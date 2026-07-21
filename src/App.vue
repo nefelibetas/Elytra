@@ -1,61 +1,80 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 
-const greetMsg = ref("");
-const name = ref("");
+interface JavaEnv {
+  path: string;
+  version: string;
+  vendor: string;
+}
 
-async function greet() {
-  // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-  greetMsg.value = await invoke("greet", { name: name.value });
+const jdkInfo = ref<JavaEnv | null>(null);
+const jdkError = ref("");
+
+const customJdkList = ref<JavaEnv[]>([]);
+const customJdkError = ref("");
+
+async function findJdk() {
+  jdkInfo.value = null;
+  jdkError.value = "";
+  try {
+    jdkInfo.value = await invoke<JavaEnv>("scan_jdk");
+  } catch (e) {
+    jdkError.value = String(e);
+  }
+}
+
+async function selectCustomDir() {
+  customJdkList.value = [];
+  customJdkError.value = "";
+  try {
+    const dir = await open({ directory: true, multiple: false });
+    if (!dir) return;
+    customJdkList.value = await invoke<JavaEnv[]>("scan_custom_jdk", { path: dir });
+  } catch (e) {
+    customJdkError.value = String(e);
+  }
 }
 </script>
 
 <template>
   <main class="container">
-    <h1>Welcome to Tauri + Vue</h1>
+    <h1>Elytra Launcher</h1>
 
-    <div class="row">
-      <a href="https://vite.dev" target="_blank">
-        <img src="/vite.svg" class="logo vite" alt="Vite logo" />
-      </a>
-      <a href="https://tauri.app" target="_blank">
-        <img src="/tauri.svg" class="logo tauri" alt="Tauri logo" />
-      </a>
-      <a href="https://vuejs.org/" target="_blank">
-        <img src="./assets/vue.svg" class="logo vue" alt="Vue logo" />
-      </a>
+    <div class="section">
+      <button @click="findJdk">查找 JDK</button>
+      <div v-if="jdkInfo" class="jdk-info">
+        <p>路径：{{ jdkInfo.path }}</p>
+        <p>版本：{{ jdkInfo.version }}</p>
+        <p>厂商：{{ jdkInfo.vendor }}</p>
+      </div>
+      <div v-else-if="jdkError" class="jdk-error">{{ jdkError }}</div>
     </div>
-    <p>Click on the Tauri, Vite, and Vue logos to learn more.</p>
 
-    <form class="row" @submit.prevent="greet">
-      <input id="greet-input" v-model="name" placeholder="Enter a name..." />
-      <button type="submit">Greet</button>
-    </form>
-    <p>{{ greetMsg }}</p>
+    <div class="section">
+      <button @click="selectCustomDir">选择目录</button>
+      <div v-if="customJdkList.length > 0" class="jdk-info">
+        <p>找到 {{ customJdkList.length }} 个 JDK：</p>
+        <div v-for="(jdk, index) in customJdkList" :key="index" class="jdk-item">
+          <p>#{{ index + 1 }} 路径：{{ jdk.path }}</p>
+          <p>版本：{{ jdk.version }}</p>
+          <p>厂商：{{ jdk.vendor }}</p>
+        </div>
+      </div>
+      <div v-else-if="customJdkError" class="jdk-error">{{ customJdkError }}</div>
+    </div>
   </main>
 </template>
 
-<style scoped>
-.logo.vite:hover {
-  filter: drop-shadow(0 0 2em #747bff);
-}
-
-.logo.vue:hover {
-  filter: drop-shadow(0 0 2em #249b73);
-}
-
-</style>
 <style>
 :root {
   font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
   font-size: 16px;
   line-height: 24px;
   font-weight: 400;
-
   color: #0f0f0f;
   background-color: #f6f6f6;
-
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -68,41 +87,17 @@ async function greet() {
   padding-top: 10vh;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  align-items: center;
   text-align: center;
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: 0.75s;
-}
-
-.logo.tauri:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
-}
-
-.row {
+.section {
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-
-a:hover {
-  color: #535bf2;
-}
-
-h1 {
-  text-align: center;
-}
-
-input,
 button {
   border-radius: 8px;
   border: 1px solid transparent;
@@ -112,29 +107,35 @@ button {
   font-family: inherit;
   color: #0f0f0f;
   background-color: #ffffff;
+  cursor: pointer;
   transition: border-color 0.25s;
   box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
-}
-
-button {
-  cursor: pointer;
+  outline: none;
 }
 
 button:hover {
   border-color: #396cd8;
 }
+
 button:active {
   border-color: #396cd8;
   background-color: #e8e8e8;
 }
 
-input,
-button {
-  outline: none;
+.jdk-info {
+  text-align: left;
+  background: #ffffff;
+  padding: 16px 24px;
+  border-radius: 8px;
+  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.1);
 }
 
-#greet-input {
-  margin-right: 5px;
+.jdk-info p {
+  margin: 4px 0;
+}
+
+.jdk-error {
+  color: #d32f2f;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -143,18 +144,17 @@ button {
     background-color: #2f2f2f;
   }
 
-  a:hover {
-    color: #24c8db;
-  }
-
-  input,
   button {
     color: #ffffff;
     background-color: #0f0f0f98;
   }
+
   button:active {
     background-color: #0f0f0f69;
   }
-}
 
+  .jdk-info {
+    background: #1e1e1e;
+  }
+}
 </style>
