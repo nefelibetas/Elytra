@@ -1,9 +1,6 @@
-mod error;
-mod model;
-mod scanner;
-mod storage;
-
-pub use model::{JavaConfig, JavaEnv};
+use crate::config::jdk::model::JavaConfig;
+use crate::config::jdk::model::JavaEnv;
+use crate::config::jdk::{scanner, storage};
 
 #[tauri::command]
 pub fn auto_scan_jdk() -> Vec<JavaEnv> {

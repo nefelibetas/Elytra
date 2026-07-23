@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
-use crate::jdk::error::JdkError;
-use crate::jdk::model::JavaEnv;
+use crate::config::jdk::error::JdkError;
+use crate::config::jdk::model::JavaEnv;
 use std::path::Path;
 
 pub fn scan_custom_dir(path: &str) -> Result<Vec<JavaEnv>, JdkError> {

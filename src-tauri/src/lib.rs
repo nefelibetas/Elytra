@@ -1,4 +1,6 @@
-mod jdk;
+mod commands;
+mod config;
+mod persist;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -6,10 +8,10 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
-            jdk::auto_scan_jdk,
-            jdk::scan_custom_jdk,
-            jdk::get_jdk_config,
-            jdk::save_jdk_config
+            commands::jdk::auto_scan_jdk,
+            commands::jdk::scan_custom_jdk,
+            commands::jdk::get_jdk_config,
+            commands::jdk::save_jdk_config
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
