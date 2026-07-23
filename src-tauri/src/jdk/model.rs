@@ -5,6 +5,7 @@ pub struct JavaEnv {
     pub path: String,
     pub version: String,
     pub vendor: String,
+    pub arch: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]

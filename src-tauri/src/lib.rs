@@ -6,7 +6,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
-            jdk::scan_jdk,
+            jdk::auto_scan_jdk,
             jdk::scan_custom_jdk,
             jdk::get_jdk_config,
             jdk::save_jdk_config

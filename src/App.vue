@@ -7,19 +7,20 @@ interface JavaEnv {
   path: string;
   version: string;
   vendor: string;
+  arch: string;
 }
 
-const jdkInfo = ref<JavaEnv | null>(null);
+const jdkList = ref<JavaEnv[]>([]);
 const jdkError = ref("");
 
 const customJdkList = ref<JavaEnv[]>([]);
 const customJdkError = ref("");
 
-async function findJdk() {
-  jdkInfo.value = null;
+async function scanAllJdk() {
+  jdkList.value = [];
   jdkError.value = "";
   try {
-    jdkInfo.value = await invoke<JavaEnv>("scan_jdk");
+    jdkList.value = await invoke<JavaEnv[]>("auto_scan_jdk");
   } catch (e) {
     jdkError.value = String(e);
   }
@@ -43,13 +44,17 @@ async function selectCustomDir() {
     <h1>Elytra Launcher</h1>
 
     <div class="section">
-      <button @click="findJdk">查找 JDK</button>
-      <div v-if="jdkInfo" class="jdk-info">
-        <p>路径：{{ jdkInfo.path }}</p>
-        <p>版本：{{ jdkInfo.version }}</p>
-        <p>厂商：{{ jdkInfo.vendor }}</p>
+      <button @click="scanAllJdk">自动扫描 JDK</button>
+      <div v-if="jdkList.length > 0" class="jdk-info">
+        <p>找到 {{ jdkList.length }} 个 JDK：</p>
+        <div v-for="(jdk, index) in jdkList" :key="index" class="jdk-item">
+          <p>#{{ index + 1 }} 路径：{{ jdk.path }}</p>
+          <p>版本：{{ jdk.version }} （{{ jdk.arch }}）</p>
+          <p>厂商：{{ jdk.vendor }}</p>
+        </div>
       </div>
       <div v-else-if="jdkError" class="jdk-error">{{ jdkError }}</div>
+      <div v-else class="jdk-hint">点击按钮自动扫描 JDK</div>
     </div>
 
     <div class="section">
@@ -58,7 +63,7 @@ async function selectCustomDir() {
         <p>找到 {{ customJdkList.length }} 个 JDK：</p>
         <div v-for="(jdk, index) in customJdkList" :key="index" class="jdk-item">
           <p>#{{ index + 1 }} 路径：{{ jdk.path }}</p>
-          <p>版本：{{ jdk.version }}</p>
+          <p>版本：{{ jdk.version }} （{{ jdk.arch }}）</p>
           <p>厂商：{{ jdk.vendor }}</p>
         </div>
       </div>
@@ -134,8 +139,17 @@ button:active {
   margin: 4px 0;
 }
 
+.jdk-item {
+  border-top: 1px solid #e0e0e0;
+  padding: 4px 0;
+}
+
 .jdk-error {
   color: #d32f2f;
+}
+
+.jdk-hint {
+  color: #888;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -155,6 +169,14 @@ button:active {
 
   .jdk-info {
     background: #1e1e1e;
+  }
+
+  .jdk-item {
+    border-top-color: #333;
+  }
+
+  .jdk-hint {
+    color: #888;
   }
 }
 </style>

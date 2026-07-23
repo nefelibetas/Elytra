@@ -6,8 +6,8 @@ mod storage;
 pub use model::{JavaConfig, JavaEnv};
 
 #[tauri::command]
-pub fn scan_jdk() -> Result<JavaEnv, String> {
-    scanner::scan_jdk().map_err(|e| e.to_string())
+pub fn auto_scan_jdk() -> Vec<JavaEnv> {
+    scanner::auto_scan()
 }
 
 #[tauri::command]
