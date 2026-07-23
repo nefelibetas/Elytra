@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
@@ -36,10 +36,10 @@ fn should_download(lib: &Library) -> bool {
 
 pub async fn download_libraries(
     libraries: &[Library],
-    libraries_dir: &PathBuf,
+    libraries_dir: &Path,
     concurrency: usize,
 ) -> Result<(), Vec<String>> {
-    let mut tasks: Vec<(String, PathBuf)> = Vec::new();
+    let mut tasks: Vec<(String, std::path::PathBuf)> = Vec::new();
 
     for lib in libraries {
         if !should_download(lib) {

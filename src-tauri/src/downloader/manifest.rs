@@ -1,7 +1,9 @@
+use crate::config::downloader::model::DownloaderConfig;
 use crate::downloader::model::VersionManifest;
 
-pub async fn fetch_version_list(mirror_url: &str) -> Result<VersionManifest, String> {
-    let url = format!("{}/mc/game/version_manifest_v2.json", mirror_url);
+pub async fn fetch_version_list(config: &DownloaderConfig) -> Result<VersionManifest, String> {
+    let source = config.active_source().ok_or("no active source")?;
+    let url = format!("{}/mc/game/version_manifest_v2.json", source.manifest_url);
     let resp = reqwest::get(&url)
         .await
         .map_err(|e| format!("failed to fetch version list: {}", e))?;

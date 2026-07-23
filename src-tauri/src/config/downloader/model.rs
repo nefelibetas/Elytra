@@ -1,8 +1,16 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct DownloadSource {
+    pub name: String,
+    pub manifest_url: String,
+    pub resource_url: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DownloaderConfig {
-    pub mirror_url: String,
+    pub sources: Vec<DownloadSource>,
+    pub active_source: String,
     pub concurrency: u32,
     pub minecraft_dir: String,
 }
@@ -10,9 +18,21 @@ pub struct DownloaderConfig {
 impl Default for DownloaderConfig {
     fn default() -> Self {
         Self {
-            mirror_url: "https://piston-meta.mojang.com".into(),
+            sources: vec![DownloadSource {
+                name: "Mojang 官方".into(),
+                manifest_url: "https://piston-meta.mojang.com".into(),
+                resource_url: "https://resources.download.minecraft.net".into(),
+            }],
+            active_source: "0".into(),
             concurrency: 8,
             minecraft_dir: ".minecraft".into(),
         }
+    }
+}
+
+impl DownloaderConfig {
+    pub fn active_source(&self) -> Option<&DownloadSource> {
+        let idx: usize = self.active_source.parse().ok()?;
+        self.sources.get(idx)
     }
 }

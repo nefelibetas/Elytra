@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -23,7 +25,7 @@ pub struct VersionMeta {
     pub time: String,
     pub release_time: String,
     pub sha1: String,
-    pub compliance_level: u32,
+    pub compliance_level: serde_json::Value,
 }
 
 impl VersionMeta {
@@ -47,26 +49,36 @@ impl VersionMeta {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionJson {
-    pub id: String,
-    pub main_class: String,
-    pub java_version: JavaVersion,
-    pub asset_index: AssetIndex,
-    pub libraries: Vec<Library>,
-    pub downloads: Downloads,
     #[serde(default)]
     pub arguments: Arguments,
+    pub asset_index: AssetIndex,
+    pub assets: serde_json::Value,
+    pub compliance_level: serde_json::Value,
+    pub downloads: Downloads,
+    pub id: String,
+    pub java_version: JavaVersion,
+    pub libraries: Vec<Library>,
+    pub main_class: String,
+    pub minimum_launcher_version: serde_json::Value,
+    pub release_time: String,
+    pub time: String,
+    pub r#type: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JavaVersion {
-    pub major_version: u32,
+    pub major_version: serde_json::Value,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetIndex {
     pub id: String,
+    pub sha1: String,
+    pub size: u64,
+    pub total_size: u64,
+    pub url: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -127,4 +139,15 @@ pub struct DownloadProgress {
     pub current: u64,
     pub total: u64,
     pub speed: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AssetsJson {
+    pub objects: HashMap<String, AssetObject>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AssetObject {
+    pub hash: String,
+    pub size: u64,
 }

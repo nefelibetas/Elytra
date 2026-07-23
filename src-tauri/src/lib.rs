@@ -1,5 +1,5 @@
 mod commands;
-mod config;
+pub mod config;
 pub mod downloader;
 mod persist;
 
@@ -15,6 +15,8 @@ pub fn run() {
             commands::jdk::save_jdk_config,
             commands::downloader::get_version_list,
             commands::downloader::download_version,
+            commands::downloader::get_downloader_config,
+            commands::downloader::save_downloader_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
