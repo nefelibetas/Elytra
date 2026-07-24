@@ -9,7 +9,6 @@ pub mod version;
 use std::path::Path;
 
 use crate::config::downloader::model::DownloaderConfig;
-use crate::downloader::assets::download_assets;
 
 fn resolve_version_dir(mc: &Path, version_id: &str) -> (String, std::path::PathBuf) {
     let base = mc.join("versions").join(version_id);
@@ -38,23 +37,26 @@ pub async fn download_version(
         .await
         .map_err(|e| vec![e])?;
 
-    if let Some(ref client) = vj.downloads.client {
-        version::download_client_jar(&client.url, version_id, &vdir)
-            .await
-            .map_err(|e| vec![e])?;
-    }
+    let jar = async {
+        match vj.downloads.client.as_ref() {
+            Some(c) => version::download_client_jar(&c.url, version_id, &vdir)
+                .await
+                .map_err(|e| vec![e]),
+            None => Ok(()),
+        }
+    };
 
-    library::download_libraries(&vj.libraries, &mc.join("libraries"), config.concurrency as usize)
-        .await?;
+    let lib_dir = mc.join("libraries");
+    let libs = library::download_libraries(&vj.libraries, &lib_dir, config.concurrency as usize);
 
-    download_assets(
+    let asst = assets::download_assets(
         &vj.asset_index.url,
         &vj.asset_index.id,
         Some(&vj.asset_index.sha1),
         config,
         mc,
-    )
-    .await?;
+    );
 
+    tokio::try_join!(jar, libs, asst)?;
     Ok(())
 }
