@@ -3,13 +3,11 @@ use elytra_launcher_lib::downloader::manifest;
 
 fn test_config() -> DownloaderConfig {
     DownloaderConfig {
-        sources: vec![
-            elytra_launcher_lib::config::downloader::model::DownloadSource {
-                name: "test".into(),
-                manifest_url: "https://piston-meta.mojang.com".into(),
-                resource_url: "https://resources.download.minecraft.net".into(),
-            },
-        ],
+        sources: vec![elytra_launcher_lib::config::downloader::model::DownloadSource {
+            name: "test".into(),
+            manifest_url: "https://piston-meta.mojang.com".into(),
+            resource_url: "https://resources.download.minecraft.net".into(),
+        }],
         active_source: "0".into(),
         concurrency: 8,
         minecraft_dir: r"D:\download_test".into(),

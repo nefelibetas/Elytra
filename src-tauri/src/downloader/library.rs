@@ -2,6 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
+use super::hash::file_sha1_matches;
 use crate::downloader::fetcher;
 use crate::downloader::model::{Library, OsRule, Rule};
 
@@ -12,10 +13,9 @@ fn matches_rules(rules: &[Rule]) -> bool {
             Some(OsRule { name: Some(n) }) => n == "windows",
             _ => true,
         };
-        let this_match = os_match;
         match rule.action.as_str() {
-            "allow" if this_match => allowed = true,
-            "disallow" if this_match => return false,
+            "allow" if os_match => allowed = true,
+            "disallow" if os_match => return false,
             _ => {}
         }
     }
@@ -49,7 +49,7 @@ pub async fn download_libraries(
             continue;
         };
         let dest = libraries_dir.join(&artifact.path);
-        if dest.exists() {
+        if dest.exists() && file_sha1_matches(&dest, &artifact.sha1) {
             continue;
         }
         tasks.push((artifact.url.clone(), dest));

@@ -4,6 +4,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
 
+use super::hash::file_sha1_matches;
 use crate::config::downloader::model::DownloaderConfig;
 use crate::downloader::fetcher;
 
@@ -21,23 +22,34 @@ pub struct AssetObject {
 pub async fn download_assets(
     index_url: &str,
     index_id: &str,
+    index_sha1: Option<&str>,
     config: &DownloaderConfig,
     mc_dir: &Path,
 ) -> Result<(), Vec<String>> {
     let source = config.active_source().ok_or_else(|| vec!["no active source".into()])?;
 
-    let index_text = reqwest::get(index_url)
-        .await
-        .map_err(|e| vec![format!("failed to fetch asset index: {}", e)])?
-        .text()
-        .await
-        .map_err(|e| vec![format!("failed to read asset index: {}", e)])?;
-
     let indexes_dir = mc_dir.join("assets").join("indexes");
-    std::fs::create_dir_all(&indexes_dir)
-        .map_err(|e| vec![format!("failed to create indexes dir: {}", e)])?;
-    std::fs::write(indexes_dir.join(format!("{}.json", index_id)), &index_text)
-        .map_err(|e| vec![format!("failed to write asset index: {}", e)])?;
+    let index_path = indexes_dir.join(format!("{}.json", index_id));
+
+    let index_text = match index_sha1 {
+        Some(sha1) if index_path.exists() && file_sha1_matches(&index_path, sha1) => {
+            std::fs::read_to_string(&index_path)
+                .map_err(|e| vec![format!("failed to read cached asset index: {}", e)])?
+        }
+        _ => {
+            let text = reqwest::get(index_url)
+                .await
+                .map_err(|e| vec![format!("failed to fetch asset index: {}", e)])?
+                .text()
+                .await
+                .map_err(|e| vec![format!("failed to read asset index: {}", e)])?;
+            std::fs::create_dir_all(&indexes_dir)
+                .map_err(|e| vec![format!("failed to create indexes dir: {}", e)])?;
+            std::fs::write(&index_path, &text)
+                .map_err(|e| vec![format!("failed to write asset index: {}", e)])?;
+            text
+        }
+    };
 
     let index: AssetsIndex = serde_json::from_str(&index_text)
         .map_err(|e| vec![format!("failed to parse asset index: {}", e)])?;
@@ -55,7 +67,7 @@ pub async fn download_assets(
         let hash = obj.hash.clone();
         let sub = hash[..2].to_string();
         let dest = objects_dir.join(&sub).join(&hash);
-        if dest.exists() {
+        if dest.exists() && file_sha1_matches(&dest, &hash) {
             continue;
         }
 

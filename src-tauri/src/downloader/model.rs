@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+/// 版本清单
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionManifest {
@@ -9,6 +10,7 @@ pub struct VersionManifest {
     pub versions: Vec<VersionMeta>,
 }
 
+/// 最新版本
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LatestVersion {
@@ -16,6 +18,7 @@ pub struct LatestVersion {
     pub snapshot: String,
 }
 
+/// 版本元数据
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionMeta {
@@ -28,24 +31,7 @@ pub struct VersionMeta {
     pub compliance_level: serde_json::Value,
 }
 
-impl VersionMeta {
-    pub fn is_release(&self) -> bool {
-        self.r#type == "release"
-    }
-
-    pub fn is_snapshot(&self) -> bool {
-        self.r#type == "snapshot"
-    }
-
-    pub fn is_old_version(&self) -> bool {
-        self.r#type == "old_alpha" || self.r#type == "old_beta"
-    }
-
-    pub fn is_april_fools(&self) -> bool {
-        self.r#type == "snapshot" && self.time.contains("-04-01")
-    }
-}
-
+/// 游戏版本json
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionJson {
@@ -65,12 +51,14 @@ pub struct VersionJson {
     pub r#type: String,
 }
 
+/// Java版本
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JavaVersion {
     pub major_version: serde_json::Value,
 }
 
+/// 资源索引
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetIndex {
@@ -81,6 +69,7 @@ pub struct AssetIndex {
     pub url: String,
 }
 
+/// 库
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Library {
     pub name: String,
@@ -88,11 +77,13 @@ pub struct Library {
     pub rules: Option<Vec<Rule>>,
 }
 
+/// 库下载
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LibraryDownloads {
     pub artifact: Option<Artifact>,
 }
 
+/// Artifact
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Artifact {
     pub path: String,
@@ -101,6 +92,7 @@ pub struct Artifact {
     pub size: u64,
 }
 
+/// 规则
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Rule {
     pub action: String,
@@ -142,7 +134,7 @@ pub struct DownloadProgress {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct AssetsJson {
+pub struct AssetJson {
     pub objects: HashMap<String, AssetObject>,
 }
 
