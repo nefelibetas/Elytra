@@ -15,9 +15,5 @@ pub async fn fetch_version_list(config: &DownloaderConfig) -> Result<VersionMani
 
     let manifest: VersionManifest =
         serde_json::from_str(&text).map_err(|e| format!("failed to parse manifest: {}", e))?;
-    println!(
-        "release: {}, snapshot: {}",
-        manifest.latest.release, manifest.latest.snapshot
-    );
     Ok(manifest)
 }

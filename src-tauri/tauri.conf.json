@@ -13,8 +13,13 @@
     "windows": [
       {
         "title": "elytra-launcher",
-        "width": 800,
-        "height": 600
+        "width": 960,
+        "height": 640,
+        "decorations": false,
+        "transparent": true,
+        "resizable": false,
+        "center": true,
+        "shadow": false
       }
     ],
     "security": {
