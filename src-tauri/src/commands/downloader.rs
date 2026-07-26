@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use crate::config::downloader::model::DownloaderConfig;
 use crate::downloader::manifest;
 use crate::downloader::model::VersionManifest;
@@ -25,4 +27,26 @@ pub fn get_downloader_config() -> DownloaderConfig {
 #[tauri::command]
 pub fn save_downloader_config(config: DownloaderConfig) -> Result<(), String> {
     persist::save("downloader", &config).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_installed_versions() -> Result<Vec<String>, String> {
+    let config: DownloaderConfig = persist::read("downloader").unwrap_or_default();
+    let versions_dir = Path::new(&config.minecraft_dir).join("versions");
+    if !versions_dir.exists() {
+        return Ok(vec![]);
+    }
+    let mut items: Vec<String> = std::fs::read_dir(&versions_dir)
+        .map_err(|e| format!("读取版本目录失败: {}", e))?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            if entry.file_type().ok()?.is_dir() {
+                Some(entry.file_name().to_string_lossy().to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+    items.sort();
+    Ok(items)
 }

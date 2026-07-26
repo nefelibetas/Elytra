@@ -1,9 +1,9 @@
-use elytra_launcher_lib::config::downloader::model::DownloaderConfig;
-use elytra_launcher_lib::downloader::manifest;
+use elytra_lib::config::downloader::model::DownloaderConfig;
+use elytra_lib::downloader::manifest;
 
 fn test_config() -> DownloaderConfig {
     DownloaderConfig {
-        sources: vec![elytra_launcher_lib::config::downloader::model::DownloadSource {
+        sources: vec![elytra_lib::config::downloader::model::DownloadSource {
             name: "test".into(),
             manifest_url: "https://piston-meta.mojang.com".into(),
             resource_url: "https://resources.download.minecraft.net".into(),
@@ -21,7 +21,7 @@ async fn download_snapshot_full() {
     let sid = &m.latest.snapshot;
     let meta = m.versions.iter().find(|v| &v.id == sid).unwrap();
 
-    elytra_launcher_lib::downloader::download_version(sid, &meta.url, &config)
+    elytra_lib::downloader::download_version(sid, &meta.url, &config)
         .await
         .unwrap();
 
