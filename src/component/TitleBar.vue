@@ -25,7 +25,7 @@ function onMouseDown(e: MouseEvent) {
 <template>
   <header class="titlebar" @mousedown="onMouseDown">
     <div class="tl">
-      <span class="logo">E</span>
+      <span class="logo">Elytra</span>
     </div>
 
     <nav class="tc">
