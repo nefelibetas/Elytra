@@ -7,11 +7,11 @@ defineProps<{
   badgeClass?: string;
 }>();
 
-const emit = defineEmits<{ action: [] }>();
+const emit = defineEmits<{ select: []; action: [] }>();
 </script>
 
 <template>
-  <div class="ver-item">
+  <div class="ver-item" @click="emit('select')">
     <img :src="iconSrc" width="32" height="32" class="ver-icon" alt="" />
     <div class="ver-info">
       <div v-if="badge" class="ver-info-top">
@@ -40,6 +40,7 @@ const emit = defineEmits<{ action: [] }>();
   font-size: 13px;
   transition: background 0.1s;
   user-select: none;
+  cursor: pointer;
 }
 
 .ver-item:hover { background-color: var(--surface-hover); }

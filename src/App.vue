@@ -22,7 +22,11 @@ onUnmounted(() => {
   <div class="app-layout">
     <TitleBar />
     <main class="main-content">
-      <router-view />
+      <router-view v-slot="{ Component }">
+        <Transition name="route" mode="out-in">
+          <component :is="Component" />
+        </Transition>
+      </router-view>
     </main>
   </div>
 </template>
@@ -122,4 +126,7 @@ html, body {
   overflow-y: auto;
   background-color: var(--surface-page);
 }
+
+.route-enter-active, .route-leave-active { transition: opacity 0.25s ease; }
+.route-enter-from, .route-leave-to { opacity: 0; }
 </style>

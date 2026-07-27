@@ -18,6 +18,10 @@ pub fn run() {
             commands::downloader::get_downloader_config,
             commands::downloader::save_downloader_config,
             commands::downloader::get_installed_versions,
+            commands::loader::get_forge_versions,
+            commands::loader::get_fabric_versions,
+            commands::loader::get_optifine_versions,
+            commands::loader::get_neoforge_versions,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

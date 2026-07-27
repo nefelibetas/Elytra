@@ -84,12 +84,11 @@ function onMouseDown(e: MouseEvent) {
   font-size: 18px;
   font-weight: 800;
   color: var(--color-brand);
-  letter-spacing: -1px;
-  width: 30px;
+  letter-spacing: -0.5px;
+  padding: 0 10px;
   height: 30px;
   display: flex;
   align-items: center;
-  justify-content: center;
   border-radius: var(--radius-md);
   background-color: rgba(255, 255, 255, 0.9);
 }

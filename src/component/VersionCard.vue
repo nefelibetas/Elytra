@@ -20,8 +20,8 @@ const bodyHeight = computed(() => {
     <div class="card-title" @click="emit('toggle')">
       <span>{{ title }}</span>
       <span class="card-count">{{ count }}</span>
-      <svg class="chevron" viewBox="0 0 12 12" width="12" height="12" fill="currentColor">
-        <polygon points="3,4.5 9,4.5 6,8.5" />
+      <svg class="chevron" viewBox="0 0 12 12" width="14" height="14" fill="currentColor">
+        <polygon points="1,3 11,3 6,10" />
       </svg>
     </div>
     <div class="card-body" :style="{ maxHeight: bodyHeight }">
@@ -50,8 +50,10 @@ const bodyHeight = computed(() => {
 .card-body {
   border-top: 1px solid var(--border-default);
   overflow: hidden;
-  transition: max-height 0.25s ease;
+  transition: max-height 0.3s ease, opacity 0.25s ease;
+  opacity: 1;
 }
+.card:not(.open) .card-body { opacity: 0; }
 
 .expandable:hover { box-shadow: var(--shadow-sm); }
 
