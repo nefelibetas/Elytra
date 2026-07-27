@@ -18,11 +18,18 @@ pub struct DownloaderConfig {
 impl Default for DownloaderConfig {
     fn default() -> Self {
         Self {
-            sources: vec![DownloadSource {
-                name: "Mojang 官方".into(),
-                manifest_url: "https://piston-meta.mojang.com".into(),
-                resource_url: "https://resources.download.minecraft.net".into(),
-            }],
+            sources: vec![
+                DownloadSource {
+                    name: "Mojang 官方".into(),
+                    manifest_url: "https://piston-meta.mojang.com".into(),
+                    resource_url: "https://resources.download.minecraft.net".into(),
+                },
+                DownloadSource {
+                    name: "BMCLAPI 镜像".into(),
+                    manifest_url: "https://bmclapi2.bangbang93.com".into(),
+                    resource_url: "https://bmclapi2.bangbang93.com/assets".into(),
+                },
+            ],
             active_source: "0".into(),
             concurrency: 8,
             minecraft_dir: ".minecraft".into(),
