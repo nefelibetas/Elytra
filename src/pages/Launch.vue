@@ -335,22 +335,12 @@ async function doLaunch() {
   }
 
   // 正版模式必须已登录；启动前静默刷新 token
-  if (!isOffline) {
-    if (!msAccount.value) {
-      alertMsg.value = "请先登录 Microsoft 账号";
-      alertCopyable.value = false;
-      showAlert.value = true;
-      return;
-    }
-    try {
-      msAccount.value = await invoke<MsAccountInfo>("refresh_ms_account");
-    } catch (e) {
-      msAccount.value = null;
-      alertMsg.value = `正版登录已失效，请重新登录：${String(e)}`;
-      alertCopyable.value = true;
-      showAlert.value = true;
-      return;
-    }
+  // （界面切换在前，刷新是网络请求，避免点击后界面无反馈）
+  if (!isOffline && !msAccount.value) {
+    alertMsg.value = "请先登录 Microsoft 账号";
+    alertCopyable.value = false;
+    showAlert.value = true;
+    return;
   }
 
   const name = isOffline ? username.value.trim() : (msAccount.value?.name ?? "");
@@ -364,11 +354,25 @@ async function doLaunch() {
   ];
 
   try {
+    // 正版：等待 token 刷新完成（失败时重置并返回，不重复弹窗）
+    if (!isOffline) {
+      try {
+        msAccount.value = await invoke<MsAccountInfo>("refresh_ms_account");
+      } catch (e) {
+        msAccount.value = null;
+        resetLaunch();
+        alertMsg.value = `正版登录已失效，请重新登录：${String(e)}`;
+        alertCopyable.value = true;
+        showAlert.value = true;
+        return;
+      }
+    }
+
     // ① 环境 + 完整性校验
     await invoke("check_launch_env", { versionDirName: selectedVersion.value });
     step("检查 Java 环境", "done");
     step("检查游戏文件", "running");
-    await new Promise(r => setTimeout(r, 400)); // 让用户看到完整性检查过程
+    await new Promise(r => setTimeout(r, 100)); // 让用户看到完整性检查过程
     step("检查游戏文件", "done");
 
     // ② 启动游戏进程

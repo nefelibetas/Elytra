@@ -1,3 +1,23 @@
+<script lang="ts">
+// 模块级缓存：仅首次进入下载页拉取版本列表，之后进入直接展示缓存；
+// 刷新按钮手动刷新当前 tab（vanilla 重新拉取）。
+// （必须放在普通 <script> 块：<script setup> 的顶层变量每次组件重建都会重置）
+interface VersionMeta {
+  id: string;
+  type: string;
+  url: string;
+  time: string;
+  releaseTime: string;
+  sha1: string;
+  complianceLevel: number;
+}
+interface LatestVersion { release: string; snapshot: string; }
+interface VersionManifest { latest: LatestVersion; versions: VersionMeta[]; }
+let manifestLoaded = false;
+let manifestLoading = false;
+let cachedManifest: VersionManifest | null = null;
+</script>
+
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from "vue";
 import { useRouter } from "vue-router";
@@ -16,18 +36,6 @@ import fabricIcon from "../assets/Fabric.png";
 import optifineIcon from "../assets/optifined.png";
 import quiltIcon from "../assets/quilt.png";
 
-interface VersionMeta {
-  id: string;
-  type: string;
-  url: string;
-  time: string;
-  releaseTime: string;
-  sha1: string;
-  complianceLevel: number;
-}
-interface LatestVersion { release: string; snapshot: string; }
-interface VersionManifest { latest: LatestVersion; versions: VersionMeta[]; }
-
 interface LoaderItem {
   key: string;
   name: string;
@@ -37,8 +45,9 @@ interface LoaderItem {
 type Tab = "vanilla" | "mod" | "modpack" | "datapack" | "resourcepack" | "shader";
 
 const currentTab = ref<Tab>("vanilla");
-const manifest = ref<VersionManifest | null>(null);
-const loading = ref(true);
+const manifest = ref<VersionManifest | null>(cachedManifest);
+// 初始加载态由缓存状态决定：已有缓存则首帧直接展示列表，不闪加载卡片
+const loading = ref(!manifestLoaded);
 const error = ref("");
 const expanded = ref<Record<string, boolean>>({
   release: false, snapshot: false, old: false, aprilfools: false,
@@ -291,18 +300,31 @@ async function refreshData(tab: string) {
   if (tab === "vanilla") {
     selectedVersion.value = null;
     expanded.value = { release: false, snapshot: false, old: false, aprilfools: false };
-    loading.value = true;
-    error.value = "";
-    try { manifest.value = await invoke<VersionManifest>("get_version_list"); }
-    catch (e) { error.value = String(e); }
-    finally { loading.value = false; }
+    await fetchManifest();
   }
 }
 
-onMounted(async () => {
-  try { manifest.value = await invoke<VersionManifest>("get_version_list"); }
-  catch (e) { error.value = String(e); }
-  finally { loading.value = false; }
+async function fetchManifest() {
+  if (manifestLoading) return;
+  manifestLoading = true;
+  loading.value = true;
+  error.value = "";
+  try {
+    manifest.value = await invoke<VersionManifest>("get_version_list");
+    cachedManifest = manifest.value;
+    manifestLoaded = true;
+  } catch (e) {
+    error.value = String(e);
+  } finally {
+    loading.value = false;
+    manifestLoading = false;
+  }
+}
+
+onMounted(() => {
+  // 已有缓存：直接展示，不重新请求（loading 初始值已按缓存状态设定）
+  if (manifestLoaded) return;
+  fetchManifest();
 });
 </script>
 
