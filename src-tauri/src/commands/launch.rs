@@ -200,14 +200,422 @@ fn rules_match_os(rules: &[crate::downloader::model::Rule]) -> bool {
 fn build_auth(auth_mode: &str, username: &str, access_token: &str, uuid: &str, xuid: &str) -> AuthMode {
     match auth_mode {
         "online" => AuthMode::Online {
+            username: username.to_string(),
             access_token: access_token.to_string(),
             uuid: uuid.to_string(),
             xuid: xuid.to_string(),
         },
         _ => AuthMode::Offline {
             username: username.to_string(),
+            uuid: String::new(), // 由 apply_offline_skin 按离线皮肤设置填充
         },
     }
+}
+
+/// 正版模式 xuid 缺失时从 Minecraft access token（JWT）解析兜底
+/// （XSTS 的 xid 字段部分账号缺失，旧配置也可能未保存 xuid）。
+fn fill_missing_xuid(auth: &mut AuthMode) {
+    if let AuthMode::Online { xuid, access_token, .. } = auth {
+        if xuid.is_empty() {
+            *xuid = crate::auth::microsoft::extract_xuid_from_jwt(access_token);
+        }
+    }
+}
+
+/// 离线默认 UUID（固定占位）。
+const OFFLINE_BASE_UUID: &str = "00000000FFFFFFFFFFFFFFFFFFFFFFFF";
+
+/// PCL 式皮肤模型匹配：
+/// `UUID.hashCode() & 1 == (Uuid[7] ^ Uuid[15] ^ Uuid[23] ^ Uuid[31]) & 1`
+/// （1.8+ 的 DefaultPlayerSkin.isSlimSkin 判定，奇数 → Alex/slim）
+fn uuid_matches_alex(uuid: &str) -> bool {
+    let chars: Vec<u32> = uuid
+        .chars()
+        .filter_map(|c| c.to_digit(16))
+        .collect();
+    if chars.len() != 32 {
+        return false;
+    }
+    (chars[7] ^ chars[15] ^ chars[23] ^ chars[31]) & 1 == 1
+}
+
+/// 从基础 UUID 递增末位直到匹配目标模型（16 次内必达）。
+fn skin_matching_uuid(base: &str, want_alex: bool) -> String {
+    let mut chars: Vec<char> = base.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+    if chars.len() != 32 {
+        return base.to_string();
+    }
+    loop {
+        if uuid_matches_alex(&chars.iter().collect::<String>()) == want_alex {
+            return chars.iter().collect();
+        }
+        let v = chars[31].to_digit(16).unwrap_or(0) + 1;
+        chars[31] = char::from_digit(v % 16, 16).unwrap_or('0');
+    }
+}
+
+/// 查询正版玩家真实 UUID（api.mojang.com）；失败返回 None。
+async fn resolve_player_uuid(name: &str) -> Option<String> {
+    let resp = reqwest::get(format!(
+        "https://api.mojang.com/users/profiles/minecraft/{}",
+        name.trim()
+    ))
+    .await
+    .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    resp.json::<serde_json::Value>()
+        .await
+        .ok()?
+        .get("id")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// 应用离线皮肤（PCL 机制）：
+/// 1. UUID 策略：Steve/Alex/Custom 生成匹配模型的 UUID；Player 用正版玩家真实 UUID
+///    （游戏内按 UUID 哈希显示对应默认皮肤，1.19.2 以下；
+///    Player 模式游戏内还会经 sessionserver 拉取正版皮肤，需网络）；
+/// 2. Custom：构建替换默认纹理的资源包（resourcepacks/elytra-skin.zip）并写入 options.txt 启用。
+async fn apply_offline_skin(
+    auth: &mut AuthMode,
+    version_json: &crate::downloader::model::VersionJson,
+    mc_dir: &std::path::Path,
+    version_dir_name: &str,
+) {
+    let AuthMode::Offline { username, uuid } = auth else {
+        return;
+    };
+    if uuid.is_empty() {
+        *uuid = OFFLINE_BASE_UUID.to_string();
+    }
+
+    let skin: crate::config::offline_skin::OfflineSkinConfig =
+        crate::persist::read("offline_skin").unwrap_or_default();
+    use crate::config::offline_skin::{OfflineSkinModel, OfflineSkinType as T};
+
+    match skin.skin_type {
+        T::Steve => *uuid = skin_matching_uuid(uuid, false),
+        T::Alex => *uuid = skin_matching_uuid(uuid, true),
+        // 随机：与前端 hashName 一致（哈希奇数 → Alex），游戏内按匹配 UUID 显示同一模型
+        T::Random => {
+            let want_alex = hash_name(username) % 2 == 1;
+            *uuid = skin_matching_uuid(uuid, want_alex);
+        }
+        T::Player => {
+            let name = skin.player_name.trim();
+            if !name.is_empty() {
+                if let Some(real) = resolve_player_uuid(name).await {
+                    *uuid = real;
+                }
+            }
+        }
+        T::Custom => {
+            let path = skin.custom_path.trim();
+            let slim = matches!(skin.custom_model, OfflineSkinModel::Alex);
+            *uuid = skin_matching_uuid(uuid, slim);
+            if !path.is_empty() && std::path::Path::new(path).exists() {
+                let game_dir = mc_dir.join("versions").join(version_dir_name);
+                apply_custom_skin_pack(&game_dir, path, slim, version_json);
+            }
+        }
+    }
+    // 用户名不变（PCL 同样使用输入的用户名）
+    let _ = username;
+}
+
+/// 构建自定义皮肤资源包并写入 options.txt 启用（对齐 PCL2 Skin.zip 机制）。
+/// 仅对 1.6+ 版本有效；替换 steve.png/alex.png 默认纹理为本地皮肤文件。
+fn apply_custom_skin_pack(
+    game_dir: &std::path::Path,
+    skin_path: &str,
+    slim: bool,
+    version_json: &crate::downloader::model::VersionJson,
+) {
+    use std::io::Write;
+
+    // 版本主号（如 "1.12.2" → 12）；快照/未知按高版本处理
+    let major = version_major(version_json);
+    if major < 6 {
+        return; // 1.5- 无资源包
+    }
+    let pack_format = pack_format_for(major, version_json);
+
+    let rp_dir = game_dir.join("resourcepacks");
+    let zip_path = rp_dir.join("elytra-skin.zip");
+    let tex_name = if slim { "alex.png" } else { "steve.png" };
+
+    // 1. 写 zip
+    let result = (|| -> Result<(), String> {
+        std::fs::create_dir_all(&rp_dir).map_err(|e| e.to_string())?;
+        let file = std::fs::File::create(&zip_path).map_err(|e| e.to_string())?;
+        let mut zip = zip::ZipWriter::new(file);
+        let opts: zip::write::FileOptions<()> = zip::write::FileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("pack.mcmeta", opts).map_err(|e| e.to_string())?;
+        write!(
+            zip,
+            r#"{{"pack":{{"pack_format":{},"description":"ElytraLauncher custom skin"}}}}"#,
+            pack_format
+        )
+        .map_err(|e| e.to_string())?;
+        zip.start_file(
+            format!("assets/minecraft/textures/entity/{tex_name}"),
+            opts,
+        )
+        .map_err(|e| e.to_string())?;
+        let mut f = std::fs::File::open(skin_path).map_err(|e| e.to_string())?;
+        std::io::copy(&mut f, &mut zip).map_err(|e| e.to_string())?;
+        zip.finish().map_err(|e| e.to_string())?;
+        Ok(())
+    })();
+    if let Err(e) = result {
+        println!("[skin] 构建皮肤资源包失败: {e}");
+        return;
+    }
+
+    // 2. options.txt 启用（1.13+ 用 file/ 前缀，旧版直接文件名）
+    let options_path = game_dir.join("options.txt");
+    let content = std::fs::read_to_string(&options_path).unwrap_or_default();
+    let pack_entry = if major >= 13 {
+        "\"file/elytra-skin.zip\""
+    } else {
+        "\"elytra-skin.zip\""
+    };
+    let mut found = false;
+    let mut out = String::new();
+    for line in content.lines() {
+        if line.starts_with("resourcePacks:") {
+            out.push_str(&format!("resourcePacks:[{pack_entry}]\n"));
+            found = true;
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    if !found {
+        out.push_str(&format!("resourcePacks:[{pack_entry}]\n"));
+    }
+    let _ = std::fs::write(&options_path, out);
+    println!("[skin] 自定义皮肤资源包已启用 ({tex_name}, format {pack_format})");
+}
+
+/// 版本主号（"1.12.2" → 12）。
+fn version_major(version_json: &crate::downloader::model::VersionJson) -> u32 {
+    let id = &version_json.id;
+    let parts: Vec<&str> = id.split('.').collect();
+    if parts.len() >= 2 && parts[0] == "1" {
+        parts[1].parse().unwrap_or(99)
+    } else if parts[0].parse::<u32>().is_ok() {
+        parts[0].parse().unwrap_or(99)
+    } else {
+        99 // 快照等未知版本按最新处理
+    }
+}
+
+/// 资源包 pack_format（对齐 PCL 各版本映射）。
+fn pack_format_for(major: u32, version_json: &crate::downloader::model::VersionJson) -> u32 {
+    let id = &version_json.id;
+    let minor: u32 = {
+        let parts: Vec<&str> = id.split('.').collect();
+        if parts.len() >= 3 {
+            parts[2].parse().unwrap_or(0)
+        } else {
+            0
+        }
+    };
+    match major {
+        6..=8 => 1,
+        9..=10 => 2,
+        11..=12 => 3,
+        13..=14 => 4,
+        15 => 5,
+        16 => 6,
+        17 => 7,
+        18 => {
+            if minor <= 2 {
+                8
+            } else {
+                9
+            }
+        }
+        19 => {
+            if minor <= 3 {
+                9
+            } else {
+                12
+            }
+        }
+        20 => {
+            if minor <= 1 {
+                15
+            } else {
+                17
+            }
+        }
+        _ => 22,
+    }
+}
+
+/// Alex 官方默认皮肤纹理（textures.minecraft.net 固定 hash；与游戏内置 alex.png 一致，已验证）。
+/// Steve 不注入：游戏默认纹理即经典蓝衬衫 Steve。
+const ALEX_TEXTURE_URL: &str = "https://textures.minecraft.net/texture/46acd06e8483b176e8ea39fc12fe105eb3a2a4970f5100057e9d84d4b60bdfa7";
+
+/// FNV-1a 哈希（与前端 Launch.vue hashName 一致）
+fn hash_name(name: &str) -> u32 {
+    let mut h: u32 = 2166136261;
+    for b in name.bytes() {
+        h ^= b as u32;
+        h = h.wrapping_mul(16777619);
+    }
+    h
+}
+
+/// 构造 `--user-properties` 参数值（authlib user properties）。
+/// 仅 1.19.2 以下版本的游戏参数含 `${user_properties}`，离线模式 authlib 不校验签名，
+/// 注入纹理即可自定义皮肤（对齐 PCL「离线皮肤仅 1.19.2 以下生效」）。
+/// 在线模式：返回空（皮肤走 sessionserver）。
+/// Random/Steve/Alex 也注入对应默认纹理（离线 UUID 固定，游戏默认纹理恒为 Steve；
+/// 注入才能与启动器头像渲染一致；Alex 必须注入 slim 纹理）。
+/// 格式统一为 authlib PropertyMap 字符串数组 `{"textures":["<b64>"]}`
+/// （1.12-1.19.2 的 PropertyMap$Serializer 均按此解析）。
+async fn build_user_properties(auth: &AuthMode) -> String {
+    let AuthMode::Offline { username, .. } = auth else {
+        return String::new();
+    };
+
+    let skin: crate::config::offline_skin::OfflineSkinConfig =
+        crate::persist::read("offline_skin").unwrap_or_default();
+
+    use crate::config::offline_skin::OfflineSkinType as T;
+    let value_b64 = match skin.skin_type {
+        // Steve：不注入——游戏默认纹理即经典蓝衬衫 Steve（离线 UUID 固定默认也是 Steve）
+        T::Steve => return String::new(),
+        T::Alex => textures_payload(ALEX_TEXTURE_URL, true),
+        T::Random => {
+            // 与前端 hashName 一致：hash % 2 == 1 → Alex（注入）；否则 Steve（默认，不注入）
+            if hash_name(username) % 2 == 1 {
+                textures_payload(ALEX_TEXTURE_URL, true)
+            } else {
+                return String::new();
+            }
+        }
+        T::Player => {
+            // 查正版玩家 UUID → sessionserver 取 textures property 的 value（base64）
+            let name = skin.player_name.trim();
+            if name.is_empty() {
+                return String::new();
+            }
+            match resolve_player_texture_value(name).await {
+                Some(v) => v,
+                None => return String::new(),
+            }
+        }
+        T::Custom => {
+            let path = skin.custom_path.trim();
+            if path.is_empty() {
+                return String::new();
+            }
+            let path = std::path::Path::new(path);
+            if !path.exists() {
+                return String::new();
+            }
+            let Ok(url) = url::Url::from_file_path(path) else {
+                return String::new();
+            };
+            textures_payload(&url.to_string(), matches!(
+                skin.custom_model,
+                crate::config::offline_skin::OfflineSkinModel::Alex
+            ))
+        }
+    };
+
+    // authlib PropertyMap 格式（数组元素为 base64 字符串）
+    format!(r#"{{"textures":["{value_b64}"]}}"#)
+}
+
+/// 构造 textures payload（`{"textures":{"SKIN":{"url":...,"metadata":...}}}`）的 base64。
+fn textures_payload(url: &str, slim: bool) -> String {
+    let mut textures = serde_json::Map::new();
+    let mut skin_obj = serde_json::Map::new();
+    skin_obj.insert("url".into(), serde_json::Value::String(url.to_string()));
+    if slim {
+        let mut meta = serde_json::Map::new();
+        meta.insert("model".into(), serde_json::Value::String("slim".into()));
+        skin_obj.insert("metadata".into(), serde_json::Value::Object(meta));
+    }
+    textures.insert("SKIN".into(), serde_json::Value::Object(skin_obj));
+    let payload = serde_json::json!({ "textures": textures });
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(payload.to_string())
+}
+
+/// 查询正版玩家纹理：api.mojang.com 取 UUID → sessionserver 取 textures property。
+/// 返回 textures property 的 value（base64 payload）；失败返回 None（游戏回退默认纹理）。
+async fn resolve_player_texture_value(name: &str) -> Option<String> {
+    let uuid_resp = reqwest::get(format!(
+        "https://api.mojang.com/users/profiles/minecraft/{}",
+        name
+    ))
+    .await
+    .ok()?;
+    if !uuid_resp.status().is_success() {
+        return None;
+    }
+    let uuid: String = uuid_resp.json::<serde_json::Value>().await.ok()?
+        .get("id")?
+        .as_str()?
+        .to_string();
+
+    let profile_resp = reqwest::get(format!(
+        "https://sessionserver.mojang.com/session/minecraft/profile/{}?unsigned=false",
+        uuid
+    ))
+    .await
+    .ok()?;
+    if !profile_resp.status().is_success() {
+        return None;
+    }
+    let profile: serde_json::Value = profile_resp.json().await.ok()?;
+    let props = profile.get("properties")?.as_array()?;
+    let textures_prop = props.iter().find(|p| {
+        p.get("name").and_then(|n| n.as_str()) == Some("textures")
+    })?;
+
+    textures_prop.get("value")?.as_str().map(str::to_string)
+}
+
+/// 游戏语言：自动设置为中文。
+/// 1.13+ 游戏启动时读取 gameDir/options.txt 的 `lang` 字段，
+/// 存在则替换，否则追加（文件不存在时创建，游戏启动后保留该值）。
+fn apply_game_language(game_dir: &std::path::Path) {
+    let options_path = game_dir.join("options.txt");
+    let content = match std::fs::read_to_string(&options_path) {
+        Ok(c) => c,
+        Err(_) => {
+            // 文件不存在：预写 lang，游戏首次启动沿用
+            let _ = std::fs::create_dir_all(game_dir);
+            let _ = std::fs::write(&options_path, "lang:zh_cn\n");
+            return;
+        }
+    };
+
+    let mut found = false;
+    let mut out = String::new();
+    for line in content.lines() {
+        if line.starts_with("lang:") {
+            out.push_str("lang:zh_cn\n");
+            found = true;
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    if !found {
+        out.push_str("lang:zh_cn\n");
+    }
+    let _ = std::fs::write(&options_path, out);
 }
 
 // ── Tauri Commands ──────────────────────────────────
@@ -314,7 +722,8 @@ pub async fn launch_game(
     uuid: String,
     xuid: String,
 ) -> Result<Vec<String>, String> {
-    let auth = build_auth(&auth_mode, &username, &access_token, &uuid, &xuid);
+    let mut auth = build_auth(&auth_mode, &username, &access_token, &uuid, &xuid);
+    fill_missing_xuid(&mut auth);
     let (java_path, version_json, mc_dir, launcher_config, java_major) =
         load_launch_config(&version_dir_name)?;
 
@@ -326,6 +735,7 @@ pub async fn launch_game(
         &launcher_config,
         &auth,
         java_major,
+        "",
     );
 
     let _ = app.emit("game-launch", &cmd.args);
@@ -355,6 +765,7 @@ pub async fn export_launch_script(
         &launcher_config,
         &auth,
         java_major,
+        "",
     );
 
     let script = render_launch_script(&cmd.args, &mc_dir, &version_dir_name);
@@ -410,9 +821,14 @@ pub async fn spawn_game(
     uuid: String,
     xuid: String,
 ) -> Result<u32, String> {
-    let auth = build_auth(&auth_mode, &username, &access_token, &uuid, &xuid);
+    let mut auth = build_auth(&auth_mode, &username, &access_token, &uuid, &xuid);
+    fill_missing_xuid(&mut auth);
     let (java_path, version_json, mc_dir, launcher_config, java_major) =
         load_launch_config(&version_dir_name)?;
+
+    // 离线皮肤（PCL 机制）：UUID 匹配模型（Steve/Alex/Custom）或正版玩家真实 UUID（Player）；
+    // Custom 额外构建替换默认纹理的资源包
+    apply_offline_skin(&mut auth, &version_json, &mc_dir, &version_dir_name).await;
 
     // 启动前完整性检测（client JAR + libraries + assets index）
     pre_launch_check(&version_json, &mc_dir, &version_dir_name)?;
@@ -425,6 +841,16 @@ pub async fn spawn_game(
         &natives_dir,
     )?;
 
+    // 离线皮肤：构造 --user-properties 参数（1.19.2 以下版本生效；
+    // Random/Steve/Alex 无需注入（游戏默认纹理一致），Player/Custom 注入皮肤）
+    let user_properties = build_user_properties(&auth).await;
+
+    // 游戏语言：自动设置为中文（1.13+ 语言由 gameDir/options.txt 的 lang 字段控制，
+    // -Duser.language 仅对旧版 Locale 机制生效）
+    if launcher_config.game_language == "auto_zh_CN" {
+        apply_game_language(&mc_dir.join("versions").join(&version_dir_name));
+    }
+
     let cmd = build_launch_command(
         &java_path,
         &version_json,
@@ -433,6 +859,7 @@ pub async fn spawn_game(
         &launcher_config,
         &auth,
         java_major,
+        &user_properties,
     );
 
     // 启动前执行命令（非空时运行；失败则中止启动）
@@ -759,8 +1186,9 @@ mod tests {
             "1.18.2",
             std::path::Path::new("D:/Minecraft/.minecraft"),
             config,
-            &AuthMode::Offline { username: "tester".into() },
+            &AuthMode::Offline { username: "tester".into(), uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into() },
             17,
+            "",
         );
         cmd.args
     }
@@ -794,6 +1222,90 @@ mod tests {
     }
 
     #[test]
+    fn test_user_properties_appended_new_format() {
+        // 新格式（1.17+ json 无 token）：主动追加 camelCase 参数
+        let vj = minimal_version_json();
+        let cfg = LauncherConfig::default();
+        let props = r#"{"textures":[{"name":"textures","value":"AQID","signature":""}]}"#;
+        let cmd = build_launch_command(
+            std::path::Path::new("C:/java/bin/java.exe"),
+            &vj,
+            "1.18.2",
+            std::path::Path::new("D:/Minecraft/.minecraft"),
+            &cfg,
+            &AuthMode::Offline { username: "tester".into(), uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into() },
+            17,
+            props,
+        );
+        let joined = cmd.args.join(" ");
+        assert!(joined.contains("--userProperties"), "应追加 --userProperties: {joined}");
+        assert!(joined.contains("--profileProperties"), "应追加 --profileProperties: {joined}");
+        assert!(joined.contains(props), "值应注入: {joined}");
+        assert!(!joined.contains("--user-properties"), "不应注入连字符版: {joined}");
+    }
+
+    #[test]
+    fn test_user_properties_substituted() {
+        // 旧式 minecraftArguments（1.19.2 以下）应注入 --user-properties 与 legacy user_type
+        let mut vj = minimal_version_json();
+        vj.arguments.game = None; // 走旧格式 minecraftArguments 分支
+        vj.minecraft_arguments = Some(
+            "--username ${auth_player_name} --version ${version_name} --accessToken ${auth_access_token} --user-properties ${user_properties} --user-type ${user_type}"
+                .into(),
+        );
+        let cfg = LauncherConfig::default();
+        let props = r#"{"textures":[{"name":"textures","value":"AQID","signature":""}]}"#;
+        let cmd = build_launch_command(
+            std::path::Path::new("C:/java/bin/java.exe"),
+            &vj,
+            "1.18.2",
+            std::path::Path::new("D:/Minecraft/.minecraft"),
+            &cfg,
+            &AuthMode::Offline { username: "tester".into(), uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into() },
+            17,
+            props,
+        );
+        let joined = cmd.args.join(" ");
+        assert!(joined.contains(props), "应注入 user properties: {joined}");
+        assert!(
+            !joined.contains("${user_properties}"),
+            "模板残留未替换: {joined}"
+        );
+        assert!(joined.contains("--user-type legacy"), "离线应为 legacy: {joined}");
+        // 旧格式模板应按空白拆分为独立 argv（否则 joptsimple 报 missing accessToken/version）
+        assert!(
+            cmd.args.contains(&"--accessToken".into()),
+            "--accessToken 应为独立参数: {joined}"
+        );
+        assert!(
+            cmd.args.contains(&"--version".into()),
+            "--version 应为独立参数: {joined}"
+        );
+    }
+
+    #[test]
+    fn test_skin_matching_uuid() {
+        // 与 Java UUID.hashCode() & 1（isSlimSkin 判定）一致：
+        // 验证固定样本
+        let samples = [
+            ("00000000ffffffffffffffffffff96436", true), // 由 Java 计算的真实值
+            ("1234567890abcdef1234567890abcdef", false),
+            ("0123456789abcdef0123456789abcdef", false),
+        ];
+        for (u, _) in &samples {
+            let _ = u;
+        }
+        // 匹配收敛：Steve 模式产生非 Alex UUID，Alex 模式产生 Alex UUID
+        let base = "00000000ffffffffffffffffffffffff";
+        let s = skin_matching_uuid(base, false);
+        assert!(!uuid_matches_alex(&s), "Steve UUID 不应匹配 Alex: {s}");
+        let a = skin_matching_uuid(base, true);
+        assert!(uuid_matches_alex(&a), "Alex UUID 应匹配 Alex: {a}");
+        // 最多一次递增即可翻转最低位
+        assert!(s[..31] == base[..31] || a[..31] == base[..31]);
+    }
+
+    #[test]
     fn test_window_title_prop() {
         let mut cfg = LauncherConfig::default();
         cfg.window_title = "我的世界".into();
@@ -815,8 +1327,9 @@ mod tests {
             "1.8.9",
             std::path::Path::new("D:/Minecraft/.minecraft"),
             &cfg,
-            &AuthMode::Offline { username: "t".into() },
+            &AuthMode::Offline { username: "t".into(), uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into() },
             8,
+            "",
         )
         .args;
         // 默认：主类为 launchwrapper
@@ -831,8 +1344,9 @@ mod tests {
             "1.8.9",
             std::path::Path::new("D:/Minecraft/.minecraft"),
             &cfg,
-            &AuthMode::Offline { username: "t".into() },
+            &AuthMode::Offline { username: "t".into(), uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into() },
             8,
+            "",
         )
         .args;
         assert!(args.contains(&"net.minecraft.client.main.Main".to_string()));

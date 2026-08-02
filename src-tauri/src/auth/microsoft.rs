@@ -355,6 +355,12 @@ async fn complete_after_ms_token(
     let (xsts_token, xuid) = authenticate_xsts(client, &xbl_token).await?;
     let mc_token = minecraft_login(client, &uhs, &xsts_token).await?;
     let (uuid, name) = minecraft_profile(client, &mc_token).await?;
+    // XSTS 的 xid 字段部分账号缺失：从 Minecraft token 的 JWT payload 兜底提取 xuid
+    let xuid = if xuid.is_empty() {
+        extract_xuid_from_jwt(&mc_token)
+    } else {
+        xuid
+    };
     let expires_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -370,12 +376,44 @@ async fn complete_after_ms_token(
     })
 }
 
+/// 从 Minecraft access token（JWT）的 payload 提取 xuid claim；失败返回空串。
+pub fn extract_xuid_from_jwt(token: &str) -> String {
+    let Some(payload) = token.split('.').nth(1) else {
+        return String::new();
+    };
+    let Ok(decoded) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload) else {
+        return String::new();
+    };
+    let Ok(json) = serde_json::from_slice::<serde_json::Value>(&decoded) else {
+        return String::new();
+    };
+    match json.get("xuid") {
+        Some(v) => v
+            .as_str()
+            .map(str::to_string)
+            .or_else(|| v.as_i64().map(|n| n.to_string()))
+            .unwrap_or_default(),
+        None => String::new(),
+    }
+}
+
+/// 构建正版登录专用 HTTP client；按「正版登录时验证 SSL 证书」配置决定是否校验证书。
+fn build_auth_client() -> reqwest::Client {
+    let verify = crate::persist::read::<crate::config::downloader::model::DownloaderConfig>("downloader")
+        .map(|c| c.verify_ssl)
+        .unwrap_or(false);
+    reqwest::Client::builder()
+        .danger_accept_invalid_certs(!verify)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
 /// 授权码 → 完整登录。
 pub async fn login_with_code(code: &str, verifier: &str) -> Result<MsAccount, MsError> {
     if MS_CLIENT_ID.starts_with("PASTE_") {
         return Err(MsError::NotConfigured);
     }
-    let client = reqwest::Client::new();
+    let client = build_auth_client();
     let tokens = exchange_code(&client, code, verifier).await?;
     complete_after_ms_token(&client, &tokens).await
 }
@@ -385,7 +423,7 @@ pub async fn refresh_login(account: &MsAccount) -> Result<MsAccount, MsError> {
     if MS_CLIENT_ID.starts_with("PASTE_") {
         return Err(MsError::NotConfigured);
     }
-    let client = reqwest::Client::new();
+    let client = build_auth_client();
     let tokens = refresh_ms(&client, &account.refresh_token).await?;
     complete_after_ms_token(&client, &tokens).await
 }

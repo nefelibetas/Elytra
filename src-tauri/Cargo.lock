@@ -1039,6 +1039,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tokio",
  "toml 0.8.2",
+ "url",
  "zip",
 ]
 

@@ -3,7 +3,7 @@ use elytra_lib::downloader::manifest;
 
 fn test_config() -> DownloaderConfig {
     let mut cfg = DownloaderConfig::default();
-    cfg.active_source = "0".into();
+    cfg.file_source_mode = elytra_lib::config::downloader::model::DownloadSourceMode::PreferOfficial;
     cfg.minecraft_dir = r"D:\download_test".into();
     cfg
 }

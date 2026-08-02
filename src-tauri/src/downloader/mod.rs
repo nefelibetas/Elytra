@@ -37,17 +37,17 @@ pub async fn download_version(
     version_url: &str,
     config: &DownloaderConfig,
 ) -> Result<(), Vec<String>> {
-    let source = config.active_source().ok_or_else(|| vec!["no active source".into()])?;
+    let sources = config.file_sources_list();
     let mc = Path::new(&config.minecraft_dir);
     let (_folder_name, vdir) = resolve_version_dir(mc, version_id);
 
-    let vj = version::download_version_json(version_url, &vdir, source)
+    let vj = version::download_version_json(version_url, &vdir, &sources)
         .await
         .map_err(|e| vec![e])?;
 
     let jar = async {
         match vj.downloads.client.as_ref() {
-            Some(c) => version::download_client_jar(&c.url, version_id, &vdir, source)
+            Some(c) => version::download_client_jar(&c.url, version_id, &vdir, &sources)
                 .await
                 .map_err(|e| vec![e]),
             None => Ok(()),
@@ -55,7 +55,7 @@ pub async fn download_version(
     };
 
     let lib_dir = mc.join("libraries");
-    let libs = library::download_libraries(&vj.libraries, &lib_dir, config.concurrency as usize, source, None, None);
+    let libs = library::download_libraries(&vj.libraries, &lib_dir, config.concurrency as usize, &sources, None, None);
 
     let asst = assets::download_assets(
         &vj.asset_index.url,
@@ -69,7 +69,7 @@ pub async fn download_version(
 
     tokio::try_join!(jar, libs, asst)?;
 
-    extract::process_natives(&vj.libraries, &lib_dir, source, None, None).await?;
+    extract::process_natives(&vj.libraries, &lib_dir, &sources, None, None).await?;
 
     Ok(())
 }

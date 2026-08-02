@@ -18,7 +18,7 @@ async fn install_loader_via_profile(
     loader_jar_url_tpl: &str,
     config: &DownloaderConfig,
 ) -> Result<InstallInfo, String> {
-    let source = config.active_source().ok_or("no active source")?;
+    let source = config.file_primary_source().ok_or("no active source")?;
     let mc = Path::new(&config.minecraft_dir);
     let dir_name = format!("{}-{}-{}", mc_version, dir_suffix, loader_version);
     let vdir = mc.join("versions").join(&dir_name);
@@ -88,7 +88,7 @@ pub async fn install_fabric(
     loader_version: &str,
     config: &DownloaderConfig,
 ) -> Result<InstallInfo, String> {
-    let source = config.active_source().ok_or("no active source")?;
+    let source = config.file_primary_source().ok_or("no active source")?;
     install_loader_via_profile(
         mc_version,
         loader_version,
@@ -105,7 +105,7 @@ pub async fn install_forge(
     forge_version: &str,
     config: &DownloaderConfig,
 ) -> Result<InstallInfo, String> {
-    let source = config.active_source().ok_or("no active source")?;
+    let source = config.file_primary_source().ok_or("no active source")?;
     let mc = Path::new(&config.minecraft_dir);
     let dir_name = format!("{}-forge-{}", mc_version, forge_version);
     let vdir = mc.join("versions").join(&dir_name);
@@ -121,7 +121,7 @@ pub async fn install_neoforge(
     neo_version: &str,
     config: &DownloaderConfig,
 ) -> Result<InstallInfo, String> {
-    let source = config.active_source().ok_or("no active source")?;
+    let source = config.file_primary_source().ok_or("no active source")?;
     let mc = Path::new(&config.minecraft_dir);
     let dir_name = format!("{}-neoforge-{}", mc_version, neo_version);
     let vdir = mc.join("versions").join(&dir_name);
@@ -356,7 +356,7 @@ pub async fn install_optifine(
     config: &DownloaderConfig,
 ) -> Result<InstallInfo, String> {
     let config = config.clone();
-    let source = config.active_source().ok_or("no active source")?.clone();
+    let source = config.file_primary_source().ok_or("no active source")?.clone();
     let mc = Path::new(&config.minecraft_dir);
     let dir_name = format!("{}-optifine-{}", mc_version, patch);
     let vdir = mc.join("versions").join(&dir_name);

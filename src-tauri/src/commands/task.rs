@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter};
 
-use crate::config::downloader::model::DownloaderConfig;
-use crate::downloader::fetcher::{self, http, http_assets};
+use crate::config::downloader::model::{DownloadSource, DownloaderConfig};
+use crate::downloader::fetcher;
 use crate::downloader::installer;
 use crate::downloader::model::VersionJson;
 use crate::persist;
@@ -88,9 +88,6 @@ pub async fn scan_missing_files(version_dir_name: String) -> Result<MissingRepor
     use std::path::Path;
 
     let config: DownloaderConfig = persist::read("downloader").unwrap_or_default();
-    let source = config
-        .active_source()
-        .ok_or_else(|| "没有可用下载源，请到设置中检查".to_string())?;
     let mc = Path::new(&config.minecraft_dir);
     let vdir = mc.join("versions").join(&version_dir_name);
     let vj = read_version_json(&vdir)?;
@@ -107,7 +104,7 @@ pub async fn scan_missing_files(version_dir_name: String) -> Result<MissingRepor
 
     // 3. 资源（sha1 比对本地缓存，多线程）
     let (_total, asst_pending) =
-        count_assets_all(&vj.asset_index.url, &source, mc).await;
+        count_assets_all(&vj.asset_index.url, &config, mc).await;
 
     Ok(MissingReport {
         client_jar: jar_missing,
@@ -165,9 +162,9 @@ async fn run_repair_task(
     report: MissingReport,
 ) {
     let config: DownloaderConfig = persist::read("downloader").unwrap_or_default();
-    let Some(source) = config.active_source().cloned() else {
-        return set_error(&app, progress, "没有可用源".into());
-    };
+    let sources: Vec<crate::config::downloader::model::DownloadSource> =
+        config.file_sources_list().into_iter().cloned().collect();
+    let src_refs: Vec<&crate::config::downloader::model::DownloadSource> = sources.iter().collect();
     let mc = std::path::PathBuf::from(&config.minecraft_dir);
     let vdir = mc.join("versions").join(version_dir_name);
     let vj = match read_version_json(&vdir) {
@@ -311,7 +308,7 @@ async fn run_repair_task(
                 }
             }
             if let Some(ref c) = vj.downloads.client {
-                let url = source.mirror_url(&c.url);
+                let urls: Vec<String> = sources.iter().map(|src| src.mirror_url(&c.url)).collect();
                 let jar_path = vdir.join(format!("{version_dir_name}.jar"));
                 let jbc2 = Arc::clone(&jar_bytes);
                 let jt2 = Arc::clone(&jar_total);
@@ -324,7 +321,7 @@ async fn run_repair_task(
                         jt2.store(total, Ordering::Relaxed);
                     }
                 };
-                fetcher::fetch(&url, &jar_path, Some(cb))
+                fetcher::fetch_fallback(&urls, &jar_path, Some(cb))
                     .await
                     .map_err(|e| vec![e.to_string()])?;
                 if !c.sha1.is_empty()
@@ -344,7 +341,7 @@ async fn run_repair_task(
         &vj.libraries,
         &lib_dir,
         config.concurrency as usize,
-        &source,
+        &src_refs,
         Some(Arc::clone(&lib_counter)),
         Some(Arc::clone(&bytes_counter)),
     );
@@ -386,7 +383,7 @@ async fn run_repair_task(
     if let Err(errors) = crate::downloader::extract::process_natives(
         &vj.libraries,
         &lib_dir,
-        &source,
+        &src_refs,
         None,
         None,
     )
@@ -418,17 +415,15 @@ async fn run_task(
     version_dir_name: Option<String>,
 ) {
     let config: DownloaderConfig = persist::read("downloader").unwrap_or_default();
-    let source = match config.active_source() {
-        Some(s) => s.clone(),
-        None => { set_error(&app, progress, "没有可用源".into()); return; }
-    };
+    let sources: Vec<DownloadSource> = config.file_sources_list().into_iter().cloned().collect();
+    let src_refs: Vec<&DownloadSource> = sources.iter().collect();
     let mc = Path::new(&config.minecraft_dir);
 
     set_phase(&app, progress, "running", "下载原版json文件", STEP_VERJSON, "running");
     if cancelled(cancel) { return set_cancelled(&app, progress); }
 
     // ── Step 0: fetch version.json in-memory ──
-    let vj = match fetch_version_json(version_url, &source).await {
+    let vj = match fetch_version_json(version_url, &config).await {
         Ok(v) => v,
         Err(e) => return set_error(&app, progress, e),
     };
@@ -468,7 +463,7 @@ async fn run_task(
     let jar_exists = vj.downloads.client.is_some();
     let jar_total = if jar_exists { 1u32 } else { 0u32 };
 
-    let (asst_total_all, asst_pending) = count_assets_all(&vj.asset_index.url, &source, mc).await;
+    let (asst_total_all, asst_pending) = count_assets_all(&vj.asset_index.url, &config, mc).await;
     let asst_existing = asst_total_all - asst_pending;
 
     let total_files = 1 + jar_total + lib_total_all + asst_total_all;
@@ -555,7 +550,7 @@ async fn run_task(
 
     let jar = async {
         if let Some(ref c) = vj.downloads.client {
-            let url = source.mirror_url(&c.url);
+            let urls: Vec<String> = sources.iter().map(|src| src.mirror_url(&c.url)).collect();
             let jar_path = vdir.join(format!("{}.jar", dir_name));
             let bytes = Arc::clone(&bytes_counter);
             let jbytes = Arc::clone(&jar_bytes_counter);
@@ -567,7 +562,7 @@ async fn run_task(
                     jar_total.store(total, Ordering::Relaxed);
                 }
             };
-            fetcher::fetch(&url, &jar_path, Some(cb)).await.map_err(|e| vec![e.to_string()])?;
+            fetcher::fetch_fallback(&urls, &jar_path, Some(cb)).await.map_err(|e| vec![e.to_string()])?;
             // client.jar sha1 完整性校验（防止镜像 CDN 返回不完整/错误内容）
             if !c.sha1.is_empty() && !crate::downloader::hash::file_sha1_matches(&jar_path, &c.sha1) {
                 let _ = std::fs::remove_file(&jar_path);
@@ -580,7 +575,7 @@ async fn run_task(
 
     let lib_dir = mc.join("libraries");
     let libs = crate::downloader::library::download_libraries(
-        &vj.libraries, &lib_dir, config.concurrency as usize, &source,
+        &vj.libraries, &lib_dir, config.concurrency as usize, &src_refs,
         Some(Arc::clone(&lib_counter)), Some(Arc::clone(&bytes_counter)),
     );
 
@@ -623,7 +618,7 @@ async fn run_task(
     // ── Native classifier JAR 下载 ──
     set_phase(&app, progress, "", "处理 native 库", STEP_LIBS, "running");
     let natives = crate::downloader::extract::process_natives(
-        &vj.libraries, &lib_dir, &source,
+        &vj.libraries, &lib_dir, &src_refs,
         Some(Arc::clone(&lib_counter)), Some(Arc::clone(&bytes_counter)),
     ).await;
     if let Err(errors) = natives {
@@ -738,22 +733,26 @@ fn set_cancelled(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>) {
     });
 }
 
-async fn fetch_version_json(version_url: &str, source: &crate::config::downloader::model::DownloadSource) -> Result<VersionJson, String> {
-    let url = source.mirror_url(version_url);
-    let text = http().get(&url).send().await
-        .map_err(|e| format!("获取 version json 失败: {}", e))?
-        .text().await
-        .map_err(|e| format!("读取 version json 失败: {}", e))?;
+async fn fetch_version_json(
+    version_url: &str,
+    config: &DownloaderConfig,
+) -> Result<VersionJson, String> {
+    let text = config
+        .fetch_with_fallback(config.file_source_mode, |s| s.mirror_url(version_url))
+        .await
+        .map_err(|e| format!("获取 version json 失败: {e}"))?;
     serde_json::from_str(&text).map_err(|e| format!("解析 version json 失败: {}", e))
 }
 
 /// Count total and pending assets (sha1-matched against local cache, multi-threaded).
 /// Uses the same http client as `download_assets` for consistency.
-async fn count_assets_all(asset_index_url: &str, source: &crate::config::downloader::model::DownloadSource, mc_dir: &Path) -> (u32, u32) {
+async fn count_assets_all(asset_index_url: &str, config: &DownloaderConfig, mc_dir: &Path) -> (u32, u32) {
     use crate::downloader::hash::file_sha1_matches;
-    let idx_url = source.mirror_url(asset_index_url);
-    let text = match http_assets().get(&idx_url).send().await {
-        Ok(r) => match r.text().await { Ok(t) => t, _ => return (0, 0) },
+    let text = match config
+        .fetch_with_fallback(config.file_source_mode, |s| s.mirror_url(asset_index_url))
+        .await
+    {
+        Ok(t) => t,
         _ => return (0, 0),
     };
     let idx: serde_json::Value = match serde_json::from_str(&text) { Ok(v) => v, _ => return (0, 0) };

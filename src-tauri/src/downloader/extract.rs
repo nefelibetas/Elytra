@@ -64,7 +64,7 @@ pub fn native_classifier_matches(lib_name: &str) -> bool {
 pub async fn process_natives(
     libraries: &[Library],
     libraries_dir: &Path,
-    source: &DownloadSource,
+    sources: &[&DownloadSource],
     counter: Option<Arc<AtomicU32>>,
     bytes_counter: Option<Arc<AtomicU64>>,
 ) -> Result<(), Vec<String>> {
@@ -89,8 +89,9 @@ pub async fn process_natives(
                 continue;
             }
         }
-        let url = source.mirror_url(&artifact.url);
-        match fetcher::fetch(&url, &dest, None::<fn(u64, u64)>).await {
+        // 每个源各构造一个 URL，下载时主源过慢/失败自动降级
+        let urls: Vec<String> = sources.iter().map(|s| s.mirror_url(&artifact.url)).collect();
+        match fetcher::fetch_fallback(&urls, &dest, None::<fn(u64, u64)>).await {
             Ok(dl) => {
                 if let Some(c) = counter.as_ref() {
                     c.fetch_add(1, Ordering::Relaxed);

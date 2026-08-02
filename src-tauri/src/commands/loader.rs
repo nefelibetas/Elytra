@@ -33,7 +33,7 @@ async fn fetch_versions<T: serde::de::DeserializeOwned>(
     make_url: impl Fn(&crate::config::downloader::model::DownloadSource) -> String,
 ) -> Result<Vec<T>, String> {
     let cfg = config();
-    cfg.fetch_json_with_fallback::<Vec<T>>(make_url).await
+    cfg.fetch_json_with_fallback::<Vec<T>>(cfg.file_source_mode, make_url).await
 }
 
 #[tauri::command]
@@ -91,7 +91,7 @@ pub async fn get_optifine_versions(mc_version: String) -> Result<Vec<String>, St
 #[tauri::command]
 pub async fn get_liteloader_versions(mc_version: String) -> Result<Vec<String>, String> {
     let cfg = config();
-    let data = cfg.fetch_json_with_fallback::<Vec<LiteLoaderEntry>>(|s| {
+    let data = cfg.fetch_json_with_fallback::<Vec<LiteLoaderEntry>>(cfg.file_source_mode, |s| {
         s.liteloader_list_url.clone()
     }).await?;
     Ok(data.into_iter().filter(|e| e.mcversion == mc_version).map(|e| e.version).collect())

@@ -1,8 +1,15 @@
 use std::path::Path;
 use std::sync::OnceLock;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use reqwest::Client;
+
+/// 当前全局下载限速（bytes/s，0 = 无限制）。每次下载开始读取一次。
+pub fn max_speed_bps() -> u64 {
+    crate::persist::read::<crate::config::downloader::model::DownloaderConfig>("downloader")
+        .map(|c| c.max_speed)
+        .unwrap_or(0)
+}
 
 fn build_client() -> Client {
     Client::builder()
@@ -59,18 +66,57 @@ pub async fn fetch(
     fetch_with(http(), url, dest, progress).await
 }
 
+/// 依次尝试多个 URL（主源优先）：连接超时（8s）或失败即换下一个源（过慢降级）。
+/// 单 URL 时走 `fetch_with`（保留 3 次重试 + 长超时）。
+pub async fn fetch_fallback(
+    urls: &[String],
+    dest: &Path,
+    progress: Option<impl Fn(u64, u64)>,
+) -> Result<DownloadResult, FetchError> {
+    if urls.len() <= 1 {
+        let url = urls.first().map(String::as_str).unwrap_or("");
+        return fetch_with(http(), url, dest, progress).await;
+    }
+    let mut last_err = None;
+    for url in urls {
+        // 每源独立 client（连接超时 8s：连接缓慢即判“过慢”，传输不限时）
+        let client = match reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(8))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                last_err = Some(FetchError::Network(e.to_string()));
+                continue;
+            }
+        };
+        let max_speed = max_speed_bps();
+        match fetch_once(&client, url, dest, &progress, max_speed).await {
+            Ok(r) => return Ok(r),
+            Err(e) => {
+                // 失败清理残留（下一次尝试会重新创建）
+                let _ = std::fs::remove_file(dest);
+                last_err = Some(e);
+            }
+        }
+    }
+    Err(last_err.unwrap())
+}
+
 /// Like `fetch` but uses a specific client (for dedicated connection pools per category).
 /// 带重试（网络错误/5xx 重试最多 3 次）与 HTTP 状态检查；失败时清理残留文件。
+/// 下载时按全局配置限速（max_speed，0 = 不限）。
 pub async fn fetch_with(
     client: &Client,
     url: &str,
     dest: &Path,
     progress: Option<impl Fn(u64, u64)>,
 ) -> Result<DownloadResult, FetchError> {
+    let max_speed = max_speed_bps();
     const MAX_ATTEMPTS: u32 = 3;
     let mut last_err = None;
     for attempt in 0..MAX_ATTEMPTS {
-        match fetch_once(client, url, dest, &progress).await {
+        match fetch_once(client, url, dest, &progress, max_speed).await {
             Ok(r) => return Ok(r),
             Err(e) => {
                 // 失败清理残留（下一次尝试或后续下载会重新创建）
@@ -90,6 +136,7 @@ async fn fetch_once<F: Fn(u64, u64)>(
     url: &str,
     dest: &Path,
     progress: &Option<F>,
+    max_speed: u64,
 ) -> Result<DownloadResult, FetchError> {
     let response = client.get(url).send()
         .await
@@ -126,6 +173,14 @@ async fn fetch_once<F: Fn(u64, u64)>(
         downloaded = downloaded.saturating_add(chunk.len() as u64);
         if let Some(cb) = progress.as_ref() {
             cb(downloaded, total);
+        }
+        // 限速：按已下载字节数控制期望耗时，超出则等待
+        if max_speed > 0 {
+            let expect = downloaded as f64 / max_speed as f64;
+            let actual = start.elapsed().as_secs_f64();
+            if expect > actual {
+                tokio::time::sleep(Duration::from_secs_f64(expect - actual)).await;
+            }
         }
     }
 

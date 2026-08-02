@@ -132,19 +132,12 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-/** Steve 默认皮肤纹理 ID（Mojang 官方默认皮肤账号「Steve」的纹理，classic 模型）。 */
-const STEVE_TEXTURE_ID =
-  "60a5bd016b3c9a1b9272e4929e30827a67be4ebb219017adbbc4a4d22ebd5b1";
-/** Alex 默认皮肤纹理 ID（Mojang 官方默认皮肤账号「Alex」的纹理，slim 模型）。
- * 与 Steve/Notch 皮肤均为独立纹理，visage 渲染结果不同。 */
-const ALEX_TEXTURE_ID =
-  "46acd06e8483b176e8ea39fc12fe105eb3a2a4970f5100057e9d84d4b60bdfa7";
-
 /** 离线头像：按「离线皮肤」设置渲染（对齐 PCL2 五种），失败回退像素脸。
+ * 全部类型均为 2D 头像（原始纹理截取头部，无帽子层）：
  * - random：用户名哈希确定性选 Steve/Alex 默认皮肤
  * - steve / alex：固定对应默认皮肤
- * - player：指定正版玩家的 visage 3D 头
- * - custom：本地皮肤文件 → 截取正面 8×8 格放大（visage 不支持本地纹理） */
+ * - player：指定正版玩家的 sessionserver 纹理
+ * - custom：本地皮肤文件 */
 async function renderOfflineAvatar(name: string) {
   const trimmed = name.trim();
   if (!trimmed) {
@@ -171,8 +164,9 @@ async function renderOfflineAvatar(name: string) {
         generateOfflineAvatar(trimmed);
         return;
       }
-      const b64 = await invoke<string>("fetch_avatar", { subject: p });
-      offlineAvatar.value = `data:image/png;base64,${b64}`;
+      // 2D 头像：sessionserver 取正版玩家纹理 → 截取头部
+      const b64 = await invoke<string>("fetch_player_skin_texture", { playerName: p });
+      offlineAvatar.value = await renderSkinHead(b64);
       cachedOfflineAvatar = offlineAvatar.value;
       return;
     }
@@ -185,35 +179,38 @@ async function renderOfflineAvatar(name: string) {
       return;
     }
     // random：哈希确定性选默认皮肤；steve/alex：固定对应默认皮肤
-    const texId =
-      cfg.skin_type === "random"
-        ? hashName(trimmed) % 2 === 1
-          ? ALEX_TEXTURE_ID
-          : STEVE_TEXTURE_ID
-        : cfg.skin_type === "alex"
-          ? ALEX_TEXTURE_ID
-          : STEVE_TEXTURE_ID;
-    const b64 = await invoke<string>("fetch_avatar", { subject: texId });
-    offlineAvatar.value = `data:image/png;base64,${b64}`;
+    // 一律 2D 头像：游戏内置纹理（经典蓝衬衫 Steve / 绿衬衫 Alex）截取头部
+    const skinKind =
+      cfg.skin_type === "alex" ||
+      (cfg.skin_type === "random" && hashName(trimmed) % 2 === 1)
+        ? "alex"
+        : "steve";
+    const b64 = await invoke<string>("fetch_default_skin", { skin: skinKind });
+    offlineAvatar.value = await renderSkinHead(b64);
     cachedOfflineAvatar = offlineAvatar.value;
   } catch {
     generateOfflineAvatar(trimmed);
   }
 }
 
+/** 截取皮肤正面头部（8×8 格）放大成 2D 大头像（无帽子层）。 */
+async function renderSkinHead(b64: string): Promise<string> {
+  const img = await loadImage(`data:image/png;base64,${b64}`);
+  const grid = Math.floor(img.width / 8); // 64 → 8，128 → 16
+  const canvas = document.createElement("canvas");
+  canvas.width = 68;
+  canvas.height = 68;
+  const ctx = canvas.getContext("2d")!;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(img, grid, grid, grid, grid, 0, 0, 68, 68);
+  return canvas.toDataURL("image/png");
+}
+
 /** 自定义本地皮肤：截取正面区域（64/128 布局均为 (grid, grid)）放大成 2D 大头像。 */
 async function renderCustomSkinFile(path: string, fallbackName: string) {
   try {
     const b64 = await invoke<string>("read_skin_file", { path });
-    const img = await loadImage(`data:image/png;base64,${b64}`);
-    const grid = Math.floor(img.width / 8); // 64 → 8，128 → 16
-    const canvas = document.createElement("canvas");
-    canvas.width = 68;
-    canvas.height = 68;
-    const ctx = canvas.getContext("2d")!;
-    ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(img, grid, grid, grid, grid, 0, 0, 68, 68);
-    offlineAvatar.value = canvas.toDataURL("image/png");
+    offlineAvatar.value = await renderSkinHead(b64);
     cachedOfflineAvatar = offlineAvatar.value;
   } catch (e) {
     console.error("自定义皮肤渲染失败:", e);

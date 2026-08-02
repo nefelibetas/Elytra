@@ -55,6 +55,7 @@ onMounted(() => {
   loadConfig();
   loadOfflineSkin();
   loadLaunchOptions();
+  loadDownloadConfig();
 });
 
 async function refreshJdks() {
@@ -112,6 +113,7 @@ interface LauncherOptions {
   disable_lwjgl_unsafe_agent: boolean;
   use_high_performance_gpu: boolean;
   pre_launch_memory_optimize: boolean;
+  game_language: string;
   jvm_args: string[];
   game_args: string[];
   pre_launch_cmd: string;
@@ -124,6 +126,7 @@ const loPriority = ref<"Low" | "Normal" | "High" | "RealTime">("Normal");
 const loWinMode = ref<"Default" | "Custom">("Default");
 const loWinW = ref(1280);
 const loWinH = ref(720);
+const loGameLang = ref("auto_zh_CN");
 
 // 内存分配（状态由全局 startMemoryMonitor 持续刷新）
 import { memState } from "../store/memory";
@@ -199,6 +202,7 @@ async function loadLaunchOptions() {
     loDisableAgent.value = !!cfg.disable_lwjgl_unsafe_agent;
     // 高性能显卡默认开启：旧配置/旧后端缺字段时按 true 处理
     loHighGpu.value = cfg.use_high_performance_gpu ?? true;
+    loGameLang.value = cfg.game_language ?? "auto_zh_CN";
     loMemMode.value = cfg.memory === "Auto" ? "Auto" : "Custom";
     if (cfg.memory !== "Auto") loMemMb.value = (cfg.memory as any).Custom ?? 4096;
     loMemOptimize.value = !!cfg.pre_launch_memory_optimize;
@@ -241,6 +245,7 @@ async function saveLaunchOptions() {
     cfg.disable_launch_wrapper = loDisableWrapper.value;
     cfg.disable_lwjgl_unsafe_agent = loDisableAgent.value;
     cfg.use_high_performance_gpu = loHighGpu.value;
+    cfg.game_language = loGameLang.value;
     await invoke("save_launch_options", { config: cfg });
   } catch (e) {
     launchError.value = String(e);
@@ -376,6 +381,82 @@ async function refreshPlayerSkin() {
   } catch (e) {
     skinError.value = String(e);
   }
+}
+
+// ── 下载设置（管理游戏下载源） ──
+const sourceModeOptions = [
+  { value: "preferOfficial", label: "优先官方源", desc: "官方源优先，加载缓慢时使用国内镜像源" },
+  { value: "preferChina", label: "优先镜像源", desc: "国内镜像源优先，失败时回退官方源" },
+  { value: "officialOnly", label: "官方源", desc: "仅使用官方源，不自动回退" },
+  { value: "chinaOnly", label: "国内镜像源", desc: "仅使用国内镜像源，不自动回退" },
+];
+function sourceModeLabel(v: string) {
+  return sourceModeOptions.find((o) => o.value === v)?.label ?? v;
+}
+
+interface DownloaderConfig {
+  file_source_mode: string;
+  manifest_source_mode: string;
+  concurrency: number;
+  max_speed: number; // bytes/s，0 = 无限制
+  verify_ssl: boolean;
+  minecraft_dir: string;
+}
+
+const dlFileMode = ref("preferOfficial");
+const dlManifestMode = ref("preferOfficial");
+const dlConcurrency = ref(64);
+const dlMaxSpeed = ref(0); // MB/s，0 = 无上限
+const dlVerifySsl = ref(false);
+const dlFileOpen = ref(false);
+const dlManifestOpen = ref(false);
+const dlError = ref("");
+const dlMinecraftDir = ref(".minecraft");
+
+async function loadDownloadConfig() {
+  try {
+    const cfg = await invoke<DownloaderConfig>("get_downloader_config");
+    dlFileMode.value = cfg.file_source_mode ?? "preferOfficial";
+    dlManifestMode.value = cfg.manifest_source_mode ?? "preferOfficial";
+    // 旧配置默认线程数为 8，统一迁移到 64
+    dlConcurrency.value = (cfg.concurrency === 8 ? 64 : (cfg.concurrency ?? 64));
+    dlConcurrency.value = Math.min(256, Math.max(1, dlConcurrency.value));
+    const mb = Math.round((cfg.max_speed ?? 0) / (1024 * 1024));
+    dlMaxSpeed.value = Math.min(100, Math.max(0, mb));
+    dlVerifySsl.value = !!cfg.verify_ssl;
+    dlMinecraftDir.value = cfg.minecraft_dir || ".minecraft";
+  } catch {
+    // 无配置时保持默认
+  }
+}
+
+async function saveDownloadConfig() {
+  dlError.value = "";
+  try {
+    await invoke("save_downloader_config", {
+      config: {
+        file_source_mode: dlFileMode.value,
+        manifest_source_mode: dlManifestMode.value,
+        concurrency: dlConcurrency.value,
+        max_speed: dlMaxSpeed.value * 1024 * 1024,
+        verify_ssl: dlVerifySsl.value,
+        minecraft_dir: dlMinecraftDir.value,
+      },
+    });
+  } catch (e) {
+    dlError.value = String(e);
+  }
+}
+
+function setFileMode(v: string) {
+  dlFileMode.value = v;
+  dlFileOpen.value = false;
+  saveDownloadConfig();
+}
+function setManifestMode(v: string) {
+  dlManifestMode.value = v;
+  dlManifestOpen.value = false;
+  saveDownloadConfig();
 }
 
 // ── 未实现 tab 占位 ──
@@ -565,6 +646,18 @@ const placeholder = computed(() => {
                   </template>
                 </div>
               </div>
+
+              <div class="lo-row">
+                <label class="lo-label" for="lo-lang">游戏语言</label>
+                <select
+                  id="lo-lang"
+                  v-model="loGameLang"
+                  class="lo-select"
+                  @change="saveLaunchOptions"
+                >
+                  <option value="auto_zh_CN">自动设置为中文</option>
+                </select>
+              </div>
             </div>
             <div v-if="launchError" class="err">{{ launchError }}</div>
           </div>
@@ -703,6 +796,7 @@ const placeholder = computed(() => {
                 v-model="loJvmArgs"
                 class="lo-textarea"
                 rows="4"
+                wrap="off"
                 placeholder="每行一个 JVM 参数"
                 spellcheck="false"
                 @change="saveLaunchOptions"
@@ -716,6 +810,7 @@ const placeholder = computed(() => {
                 v-model="loGameArgs"
                 class="lo-textarea"
                 rows="2"
+                wrap="off"
                 placeholder="每行一个游戏参数"
                 spellcheck="false"
                 @change="saveLaunchOptions"
@@ -761,6 +856,102 @@ const placeholder = computed(() => {
               </label>
             </div>
             </div>
+          </div>
+        </div>
+
+        <!-- 下载设置：管理游戏下载源 -->
+        <div v-else-if="currentTab === 'download'" key="download" class="stg-page">
+          <div class="stg-card">
+            <div class="stg-card-hdr">
+              <h3>管理游戏下载源</h3>
+              <div class="stg-card-sub">游戏文件与版本列表的下载来源、线程数与速度控制</div>
+            </div>
+
+            <!-- 文件下载源：点击展开选项 -->
+            <div class="dl-row">
+              <span class="dl-label">文件下载源</span>
+              <div class="dl-sel" :class="{ open: dlFileOpen }">
+                <button class="dl-sel-btn" @click="dlFileOpen = !dlFileOpen">
+                  <span>{{ sourceModeLabel(dlFileMode) }}</span>
+                  <svg viewBox="0 0 12 12" width="12" height="12" fill="currentColor">
+                    <polygon points="3,4 9,4 6,9" />
+                  </svg>
+                </button>
+                <div v-if="dlFileOpen" class="dl-sel-menu">
+                  <button
+                    v-for="opt in sourceModeOptions"
+                    :key="opt.value"
+                    class="dl-sel-item"
+                    :class="{ active: dlFileMode === opt.value }"
+                    @click="setFileMode(opt.value)"
+                  >
+                    <span class="dl-sel-item-label">{{ opt.label }}</span>
+                    <span class="dl-sel-item-desc">{{ opt.desc }}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 版本列表源 -->
+            <div class="dl-row">
+              <span class="dl-label">版本列表源</span>
+              <div class="dl-sel" :class="{ open: dlManifestOpen }">
+                <button class="dl-sel-btn" @click="dlManifestOpen = !dlManifestOpen">
+                  <span>{{ sourceModeLabel(dlManifestMode) }}</span>
+                  <svg viewBox="0 0 12 12" width="12" height="12" fill="currentColor">
+                    <polygon points="3,4 9,4 6,9" />
+                  </svg>
+                </button>
+                <div v-if="dlManifestOpen" class="dl-sel-menu">
+                  <button
+                    v-for="opt in sourceModeOptions"
+                    :key="opt.value"
+                    class="dl-sel-item"
+                    :class="{ active: dlManifestMode === opt.value }"
+                    @click="setManifestMode(opt.value)"
+                  >
+                    <span class="dl-sel-item-label">{{ opt.label }}</span>
+                    <span class="dl-sel-item-desc">{{ opt.desc }}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 最大线程数 -->
+            <div class="dl-row">
+              <span class="dl-label">最大线程数</span>
+              <input
+                class="dl-range"
+                type="range"
+                min="1"
+                max="256"
+                step="1"
+                v-model.number="dlConcurrency"
+                @input="saveDownloadConfig"
+              />
+              <span class="dl-val">{{ dlConcurrency }} / 256</span>
+            </div>
+
+            <!-- 速度限制：0 = 无上限 -->
+            <div class="dl-row">
+              <span class="dl-label">速度限制</span>
+              <input
+                class="dl-range"
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                v-model.number="dlMaxSpeed"
+                @input="saveDownloadConfig"
+              />
+              <span class="dl-val">{{ dlMaxSpeed === 0 ? "无上限" : dlMaxSpeed + " MB/s" }} / 100 MB/s</span>
+            </div>
+
+            <label class="lo-check dl-check">
+              <input type="checkbox" v-model="dlVerifySsl" @change="saveDownloadConfig" />
+              <span>在正版登录时验证 SSL 证书</span>
+            </label>
+            <div v-if="dlError" class="dl-error">{{ dlError }}</div>
           </div>
         </div>
 
@@ -1195,6 +1386,10 @@ const placeholder = computed(() => {
   border-radius: var(--radius-sm);
   outline: none;
   resize: none;
+  /* 参数文本不折行：超宽时横向滚动 */
+  white-space: nowrap;
+  overflow-x: auto;
+  overflow-y: auto;
   transition: border-color 0.15s;
 }
 
@@ -1501,5 +1696,114 @@ const placeholder = computed(() => {
 
 .dialog-btn.primary:hover {
   opacity: 0.88;
+}
+
+/* ── 下载设置 ── */
+.dl-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 0;
+}
+
+.dl-label {
+  flex: 0 0 88px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* 点击展开的选择器 */
+.dl-sel {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.dl-sel-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 12px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background-color: var(--surface-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.dl-sel-btn:hover { border-color: var(--color-brand); }
+.dl-sel-btn svg {
+  color: var(--text-tertiary);
+  transition: transform 0.2s ease;
+}
+.dl-sel.open .dl-sel-btn svg { transform: rotate(180deg); }
+
+.dl-sel-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 10;
+  background-color: var(--surface-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+.dl-sel-item {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 9px 12px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+}
+.dl-sel-item + .dl-sel-item {
+  border-top: 1px solid var(--border-default);
+}
+.dl-sel-item:hover { background-color: var(--surface-hover); }
+.dl-sel-item.active .dl-sel-item-label { color: var(--color-brand); }
+.dl-sel-item-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.dl-sel-item-desc {
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+}
+
+/* 滑块（进度条） */
+.dl-range {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--color-brand);
+}
+.dl-val {
+  flex: 0 0 auto;
+  min-width: 86px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dl-check {
+  margin-top: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-default);
+}
+.dl-error {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #e74c3c;
 }
 </style>

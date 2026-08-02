@@ -7,7 +7,7 @@ use tokio::time::{sleep, Duration};
 
 use super::hash::file_sha1_matches;
 use crate::config::downloader::model::DownloaderConfig;
-use crate::downloader::fetcher::{self, http_assets};
+use crate::downloader::fetcher;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AssetsIndex {
@@ -29,7 +29,8 @@ pub async fn download_assets(
     counter: Option<Arc<AtomicU32>>,
     bytes_counter: Option<Arc<AtomicU64>>,
 ) -> Result<(), Vec<String>> {
-    let source = config.active_source().ok_or_else(|| vec!["no active source".into()])?;
+    let sources: Vec<&crate::config::downloader::model::DownloadSource> =
+        config.file_sources_list();
 
     let indexes_dir = mc_dir.join("assets").join("indexes");
     let index_path = indexes_dir.join(format!("{}.json", index_id));
@@ -40,12 +41,11 @@ pub async fn download_assets(
                 .map_err(|e| vec![format!("failed to read cached asset index: {}", e)])?
         }
         _ => {
-            let text = http_assets().get(&source.mirror_url(index_url)).send()
+            // 资源索引：主源过慢（5s）自动降级到备用源
+            let text = config
+                .fetch_with_fallback(config.file_source_mode, |s| s.mirror_url(index_url))
                 .await
-                .map_err(|e| vec![format!("failed to fetch asset index: {}", e)])?
-                .text()
-                .await
-                .map_err(|e| vec![format!("failed to read asset index: {}", e)])?;
+                .map_err(|e| vec![format!("failed to fetch asset index: {}", e)])?;
             std::fs::create_dir_all(&indexes_dir)
                 .map_err(|e| vec![format!("failed to create indexes dir: {}", e)])?;
             std::fs::write(&index_path, &text)
@@ -73,14 +73,18 @@ pub async fn download_assets(
             continue;
         }
 
-        let url = format!("{}/{}/{}", source.resource_url, sub, hash);
+        // 每个源各构造一个 URL，下载时主源过慢/失败自动降级
+        let urls: Vec<String> = sources
+            .iter()
+            .map(|s| format!("{}/{}/{}", s.resource_url, sub, hash))
+            .collect();
         let ctr = counter.clone();
         let bc = bytes_counter.clone();
         handles.push(tokio::spawn(async move {
             let mut last_err = String::new();
             for attempt in 0..3 {
                 if attempt > 0 { sleep(Duration::from_millis(200)).await; }
-                match fetcher::fetch_with(http_assets(), &url, &dest, None::<fn(u64, u64)>).await {
+                match fetcher::fetch_fallback(&urls, &dest, None::<fn(u64, u64)>).await {
                     Ok(dl) => {
                         if let Some(ref c) = ctr { c.fetch_add(1, Ordering::Relaxed); }
                         if let Some(ref b) = bc { b.fetch_add(dl.bytes, Ordering::SeqCst); }

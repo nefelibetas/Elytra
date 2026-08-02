@@ -6,7 +6,7 @@ use tokio::sync::Semaphore;
 use super::extract::native_classifier_matches;
 use super::hash::file_sha1_matches;
 use crate::config::downloader::model::DownloadSource;
-use crate::downloader::fetcher::{self, http_libs};
+use crate::downloader::fetcher;
 use crate::downloader::model::{Library, OsRule, Rule};
 
 fn matches_rules(rules: &[Rule]) -> bool {
@@ -60,11 +60,11 @@ pub async fn download_libraries(
     libraries: &[Library],
     libraries_dir: &Path,
     concurrency: usize,
-    source: &DownloadSource,
+    sources: &[&DownloadSource],
     counter: Option<Arc<AtomicU32>>,
     bytes_counter: Option<Arc<AtomicU64>>,
 ) -> Result<(), Vec<String>> {
-    let mut tasks: Vec<(String, std::path::PathBuf)> = Vec::new();
+    let mut tasks: Vec<(Vec<String>, std::path::PathBuf)> = Vec::new();
 
     for lib in libraries {
         if !should_download(lib) {
@@ -77,8 +77,9 @@ pub async fn download_libraries(
         if dest.exists() && file_sha1_matches(&dest, &artifact.sha1) {
             continue;
         }
-        let url = source.mirror_url(&artifact.url);
-        tasks.push((url, dest));
+        // 每个源各构造一个 URL，下载时主源过慢/失败自动降级
+        let urls: Vec<String> = sources.iter().map(|s| s.mirror_url(&artifact.url)).collect();
+        tasks.push((urls, dest));
     }
 
     if tasks.is_empty() {
@@ -89,13 +90,13 @@ pub async fn download_libraries(
     let mut errors = Vec::new();
     let mut handles = Vec::new();
 
-    for (url, dest) in tasks {
+    for (urls, dest) in tasks {
         let permit = sem.clone();
         let ctr = counter.clone();
         let bc = bytes_counter.clone();
         handles.push(tokio::spawn(async move {
             let _permit = permit.acquire_owned().await.unwrap();
-            match fetcher::fetch_with(http_libs(), &url, &dest, None::<fn(u64, u64)>).await {
+            match fetcher::fetch_fallback(&urls, &dest, None::<fn(u64, u64)>).await {
                 Ok(dl) => {
                     if let Some(ref c) = ctr { c.fetch_add(1, Ordering::Relaxed); }
                     if let Some(ref b) = bc { b.fetch_add(dl.bytes, Ordering::SeqCst); }

@@ -26,9 +26,7 @@ pub async fn download_version(version_id: String, version_url: String) -> Result
 pub async fn repair_version(version_id: String) -> Result<String, String> {
     use std::path::Path;
     let config: DownloaderConfig = persist::read("downloader").unwrap_or_default();
-    let source = config
-        .active_source()
-        .ok_or_else(|| "没有可用下载源，请到设置中检查".to_string())?;
+    let sources = config.file_sources_list();
     let mc = Path::new(&config.minecraft_dir);
     let vdir = mc.join("versions").join(&version_id);
     let json_path = vdir.join(format!("{version_id}.json"));
@@ -41,7 +39,7 @@ pub async fn repair_version(version_id: String) -> Result<String, String> {
     let jar_path = vdir.join(format!("{version_id}.jar"));
     if !jar_path.exists() {
         if let Some(c) = &vj.downloads.client {
-            crate::downloader::version::download_client_jar(&c.url, &version_id, &vdir, source)
+            crate::downloader::version::download_client_jar(&c.url, &version_id, &vdir, &sources)
                 .await
                 .map_err(|e| format!("下载客户端失败：{e}"))?;
             if !c.sha1.is_empty()
@@ -59,7 +57,7 @@ pub async fn repair_version(version_id: String) -> Result<String, String> {
         &vj.libraries,
         &lib_dir,
         config.concurrency as usize,
-        source,
+        &sources,
         None,
         None,
     )
@@ -76,7 +74,7 @@ pub async fn repair_version(version_id: String) -> Result<String, String> {
     )
     .await
     .map_err(|e| e.join("\n"))?;
-    crate::downloader::extract::process_natives(&vj.libraries, &lib_dir, source, None, None)
+    crate::downloader::extract::process_natives(&vj.libraries, &lib_dir, &sources, None, None)
         .await
         .map_err(|e| e.join("\n"))?;
 

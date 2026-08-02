@@ -19,8 +19,11 @@ impl Default for GcType {
 pub enum AuthMode {
     Offline {
         username: String,
+        /// 离线 UUID（按离线皮肤设置生成：匹配 Steve/Alex 模型或正版玩家真实 UUID）
+        uuid: String,
     },
     Online {
+        username: String,
         access_token: String,
         uuid: String,
         xuid: String,
@@ -31,6 +34,7 @@ impl Default for AuthMode {
     fn default() -> Self {
         Self::Offline {
             username: String::new(),
+            uuid: String::new(),
         }
     }
 }
@@ -112,6 +116,10 @@ pub struct LauncherConfig {
     #[serde(default = "default_true")]
     pub use_high_performance_gpu: bool,
 
+    /// 游戏语言策略："auto_zh_CN" = 启动时自动设置中文（唯一选项），空 = 不干预。
+    #[serde(default = "default_zh")]
+    pub game_language: String,
+
     pub jvm_args: Vec<String>,
     pub game_args: Vec<String>,
 
@@ -123,6 +131,10 @@ pub struct LauncherConfig {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_zh() -> String {
+    "auto_zh_CN".into()
 }
 
 impl Default for LauncherConfig {
@@ -137,6 +149,7 @@ impl Default for LauncherConfig {
             disable_lwjgl_unsafe_agent: false,
             pre_launch_memory_optimize: false,
             use_high_performance_gpu: true,
+            game_language: "auto_zh_CN".into(),
             jvm_args: vec![
                 "-XX:-OmitStackTraceInFastThrow".into(),
                 "-Djdk.lang.Process.allowAmbiguousCommands=True".into(),

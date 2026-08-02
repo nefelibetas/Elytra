@@ -34,6 +34,8 @@ struct TemplateContext<'a> {
     auth_access_token: &'a str,
     auth_xuid: &'a str,
     user_type: &'a str,
+    /// `--user-properties` 参数值（离线皮肤注入点；1.19.2 以下版本消费）
+    user_properties: &'a str,
     version_type: &'a str,
     resolution_width: u32,
     resolution_height: u32,
@@ -53,6 +55,7 @@ fn substitute<'a>(template: &str, ctx: &TemplateContext<'a>) -> String {
     s = s.replace("${auth_access_token}", ctx.auth_access_token);
     s = s.replace("${auth_xuid}", ctx.auth_xuid);
     s = s.replace("${user_type}", ctx.user_type);
+    s = s.replace("${user_properties}", ctx.user_properties);
     s = s.replace("${version_type}", ctx.version_type);
     s = s.replace("${resolution_width}", &ctx.resolution_width.to_string());
     s = s.replace("${resolution_height}", &ctx.resolution_height.to_string());
@@ -185,6 +188,7 @@ pub fn build_launch_command(
     config: &LauncherConfig,
     auth: &AuthMode,
     java_major_version: u32,
+    user_properties: &str,
 ) -> LaunchCommand {
     // ── 路径 ──
     // natives 目录统一放在 .minecraft/natives/<ver>/（首次启动解压一次，后续复用）
@@ -266,9 +270,18 @@ pub fn build_launch_command(
     system_props.push("-Dstdout.encoding=UTF-8".into());
     system_props.push("-Dstderr.encoding=UTF-8".into());
 
+    // 游戏进程读取 Windows 系统代理（梯子/PAC 场景下 sessionserver/textures 才能拉取皮肤）
+    system_props.push("-Djava.net.useSystemProxies=true".into());
+
     // 游戏窗口标题（1.13+ 读取 minecraft.window.title 系统属性；空 = 不改）
     if !config.window_title.is_empty() {
         system_props.push(format!("-Dminecraft.window.title={}", config.window_title));
+    }
+
+    // 游戏语言：自动设置为中文（-Duser.language 影响游戏/资源本地化）
+    if config.game_language == "auto_zh_CN" {
+        system_props.push("-Duser.language=zh_CN".into());
+        system_props.push("-Duser.country=CN".into());
     }
 
     // 内存
@@ -303,16 +316,18 @@ pub fn build_launch_command(
     }
 
     // ── 游戏参数 ──
-    // 离线模式使用固定占位 UUID/Token，在线模式使用真实的微软返回值
-    let (auth_user, auth_uuid, auth_token, auth_xuid) = match auth {
-        AuthMode::Offline { username } => (
+    // 离线模式 UUID 由离线皮肤设置生成（匹配 Steve/Alex 模型或正版玩家真实 UUID），
+    // Token 使用固定占位；在线模式使用真实的微软返回值
+    let (auth_user, auth_uuid, auth_token, auth_xuid, user_type) = match auth {
+        AuthMode::Offline { username, uuid } => (
             username.as_str(),
-            "00000000FFFFFFFFFFFFFFFFFFFFFF96436",
+            uuid.as_str(),
             "00000000FFFFFFFFFFFFFFFFFFFFFF96436",
             "",
+            "legacy",
         ),
-        AuthMode::Online { access_token, uuid, xuid } => {
-            ("", uuid.as_str(), access_token.as_str(), xuid.as_str())
+        AuthMode::Online { username, access_token, uuid, xuid } => {
+            (username.as_str(), uuid.as_str(), access_token.as_str(), xuid.as_str(), "msa")
         }
     };
 
@@ -325,7 +340,9 @@ pub fn build_launch_command(
         auth_uuid,
         auth_access_token: auth_token,
         auth_xuid,
-        user_type: "msa",
+        user_type,
+        // 空值用空 JSON（老版本 json 的 token 不能被替换为空串，Main 解析会崩）
+        user_properties: if user_properties.is_empty() { "{}" } else { user_properties },
         version_type: &version_json.r#type,
         resolution_width,
         resolution_height,
@@ -342,7 +359,11 @@ pub fn build_launch_command(
         _ => {
             // 旧格式：minecraftArguments 模板字符串
             if let Some(tpl) = &version_json.minecraft_arguments {
-                vec![substitute(tpl, &game_ctx)]
+                // 旧格式：模板是空格分隔的参数串，替换后按空白拆分（与官方启动器一致）
+                substitute(tpl, &game_ctx)
+                    .split_whitespace()
+                    .map(String::from)
+                    .collect()
             } else {
                 // 最低保底
                 let mut base = vec![
@@ -379,6 +400,24 @@ pub fn build_launch_command(
     };
 
     // ── 组装完整命令行 ──
+    let mut game_args = game_args;
+    // 主动注入 user properties（1.17+ 官方 json 已移除 token，Main 仍解析；
+    // 参数名 1.17+ 为 camelCase：--userProperties / --profileProperties，旧版为连字符
+    // --user-properties（由 json token 替换覆盖，不重复追加）；
+    // 1.18+ 的 Minecraft.getProfileProperties 直接消费 --profileProperties（非空即注入纹理），
+    // --userProperties 供 authlib 合并进选中档案；1.19.3+ Main 移除解析
+    // （allowsUnrecognizedOptions 静默忽略，与 PCL「仅 1.19.2 以下」一致）
+    if !user_properties.is_empty()
+        && !game_args
+            .iter()
+            .any(|a| a == "--user-properties" || a == "--userProperties")
+    {
+        game_args.push("--userProperties".into());
+        game_args.push(user_properties.to_string());
+        game_args.push("--profileProperties".into());
+        game_args.push(user_properties.to_string());
+    }
+
     let mut args = Vec::new();
     args.push(java_path.to_string_lossy().to_string());
     args.extend(jvm_preamble);

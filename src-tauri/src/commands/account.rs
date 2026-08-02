@@ -127,6 +127,148 @@ pub async fn fetch_texture_id(uuid: String) -> Result<String, String> {
         .ok_or_else(|| "皮肤地址格式异常".to_string())
 }
 
+/// 下载 Mojang 纹理文件（textures.minecraft.net）原始 PNG，返回 base64。
+/// 用于离线默认皮肤（Steve/Alex）头像：前端截取头部区域，避免 visage 渲染的帽子层。
+#[tauri::command]
+pub async fn fetch_skin_texture(texture_id: String) -> Result<String, String> {
+    use base64::Engine;
+    let client = reqwest::Client::builder()
+        .user_agent("ElytraLauncher/0.1.0 (+https://github.com/nefelibetas/Elytra)")
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("初始化客户端失败：{e}"))?;
+    let url = format!("https://textures.minecraft.net/texture/{texture_id}");
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("请求纹理失败：{e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("纹理服务返回 {}", resp.status()));
+    }
+    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+}
+
+/// 提取游戏内置默认皮肤（经典蓝衬衫 Steve / Alex），返回 base64。
+/// 从任一已下载版本 jar 的 assets/minecraft/textures/entity/ 提取（各版本相同）。
+#[tauri::command]
+pub fn fetch_default_skin(skin: String) -> Result<String, String> {
+    use base64::Engine;
+    use std::io::Read;
+
+    let cfg: crate::config::downloader::model::DownloaderConfig =
+        crate::persist::read("downloader").unwrap_or_default();
+    let mc = std::path::Path::new(&cfg.minecraft_dir);
+    let name = format!("assets/minecraft/textures/entity/{}.png", skin);
+    let versions_dir = mc.join("versions");
+    let rd = std::fs::read_dir(&versions_dir).map_err(|e| e.to_string())?;
+    // jar 位于 versions/<ver>/<ver>.jar（子目录），递归一层扫描
+    for entry in rd.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Ok(sub) = std::fs::read_dir(&path) {
+                for f in sub.flatten() {
+                    let p = f.path();
+                    if p.extension().map(|e| e == "jar").unwrap_or(false) {
+                        if let Ok(file) = std::fs::File::open(&p) {
+                            if let Ok(mut archive) = zip::ZipArchive::new(file) {
+                                if let Ok(mut f) = archive.by_name(&name) {
+                                    let mut buf = Vec::new();
+                                    if f.read_to_end(&mut buf).is_ok() && !buf.is_empty() {
+                                        return Ok(base64::engine::general_purpose::STANDARD
+                                            .encode(&buf));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Err("未找到游戏内置皮肤文件".into())
+}
+
+/// 获取正版玩家的皮肤纹理（原始 PNG），返回 base64。
+/// api.mojang.com 查 UUID → sessionserver 取 textures property → 解码 payload → 下载纹理。
+#[tauri::command]
+pub async fn fetch_player_skin_texture(player_name: String) -> Result<String, String> {
+    use base64::Engine;
+    let client = reqwest::Client::builder()
+        .user_agent("ElytraLauncher/0.1.0 (+https://github.com/nefelibetas/Elytra)")
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| format!("初始化客户端失败：{e}"))?;
+
+    // 1. 用户名 → UUID
+    let resp = client
+        .get(format!(
+            "https://api.mojang.com/users/profiles/minecraft/{}",
+            player_name.trim()
+        ))
+        .send()
+        .await
+        .map_err(|e| format!("查询玩家失败：{e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("查询玩家失败：HTTP {}", resp.status()));
+    }
+    let uuid = resp
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|e| e.to_string())?
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or("玩家不存在")?
+        .to_string();
+
+    // 2. sessionserver → textures property
+    let resp = client
+        .get(format!(
+            "https://sessionserver.mojang.com/session/minecraft/profile/{uuid}?unsigned=false"
+        ))
+        .send()
+        .await
+        .map_err(|e| format!("获取档案失败：{e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("获取档案失败：HTTP {}", resp.status()));
+    }
+    let profile = resp.json::<serde_json::Value>().await.map_err(|e| e.to_string())?;
+    let props = profile
+        .get("properties")
+        .and_then(|v| v.as_array())
+        .ok_or("档案属性缺失")?;
+    let textures_prop = props
+        .iter()
+        .find(|p| p.get("name").and_then(|n| n.as_str()) == Some("textures"))
+        .ok_or("该玩家未设置皮肤")?;
+    let value_b64 = textures_prop
+        .get("value")
+        .and_then(|v| v.as_str())
+        .ok_or("纹理数据缺失")?;
+
+    // 3. 解码 payload → SKIN.url → 下载纹理
+    let payload_bytes = base64::engine::general_purpose::STANDARD
+        .decode(value_b64)
+        .map_err(|e| e.to_string())?;
+    let payload: serde_json::Value =
+        serde_json::from_slice(&payload_bytes).map_err(|e| e.to_string())?;
+    let skin_url = payload
+        .pointer("/textures/SKIN/url")
+        .and_then(|v| v.as_str())
+        .ok_or("皮肤地址缺失")?;
+    let resp = client
+        .get(skin_url)
+        .send()
+        .await
+        .map_err(|e| format!("下载皮肤失败：{e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("下载皮肤失败：HTTP {}", resp.status()));
+    }
+    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+}
+
 /// 通过官方 API 拉取指定 uuid 的皮肤 PNG，返回 base64（前端本地渲染头像）。
 /// 绕开浏览器跨域/混合内容限制，走 Rust 下载链路。
 #[tauri::command]
