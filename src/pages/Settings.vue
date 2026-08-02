@@ -1,116 +1,1505 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, computed, watch, onMounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
+
+/** 轻提示（短暂显示，自动消失）。 */
+const toastMsg = ref("");
+let toastTimer: number | undefined;
+function showToast(msg: string) {
+  toastMsg.value = msg;
+  clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => (toastMsg.value = ""), 2500);
+}
 
 interface JavaEnv { path: string; version: string; vendor: string; arch: string; }
+interface JavaConfig { active_jdk: JavaEnv | null; discovered_jdks: JavaEnv[]; }
 
+type Tab = "launch" | "download";
+
+const currentTab = ref<Tab>("launch");
+
+// ── Java 配置 ──
 const jdkList = ref<JavaEnv[]>([]);
+const autoMode = ref(true);
+const activeJdk = ref<JavaEnv | null>(null);
 const jdkError = ref("");
+const loading = ref(false);
+const pickerOpen = ref(false);
 
-async function scanAllJdk() {
-  jdkList.value = []; jdkError.value = "";
-  try { jdkList.value = await invoke<JavaEnv[]>("auto_scan_jdk"); }
-  catch (e) { jdkError.value = String(e); }
+async function loadConfig() {
+  try {
+    const cfg = await invoke<JavaConfig>("get_jdk_config");
+    jdkList.value = cfg.discovered_jdks ?? [];
+    activeJdk.value = cfg.active_jdk ?? null;
+    autoMode.value = !cfg.active_jdk;
+  } catch {
+    // 忽略
+  }
+}
+
+async function saveConfig() {
+  try {
+    await invoke("save_jdk_config", {
+      config: {
+        active_jdk: autoMode.value ? null : activeJdk.value,
+        discovered_jdks: jdkList.value,
+      },
+    });
+  } catch (e) {
+    jdkError.value = String(e);
+  }
+}
+
+onMounted(() => {
+  loadConfig();
+  loadOfflineSkin();
+  loadLaunchOptions();
+});
+
+async function refreshJdks() {
+  loading.value = true;
+  jdkError.value = "";
+  try {
+    jdkList.value = await invoke<JavaEnv[]>("auto_scan_jdk");
+  } catch (e) { jdkError.value = String(e); }
+  finally { loading.value = false; }
 }
 
 async function selectCustomDir() {
-  jdkList.value = []; jdkError.value = "";
+  loading.value = true;
+  jdkError.value = "";
   try {
     const dir = await open({ directory: true, multiple: false });
     if (!dir) return;
     jdkList.value = await invoke<JavaEnv[]>("scan_custom_jdk", { path: dir });
   } catch (e) { jdkError.value = String(e); }
+  finally { loading.value = false; }
 }
+
+function selectAuto() {
+  autoMode.value = true;
+  activeJdk.value = null;
+  pickerOpen.value = false;
+  saveConfig();
+}
+
+function selectJdk(env: JavaEnv) {
+  autoMode.value = false;
+  activeJdk.value = env;
+  pickerOpen.value = false;
+  saveConfig();
+}
+
+const pickerLabel = computed(() => {
+  if (autoMode.value) return "自动选择";
+  return activeJdk.value ? activeJdk.value.version : "未选择";
+});
+
+const pickerSub = computed(() => {
+  if (autoMode.value) return "根据游戏版本需求自动匹配";
+  return activeJdk.value?.path ?? "";
+});
+
+// ── 启动选项（对齐 PCL2 启动设置） ──
+interface LauncherOptions {
+  memory: "Auto" | { Custom: number };
+  window_title: string;
+  launcher_visibility: "Keep" | "Minimize" | "Hide" | "Close";
+  process_priority: "Low" | "Normal" | "High" | "RealTime";
+  window_size: "Default" | { Custom: [number, number] };
+  disable_launch_wrapper: boolean;
+  disable_lwjgl_unsafe_agent: boolean;
+  use_high_performance_gpu: boolean;
+  pre_launch_memory_optimize: boolean;
+  jvm_args: string[];
+  game_args: string[];
+  pre_launch_cmd: string;
+  gc_type: string;
+}
+
+const loWindowTitle = ref("");
+const loVisibility = ref<"Keep" | "Minimize" | "Hide" | "Close">("Keep");
+const loPriority = ref<"Low" | "Normal" | "High" | "RealTime">("Normal");
+const loWinMode = ref<"Default" | "Custom">("Default");
+const loWinW = ref(1280);
+const loWinH = ref(720);
+
+// 内存分配（状态由全局 startMemoryMonitor 持续刷新）
+import { memState } from "../store/memory";
+const loMemMode = ref<"Auto" | "Custom">("Auto");
+const loMemMb = ref(4096);
+const loMemOptimize = ref(false);
+
+const memUsedMb = computed(() => Math.max(0, memState.totalMb - memState.availMb));
+const memGameMb = computed(() => {
+  // 自动配置：显示 0 mod 基准值（启动时后端按实际 mod 数量动态调整）
+  const g = loMemMode.value === "Custom"
+    ? loMemMb.value
+    : Math.max(2048, Math.floor(memState.availMb * 0.60));
+  return Math.min(g, memState.availMb || Number.MAX_SAFE_INTEGER);
+});
+const memUsedPct = computed(() =>
+  memState.totalMb ? (memUsedMb.value / memState.totalMb) * 100 : 0);
+const memGamePct = computed(() => {
+  const remain = Math.max(0, memState.totalMb - memUsedMb.value);
+  const g = Math.min(memGameMb.value, remain);
+  return memState.totalMb ? (g / memState.totalMb) * 100 : 0;
+});
+const memLabelLeft = (pct: number) => Math.min(Math.max(pct, 4), 96) + "%";
+const fmtGb = (mb: number) => (mb / 1024).toFixed(1) + "GB";
+
+// 自定义值超出最新剩余内存 → 动态收紧到可用范围内
+watch(
+  () => memState.availMb,
+  (avail) => {
+    if (avail > 0 && loMemMb.value > avail) {
+      loMemMb.value = Math.max(1024, avail);
+    }
+  },
+);
+
+// Java 高级项
+const loJvmArgs = ref("");
+const loGameArgs = ref("");
+const loPreCmd = ref("");
+const loGc = ref("TunedG1Gc");
+const loDisableWrapper = ref(false);
+const loDisableAgent = ref(false);
+const loHighGpu = ref(false);
+
+const gcOptions: { value: string; label: string }[] = [
+  { value: "PreferZgc", label: "首选 ZGC（实验性）" },
+  { value: "PreferGenerationalZgc", label: "首选分代 ZGC（实验性）" },
+  { value: "StandardG1Gc", label: "标准 G1" },
+  { value: "TunedG1Gc", label: "调优 G1（默认）" },
+  { value: "Custom", label: "自定义（不追加 GC 参数）" },
+];
+
+const launchError = ref("");
+
+async function loadLaunchOptions() {
+  try {
+    const cfg = await invoke<LauncherOptions>("get_launch_options");
+    loWindowTitle.value = cfg.window_title ?? "";
+    loVisibility.value = cfg.launcher_visibility;
+    loPriority.value = cfg.process_priority;
+    if (cfg.window_size === "Default") {
+      loWinMode.value = "Default";
+    } else {
+      loWinMode.value = "Custom";
+      loWinW.value = cfg.window_size.Custom[0];
+      loWinH.value = cfg.window_size.Custom[1];
+    }
+    loJvmArgs.value = (cfg.jvm_args ?? []).join("\n");
+    loGameArgs.value = (cfg.game_args ?? []).join("\n");
+    loPreCmd.value = cfg.pre_launch_cmd ?? "";
+    loGc.value = cfg.gc_type ?? "TunedG1Gc";
+    loDisableWrapper.value = !!cfg.disable_launch_wrapper;
+    loDisableAgent.value = !!cfg.disable_lwjgl_unsafe_agent;
+    // 高性能显卡默认开启：旧配置/旧后端缺字段时按 true 处理
+    loHighGpu.value = cfg.use_high_performance_gpu ?? true;
+    loMemMode.value = cfg.memory === "Auto" ? "Auto" : "Custom";
+    if (cfg.memory !== "Auto") loMemMb.value = (cfg.memory as any).Custom ?? 4096;
+    loMemOptimize.value = !!cfg.pre_launch_memory_optimize;
+    // 内存快照由全局监听提供；首帧未就绪时补拉一次
+    if (!memState.availMb) {
+      try {
+        const [total, avail] = await invoke<[number, number]>("get_memory_info");
+        memState.totalMb = total;
+        memState.availMb = avail;
+      } catch {
+        // 忽略
+      }
+    }
+    if (loMemMode.value === "Auto") {
+      loMemMb.value = Math.max(2048, Math.min(Math.floor(memState.availMb * 0.60), memState.availMb || Number.MAX_SAFE_INTEGER));
+    }
+  } catch {
+    // 无配置时保持默认
+  }
+}
+
+/** 保存启动选项（保留 jvm_args 等其余字段，仅覆盖用户可改项）。 */
+async function saveLaunchOptions() {
+  launchError.value = "";
+  try {
+    const cfg = await invoke<LauncherOptions>("get_launch_options");
+    cfg.window_title = loWindowTitle.value.trim();
+    cfg.launcher_visibility = loVisibility.value;
+    cfg.process_priority = loPriority.value;
+    cfg.window_size =
+      loWinMode.value === "Custom"
+        ? { Custom: [loWinW.value, loWinH.value] }
+        : "Default";
+    cfg.jvm_args = loJvmArgs.value.split(/\n/).map(s => s.trim()).filter(Boolean);
+    cfg.game_args = loGameArgs.value.split(/\n/).map(s => s.trim()).filter(Boolean);
+    cfg.pre_launch_cmd = loPreCmd.value.trim();
+    cfg.memory = loMemMode.value === "Custom" ? { Custom: loMemMb.value } : "Auto";
+    cfg.pre_launch_memory_optimize = loMemOptimize.value;
+    cfg.gc_type = loGc.value;
+    cfg.disable_launch_wrapper = loDisableWrapper.value;
+    cfg.disable_lwjgl_unsafe_agent = loDisableAgent.value;
+    cfg.use_high_performance_gpu = loHighGpu.value;
+    await invoke("save_launch_options", { config: cfg });
+  } catch (e) {
+    launchError.value = String(e);
+  }
+}
+
+// ── 离线皮肤配置（对齐 PCL2 五种） ──
+type OfflineSkinType = "random" | "steve" | "alex" | "player" | "custom";
+type OfflineSkinModel = "steve" | "alex" | "auto";
+import AlertDialog from "../component/AlertDialog.vue";
+
+const skinType = ref<OfflineSkinType>("random");
+const skinPlayerName = ref("");
+const skinCustomPath = ref("");
+const skinCustomModel = ref<OfflineSkinModel>("steve");
+const skinError = ref("");
+
+const skinOptions: { value: OfflineSkinType; label: string; desc: string }[] = [
+  { value: "random", label: "随机", desc: "按用户名哈希确定性选择 Steve/Alex 默认皮肤" },
+  { value: "steve", label: "Steve", desc: "固定使用 Steve 默认皮肤" },
+  { value: "alex", label: "Alex", desc: "固定使用 Alex 默认皮肤" },
+  { value: "player", label: "正版玩家", desc: "显示指定正版玩家的皮肤" },
+  { value: "custom", label: "自定义", desc: "使用本地皮肤文件" },
+];
+
+async function loadOfflineSkin() {
+  try {
+    const cfg = await invoke<{
+      skin_type: OfflineSkinType;
+      player_name: string;
+      custom_path: string;
+      custom_model: OfflineSkinModel;
+    }>("get_offline_skin");
+    skinType.value = cfg.skin_type;
+    skinPlayerName.value = cfg.player_name;
+    skinCustomPath.value = cfg.custom_path;
+    skinCustomModel.value = cfg.custom_model;
+  } catch {
+    // 无配置时保持默认
+  }
+}
+
+function saveOfflineSkin() {
+  skinError.value = "";
+  invoke("set_offline_skin", {
+    config: {
+      skin_type: skinType.value,
+      player_name: skinPlayerName.value.trim(),
+      custom_path: skinCustomPath.value,
+      custom_model: skinCustomModel.value,
+    },
+  }).catch(e => (skinError.value = String(e)));
+}
+
+/** 当前选中选项的详细描述（选中后才展示）。 */
+const currentSkinDesc = computed(
+  () => skinOptions.find(o => o.value === skinType.value)?.desc ?? "",
+);
+
+/** 模型选择 dialog（选完皮肤文件后弹出）。 */
+const skinModelDialog = ref(false);
+
+/** 点击皮肤类型胶囊：custom 且未选择文件时自动打开文件选择器。 */
+function onSkinTypeChange() {
+  if (skinType.value === "custom" && !skinCustomPath.value) {
+    saveOfflineSkin();
+    pickCustomSkin();
+    return;
+  }
+  saveOfflineSkin();
+}
+
+/** 打开文件选择器；选完后弹出「选择皮肤种类」模型 dialog。 */
+async function pickCustomSkin() {
+  const path = await open({
+    multiple: false,
+    filters: [{ name: "PNG 图片", extensions: ["png"] }],
+  });
+  if (!path) return;
+  skinCustomPath.value = path;
+  skinModelDialog.value = true;
+}
+
+/** 选择模型（Steve / Alex / 启动器决定）→ 保存并关闭。 */
+function pickModel(model: OfflineSkinModel) {
+  skinCustomModel.value = model;
+  skinModelDialog.value = false;
+  saveOfflineSkin();
+}
+
+/** 重置自定义皮肤：清空文件选择，自动切回随机。 */
+function resetCustomSkin() {
+  skinCustomPath.value = "";
+  skinType.value = "random";
+  skinCustomModel.value = "steve";
+  saveOfflineSkin();
+}
+
+/** 保存正版玩家的皮肤到用户指定位置。 */
+async function savePlayerSkin() {
+  const name = skinPlayerName.value.trim();
+  if (!name) {
+    showToast("请先填写正版玩家用户名");
+    return;
+  }
+  const path = await save({
+    defaultPath: `${name}.png`,
+    filters: [{ name: "PNG 图片", extensions: ["png"] }],
+  });
+  if (!path) return;
+  try {
+    await invoke("save_player_skin", { playerName: name, path });
+    showToast(`皮肤已保存：${name}`);
+  } catch (e) {
+    skinError.value = String(e);
+  }
+}
+
+/** 刷新：重新校验正版玩家皮肤信息。 */
+async function refreshPlayerSkin() {
+  const name = skinPlayerName.value.trim();
+  if (!name) {
+    showToast("请先填写正版玩家用户名");
+    return;
+  }
+  try {
+    const info = await invoke<{ uuid: string; texture_id: string }>(
+      "fetch_player_skin",
+      { playerName: name },
+    );
+    showToast(`皮肤信息已刷新：${name}`);
+    void info;
+  } catch (e) {
+    skinError.value = String(e);
+  }
+}
+
+// ── 未实现 tab 占位 ──
+const placeholder = computed(() => {
+  if (currentTab.value === "download") return "下载设置（开发中）";
+  return "";
+});
 </script>
 
 <template>
-  <div class="page">
-    <h2>设置</h2>
+  <div class="stg">
+    <nav class="stg-nav">
+      <div class="nav-divider"><span>设置</span></div>
+      <button
+        class="stg-tab"
+        :class="{ active: currentTab === 'launch' }"
+        @click="currentTab = 'launch'"
+      >
+        <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+          <path d="M3 2h10a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3a1 1 0 011-1zm1 2v2h8V4H4zm0 4v4h8V8H4z" />
+        </svg>
+        启动设置
+      </button>
+      <button
+        class="stg-tab"
+        :class="{ active: currentTab === 'download' }"
+        @click="currentTab = 'download'"
+      >
+        <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+          <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 12V3a5 5 0 010 10z" />
+        </svg>
+        下载设置
+      </button>
+    </nav>
 
-    <section class="section">
-      <h3>Java 运行时</h3>
-      <div class="actions">
-        <button @click="scanAllJdk">自动扫描</button>
-        <button @click="selectCustomDir">选择目录</button>
-      </div>
-      <div v-if="jdkList.length" class="info">
-        <p>找到 {{ jdkList.length }} 个 JDK：</p>
-        <div v-for="(jdk, i) in jdkList" :key="i" class="item">
-          <p>#{{ i + 1 }} 路径：{{ jdk.path }}</p>
-          <p>版本：{{ jdk.version }}（{{ jdk.arch }}）</p>
-          <p>厂商：{{ jdk.vendor }}</p>
+    <div class="stg-body">
+      <Transition name="page" mode="out-in">
+                <!-- 启动设置：离线皮肤 -->
+        <div v-if="currentTab === 'launch'" key="launch" class="stg-page">
+          <div class="stg-card">
+            <div class="stg-card-hdr">
+              <h3>离线皮肤</h3>
+              <div class="stg-card-sub">离线模式下头像显示的皮肤</div>
+            </div>
+            <div class="skin-opts">
+              <label
+                v-for="opt in skinOptions"
+                :key="opt.value"
+                class="skin-opt"
+                :class="{ selected: skinType === opt.value }"
+              >
+                <input type="radio" :value="opt.value" v-model="skinType" @change="onSkinTypeChange" />
+                <span class="skin-opt-label">{{ opt.label }}</span>
+              </label>
+            </div>
+            <!-- 选中后显示详细信息 -->
+            <div class="skin-detail">
+              <div class="skin-desc">{{ currentSkinDesc }}</div>
+              <div v-if="skinType === 'player'" class="skin-player-row">
+                <input
+                  v-model="skinPlayerName"
+                  class="skin-input"
+                  type="text"
+                  placeholder="正版玩家用户名"
+                  maxlength="16"
+                  @change="saveOfflineSkin"
+                />
+                <button class="tool-btn" @click="savePlayerSkin">
+                  <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
+                    <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 12V3a5 5 0 010 10z" />
+                  </svg>
+                  保存皮肤
+                </button>
+                <button class="tool-btn" @click="refreshPlayerSkin">
+                  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 8a6 6 0 01-11 3.5"/>
+                    <polygon points="3,14 2.5,10 7,11" stroke="none" fill="currentColor"/>
+                    <path d="M2 8a6 6 0 0111-3.5"/>
+                    <polygon points="13,2 13.5,6 9,5" stroke="none" fill="currentColor"/>
+                  </svg>
+                  刷新
+                </button>
+              </div>
+              <div v-if="skinType === 'custom'" class="skin-sub-row">
+                <template v-if="skinCustomPath">
+                  <button class="tool-btn" @click="pickCustomSkin">
+                    <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
+                      <path d="M11.3 1.3a1.8 1.8 0 012.6 2.6L5.6 12.2l-3.5 1 1-3.5 8.2-8.4zm.9 1.7a.5.5 0 00-.7 0L4 10.6l.4 1 1 .4 7.6-7.5a.5.5 0 000-.7l-.8-.8z" />
+                    </svg>
+                    更改皮肤
+                  </button>
+                  <button class="tool-btn" @click="resetCustomSkin">
+                    <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
+                      <path d="M8 3a5 5 0 105 5h-2a3 3 0 11-3-3v2L4 4l4-3v2z" />
+                    </svg>
+                    重置皮肤
+                  </button>
+                  <span class="skin-model-note">模型：{{ skinCustomModel === 'alex' ? 'Alex（纤细）' : skinCustomModel === 'auto' ? '启动器决定' : 'Steve（经典）' }}</span>
+                </template>
+                <span v-else class="skin-desc">点击上方「自定义」打开文件选择器</span>
+              </div>
+            </div>
+            <div v-if="skinError" class="err">{{ skinError }}</div>
+          </div>
+
+          <div class="stg-card">
+            <div class="stg-card-hdr">
+              <h3>启动选项</h3>
+              <div class="stg-card-sub">游戏启动行为设置</div>
+            </div>
+            <div class="launch-opts">
+              <div class="lo-row">
+                <label class="lo-label" for="lo-title">游戏窗口标题</label>
+                <input
+                  id="lo-title"
+                  v-model="loWindowTitle"
+                  class="lo-input"
+                  type="text"
+                  placeholder="不修改（默认）"
+                  maxlength="64"
+                  @change="saveLaunchOptions"
+                />
+              </div>
+
+              <div class="lo-row">
+                <label class="lo-label" for="lo-vis">启动器可见性</label>
+                <select
+                  id="lo-vis"
+                  v-model="loVisibility"
+                  class="lo-select"
+                  @change="saveLaunchOptions"
+                >
+                  <option value="Keep">保持不变（默认）</option>
+                  <option value="Minimize">最小化</option>
+                  <option value="Hide">隐藏</option>
+                  <option value="Close">关闭启动器</option>
+                </select>
+              </div>
+
+              <div class="lo-row">
+                <label class="lo-label" for="lo-prio">进程优先级</label>
+                <select
+                  id="lo-prio"
+                  v-model="loPriority"
+                  class="lo-select"
+                  @change="saveLaunchOptions"
+                >
+                  <option value="Low">低</option>
+                  <option value="Normal">中（平衡）</option>
+                  <option value="High">高</option>
+                  <option value="RealTime">实时</option>
+                </select>
+              </div>
+
+              <div class="lo-row">
+                <label class="lo-label" for="lo-winsize">窗口大小</label>
+                <div class="lo-winsize">
+                  <select
+                    id="lo-winsize"
+                    v-model="loWinMode"
+                    class="lo-select"
+                    @change="saveLaunchOptions"
+                  >
+                    <option value="Default">默认（不设置）</option>
+                    <option value="Custom">自定义</option>
+                  </select>
+                  <template v-if="loWinMode === 'Custom'">
+                    <input
+                      v-model.number="loWinW"
+                      class="lo-input lo-num"
+                      type="number"
+                      min="320"
+                      max="7680"
+                      placeholder="宽"
+                      @change="saveLaunchOptions"
+                    />
+                    <span class="lo-times">×</span>
+                    <input
+                      v-model.number="loWinH"
+                      class="lo-input lo-num"
+                      type="number"
+                      min="240"
+                      max="4320"
+                      placeholder="高"
+                      @change="saveLaunchOptions"
+                    />
+                  </template>
+                </div>
+              </div>
+            </div>
+            <div v-if="launchError" class="err">{{ launchError }}</div>
+          </div>
+
+          <div class="stg-card">
+            <div class="stg-card-hdr">
+              <h3>内存分配</h3>
+              <div class="stg-card-sub">游戏内存分配与系统内存状态</div>
+            </div>
+            <div class="launch-opts">
+              <div class="lo-row">
+                <label class="lo-check">
+                  <input type="radio" value="Auto" v-model="loMemMode" @change="saveLaunchOptions" />
+                  <span>自动配置</span>
+                </label>
+              </div>
+              <div class="lo-row">
+                <label class="lo-check">
+                  <input type="radio" value="Custom" v-model="loMemMode" @change="saveLaunchOptions" />
+                  <span>自定义</span>
+                </label>
+                <input
+                  v-model.number="loMemMb"
+                  class="mem-slider"
+                  :class="{ disabled: loMemMode !== 'Custom' }"
+                  type="range"
+                  :min="1024"
+                  :max="memState.availMb || 4096"
+                  step="256"
+                  :disabled="loMemMode !== 'Custom'"
+                  @change="saveLaunchOptions"
+                />
+                <span class="mem-slider-val" :class="{ disabled: loMemMode !== 'Custom' }">{{ fmtGb(loMemMb) }}</span>
+              </div>
+              <div class="lo-row">
+                <label class="lo-check">
+                  <input v-model="loMemOptimize" type="checkbox" @change="saveLaunchOptions" />
+                  <span>启动游戏前进行内存优化</span>
+                </label>
+              </div>
+              <div class="mem-status">
+                <div class="mem-bar-labels">
+                  <span class="mem-bar-label">已使用 {{ fmtGb(memUsedMb) }}</span>
+                  <span v-if="memGamePct > 0" class="mem-bar-label" :style="{ left: memLabelLeft(memUsedPct) }">游戏分配 {{ fmtGb(memGameMb) }}</span>
+                </div>
+                <div class="mem-bar">
+                  <div class="mem-seg mem-used" :style="{ width: memUsedPct + '%' }"></div>
+                  <div class="mem-seg mem-game" :style="{ width: memGamePct + '%' }"></div>
+                  <div class="mem-seg mem-free"></div>
+                </div>
+                <div class="mem-total">{{ fmtGb(memUsedMb) }} / {{ fmtGb(memState.totalMb) }}</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="stg-card">
+            <div class="stg-card-hdr">
+              <h3>Java 运行时</h3>
+              <span class="stg-card-sub">选择用于启动游戏的 Java 版本，或由启动器自动匹配</span>
+            </div>
+
+            <!-- 选择行：下拉 + 右侧按钮 -->
+            <div class="jdk-toolbar">
+              <div class="jdk-picker-wrap">
+                <button class="jdk-picker" :class="{ open: pickerOpen }" @click="pickerOpen = !pickerOpen">
+                  <span class="jdk-picker-main">
+                    <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+                      <path d="M11 1L5 7v8h6V7L7 3l4-4V1z" />
+                    </svg>
+                    {{ pickerLabel }}
+                  </span>
+                  <span class="jdk-picker-sub">{{ pickerSub }}</span>
+                  <svg class="jdk-chevron" :class="{ flip: pickerOpen }" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 6l5 5 5-5" />
+                  </svg>
+                </button>
+
+                <!-- 展开列表 -->
+                <Transition name="drop">
+                  <div v-if="pickerOpen" class="jdk-dropdown">
+                    <button class="jdk-opt" :class="{ selected: autoMode }" @click="selectAuto">
+                      <div class="jdk-opt-main">
+                        <span class="jdk-opt-title">自动选择</span>
+                        <span class="jdk-opt-sub">根据游戏版本需求自动匹配</span>
+                      </div>
+                      <svg v-if="autoMode" viewBox="0 0 14 14" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7l3.5 3.5L12 3" /></svg>
+                    </button>
+                    <div v-if="jdkList.length" class="jdk-drop-divider"></div>
+                    <button
+                      v-for="jdk in jdkList"
+                      :key="jdk.path"
+                      class="jdk-opt"
+                      :class="{ selected: !autoMode && activeJdk && activeJdk.path === jdk.path }"
+                      @click="selectJdk(jdk)"
+                    >
+                      <div class="jdk-opt-main">
+                        <span class="jdk-opt-title">{{ jdk.version }}</span>
+                        <span class="jdk-opt-sub">{{ jdk.vendor }} · {{ jdk.arch }}</span>
+                        <span class="jdk-opt-path">{{ jdk.path }}</span>
+                      </div>
+                      <svg v-if="!autoMode && activeJdk && activeJdk.path === jdk.path" viewBox="0 0 14 14" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7l3.5 3.5L12 3" /></svg>
+                    </button>
+                    <div v-if="!jdkList.length" class="jdk-drop-empty">暂无扫描结果，点击右上角「刷新」</div>
+                  </div>
+                </Transition>
+              </div>
+
+              <button class="tool-btn" :disabled="loading" @click="refreshJdks">
+                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M14 8a6 6 0 01-11 3.5"/>
+                  <polygon points="3,14 2.5,10 7,11" stroke="none" fill="currentColor"/>
+                  <path d="M2 8a6 6 0 0111-3.5"/>
+                  <polygon points="13,2 13.5,6 9,5" stroke="none" fill="currentColor"/>
+                </svg>
+                刷新
+              </button>
+              <button class="tool-btn" :disabled="loading" @click="selectCustomDir">
+                <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
+                  <path d="M2 3a1 1 0 011-1h3l2 2h6a1 1 0 011 1v8a1 1 0 01-1 1H3a1 1 0 01-1-1V3z" />
+                </svg>
+                自定义目录
+              </button>
+            </div>
+
+            <div v-if="loading" class="loading-hint">正在扫描...</div>
+            <div v-else-if="jdkError" class="err">{{ jdkError }}</div>
+
+            <div class="jdk-divider"></div>
+
+            <!-- Java 高级项 -->
+            <div class="launch-opts jdk-opts">
+            <div class="lo-row lo-top">
+              <label class="lo-label" for="lo-jvm">Java 虚拟机参数</label>
+              <textarea
+                id="lo-jvm"
+                v-model="loJvmArgs"
+                class="lo-textarea"
+                rows="4"
+                placeholder="每行一个 JVM 参数"
+                spellcheck="false"
+                @change="saveLaunchOptions"
+              ></textarea>
+            </div>
+
+            <div class="lo-row lo-top">
+              <label class="lo-label" for="lo-game">游戏参数</label>
+              <textarea
+                id="lo-game"
+                v-model="loGameArgs"
+                class="lo-textarea"
+                rows="2"
+                placeholder="每行一个游戏参数"
+                spellcheck="false"
+                @change="saveLaunchOptions"
+              ></textarea>
+            </div>
+
+            <div class="lo-row">
+              <label class="lo-label" for="lo-pre">启动前执行命令</label>
+              <input
+                id="lo-pre"
+                v-model="loPreCmd"
+                class="lo-input"
+                type="text"
+                placeholder="启动游戏前执行的命令"
+                @change="saveLaunchOptions"
+              />
+            </div>
+
+            <div class="lo-row">
+              <label class="lo-label" for="lo-gc">内存管理</label>
+              <select
+                id="lo-gc"
+                v-model="loGc"
+                class="lo-select"
+                @change="saveLaunchOptions"
+              >
+                <option v-for="g in gcOptions" :key="g.value" :value="g.value">{{ g.label }}</option>
+              </select>
+            </div>
+
+            <div class="lo-checks">
+              <label class="lo-check">
+                <input v-model="loDisableWrapper" type="checkbox" @change="saveLaunchOptions" />
+                <span>禁用 Java Launch Wrapper</span>
+              </label>
+              <label class="lo-check">
+                <input v-model="loDisableAgent" type="checkbox" @change="saveLaunchOptions" />
+                <span>禁用 LWJGL Unsafe Agent</span>
+              </label>
+              <label class="lo-check">
+                <input v-model="loHighGpu" type="checkbox" @change="saveLaunchOptions" />
+                <span>使用高性能显卡</span>
+              </label>
+            </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 占位 -->
+        <div v-else key="placeholder" class="stg-page">
+          <div class="stg-card">
+            <div class="stg-card-hdr">
+              <h3>{{ placeholder }}</h3>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </div>
+
+    <!-- 轻提示 toast -->
+    <Teleport to="body">
+      <Transition name="toast-fade">
+        <div v-if="toastMsg" class="toast">{{ toastMsg }}</div>
+      </Transition>
+    </Teleport>
+
+    <!-- 选择皮肤种类 dialog -->
+    <AlertDialog v-model="skinModelDialog" title="选择皮肤种类" :divider="false">
+      <div class="model-dialog-body">
+        <div class="model-row">
+          <span class="model-name">Steve（经典模型）</span>
+          手臂较粗（4px），经典 Steve 风格，大多数皮肤适用
+        </div>
+        <div class="model-row">
+          <span class="model-name">Alex（纤细模型）</span>
+          手臂较细（3px），纤细 Alex 风格，slim 皮肤专用
         </div>
       </div>
-      <div v-else-if="jdkError" class="err">{{ jdkError }}</div>
-      <div v-else class="hint">点击按钮扫描系统中已安装的 JDK</div>
-    </section>
+      <template #actions>
+        <button class="dialog-btn" @click="pickModel('steve')">Steve</button>
+        <button class="dialog-btn" @click="pickModel('alex')">Alex</button>
+        <button class="dialog-btn primary" @click="pickModel('auto')">启动器决定</button>
+      </template>
+    </AlertDialog>
   </div>
 </template>
 
 <style scoped>
-.page {
-  padding: 24px;
-  max-width: 640px;
-}
+.stg { display: flex; height: 100%; }
 
-.page h2 {
-  font-size: 20px;
-  font-weight: 600;
-  margin-bottom: 24px;
-  color: var(--text-primary);
-}
-
-.section { margin-bottom: 32px; }
-
-.section h3 {
-  font-size: 15px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  margin-bottom: 12px;
-}
-
-.actions {
+/* ===== 左侧导航 ===== */
+.stg-nav {
+  flex: 0 0 180px; min-width: 160px;
+  background-color: var(--surface-elevated);
+  border-right: 1px solid var(--border-default);
+  padding: 12px 8px;
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-divider {
+  display: flex; align-items: center;
+  padding: 8px 12px 6px; user-select: none;
+}
+
+.nav-divider span {
+  font-size: 11px; font-weight: 500;
+  color: var(--text-tertiary);
+  text-transform: uppercase; letter-spacing: 0.8px;
+}
+
+.stg-tab {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px;
+  border: none; border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: all 0.15s;
+  text-align: left;
+}
+
+.stg-tab:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-hover);
+}
+
+.stg-tab.active {
+  color: var(--color-brand);
+  background-color: var(--color-brand-bg);
+}
+
+/* ===== 右侧内容 ===== */
+.stg-body {
+  flex: 1; position: relative;
+  padding: 20px 24px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  background: var(--surface-page);
+}
+
+.stg-card {
+  background: var(--surface-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: 20px 24px;
+}
+
+/* 多卡片上下间距 */
+.stg-card + .stg-card {
+  margin-top: 16px;
+}
+
+.stg-card-hdr {
   margin-bottom: 16px;
 }
 
-.actions button {
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-strong);
-  padding: 0.5em 1.2em;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  background-color: var(--surface-card);
-  cursor: pointer;
-  transition: 0.15s;
+.stg-card-hdr h3 {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
-.actions button:hover {
+.stg-card-sub {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+/* ===== JDK 工具栏 ===== */
+.jdk-toolbar {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.jdk-picker-wrap {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+
+.jdk-picker {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-page);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.jdk-picker:hover {
+  border-color: var(--color-brand);
+}
+
+.jdk-picker.open {
+  border-color: var(--color-brand);
+  box-shadow: 0 0 0 3px var(--color-brand-bg);
+}
+
+.jdk-picker-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.jdk-picker-main svg {
+  color: var(--color-brand);
+}
+
+.jdk-picker-sub {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.jdk-chevron {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  transition: transform 0.15s;
+}
+
+.jdk-chevron.flip {
+  transform: rotate(180deg);
+}
+
+.tool-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.tool-btn:hover:not(:disabled) {
   border-color: var(--color-brand);
   color: var(--color-brand);
 }
 
-.info {
-  background-color: var(--surface-card);
-  padding: 12px 16px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-default);
+.tool-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
-.info p {
-  margin: 4px 0;
+/* 下拉列表 */
+.jdk-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  max-height: 280px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior-x: none;
+  touch-action: pan-y;
+  background: var(--surface-card);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(30, 27, 75, 0.12);
+  z-index: 100;
+  padding: 6px;
+}
+
+.jdk-opt {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.jdk-opt:hover {
+  background: var(--surface-hover);
+}
+
+.jdk-opt.selected {
+  background: var(--color-brand-bg);
+}
+
+.jdk-opt.selected .jdk-opt-title {
+  color: var(--color-brand);
+}
+
+.jdk-opt-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.jdk-opt-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.jdk-opt-sub {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.jdk-opt-path {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.jdk-opt > svg {
+  flex-shrink: 0;
+  color: var(--color-brand);
+}
+
+.jdk-drop-divider {
+  height: 1px;
+  background: var(--border-default);
+  margin: 4px 8px;
+}
+
+.jdk-drop-empty {
+  padding: 14px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+/* 状态提示 */
+.loading-hint {
   color: var(--text-secondary);
+  font-size: 13px;
+  padding: 10px 0 0;
+}
+
+.err {
+  color: #e74c3c;
+  font-size: 13px;
+  padding: 10px 0 0;
+}
+
+/* 下拉动画 */
+.drop-enter-active { transition: all 0.15s ease-out; }
+.drop-leave-active { transition: all 0.1s ease-in; }
+.drop-enter-from { opacity: 0; transform: translateY(-6px); }
+.drop-leave-to { opacity: 0; transform: translateY(-6px); }
+
+/* 页面过渡 */
+.page-enter-active, .page-leave-active { transition: all 0.15s ease-out; }
+.page-enter-from { opacity: 0; transform: translateY(8px); }
+.page-leave-to { opacity: 0; transform: translateY(-8px); }
+
+/* ===== 内存分配 ===== */
+.mem-slider {
+  flex: 1;
+  accent-color: var(--color-brand);
+  cursor: pointer;
+}
+
+.mem-slider.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.mem-slider-val {
+  flex: none;
+  width: 72px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  text-align: right;
+}
+
+.mem-slider-val.disabled {
+  opacity: 0.45;
+}
+
+.mem-status {
+  margin-top: 2px;
+}
+
+.mem-bar-labels {
+  position: relative;
+  height: 16px;
+}
+
+.mem-bar-label {
+  position: absolute;
+  /* 左对齐：文本起始紧贴色条左侧 */
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.mem-bar {
+  display: flex;
+  height: 10px;
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--border-default);
+}
+
+.mem-seg {
+  height: 100%;
+  transition: width 0.4s ease;
+}
+
+.mem-used {
+  background: #e74c3c;
+}
+
+.mem-game {
+  background: #059669;
+}
+
+.mem-free {
+  flex: 1;
+}
+
+.mem-total {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* ===== Java 高级项 ===== */
+.jdk-divider {
+  height: 1px;
+  background: var(--border-default);
+  margin: 16px 0;
+}
+
+.lo-top {
+  align-items: flex-start;
+}
+
+.lo-top .lo-label {
+  padding-top: 6px;
+}
+
+.lo-textarea {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  font-family: inherit;
+  color: var(--text-primary);
+  background-color: var(--surface-input, var(--surface-card));
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  outline: none;
+  resize: none;
+  transition: border-color 0.15s;
+}
+
+.lo-textarea:hover,
+.lo-textarea:focus {
+  border-color: var(--color-brand);
+}
+
+.lo-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lo-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.lo-check input[type="checkbox"] {
+  accent-color: var(--color-brand);
+  cursor: pointer;
+}
+
+/* ===== 启动选项 ===== */
+.launch-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.lo-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 32px;
+}
+
+.lo-label {
+  flex: none;
+  width: 96px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.lo-select {
+  flex: 1;
+  height: 30px;
+  padding: 0 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background-color: var(--surface-input, var(--surface-card));
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.lo-select:hover,
+.lo-select:focus {
+  border-color: var(--color-brand);
+}
+
+.lo-input {
+  flex: 1;
+  height: 30px;
+  padding: 0 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background-color: var(--surface-input, var(--surface-card));
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.lo-input:hover,
+.lo-input:focus {
+  border-color: var(--color-brand);
+}
+
+.lo-winsize {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lo-winsize .lo-select {
+  flex: none;
+  width: 140px;
+}
+
+.lo-num {
+  flex: 1;
+  min-width: 0;
+}
+
+.lo-times {
+  flex: none;
+  color: var(--text-tertiary);
   font-size: 13px;
 }
 
-.item {
-  border-top: 1px solid var(--border-default);
-  padding: 4px 0;
+/* ===== 离线皮肤 ===== */
+/* 横向 chip 选项：关键文字 + 圆形选择器 */
+.skin-opts {
+  display: flex;
+  gap: 8px;
 }
 
-.err { color: #e74c3c; }
-.hint { color: var(--text-tertiary); font-size: 13px; }
+.skin-opt {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+
+.skin-opt:hover {
+  border-color: var(--color-brand);
+}
+
+.skin-opt.selected {
+  border-color: var(--color-brand);
+  background: var(--color-brand-bg);
+}
+
+.skin-opt input[type="radio"] {
+  accent-color: var(--color-brand);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+  flex: none;
+  margin: 0;
+}
+
+.skin-opt-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.skin-opt.selected .skin-opt-label {
+  font-weight: 600;
+  color: var(--color-brand);
+}
+
+/* 选中后的详细信息 */
+.skin-detail {
+  margin-top: 14px;
+}
+
+.skin-desc {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  line-height: 1.6;
+}
+
+.skin-sub-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.skin-input {
+  flex: 1;
+  min-width: 180px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-page);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.skin-input:focus {
+  border-color: var(--color-brand);
+}
+
+.skin-model-row {
+  display: flex;
+  gap: 16px;
+}
+
+.skin-model-row label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.skin-model-row label.selected {
+  color: var(--text-primary);
+}
+
+.skin-model-note {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.skin-player-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.skin-player-row .skin-input {
+  flex: 1;
+  min-width: 180px;
+  margin: 0;
+}
+
+/* 轻提示 toast */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 36px;
+  transform: translateX(-50%);
+  z-index: 2000;
+  max-width: 480px;
+  padding: 8px 18px;
+  font-size: 13px;
+  color: #fff;
+  background: rgba(24, 24, 27, 0.92);
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.toast-fade-enter-active,
+.toast-fade-leave-active {
+  transition: opacity 0.25s, transform 0.25s;
+}
+
+.toast-fade-enter-from,
+.toast-fade-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(8px);
+}
+
+/* 模型选择 dialog */
+.model-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.model-row {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.model-name {
+  display: block;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dialog-btn {
+  padding: 5px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.dialog-btn:hover {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
+}
+
+.dialog-btn.primary {
+  background: var(--color-brand);
+  border-color: var(--color-brand);
+  color: #fff;
+}
+
+.dialog-btn.primary:hover {
+  opacity: 0.88;
+}
 </style>

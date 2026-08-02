@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Semaphore;
+use tokio::time::{sleep, Duration};
 
 use super::hash::file_sha1_matches;
 use crate::config::downloader::model::DownloaderConfig;
-use crate::downloader::fetcher;
+use crate::downloader::fetcher::{self, http_assets};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AssetsIndex {
@@ -25,6 +26,8 @@ pub async fn download_assets(
     index_sha1: Option<&str>,
     config: &DownloaderConfig,
     mc_dir: &Path,
+    counter: Option<Arc<AtomicU32>>,
+    bytes_counter: Option<Arc<AtomicU64>>,
 ) -> Result<(), Vec<String>> {
     let source = config.active_source().ok_or_else(|| vec!["no active source".into()])?;
 
@@ -37,7 +40,7 @@ pub async fn download_assets(
                 .map_err(|e| vec![format!("failed to read cached asset index: {}", e)])?
         }
         _ => {
-            let text = reqwest::get(index_url)
+            let text = http_assets().get(&source.mirror_url(index_url)).send()
                 .await
                 .map_err(|e| vec![format!("failed to fetch asset index: {}", e)])?
                 .text()
@@ -55,7 +58,6 @@ pub async fn download_assets(
         .map_err(|e| vec![format!("failed to parse asset index: {}", e)])?;
 
     let objects_dir = mc_dir.join("assets").join("objects");
-    let sem = Arc::new(Semaphore::new(config.concurrency as usize));
     let mut handles = Vec::new();
     let mut errors = Vec::new();
 
@@ -71,13 +73,23 @@ pub async fn download_assets(
             continue;
         }
 
-        let url = format!("{}/assets/{}/{}", source.resource_url, sub, hash);
-        let permit = sem.clone();
+        let url = format!("{}/{}/{}", source.resource_url, sub, hash);
+        let ctr = counter.clone();
+        let bc = bytes_counter.clone();
         handles.push(tokio::spawn(async move {
-            let _permit = permit.acquire_owned().await.unwrap();
-            fetcher::fetch(&url, &dest, None::<fn(u64, u64)>)
-                .await
-                .map_err(|e| format!("{}: {}", hash, e))
+            let mut last_err = String::new();
+            for attempt in 0..3 {
+                if attempt > 0 { sleep(Duration::from_millis(200)).await; }
+                match fetcher::fetch_with(http_assets(), &url, &dest, None::<fn(u64, u64)>).await {
+                    Ok(dl) => {
+                        if let Some(ref c) = ctr { c.fetch_add(1, Ordering::Relaxed); }
+                        if let Some(ref b) = bc { b.fetch_add(dl.bytes, Ordering::SeqCst); }
+                        return Ok(());
+                    }
+                    Err(e) => last_err = format!("{}: {}", hash, e),
+                }
+            }
+            Err(last_err)
         }));
     }
 

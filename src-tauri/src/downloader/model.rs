@@ -45,6 +45,8 @@ pub struct VersionJson {
     pub java_version: JavaVersion,
     pub libraries: Vec<Library>,
     pub main_class: String,
+    #[serde(default)]
+    pub minecraft_arguments: Option<String>,
     pub minimum_launcher_version: serde_json::Value,
     pub release_time: String,
     pub time: String,
@@ -75,12 +77,18 @@ pub struct Library {
     pub name: String,
     pub downloads: Option<LibraryDownloads>,
     pub rules: Option<Vec<Rule>>,
+    #[serde(default)]
+    pub natives: Option<std::collections::HashMap<String, String>>,
+    #[serde(default)]
+    pub extract: Option<ExtractRules>,
 }
 
 /// 库下载
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LibraryDownloads {
     pub artifact: Option<Artifact>,
+    #[serde(default)]
+    pub classifiers: Option<std::collections::HashMap<String, Artifact>>,
 }
 
 /// Artifact
@@ -90,6 +98,12 @@ pub struct Artifact {
     pub url: String,
     pub sha1: String,
     pub size: u64,
+}
+
+/// 解压规则（旧式 native 库用）
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ExtractRules {
+    pub exclude: Vec<String>,
 }
 
 /// 规则

@@ -48,10 +48,16 @@ const bodyHeight = computed(() => {
 }
 
 .card-body {
-  border-top: 1px solid var(--border-default);
   overflow: hidden;
   transition: max-height 0.3s ease, opacity 0.25s ease;
   opacity: 1;
+}
+/* 标题与 items 之间的分割线：左右留白 16px */
+.card-body::before {
+  content: "";
+  display: block;
+  margin: 0 16px;
+  border-top: 1px solid var(--border-default);
 }
 .card:not(.open) .card-body { opacity: 0; }
 

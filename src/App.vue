@@ -1,16 +1,102 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from "vue";
+import { ref, onMounted, onUnmounted } from "vue";
+import { useRouter } from "vue-router";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import TitleBar from "./component/TitleBar.vue";
+import DownloadFAB from "./component/DownloadFAB.vue";
+import { dlState, ensureListen } from "./store/download";
+import { startMemoryMonitor } from "./store/memory";
+
+const router = useRouter();
+const toastMsg = ref("");
+let toastTimer = 0;
+
+function showToast(msg: string) {
+  toastMsg.value = msg;
+  clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => toastMsg.value = "", 3000);
+}
+
+(window as any).__showToast = showToast;
+
+// ── 启动器可见性 ──────────────────────────────────────
+// 游戏启动后按设置最小化/隐藏启动器；游戏退出后恢复显示。
+let launcherConcealed = false;
+
+/** 由 Launch 页在游戏进程成功启动后调用。 */
+(window as any).__applyLaunchVisibility = async () => {
+  try {
+    const cfg = await invoke<{ launcher_visibility: string }>("get_launch_options");
+    const win = getCurrentWindow();
+    switch (cfg.launcher_visibility) {
+      case "Minimize":
+        launcherConcealed = true;
+        win.minimize();
+        break;
+      case "Hide":
+        launcherConcealed = true;
+        win.hide();
+        break;
+      case "Close":
+        win.close();
+        break;
+      default:
+        break; // 保持不变
+    }
+  } catch {
+    // 配置读取失败时保持现状
+  }
+};
+
+
+dlState.onTaskDone = (taskName: string, prevRoute: string) => {
+  showToast(`${taskName} 已完成`);
+  if (prevRoute) router.push(prevRoute);
+};
 
 function onKeyDown(e: KeyboardEvent) {
-  if (e.key === "F12" || (e.ctrlKey && e.shiftKey && ["I", "J", "C"].includes(e.key.toUpperCase())) || (e.ctrlKey && e.key.toUpperCase() === "U")) {
+  // 禁止打开开发者工具：F12 / Ctrl+Shift+I/J/C / Ctrl+U
+  if (
+    e.key === "F12" ||
+    (e.ctrlKey && e.shiftKey && ["I", "J", "C"].includes(e.key.toUpperCase())) ||
+    (e.ctrlKey && e.key.toUpperCase() === "U")
+  ) {
     e.preventDefault();
+    return;
+  }
+  // 禁止 Tab 切换控件焦点
+  if (e.key === "Tab") {
+    e.preventDefault();
+    return;
+  }
+  // 禁止全选（Ctrl+A）
+  if (e.ctrlKey && e.key.toLowerCase() === "a") {
+    e.preventDefault();
+    return;
+  }
+  // ESC：非启动页面且无弹窗时回到启动页
+  if (e.key === "Escape" && !document.querySelector(".dialog-overlay")) {
+    const path = router.currentRoute.value.path;
+    if (path !== "/") router.push("/");
   }
 }
 
 onMounted(() => {
   document.addEventListener("contextmenu", (e) => e.preventDefault());
   document.addEventListener("keydown", onKeyDown);
+  ensureListen();
+  // 应用启动即持续监听系统内存（设置页/启动页共用）
+  startMemoryMonitor();
+  // 游戏退出 → 若启动器曾被隐藏/最小化则恢复显示
+  listen<[number, string]>("game-exited", () => {
+    if (!launcherConcealed) return;
+    launcherConcealed = false;
+    const win = getCurrentWindow();
+    win.show();
+    win.unminimize();
+  });
 });
 
 onUnmounted(() => {
@@ -21,13 +107,17 @@ onUnmounted(() => {
 <template>
   <div class="app-layout">
     <TitleBar />
+    <DownloadFAB />
     <main class="main-content">
-      <router-view v-slot="{ Component }">
-        <Transition name="route" mode="out-in">
+      <router-view v-slot="{ Component, route }">
+        <Transition :name="(route.meta.transition as string) || 'route'" mode="out-in">
           <component :is="Component" />
         </Transition>
       </router-view>
     </main>
+    <Transition name="toast">
+      <div v-if="toastMsg" class="toast">{{ toastMsg }}</div>
+    </Transition>
   </div>
 </template>
 
@@ -40,11 +130,20 @@ html, body {
   background: transparent;
   height: 100%;
   width: 100%;
+  /* 全局禁止选中（输入框/文本域内例外） */
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 #app {
   height: 100%;
   width: 100%;
+}
+
+/* 输入控件保持可选中/可编辑 */
+input, textarea {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 :root {
@@ -124,9 +223,38 @@ html, body {
 .main-content {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
   background-color: var(--surface-page);
 }
 
-.route-enter-active, .route-leave-active { transition: opacity 0.25s ease; }
-.route-enter-from, .route-leave-to { opacity: 0; }
+/* Route transitions — simple opacity fade, normal flow, no scroll jitter */
+.route-enter-active,
+.route-leave-active,
+.slide-left-enter-active,
+.slide-left-leave-active,
+.slide-right-enter-active,
+.slide-right-leave-active {
+  transition: opacity 0.18s ease;
+}
+.route-enter-from,
+.slide-left-enter-from,
+.slide-right-enter-from { opacity: 0; }
+.route-leave-to,
+.slide-left-leave-to,
+.slide-right-leave-to { opacity: 0; }
+
+.toast {
+  position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+  z-index: 9999;
+  padding: 10px 24px; border-radius: var(--radius-md);
+  background: #1E1B4B; color: #fff;
+  font-size: 13px; font-weight: 500;
+  white-space: nowrap; box-shadow: var(--shadow-lg);
+  pointer-events: none;
+}
+.toast-enter-active { transition: all 0.3s ease-out; }
+.toast-leave-active { transition: all 0.2s ease-in; }
+.toast-enter-from { opacity: 0; transform: translateX(-50%) translateY(16px); }
+.toast-leave-to   { opacity: 0; transform: translateX(-50%) translateY(16px); }
 </style>

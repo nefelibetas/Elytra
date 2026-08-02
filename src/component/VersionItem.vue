@@ -7,7 +7,7 @@ defineProps<{
   badgeClass?: string;
 }>();
 
-const emit = defineEmits<{ select: []; action: [] }>();
+const emit = defineEmits<{ select: [] }>();
 </script>
 
 <template>
@@ -21,15 +21,10 @@ const emit = defineEmits<{ select: []; action: [] }>();
       <span v-else class="ver-id">{{ versionId }}</span>
       <span class="ver-sub">{{ subtitle }}</span>
     </div>
-    <button class="ver-action" title="下载服务端" @click="emit('action')">
-      <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
-        <rect x="3" y="1" width="10" height="2" rx="1" />
-        <rect x="4" y="3" width="8" height="8" rx="1" />
-        <rect x="5" y="5" width="6" height="1" />
-        <rect x="5" y="7" width="4" height="1" />
-        <polygon points="8,11 10.5,8.5 12,10 8,14 4,10 5.5,8.5" />
-      </svg>
-    </button>
+    <!-- 右侧操作区：由使用场景按需组合（hover 显示） -->
+    <div class="ver-actions">
+      <slot name="action" />
+    </div>
   </div>
 </template>
 
@@ -44,8 +39,6 @@ const emit = defineEmits<{ select: []; action: [] }>();
 }
 
 .ver-item:hover { background-color: var(--surface-hover); }
-
-.ver-item + .ver-item { border-top: 1px solid var(--border-default); }
 
 .ver-icon { flex-shrink: 0; border-radius: 3px; }
 
@@ -75,22 +68,16 @@ const emit = defineEmits<{ select: []; action: [] }>();
 
 .ver-badge[class*="old"] { color: #7c3aed; background-color: rgba(124, 58, 237, 0.1); }
 
-.ver-action {
+.ver-actions {
   flex-shrink: 0;
-  width: 32px; height: 32px;
-  display: flex; align-items: center; justify-content: center;
-  border: none; background: transparent;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   opacity: 0;
+  transition: opacity 0.12s;
 }
 
-.ver-item:hover .ver-action { opacity: 1; }
-
-.ver-action:hover {
-  background-color: var(--color-brand-bg);
-  color: var(--color-brand);
+.ver-item:hover .ver-actions {
+  opacity: 1;
 }
 </style>

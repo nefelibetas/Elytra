@@ -1,9 +1,12 @@
 use std::path::Path;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
+use super::extract::native_classifier_matches;
 use super::hash::file_sha1_matches;
-use crate::downloader::fetcher;
+use crate::config::downloader::model::DownloadSource;
+use crate::downloader::fetcher::{self, http_libs};
 use crate::downloader::model::{Library, OsRule, Rule};
 
 fn matches_rules(rules: &[Rule]) -> bool {
@@ -28,16 +31,38 @@ fn should_download(lib: &Library) -> bool {
             return false;
         }
     }
-    if lib.name.contains("-natives-") || lib.name.contains("natives-windows") {
+    if !native_classifier_matches(&lib.name) {
         return false;
     }
     true
+}
+
+/// Count how many libraries still need downloading (filtering + existence + sha1 check).
+pub fn count_pending(libraries: &[Library], lib_dir: &Path) -> usize {
+    libraries.iter().filter(|lib| {
+        if !should_download(lib) { return false; }
+        let Some(artifact) = lib.downloads.as_ref().and_then(|d| d.artifact.as_ref()) else { return false; };
+        let dest = lib_dir.join(&artifact.path);
+        if dest.exists() && file_sha1_matches(&dest, &artifact.sha1) { return false; }
+        true
+    }).count()
+}
+
+/// Count libraries that need to be present (passes filter + has artifact), regardless of local state.
+pub fn count_total(libraries: &[Library]) -> usize {
+    libraries.iter().filter(|lib| {
+        if !should_download(lib) { return false; }
+        lib.downloads.as_ref().and_then(|d| d.artifact.as_ref()).is_some()
+    }).count()
 }
 
 pub async fn download_libraries(
     libraries: &[Library],
     libraries_dir: &Path,
     concurrency: usize,
+    source: &DownloadSource,
+    counter: Option<Arc<AtomicU32>>,
+    bytes_counter: Option<Arc<AtomicU64>>,
 ) -> Result<(), Vec<String>> {
     let mut tasks: Vec<(String, std::path::PathBuf)> = Vec::new();
 
@@ -52,7 +77,8 @@ pub async fn download_libraries(
         if dest.exists() && file_sha1_matches(&dest, &artifact.sha1) {
             continue;
         }
-        tasks.push((artifact.url.clone(), dest));
+        let url = source.mirror_url(&artifact.url);
+        tasks.push((url, dest));
     }
 
     if tasks.is_empty() {
@@ -65,11 +91,18 @@ pub async fn download_libraries(
 
     for (url, dest) in tasks {
         let permit = sem.clone();
+        let ctr = counter.clone();
+        let bc = bytes_counter.clone();
         handles.push(tokio::spawn(async move {
             let _permit = permit.acquire_owned().await.unwrap();
-            fetcher::fetch(&url, &dest, None::<fn(u64, u64)>)
-                .await
-                .map_err(|e| format!("{}: {}", dest.display(), e))
+            match fetcher::fetch_with(http_libs(), &url, &dest, None::<fn(u64, u64)>).await {
+                Ok(dl) => {
+                    if let Some(ref c) = ctr { c.fetch_add(1, Ordering::Relaxed); }
+                    if let Some(ref b) = bc { b.fetch_add(dl.bytes, Ordering::SeqCst); }
+                    Ok(())
+                }
+                Err(e) => Err(format!("{}: {}", dest.display(), e)),
+            }
         }));
     }
 

@@ -2,6 +2,10 @@ mod store;
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use std::sync::Mutex;
+
+/// 串行化所有读改写，避免后台线程与命令写入互相覆盖（read-modify-write 竞态）。
+static PERSIST_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug)]
 pub enum PersistError {
@@ -21,6 +25,7 @@ impl std::fmt::Display for PersistError {
 }
 
 pub fn read<T: DeserializeOwned>(key: &str) -> Result<T, PersistError> {
+    let _guard = PERSIST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let content = store::read_raw().map_err(PersistError::Io)?;
     if content.is_empty() {
         return Err(PersistError::NotFound);
@@ -28,12 +33,27 @@ pub fn read<T: DeserializeOwned>(key: &str) -> Result<T, PersistError> {
     let root: toml::Table =
         toml::from_str(&content).map_err(|e| PersistError::Serde(e.to_string()))?;
     let value = root.get(key).ok_or(PersistError::NotFound)?;
-    let section =
-        toml::to_string(value).map_err(|e| PersistError::Serde(e.to_string()))?;
-    toml::from_str(&section).map_err(|e| PersistError::Serde(e.to_string()))
+    // 直接反序列化值本身（String / Vec 等裸值也是合法 TOML value），
+    // 不能先 to_string 再 from_str——那要求文档必须是 table。
+    value
+        .clone()
+        .try_into()
+        .map_err(|e: toml::de::Error| PersistError::Serde(e.to_string()))
+}
+
+/// 删除某个 section。
+pub fn remove(key: &str) -> Result<(), PersistError> {
+    let _guard = PERSIST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let content = store::read_raw().unwrap_or_default();
+    let mut root: toml::Table = toml::from_str(&content).unwrap_or_default();
+    root.remove(key);
+    let output =
+        toml::to_string_pretty(&root).map_err(|e| PersistError::Serde(e.to_string()))?;
+    store::write_raw(&output).map_err(PersistError::Io)
 }
 
 pub fn save<T: Serialize>(key: &str, data: &T) -> Result<(), PersistError> {
+    let _guard = PERSIST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let content = store::read_raw().unwrap_or_default();
     let mut root: toml::Table =
         toml::from_str(&content).unwrap_or_default();
@@ -45,4 +65,55 @@ pub fn save<T: Serialize>(key: &str, data: &T) -> Result<(), PersistError> {
     let output =
         toml::to_string_pretty(&root).map_err(|e| PersistError::Serde(e.to_string()))?;
     store::write_raw(&output).map_err(PersistError::Io)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::{Deserialize, Serialize};
+    use std::path::PathBuf;
+
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    struct FakeConfig {
+        name: String,
+        count: i32,
+    }
+
+    /// 测试进程的 current_exe 在 target/debug/deps/ 下，配置文件独立于正式运行。
+    fn test_file() -> PathBuf {
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .unwrap()
+            .join("Elytra")
+            .join("Settings.toml")
+    }
+
+    #[test]
+    fn test_read_write_string() {
+        let _ = std::fs::remove_file(test_file());
+        save("last_offline_username", &"BridgeFishDev".to_string()).unwrap();
+        let v: String = read("last_offline_username").unwrap();
+        assert_eq!(v, "BridgeFishDev");
+        let _ = std::fs::remove_file(test_file());
+    }
+
+    #[test]
+    fn test_read_write_vec() {
+        let _ = std::fs::remove_file(test_file());
+        save("history", &vec!["a".to_string(), "b".to_string()]).unwrap();
+        let v: Vec<String> = read("history").unwrap();
+        assert_eq!(v, vec!["a".to_string(), "b".to_string()]);
+        let _ = std::fs::remove_file(test_file());
+    }
+
+    #[test]
+    fn test_read_write_struct() {
+        let _ = std::fs::remove_file(test_file());
+        let cfg = FakeConfig { name: "x".into(), count: 3 };
+        save("fake", &cfg).unwrap();
+        let v: FakeConfig = read("fake").unwrap();
+        assert_eq!(v, cfg);
+        let _ = std::fs::remove_file(test_file());
+    }
 }

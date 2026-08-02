@@ -1,9 +1,28 @@
 <script setup lang="ts">
-import { useRoute } from "vue-router";
+import { computed } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { dlState } from "../store/download";
 
 const route = useRoute();
+const router = useRouter();
 const appWindow = getCurrentWindow();
+
+const isDetail = computed(
+  () =>
+    route.path === "/download-detail" ||
+    route.path === "/version-select" ||
+    route.path === "/version-setup",
+);
+
+/** 次级页面标题栏文案。 */
+const barTitle = computed(() => {
+  if (route.path === "/version-select") return "版本选择";
+  if (route.path === "/version-setup") {
+    return `版本设置 - ${String(route.query.name ?? "")}`;
+  }
+  return "下载管理";
+});
 
 const items = [
   { path: "/", label: "启动", icon: "play" },
@@ -20,33 +39,68 @@ function onMouseDown(e: MouseEvent) {
   if (target.closest("a, button")) return;
   appWindow.startDragging();
 }
+
+function goBack() {
+  const p = router.currentRoute.value.path;
+  if (p === "/version-select") {
+    router.push("/");
+    return;
+  }
+  if (p === "/version-setup") {
+    router.push("/version-select");
+    return;
+  }
+  const prev = dlState.previousRoute || "/";
+  router.push(prev);
+  dlState.previousRoute = "/";
+}
 </script>
 
 <template>
   <header class="titlebar" @mousedown="onMouseDown">
-    <div class="tl">
-      <span class="logo">Elytra</span>
-    </div>
-
-    <nav class="tc">
-      <router-link
-        v-for="item in items" :key="item.path"
-        :to="item.path"
-        class="nav" :class="{ active: isActive(item.path) }"
-      >
-        <svg v-if="item.icon === 'play'" viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
-          <polygon points="3,1 14,8 3,15" />
-        </svg>
-        <svg v-if="item.icon === 'download'" viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
-          <rect x="2" y="12" width="12" height="2" rx="1" />
-          <polygon points="7,1 9,1 9,7 11.5,4.5 13,6 8,11 3,6 4.5,4.5 7,7" />
-        </svg>
-        <svg v-if="item.icon === 'settings'" viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
-          <path d="M8 1a1 1 0 01.5.18l.7.56a2.8 2.8 0 001.38.54l.88.08a.8.8 0 01.67.67l.08.88a2.8 2.8 0 00.54 1.38l.56.7a.8.8 0 010 1l-.56.7a2.8 2.8 0 00-.54 1.38l-.08.88a.8.8 0 01-.67.67l-.88.08a2.8 2.8 0 00-1.38.54l-.7.56a.8.8 0 01-1 0l-.7-.56a2.8 2.8 0 00-1.38-.54l-.88-.08a.8.8 0 01-.67-.67l-.08-.88a2.8 2.8 0 00-.54-1.38l-.56-.7a.8.8 0 010-1l.56-.7a2.8 2.8 0 00.54-1.38l.08-.88a.8.8 0 01.67-.67l.88-.08a2.8 2.8 0 001.38-.54l.7-.56A1 1 0 018 1zm0 3.2a3.2 3.2 0 100 6.4 3.2 3.2 0 000-6.4z" />
-        </svg>
-        <span class="label">{{ item.label }}</span>
-      </router-link>
-    </nav>
+    <Transition name="bar-slide" mode="out-in">
+      <div v-if="isDetail" key="detail" class="bar-inner">
+        <div class="tl">
+          <button class="back-btn" @click="goBack">
+            <svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2L4 8l6 6" /></svg>
+            <span>{{ barTitle }}</span>
+          </button>
+        </div>
+        <div class="tc"></div>
+      </div>
+      <div v-else key="main" class="bar-inner">
+        <div class="tl">
+          <span class="logo">Elytra</span>
+        </div>
+        <nav class="tc">
+          <router-link
+            v-for="item in items" :key="item.path"
+            :to="item.path"
+            class="nav" :class="{ active: isActive(item.path) }"
+          >
+            <svg v-if="item.icon === 'play'" viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+              <polygon points="3,1 14,8 3,15" />
+            </svg>
+            <svg v-if="item.icon === 'download'" viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+              <rect x="2" y="12" width="12" height="2" rx="1" />
+              <polygon points="7,1 9,1 9,7 11.5,4.5 13,6 8,11 3,6 4.5,4.5 7,7" />
+            </svg>
+            <svg v-if="item.icon === 'settings'" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <line x1="21" y1="4" x2="14" y2="4"/>
+              <line x1="10" y1="4" x2="3" y2="4"/>
+              <line x1="21" y1="12" x2="12" y2="12"/>
+              <line x1="8" y1="12" x2="3" y2="12"/>
+              <line x1="21" y1="20" x2="16" y2="20"/>
+              <line x1="12" y1="20" x2="3" y2="20"/>
+              <line x1="14" y1="2" x2="14" y2="6"/>
+              <line x1="8" y1="10" x2="8" y2="14"/>
+              <line x1="16" y1="18" x2="16" y2="22"/>
+            </svg>
+            <span class="label">{{ item.label }}</span>
+          </router-link>
+        </nav>
+      </div>
+    </Transition>
 
     <div class="tr">
       <button class="win" @click="minimize" title="最小化">
@@ -78,7 +132,7 @@ function onMouseDown(e: MouseEvent) {
   box-shadow: var(--shadow-sm);
 }
 
-.tl { display: flex; align-items: center; width: 100px; }
+.tl { display: flex; align-items: center; width: auto; min-width: 0; }
 
 .logo {
   font-size: 18px;
@@ -91,6 +145,25 @@ function onMouseDown(e: MouseEvent) {
   align-items: center;
   border-radius: var(--radius-md);
   background-color: rgba(255, 255, 255, 0.9);
+}
+
+.back-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 10px;
+  border: none; background: transparent;
+  color: rgba(255,255,255,0.8);
+  cursor: pointer; border-radius: var(--radius-sm);
+  font-size: 14px; font-weight: 500;
+  transition: all 0.15s;
+  outline: none;
+}
+.back-btn svg { flex-shrink: 0; }
+.back-btn:hover { background-color: rgba(255,255,255,0.12); color: #fff; }
+.back-btn { white-space: nowrap; }
+
+.dt-title {
+  font-size: 14px; font-weight: 600;
+  color: rgba(255,255,255,0.9);
 }
 
 .tc {
@@ -155,5 +228,20 @@ function onMouseDown(e: MouseEvent) {
 .close:hover {
   background-color: rgba(0, 0, 0, 0.25);
   color: #fff;
+}
+
+.bar-inner {
+  display: flex; align-items: center; gap: 16px;
+  width: 100%; height: 100%;
+}
+
+.bar-slide-enter-active, .bar-slide-leave-active {
+  transition: all 0.2s ease;
+}
+.bar-slide-enter-from {
+  opacity: 0; transform: translateX(24px);
+}
+.bar-slide-leave-to {
+  opacity: 0; transform: translateX(-24px);
 }
 </style>

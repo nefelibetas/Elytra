@@ -2,16 +2,10 @@ use elytra_lib::config::downloader::model::DownloaderConfig;
 use elytra_lib::downloader::manifest;
 
 fn test_config() -> DownloaderConfig {
-    DownloaderConfig {
-        sources: vec![elytra_lib::config::downloader::model::DownloadSource {
-            name: "test".into(),
-            manifest_url: "https://piston-meta.mojang.com".into(),
-            resource_url: "https://resources.download.minecraft.net".into(),
-        }],
-        active_source: "0".into(),
-        concurrency: 8,
-        minecraft_dir: r"D:\download_test".into(),
-    }
+    let mut cfg = DownloaderConfig::default();
+    cfg.active_source = "0".into();
+    cfg.minecraft_dir = r"D:\download_test".into();
+    cfg
 }
 
 #[tokio::test]

@@ -47,25 +47,96 @@ impl Default for MemoryMode {
     }
 }
 
+/// 游戏启动后启动器窗口的可见性行为。
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub enum LauncherVisibility {
+    /// 保持不变（默认）。
+    #[default]
+    Keep,
+    Minimize,
+    Hide,
+    /// 关闭启动器。
+    Close,
+}
+
+/// 游戏进程优先级（Windows 进程优先级类）。
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub enum ProcessPriority {
+    Low,
+    /// 中（平衡），默认。
+    #[default]
+    Normal,
+    High,
+    RealTime,
+}
+
+/// 游戏窗口大小。
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub enum WindowSize {
+    /// 默认（不传 --width/--height，由游戏自己决定）。
+    #[default]
+    Default,
+    Custom(u32, u32),
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LauncherConfig {
     pub memory: MemoryMode,
 
-    pub window_width: u32,
-    pub window_height: u32,
+    /// 游戏窗口标题；空 = 不改（不传 -Dminecraft.window.title）。
+    #[serde(default)]
+    pub window_title: String,
+
+    #[serde(default)]
+    pub launcher_visibility: LauncherVisibility,
+
+    #[serde(default)]
+    pub process_priority: ProcessPriority,
+
+    #[serde(default)]
+    pub window_size: WindowSize,
+
+    /// 禁用 Java Launch Wrapper（老版本主类 net.minecraft.launchwrapper.Launch → 直接用 client.main.Main）。
+    #[serde(default)]
+    pub disable_launch_wrapper: bool,
+
+    /// 禁用 LWJGL Unsafe Agent（不注入 -javaagent:lwjgl-unsafe-agent 类参数）。
+    #[serde(default)]
+    pub disable_lwjgl_unsafe_agent: bool,
+
+    /// 启动游戏前进行内存优化（Windows 清理当前进程工作集）。
+    #[serde(default)]
+    pub pre_launch_memory_optimize: bool,
+
+    /// 使用高性能显卡（Windows 注册表 DirectX UserGpuPreferences 指定独显）。
+    #[serde(default = "default_true")]
+    pub use_high_performance_gpu: bool,
 
     pub jvm_args: Vec<String>,
     pub game_args: Vec<String>,
 
     pub pre_launch_cmd: String,
+
+    #[serde(default)]
+    pub gc_type: GcType,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for LauncherConfig {
     fn default() -> Self {
         Self {
             memory: MemoryMode::default(),
-            window_width: 1280,
-            window_height: 720,
+            window_title: String::new(),
+            launcher_visibility: LauncherVisibility::default(),
+            process_priority: ProcessPriority::default(),
+            window_size: WindowSize::default(),
+            disable_launch_wrapper: false,
+            disable_lwjgl_unsafe_agent: false,
+            pre_launch_memory_optimize: false,
+            use_high_performance_gpu: true,
             jvm_args: vec![
                 "-XX:-OmitStackTraceInFastThrow".into(),
                 "-Djdk.lang.Process.allowAmbiguousCommands=True".into(),
@@ -74,6 +145,7 @@ impl Default for LauncherConfig {
             ],
             game_args: vec![],
             pre_launch_cmd: String::new(),
+            gc_type: GcType::default(),
         }
     }
 }

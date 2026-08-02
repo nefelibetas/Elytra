@@ -4,7 +4,9 @@ use crate::config::jdk::{scanner, storage};
 
 #[tauri::command]
 pub fn auto_scan_jdk() -> Vec<JavaEnv> {
-    scanner::auto_scan()
+    let found = scanner::auto_scan();
+    storage::merge_scanned(found.clone());
+    found
 }
 
 #[tauri::command]
@@ -14,7 +16,9 @@ pub fn get_jdk_config() -> JavaConfig {
 
 #[tauri::command]
 pub fn scan_custom_jdk(path: String) -> Result<Vec<JavaEnv>, String> {
-    scanner::scan_custom_dir(&path).map_err(|e| e.to_string())
+    let found = scanner::scan_custom_dir(&path).map_err(|e| e.to_string())?;
+    storage::merge_scanned(found.clone());
+    Ok(found)
 }
 
 #[tauri::command]
