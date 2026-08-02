@@ -1085,6 +1085,9 @@ onMounted(async () => {
   text-align: center;
   outline: none;
   transition: border-color 0.15s;
+  /* 盖过 .user-area::before hover 热区，保证可点击聚焦 */
+  position: relative;
+  z-index: 1;
 }
 
 .name-input:focus { border-color: var(--color-brand); }
