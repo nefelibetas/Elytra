@@ -1,3 +1,4 @@
+mod events;
 mod auth;
 mod commands;
 pub mod config;

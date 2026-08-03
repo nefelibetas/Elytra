@@ -6,10 +6,9 @@ pub mod installer;
 pub mod library;
 pub mod manifest;
 pub mod model;
-pub mod source;
 pub mod version;
 
-use std::path::Path;
+use std::path::Path;    
 
 use crate::config::downloader::model::DownloaderConfig;
 
@@ -55,7 +54,14 @@ pub async fn download_version(
     };
 
     let lib_dir = mc.join("libraries");
-    let libs = library::download_libraries(&vj.libraries, &lib_dir, config.concurrency as usize, &sources, None, None);
+    let libs = library::download_libraries(
+        &vj.libraries,
+        &lib_dir,
+        config.concurrency as usize,
+        &sources,
+        None,
+        None,
+    );
 
     let asst = assets::download_assets(
         &vj.asset_index.url,

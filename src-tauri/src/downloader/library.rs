@@ -13,7 +13,7 @@ fn matches_rules(rules: &[Rule]) -> bool {
     let mut allowed = false;
     for rule in rules {
         let os_match = match &rule.os {
-            Some(OsRule { name: Some(n) }) => n == "windows",
+            Some(OsRule { name: Some(n) }) => n == crate::downloader::extract::TARGET_OS,
             _ => true,
         };
         match rule.action.as_str() {

@@ -23,6 +23,5 @@ dist-ssr
 *.sln
 *.sw?
 pnpm-lock.yaml
-AGENTS.md
 .vscode/
 src-tauri/.minecraft

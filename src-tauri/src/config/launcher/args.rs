@@ -120,7 +120,7 @@ fn match_rules_json(rules: &[serde_json::Value], has_custom_resolution: bool) ->
             .and_then(|o| o.get("name"))
             .and_then(|n| n.as_str());
         let os_match = match os_name {
-            Some(n) => n == "windows",
+            Some(n) => n == crate::downloader::extract::TARGET_OS,
             None => true,
         };
         let feat_match = match rule.get("features") {
@@ -507,7 +507,7 @@ fn match_rules(rules: &[Rule]) -> bool {
     let mut allowed = false;
     for rule in rules {
         let os_match = match &rule.os {
-            Some(OsRule { name: Some(n) }) => n == "windows",
+            Some(OsRule { name: Some(n) }) => n == crate::downloader::extract::TARGET_OS,
             _ => true,
         };
         match rule.action.as_str() {
@@ -531,7 +531,7 @@ pub fn has_old_style_natives(version_json: &VersionJson) -> bool {
     version_json.libraries.iter().any(|lib| {
         lib.natives
             .as_ref()
-            .map(|n| n.contains_key("windows"))
+            .map(|n| n.contains_key(crate::downloader::extract::TARGET_OS))
             .unwrap_or(false)
     })
 }
@@ -561,7 +561,7 @@ pub fn ensure_old_style_natives(
 
     let mut errors: Vec<String> = Vec::new();
     for lib in &version_json.libraries {
-        let Some(classifier_key) = lib.natives.as_ref().and_then(|n| n.get("windows")) else {
+        let Some(classifier_key) = lib.natives.as_ref().and_then(|n| n.get(crate::downloader::extract::TARGET_OS)) else {
             continue;
         };
         let Some(classifiers) = lib.downloads.as_ref().and_then(|d| d.classifiers.as_ref()) else {

@@ -606,7 +606,7 @@ fn emit_result(
     error: Option<String>,
 ) -> Result<(), tauri::Error> {
     app.emit(
-        "ms-login-complete",
+        crate::events::MS_LOGIN_COMPLETE,
         json!({ "ok": ok, "account": account, "error": error }),
     )
 }

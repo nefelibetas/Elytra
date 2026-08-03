@@ -185,7 +185,7 @@ fn rules_match_os(rules: &[crate::downloader::model::Rule]) -> bool {
     let mut allowed = false;
     for rule in rules {
         let os_match = match &rule.os {
-            Some(crate::downloader::model::OsRule { name: Some(n) }) => n == "windows",
+            Some(crate::downloader::model::OsRule { name: Some(n) }) => n == crate::downloader::extract::TARGET_OS,
             _ => true,
         };
         match rule.action.as_str() {
@@ -908,7 +908,7 @@ pub async fn spawn_game(
     let version_label = version_dir_name.clone();
     std::thread::spawn(move || {
         let _ = child.wait();
-        let _ = app_handle.emit("game-exited", (pid, version_label));
+        let _ = app_handle.emit(crate::events::GAME_EXITED, (pid, version_label));
     });
 
     Ok(pid)

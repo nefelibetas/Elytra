@@ -1,78 +1,126 @@
-# ElytraLauncher — Tauri v2 Minecraft 启动器
+# Repository Guidelines
 
-## 架构
+## Project Overview
+
+ElytraLauncher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前端）** 的 Minecraft 启动器。功能：游戏版本下载（官方/国内镜像多源）、ModLoader 安装（Forge/Fabric/NeoForge/Quilt/OptiFine/LiteLoader）、微软正版登录（OAuth PKCE）、离线模式与离线皮肤（对齐 PCL2 机制）、JDK 自动扫描、下载任务管理、启动参数构建与游戏进程管理。
+
+后端 67 个 `#[tauri::command]`（38 async / 29 sync），前端 6 个页面，无状态管理库（模块级 `reactive()` 单例）。
+
+## Architecture & Data Flow
 
 ```
-src-tauri/src/
-├── commands/         ← #[tauri::command] 薄胶水层
-│   ├── jdk.rs        ← 4 个 JDK 命令
-│   ├── downloader.rs ← 版本列表 / 下载 / 配置
-│   ├── loader.rs     ← Forge/Fabric/Quilt/NeoForge/OptiFine/LiteLoader 版本查询
-│   ├── installer.rs  ← Fabric/Forge/NeoForge/OptiFine 安装
-│   └── task.rs       ← 任务生命周期（start/cancel/list/remove）
-├── config/           ← 配置模型（无状态，纯数据）
-│   ├── jdk/          ← JavaEnv, JavaConfig, scanner, storage
-│   ├── downloader/   ← DownloadSource, DownloaderConfig（含 fallback 下载逻辑）
-│   └── launcher/     ← LauncherConfig, GcType, AuthMode, MemoryMode
-├── downloader/       ← Minecraft 下载引擎
-│   ├── manifest.rs   ← 版本清单获取
-│   ├── version.rs    ← 版本 JSON / client.jar 下载
-│   ├── library.rs    ← 依赖库下载
-│   ├── assets.rs     ← 资源文件下载
-│   ├── installer.rs  ← ModLoader 安装器
-│   ├── fetcher.rs    ← HTTP 客户端
-│   ├── hash.rs       ← SHA1 校验
-│   └── model.rs      ← VersionJson, Library, AssetIndex 等
-├── persist/          ← TOML 持久化（read<T>/save<T> 按 section 存取）
-├── task/             ← 全局 TaskManager（进度跟踪、取消、清理）
-├── lib.rs            ← mod 声明 + generate_handler![]
-└── main.rs           ← lib::run()
-src/
-├── main.ts           ← createApp + router
-├── App.vue           ← 根布局（TitleBar + Transition）
-├── router/index.ts   ← 4 路由：/ /download /settings /download-detail
-├── store/download.ts ← 下载任务状态（reactive）+ Tauri event 监听
-├── pages/            ← Launch / Download / Settings / DownloadDetail
-└── component/        ← TitleBar / DownloadFAB / DownloadTab / VersionCard / VersionItem
+前端 Vue3 (src/)  ──invoke(snake_case)──▶  commands/（薄胶水层）
+    ▲                                          │ 读 persist 配置、调领域函数
+    │ task-progress / ms-login-complete        ▼
+    │ 事件推送                      downloader/（下载流水线）auth/（微软登录）
+    │                                config/（纯数据模型）task/（TaskManager）
+    └────────────── 返回 Result<T, String> 或裸值
 ```
 
-## 关键约定
+- **后端分层**：`commands/` 只做胶水（读配置 → 调领域函数 → `map_err` 展平 String）；核心逻辑在 `downloader/`、`auth/`、`config/`；统一持久化 `persist/`（exe 旁 `Elytra/Settings.toml`，TOML 分 section，全局 Mutex 串行化）；任务由 `task/` TaskManager 单例（`tauri::async_runtime::spawn` + `task-progress` 事件推送）
+- **前端数据流**：`invoke` 返回 taskId → 预注册任务 → 后端推 `task-progress` 事件增量更新 `dlState` → done 时触发回调并移除；`memState` 每 2s 轮询内存
+- **配置联动**：`gamedirs::set_active_game_dir` 会写 downloader section 的 `minecraft_dir`，launch/downloader 都读该字段
+- **下载链路**：manifest → version JSON/client jar → libraries → assets → natives 解压；多源回退（主源 5s 超时降级"过慢"）+ sha1 校验 + 限速 + 并发
 
-### 模块模式
-- `commands/` 下每个文件只放 `#[tauri::command]` 函数（薄胶水层），核心逻辑放其他模块
-- `generate_handler!` 中路径必须与 `#[tauri::command]` 所在模块完全一致（re-export 不能代替）
-- 前端 TypeScript interface 需手动同步 Rust struct（无自动生成）
+## Key Directories
 
-### Tauri command
-- **同步和异步混用**：JDK 命令同步，downloader/loader/installer/task 命令全为 `async fn`
-- 返回 `Result<T, String>`，错误在模块边界展平为 String
+| 路径 | 职责 |
+|---|---|
+| `src-tauri/src/commands/` | 8 个命令模块：jdk / downloader / loader / installer / task / account / gamedirs / launch |
+| `src-tauri/src/config/` | 纯数据模型：`jdk/`（JavaEnv/scanner/storage）、`launcher/`（LauncherConfig + `args.rs` 启动命令构建）、`downloader/model.rs`（多源与回退）、`offline_skin.rs`、`game_dirs.rs` |
+| `src-tauri/src/downloader/` | 下载引擎：manifest / version / library / assets / installer / fetcher / hash / model / extract（`source.rs` 是空壳，URL 逻辑在 config 侧） |
+| `src-tauri/src/auth/` | 微软 OAuth PKCE 全链路（`microsoft.rs`）+ MsAccount（`model.rs`） |
+| `src-tauri/src/persist/` | TOML section 存取（`read<T>/save<T>/remove`） |
+| `src-tauri/src/task/` | TaskManager 单例 + 进度事件 |
+| `src/pages/` | Launch（启动/登录/头像）、Download（下载/loader 选择）、Settings（Java/启动选项/离线皮肤/下载源）、DownloadDetail（任务管理）、VersionSelect（版本选择）、VersionSetup（版本设置） |
+| `src/store/` | `download.ts`（dlState）、`memory.ts`（memState）——模块级 reactive 单例 |
+| `src/component/` | TitleBar / DownloadFAB / DownloadTab / VersionCard / VersionItem / AlertDialog / DialogModal |
+| `src/utils/` | versionClassify（目录名 `{mc}-{loader}-{ver}` 解析）、versionIcons |
 
-### 配置存储
-- 单文件 `Elytra/Settings.toml`（exe 同级），TOML 格式，按 key section 存取
-- `persist::read<T>("downloader")` / `persist::save("downloader", &config)` 读写指定 section
-- 前端负责编排读写时机，后端无状态
-
-### 下载引擎
-- 支持多数据源（官方 + 国内镜像），`active_source` 索引决定主源，`fetch_with_fallback`/`fetch_json_with_fallback` 自动回退
-- BMCLAPI 源自动 URL 重写（`mirror_url`）
-- 任务通过 `TaskManager` 全局单例管理，`task-progress` event 推送进度到前端
-
-## 开发命令
+## Development Commands
 
 ```bash
-pnpm tauri dev                     # 启动 Tauri 开发窗口（前端 :1420 + Rust）
-pnpm tauri build                   # 构建发布包
-cd src-tauri && cargo check        # Rust 编译检查
-cd src-tauri && cargo clippy       # Rust 代码检查
-cd src-tauri && cargo test         # 运行 Rust 测试
-pnpm build                         # 前端类型检查 + 构建（vue-tsc --noEmit + vite build）
-pnpm dev                           # 仅启动 vite 前端 dev server（不含 Tauri）
+pnpm tauri dev      # 主开发命令：vite :1420 + Rust dev 窗口（Rust 改动需手动重启才生效）
+pnpm tauri build    # 发布构建（vue-tsc + vite + cargo release + bundle）
+pnpm dev            # 仅 vite dev server（:1420 strictPort）
+pnpm build          # vue-tsc --noEmit（全量类型检查）+ vite build → dist/
+cd src-tauri && cargo check    # Rust 编译检查
+cd src-tauri && cargo clippy   # Rust lint
+cd src-tauri && cargo test --lib   # 单元测试（安全，27 个）
 ```
 
-## 注意事项
-- 包管理器必须用 **pnpm**（`beforeDevCommand` 硬编码）
-- 窗口无边框透明（`decorations: false, transparent: true`），800×520，不可调整大小
-- Rust 测试在 `src-tauri/tests/downloader_test.rs`，需要有效的 `minecraft_dir` 配置
-- `capabilities/default.json` 控制 Tauri v2 权限（window 拖拽/最小化/关闭 + opener + dialog）
-- 前端路由使用 `createWebHashHistory`（hash 路由）
-- 下载任务基于 `tokio::spawn` + event 推送，非 command 返回
+**测试红线**：`cargo test` 全量会跑 `download_snapshot_full`——**真实下载数百 MB** 到 `D:\download_test`（硬编码路径），日常验证**务必只用 `cargo test --lib`**。集成测试 `fetch_manifest_works` 需网络（单发小请求）。
+
+## Code Conventions & Common Patterns
+
+### Rust 后端
+- **命令命名**：snake_case、动词开头（`get_/save_/set_/fetch_/scan_/launch_/spawn_/start_/cancel_/remove_`…）
+- **返回**：可失败 → `Result<T, String>`；纯读取 → 裸 `T`/`Option<T>`；错误在模块边界 `.map_err(|e| e.to_string())`
+- **async 分布**：网络/IO 重命令 async；配置读写/本地小操作同步
+- **注册**：新命令 = `commands/<file>.rs` 加 `#[tauri::command] pub fn`，再在 `lib.rs` 的 `generate_handler![commands::<file>::<fn>, ...]` 追加**全限定路径**——`commands/mod.rs` 只有 `pub mod`，re-export 不能代替
+- **错误消息**：中文，约定"首行短文案 + `\n` 详细技术信息"
+- **持久化**：配置一律 `persist::read::<T>("section").unwrap_or_default()`；结构体实现 `Default`；`save` 前读改写（全局锁串行化）
+- **下载**：`fetch_with`（3 次重试+退避）/`fetch_fallback`（多源 URL 列表）/`fetch_json_with_fallback`（主源 5s 超时降级）；`file_sha1_matches` 整文件读内存
+- **版本目录**：`versions/{id}` 冲突时 `{id}_{n}`；目录内 jar/json 文件名可能 ≠ 目录名，一律扫描兜底
+
+### 前端 Vue/TS
+- **IPC**：命令名与参数/返回值字段全 snake_case；**TS interface 手写镜像 Rust struct，无自动生成**——改 Rust 字段必须同步前端
+- **跨组件缓存必须放普通 `<script lang="ts">` 块**——`<script setup>` 顶层变量每次组件重建（路由切换）重置（Launch.vue 头像缓存、Download.vue manifest 缓存为范例）
+- **状态**：模块级 `reactive()` 单例导出，页面直接 import；无 Pinia/Vuex
+- **事件监听幂等**：`ensureListen()` 用 listening 标志防重复注册
+- **样式**：CSS 变量统一在 App.vue `:root`（`--color-brand`/`--text-*`/`--surface-*`/`--radius-*` 等），组件页面一律 `var()` 引用、`<style scoped>`；图标用内联 SVG（`fill=currentColor`），无图标库
+- **错误提示两级**：toast（`window.__showToast`，2.5s）vs AlertDialog（复杂错误，带复制按钮）
+- **路由**：hash 路由（`createWebHashHistory`），`meta.transition` 驱动页面动画
+
+## Important Files
+
+| 文件 | 说明 |
+|---|---|
+| `src-tauri/src/lib.rs` | 入口：`task::init()`、后台预扫 JDK、**唯一** generate_handler! 注册点（67 命令） |
+| `src-tauri/src/main.rs` | 仅 `elytra_lib::run()` |
+| `src-tauri/src/commands/launch.rs` | 启动核心：build_launch_command 组装、离线皮肤（PCL 机制：UUID 模型匹配 + 自定义资源包）、userProperties 注入（1.19.2 以下） |
+| `src-tauri/src/config/launcher/args.rs` | `${key}` 占位符替换、rules/features 匹配、classpath、JDK22+ 标志 |
+| `src-tauri/src/config/downloader/model.rs` | 多源 URL 模板、`mirror_url` BMCLAPI 重写、过慢降级 |
+| `src-tauri/src/auth/microsoft.rs` | 微软 OAuth（授权码/refresh/XBL/XSTS/MC login）、xuid 提取、回调服务 127.0.0.1:27205 |
+| `src-tauri/src/persist/store.rs` | 配置文件路径 = `current_exe 目录/Elytra/Settings.toml`（非标准配置目录） |
+| `src-tauri/src/task/mod.rs` | TaskManager 单例；取消时 `cleanup_path` 整删（慎用 set_cleanup_path） |
+| `src-tauri/tauri.conf.json` | 窗口 **840×540**、无边框透明、`beforeDevCommand: pnpm dev`、devUrl :1420 |
+| `src-tauri/capabilities/default.json` | main 窗口权限：core:default + window 控制子集 + opener + dialog |
+| `src/store/download.ts` | 下载任务状态机（事件驱动核心） |
+
+## Runtime/Tooling Preferences
+
+- **包管理器必须 pnpm**：`beforeDevCommand` 硬编码 `pnpm dev`；注意 `pnpm-lock.yaml` 被 gitignore（依赖版本不锁定）
+- **工具链很新**：vite 8、typescript 6、vue-tsc 3、vue-router 5——新增依赖前确认兼容
+- **窗口**：840×540、`decorations:false` + `transparent:true` + `resizable:false`——前端自绘 TitleBar（`startDragging`）
+- **Rust 变更需重启 `pnpm tauri dev`**（vite `watch.ignored` 忽略 src-tauri）；前端改动 HMR 即时生效
+- **reqwest 0.13 无 `.form()`**：表单需手工 urlencode（auth 里 `form_body`）
+- **MS_CLIENT_ID 固定 PrismLauncher 的**（自建 Azure 应用 2025 起 403）；回调端口 27205 写死
+- **lib 名 `elytra_lib`**：Windows 下 bin/lib 同名会 Cargo 8519，保留 `_lib` 后缀
+- **版本号两处**：tauri.conf.json（1.0.0）与 Cargo.toml（0.1.0）不一致，改动需同步
+- **capabilities 是 v2 权限门**：新增 JS 侧 window/fs/dialog API 必须先在 `default.json` 加权限
+- 新增依赖前评估：库名、用途、更轻量替代，确认后再引入
+- 敏感信息（token/client secret）不硬编码、不打印日志、不提交 git
+
+## Testing & QA
+
+- **无前端测试**；Rust 侧 27 个单元测试 + 2 个集成测试，全部 `#[test]`（集成用 `#[tokio::test]`）
+- **单元测试只测纯函数**：PKCE、URL 组装、启动命令构建（`build_cmd` + `minimal_version_json()` 助手）、离线皮肤 UUID 算法（与 Java `UUID.hashCode() & 1` 一致性）、内存分配公式、修复步骤规划、persist 读写回环
+- **断言风格**：`assert_eq!` 精确值为主（argv 位置、公式值、错误码消息）；行为不变量用 `assert!` + 中文 message
+- **平台隔离**：Windows 专属逻辑（BAT 脚本渲染）用 `#[cfg(target_os = "windows")]`
+- **persist 测试隔离**：测试进程下配置落在 `target/debug/deps/Elytra/Settings.toml`，与正式运行隔离
+- **安全命令**：`cargo test --lib`（无网络、无大写入）——日常验证用这个
+- **危险命令**：`cargo test` 全量 / `--test downloader_test`——真实下载最新 snapshot 数百 MB 到 `D:\download_test`，避免
+- 集成测试无 mock/本地 fixture，走真实官方源；`downloader/hash.rs` 与 version JSON 解析目前无单测（仅被集成测试间接覆盖）
+
+## Gotchas
+
+1. `generate_handler!` 路径必须与模块树一致，`commands/mod.rs` 无 re-export
+2. 同步命令的阻塞操作（`remove_dir_all`、rename、explorer）跑在主线程——重活改 async/`spawn_blocking`
+4. `extract.rs`/`library.rs`/`launch.rs` 硬编码 `"windows"`，跨平台要一起改
+5. `task::init()` 必须在 `run()` 开头调用，否则 `task::global()` panic
+6. 事件名 `task-progress` / `ms-login-complete` / `game-exited` 前后端字符串要一致
+7. App.vue 拦截 F12/DevTools/全选/Tab/ESC 快捷键——调试注意
+8. 长页面单文件巨大（Launch 1566 行、Settings 1815 行），改动前先 grep 定位
+9. 版本选择持久化：localStorage 双键 `elytra.selectedVersion` + `elytra.selectedVersionDir`
+10. AGENTS.md 本身被 `.gitignore` 忽略（本地文件）；README.md 是空文件

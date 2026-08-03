@@ -8,8 +8,14 @@ use crate::config::downloader::model::DownloadSource;
 use crate::downloader::fetcher;
 use crate::downloader::model::{ExtractRules, Library};
 
-/// 当前目标 OS（与 matches_rules 保持一致）
-const TARGET_OS: &str = "windows";
+/// 当前目标 OS（与 matches_rules 保持一致）。
+/// 支持 Windows / Linux；macOS 仅保证编译（native classifier 惯例为 osx），不做适配。
+#[cfg(target_os = "windows")]
+pub const TARGET_OS: &str = "windows";
+#[cfg(target_os = "linux")]
+pub const TARGET_OS: &str = "linux";
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+pub const TARGET_OS: &str = "osx";
 
 /// 返回当前 OS 对应的 classifier key。
 ///

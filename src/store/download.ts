@@ -1,5 +1,6 @@
 import { reactive } from "vue"
 import { listen } from "@tauri-apps/api/event"
+import { EVT_TASK_PROGRESS } from "./events"
 import { invoke } from "@tauri-apps/api/core"
 
 export interface StepInfo {
@@ -137,7 +138,7 @@ let listening = false
 export function ensureListen() {
   if (listening) return
   listening = true
-  listen<ProgressPayload>("task-progress", (ev) => {
+  listen<ProgressPayload>(EVT_TASK_PROGRESS, (ev) => {
     const p = ev.payload
     const idx = dlState.tasks.findIndex(t => t.taskId === p.task_id)
     if (idx >= 0) {

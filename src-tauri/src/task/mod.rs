@@ -121,7 +121,7 @@ impl TaskManager {
 
 /// Emit a progress event to the frontend.
 pub fn emit(app: &AppHandle, p: &TaskProgress) {
-    let _ = app.emit("task-progress", p);
+    let _ = app.emit(crate::events::TASK_PROGRESS, p);
 }
 
 /// Update progress fields and emit.

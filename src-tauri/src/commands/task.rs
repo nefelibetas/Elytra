@@ -289,7 +289,7 @@ async fn run_repair_task(
                 let step_sum: f64 = p.steps.iter().map(|s| s.progress).sum();
                 let step_count = p.steps.len().max(1) as f64;
                 p.progress = (step_sum / step_count).min(100.0);
-                let _ = p_app.emit("task-progress", &*p);
+                let _ = p_app.emit(crate::events::TASK_PROGRESS, &*p);
                 p.completed_files >= p_total || p_cancel.load(Ordering::SeqCst)
             };
             if done {
@@ -540,7 +540,7 @@ async fn run_task(
                 let step_count = p.steps.len().max(1) as f64;
                 p.progress = (step_sum / step_count).min(100.0);
 
-                let _ = p_app.emit("task-progress", &*p);
+                let _ = p_app.emit(crate::events::TASK_PROGRESS, &*p);
             }
 
             if total >= p_total_files || p_cancel.load(Ordering::SeqCst) { break; }

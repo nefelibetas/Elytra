@@ -15,6 +15,7 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import AlertDialog from "../component/AlertDialog.vue";
+import { EVT_MS_LOGIN_COMPLETE, EVT_GAME_EXITED } from "../store/events";
 
 type AuthMode = "premium" | "offline";
 
@@ -693,7 +694,7 @@ onMounted(async () => {
   renderPremiumAvatar(msAccount.value?.uuid ?? "");
 
   await listen<{ ok: boolean; account: MsAccountInfo | null; error: string | null }>(
-    "ms-login-complete",
+    EVT_MS_LOGIN_COMPLETE,
     (ev) => {
       msLoginState.value = "idle";
       if (ev.payload.ok && ev.payload.account) {
@@ -706,7 +707,7 @@ onMounted(async () => {
     },
   );
 
-  await listen<[number, string]>("game-exited", (ev) => {
+  await listen<[number, string]>(EVT_GAME_EXITED, (ev) => {
     console.log("Game exited:", ev.payload);
   });
 });

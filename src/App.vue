@@ -8,6 +8,7 @@ import TitleBar from "./component/TitleBar.vue";
 import DownloadFAB from "./component/DownloadFAB.vue";
 import { dlState, ensureListen } from "./store/download";
 import { startMemoryMonitor } from "./store/memory";
+import { EVT_GAME_EXITED } from "./store/events";
 
 const router = useRouter();
 const toastMsg = ref("");
@@ -90,7 +91,7 @@ onMounted(() => {
   // 应用启动即持续监听系统内存（设置页/启动页共用）
   startMemoryMonitor();
   // 游戏退出 → 若启动器曾被隐藏/最小化则恢复显示
-  listen<[number, string]>("game-exited", () => {
+  listen<[number, string]>(EVT_GAME_EXITED, () => {
     if (!launcherConcealed) return;
     launcherConcealed = false;
     const win = getCurrentWindow();

@@ -204,8 +204,9 @@ pub fn ensure_game_folder(kind: String, version_name: String) -> Result<String, 
 }
 
 /// 删除版本文件夹（递归删除 versions/{name}）。
+/// 大目录删除耗时，用 tokio::fs（内部 spawn_blocking）避免阻塞主线程。
 #[tauri::command]
-pub fn delete_version_dir(version_name: String) -> Result<(), String> {
+pub async fn delete_version_dir(version_name: String) -> Result<(), String> {
     let active = get_active_game_dir();
     let dir = std::path::Path::new(&active.path)
         .join("versions")
@@ -213,5 +214,7 @@ pub fn delete_version_dir(version_name: String) -> Result<(), String> {
     if !dir.exists() {
         return Err(format!("版本「{version_name}」不存在"));
     }
-    std::fs::remove_dir_all(&dir).map_err(|e| format!("删除失败：{e}"))
+    tokio::fs::remove_dir_all(&dir)
+        .await
+        .map_err(|e| format!("删除失败：{e}"))
 }
