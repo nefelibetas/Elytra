@@ -5,7 +5,7 @@
 ## 功能
 
 - 游戏版本下载：官方源 / 国内镜像多源回退，sha1 校验，并发与限速
-- ModLoader：Forge / Fabric / NeoForge / Quilt / OptiFine / LiteLoader 版本查询与安装
+- ModLoader：Fabric / Forge / NeoForge / OptiFine 安装，Quilt / LiteLoader 版本查询（Quilt 暂复用 Fabric 流程）
 - 账号：微软正版登录（OAuth PKCE）、离线模式
 - 离线皮肤：Steve / Alex / 随机 / 自定义 / 正版玩家皮肤（对齐 PCL2 机制，仅 1.19.2 以下）
 - JDK 自动扫描与自定义配置
@@ -26,7 +26,7 @@ pnpm tauri build      # 发布构建
 ## 结构
 
 - `src/` — Vue 3 前端（6 个页面 + 模块级 `reactive()` 状态单例）
-- `src-tauri/` — Rust 后端（`commands/` 薄胶水层 + `downloader/` 下载引擎 + `auth/` 微软登录 + `persist/` TOML 配置）
+- `src-tauri/` — Rust 后端：`commands/` 命令胶水层、`task/` 任务管理器与下载编排、`config/launcher/` 启动构建/环境/离线皮肤、`auth/` 微软登录与皮肤 API、`downloader/` 下载引擎、`persist/` TOML 配置
 
 详见 [AGENTS.md](AGENTS.md)（仓库开发指南）。
 
