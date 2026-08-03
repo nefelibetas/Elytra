@@ -610,10 +610,13 @@ impl EmitLoop {
                         }
                     }
 
-                    // 总进度 = 各分步进度的平均值（始终与分步显示一致）
-                    let step_sum: f64 = p.steps.iter().map(|s| s.progress).sum();
-                    let step_count = p.steps.len().max(1) as f64;
-                    p.progress = (step_sum / step_count).min(100.0);
+                    // 总进度 = 已完成文件数 / 总文件数（与检测阶段 set_completed 同公式，
+                    // 无缝衔接：检测完即 initial/total，下载中继续单调涨）
+                    p.progress = if self.total_files > 0 {
+                        (completed as f64 / self.total_files as f64 * 100.0).min(100.0)
+                    } else {
+                        0.0
+                    };
 
                     let _ = self.app.emit(crate::events::TASK_PROGRESS, &*p);
                     completed >= self.total_files || self.cancel.load(Ordering::SeqCst)
@@ -651,15 +654,22 @@ fn step_done(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, idx: usize) {
 }
 
 fn set_total(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, n: u32) {
-    // 只更新文件数字段；总进度由 EmitLoop 分步平均独占（completed/total 与分步平均混用会造成 100→75 跳变）
+    // 总进度 = completed/total，与 EmitLoop 同公式：
+    // 检测阶段随已完成数平滑涨到初始值，下载阶段继续单调涨，无跳变
     task::update_and_emit(app, progress, |p| {
         p.total_files = n;
+        if n > 0 {
+            p.progress = (p.completed_files as f64 / n as f64 * 100.0).min(100.0);
+        }
     });
 }
 
 fn set_completed(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, n: u32) {
     task::update_and_emit(app, progress, |p| {
         p.completed_files = n;
+        if p.total_files > 0 {
+            p.progress = (n as f64 / p.total_files as f64 * 100.0).min(100.0);
+        }
     });
 }
 

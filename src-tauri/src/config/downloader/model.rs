@@ -191,10 +191,11 @@ impl DownloaderConfig {
     }
 
     /// 优先模式下主源判慢时限（秒）：超时即降级到备用源。
-    const SLOW_SOURCE_TIMEOUT_SECS: u64 = 5;
+    /// 2s：国内环境官方源连接/响应普遍慢，缩短判慢让镜像源更快接管。
+    const SLOW_SOURCE_TIMEOUT_SECS: u64 = 2;
 
     /// Try fetching from each source in order; returns first success.
-    /// 优先模式：主源超过 5s 未完成（过慢）即降级到备用源，不等待失败。
+    /// 优先模式：主源超过 2s 未完成（过慢）即降级到备用源，不等待失败。
     pub async fn fetch_with_fallback(
         &self,
         mode: DownloadSourceMode,
@@ -220,7 +221,7 @@ impl DownloaderConfig {
     }
 
     /// Try fetching JSON from each source; returns first success.
-    /// 优先模式：主源超过 5s 未完成（过慢）即降级到备用源，不等待失败。
+    /// 优先模式：主源超过 2s 未完成（过慢）即降级到备用源，不等待失败。
     pub async fn fetch_json_with_fallback<T: serde::de::DeserializeOwned>(
         &self,
         mode: DownloadSourceMode,

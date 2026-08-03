@@ -79,9 +79,9 @@ pub async fn fetch_fallback(
     }
     let mut last_err = None;
     for url in urls {
-        // 每源独立 client（连接超时 8s：连接缓慢即判“过慢”，传输不限时）
+        // 每源独立 client（连接超时 2s：连接缓慢即判"过慢"，传输不限时）
         let client = match reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(8))
+            .connect_timeout(Duration::from_secs(2))
             .build()
         {
             Ok(c) => c,
