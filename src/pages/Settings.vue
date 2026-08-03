@@ -494,12 +494,12 @@ const placeholder = computed(() => {
 
     <div class="stg-body">
       <Transition name="page" mode="out-in">
-                <!-- 启动设置：离线皮肤 -->
+        <!-- 启动设置：离线皮肤 -->
         <div v-if="currentTab === 'launch'" key="launch" class="stg-page">
           <div class="stg-card">
             <div class="stg-card-hdr">
               <h3>离线皮肤</h3>
-              <div class="stg-card-sub">离线模式下头像显示的皮肤</div>
+              <div class="stg-card-sub">离线模式使用的皮肤<span class="stg-warn">仅保证于 1.19.2 版本以下可用</span></div>
             </div>
             <div class="skin-opts">
               <label
@@ -1075,6 +1075,11 @@ const placeholder = computed(() => {
 .stg-card-sub {
   font-size: 12px;
   color: var(--text-tertiary);
+}
+
+.stg-card-sub .stg-warn {
+  margin-left: 6px;
+  color: #d9534f; /* 柔和红，非刺眼 */
 }
 
 /* ===== JDK 工具栏 ===== */
