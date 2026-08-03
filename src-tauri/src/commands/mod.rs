@@ -1,7 +1,7 @@
 pub mod account;
-pub mod jdk;
 pub mod downloader;
+pub mod gamedirs;
+pub mod jdk;
+pub mod launch;
 pub mod loader;
 pub mod task;
-pub mod launch;
-pub mod gamedirs;

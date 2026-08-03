@@ -26,7 +26,7 @@ ElytraLauncher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前端
 
 | 路径 | 职责 |
 |---|---|
-| `src-tauri/src/commands/` | 8 个命令模块：jdk / downloader / loader / installer / task / account / gamedirs / launch（真薄胶水；`launch.rs` 额外含进程管理，编排均已下沉） |
+| `src-tauri/src/commands/` | 7 个命令模块：jdk / downloader / loader / task / account / gamedirs / launch（真薄胶水；`launch.rs` 额外含进程管理，编排均已下沉；`install_*` 命令前端无调用，已随死代码清理删除，ModLoader 引擎逻辑在 `downloader/installer.rs`） |
 | `src-tauri/src/config/` | 纯数据模型：`jdk/`（JavaEnv/scanner/storage）、`launcher/`（`model.rs` 配置 + `args.rs` 命令构建 + `env.rs` 环境准备 + `skin.rs` 离线皮肤）、`downloader/model.rs`（多源与回退）、`offline_skin.rs`、`game_dirs.rs` |
 | `src-tauri/src/downloader/` | 下载引擎：manifest / version / library / assets / installer / fetcher / hash / model / extract（`TARGET_OS`、`matches_rules`/`native_classifier_matches`/`os_classifier_key` 平台判定与规则过滤的唯一实现、`extract_jar` natives 解压；`source.rs` 是空壳，URL 逻辑在 config 侧） |
 | `src-tauri/src/auth/` | 微软 OAuth PKCE（`microsoft.rs`）+ 官方 API 客户端（`mojang.rs`：玩家查询/皮肤纹理）+ 账号服务（`account.rs`：登录回调/披风/上传）+ MsAccount（`model.rs`） |

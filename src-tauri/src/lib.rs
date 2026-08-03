@@ -1,8 +1,8 @@
-mod events;
 mod auth;
 mod commands;
 pub mod config;
 pub mod downloader;
+mod events;
 mod persist;
 pub mod task;
 
