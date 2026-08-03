@@ -67,6 +67,13 @@ export const dlState = reactive({
   },
 
   addTask(task: TaskItem) {
+    const idx = this.tasks.findIndex(t => t.taskId === task.taskId)
+    if (idx >= 0) {
+      // 竞态：startTask 的 invoke 返回与首个 task-progress 事件谁先到不确定；
+      // 事件已自动注册（同 taskId）时合并，保留调用方传入的 previousRoute
+      this.tasks[idx] = { ...task, ...this.tasks[idx], previousRoute: task.previousRoute }
+      return
+    }
     this.tasks.push(task)
   },
 

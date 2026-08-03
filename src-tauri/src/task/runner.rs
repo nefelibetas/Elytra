@@ -60,8 +60,8 @@ pub async fn scan_missing(version_dir_name: &str) -> Result<MissingReport, Strin
     let lib_dir = mc.join("libraries");
     let lib_pending = library::count_pending(&vj.libraries, &lib_dir) as u32;
 
-    // 3. 资源（sha1 比对本地缓存，多线程）
-    let (_total, asst_pending) = count_assets_all(&vj.asset_index.url, &config, &mc).await;
+    // 3. 资源（sha1 比对本地缓存，多线程；非下载任务，无需进度回调）
+    let asst_pending = count_assets_all(&vj.asset_index.url, &config, &mc, |_| {}, |_| {}).await;
 
     Ok(MissingReport {
         client_jar: jar_missing,
@@ -337,7 +337,7 @@ pub async fn run_task(
     }
     task::global().set_cleanup_path(&progress.try_lock().unwrap().task_id, vdir.clone());
 
-    // ── Count total work & already-existing ──
+    // ── 检测本地已有文件：先给全量总数（剩余=大数字），检测中实时上报已完成数，避免 UI 死等 ──
     let lib_dir = mc.join("libraries");
     let lib_total_all = crate::downloader::library::count_total(&vj.libraries) as u32;
     let lib_pending = crate::downloader::library::count_pending(&vj.libraries, &lib_dir) as u32;
@@ -346,14 +346,31 @@ pub async fn run_task(
     let jar_exists = vj.downloads.client.is_some();
     let jar_total = if jar_exists { 1u32 } else { 0u32 };
 
-    let (asst_total_all, asst_pending) = count_assets_all(&vj.asset_index.url, &config, &mc).await;
-    let asst_existing = asst_total_all - asst_pending;
+    // 资源清单：fetch asset index（网络）→ 报资产总数；再多线程 sha1 检测本地（逐批上报）
+    let mut asst_total_all = 0u32;
+    task::update_and_emit(&app, progress, |p| p.current_phase = "获取资源清单".into());
+    let asst_pending = count_assets_all(
+        &vj.asset_index.url,
+        &config,
+        &mc,
+        |total| {
+            asst_total_all = total;
+            // 清单齐了：剩余=全量总数，已完成仅 version json
+            set_total(&app, progress, 1 + jar_total + lib_total_all + total);
+            set_completed(&app, progress, 1);
+            task::update_and_emit(&app, progress, |p| p.current_phase = "检测本地资源文件".into());
+        },
+        |checked| {
+            // 检测中：已完成 = version json + 已存在库 + 已检测资产
+            set_completed(&app, progress, 1 + lib_existing + checked);
+        },
+    )
+    .await;
+    let asst_existing = asst_total_all.saturating_sub(asst_pending);
+    set_completed(&app, progress, 1 + lib_existing + asst_existing);
 
     let total_files = 1 + jar_total + lib_total_all + asst_total_all;
     let initial_completed = 1 + lib_existing + asst_existing;
-
-    set_total(&app, progress, total_files);
-    set_completed(&app, progress, initial_completed);
 
     // ── Parallel phase: client.jar + libraries + assets ──
     let jar_counter = Arc::new(AtomicU32::new(0));
@@ -634,20 +651,15 @@ fn step_done(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, idx: usize) {
 }
 
 fn set_total(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, n: u32) {
+    // 只更新文件数字段；总进度由 EmitLoop 分步平均独占（completed/total 与分步平均混用会造成 100→75 跳变）
     task::update_and_emit(app, progress, |p| {
         p.total_files = n;
-        if p.total_files > 0 {
-            p.progress = (p.completed_files as f64 / p.total_files as f64 * 100.0).min(100.0);
-        }
     });
 }
 
 fn set_completed(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, n: u32) {
     task::update_and_emit(app, progress, |p| {
         p.completed_files = n;
-        if p.total_files > 0 {
-            p.progress = (p.completed_files as f64 / p.total_files as f64 * 100.0).min(100.0);
-        }
     });
 }
 
@@ -674,15 +686,21 @@ async fn fetch_version_json(
 }
 
 /// Count total and pending assets (sha1-matched against local cache, multi-threaded).
-async fn count_assets_all(asset_index_url: &str, config: &DownloaderConfig, mc_dir: &Path) -> (u32, u32) {
+async fn count_assets_all(
+    asset_index_url: &str,
+    config: &DownloaderConfig,
+    mc_dir: &Path,
+    mut on_total: impl FnMut(u32),
+    mut on_checked: impl FnMut(u32),
+) -> u32 {
     use crate::downloader::hash::file_sha1_matches;
     let text = match crate::downloader::assets::fetch_asset_index(config, mc_dir, asset_index_url, None, None)
         .await
     {
         Ok(t) => t,
-        _ => return (0, 0),
+        _ => return 0,
     };
-    let idx: serde_json::Value = match serde_json::from_str(&text) { Ok(v) => v, _ => return (0, 0) };
+    let idx: serde_json::Value = match serde_json::from_str(&text) { Ok(v) => v, _ => return 0 };
     let objects_dir = mc_dir.join("assets").join("objects");
 
     // 先收集全部 (hash, 目标路径)，再分块多线程 sha1 校验（数千个文件，单线程过慢）
@@ -695,8 +713,10 @@ async fn count_assets_all(asset_index_url: &str, config: &DownloaderConfig, mc_d
     }
     let total = items.len() as u32;
     if total == 0 {
-        return (0, 0);
+        return 0;
     }
+    // 清单已拿到：先报总数，让调用方立即 set_total（剩余=大数字，而非检测完才出现）
+    on_total(total);
 
     let n_threads = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -704,22 +724,39 @@ async fn count_assets_all(asset_index_url: &str, config: &DownloaderConfig, mc_d
         .clamp(1, 8);
     let chunk = items.len().div_ceil(n_threads);
     let pending = std::sync::atomic::AtomicU32::new(0);
+    let checked = std::sync::atomic::AtomicU32::new(0);
+    // 检测进度经 mpsc 汇总到主线程逐批回调（多线程直接调 emit 会造成锁竞争）
+    let (tx, rx) = std::sync::mpsc::channel::<u32>();
     std::thread::scope(|s| {
         for slice in items.chunks(chunk) {
+            let tx = tx.clone();
             let counter = &pending;
+            let checked = &checked;
             s.spawn(move || {
                 let mut p = 0u32;
+                let mut done = 0u32;
                 for (hash, dest) in slice {
-                    if dest.exists() && file_sha1_matches(dest, hash) {
-                        continue;
+                    if !(dest.exists() && file_sha1_matches(dest, hash)) {
+                        p += 1;
                     }
-                    p += 1;
+                    done += 1;
+                    if done % 500 == 0 {
+                        checked.fetch_add(done, std::sync::atomic::Ordering::Relaxed);
+                        let _ = tx.send(done);
+                        done = 0;
+                    }
                 }
+                checked.fetch_add(done, std::sync::atomic::Ordering::Relaxed);
+                let _ = tx.send(done);
                 counter.fetch_add(p, std::sync::atomic::Ordering::Relaxed);
             });
         }
+        drop(tx);
+        while rx.recv().is_ok() {
+            on_checked(checked.load(std::sync::atomic::Ordering::Relaxed));
+        }
     });
-    (total, pending.load(std::sync::atomic::Ordering::Relaxed))
+    pending.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 #[cfg(test)]

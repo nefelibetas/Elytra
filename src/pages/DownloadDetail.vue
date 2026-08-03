@@ -56,6 +56,7 @@ async function handleCancel(task: TaskItem) {
               </svg>
             </button>
           </div>
+          <div v-if="task.currentPhase" class="tc-phase">{{ task.currentPhase }}</div>
           <div v-if="task.status === 'error' && task.error" class="tc-err">{{ task.error }}</div>
         </div>
       </TransitionGroup>
@@ -166,6 +167,13 @@ async function handleCancel(task: TaskItem) {
   color: #e74c3c;
   line-height: 1.5;
   word-break: break-all;
+}
+
+.tc-phase {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  line-height: 1.4;
 }
 
 /* transition */
