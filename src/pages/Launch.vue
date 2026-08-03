@@ -1,12 +1,3 @@
-<script lang="ts">
-// 模块级头像缓存：跨组件实例存活（路由切换卸载/重挂载不重复请求、不闪占位）
-let lastPremiumUuid = "";
-let lastOfflineName = "";
-let lastOfflineKey = "";
-let cachedPremiumAvatar = "";
-let cachedOfflineAvatar = "";
-</script>
-
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
@@ -15,280 +6,54 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import AlertDialog from "../component/AlertDialog.vue";
+import StepDot from "../component/StepDot.vue";
+import type { StepStatus } from "../store/download";
 import { EVT_MS_LOGIN_COMPLETE, EVT_GAME_EXITED } from "../store/events";
+import { authMode, msAccount, username, setAuthMode, loadMsAccount, loadLastUsername, type AuthMode, type MsAccountInfo } from "../store/auth";
+import { showToast } from "../utils/toast";
+import { useSelectedVersion } from "../utils/useSelectedVersion";
+import { useAvatar } from "../utils/avatar";
 
-type AuthMode = "premium" | "offline";
-
-type MsAccountInfo = {
-  uuid: string;
-  name: string;
-  access_token: string;
-  refresh_token: string;
-  xuid: string;
-  expires_at: number;
-};
-
-// 记住正版/离线选择（localStorage，跨启动与页面切换）
-const AUTH_MODE_KEY = "elytra.authMode";
-const authMode = ref<AuthMode>(localStorage.getItem(AUTH_MODE_KEY) === "offline" ? "offline" : "premium");
-const msAccount = ref<MsAccountInfo | null>(null);
 const msLoginState = ref<"idle" | "waiting">("idle");
-const username = ref("");
 const versions = ref<string[]>([]);
-// 记住上次选择的版本（版本选择页写入）
-const SELECTED_VERSION_KEY = "elytra.selectedVersion";
-const selectedVersion = ref(localStorage.getItem(SELECTED_VERSION_KEY) ?? "");
-const launching = ref(false);
+const { selectedVersion, setSelected, getSavedDir } = useSelectedVersion();
 const router = useRouter();
 const alertMsg = ref("");
 const showAlert = ref(false);
 /** 弹窗是否为复杂错误（需要复制按钮） */
 const alertCopyable = ref(false);
 
-// ── 轻提示（toast：短暂显示，自动消失，无需手动关闭） ────────────
-const toastMsg = ref("");
-let toastTimer: number | undefined;
-function showToast(msg: string) {
-  toastMsg.value = msg;
-  clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => (toastMsg.value = ""), 2500);
-}
+const {
+  premiumAvatar,
+  offlineAvatar,
+  avatarError,
+  renderPremiumAvatar,
+  renderOfflineAvatar,
+  scheduleOfflineRender,
+} = useAvatar({
+  onError: (msg, copyable) => {
+    alertMsg.value = msg;
+    alertCopyable.value = copyable;
+    showAlert.value = true;
+  },
+});
 
-// ── 头像 ─────────────────────────────────────────────────────────
-/** 正版：visage 服务端 3D 渲染头部（正面视角+光照）；离线：按用户名生成的 2D 像素脸。 */
-const premiumAvatar = ref(cachedPremiumAvatar);
-const offlineAvatar = ref(cachedOfflineAvatar);
-const avatarError = ref(false);
-
+/** 正版：visage 3D 头部；离线：2D 像素脸。 */
 const avatarUrl = computed(() =>
   authMode.value === "premium" ? premiumAvatar.value : offlineAvatar.value,
 );
 
-/** 正版：后端经 visage 3D 渲染服务获取头部图（浏览器无法设置自定义 UA，走后端）。
- * 优先按 Mojang texture ID 渲染——皮肤更换后 ID 即变，visage 按 ID 缓存不会串图；
- * 失败（如 profile 拉取异常）回退 uuid 路径。force 用于主动刷新（上传皮肤后等）。 */
-async function renderPremiumAvatar(uuid: string, force = false) {
-  if (!uuid) {
-    premiumAvatar.value = "";
-    cachedPremiumAvatar = "";
-    lastPremiumUuid = "";
-    return;
-  }
-  // 账号未变 → 不重复请求（含进行中，避免并发竞态；失败时重置可重试）
-  if (!force && lastPremiumUuid === uuid) {
-    return;
-  }
-  lastPremiumUuid = uuid;
-  try {
-    let b64: string;
-    try {
-      const tid = await invoke<string>("fetch_texture_id", { uuid });
-      b64 = await invoke<string>("fetch_avatar", { subject: tid });
-    } catch {
-      // 回退：直接按 uuid 渲染
-      b64 = await invoke<string>("fetch_avatar", { subject: uuid });
-    }
-    premiumAvatar.value = `data:image/png;base64,${b64}`;
-    cachedPremiumAvatar = premiumAvatar.value;
-    avatarError.value = false;
-  } catch (e) {
-    console.error("正版头像加载失败:", e);
-    premiumAvatar.value = "";
-    cachedPremiumAvatar = "";
-    lastPremiumUuid = ""; // 失败允许下次重试
-    avatarError.value = true;
-    alertMsg.value = `正版头像加载失败：${String(e)}`;
-    alertCopyable.value = true;
-    showAlert.value = true;
-  }
-}
-
-/** FNV-1a 哈希 → 32 位种子 */
-function hashName(name: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < name.length; i++) {
-    h ^= name.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
-
-/** 确定性 PRNG（mulberry32） */
-function mulberry32(seed: number) {
-  return function () {
-    seed |= 0;
-    seed = (seed + 0x6d2b79f5) | 0;
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function loadImage(src: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error("image load failed"));
-    img.src = src;
-  });
-}
-
-/** 离线头像：按「离线皮肤」设置渲染（对齐 PCL2 五种），失败回退像素脸。
- * 全部类型均为 2D 头像（原始纹理截取头部，无帽子层）：
- * - random：用户名哈希确定性选 Steve/Alex 默认皮肤
- * - steve / alex：固定对应默认皮肤
- * - player：指定正版玩家的 sessionserver 纹理
- * - custom：本地皮肤文件 */
-async function renderOfflineAvatar(name: string) {
-  const trimmed = name.trim();
-  if (!trimmed) {
-    offlineAvatar.value = "";
-    cachedOfflineAvatar = "";
-    return;
-  }
-  try {
-    const cfg = await invoke<{
-      skin_type: string;
-      player_name: string;
-      custom_path: string;
-    }>("get_offline_skin");
-    // 用户名与离线皮肤设置均未变 → 不重复请求（含进行中；设置变更时 key 变化自动重新渲染）
-    const key = `${cfg.skin_type}|${cfg.player_name}|${cfg.custom_path}`;
-    if (lastOfflineName === trimmed && lastOfflineKey === key) {
-      return;
-    }
-    lastOfflineName = trimmed;
-    lastOfflineKey = key;
-    if (cfg.skin_type === "player") {
-      const p = cfg.player_name.trim();
-      if (!p) {
-        generateOfflineAvatar(trimmed);
-        return;
-      }
-      // 2D 头像：sessionserver 取正版玩家纹理 → 截取头部
-      const b64 = await invoke<string>("fetch_player_skin_texture", { playerName: p });
-      offlineAvatar.value = await renderSkinHead(b64);
-      cachedOfflineAvatar = offlineAvatar.value;
-      return;
-    }
-    if (cfg.skin_type === "custom") {
-      if (!cfg.custom_path) {
-        generateOfflineAvatar(trimmed);
-        return;
-      }
-      await renderCustomSkinFile(cfg.custom_path, trimmed);
-      return;
-    }
-    // random：哈希确定性选默认皮肤；steve/alex：固定对应默认皮肤
-    // 一律 2D 头像：游戏内置纹理（经典蓝衬衫 Steve / 绿衬衫 Alex）截取头部
-    const skinKind =
-      cfg.skin_type === "alex" ||
-      (cfg.skin_type === "random" && hashName(trimmed) % 2 === 1)
-        ? "alex"
-        : "steve";
-    const b64 = await invoke<string>("fetch_default_skin", { skin: skinKind });
-    offlineAvatar.value = await renderSkinHead(b64);
-    cachedOfflineAvatar = offlineAvatar.value;
-  } catch {
-    generateOfflineAvatar(trimmed);
-  }
-}
-
-/** 截取皮肤正面头部（8×8 格）放大成 2D 大头像（无帽子层）。 */
-async function renderSkinHead(b64: string): Promise<string> {
-  const img = await loadImage(`data:image/png;base64,${b64}`);
-  const grid = Math.floor(img.width / 8); // 64 → 8，128 → 16
-  const canvas = document.createElement("canvas");
-  canvas.width = 68;
-  canvas.height = 68;
-  const ctx = canvas.getContext("2d")!;
-  ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(img, grid, grid, grid, grid, 0, 0, 68, 68);
-  return canvas.toDataURL("image/png");
-}
-
-/** 自定义本地皮肤：截取正面区域（64/128 布局均为 (grid, grid)）放大成 2D 大头像。 */
-async function renderCustomSkinFile(path: string, fallbackName: string) {
-  try {
-    const b64 = await invoke<string>("read_skin_file", { path });
-    offlineAvatar.value = await renderSkinHead(b64);
-    cachedOfflineAvatar = offlineAvatar.value;
-  } catch (e) {
-    console.error("自定义皮肤渲染失败:", e);
-    generateOfflineAvatar(fallbackName);
-  }
-}
-
-/** 按用户名生成 Minecraft 风格 8×8 像素脸（确定性，左右镜像）——离线用户名非真实账号时的回退。 */
-function generateOfflineAvatar(name: string) {
-  const trimmed = name.trim();
-  if (!trimmed) {
-    offlineAvatar.value = "";
-    cachedOfflineAvatar = "";
-    return;
-  }
-  const seed = hashName(trimmed);
-  const rng = mulberry32(seed);
-  const skinTones = ["#c68642", "#b5763a", "#a0662f", "#d1a579", "#e0ac69", "#8d5524", "#e8b57e"];
-  const hairColors = ["#2a2222", "#3b2f2f", "#4a3728", "#1f1f1f", "#5c4033", "#6b4a2a"];
-
-  const base = skinTones[seed % skinTones.length];
-  const hair = hairColors[(seed >> 3) % hairColors.length];
-  const eye = "#2f2f2f";
-
-  // 8×8 像素脸
-  const canvas = document.createElement("canvas");
-  canvas.width = 8;
-  canvas.height = 8;
-  const ctx = canvas.getContext("2d")!;
-
-  // 皮肤底色
-  ctx.fillStyle = base;
-  ctx.fillRect(0, 0, 8, 8);
-  // 头发：顶部两行，左半随机 + 镜像
-  ctx.fillStyle = hair;
-  for (let x = 0; x < 4; x++) {
-    for (let y = 0; y < 2; y++) {
-      if (rng() > 0.35) {
-        ctx.fillRect(x, y, 1, 1);
-        ctx.fillRect(7 - x, y, 1, 1);
-      }
-    }
-  }
-  // 眼睛
-  ctx.fillStyle = eye;
-  ctx.fillRect(2, 3, 1, 1);
-  ctx.fillRect(5, 3, 1, 1);
-  // 嘴
-  ctx.fillRect(3, 6, 1, 1);
-  ctx.fillRect(4, 6, 1, 1);
-
-  // 放大到 68×68
-  const out = document.createElement("canvas");
-  out.width = 68;
-  out.height = 68;
-  const octx = out.getContext("2d")!;
-  octx.imageSmoothingEnabled = false;
-  octx.drawImage(canvas, 0, 0, 68, 68);
-  offlineAvatar.value = out.toDataURL("image/png");
-  cachedOfflineAvatar = offlineAvatar.value;
-}
-
 /** 用户名输入防抖 1.337s 后刷新离线头像 */
-let avatarTimer: number | undefined;
-watch(username, () => {
-  avatarError.value = false;
-  if (avatarTimer) clearTimeout(avatarTimer);
-  avatarTimer = window.setTimeout(() => renderOfflineAvatar(username.value), 1337);
-});
+watch(username, (v) => scheduleOfflineRender(v));
 
 // 启动流程："" 空闲 | "running" 启动中 | "done" 完成
 const launchPhase = ref("");
-const launchSteps = ref<{ name: string; status: "pending" | "running" | "done" }[]>([]);
+const launchSteps = ref<{ name: string; status: StepStatus }[]>([]);
+/** 启动中（launchPhase === "running"；done 后按钮恢复可用）。 */
+const isLaunching = computed(() => launchPhase.value === "running");
 
 function switchMode(mode: AuthMode) {
-  authMode.value = mode;
-  localStorage.setItem(AUTH_MODE_KEY, mode);
+  setAuthMode(mode);
   // 切回离线时若用户名为空，填充最后一次离线用户名（与正版隔离）
   if (mode === "offline" && !username.value) {
     loadLastUsername();
@@ -299,16 +64,7 @@ function switchMode(mode: AuthMode) {
   }
 }
 
-async function loadLastUsername() {
-  try {
-    const last = await invoke<string>("get_last_offline_username");
-    if (last && !username.value) username.value = last;
-  } catch {
-    // ignore
-  }
-}
-
-function step(name: string, status: "pending" | "running" | "done") {
+function step(name: string, status: StepStatus) {
   const idx = launchSteps.value.findIndex(s => s.name === name);
   if (idx >= 0) launchSteps.value[idx].status = status;
 }
@@ -319,7 +75,7 @@ function resetLaunch() {
 }
 
 async function doLaunch() {
-  if (launching.value) return;
+  if (isLaunching.value) return;
   if (!selectedVersion.value) return;
 
   const isOffline = authMode.value === "offline";
@@ -342,7 +98,6 @@ async function doLaunch() {
   }
 
   const name = isOffline ? username.value.trim() : (msAccount.value?.name ?? "");
-  launching.value = true;
   launchPhase.value = "running";
   launchSteps.value = [
     { name: "检查 Java 环境", status: "running" },
@@ -387,9 +142,6 @@ async function doLaunch() {
     step("等待游戏窗口", "running");
     console.log("Game started, PID:", pid);
 
-    // 按「启动器可见性」设置调整启动器窗口（最小化/隐藏/关闭）
-    (window as any).__applyLaunchVisibility?.();
-
     // 记录最后一次离线用户名（与正版隔离）
     if (isOffline) {
       await invoke("save_last_offline_username", { username: name });
@@ -409,8 +161,6 @@ async function doLaunch() {
     alertMsg.value = String(e);
     alertCopyable.value = true;
     showAlert.value = true;
-  } finally {
-    launching.value = false;
   }
 }
 
@@ -419,7 +169,7 @@ onMounted(async () => {
     const list: string[] = await invoke("get_installed_versions");
     versions.value = list;
     // 上次选择的版本仅在所属目录仍是当前激活目录时才恢复（版本选择页同时写入两者）
-    const savedDir = localStorage.getItem("elytra.selectedVersionDir");
+    const savedDir = getSavedDir();
     if (savedDir) {
       try {
         const active = await invoke<{ path: string }>("get_active_game_dir");
@@ -439,8 +189,7 @@ onMounted(async () => {
         selectedVersion.value = newList.includes(r.version)
           ? r.version
           : newList[0] ?? "";
-        localStorage.setItem("elytra.selectedVersion", selectedVersion.value);
-        localStorage.setItem("elytra.selectedVersionDir", r.dir_path);
+        setSelected(selectedVersion.value, r.dir_path);
       } catch {
         // 所有目录均无版本：保持现状
         selectedVersion.value = list.includes(selectedVersion.value)
@@ -452,14 +201,6 @@ onMounted(async () => {
     // ignore
   }
 });
-
-async function loadMsAccount() {
-  try {
-    msAccount.value = await invoke<MsAccountInfo | null>("get_ms_account");
-  } catch {
-    msAccount.value = null;
-  }
-}
 
 async function startMsLogin() {
   msLoginState.value = "waiting";
@@ -672,17 +413,7 @@ async function refreshCape() {
 }
 
 onMounted(async () => {
-  try {
-    const list: string[] = await invoke("get_installed_versions");
-    versions.value = list;
-    // 优先恢复上次选择（版本选择页写入）；不存在则取列表最后一个
-    if (!list.includes(selectedVersion.value)) {
-      selectedVersion.value = list.length > 0 ? list[list.length - 1] : "";
-    }
-  } catch {
-    // ignore
-  }
-
+  // 版本列表的恢复/激活/兜底已在第一个 onMounted 完成，这里不再重复拉取
   await loadLastUsername();
   await loadMsAccount();
   renderOfflineAvatar(username.value);
@@ -725,11 +456,7 @@ onMounted(async () => {
         </div>
         <div class="lp-steps">
           <div v-for="(st, i) in launchSteps" :key="i" class="lp-step" :class="st.status">
-            <span class="lp-icon">
-              <svg v-if="st.status === 'done'" viewBox="0 0 14 14" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7l3.5 3.5L12 3" /></svg>
-              <span v-else-if="st.status === 'running'" class="ls-spin"></span>
-              <span v-else class="lp-dot"></span>
-            </span>
+            <StepDot :status="st.status" />
             <span class="lp-name">{{ st.name }}</span>
           </div>
         </div>
@@ -858,13 +585,6 @@ onMounted(async () => {
               <div class="menu-item" @click="openNameChangePage">修改玩家名</div>
             </div>
           </Teleport>
-
-          <!-- 轻提示 toast -->
-          <Teleport to="body">
-            <Transition name="toast-fade">
-              <div v-if="toastMsg" class="toast">{{ toastMsg }}</div>
-            </Transition>
-          </Teleport>
         </div>
       </div>
 
@@ -873,15 +593,15 @@ onMounted(async () => {
         <div class="launch-area">
           <button
             class="launch-btn"
-            :class="{ launching }"
-            :disabled="!selectedVersion || launching"
+            :class="{ launching: isLaunching }"
+            :disabled="!selectedVersion || isLaunching"
             @click="doLaunch"
           >
             <template v-if="!selectedVersion">
               <span class="launch-label">下载游戏</span>
               <span class="launch-version">未找到可用的游戏版本</span>
             </template>
-            <template v-else-if="launching">
+            <template v-else-if="isLaunching">
               <span class="launch-label">启动中...</span>
               <span class="launch-version">{{ selectedVersion }}</span>
             </template>
@@ -1280,17 +1000,6 @@ onMounted(async () => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.toast-fade-enter-active,
-.toast-fade-leave-active {
-  transition: opacity 0.25s, transform 0.25s;
-}
-
-.toast-fade-enter-from,
-.toast-fade-leave-to {
-  opacity: 0;
-  transform: translateX(-50%) translateY(8px);
 }
 
 .act-btn {

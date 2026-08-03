@@ -2,15 +2,9 @@
 import { ref, computed, watch, onMounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
-
-/** 轻提示（短暂显示，自动消失）。 */
-const toastMsg = ref("");
-let toastTimer: number | undefined;
-function showToast(msg: string) {
-  toastMsg.value = msg;
-  clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => (toastMsg.value = ""), 2500);
-}
+import { showToast } from "../utils/toast";
+import { useConfigSection } from "../utils/useConfigSection";
+import { SKIN_TYPE_OPTIONS, type OfflineSkinType, type OfflineSkinModel } from "../utils/offlineSkin";
 
 interface JavaEnv { path: string; version: string; vendor: string; arch: string; }
 interface JavaConfig { active_jdk: JavaEnv | null; discovered_jdks: JavaEnv[]; }
@@ -23,7 +17,8 @@ const currentTab = ref<Tab>("launch");
 const jdkList = ref<JavaEnv[]>([]);
 const autoMode = ref(true);
 const activeJdk = ref<JavaEnv | null>(null);
-const jdkError = ref("");
+const jdkSection = useConfigSection();
+const jdkError = jdkSection.error;
 const loading = ref(false);
 const pickerOpen = ref(false);
 
@@ -39,16 +34,14 @@ async function loadConfig() {
 }
 
 async function saveConfig() {
-  try {
+  await jdkSection.run(async () => {
     await invoke("save_jdk_config", {
       config: {
         active_jdk: autoMode.value ? null : activeJdk.value,
         discovered_jdks: jdkList.value,
       },
     });
-  } catch (e) {
-    jdkError.value = String(e);
-  }
+  });
 }
 
 onMounted(() => {
@@ -60,22 +53,20 @@ onMounted(() => {
 
 async function refreshJdks() {
   loading.value = true;
-  jdkError.value = "";
-  try {
+  await jdkSection.run(async () => {
     jdkList.value = await invoke<JavaEnv[]>("auto_scan_jdk");
-  } catch (e) { jdkError.value = String(e); }
-  finally { loading.value = false; }
+  });
+  loading.value = false;
 }
 
 async function selectCustomDir() {
   loading.value = true;
-  jdkError.value = "";
-  try {
+  await jdkSection.run(async () => {
     const dir = await open({ directory: true, multiple: false });
     if (!dir) return;
     jdkList.value = await invoke<JavaEnv[]>("scan_custom_jdk", { path: dir });
-  } catch (e) { jdkError.value = String(e); }
-  finally { loading.value = false; }
+  });
+  loading.value = false;
 }
 
 function selectAuto() {
@@ -106,7 +97,6 @@ const pickerSub = computed(() => {
 interface LauncherOptions {
   memory: "Auto" | { Custom: number };
   window_title: string;
-  launcher_visibility: "Keep" | "Minimize" | "Hide" | "Close";
   process_priority: "Low" | "Normal" | "High" | "RealTime";
   window_size: "Default" | { Custom: [number, number] };
   disable_launch_wrapper: boolean;
@@ -121,7 +111,6 @@ interface LauncherOptions {
 }
 
 const loWindowTitle = ref("");
-const loVisibility = ref<"Keep" | "Minimize" | "Hide" | "Close">("Keep");
 const loPriority = ref<"Low" | "Normal" | "High" | "RealTime">("Normal");
 const loWinMode = ref<"Default" | "Custom">("Default");
 const loWinW = ref(1280);
@@ -179,13 +168,13 @@ const gcOptions: { value: string; label: string }[] = [
   { value: "Custom", label: "自定义（不追加 GC 参数）" },
 ];
 
-const launchError = ref("");
+const launchSection = useConfigSection();
+const launchError = launchSection.error;
 
 async function loadLaunchOptions() {
   try {
     const cfg = await invoke<LauncherOptions>("get_launch_options");
     loWindowTitle.value = cfg.window_title ?? "";
-    loVisibility.value = cfg.launcher_visibility;
     loPriority.value = cfg.process_priority;
     if (cfg.window_size === "Default") {
       loWinMode.value = "Default";
@@ -226,11 +215,9 @@ async function loadLaunchOptions() {
 
 /** 保存启动选项（保留 jvm_args 等其余字段，仅覆盖用户可改项）。 */
 async function saveLaunchOptions() {
-  launchError.value = "";
-  try {
+  await launchSection.run(async () => {
     const cfg = await invoke<LauncherOptions>("get_launch_options");
     cfg.window_title = loWindowTitle.value.trim();
-    cfg.launcher_visibility = loVisibility.value;
     cfg.process_priority = loPriority.value;
     cfg.window_size =
       loWinMode.value === "Custom"
@@ -247,29 +234,20 @@ async function saveLaunchOptions() {
     cfg.use_high_performance_gpu = loHighGpu.value;
     cfg.game_language = loGameLang.value;
     await invoke("save_launch_options", { config: cfg });
-  } catch (e) {
-    launchError.value = String(e);
-  }
+  });
 }
 
 // ── 离线皮肤配置（对齐 PCL2 五种） ──
-type OfflineSkinType = "random" | "steve" | "alex" | "player" | "custom";
-type OfflineSkinModel = "steve" | "alex" | "auto";
 import AlertDialog from "../component/AlertDialog.vue";
 
 const skinType = ref<OfflineSkinType>("random");
 const skinPlayerName = ref("");
 const skinCustomPath = ref("");
 const skinCustomModel = ref<OfflineSkinModel>("steve");
-const skinError = ref("");
+const skinSection = useConfigSection();
+const skinError = skinSection.error;
 
-const skinOptions: { value: OfflineSkinType; label: string; desc: string }[] = [
-  { value: "random", label: "随机", desc: "按用户名哈希确定性选择 Steve/Alex 默认皮肤" },
-  { value: "steve", label: "Steve", desc: "固定使用 Steve 默认皮肤" },
-  { value: "alex", label: "Alex", desc: "固定使用 Alex 默认皮肤" },
-  { value: "player", label: "正版玩家", desc: "显示指定正版玩家的皮肤" },
-  { value: "custom", label: "自定义", desc: "使用本地皮肤文件" },
-];
+const skinOptions = SKIN_TYPE_OPTIONS;
 
 async function loadOfflineSkin() {
   try {
@@ -288,16 +266,17 @@ async function loadOfflineSkin() {
   }
 }
 
-function saveOfflineSkin() {
-  skinError.value = "";
-  invoke("set_offline_skin", {
-    config: {
-      skin_type: skinType.value,
-      player_name: skinPlayerName.value.trim(),
-      custom_path: skinCustomPath.value,
-      custom_model: skinCustomModel.value,
-    },
-  }).catch(e => (skinError.value = String(e)));
+async function saveOfflineSkin() {
+  await skinSection.run(async () => {
+    await invoke("set_offline_skin", {
+      config: {
+        skin_type: skinType.value,
+        player_name: skinPlayerName.value.trim(),
+        custom_path: skinCustomPath.value,
+        custom_model: skinCustomModel.value,
+      },
+    });
+  });
 }
 
 /** 当前选中选项的详细描述（选中后才展示）。 */
@@ -356,12 +335,10 @@ async function savePlayerSkin() {
     filters: [{ name: "PNG 图片", extensions: ["png"] }],
   });
   if (!path) return;
-  try {
+  await skinSection.run(async () => {
     await invoke("save_player_skin", { playerName: name, path });
     showToast(`皮肤已保存：${name}`);
-  } catch (e) {
-    skinError.value = String(e);
-  }
+  });
 }
 
 /** 刷新：重新校验正版玩家皮肤信息。 */
@@ -371,16 +348,14 @@ async function refreshPlayerSkin() {
     showToast("请先填写正版玩家用户名");
     return;
   }
-  try {
+  await skinSection.run(async () => {
     const info = await invoke<{ uuid: string; texture_id: string }>(
       "fetch_player_skin",
       { playerName: name },
     );
     showToast(`皮肤信息已刷新：${name}`);
     void info;
-  } catch (e) {
-    skinError.value = String(e);
-  }
+  });
 }
 
 // ── 下载设置（管理游戏下载源） ──
@@ -410,7 +385,8 @@ const dlMaxSpeed = ref(0); // MB/s，0 = 无上限
 const dlVerifySsl = ref(false);
 const dlFileOpen = ref(false);
 const dlManifestOpen = ref(false);
-const dlError = ref("");
+const dlSection = useConfigSection();
+const dlError = dlSection.error;
 const dlMinecraftDir = ref(".minecraft");
 
 async function loadDownloadConfig() {
@@ -431,8 +407,7 @@ async function loadDownloadConfig() {
 }
 
 async function saveDownloadConfig() {
-  dlError.value = "";
-  try {
+  await dlSection.run(async () => {
     await invoke("save_downloader_config", {
       config: {
         file_source_mode: dlFileMode.value,
@@ -443,9 +418,7 @@ async function saveDownloadConfig() {
         minecraft_dir: dlMinecraftDir.value,
       },
     });
-  } catch (e) {
-    dlError.value = String(e);
-  }
+  });
 }
 
 function setFileMode(v: string) {
@@ -579,21 +552,6 @@ const placeholder = computed(() => {
                   maxlength="64"
                   @change="saveLaunchOptions"
                 />
-              </div>
-
-              <div class="lo-row">
-                <label class="lo-label" for="lo-vis">启动器可见性</label>
-                <select
-                  id="lo-vis"
-                  v-model="loVisibility"
-                  class="lo-select"
-                  @change="saveLaunchOptions"
-                >
-                  <option value="Keep">保持不变（默认）</option>
-                  <option value="Minimize">最小化</option>
-                  <option value="Hide">隐藏</option>
-                  <option value="Close">关闭启动器</option>
-                </select>
               </div>
 
               <div class="lo-row">
@@ -965,13 +923,6 @@ const placeholder = computed(() => {
         </div>
       </Transition>
     </div>
-
-    <!-- 轻提示 toast -->
-    <Teleport to="body">
-      <Transition name="toast-fade">
-        <div v-if="toastMsg" class="toast">{{ toastMsg }}</div>
-      </Transition>
-    </Teleport>
 
     <!-- 选择皮肤种类 dialog -->
     <AlertDialog v-model="skinModelDialog" title="选择皮肤种类" :divider="false">
@@ -1645,17 +1596,6 @@ const placeholder = computed(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.toast-fade-enter-active,
-.toast-fade-leave-active {
-  transition: opacity 0.25s, transform 0.25s;
-}
-
-.toast-fade-enter-from,
-.toast-fade-leave-to {
-  opacity: 0;
-  transform: translateX(-50%) translateY(8px);
 }
 
 /* 模型选择 dialog */

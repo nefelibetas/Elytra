@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { dlState, TaskItem } from "../store/download"
+import { showToast } from "../utils/toast"
 import { useRouter } from "vue-router"
 
 const router = useRouter()
@@ -14,7 +15,7 @@ async function handleCancel(task: TaskItem) {
   const name = task.name || "下载任务";
   await dlState.cancelTask(task.taskId)
   dlState.removeTask(task.taskId)
-  ;(window as any).__showToast?.(`${name} 已取消`)
+  ;showToast(`${name} 已取消`)
   if (dlState.tasks.length === 0) {
     router.push(task.previousRoute || "/")
   }

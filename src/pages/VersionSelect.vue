@@ -52,19 +52,12 @@ async function selectDir(d: GameDir) {
 
 // ── 版本列表（右侧，按 ModLoader/原版分类卡片）──
 const versions = ref<string[]>([]);
-const selectedVersion = ref("");
+const { selectedVersion, setSelected, clearSelected } = useSelectedVersion();
 const versionsLoading = ref(false);
 const versionsError = ref("");
 
-const CATEGORIES = [
-  { key: "vanilla", title: "原版" },
-  { key: "forge", title: "Forge" },
-  { key: "neoforge", title: "NeoForge" },
-  { key: "fabric", title: "Fabric" },
-  { key: "quilt", title: "Quilt" },
-  { key: "optifine", title: "OptiFine" },
-  { key: "liteloader", title: "LiteLoader" },
-];
+import { CATEGORIES } from "../utils/versionMeta";
+import { useSelectedVersion } from "../utils/useSelectedVersion";
 
 /** 分类卡片展开状态：默认全部展开。 */
 const expanded = ref<Record<string, boolean>>(
@@ -96,11 +89,7 @@ async function loadVersions() {
 
 /** 选择版本 → 记录（含所属目录）并返回启动页。 */
 function pickVersion(v: string) {
-  selectedVersion.value = v;
-  localStorage.setItem("elytra.selectedVersion", v);
-  if (activePath.value) {
-    localStorage.setItem("elytra.selectedVersionDir", activePath.value);
-  }
+  setSelected(v, activePath.value || undefined);
   router.push("/");
 }
 
@@ -125,11 +114,9 @@ async function confirmDeleteVersion() {
     await invoke("delete_version_dir", { versionName: deleteTarget.value });
     deleteDialog.value = false;
     // 删除的是当前选中版本 → 清理持久化选择
-    if (localStorage.getItem("elytra.selectedVersion") === deleteTarget.value) {
-      localStorage.removeItem("elytra.selectedVersion");
-      localStorage.removeItem("elytra.selectedVersionDir");
+    if (selectedVersion.value === deleteTarget.value) {
+      clearSelected();
     }
-    selectedVersion.value = "";
     await loadVersions();
   } catch (e) {
     deleteError.value = String(e);

@@ -3,9 +3,11 @@ import { listen } from "@tauri-apps/api/event"
 import { EVT_TASK_PROGRESS } from "./events"
 import { invoke } from "@tauri-apps/api/core"
 
+export type StepStatus = "pending" | "running" | "done";
+
 export interface StepInfo {
   name: string
-  status: string
+  status: StepStatus
   progress: number
 }
 
@@ -38,12 +40,6 @@ interface ProgressPayload {
 
 export const dlState = reactive({
   tasks: [] as TaskItem[],
-  previousRoute: "/",
-  _seenTasks: {} as Record<string, boolean>,
-
-  get activeTasks(): TaskItem[] {
-    return this.tasks.filter(t => t.status === "running" || t.status === "pending")
-  },
 
   /** FAB 显示条件：有进行中/等待中任务，或任务失败（点击查看错误详情）。 */
   get anyActive(): boolean {
@@ -72,11 +68,6 @@ export const dlState = reactive({
 
   addTask(task: TaskItem) {
     this.tasks.push(task)
-  },
-
-  updateTask(taskId: string, patch: Partial<TaskItem>) {
-    const t = this.tasks.find(t => t.taskId === taskId)
-    if (t) Object.assign(t, patch)
   },
 
   removeTask(taskId: string) {
@@ -122,12 +113,6 @@ export const dlState = reactive({
     await invoke("cancel_task", { taskId })
   },
 
-  async removeTaskById(taskId: string) {
-    await invoke("remove_task", { taskId })
-    const idx = this.tasks.findIndex(t => t.taskId === taskId)
-    if (idx >= 0) this.tasks.splice(idx, 1)
-  },
-
   onTaskDone: null as ((taskName: string, prevRoute: string) => void) | null,
 })
 
@@ -158,9 +143,11 @@ export function ensureListen() {
       dlState.tasks[idx].currentPhase = p.current_phase
       dlState.tasks[idx].steps = p.steps
       dlState.tasks[idx].error = p.error ?? undefined
-    } else if (p.status !== "done") {
+    } else if (p.status !== "done" && p.status !== "cancelled") {
       // 后端直接创建的任务（如补全文件）不在前端列表中：首次事件自动注册，
       // 保证下载管理 FAB 与进度可见。
+      // done/cancelled 均为终态：done 走上方移除逻辑；cancelled 由取消流程
+      // （cancelTask + removeTask）主动清理，事件到达时不应重新注册（否则幽灵复活）。
       dlState.addTask({
         taskId: p.task_id,
         name: p.name,

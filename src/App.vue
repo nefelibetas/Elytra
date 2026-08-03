@@ -1,56 +1,13 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from "vue";
+import { onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import TitleBar from "./component/TitleBar.vue";
 import DownloadFAB from "./component/DownloadFAB.vue";
 import { dlState, ensureListen } from "./store/download";
 import { startMemoryMonitor } from "./store/memory";
-import { EVT_GAME_EXITED } from "./store/events";
+import { toastState, showToast } from "./utils/toast";
 
 const router = useRouter();
-const toastMsg = ref("");
-let toastTimer = 0;
-
-function showToast(msg: string) {
-  toastMsg.value = msg;
-  clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => toastMsg.value = "", 3000);
-}
-
-(window as any).__showToast = showToast;
-
-// ── 启动器可见性 ──────────────────────────────────────
-// 游戏启动后按设置最小化/隐藏启动器；游戏退出后恢复显示。
-let launcherConcealed = false;
-
-/** 由 Launch 页在游戏进程成功启动后调用。 */
-(window as any).__applyLaunchVisibility = async () => {
-  try {
-    const cfg = await invoke<{ launcher_visibility: string }>("get_launch_options");
-    const win = getCurrentWindow();
-    switch (cfg.launcher_visibility) {
-      case "Minimize":
-        launcherConcealed = true;
-        win.minimize();
-        break;
-      case "Hide":
-        launcherConcealed = true;
-        win.hide();
-        break;
-      case "Close":
-        win.close();
-        break;
-      default:
-        break; // 保持不变
-    }
-  } catch {
-    // 配置读取失败时保持现状
-  }
-};
-
 
 dlState.onTaskDone = (taskName: string, prevRoute: string) => {
   showToast(`${taskName} 已完成`);
@@ -84,23 +41,20 @@ function onKeyDown(e: KeyboardEvent) {
   }
 }
 
+function onContextMenu(e: MouseEvent) {
+  e.preventDefault();
+}
+
 onMounted(() => {
-  document.addEventListener("contextmenu", (e) => e.preventDefault());
+  document.addEventListener("contextmenu", onContextMenu);
   document.addEventListener("keydown", onKeyDown);
   ensureListen();
   // 应用启动即持续监听系统内存（设置页/启动页共用）
   startMemoryMonitor();
-  // 游戏退出 → 若启动器曾被隐藏/最小化则恢复显示
-  listen<[number, string]>(EVT_GAME_EXITED, () => {
-    if (!launcherConcealed) return;
-    launcherConcealed = false;
-    const win = getCurrentWindow();
-    win.show();
-    win.unminimize();
-  });
 });
 
 onUnmounted(() => {
+  document.removeEventListener("contextmenu", onContextMenu);
   document.removeEventListener("keydown", onKeyDown);
 });
 </script>
@@ -111,13 +65,13 @@ onUnmounted(() => {
     <DownloadFAB />
     <main class="main-content">
       <router-view v-slot="{ Component, route }">
-        <Transition :name="(route.meta.transition as string) || 'route'" mode="out-in">
+        <Transition :name="route.meta.transition ?? 'route'" mode="out-in">
           <component :is="Component" />
         </Transition>
       </router-view>
     </main>
     <Transition name="toast">
-      <div v-if="toastMsg" class="toast">{{ toastMsg }}</div>
+      <div v-if="toastState.msg" class="toast">{{ toastState.msg }}</div>
     </Transition>
   </div>
 </template>

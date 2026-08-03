@@ -2,7 +2,6 @@
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { dlState } from "../store/download";
 
 const route = useRoute();
 const router = useRouter();
@@ -50,9 +49,8 @@ function goBack() {
     router.push("/version-select");
     return;
   }
-  const prev = dlState.previousRoute || "/";
-  router.push(prev);
-  dlState.previousRoute = "/";
+  // 其余详情页（download-detail）返回启动页；store 级 previousRoute 无赋值点，恒为 "/"
+  router.push("/");
 }
 </script>
 

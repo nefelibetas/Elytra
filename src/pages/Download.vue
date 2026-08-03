@@ -23,18 +23,13 @@ import { ref, computed, watch, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 import { dlState, ensureListen } from "../store/download";
+import { CATEGORIES } from "../utils/versionMeta";
 import DownloadTab from "../component/DownloadTab.vue";
 import VersionCard from "../component/VersionCard.vue";
 import VersionItem from "../component/VersionItem.vue";
-import grassIcon from "../assets/grass.png";
 import commandIcon from "../assets/command.png";
 import cobbleIcon from "../assets/cobble.png";
 import emeraldIcon from "../assets/emerald.png";
-import forgeIcon from "../assets/forge.png";
-import neoForgeIcon from "../assets/neoForge.png";
-import fabricIcon from "../assets/Fabric.png";
-import optifineIcon from "../assets/optifined.png";
-import quiltIcon from "../assets/quilt.png";
 
 interface LoaderItem {
   key: string;
@@ -57,19 +52,13 @@ const selectedVersion = ref<VersionMeta | null>(null);
 const versionInput = ref("");
 const resolvedDirName = ref("");
 
-const loaderIcon: Record<string, string> = {
-  forge: forgeIcon, neoforge: neoForgeIcon, fabric: fabricIcon,
-  optifine: optifineIcon, quilt: quiltIcon,
-};
+const loaderIcon: Record<string, string> = Object.fromEntries(
+  CATEGORIES.filter(c => c.key !== "vanilla").map(c => [c.key, c.icon]),
+);
 
-const loaders: LoaderItem[] = [
-  { key: "forge", name: "Forge", icon: forgeIcon },
-  { key: "neoforge", name: "NeoForge", icon: neoForgeIcon },
-  { key: "fabric", name: "Fabric", icon: fabricIcon },
-  { key: "quilt", name: "Quilt", icon: quiltIcon },
-  { key: "optifine", name: "OptiFine", icon: optifineIcon },
-  { key: "liteloader", name: "LiteLoader", icon: "" },
-];
+const loaders: LoaderItem[] = CATEGORIES
+  .filter(c => c.key !== "vanilla")
+  .map(c => ({ key: c.key, name: c.title, icon: c.icon }));
 
 // Loader version data cache
 const loaderData = ref<Record<string, string[]>>({});
@@ -220,8 +209,11 @@ const computedVersionName = computed(() => {
 
 const router = useRouter();
 
+/** 原版/正式版图标（数据源在 versionMeta）。 */
+const vanillaIcon = CATEGORIES[0].icon;
+
 function versionIcon(v: VersionMeta): string {
-  if (v.type === "release") return grassIcon;
+  if (v.type === "release") return vanillaIcon;
   if (v.type === "snapshot") return commandIcon;
   return cobbleIcon;
 }
@@ -367,12 +359,12 @@ onMounted(() => {
             <div class="card">
               <div class="card-title">最新版本</div>
               <div class="card-body">
-                <VersionItem :icon-src="grassIcon" :version-id="manifest.latest.release" :subtitle="'最新正式版，发布于 ' + (latestRelease ? fmtDateTime(latestRelease.releaseTime) : '')" @select="selectVersion(latestRelease!)" />
+                <VersionItem :icon-src="vanillaIcon" :version-id="manifest.latest.release" :subtitle="'最新正式版，发布于 ' + (latestRelease ? fmtDateTime(latestRelease.releaseTime) : '')" @select="selectVersion(latestRelease!)" />
                 <VersionItem :icon-src="commandIcon" :version-id="manifest.latest.snapshot" :subtitle="'最新预览版，发布于 ' + (latestSnapshot ? fmtDateTime(latestSnapshot.releaseTime) : '')" @select="selectVersion(latestSnapshot!)" />
               </div>
             </div>
             <VersionCard title="正式版" :count="releases.length" :expanded="expanded.release" @toggle="toggle('release')">
-              <VersionItem v-for="v in releases" :key="v.id" :icon-src="grassIcon" :version-id="v.id" :subtitle="fmtDateTime(v.releaseTime)" @select="selectVersion(v)" />
+              <VersionItem v-for="v in releases" :key="v.id" :icon-src="vanillaIcon" :version-id="v.id" :subtitle="fmtDateTime(v.releaseTime)" @select="selectVersion(v)" />
             </VersionCard>
             <VersionCard title="预览版" :count="snapshots.length" :expanded="expanded.snapshot" @toggle="toggle('snapshot')">
               <VersionItem v-for="v in snapshots" :key="v.id" :icon-src="commandIcon" :version-id="v.id" :subtitle="fmtDateTime(v.releaseTime)" @select="selectVersion(v)" />

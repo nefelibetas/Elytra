@@ -4,6 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { classifyVersion } from "../utils/versionClassify";
+import { showToast } from "../utils/toast";
 import { CATEGORY_ICONS } from "../utils/versionIcons";
 import VersionItem from "../component/VersionItem.vue";
 import AlertDialog from "../component/AlertDialog.vue";
@@ -50,7 +51,7 @@ async function openFolder(kind: "version" | "saves" | "mods") {
     });
     await invoke("open_folder", { path: target });
   } catch (e) {
-    (window as any).__showToast?.(String(e));
+    showToast(String(e));
   }
 }
 
@@ -97,14 +98,14 @@ async function confirmDelete() {
     deleteDialog.value = false;
     router.push({ path: "/version-select", query: { refresh: String(Date.now()) } });
   } catch (e) {
-    (window as any).__showToast?.(String(e));
+    showToast(String(e));
     deleteDialog.value = false;
   }
 }
 
 /** 补全文件：先提示检测，扫描缺失 → 提交到下载管理。 */
 async function repairFiles() {
-  (window as any).__showToast?.("正在检测游戏完整性…");
+  showToast("正在检测游戏完整性…");
   try {
     const report = await invoke<{
       client_jar: boolean;
@@ -114,7 +115,7 @@ async function repairFiles() {
     const total =
       (report.client_jar ? 1 : 0) + report.libraries + report.assets;
     if (total === 0) {
-      (window as any).__showToast?.("游戏文件完整，无需补全");
+      showToast("游戏文件完整，无需补全");
       return;
     }
     const taskId = await invoke<string>("submit_missing_download", {
@@ -133,9 +134,9 @@ async function repairFiles() {
       steps: [],
       previousRoute: router.currentRoute.value.fullPath,
     });
-    (window as any).__showToast?.(`已提交 ${total} 个缺失文件到下载管理`);
+    showToast(`已提交 ${total} 个缺失文件到下载管理`);
   } catch (e) {
-    (window as any).__showToast?.(String(e));
+    showToast(String(e));
   }
 }
 
@@ -164,7 +165,7 @@ async function exportScript() {
         xuid: string;
       } | null>("get_ms_account");
       if (!acc) {
-        (window as any).__showToast?.("未登录正版账号，请先在启动页登录");
+        showToast("未登录正版账号，请先在启动页登录");
         return;
       }
       username = acc.name;
@@ -185,9 +186,9 @@ async function exportScript() {
       uuid,
       xuid,
     });
-    (window as any).__showToast?.("启动脚本已导出");
+    showToast("启动脚本已导出");
   } catch (e) {
-    (window as any).__showToast?.(String(e));
+    showToast(String(e));
   }
 }
 </script>
