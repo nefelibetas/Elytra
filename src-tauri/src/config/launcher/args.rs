@@ -1,13 +1,13 @@
 use std::path::{Path, PathBuf};
 
-use crate::config::launcher::model::{AuthMode, LauncherConfig, MemoryMode, GcType};
+use crate::config::launcher::model::{AuthMode, GcType, LauncherConfig, MemoryMode};
 use crate::downloader::extract::{native_classifier_matches, os_classifier_key};
 use crate::downloader::model::{OsRule, Rule, VersionJson};
 
 /// 启动器标识
 const LAUNCHER_NAME: &str = "Elytra";
 const LAUNCHER_VERSION: &str = "0.1.0";
-const LAUNCHER_CLIENT_ID: &str = "elytra-launcher";
+const LAUNCHER_CLIENT_ID: &str = "elytra";
 
 /// 完整的启动命令，按执行顺序排列。
 pub struct LaunchCommand {
@@ -220,7 +220,7 @@ pub fn build_launch_command(
     // ── JVM 参数 ──
     let mut jvm_preamble: Vec<String> = Vec::new(); // -cp 之前
     let mut system_props: Vec<String> = Vec::new(); // -D 类
-    let mut jvm_tuning: Vec<String> = Vec::new();   // -cp 之后、mainClass 之前
+    let mut jvm_tuning: Vec<String> = Vec::new(); // -cp 之后、mainClass 之前
 
     // 从版本 JSON 的 arguments.jvm 提取
     if let Some(jvm_args) = &version_json.arguments.jvm {
@@ -255,16 +255,28 @@ pub fn build_launch_command(
 
     // JDK 22+ 前置兼容标志（官方 arguments.jvm 可能已包含，去重）
     if java_major_version >= 22 {
-        push_unique(&mut jvm_preamble, "--sun-misc-unsafe-memory-access=allow".into());
-        push_unique(&mut jvm_preamble, "--enable-native-access=ALL-UNNAMED".into());
+        push_unique(
+            &mut jvm_preamble,
+            "--sun-misc-unsafe-memory-access=allow".into(),
+        );
+        push_unique(
+            &mut jvm_preamble,
+            "--enable-native-access=ALL-UNNAMED".into(),
+        );
     }
 
     // Native 库系统属性：旧式版本设置 -Djava.library.path（目录由启动前 ensure 保证就绪）
     add_native_props(&mut system_props, &natives_dir, version_json);
 
     // 启动器品牌标识（官方 arguments.jvm 可能已包含，去重）
-    push_unique(&mut system_props, format!("-Dminecraft.launcher.brand={}", LAUNCHER_NAME));
-    push_unique(&mut system_props, format!("-Dminecraft.launcher.version={}", LAUNCHER_VERSION));
+    push_unique(
+        &mut system_props,
+        format!("-Dminecraft.launcher.brand={}", LAUNCHER_NAME),
+    );
+    push_unique(
+        &mut system_props,
+        format!("-Dminecraft.launcher.version={}", LAUNCHER_VERSION),
+    );
 
     // 编码
     system_props.push("-Dstdout.encoding=UTF-8".into());
@@ -326,9 +338,18 @@ pub fn build_launch_command(
             "",
             "legacy",
         ),
-        AuthMode::Online { username, access_token, uuid, xuid } => {
-            (username.as_str(), uuid.as_str(), access_token.as_str(), xuid.as_str(), "msa")
-        }
+        AuthMode::Online {
+            username,
+            access_token,
+            uuid,
+            xuid,
+        } => (
+            username.as_str(),
+            uuid.as_str(),
+            access_token.as_str(),
+            xuid.as_str(),
+            "msa",
+        ),
     };
 
     let game_ctx = TemplateContext {
@@ -342,7 +363,11 @@ pub fn build_launch_command(
         auth_xuid,
         user_type,
         // 空值用空 JSON（老版本 json 的 token 不能被替换为空串，Main 解析会崩）
-        user_properties: if user_properties.is_empty() { "{}" } else { user_properties },
+        user_properties: if user_properties.is_empty() {
+            "{}"
+        } else {
+            user_properties
+        },
         version_type: &version_json.r#type,
         resolution_width,
         resolution_height,
@@ -438,11 +463,7 @@ pub fn build_launch_command(
 // ── 辅助函数 ──────────────────────────────────────────
 
 /// 构建 classpath：libraries 的 artifact + 新式 classifier + client.jar
-fn build_classpath(
-    version_json: &VersionJson,
-    lib_dir: &Path,
-    client_jar: &Path,
-) -> Vec<PathBuf> {
+fn build_classpath(version_json: &VersionJson, lib_dir: &Path, client_jar: &Path) -> Vec<PathBuf> {
     let mut cp = Vec::new();
 
     for lib in &version_json.libraries {
@@ -524,8 +545,7 @@ pub fn ensure_old_style_natives(
     natives_dir: &Path,
 ) -> Result<(), String> {
     // 所有版本：确保 natives 根目录存在（LWJGL/Netty 运行时在其中创建子目录）
-    std::fs::create_dir_all(natives_dir)
-        .map_err(|e| format!("创建 natives 目录失败: {}", e))?;
+    std::fs::create_dir_all(natives_dir).map_err(|e| format!("创建 natives 目录失败: {}", e))?;
 
     if !has_old_style_natives(version_json) {
         return Ok(());
@@ -541,27 +561,23 @@ pub fn ensure_old_style_natives(
 
     let mut errors: Vec<String> = Vec::new();
     for lib in &version_json.libraries {
-        let Some(classifier_key) = lib
-            .natives
-            .as_ref()
-            .and_then(|n| n.get("windows"))
-        else {
+        let Some(classifier_key) = lib.natives.as_ref().and_then(|n| n.get("windows")) else {
             continue;
         };
         let Some(classifiers) = lib.downloads.as_ref().and_then(|d| d.classifiers.as_ref()) else {
             continue;
         };
-        let Some(artifact) = classifiers.get(classifier_key) else { continue };
+        let Some(artifact) = classifiers.get(classifier_key) else {
+            continue;
+        };
         let jar = lib_dir.join(&artifact.path);
         if !jar.exists() {
             errors.push(format!("native JAR 缺失: {}", artifact.path));
             continue;
         }
-        if let Err(e) = crate::downloader::extract::extract_jar(
-            &jar,
-            natives_dir,
-            lib.extract.as_ref(),
-        ) {
+        if let Err(e) =
+            crate::downloader::extract::extract_jar(&jar, natives_dir, lib.extract.as_ref())
+        {
             errors.push(format!("{}: {}", lib.name, e));
         }
     }
@@ -588,7 +604,10 @@ fn add_native_props(props: &mut Vec<String>, natives_dir: &Path, version_json: &
     if !has_old_style_natives(version_json) {
         return;
     }
-    props.push(format!(r#"-Djava.library.path={}"#, natives_dir.to_string_lossy()));
+    props.push(format!(
+        r#"-Djava.library.path={}"#,
+        natives_dir.to_string_lossy()
+    ));
 }
 
 /// 根据 GC 类型返回对应的 JVM 参数
@@ -678,7 +697,7 @@ mod tests {
     #[test]
     fn test_auto_memory_strategy() {
         let avail = 9216u64; // 剩余 9GB
-        // 0 mod → 60% = 5529MB
+                             // 0 mod → 60% = 5529MB
         assert_eq!(auto_alloc_memory(avail, 0), (9216.0 * 0.60) as u32);
         // 30 mod → 69%
         assert_eq!(auto_alloc_memory(avail, 30), (9216.0 * 0.69) as u32);
@@ -748,9 +767,15 @@ fn available_system_memory_mb() -> u64 {
 
 /// 在版本目录中扫描第一个 `.jar` 文件（与目录名可能不同）。
 pub fn find_jar_in_dir(dir: &std::path::Path) -> Option<std::path::PathBuf> {
-    std::fs::read_dir(dir).ok()?.filter_map(|e| e.ok()).find_map(|e| {
-        let p = e.path();
-        if p.extension()? == "jar" && p.is_file() { Some(p) } else { None }
-    })
+    std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .find_map(|e| {
+            let p = e.path();
+            if p.extension()? == "jar" && p.is_file() {
+                Some(p)
+            } else {
+                None
+            }
+        })
 }
-
