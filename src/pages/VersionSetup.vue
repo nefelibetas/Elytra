@@ -9,6 +9,7 @@ import { CATEGORY_ICONS } from "../utils/versionIcons";
 import VersionItem from "../component/VersionItem.vue";
 import AlertDialog from "../component/AlertDialog.vue";
 import { dlState } from "../store/download";
+import { authMode, msAccount, loadMsAccount } from "../store/auth";
 
 const route = useRoute();
 const router = useRouter();
@@ -154,18 +155,14 @@ async function exportScript() {
     if (!path) return; // 用户取消
 
     // 收集当前登录态，生成可直接启动的命令
-    const mode = localStorage.getItem("elytra.authMode") ?? "offline";
+    // 注意：auth store 的 AuthMode 是 "premium" | "offline"，后端命令参数约定是 "online" | "offline"
     let username = "";
     let accessToken = "";
     let uuid = "";
     let xuid = "";
-    if (mode === "online") {
-      const acc = await invoke<{
-        name: string;
-        access_token: string;
-        uuid: string;
-        xuid: string;
-      } | null>("get_ms_account");
+    if (authMode.value === "premium") {
+      if (!msAccount.value) await loadMsAccount();
+      const acc = msAccount.value;
       if (!acc) {
         showToast("未登录正版账号，请先在启动页登录");
         return;
@@ -182,7 +179,7 @@ async function exportScript() {
     await invoke("export_launch_script", {
       savePath: path,
       versionDirName: versionName.value,
-      authMode: mode,
+      authMode: authMode.value === "premium" ? "online" : "offline",
       username,
       accessToken,
       uuid,
