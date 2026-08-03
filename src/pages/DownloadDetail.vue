@@ -36,7 +36,7 @@ async function handleCancel(task: TaskItem) {
         </div>
         <div class="summary-row">
           <span class="summary-label">总进度</span>
-          <span class="summary-value mono">{{ Math.round(dlState.totalProgress) }}%</span>
+          <span class="summary-value mono">{{ Math.floor(dlState.totalProgress) }}%</span>
         </div>
       </div>
     </aside>

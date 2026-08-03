@@ -611,9 +611,11 @@ impl EmitLoop {
                     }
 
                     // 总进度 = 已完成文件数 / 总文件数（与检测阶段 set_completed 同公式，
-                    // 无缝衔接：检测完即 initial/total，下载中继续单调涨）
+                    // 无缝衔接：检测完即 initial/total，下载中继续单调涨）。
+                    // 封顶 99.9：done 前永不显示 100%（剩余文件未下完时四舍五入会误导），
+                    // 真正的 100% 由下载完成后 run_task 收尾显式设置。
                     p.progress = if self.total_files > 0 {
-                        (completed as f64 / self.total_files as f64 * 100.0).min(100.0)
+                        (completed as f64 / self.total_files as f64 * 100.0).min(99.9)
                     } else {
                         0.0
                     };
@@ -655,11 +657,12 @@ fn step_done(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, idx: usize) {
 
 fn set_total(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, n: u32) {
     // 总进度 = completed/total，与 EmitLoop 同公式：
-    // 检测阶段随已完成数平滑涨到初始值，下载阶段继续单调涨，无跳变
+    // 检测阶段随已完成数平滑涨到初始值，下载阶段继续单调涨，无跳变。
+    // 封顶 99.9：100% 只由任务收尾显式设置（见 run_task/repair 的 done 分支）。
     task::update_and_emit(app, progress, |p| {
         p.total_files = n;
         if n > 0 {
-            p.progress = (p.completed_files as f64 / n as f64 * 100.0).min(100.0);
+            p.progress = (p.completed_files as f64 / n as f64 * 100.0).min(99.9);
         }
     });
 }
@@ -668,7 +671,7 @@ fn set_completed(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, n: u32) {
     task::update_and_emit(app, progress, |p| {
         p.completed_files = n;
         if p.total_files > 0 {
-            p.progress = (n as f64 / p.total_files as f64 * 100.0).min(100.0);
+            p.progress = (n as f64 / p.total_files as f64 * 100.0).min(99.9);
         }
     });
 }
