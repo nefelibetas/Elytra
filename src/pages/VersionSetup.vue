@@ -130,6 +130,8 @@ async function repairFiles() {
       speedBps: 0,
       completedFiles: 0,
       totalFiles: 0,
+      completedBytes: 0,
+      totalBytes: 0,
       currentPhase: "等待中",
       steps: [],
       previousRoute: router.currentRoute.value.fullPath,

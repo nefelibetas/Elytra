@@ -26,6 +26,8 @@ pub struct TaskProgress {
     pub speed_bps: f64,
     pub completed_files: u32,
     pub total_files: u32,
+    pub completed_bytes: u64,
+    pub total_bytes: u64,
     pub current_phase: String,
     pub steps: Vec<StepInfo>,
     pub error: Option<String>,
@@ -72,6 +74,8 @@ impl TaskManager {
             speed_bps: 0.0,
             completed_files: 0,
             total_files: 0,
+            completed_bytes: 0,
+            total_bytes: 0,
             current_phase: "等待中".into(),
             steps: steps.iter().map(|s| StepInfo {
                 name: s.to_string(),

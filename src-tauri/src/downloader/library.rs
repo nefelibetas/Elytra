@@ -40,6 +40,28 @@ pub fn count_total(libraries: &[Library]) -> usize {
     }).count()
 }
 
+/// 全部应下载库的字节合计（与 count_total 同过滤条件）。
+pub fn total_lib_bytes(libraries: &[Library]) -> u64 {
+    libraries.iter().filter_map(|lib| {
+        if !should_download(lib) { return None; }
+        lib.downloads.as_ref()?.artifact.as_ref().map(|a| a.size)
+    }).sum()
+}
+
+/// 本地已存在且 sha1 匹配的库字节合计（与 count_pending 同过滤条件，取反）。
+pub fn existing_lib_bytes(libraries: &[Library], lib_dir: &Path) -> u64 {
+    libraries.iter().filter_map(|lib| {
+        if !should_download(lib) { return None; }
+        let artifact = lib.downloads.as_ref()?.artifact.as_ref()?;
+        let dest = lib_dir.join(&artifact.path);
+        if dest.exists() && file_sha1_matches(&dest, &artifact.sha1) {
+            Some(artifact.size)
+        } else {
+            None
+        }
+    }).sum()
+}
+
 pub async fn download_libraries(
     libraries: &[Library],
     libraries_dir: &Path,

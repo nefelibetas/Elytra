@@ -61,7 +61,7 @@ pub async fn scan_missing(version_dir_name: &str) -> Result<MissingReport, Strin
     let lib_pending = library::count_pending(&vj.libraries, &lib_dir) as u32;
 
     // 3. 资源（sha1 比对本地缓存，多线程；非下载任务，无需进度回调）
-    let asst_pending = count_assets_all(&vj.asset_index.url, &config, &mc, |_| {}, |_| {}).await;
+    let (asst_pending, _) = count_assets_all(&vj.asset_index.url, &config, &mc, |_, _| {}, |_, _| {}).await;
 
     Ok(MissingReport {
         client_jar: jar_missing,
@@ -146,8 +146,8 @@ pub async fn run_repair_task(
     };
     let natives_idx = idx;
 
-    set_total(&app, progress, total_files);
-    set_completed(&app, progress, 0);
+    set_total(&app, progress, total_files, 0);
+    set_completed(&app, progress, 0, 0);
     if let Some(i) = jar_idx {
         set_phase(&app, progress, "running", "修复中", i, "running");
     }
@@ -177,6 +177,8 @@ pub async fn run_repair_task(
         asst_pending,
         initial_completed: 0,
         total_files,
+        initial_bytes: 0,
+        total_bytes: 0,
         jar_total_fallback: 0,
     }
     .spawn();
@@ -337,40 +339,56 @@ pub async fn run_task(
     }
     task::global().set_cleanup_path(&progress.try_lock().unwrap().task_id, vdir.clone());
 
-    // ── 检测本地已有文件：先给全量总数（剩余=大数字），检测中实时上报已完成数，避免 UI 死等 ──
+    // ── 检测本地已有文件：先给全量总数（剩余=大数字），检测中实时上报已完成字节，避免 UI 死等 ──
     let lib_dir = mc.join("libraries");
     let lib_total_all = crate::downloader::library::count_total(&vj.libraries) as u32;
     let lib_pending = crate::downloader::library::count_pending(&vj.libraries, &lib_dir) as u32;
     let lib_existing = lib_total_all - lib_pending;
+    let lib_total_bytes = crate::downloader::library::total_lib_bytes(&vj.libraries);
+    let lib_existing_bytes = crate::downloader::library::existing_lib_bytes(&vj.libraries, &lib_dir);
 
     let jar_exists = vj.downloads.client.is_some();
     let jar_total = if jar_exists { 1u32 } else { 0u32 };
+    let jar_total_bytes = vj.downloads.client.as_ref().map(|c| c.size).unwrap_or(0);
 
-    // 资源清单：fetch asset index（网络）→ 报资产总数；再多线程 sha1 检测本地（逐批上报）
+    // 资源清单：fetch asset index（网络）→ 报资产总数（文件+字节）；再多线程 sha1 检测本地（逐批上报）
     let mut asst_total_all = 0u32;
+    let mut asst_total_bytes = 0u64;
     task::update_and_emit(&app, progress, |p| p.current_phase = "获取资源清单".into());
-    let asst_pending = count_assets_all(
+    let (asst_pending, asst_pending_bytes) = count_assets_all(
         &vj.asset_index.url,
         &config,
         &mc,
-        |total| {
+        |total, total_bytes| {
             asst_total_all = total;
+            asst_total_bytes = total_bytes;
             // 清单齐了：剩余=全量总数，已完成仅 version json
-            set_total(&app, progress, 1 + jar_total + lib_total_all + total);
-            set_completed(&app, progress, 1);
+            set_total(
+                &app, progress,
+                1 + jar_total + lib_total_all + total,
+                1 + jar_total_bytes + lib_total_bytes + total_bytes,
+            );
+            set_completed(&app, progress, 1, 1);
             task::update_and_emit(&app, progress, |p| p.current_phase = "检测本地资源文件".into());
         },
-        |checked| {
-            // 检测中：已完成 = version json + 已存在库 + 已检测资产
-            set_completed(&app, progress, 1 + lib_existing + checked);
+        |checked_files, checked_bytes| {
+            // 检测中：已完成 = version json + 已存在库 + 已检测资产（文件与字节）
+            set_completed(&app, progress, 1 + lib_existing + checked_files, 1 + lib_existing_bytes + checked_bytes);
         },
     )
     .await;
     let asst_existing = asst_total_all.saturating_sub(asst_pending);
-    set_completed(&app, progress, 1 + lib_existing + asst_existing);
+    let asst_existing_bytes = asst_total_bytes.saturating_sub(asst_pending_bytes);
+    set_completed(
+        &app, progress,
+        1 + lib_existing + asst_existing,
+        1 + lib_existing_bytes + asst_existing_bytes,
+    );
 
     let total_files = 1 + jar_total + lib_total_all + asst_total_all;
     let initial_completed = 1 + lib_existing + asst_existing;
+    let total_bytes = 1 + jar_total_bytes + lib_total_bytes + asst_total_bytes;
+    let initial_bytes = 1 + lib_existing_bytes + asst_existing_bytes;
 
     // ── Parallel phase: client.jar + libraries + assets ──
     let jar_counter = Arc::new(AtomicU32::new(0));
@@ -402,6 +420,8 @@ pub async fn run_task(
         asst_pending,
         initial_completed,
         total_files,
+        initial_bytes,
+        total_bytes,
         jar_total_fallback: vj.downloads.client.as_ref().map(|c| c.size).unwrap_or(0),
     }
     .spawn();
@@ -540,6 +560,9 @@ struct EmitLoop {
     /// 初始已完成数（完整下载 = 预扫描已存在文件；补全 = 0）
     initial_completed: u32,
     total_files: u32,
+    /// 字节维度：检测完的已存在字节与清单总字节（bytes 为 0 时进度回退文件数公式）
+    initial_bytes: u64,
+    total_bytes: u64,
     /// jar 总大小兜底（version.json 的 size；content-length 缺失时用）
     jar_total_fallback: u64,
 }
@@ -557,6 +580,9 @@ impl EmitLoop {
                 let ld = self.lib_done.load(Ordering::Relaxed);
                 let ad = self.asst_done.load(Ordering::Relaxed);
                 let completed = self.initial_completed + jd + ld + ad;
+                // 字节维度：initial（已存在）+ jar 当前字节 + libs/assets 下载增量
+                let completed_bytes =
+                    self.initial_bytes + jb + self.bytes.load(Ordering::Relaxed);
 
                 let done = {
                     let mut p = self.progress.lock().unwrap();
@@ -573,6 +599,7 @@ impl EmitLoop {
                     }
                     p.speed_bps = speed_ema;
                     p.completed_files = completed;
+                    p.completed_bytes = completed_bytes;
 
                     // 分步进度：client.jar 字节级（total 未知时用完成标志），libs/assets 按完成数
                     if let Some(i) = self.jar_step {
@@ -610,11 +637,14 @@ impl EmitLoop {
                         }
                     }
 
-                    // 总进度 = 已完成文件数 / 总文件数（与检测阶段 set_completed 同公式，
-                    // 无缝衔接：检测完即 initial/total，下载中继续单调涨）。
-                    // 封顶 99.9：done 前永不显示 100%（剩余文件未下完时四舍五入会误导），
-                    // 真正的 100% 由下载完成后 run_task 收尾显式设置。
-                    p.progress = if self.total_files > 0 {
+                    // 总进度 = 已完成字节 / 总字节（与检测阶段 set_completed 同公式，
+                    // 无缝衔接：检测完即 initial/total，下载中继续单调涨；大文件按字节占比，
+                    // 不再出现"剩余 1 个 jar 却卡 99%"）。
+                    // bytes 为 0 时回退文件数占比（repair 等无字节来源场景）。
+                    // 封顶 99.9：done 前永不显示 100%，真正的 100% 由任务收尾显式设置。
+                    p.progress = if self.total_bytes > 0 {
+                        (completed_bytes as f64 / self.total_bytes as f64 * 100.0).min(99.9)
+                    } else if self.total_files > 0 {
                         (completed as f64 / self.total_files as f64 * 100.0).min(99.9)
                     } else {
                         0.0
@@ -655,24 +685,32 @@ fn step_done(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, idx: usize) {
     });
 }
 
-fn set_total(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, n: u32) {
-    // 总进度 = completed/total，与 EmitLoop 同公式：
-    // 检测阶段随已完成数平滑涨到初始值，下载阶段继续单调涨，无跳变。
-    // 封顶 99.9：100% 只由任务收尾显式设置（见 run_task/repair 的 done 分支）。
+/// 总进度统一公式：优先字节占比（方案 A：全程字节，大文件不再卡 99%），
+/// bytes 为 0 时回退文件数占比（repair 等无字节来源的场景）。
+/// 封顶 99.9：100% 只由任务收尾显式设置（见 run_task/repair 的 done 分支）。
+fn update_progress(p: &mut TaskProgress) {
+    p.progress = if p.total_bytes > 0 {
+        (p.completed_bytes as f64 / p.total_bytes as f64 * 100.0).min(99.9)
+    } else if p.total_files > 0 {
+        (p.completed_files as f64 / p.total_files as f64 * 100.0).min(99.9)
+    } else {
+        0.0
+    };
+}
+
+fn set_total(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, files: u32, bytes: u64) {
     task::update_and_emit(app, progress, |p| {
-        p.total_files = n;
-        if n > 0 {
-            p.progress = (p.completed_files as f64 / n as f64 * 100.0).min(99.9);
-        }
+        p.total_files = files;
+        p.total_bytes = bytes;
+        update_progress(p);
     });
 }
 
-fn set_completed(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, n: u32) {
+fn set_completed(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, files: u32, bytes: u64) {
     task::update_and_emit(app, progress, |p| {
-        p.completed_files = n;
-        if p.total_files > 0 {
-            p.progress = (n as f64 / p.total_files as f64 * 100.0).min(99.9);
-        }
+        p.completed_files = files;
+        p.completed_bytes = bytes;
+        update_progress(p);
     });
 }
 
@@ -703,33 +741,36 @@ async fn count_assets_all(
     asset_index_url: &str,
     config: &DownloaderConfig,
     mc_dir: &Path,
-    mut on_total: impl FnMut(u32),
-    mut on_checked: impl FnMut(u32),
-) -> u32 {
+    mut on_total: impl FnMut(u32, u64),
+    mut on_checked: impl FnMut(u32, u64),
+) -> (u32, u64) {
     use crate::downloader::hash::file_sha1_matches;
     let text = match crate::downloader::assets::fetch_asset_index(config, mc_dir, asset_index_url, None, None)
         .await
     {
         Ok(t) => t,
-        _ => return 0,
+        _ => return (0, 0),
     };
-    let idx: serde_json::Value = match serde_json::from_str(&text) { Ok(v) => v, _ => return 0 };
+    let idx: serde_json::Value = match serde_json::from_str(&text) { Ok(v) => v, _ => return (0, 0) };
     let objects_dir = mc_dir.join("assets").join("objects");
 
-    // 先收集全部 (hash, 目标路径)，再分块多线程 sha1 校验（数千个文件，单线程过慢）
-    let mut items: Vec<(String, std::path::PathBuf)> = Vec::new();
+    // 先收集全部 (hash, 目标路径, size)，再分块多线程 sha1 校验（数千个文件，单线程过慢）
+    let mut items: Vec<(String, std::path::PathBuf, u64)> = Vec::new();
+    let mut total_bytes: u64 = 0;
     if let Some(map) = idx["objects"].as_object() {
         for (_path, obj) in map {
             let Some(hash) = obj.get("hash").and_then(|v| v.as_str()) else { continue; };
-            items.push((hash.to_string(), objects_dir.join(&hash[..2]).join(hash)));
+            let size = obj.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
+            total_bytes += size;
+            items.push((hash.to_string(), objects_dir.join(&hash[..2]).join(hash), size));
         }
     }
     let total = items.len() as u32;
     if total == 0 {
-        return 0;
+        return (0, 0);
     }
-    // 清单已拿到：先报总数，让调用方立即 set_total（剩余=大数字，而非检测完才出现）
-    on_total(total);
+    // 清单已拿到：先报总数（文件数 + 字节），让调用方立即 set_total（剩余=大数字，而非检测完才出现）
+    on_total(total, total_bytes);
 
     let n_threads = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -737,20 +778,28 @@ async fn count_assets_all(
         .clamp(1, 8);
     let chunk = items.len().div_ceil(n_threads);
     let pending = std::sync::atomic::AtomicU32::new(0);
+    let pending_bytes = std::sync::atomic::AtomicU64::new(0);
     let checked = std::sync::atomic::AtomicU32::new(0);
+    let existing_bytes = std::sync::atomic::AtomicU64::new(0);
     // 检测进度经 mpsc 汇总到主线程逐批回调（多线程直接调 emit 会造成锁竞争）
     let (tx, rx) = std::sync::mpsc::channel::<u32>();
     std::thread::scope(|s| {
         for slice in items.chunks(chunk) {
             let tx = tx.clone();
             let counter = &pending;
+            let pb = &pending_bytes;
             let checked = &checked;
+            let existing = &existing_bytes;
             s.spawn(move || {
                 let mut p = 0u32;
+                let mut pb_local = 0u64;
                 let mut done = 0u32;
-                for (hash, dest) in slice {
-                    if !(dest.exists() && file_sha1_matches(dest, hash)) {
+                for (hash, dest, size) in slice {
+                    if dest.exists() && file_sha1_matches(dest, hash) {
+                        existing.fetch_add(*size, std::sync::atomic::Ordering::Relaxed);
+                    } else {
                         p += 1;
+                        pb_local += *size;
                     }
                     done += 1;
                     if done % 500 == 0 {
@@ -762,14 +811,21 @@ async fn count_assets_all(
                 checked.fetch_add(done, std::sync::atomic::Ordering::Relaxed);
                 let _ = tx.send(done);
                 counter.fetch_add(p, std::sync::atomic::Ordering::Relaxed);
+                pb.fetch_add(pb_local, std::sync::atomic::Ordering::Relaxed);
             });
         }
         drop(tx);
         while rx.recv().is_ok() {
-            on_checked(checked.load(std::sync::atomic::Ordering::Relaxed));
+            on_checked(
+                checked.load(std::sync::atomic::Ordering::Relaxed),
+                existing_bytes.load(std::sync::atomic::Ordering::Relaxed),
+            );
         }
     });
-    pending.load(std::sync::atomic::Ordering::Relaxed)
+    (
+        pending.load(std::sync::atomic::Ordering::Relaxed),
+        pending_bytes.load(std::sync::atomic::Ordering::Relaxed),
+    )
 }
 
 #[cfg(test)]

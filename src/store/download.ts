@@ -19,6 +19,8 @@ export interface TaskItem {
   speedBps: number
   completedFiles: number
   totalFiles: number
+  completedBytes: number
+  totalBytes: number
   currentPhase: string
   steps: StepInfo[]
   error?: string
@@ -33,6 +35,8 @@ interface ProgressPayload {
   speed_bps: number
   completed_files: number
   total_files: number
+  completed_bytes: number
+  total_bytes: number
   current_phase: string
   steps: StepInfo[]
   error?: string | null
@@ -109,6 +113,8 @@ export const dlState = reactive({
       speedBps: 0,
       completedFiles: 0,
       totalFiles: 0,
+      completedBytes: 0,
+      totalBytes: 0,
       currentPhase: "等待中",
       steps: [],
       previousRoute: prevRoute,
@@ -147,6 +153,8 @@ export function ensureListen() {
       dlState.tasks[idx].speedBps = p.speed_bps
       dlState.tasks[idx].completedFiles = p.completed_files
       dlState.tasks[idx].totalFiles = p.total_files
+      dlState.tasks[idx].completedBytes = p.completed_bytes
+      dlState.tasks[idx].totalBytes = p.total_bytes
       dlState.tasks[idx].currentPhase = p.current_phase
       dlState.tasks[idx].steps = p.steps
       dlState.tasks[idx].error = p.error ?? undefined
@@ -163,6 +171,8 @@ export function ensureListen() {
         speedBps: p.speed_bps,
         completedFiles: p.completed_files,
         totalFiles: p.total_files,
+        completedBytes: p.completed_bytes,
+        totalBytes: p.total_bytes,
         currentPhase: p.current_phase,
         steps: p.steps,
         error: p.error ?? undefined,
