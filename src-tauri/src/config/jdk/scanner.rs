@@ -1,37 +1,33 @@
 use std::collections::HashSet;
 
-use crate::config::jdk::error::JdkError;
 use crate::config::jdk::model::JavaEnv;
 use std::path::Path;
 
-pub fn scan_custom_dir(path: &str) -> Result<Vec<JavaEnv>, JdkError> {
-    let mut envs = vec![];
+/// 扫描用户指定目录（JDK 根或其子目录），复用 auto_scan 的过滤与去重逻辑。
+pub fn scan_custom_dir(path: &str) -> Result<Vec<JavaEnv>, String> {
+    let mut envs = Vec::new();
+    let mut seen = HashSet::new();
     let dir = Path::new(path);
     if !dir.exists() {
-        return Err(JdkError::TargetDirNotFound);
+        return Err("目标目录不存在".into());
     }
-    if let Ok(env) = java_bin_handler(dir, false) {
-        envs.push(env);
-    }
-    for entry in std::fs::read_dir(path)? {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        let filename = entry.file_name();
-        if file_type.is_dir() {
-            let name_is_bin = filename == "bin";
-            if let Ok(env) = java_bin_handler(&entry.path(), name_is_bin) {
-                envs.push(env);
+    scan_one(dir, &mut envs, &mut seen);
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                scan_one(&path, &mut envs, &mut seen);
             }
         }
     }
     if envs.is_empty() {
-        Err(JdkError::JavaEnvNotFound(path.to_string()))
+        Err(format!("未在目录中找到 Java 环境: {}", path))
     } else {
         Ok(envs)
     }
 }
 
-pub(crate) fn java_bin_handler(path: &Path, is_bin_dir: bool) -> Result<JavaEnv, JdkError> {
+fn java_bin_handler(path: &Path, is_bin_dir: bool) -> Result<JavaEnv, String> {
     let java_home = if is_bin_dir {
         path.parent().unwrap_or(path)
     } else {
@@ -44,17 +40,17 @@ pub(crate) fn java_bin_handler(path: &Path, is_bin_dir: bool) -> Result<JavaEnv,
             .join(if cfg!(windows) { "java.exe" } else { "java" })
     };
     if !java_bin_path.exists() {
-        return Err(JdkError::TargetDirNotFound);
+        return Err("目标目录不存在".into());
     }
 
     let output = std::process::Command::new(&java_bin_path)
         .arg("-version")
         .output()
-        .map_err(|e| JdkError::DetectFailed(e.to_string()))?;
+        .map_err(|e| format!("Java 检测失败: {}", e))?;
 
     let version_str = String::from_utf8_lossy(&output.stderr);
     let version = parse_version(&version_str)
-        .ok_or_else(|| JdkError::ParseFailed(version_str.to_string()))?;
+        .ok_or_else(|| format!("Java 版本解析失败: {}", version_str))?;
     let arch = if version_str.contains("64-Bit") {
         "64-Bit".into()
     } else {
@@ -93,6 +89,7 @@ fn env(key: &str) -> Option<String> {
     std::env::var(key).ok()
 }
 
+/// 探测单个目录（含去重 + 仅收 64 位；自动扫描与用户指定目录共用）。
 fn scan_one(dir: &Path, found: &mut Vec<JavaEnv>, seen: &mut HashSet<String>) {
     if let Ok(env) = java_bin_handler(dir, false) {
         if seen.insert(env.path.clone()) && env.arch == "64-Bit" {

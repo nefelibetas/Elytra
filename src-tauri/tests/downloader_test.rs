@@ -8,7 +8,10 @@ fn test_config() -> DownloaderConfig {
     cfg
 }
 
+/// 真实下载最新快照版本到 `D:\download_test`（数百 MB）。
+/// 默认跳过：日常验证用 `cargo test --lib`；需要时显式 `cargo test --test downloader_test -- --ignored`。
 #[tokio::test]
+#[ignore = "真实下载数百 MB，默认不跑（AGENTS.md 测试红线）"]
 async fn download_snapshot_full() {
     let config = test_config();
     let m = manifest::fetch_version_list(&config).await.unwrap();
@@ -22,6 +25,7 @@ async fn download_snapshot_full() {
     println!("downloaded {} complete", sid);
 }
 
+/// 版本清单拉取（单发小请求，需网络；离线环境会失败）。
 #[tokio::test]
 async fn fetch_manifest_works() {
     let config = test_config();

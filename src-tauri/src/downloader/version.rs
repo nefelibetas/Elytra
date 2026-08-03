@@ -1,28 +1,27 @@
 use std::path::Path;
 
-use crate::config::downloader::model::DownloadSource;
-use crate::downloader::fetcher::{self, http};
+use crate::config::downloader::model::{DownloadSource, DownloaderConfig};
+use crate::downloader::fetcher;
 use crate::downloader::model::VersionJson;
+
+/// 多源回退拉取版本 JSON 原始文本（不写盘）。下载流程与任务编排共用。
+pub async fn fetch_version_json_text(
+    version_url: &str,
+    config: &DownloaderConfig,
+) -> Result<String, String> {
+    config
+        .fetch_with_fallback(config.file_source_mode, |s| s.mirror_url(version_url))
+        .await
+        .map_err(|e| format!("获取 version json 失败: {e}"))
+}
+
+/// 下载并落盘版本 JSON（保留原始文本，避免序列化丢失未知字段）。
 pub async fn download_version_json(
     version_url: &str,
     dest_dir: &Path,
-    sources: &[&DownloadSource],
+    config: &DownloaderConfig,
 ) -> Result<VersionJson, String> {
-    let urls: Vec<String> = sources.iter().map(|s| s.mirror_url(version_url)).collect();
-    let mut last_err = String::new();
-    let mut text = String::new();
-    for url in &urls {
-        match http().get(url).send().await {
-            Ok(resp) => match resp.text().await {
-                Ok(t) => { text = t; break; }
-                Err(e) => last_err = format!("读取 version json 失败: {}", e),
-            },
-            Err(e) => last_err = format!("获取 version json 失败: {}", e),
-        }
-    }
-    if text.is_empty() {
-        return Err(last_err);
-    }
+    let text = fetch_version_json_text(version_url, config).await?;
 
     let version_json: VersionJson =
         serde_json::from_str(&text).map_err(|e| format!("解析 version json 失败: {}", e))?;

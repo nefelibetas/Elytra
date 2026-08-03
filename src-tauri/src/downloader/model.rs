@@ -157,3 +157,69 @@ pub struct AssetObject {
     pub hash: String,
     pub size: u64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 最小可用版本 JSON（覆盖全部必填字段）。
+    fn minimal_json() -> &'static str {
+        r#"{
+            "id": "1.18.2",
+            "mainClass": "net.minecraft.client.main.Main",
+            "assets": "1.18",
+            "assetIndex": { "id": "1.18", "url": "x", "sha1": "y", "size": 1, "totalSize": 1 },
+            "downloads": { "client": { "url": "x", "sha1": "y", "size": 1 } },
+            "arguments": { "game": [], "jvm": [] },
+            "libraries": [],
+            "complianceLevel": 0,
+            "minimumLauncherVersion": 21,
+            "javaVersion": { "majorVersion": 17 },
+            "releaseTime": "2021-11-30T00:00:00Z",
+            "time": "2021-11-30T00:00:00Z",
+            "type": "release"
+        }"#
+    }
+
+    #[test]
+    fn test_version_json_parse_minimal() {
+        let vj: VersionJson = serde_json::from_str(minimal_json()).unwrap();
+        assert_eq!(vj.id, "1.18.2");
+        assert_eq!(vj.main_class, "net.minecraft.client.main.Main");
+        assert!(vj.libraries.is_empty());
+        let c = vj.downloads.client.unwrap();
+        assert_eq!(c.size, 1);
+        assert_eq!(vj.arguments.jvm.as_ref().map(Vec::len), Some(0));
+    }
+
+    #[test]
+    fn test_version_json_parse_loader() {
+        // ModLoader 版本：带 libraries + minecraftArguments + 未知字段（须容忍）
+        let json = r#"{
+            "id": "1.20.1-forge-47.1.0",
+            "mainClass": "cpw.mods.bootstraplauncher.BootstrapLauncher",
+            "assets": "1.20",
+            "assetIndex": { "id": "1.20", "url": "x", "sha1": "y", "size": 1, "totalSize": 1 },
+            "downloads": { "client": { "url": "x", "sha1": "y", "size": 1 } },
+            "arguments": { "game": [], "jvm": [] },
+            "minecraftArguments": "--username ${auth_player_name}",
+            "libraries": [{
+                "name": "net.minecraftforge:forge:47.1.0",
+                "downloads": { "artifact": { "path": "x.jar", "url": "u", "sha1": "s", "size": 1 } }
+            }],
+            "complianceLevel": 0,
+            "minimumLauncherVersion": 21,
+            "javaVersion": { "majorVersion": 17 },
+            "releaseTime": "2023-07-01T00:00:00Z",
+            "time": "2023-07-01T00:00:00Z",
+            "type": "release",
+            "inheritsFrom": "1.20.1",
+            "unknownFutureField": { "a": 1 }
+        }"#;
+        let vj: VersionJson = serde_json::from_str(json).unwrap();
+        assert_eq!(vj.id, "1.20.1-forge-47.1.0");
+        assert_eq!(vj.libraries.len(), 1);
+        assert_eq!(vj.libraries[0].name, "net.minecraftforge:forge:47.1.0");
+        assert!(vj.minecraft_arguments.is_some());
+    }
+}

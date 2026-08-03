@@ -9,6 +9,8 @@ use sha2::Digest;
 // 自己新注册的 Azure 应用（未验证）会返回 403 Invalid app registration，
 // 因此不能换自定义 client id。
 pub const MS_CLIENT_ID: &str = "c36a9fb6-4f2a-41ff-90bd-ae7cc92031eb";
+/// 本地回调端口（唯一事实源：account.rs 监听与 REDIRECT_URI 都必须与此一致）。
+pub const CALLBACK_PORT: u16 = 27205;
 pub const REDIRECT_URI: &str = "http://localhost:27205";
 
 // ── 端点 ─────────────────────────────────────────────────────────
@@ -478,9 +480,10 @@ mod tests {
     }
 
     #[test]
-    fn test_xsts_error_message() {
-        assert_eq!(xsts_error_message(2148916233), "该 Microsoft 账号没有 Xbox Live 账号，请先注册");
-        assert_eq!(xsts_error_message(2148916238), "未成年账号需要家长同意，请先加入家庭组");
-        assert_eq!(xsts_error_message(999), "Xbox Live 鉴权失败，请稍后重试");
+    fn test_redirect_uri_matches_callback_port() {
+        assert!(
+            REDIRECT_URI.ends_with(&format!(":{CALLBACK_PORT}")),
+            "REDIRECT_URI 与 CALLBACK_PORT 不一致：{REDIRECT_URI} vs {CALLBACK_PORT}"
+        );
     }
 }

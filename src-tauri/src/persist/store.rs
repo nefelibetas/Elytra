@@ -2,11 +2,7 @@ use std::path::PathBuf;
 use std::fs;
 
 fn config_dir() -> PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("Elytra")
+    crate::persist::exe_dir().join("Elytra")
 }
 
 fn config_file() -> PathBuf {

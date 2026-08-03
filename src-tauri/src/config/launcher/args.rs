@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::config::launcher::model::{AuthMode, GcType, LauncherConfig, MemoryMode};
-use crate::downloader::extract::{native_classifier_matches, os_classifier_key};
-use crate::downloader::model::{OsRule, Rule, VersionJson};
+use crate::downloader::extract::{classifier_artifact, matches_rules, native_classifier_matches, os_classifier_key};
+use crate::downloader::model::VersionJson;
 
 /// 启动器标识
 const LAUNCHER_NAME: &str = "Elytra";
@@ -205,7 +205,7 @@ pub fn build_launch_command(
         crate::config::launcher::model::WindowSize::Default => (854, 480, false),
     };
     // JAR 文件名不一定等于目录名（目录可能因冲突被重命名）
-    let client_jar = find_jar_in_dir(&version_dir)
+    let client_jar = find_file_in_dir(&version_dir, "jar")
         .unwrap_or_else(|| version_dir.join(format!("{}.jar", version_dir_name)));
     let classpath_sep = ";";
 
@@ -469,7 +469,7 @@ fn build_classpath(version_json: &VersionJson, lib_dir: &Path, client_jar: &Path
     for lib in &version_json.libraries {
         // 规则过滤
         if let Some(rules) = &lib.rules {
-            if !match_rules(rules) {
+            if !matches_rules(rules) {
                 continue;
             }
         }
@@ -502,24 +502,7 @@ fn build_classpath(version_json: &VersionJson, lib_dir: &Path, client_jar: &Path
     cp
 }
 
-/// 将 Library 的 Rule 列表匹配当前 OS
-fn match_rules(rules: &[Rule]) -> bool {
-    let mut allowed = false;
-    for rule in rules {
-        let os_match = match &rule.os {
-            Some(OsRule { name: Some(n) }) => n == crate::downloader::extract::TARGET_OS,
-            _ => true,
-        };
-        match rule.action.as_str() {
-            "allow" if os_match => allowed = true,
-            "disallow" if os_match => return false,
-            _ => {}
-        }
-    }
-    allowed
-}
-
-/// 仅在列表不含相同参数时追加。
+/// 检查版本是否包含旧式 natives 库（lwjgl 2.x，有 `natives` 字段）。
 fn push_unique(list: &mut Vec<String>, arg: String) {
     if !list.iter().any(|a| a == &arg) {
         list.push(arg);
@@ -551,23 +534,21 @@ pub fn ensure_old_style_natives(
         return Ok(());
     }
 
-    // 旧式：已解压过（目录有内容）→ 直接复用
-    let natives_ready = std::fs::read_dir(natives_dir)
-        .map(|mut it| it.next().is_some())
-        .unwrap_or(false);
-    if natives_ready {
+    // 旧式：解压完成标记（.elytra-ready）存在 → 直接复用。
+    // 只查“目录非空”不可靠：上次解压中断会留下部分文件，误判为已就绪，
+    // 启动后缺原生库才暴露。marker 在全部解压成功后写入。
+    let ready_marker = natives_dir.join(".elytra-ready");
+    if ready_marker.exists() {
         return Ok(());
     }
 
     let mut errors: Vec<String> = Vec::new();
     for lib in &version_json.libraries {
+        // 仅旧式（natives 字段）参与解压；has_old_style_natives 保证版本整体含旧式库
         let Some(classifier_key) = lib.natives.as_ref().and_then(|n| n.get(crate::downloader::extract::TARGET_OS)) else {
             continue;
         };
-        let Some(classifiers) = lib.downloads.as_ref().and_then(|d| d.classifiers.as_ref()) else {
-            continue;
-        };
-        let Some(artifact) = classifiers.get(classifier_key) else {
+        let Some(artifact) = classifier_artifact(lib, classifier_key) else {
             continue;
         };
         let jar = lib_dir.join(&artifact.path);
@@ -591,6 +572,8 @@ pub fn ensure_old_style_natives(
     }
 
     if errors.is_empty() {
+        std::fs::write(&ready_marker, "")
+            .map_err(|e| format!("写入 natives 完成标记失败: {}", e))?;
         Ok(())
     } else {
         // 第一行为大类短句（dialog 正文显示），细节进复制区
@@ -765,14 +748,14 @@ fn available_system_memory_mb() -> u64 {
     4096
 }
 
-/// 在版本目录中扫描第一个 `.jar` 文件（与目录名可能不同）。
-pub fn find_jar_in_dir(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+/// 在目录中扫描第一个指定扩展名的文件（文件名可能与目录名不同，如目录被重命名）。
+pub fn find_file_in_dir(dir: &std::path::Path, ext: &str) -> Option<std::path::PathBuf> {
     std::fs::read_dir(dir)
         .ok()?
         .filter_map(|e| e.ok())
         .find_map(|e| {
             let p = e.path();
-            if p.extension()? == "jar" && p.is_file() {
+            if p.extension()? == ext && p.is_file() {
                 Some(p)
             } else {
                 None

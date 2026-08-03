@@ -4,6 +4,14 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::sync::Mutex;
 
+/// 启动器可执行文件所在目录（配置文件与默认游戏目录的基准）。
+pub fn exe_dir() -> std::path::PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+}
+
 /// 串行化所有读改写，避免后台线程与命令写入互相覆盖（read-modify-write 竞态）。
 static PERSIST_LOCK: Mutex<()> = Mutex::new(());
 

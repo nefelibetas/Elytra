@@ -16,24 +16,18 @@ pub struct GameDirsConfig {
 
 /// 启动器 exe 所在文件夹名（旧版默认项命名，用于迁移）。
 pub fn exe_dir_name() -> String {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .and_then(|p| {
-            p.file_name()
-                .map(|n| n.to_string_lossy().to_string())
-        })
+    crate::persist::exe_dir()
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default()
 }
 
 /// 默认目录：title 固定「当前文件夹」，指向启动器 exe 同级 .minecraft
 pub fn default_dir() -> GameDir {
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()));
-    let path = exe_dir
-        .map(|p| p.join(".minecraft").to_string_lossy().to_string())
-        .unwrap_or_else(|| ".minecraft".to_string());
+    let path = crate::persist::exe_dir()
+        .join(".minecraft")
+        .to_string_lossy()
+        .to_string();
     GameDir {
         name: "当前文件夹".to_string(),
         path,

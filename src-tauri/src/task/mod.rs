@@ -5,6 +5,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
+pub mod runner;
+
 static TM: OnceLock<Arc<TaskManager>> = OnceLock::new();
 
 pub fn init() {

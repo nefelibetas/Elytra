@@ -157,6 +157,14 @@ impl Default for DownloaderConfig {
 }
 
 impl DownloaderConfig {
+    /// 绝对化的游戏目录（相对路径基于启动器进程 cwd 解析）。
+    /// 启动参数（classpath/natives）与文件操作统一走绝对路径，
+    /// 避免基于不同 cwd 解析出错。
+    pub fn minecraft_dir_abs(&self) -> std::path::PathBuf {
+        std::path::absolute(std::path::PathBuf::from(&self.minecraft_dir))
+            .unwrap_or_else(|_| std::path::PathBuf::from(&self.minecraft_dir))
+    }
+
     /// 文件下载主源（按 file_source_mode 选择），文件下载失败不会跨源回退。
     pub fn file_primary_source(&self) -> Option<&DownloadSource> {
         match self.file_source_mode {

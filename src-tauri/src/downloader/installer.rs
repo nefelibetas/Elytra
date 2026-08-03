@@ -19,7 +19,7 @@ async fn install_loader_via_profile(
     config: &DownloaderConfig,
 ) -> Result<InstallInfo, String> {
     let source = config.file_primary_source().ok_or("no active source")?;
-    let mc = Path::new(&config.minecraft_dir);
+    let mc = config.minecraft_dir_abs();
     let dir_name = format!("{}-{}-{}", mc_version, dir_suffix, loader_version);
     let vdir = mc.join("versions").join(&dir_name);
 
@@ -106,7 +106,7 @@ pub async fn install_forge(
     config: &DownloaderConfig,
 ) -> Result<InstallInfo, String> {
     let source = config.file_primary_source().ok_or("no active source")?;
-    let mc = Path::new(&config.minecraft_dir);
+    let mc = config.minecraft_dir_abs();
     let dir_name = format!("{}-forge-{}", mc_version, forge_version);
     let vdir = mc.join("versions").join(&dir_name);
     let url = source.url(
@@ -122,7 +122,7 @@ pub async fn install_neoforge(
     config: &DownloaderConfig,
 ) -> Result<InstallInfo, String> {
     let source = config.file_primary_source().ok_or("no active source")?;
-    let mc = Path::new(&config.minecraft_dir);
+    let mc = config.minecraft_dir_abs();
     let dir_name = format!("{}-neoforge-{}", mc_version, neo_version);
     let vdir = mc.join("versions").join(&dir_name);
     let url = source.url(&source.neoforge_installer_url, &[("ver", neo_version)]);
@@ -136,7 +136,7 @@ async fn download_and_extract(
     version_dir: &Path,
     dir_name: &str,
 ) -> Result<InstallInfo, String> {
-    let mc_dir = Path::new(&config.minecraft_dir);
+    let mc_dir = config.minecraft_dir_abs();
     let tmp = mc_dir.join(".elytra").join("tmp");
     std::fs::create_dir_all(&tmp).map_err(|e| format!("创建临时目录失败: {}", e))?;
     let installer_name = installer_url.split('/').last().unwrap_or("installer.jar");
@@ -357,7 +357,7 @@ pub async fn install_optifine(
 ) -> Result<InstallInfo, String> {
     let config = config.clone();
     let source = config.file_primary_source().ok_or("no active source")?.clone();
-    let mc = Path::new(&config.minecraft_dir);
+    let mc = config.minecraft_dir_abs();
     let dir_name = format!("{}-optifine-{}", mc_version, patch);
     let vdir = mc.join("versions").join(&dir_name);
 

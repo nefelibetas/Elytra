@@ -1,18 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub enum GcType {
     PreferZgc,
     PreferGenerationalZgc,
     StandardG1Gc,
+    #[default]
     TunedG1Gc,
     Custom,
-}
-
-impl Default for GcType {
-    fn default() -> Self {
-        Self::TunedG1Gc
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -30,37 +25,11 @@ pub enum AuthMode {
     },
 }
 
-impl Default for AuthMode {
-    fn default() -> Self {
-        Self::Offline {
-            username: String::new(),
-            uuid: String::new(),
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub enum MemoryMode {
+    #[default]
     Auto,
     Custom(u32),
-}
-
-impl Default for MemoryMode {
-    fn default() -> Self {
-        Self::Auto
-    }
-}
-
-/// 游戏启动后启动器窗口的可见性行为。
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
-pub enum LauncherVisibility {
-    /// 保持不变（默认）。
-    #[default]
-    Keep,
-    Minimize,
-    Hide,
-    /// 关闭启动器。
-    Close,
 }
 
 /// 游戏进程优先级（Windows 进程优先级类）。
@@ -90,9 +59,6 @@ pub struct LauncherConfig {
     /// 游戏窗口标题；空 = 不改（不传 -Dminecraft.window.title）。
     #[serde(default)]
     pub window_title: String,
-
-    #[serde(default)]
-    pub launcher_visibility: LauncherVisibility,
 
     #[serde(default)]
     pub process_priority: ProcessPriority,
@@ -142,7 +108,6 @@ impl Default for LauncherConfig {
         Self {
             memory: MemoryMode::default(),
             window_title: String::new(),
-            launcher_visibility: LauncherVisibility::default(),
             process_priority: ProcessPriority::default(),
             window_size: WindowSize::default(),
             disable_launch_wrapper: false,

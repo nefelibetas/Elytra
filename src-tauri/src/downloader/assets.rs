@@ -1,8 +1,8 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
-use serde::{Deserialize, Serialize};
 use tokio::time::{sleep, Duration};
 
 use super::hash::file_sha1_matches;
@@ -20,6 +20,43 @@ pub struct AssetObject {
     pub size: u64,
 }
 
+/// 拉取并缓存资源索引（本地缓存 sha1 匹配则直接读，不重新拉取）。
+/// `index_id` 为 None 时不读缓存也不写缓存（仅拉取，供缺失统计等场景）。
+pub async fn fetch_asset_index(
+    config: &DownloaderConfig,
+    mc_dir: &Path,
+    index_url: &str,
+    index_id: Option<&str>,
+    index_sha1: Option<&str>,
+) -> Result<String, String> {
+    let index_path = index_id.map(|id| {
+        mc_dir
+            .join("assets")
+            .join("indexes")
+            .join(format!("{}.json", id))
+    });
+    if let (Some(path), Some(sha1)) = (&index_path, index_sha1) {
+        if path.exists() && file_sha1_matches(path, sha1) {
+            return std::fs::read_to_string(path)
+                .map_err(|e| format!("读取缓存资源索引失败: {}", e));
+        }
+    }
+
+    // 资源索引：主源过慢（5s）自动降级到备用源
+    let text = config
+        .fetch_with_fallback(config.file_source_mode, |s| s.mirror_url(index_url))
+        .await
+        .map_err(|e| format!("获取资源索引失败: {e}"))?;
+
+    if let Some(path) = &index_path {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("创建索引目录失败: {}", e))?;
+        }
+        std::fs::write(path, &text).map_err(|e| format!("写入资源索引失败: {}", e))?;
+    }
+    Ok(text)
+}
+
 pub async fn download_assets(
     index_url: &str,
     index_id: &str,
@@ -32,27 +69,9 @@ pub async fn download_assets(
     let sources: Vec<&crate::config::downloader::model::DownloadSource> =
         config.file_sources_list();
 
-    let indexes_dir = mc_dir.join("assets").join("indexes");
-    let index_path = indexes_dir.join(format!("{}.json", index_id));
-
-    let index_text = match index_sha1 {
-        Some(sha1) if index_path.exists() && file_sha1_matches(&index_path, sha1) => {
-            std::fs::read_to_string(&index_path)
-                .map_err(|e| vec![format!("failed to read cached asset index: {}", e)])?
-        }
-        _ => {
-            // 资源索引：主源过慢（5s）自动降级到备用源
-            let text = config
-                .fetch_with_fallback(config.file_source_mode, |s| s.mirror_url(index_url))
-                .await
-                .map_err(|e| vec![format!("failed to fetch asset index: {}", e)])?;
-            std::fs::create_dir_all(&indexes_dir)
-                .map_err(|e| vec![format!("failed to create indexes dir: {}", e)])?;
-            std::fs::write(&index_path, &text)
-                .map_err(|e| vec![format!("failed to write asset index: {}", e)])?;
-            text
-        }
-    };
+    let index_text = fetch_asset_index(config, mc_dir, index_url, Some(index_id), index_sha1)
+        .await
+        .map_err(|e| vec![e])?;
 
     let index: AssetsIndex = serde_json::from_str(&index_text)
         .map_err(|e| vec![format!("failed to parse asset index: {}", e)])?;
@@ -83,11 +102,26 @@ pub async fn download_assets(
         handles.push(tokio::spawn(async move {
             let mut last_err = String::new();
             for attempt in 0..3 {
-                if attempt > 0 { sleep(Duration::from_millis(200)).await; }
-                match fetcher::fetch_fallback(&urls, &dest, None::<fn(u64, u64)>).await {
-                    Ok(dl) => {
-                        if let Some(ref c) = ctr { c.fetch_add(1, Ordering::Relaxed); }
-                        if let Some(ref b) = bc { b.fetch_add(dl.bytes, Ordering::SeqCst); }
+                if attempt > 0 {
+                    sleep(Duration::from_millis(200)).await;
+                }
+                // 字节级进度：增量累加进全局计数（每次重试从 0 重新开始，增量不会为负）
+                let progress: Option<_> = bc.as_ref().map(|_| {
+                    let file_done = Arc::new(AtomicU64::new(0));
+                    let fd = file_done.clone();
+                    let b = bc.clone();
+                    move |downloaded: u64, _total: u64| {
+                        let prev = fd.swap(downloaded, Ordering::Relaxed);
+                        if let Some(b) = &b {
+                            b.fetch_add(downloaded.saturating_sub(prev), Ordering::Relaxed);
+                        }
+                    }
+                });
+                match fetcher::fetch_fallback(&urls, &dest, progress).await {
+                    Ok(_dl) => {
+                        if let Some(c) = &ctr {
+                            c.fetch_add(1, Ordering::Relaxed);
+                        }
                         return Ok(());
                     }
                     Err(e) => last_err = format!("{}: {}", hash, e),

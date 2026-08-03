@@ -16,7 +16,7 @@ pub fn get_jdk_config() -> JavaConfig {
 
 #[tauri::command]
 pub fn scan_custom_jdk(path: String) -> Result<Vec<JavaEnv>, String> {
-    let found = scanner::scan_custom_dir(&path).map_err(|e| e.to_string())?;
+    let found = scanner::scan_custom_dir(&path)?;
     storage::merge_scanned(found.clone());
     Ok(found)
 }

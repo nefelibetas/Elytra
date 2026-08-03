@@ -3,27 +3,11 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
-use super::extract::native_classifier_matches;
+use super::extract::{matches_rules, native_classifier_matches};
 use super::hash::file_sha1_matches;
 use crate::config::downloader::model::DownloadSource;
 use crate::downloader::fetcher;
-use crate::downloader::model::{Library, OsRule, Rule};
-
-fn matches_rules(rules: &[Rule]) -> bool {
-    let mut allowed = false;
-    for rule in rules {
-        let os_match = match &rule.os {
-            Some(OsRule { name: Some(n) }) => n == crate::downloader::extract::TARGET_OS,
-            _ => true,
-        };
-        match rule.action.as_str() {
-            "allow" if os_match => allowed = true,
-            "disallow" if os_match => return false,
-            _ => {}
-        }
-    }
-    allowed
-}
+use crate::downloader::model::Library;
 
 fn should_download(lib: &Library) -> bool {
     if let Some(rules) = &lib.rules {
@@ -96,10 +80,22 @@ pub async fn download_libraries(
         let bc = bytes_counter.clone();
         handles.push(tokio::spawn(async move {
             let _permit = permit.acquire_owned().await.unwrap();
-            match fetcher::fetch_fallback(&urls, &dest, None::<fn(u64, u64)>).await {
-                Ok(dl) => {
-                    if let Some(ref c) = ctr { c.fetch_add(1, Ordering::Relaxed); }
-                    if let Some(ref b) = bc { b.fetch_add(dl.bytes, Ordering::SeqCst); }
+            // 字节级进度：把本文件已下载字节的增量累加进全局计数（而非完成时整体累加），
+            // 让任务层能算出平滑的实时速度。重试时进度从 0 重新开始，saturating_sub 保证不减。
+            let progress: Option<_> = bc.as_ref().map(|_| {
+                let file_done = Arc::new(AtomicU64::new(0));
+                let fd = file_done.clone();
+                let b = bc.clone();
+                move |downloaded: u64, _total: u64| {
+                    let prev = fd.swap(downloaded, Ordering::Relaxed);
+                    if let Some(b) = &b {
+                        b.fetch_add(downloaded.saturating_sub(prev), Ordering::Relaxed);
+                    }
+                }
+            });
+            match fetcher::fetch_fallback(&urls, &dest, progress).await {
+                Ok(_dl) => {
+                    if let Some(c) = &ctr { c.fetch_add(1, Ordering::Relaxed); }
                     Ok(())
                 }
                 Err(e) => Err(format!("{}: {}", dest.display(), e)),

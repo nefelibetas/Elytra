@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::config::downloader::model::DownloadSource;
 use crate::downloader::fetcher;
-use crate::downloader::model::{ExtractRules, Library};
+use crate::downloader::model::{Artifact, ExtractRules, Library, OsRule, Rule};
 
 /// 当前目标 OS（与 matches_rules 保持一致）。
 /// 支持 Windows / Linux；macOS 仅保证编译（native classifier 惯例为 osx），不做适配。
@@ -16,6 +16,25 @@ pub const TARGET_OS: &str = "windows";
 pub const TARGET_OS: &str = "linux";
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 pub const TARGET_OS: &str = "osx";
+
+/// 将 Library 的 Rule 列表匹配当前 OS（allow/disallow + os 匹配）。
+/// 下载过滤（downloader/library.rs）与启动 classpath 过滤（launcher/args.rs）共用，
+/// 修改必须同时考虑两侧语义。
+pub fn matches_rules(rules: &[Rule]) -> bool {
+    let mut allowed = false;
+    for rule in rules {
+        let os_match = match &rule.os {
+            Some(OsRule { name: Some(n) }) => n == TARGET_OS,
+            _ => true,
+        };
+        match rule.action.as_str() {
+            "allow" if os_match => allowed = true,
+            "disallow" if os_match => return false,
+            _ => {}
+        }
+    }
+    allowed
+}
 
 /// 返回当前 OS 对应的 classifier key。
 ///
@@ -32,6 +51,13 @@ pub fn os_classifier_key(natives: Option<&HashMap<String, String>>) -> Option<&s
             _ => None,
         }
     }
+}
+
+/// 取某库 `downloads.classifiers` 中指定 classifier key 的 artifact。
+/// 下载侧（process_natives）与启动解压侧（launcher/args.rs ensure_old_style_natives）共用，
+/// 避免两侧各自穿过 Option 链取 classifier 的样板重复。
+pub fn classifier_artifact<'a>(lib: &'a Library, key: &str) -> Option<&'a Artifact> {
+    lib.downloads.as_ref()?.classifiers.as_ref()?.get(key)
 }
 
 /// 判断库名中的 native classifier 是否匹配当前 OS + 架构。
@@ -77,13 +103,8 @@ pub async fn process_natives(
     let mut errors: Vec<String> = Vec::new();
 
     for lib in libraries {
-        let Some(dls) = &lib.downloads else { continue };
-        let Some(classifiers) = &dls.classifiers else { continue };
-        let classifier_key = match os_classifier_key(lib.natives.as_ref()) {
-            Some(k) => k,
-            None => continue,
-        };
-        let Some(artifact) = classifiers.get(classifier_key) else { continue };
+        let Some(classifier_key) = os_classifier_key(lib.natives.as_ref()) else { continue };
+        let Some(artifact) = classifier_artifact(lib, classifier_key) else { continue };
 
         let dest = libraries_dir.join(&artifact.path);
         if dest.exists() {

@@ -37,10 +37,10 @@ pub async fn download_version(
     config: &DownloaderConfig,
 ) -> Result<(), Vec<String>> {
     let sources = config.file_sources_list();
-    let mc = Path::new(&config.minecraft_dir);
-    let (_folder_name, vdir) = resolve_version_dir(mc, version_id);
+    let mc = config.minecraft_dir_abs();
+    let (_folder_name, vdir) = resolve_version_dir(&mc, version_id);
 
-    let vj = version::download_version_json(version_url, &vdir, &sources)
+    let vj = version::download_version_json(version_url, &vdir, config)
         .await
         .map_err(|e| vec![e])?;
 
@@ -68,7 +68,7 @@ pub async fn download_version(
         &vj.asset_index.id,
         Some(&vj.asset_index.sha1),
         config,
-        mc,
+        &mc,
         None,
         None,
     );
