@@ -3,13 +3,7 @@ use base64::Engine;
 use serde_json::json;
 use sha2::Digest;
 
-// ── Azure 应用配置 ──────────────────────────────────────────────
-// 使用 PrismLauncher 公开注册的 client id（GitHub 开源项目公开，支持任意
-// localhost 端口回调）。注意：微软 2025 年起对 login_with_xbox 校验应用注册，
-// 自己新注册的 Azure 应用（未验证）会返回 403 Invalid app registration，
-// 因此不能换自定义 client id。
-pub const MS_CLIENT_ID: &str = "c36a9fb6-4f2a-41ff-90bd-ae7cc92031eb";
-/// 本地回调端口（唯一事实源：account.rs 监听与 REDIRECT_URI 都必须与此一致）。
+pub const MS_CLIENT_ID: &str = "PASTE_MS_CLIENT_ID";
 pub const CALLBACK_PORT: u16 = 27205;
 pub const REDIRECT_URI: &str = "http://localhost:27205";
 
@@ -89,7 +83,10 @@ pub fn generate_pkce() -> Pkce {
     let verifier = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
     let digest = sha2::Sha256::digest(verifier.as_bytes());
     let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest);
-    Pkce { verifier, challenge }
+    Pkce {
+        verifier,
+        challenge,
+    }
 }
 
 /// 生成随机 state（防 CSRF）。
@@ -159,7 +156,10 @@ fn extract_tokens(json: &serde_json::Value) -> Result<MsTokens, MsError> {
         .get("refresh_token")
         .and_then(|v| v.as_str())
         .ok_or_else(|| MsError::Malformed("missing refresh_token".into()))?;
-    let expires_in = json.get("expires_in").and_then(|v| v.as_u64()).unwrap_or(3600);
+    let expires_in = json
+        .get("expires_in")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(3600);
     Ok(MsTokens {
         access_token: access_token.to_string(),
         refresh_token: refresh_token.to_string(),
@@ -168,7 +168,11 @@ fn extract_tokens(json: &serde_json::Value) -> Result<MsTokens, MsError> {
 }
 
 /// 用授权码换微软 token。
-async fn exchange_code(client: &reqwest::Client, code: &str, verifier: &str) -> Result<MsTokens, MsError> {
+async fn exchange_code(
+    client: &reqwest::Client,
+    code: &str,
+    verifier: &str,
+) -> Result<MsTokens, MsError> {
     let resp = client
         .post(TOKEN_URL)
         .header("Content-Type", "application/x-www-form-urlencoded")
@@ -206,7 +210,10 @@ async fn refresh_ms(client: &reqwest::Client, refresh_token: &str) -> Result<MsT
 // ── Xbox / Minecraft 链路 ────────────────────────────────────────
 
 /// 微软 token → XBL token + userhash。
-async fn authenticate_xbl(client: &reqwest::Client, ms_access_token: &str) -> Result<(String, String), MsError> {
+async fn authenticate_xbl(
+    client: &reqwest::Client,
+    ms_access_token: &str,
+) -> Result<(String, String), MsError> {
     let resp = client
         .post(XBL_URL)
         .json(&json!({
@@ -241,7 +248,10 @@ async fn authenticate_xbl(client: &reqwest::Client, ms_access_token: &str) -> Re
 
 /// XBL token → XSTS token + xuid。401 时返回 XErr 码。
 /// xid（Xbox 账号 ID）部分账号缺失，非致命：缺失时降级为空串，不阻塞登录。
-async fn authenticate_xsts(client: &reqwest::Client, xbl_token: &str) -> Result<(String, String), MsError> {
+async fn authenticate_xsts(
+    client: &reqwest::Client,
+    xbl_token: &str,
+) -> Result<(String, String), MsError> {
     let resp = client
         .post(XSTS_URL)
         .json(&json!({
@@ -401,9 +411,10 @@ pub fn extract_xuid_from_jwt(token: &str) -> String {
 
 /// 构建正版登录专用 HTTP client；按「正版登录时验证 SSL 证书」配置决定是否校验证书。
 fn build_auth_client() -> reqwest::Client {
-    let verify = crate::persist::read::<crate::config::downloader::model::DownloaderConfig>("downloader")
-        .map(|c| c.verify_ssl)
-        .unwrap_or(false);
+    let verify =
+        crate::persist::read::<crate::config::downloader::model::DownloaderConfig>("downloader")
+            .map(|c| c.verify_ssl)
+            .unwrap_or(false);
     reqwest::Client::builder()
         .danger_accept_invalid_certs(!verify)
         .build()
@@ -439,7 +450,7 @@ mod tests {
         let pkce = generate_pkce();
         assert!((43..=128).contains(&pkce.verifier.len()));
         assert_eq!(pkce.challenge.len(), 43); // 32 bytes → 43 base64url chars
-        // challenge 必须是 verifier 的 sha256（S256 一致性）
+                                              // challenge 必须是 verifier 的 sha256（S256 一致性）
         let digest = sha2::Sha256::digest(pkce.verifier.as_bytes());
         let expect = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest);
         assert_eq!(pkce.challenge, expect);
