@@ -24,18 +24,18 @@ ElytraLauncher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前端
 
 ## Key Directories
 
-| 路径 | 职责 |
+|路径|职责|
 |---|---|
-| `src-tauri/src/commands/` | 7 个命令模块：jdk / downloader / loader / task / account / gamedirs / launch（真薄胶水；`launch.rs` 额外含进程管理，编排均已下沉；`install_*` 命令前端无调用，已随死代码清理删除，ModLoader 引擎逻辑在 `downloader/installer.rs`） |
-| `src-tauri/src/config/` | 纯数据模型：`jdk/`（JavaEnv/scanner/storage）、`launcher/`（`model.rs` 配置 + `args.rs` 命令构建 + `env.rs` 环境准备 + `skin.rs` 离线皮肤）、`downloader/model.rs`（多源与回退）、`offline_skin.rs`、`game_dirs.rs` |
-| `src-tauri/src/downloader/` | 下载引擎：manifest / version / library / assets / installer / fetcher / hash / model / extract（`TARGET_OS`、`matches_rules`/`native_classifier_matches`/`os_classifier_key` 平台判定与规则过滤的唯一实现、`extract_jar` natives 解压；`source.rs` 是空壳，URL 逻辑在 config 侧） |
-| `src-tauri/src/auth/` | 微软 OAuth PKCE（`microsoft.rs`）+ 官方 API 客户端（`mojang.rs`：玩家查询/皮肤纹理）+ 账号服务（`account.rs`：登录回调/披风/上传）+ MsAccount（`model.rs`） |
-| `src-tauri/src/persist/` | TOML section 存取（`read<T>/save<T>/remove`） |
-| `src-tauri/src/task/` | TaskManager 单例 + 进度事件（`mod.rs`）+ 下载任务编排（`runner.rs`：run_task / run_repair_task / EmitLoop） |
-| `src/pages/` | Launch（启动/登录/头像）、Download（下载/loader 选择）、Settings（Java/启动选项/离线皮肤/下载源）、DownloadDetail（任务管理）、VersionSelect（版本选择）、VersionSetup（版本设置） |
-| `src/store/` | `download.ts`（dlState）、`memory.ts`（memState）——模块级 reactive 单例 |
-| `src/component/` | TitleBar / DownloadFAB / DownloadTab / VersionCard / VersionItem / AlertDialog / DialogModal |
-| `src/utils/` | versionClassify（目录名 `{mc}-{loader}-{ver}` 解析）、versionIcons |
+|`src-tauri/src/commands/`|7 个命令模块：jdk / downloader / loader / task / account / gamedirs / launch（真薄胶水；`launch.rs` 额外含进程管理，编排均已下沉；`install_*` 命令前端无调用，已随死代码清理删除，ModLoader 引擎逻辑在 `downloader/installer.rs`）|
+|`src-tauri/src/config/`|纯数据模型：`jdk/`（JavaEnv/scanner/storage）、`launcher/`（`model.rs` 配置 + `args.rs` 命令构建 + `env.rs` 环境准备 + `skin.rs` 离线皮肤）、`downloader/model.rs`（多源与回退）、`offline_skin.rs`、`game_dirs.rs`|
+|`src-tauri/src/downloader/`|下载引擎：manifest / version / library / assets / installer / fetcher / hash / model / extract（`TARGET_OS`、`matches_rules`/`native_classifier_matches`/`os_classifier_key` 平台判定与规则过滤的唯一实现、`extract_jar` natives 解压；`source.rs` 是空壳，URL 逻辑在 config 侧）|
+|`src-tauri/src/auth/`|微软 OAuth PKCE（`microsoft.rs`）+ 官方 API 客户端（`mojang.rs`：玩家查询/皮肤纹理）+ 账号服务（`account.rs`：登录回调/披风/上传）+ MsAccount（`model.rs`）|
+|`src-tauri/src/persist/`|TOML section 存取（`read<T>/save<T>/remove`）|
+|`src-tauri/src/task/`|TaskManager 单例 + 进度事件（`mod.rs`）+ 下载任务编排（`runner.rs`：run_task / run_repair_task / EmitLoop）|
+|`src/pages/`|Launch（启动/登录/头像）、Download（下载/loader 选择）、Settings（Java/启动选项/离线皮肤/下载源）、DownloadDetail（任务管理）、VersionSelect（版本选择）、VersionSetup（版本设置）|
+|`src/store/`|`download.ts`（dlState）、`memory.ts`（memState）——模块级 reactive 单例|
+|`src/component/`|TitleBar / DownloadFAB / DownloadTab / VersionCard / VersionItem / AlertDialog / DialogModal|
+|`src/utils/`|versionClassify（目录名 `{mc}-{loader}-{ver}` 解析）、versionIcons|
 
 ## Development Commands
 
@@ -74,19 +74,19 @@ cd src-tauri && cargo test --lib   # 单元测试（安全，27 个）
 
 ## Important Files
 
-| 文件 | 说明 |
+|文件|说明|
 |---|---|
-| `src-tauri/src/lib.rs` | 入口：`task::init()`、后台预扫 JDK、**唯一** generate_handler! 注册点（67 命令） |
-| `src-tauri/src/main.rs` | 仅 `elytra_lib::run()` |
-| `src-tauri/src/commands/launch.rs` | 启动命令 + 进程管理（spawn/日志/优先级/GPU/内存优化）；环境准备 `config/launcher/env.rs`、离线皮肤 `config/launcher/skin.rs`、命令构建 `config/launcher/args.rs` |
-| `src-tauri/src/config/launcher/args.rs` | `${key}` 占位符替换、rules/features 匹配、classpath、JDK22+ 标志 |
-| `src-tauri/src/config/downloader/model.rs` | 多源 URL 模板、`mirror_url` BMCLAPI 重写、过慢降级 |
-| `src-tauri/src/auth/microsoft.rs` | 微软 OAuth（授权码/refresh/XBL/XSTS/MC login）、xuid 提取、回调服务 127.0.0.1:27205 |
-| `src-tauri/src/persist/store.rs` | 配置文件路径 = `current_exe 目录/Elytra/Settings.toml`（非标准配置目录） |
-| `src-tauri/src/task/mod.rs` | TaskManager 单例；取消时 `cleanup_path` 整删（慎用 set_cleanup_path） |
-| `src-tauri/tauri.conf.json` | 窗口 **840×540**、无边框透明、`beforeDevCommand: pnpm dev`、devUrl :1420 |
-| `src-tauri/capabilities/default.json` | main 窗口权限：core:default + window 控制子集 + opener + dialog |
-| `src/store/download.ts` | 下载任务状态机（事件驱动核心） |
+|`src-tauri/src/lib.rs`|入口：`task::init()`、后台预扫 JDK、**唯一** generate_handler! 注册点（67 命令）|
+|`src-tauri/src/main.rs`|仅 `elytra_lib::run()`|
+|`src-tauri/src/commands/launch.rs`|启动命令 + 进程管理（spawn/日志/优先级/GPU/内存优化）；环境准备 `config/launcher/env.rs`、离线皮肤 `config/launcher/skin.rs`、命令构建 `config/launcher/args.rs`|
+|`src-tauri/src/config/launcher/args.rs`|`${key}` 占位符替换、rules/features 匹配、classpath、JDK22+ 标志|
+|`src-tauri/src/config/downloader/model.rs`|多源 URL 模板、`mirror_url` BMCLAPI 重写、过慢降级|
+|`src-tauri/src/auth/microsoft.rs`|微软 OAuth（授权码/refresh/XBL/XSTS/MC login）、xuid 提取、回调服务 127.0.0.1:27205|
+|`src-tauri/src/persist/store.rs`|配置文件路径 = `current_exe 目录/Elytra/Settings.toml`（非标准配置目录）|
+|`src-tauri/src/task/mod.rs`|TaskManager 单例；取消时 `cleanup_path` 整删（慎用 set_cleanup_path）|
+|`src-tauri/tauri.conf.json`|窗口 **840×540**、无边框透明、`beforeDevCommand: pnpm dev`、devUrl :1420|
+|`src-tauri/capabilities/default.json`|main 窗口权限：core:default + window 控制子集 + opener + dialog|
+|`src/store/download.ts`|下载任务状态机（事件驱动核心）|
 
 ## Runtime/Tooling Preferences
 
