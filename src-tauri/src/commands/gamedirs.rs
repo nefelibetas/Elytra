@@ -1,11 +1,17 @@
 use crate::config::game_dirs::{default_dir, exe_dir_name, GameDir, GameDirsConfig};
+use crate::constants;
 
 fn read_dirs() -> Vec<GameDir> {
-    let cfg: GameDirsConfig = crate::persist::read("game_dirs").unwrap_or_default();
+    let cfg: GameDirsConfig = crate::persist::read(constants::SECT_GAME_DIRS).unwrap_or_default();
     if cfg.dirs.is_empty() {
         // 首次使用（或全部删除后）：生成默认目录（exe 同级 .minecraft）并持久化
         let d = default_dir();
-        let _ = crate::persist::save("game_dirs", &GameDirsConfig { dirs: vec![d.clone()] });
+        let _ = crate::persist::save(
+            constants::SECT_GAME_DIRS,
+            &GameDirsConfig {
+                dirs: vec![d.clone()],
+            },
+        );
         vec![d]
     } else {
         let mut dirs = cfg.dirs;
@@ -13,9 +19,12 @@ fn read_dirs() -> Vec<GameDir> {
         let default = default_dir();
         let old_name = exe_dir_name();
         if !old_name.is_empty() {
-            if let Some(d) = dirs.iter_mut().find(|d| d.path == default.path && d.name == old_name) {
+            if let Some(d) = dirs
+                .iter_mut()
+                .find(|d| d.path == default.path && d.name == old_name)
+            {
                 d.name = "当前文件夹".to_string();
-                let _ = crate::persist::save("game_dirs", &GameDirsConfig { dirs: dirs.clone() });
+                let _ = crate::persist::save(constants::SECT_GAME_DIRS, &GameDirsConfig { dirs: dirs.clone() });
             }
         }
         dirs
@@ -23,7 +32,7 @@ fn read_dirs() -> Vec<GameDir> {
 }
 
 fn save_dirs(dirs: Vec<GameDir>) -> Result<Vec<GameDir>, String> {
-    crate::persist::save("game_dirs", &GameDirsConfig { dirs: dirs.clone() })
+    crate::persist::save(constants::SECT_GAME_DIRS, &GameDirsConfig { dirs: dirs.clone() })
         .map_err(|e| e.to_string())?;
     Ok(dirs)
 }
@@ -64,7 +73,11 @@ pub fn rename_game_dir(path: String, new_name: String) -> Result<Vec<GameDir>, S
         .iter()
         .position(|d| d.path == path)
         .ok_or_else(|| "文件夹不存在".to_string())?;
-    if dirs.iter().enumerate().any(|(i, d)| d.name == new_name && i != idx) {
+    if dirs
+        .iter()
+        .enumerate()
+        .any(|(i, d)| d.name == new_name && i != idx)
+    {
         return Err(format!("名称「{new_name}」已存在"));
     }
     dirs[idx].name = new_name;
@@ -83,16 +96,16 @@ pub fn remove_game_dir(path: String) -> Result<Vec<GameDir>, String> {
 #[tauri::command]
 pub fn set_active_game_dir(path: String) -> Result<(), String> {
     let mut cfg: crate::config::downloader::model::DownloaderConfig =
-        crate::persist::read("downloader").unwrap_or_default();
+        crate::persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
     cfg.minecraft_dir = path;
-    crate::persist::save("downloader", &cfg).map_err(|e| e.to_string())
+    crate::persist::save(constants::SECT_DOWNLOADER, &cfg).map_err(|e| e.to_string())
 }
 
 /// 当前激活的游戏目录（同步于 downloader 配置的 minecraft_dir）。
 #[tauri::command]
 pub fn get_active_game_dir() -> GameDir {
     let cfg: crate::config::downloader::model::DownloaderConfig =
-        crate::persist::read("downloader").unwrap_or_default();
+        crate::persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
     let dirs = read_dirs();
     dirs.into_iter()
         .find(|d| d.path == cfg.minecraft_dir)
@@ -127,10 +140,10 @@ pub fn rename_version_dir(version_name: String, new_name: String) -> Result<(), 
 pub fn open_folder(path: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let mut cmd = {
-        // explorer 对直接路径参数解析不稳（无效时回退到文档等默认位置），
-        // 用 cmd /C start "" "path" 确保按字面路径打开。
-        let mut c = std::process::Command::new("cmd");
-        c.args(["/C", "start", "", &path]);
+        use std::os::windows::process::CommandExt;
+        let mut c = std::process::Command::new("explorer");
+        c.arg(&path);
+        c.creation_flags(0x08000000);
         c
     };
     #[cfg(target_os = "macos")]
@@ -188,14 +201,15 @@ pub fn auto_activate_version() -> Result<AutoActivate, String> {
 }
 
 /// 确保版本对应文件夹存在（不存在则创建），返回其绝对路径（快捷方式按钮用）。
+/// 版本隔离：游戏运行时 gameDir = versions/{name}，存档/mod 实际都位于版本目录下。
 #[tauri::command]
 pub fn ensure_game_folder(kind: String, version_name: String) -> Result<String, String> {
     let active = get_active_game_dir();
     let base = std::path::Path::new(&active.path);
     let sub = match kind.as_str() {
         "version" => format!("versions/{version_name}"),
-        "saves" => "saves".to_string(),
-        "mods" => "mods".to_string(),
+        "saves" => format!("versions/{version_name}/saves"),
+        "mods" => format!("versions/{version_name}/mods"),
         _ => return Err("未知文件夹类型".to_string()),
     };
     let dir = base.join(sub);

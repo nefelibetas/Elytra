@@ -76,7 +76,11 @@ function resetLaunch() {
 
 async function doLaunch() {
   if (isLaunching.value) return;
-  if (!selectedVersion.value) return;
+  // 无可用游戏版本：按钮即"下载游戏"入口，跳转下载页
+  if (!selectedVersion.value) {
+    router.push("/download");
+    return;
+  }
 
   const isOffline = authMode.value === "offline";
 
@@ -594,7 +598,7 @@ onMounted(async () => {
           <button
             class="launch-btn"
             :class="{ launching: isLaunching }"
-            :disabled="!selectedVersion || isLaunching"
+            :disabled="isLaunching"
             @click="doLaunch"
           >
             <template v-if="!selectedVersion">

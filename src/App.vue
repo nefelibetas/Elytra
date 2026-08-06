@@ -1,16 +1,28 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from "vue";
+import { onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import TitleBar from "./component/TitleBar.vue";
 import DownloadFAB from "./component/DownloadFAB.vue";
+import AlertDialog from "./component/AlertDialog.vue";
 import { dlState, ensureListen } from "./store/download";
 import { startMemoryMonitor } from "./store/memory";
 import { toastState, showToast } from "./utils/toast";
 
 const router = useRouter();
 
+/** 下载失败错误 dialog（body 只放短提示，完整错误由复制按钮带走）。 */
+const errorDialog = ref(false);
+const errorMessage = ref("");
+
 dlState.onTaskDone = (taskName: string, prevRoute: string) => {
   showToast(`${taskName} 已完成`);
+  if (prevRoute) router.push(prevRoute);
+};
+
+dlState.onTaskError = (_taskName: string, error: string, prevRoute: string) => {
+  errorMessage.value = error;
+  errorDialog.value = true;
+  // 失败任务卡片已由事件处理清理，退出下载管理页回到来源页
   if (prevRoute) router.push(prevRoute);
 };
 
@@ -73,6 +85,9 @@ onUnmounted(() => {
     <Transition name="toast">
       <div v-if="toastState.msg" class="toast">{{ toastState.msg }}</div>
     </Transition>
+    <AlertDialog v-model="errorDialog" title="下载失败" :message="errorMessage" copyable>
+      <p>下载失败，已清理该任务下载的文件，请重试</p>
+    </AlertDialog>
   </div>
 </template>
 

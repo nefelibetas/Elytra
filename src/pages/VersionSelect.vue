@@ -8,6 +8,7 @@ import VersionCard from "../component/VersionCard.vue";
 import VersionItem from "../component/VersionItem.vue";
 import { CATEGORY_ICONS } from "../utils/versionIcons";
 import { classifyVersion } from "../utils/versionClassify";
+import { showToast } from "../utils/toast";
 
 type GameDir = { name: string; path: string };
 
@@ -101,25 +102,26 @@ function openSetup(v: string) {
 // ── 删除版本 dialog（与版本设置页删除功能一致）──
 const deleteDialog = ref(false);
 const deleteTarget = ref("");
-const deleteError = ref("");
 
 function openDelete(v: string) {
   deleteTarget.value = v;
-  deleteError.value = "";
   deleteDialog.value = true;
 }
 
 async function confirmDeleteVersion() {
+  // 先关 dialog 并提示删除中（delete_version_dir 递归删除可能耗时数秒）
+  deleteDialog.value = false;
+  showToast("正在删除版本…");
   try {
     await invoke("delete_version_dir", { versionName: deleteTarget.value });
-    deleteDialog.value = false;
+    showToast(`版本「${deleteTarget.value}」已经删除`);
     // 删除的是当前选中版本 → 清理持久化选择
     if (selectedVersion.value === deleteTarget.value) {
       clearSelected();
     }
     await loadVersions();
   } catch (e) {
-    deleteError.value = String(e);
+    showToast(String(e));
   }
 }
 
@@ -328,7 +330,10 @@ onMounted(async () => {
     <div class="vs-right">
       <div v-if="versionsLoading" class="vs-hint">加载中…</div>
       <div v-else-if="versionsError" class="vs-err">{{ versionsError }}</div>
-      <div v-else-if="versions.length === 0" class="vs-hint">该目录下没有已安装的游戏版本</div>
+      <div v-else-if="versions.length === 0" class="vs-empty">
+        <p>该目录下没有已安装的游戏版本</p>
+        <button class="vs-empty-btn" @click="router.push('/download')">下载游戏</button>
+      </div>
       <div v-else class="vs-cards">
         <VersionCard
           v-for="cat in categories"
@@ -422,7 +427,6 @@ onMounted(async () => {
         <div class="vs-dialog-text">
           确定要删除版本「{{ deleteTarget }}」吗？该操作会删除版本文件夹及其全部文件，且无法恢复。
         </div>
-        <div v-if="deleteError" class="vs-err">{{ deleteError }}</div>
       </div>
       <template #actions>
         <button class="dialog-btn danger" @click="confirmDeleteVersion">删除</button>
@@ -642,6 +646,45 @@ onMounted(async () => {
   text-align: center;
   font-size: 13px;
   color: var(--text-tertiary);
+}
+
+/* 空状态：右侧容器正中提示 + 下载入口 */
+.vs-empty {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px;
+}
+
+.vs-empty p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-tertiary);
+}
+
+.vs-empty-btn {
+  padding: 8px 22px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--color-brand-gradient);
+  color: var(--text-inverse);
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  /* 渐变 ↔ 纯色背景切换不做插值（会闪变），只过渡 transform/阴影 */
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.vs-empty-btn:hover {
+  background: var(--color-brand-hover);
+  box-shadow: var(--shadow-md);
+}
+
+.vs-empty-btn:active {
+  transform: scale(0.97);
 }
 
 .vs-err {

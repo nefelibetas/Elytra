@@ -94,13 +94,15 @@ async function confirmRename() {
 const deleteDialog = ref(false);
 
 async function confirmDelete() {
+  // 先关 dialog 并提示删除中（delete_version_dir 递归删除可能耗时数秒）
+  deleteDialog.value = false;
+  showToast("正在删除版本…");
   try {
     await invoke("delete_version_dir", { versionName: versionName.value });
-    deleteDialog.value = false;
+    showToast(`版本「${versionName.value}」已经删除`);
     router.push({ path: "/version-select", query: { refresh: String(Date.now()) } });
   } catch (e) {
     showToast(String(e));
-    deleteDialog.value = false;
   }
 }
 
@@ -112,9 +114,13 @@ async function repairFiles() {
       client_jar: boolean;
       libraries: number;
       assets: number;
+      natives: number;
     }>("scan_missing_files", { versionDirName: versionName.value });
     const total =
-      (report.client_jar ? 1 : 0) + report.libraries + report.assets;
+      (report.client_jar ? 1 : 0) +
+      report.libraries +
+      report.assets +
+      report.natives;
     if (total === 0) {
       showToast("游戏文件完整，无需补全");
       return;
