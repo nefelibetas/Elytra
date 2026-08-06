@@ -3,18 +3,15 @@
 use tauri::AppHandle;
 
 use crate::auth::account;
-use crate::auth::microsoft::{self, CALLBACK_PORT, MS_CLIENT_ID};
+use crate::auth::microsoft::{self, CALLBACK_PORT};
 use crate::auth::model::MsAccount;
 use crate::auth::mojang;
+use crate::constants;
 
 /// 启动 Microsoft 登录：起本地回调服务、打开浏览器，返回授权 URL。
 /// 结果通过 `ms-login-complete` 事件推送。
 #[tauri::command]
 pub async fn start_ms_login(app: AppHandle) -> Result<String, String> {
-    if MS_CLIENT_ID.starts_with("PASTE_") {
-        return Err("Azure 客户端 ID 未配置，请先在 auth/microsoft.rs 中填入".into());
-    }
-
     let state = microsoft::generate_state();
     let pkce = microsoft::generate_pkce();
 
@@ -75,7 +72,7 @@ pub fn fetch_default_skin(skin: String) -> Result<String, String> {
     use std::io::Read;
 
     let cfg: crate::config::downloader::model::DownloaderConfig =
-        crate::persist::read("downloader").unwrap_or_default();
+        crate::persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
     let mc = cfg.minecraft_dir_abs();
     let name = format!("assets/minecraft/textures/entity/{}.png", skin);
     let versions_dir = mc.join("versions");
@@ -93,8 +90,9 @@ pub fn fetch_default_skin(skin: String) -> Result<String, String> {
                                 if let Ok(mut f) = archive.by_name(&name) {
                                     let mut buf = Vec::new();
                                     if f.read_to_end(&mut buf).is_ok() && !buf.is_empty() {
-                                        return Ok(base64::engine::general_purpose::STANDARD
-                                            .encode(&buf));
+                                        return Ok(
+                                            base64::engine::general_purpose::STANDARD.encode(&buf)
+                                        );
                                     }
                                 }
                             }
@@ -156,10 +154,7 @@ pub async fn save_skin(uuid: String, path: String) -> Result<(), String> {
 
 /// 上传本地皮肤到官方账号（POST multipart: variant=CLASSIC + file）。
 #[tauri::command]
-pub async fn upload_skin_file(
-    access_token: String,
-    file_path: String,
-) -> Result<(), String> {
+pub async fn upload_skin_file(access_token: String, file_path: String) -> Result<(), String> {
     account::upload_skin(&access_token, &file_path).await
 }
 
@@ -171,10 +166,7 @@ pub async fn fetch_capes(access_token: String) -> Result<Vec<account::CapeInfo>,
 
 /// 切换当前启用的披风（PUT /minecraft/profile/capes/active + JSON capeId）。
 #[tauri::command]
-pub async fn set_active_cape(
-    access_token: String,
-    cape_id: String,
-) -> Result<(), String> {
+pub async fn set_active_cape(access_token: String, cape_id: String) -> Result<(), String> {
     account::set_active_cape(&access_token, &cape_id).await
 }
 
@@ -187,13 +179,15 @@ pub async fn disable_cape(access_token: String) -> Result<(), String> {
 /// 读取离线皮肤配置（PCL2 同款：随机/Steve/Alex/正版玩家/自定义）。
 #[tauri::command]
 pub fn get_offline_skin() -> crate::config::offline_skin::OfflineSkinConfig {
-    crate::persist::read("offline_skin").unwrap_or_default()
+    crate::persist::read(constants::SECT_OFFLINE_SKIN).unwrap_or_default()
 }
 
 /// 保存离线皮肤配置。
 #[tauri::command]
-pub fn set_offline_skin(config: crate::config::offline_skin::OfflineSkinConfig) -> Result<(), String> {
-    crate::persist::save("offline_skin", &config).map_err(|e| e.to_string())
+pub fn set_offline_skin(
+    config: crate::config::offline_skin::OfflineSkinConfig,
+) -> Result<(), String> {
+    crate::persist::save(constants::SECT_OFFLINE_SKIN, &config).map_err(|e| e.to_string())
 }
 
 /// 校验正版玩家皮肤信息（刷新用）：返回 uuid + 当前 texture id。

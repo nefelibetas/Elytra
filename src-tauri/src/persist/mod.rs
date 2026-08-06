@@ -93,8 +93,8 @@ mod tests {
             .ok()
             .and_then(|p| p.parent().map(|p| p.to_path_buf()))
             .unwrap()
-            .join("Elytra")
-            .join("Settings.toml")
+            .join(crate::constants::CONFIG_DIR)
+            .join(crate::constants::SETTINGS_FILE)
     }
 
     #[test]

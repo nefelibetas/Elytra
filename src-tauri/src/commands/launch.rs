@@ -2,19 +2,25 @@
 //! 环境准备在 config/launcher/env.rs，离线皮肤在 config/launcher/skin.rs，命令构建在 config/launcher/args.rs。
 
 use std::path::PathBuf;
-
 use tauri::{AppHandle, Emitter};
 
-use crate::config::jdk::model::JavaConfig;
 use crate::config::launcher::args::build_launch_command;
 use crate::config::launcher::env;
 use crate::config::launcher::model::{AuthMode, LauncherConfig};
 use crate::config::launcher::skin;
+use crate::constants;
 use crate::downloader::model::VersionJson;
+use crate::jdk::model::{JdkConfig, JdkSelection};
 
 // ── 账号构造（启动前置）────────────────────────────
 
-fn build_auth(auth_mode: &str, username: &str, access_token: &str, uuid: &str, xuid: &str) -> AuthMode {
+fn build_auth(
+    auth_mode: &str,
+    username: &str,
+    access_token: &str,
+    uuid: &str,
+    xuid: &str,
+) -> AuthMode {
     match auth_mode {
         "online" => AuthMode::Online {
             username: username.to_string(),
@@ -32,7 +38,10 @@ fn build_auth(auth_mode: &str, username: &str, access_token: &str, uuid: &str, x
 /// 正版模式 xuid 缺失时从 Minecraft access token（JWT）解析兜底
 /// （XSTS 的 xid 字段部分账号缺失，旧配置也可能未保存 xuid）。
 fn fill_missing_xuid(auth: &mut AuthMode) {
-    if let AuthMode::Online { xuid, access_token, .. } = auth {
+    if let AuthMode::Online {
+        xuid, access_token, ..
+    } = auth
+    {
         if xuid.is_empty() {
             *xuid = crate::auth::microsoft::extract_xuid_from_jwt(access_token);
         }
@@ -54,7 +63,14 @@ fn prepare_launch(
     fill_missing_xuid(&mut auth);
     let (java_path, version_json, mc_dir, launcher_config, java_major) =
         env::load_launch_config(version_dir_name)?;
-    Ok((auth, java_path, version_json, mc_dir, launcher_config, java_major))
+    Ok((
+        auth,
+        java_path,
+        version_json,
+        mc_dir,
+        launcher_config,
+        java_major,
+    ))
 }
 
 /// 启动前完整性与 natives 准备（check_launch_env 与 spawn_game 共用）。
@@ -106,10 +122,13 @@ fn drain_to_file(reader: &mut impl std::io::Read, path: &std::path::Path, is_std
 /// 执行启动前命令（Windows: cmd /C；其他平台: sh -c）。失败时返回错误。
 fn run_pre_launch_command(command: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
-    let status = std::process::Command::new("cmd")
-        .args(["/C", command])
-        .status()
-        .map_err(|e| e.to_string())?;
+    let status = {
+        use std::os::windows::process::CommandExt;
+        let mut cmd = std::process::Command::new("cmd");
+        cmd.args(["/C", command]);
+        cmd.creation_flags(0x08000000);
+        cmd.status().map_err(|e| e.to_string())?
+    };
     #[cfg(not(target_os = "windows"))]
     let status = std::process::Command::new("sh")
         .args(["-c", command])
@@ -156,13 +175,52 @@ fn apply_gpu_preference(enabled: bool) {
         const KEY_SET_VALUE: u32 = 0x0002;
         const REG_SZ: u32 = 1;
         const KEY_PATH: &[u16] = &[
-            'S' as u16, 'o' as u16, 'f' as u16, 't' as u16, 'w' as u16, 'a' as u16, 'r' as u16,
-            'e' as u16, '\\' as u16, 'M' as u16, 'i' as u16, 'c' as u16, 'r' as u16, 'o' as u16,
-            's' as u16, 'o' as u16, 'f' as u16, 't' as u16, '\\' as u16, 'D' as u16, 'i' as u16,
-            'r' as u16, 'e' as u16, 'c' as u16, 't' as u16, 'X' as u16, '\\' as u16, 'U' as u16,
-            's' as u16, 'e' as u16, 'r' as u16, 'G' as u16, 'p' as u16, 'u' as u16, 'P' as u16,
-            'r' as u16, 'e' as u16, 'f' as u16, 'e' as u16, 'r' as u16, 'e' as u16, 'n' as u16,
-            'c' as u16, 'e' as u16, 's' as u16, 0,
+            'S' as u16,
+            'o' as u16,
+            'f' as u16,
+            't' as u16,
+            'w' as u16,
+            'a' as u16,
+            'r' as u16,
+            'e' as u16,
+            '\\' as u16,
+            'M' as u16,
+            'i' as u16,
+            'c' as u16,
+            'r' as u16,
+            'o' as u16,
+            's' as u16,
+            'o' as u16,
+            'f' as u16,
+            't' as u16,
+            '\\' as u16,
+            'D' as u16,
+            'i' as u16,
+            'r' as u16,
+            'e' as u16,
+            'c' as u16,
+            't' as u16,
+            'X' as u16,
+            '\\' as u16,
+            'U' as u16,
+            's' as u16,
+            'e' as u16,
+            'r' as u16,
+            'G' as u16,
+            'p' as u16,
+            'u' as u16,
+            'P' as u16,
+            'r' as u16,
+            'e' as u16,
+            'f' as u16,
+            'e' as u16,
+            'r' as u16,
+            'e' as u16,
+            'n' as u16,
+            'c' as u16,
+            'e' as u16,
+            's' as u16,
+            0,
         ];
         const VALUE_NAME: &[u16] = &[
             'j' as u16, 'a' as u16, 'v' as u16, 'a' as u16, '.' as u16, 'e' as u16, 'x' as u16,
@@ -236,7 +294,7 @@ fn set_process_priority(pid: u32, priority: crate::config::launcher::model::Proc
     #[cfg(target_os = "windows")]
     {
         let class = match priority {
-            P::Normal => return, // 中（平衡）= 系统默认，无需设置
+            P::Normal => return,        // 中（平衡）= 系统默认，无需设置
             P::Low => 0x0000_4000,      // BELOW_NORMAL_PRIORITY_CLASS
             P::High => 0x0000_0080,     // HIGH_PRIORITY_CLASS
             P::RealTime => 0x0000_0100, // REALTIME_PRIORITY_CLASS
@@ -287,7 +345,11 @@ fn set_process_priority(pid: u32, priority: crate::config::launcher::model::Proc
 
 /// 渲染启动脚本内容（Windows: .bat；macOS/Linux: .sh）。
 /// 格式对齐 PCL 导出脚本：chcp 65001 + title + cd 版本目录 + java 命令行 + pause。
-fn render_launch_script(args: &[String], mc_dir: &std::path::Path, version_dir_name: &str) -> String {
+fn render_launch_script(
+    args: &[String],
+    mc_dir: &std::path::Path,
+    version_dir_name: &str,
+) -> String {
     #[cfg(target_os = "windows")]
     {
         let mut out = String::new();
@@ -310,7 +372,10 @@ fn render_launch_script(args: &[String], mc_dir: &std::path::Path, version_dir_n
     {
         let mut out = String::from("#!/usr/bin/env sh\n");
         out.push_str(&format!("# 启动 - {version_dir_name}\n"));
-        out.push_str(&format!("cd \"{}\"\n", mc_dir.join("versions").join(version_dir_name).display()));
+        out.push_str(&format!(
+            "cd \"{}\"\n",
+            mc_dir.join("versions").join(version_dir_name).display()
+        ));
         out.push_str("exec ");
         for a in args {
             out.push('\'');
@@ -334,9 +399,17 @@ pub async fn check_launch_env(version_dir_name: String) -> Result<String, String
     // 游戏完整性 + 旧式 natives 解压准备
     verify_env(&version_json, &mc_dir, &version_dir_name)?;
 
-    let java_env = crate::persist::read::<JavaConfig>("jdk")
-        .map(|c| c.active_jdk.map(|e| e.version).unwrap_or_else(|| "自动选择".into()))
-        .unwrap_or_else(|_| "自动选择".into());
+    let java_env = crate::persist::read::<JdkConfig>(constants::SECT_JDK)
+        .ok()
+        .and_then(|c| match c.jdk_selection {
+            JdkSelection::Manual { path } => c
+                .discovered_jdks
+                .iter()
+                .find(|e| e.path == path)
+                .map(|e| e.version.clone()),
+            JdkSelection::Auto => None,
+        })
+        .unwrap_or_else(|| "自动选择".into());
     Ok(format!("环境校验通过（JDK: {}）", java_env))
 }
 
@@ -346,6 +419,7 @@ pub fn get_memory_info() -> (u64, u64) {
     #[cfg(target_os = "windows")]
     unsafe {
         #[repr(C)]
+        #[allow(clippy::upper_case_acronyms)]
         struct MEMORYSTATUSEX {
             dw_length: u32,
             dw_memory_load: u32,
@@ -373,7 +447,10 @@ pub fn get_memory_info() -> (u64, u64) {
             ull_avail_extended_virtual: 0,
         };
         if GlobalMemoryStatusEx(&mut st) != 0 {
-            return (st.ull_total_phys / 1024 / 1024, st.ull_avail_phys / 1024 / 1024);
+            return (
+                st.ull_total_phys / 1024 / 1024,
+                st.ull_avail_phys / 1024 / 1024,
+            );
         }
         (16384, 8192)
     }
@@ -410,13 +487,13 @@ fn meminfo_kb(s: &str) -> u64 {
 /// 读取启动选项配置（launcher section）。
 #[tauri::command]
 pub fn get_launch_options() -> LauncherConfig {
-    crate::persist::read::<LauncherConfig>("launcher").unwrap_or_default()
+    crate::persist::read::<LauncherConfig>(constants::SECT_LAUNCHER).unwrap_or_default()
 }
 
 /// 保存启动选项配置（launcher section）。
 #[tauri::command]
 pub fn save_launch_options(config: LauncherConfig) -> Result<(), String> {
-    crate::persist::save("launcher", &config).map_err(|e| e.to_string())
+    crate::persist::save(constants::SECT_LAUNCHER, &config).map_err(|e| e.to_string())
 }
 
 /// 读取最后一次使用的离线用户名（与正版隔离）。
@@ -444,7 +521,13 @@ pub async fn export_launch_script(
     xuid: String,
 ) -> Result<String, String> {
     let (auth, java_path, version_json, mc_dir, launcher_config, java_major) = prepare_launch(
-        &version_dir_name, &auth_mode, &username, &access_token, &uuid, &xuid)?;
+        &version_dir_name,
+        &auth_mode,
+        &username,
+        &access_token,
+        &uuid,
+        &xuid,
+    )?;
     let cmd = build_launch_command(
         &java_path,
         &version_json,
@@ -473,15 +556,28 @@ pub async fn spawn_game(
     xuid: String,
 ) -> Result<u32, String> {
     let (mut auth, java_path, version_json, mc_dir, launcher_config, java_major) = prepare_launch(
-        &version_dir_name, &auth_mode, &username, &access_token, &uuid, &xuid)?;
+        &version_dir_name,
+        &auth_mode,
+        &username,
+        &access_token,
+        &uuid,
+        &xuid,
+    )?;
 
     // 离线皮肤配置：同一次启动只读一次（apply_offline_skin 与 build_user_properties 共用）
     let skin_cfg: crate::config::offline_skin::OfflineSkinConfig =
-        crate::persist::read("offline_skin").unwrap_or_default();
+        crate::persist::read(constants::SECT_OFFLINE_SKIN).unwrap_or_default();
 
     // 离线皮肤（PCL 机制）：UUID 匹配模型（Steve/Alex/Custom）或正版玩家真实 UUID（Player）；
     // Custom 额外构建替换默认纹理的资源包
-    skin::apply_offline_skin(&mut auth, &version_json, &mc_dir, &version_dir_name, &skin_cfg).await;
+    skin::apply_offline_skin(
+        &mut auth,
+        &version_json,
+        &mc_dir,
+        &version_dir_name,
+        &skin_cfg,
+    )
+    .await;
 
     // 启动前完整性检测 + 旧式 natives 解压准备
     verify_env(&version_json, &mc_dir, &version_dir_name)?;
@@ -522,11 +618,18 @@ pub async fn spawn_game(
     apply_gpu_preference(launcher_config.use_high_performance_gpu);
 
     // 启动子进程
-    let mut child = std::process::Command::new(&cmd.args[0])
+    let mut command = std::process::Command::new(&cmd.args[0]);
+    command
         .args(&cmd.args[1..])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .stdin(std::process::Stdio::null())
+        .stdin(std::process::Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    let mut child = command
         .spawn()
         .map_err(|e| format!("启动游戏失败: {}", e))?;
 
@@ -578,9 +681,9 @@ mod tests {
             assert!(s.starts_with("chcp 65001>nul\r\n"));
             assert!(s.contains("title 启动 - 26.2\r\n"));
             assert!(s.contains(r#"cd /D "D:\Minecraft\.minecraft\versions\26.2""#));
-            assert!(s.contains(
-                r#""C:\java\bin\java.exe" "-Xmx2G" "net.minecraft.client.main.Main" "#
-            ));
+            assert!(
+                s.contains(r#""C:\java\bin\java.exe" "-Xmx2G" "net.minecraft.client.main.Main" "#)
+            );
             assert!(s.ends_with("pause\r\n"));
         }
     }
@@ -624,7 +727,10 @@ mod tests {
             "1.18.2",
             std::path::Path::new("D:/Minecraft/.minecraft"),
             config,
-            &AuthMode::Offline { username: "tester".into(), uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into() },
+            &AuthMode::Offline {
+                username: "tester".into(),
+                uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+            },
             17,
             "",
         );
@@ -656,7 +762,10 @@ mod tests {
         // 版本隔离（固定行为）：游戏目录 = 版本目录
         let args = build_cmd(&LauncherConfig::default());
         let gi = args.iter().position(|a| a == "--gameDir").unwrap();
-        assert_eq!(args[gi + 1].replace('\\', "/"), "D:/Minecraft/.minecraft/versions/1.18.2");
+        assert_eq!(
+            args[gi + 1].replace('\\', "/"),
+            "D:/Minecraft/.minecraft/versions/1.18.2"
+        );
     }
 
     #[test]
@@ -671,15 +780,27 @@ mod tests {
             "1.18.2",
             std::path::Path::new("D:/Minecraft/.minecraft"),
             &cfg,
-            &AuthMode::Offline { username: "tester".into(), uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into() },
+            &AuthMode::Offline {
+                username: "tester".into(),
+                uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+            },
             17,
             props,
         );
         let joined = cmd.args.join(" ");
-        assert!(joined.contains("--userProperties"), "应追加 --userProperties: {joined}");
-        assert!(joined.contains("--profileProperties"), "应追加 --profileProperties: {joined}");
+        assert!(
+            joined.contains("--userProperties"),
+            "应追加 --userProperties: {joined}"
+        );
+        assert!(
+            joined.contains("--profileProperties"),
+            "应追加 --profileProperties: {joined}"
+        );
         assert!(joined.contains(props), "值应注入: {joined}");
-        assert!(!joined.contains("--user-properties"), "不应注入连字符版: {joined}");
+        assert!(
+            !joined.contains("--user-properties"),
+            "不应注入连字符版: {joined}"
+        );
     }
 
     #[test]
@@ -699,7 +820,10 @@ mod tests {
             "1.18.2",
             std::path::Path::new("D:/Minecraft/.minecraft"),
             &cfg,
-            &AuthMode::Offline { username: "tester".into(), uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into() },
+            &AuthMode::Offline {
+                username: "tester".into(),
+                uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+            },
             17,
             props,
         );
@@ -709,7 +833,10 @@ mod tests {
             !joined.contains("${user_properties}"),
             "模板残留未替换: {joined}"
         );
-        assert!(joined.contains("--user-type legacy"), "离线应为 legacy: {joined}");
+        assert!(
+            joined.contains("--user-type legacy"),
+            "离线应为 legacy: {joined}"
+        );
         // 旧格式模板应按空白拆分为独立 argv（否则 joptsimple 报 missing accessToken/version）
         assert!(
             cmd.args.contains(&"--accessToken".into()),
@@ -729,7 +856,9 @@ mod tests {
         assert!(args.contains(&"-Dminecraft.window.title=我的世界".into()));
         // 空 = 不传
         let args = build_cmd(&LauncherConfig::default());
-        assert!(!args.iter().any(|a| a.starts_with("-Dminecraft.window.title")));
+        assert!(!args
+            .iter()
+            .any(|a| a.starts_with("-Dminecraft.window.title")));
     }
 
     #[test]
@@ -743,7 +872,10 @@ mod tests {
             "1.8.9",
             std::path::Path::new("D:/Minecraft/.minecraft"),
             &cfg,
-            &AuthMode::Offline { username: "t".into(), uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into() },
+            &AuthMode::Offline {
+                username: "t".into(),
+                uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+            },
             8,
             "",
         )
@@ -760,7 +892,10 @@ mod tests {
             "1.8.9",
             std::path::Path::new("D:/Minecraft/.minecraft"),
             &cfg,
-            &AuthMode::Offline { username: "t".into(), uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into() },
+            &AuthMode::Offline {
+                username: "t".into(),
+                uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+            },
             8,
             "",
         )

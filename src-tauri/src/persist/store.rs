@@ -1,12 +1,14 @@
 use std::path::PathBuf;
 use std::fs;
 
+use crate::constants::{CONFIG_DIR, SETTINGS_FILE};
+
 fn config_dir() -> PathBuf {
-    crate::persist::exe_dir().join("Elytra")
+    crate::persist::exe_dir().join(CONFIG_DIR)
 }
 
 fn config_file() -> PathBuf {
-    config_dir().join("Settings.toml")
+    config_dir().join(SETTINGS_FILE)
 }
 
 pub fn read_raw() -> Result<String, String> {

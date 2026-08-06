@@ -8,6 +8,7 @@ use tauri::{AppHandle, Emitter};
 
 use crate::auth::microsoft::{self, Pkce};
 use crate::auth::model::MsAccount;
+use crate::constants::UA_MOJANG_API;
 
 /// 等待浏览器回调的超时（5 分钟）。
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(300);
@@ -15,7 +16,7 @@ const CALLBACK_TIMEOUT: Duration = Duration::from_secs(300);
 /// 统一 HTTP 客户端（Elytra UA + 可配超时；visage 等外部服务要求自定义 UA）。
 fn http_client(timeout_secs: u64) -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
-        .user_agent("ElytraLauncher/0.1.0 (+https://github.com/nefelibetas/Elytra)")
+        .user_agent(UA_MOJANG_API)
         .timeout(Duration::from_secs(timeout_secs))
         .build()
         .map_err(|e| format!("初始化客户端失败：{e}"))

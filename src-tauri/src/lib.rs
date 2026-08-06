@@ -1,18 +1,19 @@
 mod auth;
 mod commands;
 pub mod config;
+pub mod constants;
 pub mod downloader;
 mod events;
 mod persist;
 pub mod task;
+mod jdk;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     task::init();
-
     // 启动时后台自动扫描 JDK（已有持久化结果则跳过）
     std::thread::spawn(|| {
-        crate::config::jdk::storage::ensure_scanned();
+        jdk::init();
     });
 
     tauri::Builder::default()
@@ -44,10 +45,10 @@ pub fn run() {
             commands::downloader::resolve_version_name,
             commands::loader::get_forge_versions,
             commands::loader::get_fabric_versions,
-            commands::loader::get_optifine_versions,
             commands::loader::get_quilt_versions,
-            commands::loader::get_liteloader_versions,
+            commands::loader::get_optifine_versions,
             commands::loader::get_neoforge_versions,
+            commands::loader::get_fabric_api_versions,
             commands::task::start_download,
             commands::task::cancel_task,
             commands::launch::spawn_game,

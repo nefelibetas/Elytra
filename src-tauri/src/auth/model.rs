@@ -1,3 +1,4 @@
+use crate::constants;
 use serde::{Deserialize, Serialize};
 
 /// Microsoft 正版账号（含长期 refresh_token 与短期 Minecraft access_token）。
@@ -20,13 +21,13 @@ pub struct MsAccount {
 
 
 pub fn read() -> Option<MsAccount> {
-    crate::persist::read("ms_account").ok()
+    crate::persist::read(constants::SECT_MS_ACCOUNT).ok()
 }
 
 pub fn save(account: &MsAccount) -> Result<(), String> {
-    crate::persist::save("ms_account", account).map_err(|e| e.to_string())
+    crate::persist::save(constants::SECT_MS_ACCOUNT, account).map_err(|e| e.to_string())
 }
 
 pub fn clear() -> Result<(), String> {
-    crate::persist::remove("ms_account").map_err(|e| e.to_string())
+    crate::persist::remove(constants::SECT_MS_ACCOUNT).map_err(|e| e.to_string())
 }

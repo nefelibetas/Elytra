@@ -6,17 +6,18 @@ import { showToast } from "../utils/toast";
 import { useConfigSection } from "../utils/useConfigSection";
 import { SKIN_TYPE_OPTIONS, type OfflineSkinType, type OfflineSkinModel } from "../utils/offlineSkin";
 
-interface JavaEnv { path: string; version: string; vendor: string; arch: string; }
-interface JavaConfig { active_jdk: JavaEnv | null; discovered_jdks: JavaEnv[]; }
+interface JdkInfo { path: string; version: string; vendor: string; bits: number; }
+type JdkSelection = { mode: "auto" } | { mode: "manual"; path: string };
+interface JdkConfig { jdk_selection: JdkSelection; discovered_jdks: JdkInfo[]; }
 
 type Tab = "launch" | "download";
 
 const currentTab = ref<Tab>("launch");
 
 // ── Java 配置 ──
-const jdkList = ref<JavaEnv[]>([]);
+const jdkList = ref<JdkInfo[]>([]);
 const autoMode = ref(true);
-const activeJdk = ref<JavaEnv | null>(null);
+const activeJdk = ref<JdkInfo | null>(null);
 const jdkSection = useConfigSection();
 const jdkError = jdkSection.error;
 const loading = ref(false);
@@ -24,10 +25,14 @@ const pickerOpen = ref(false);
 
 async function loadConfig() {
   try {
-    const cfg = await invoke<JavaConfig>("get_jdk_config");
+    const cfg = await invoke<JdkConfig>("get_jdk_config");
+    const sel = cfg.jdk_selection;
     jdkList.value = cfg.discovered_jdks ?? [];
-    activeJdk.value = cfg.active_jdk ?? null;
-    autoMode.value = !cfg.active_jdk;
+    autoMode.value = sel.mode === "auto";
+    activeJdk.value =
+      sel.mode === "manual"
+        ? cfg.discovered_jdks.find((e) => e.path === sel.path) ?? null
+        : null;
   } catch {
     // 忽略
   }
@@ -37,7 +42,9 @@ async function saveConfig() {
   await jdkSection.run(async () => {
     await invoke("save_jdk_config", {
       config: {
-        active_jdk: autoMode.value ? null : activeJdk.value,
+        jdk_selection: autoMode.value
+          ? { mode: "auto" }
+          : { mode: "manual", path: activeJdk.value?.path ?? "" },
         discovered_jdks: jdkList.value,
       },
     });
@@ -54,7 +61,7 @@ onMounted(() => {
 async function refreshJdks() {
   loading.value = true;
   await jdkSection.run(async () => {
-    jdkList.value = await invoke<JavaEnv[]>("auto_scan_jdk");
+    jdkList.value = await invoke<JdkInfo[]>("auto_scan_jdk");
   });
   loading.value = false;
 }
@@ -64,7 +71,7 @@ async function selectCustomDir() {
   await jdkSection.run(async () => {
     const dir = await open({ directory: true, multiple: false });
     if (!dir) return;
-    jdkList.value = await invoke<JavaEnv[]>("scan_custom_jdk", { path: dir });
+    jdkList.value = await invoke<JdkInfo[]>("scan_custom_jdk", { path: dir });
   });
   loading.value = false;
 }
@@ -76,7 +83,7 @@ function selectAuto() {
   saveConfig();
 }
 
-function selectJdk(env: JavaEnv) {
+function selectJdk(env: JdkInfo) {
   autoMode.value = false;
   activeJdk.value = env;
   pickerOpen.value = false;
@@ -713,7 +720,7 @@ const placeholder = computed(() => {
                     >
                       <div class="jdk-opt-main">
                         <span class="jdk-opt-title">{{ jdk.version }}</span>
-                        <span class="jdk-opt-sub">{{ jdk.vendor }} · {{ jdk.arch }}</span>
+                        <span class="jdk-opt-sub">{{ jdk.vendor }} · {{ jdk.bits }} 位</span>
                         <span class="jdk-opt-path">{{ jdk.path }}</span>
                       </div>
                       <svg v-if="!autoMode && activeJdk && activeJdk.path === jdk.path" viewBox="0 0 14 14" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7l3.5 3.5L12 3" /></svg>

@@ -1,4 +1,5 @@
 use crate::auth::model::MsAccount;
+use crate::constants;
 use base64::Engine;
 use serde_json::json;
 use sha2::Digest;
@@ -411,10 +412,11 @@ pub fn extract_xuid_from_jwt(token: &str) -> String {
 
 /// 构建正版登录专用 HTTP client；按「正版登录时验证 SSL 证书」配置决定是否校验证书。
 fn build_auth_client() -> reqwest::Client {
-    let verify =
-        crate::persist::read::<crate::config::downloader::model::DownloaderConfig>("downloader")
-            .map(|c| c.verify_ssl)
-            .unwrap_or(false);
+    let verify = crate::persist::read::<crate::config::downloader::model::DownloaderConfig>(
+        constants::SECT_DOWNLOADER,
+    )
+    .map(|c| c.verify_ssl)
+    .unwrap_or(false);
     reqwest::Client::builder()
         .danger_accept_invalid_certs(!verify)
         .build()

@@ -121,8 +121,9 @@ fn apply_custom_skin_pack(
         zip.start_file("pack.mcmeta", opts).map_err(|e| e.to_string())?;
         write!(
             zip,
-            r#"{{"pack":{{"pack_format":{},"description":"ElytraLauncher custom skin"}}}}"#,
-            pack_format
+            r#"{{"pack":{{"pack_format":{},"description":"{} custom skin"}}}}"#,
+            pack_format,
+            crate::constants::APP_NAME,
         )
         .map_err(|e| e.to_string())?;
         zip.start_file(
