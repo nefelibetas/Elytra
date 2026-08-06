@@ -1,7 +1,6 @@
 use std::path::Path;
 
-use crate::config::downloader::model::{DownloadSource, DownloaderConfig};
-use crate::downloader::fetcher;
+use crate::config::downloader::model::DownloaderConfig;
 use crate::downloader::model::VersionJson;
 
 /// 多源回退拉取版本 JSON 原始文本（不写盘）。下载流程与任务编排共用。
@@ -31,18 +30,4 @@ pub async fn download_version_json(
     std::fs::write(&json_path, &text).map_err(|e| format!("写入 version json 失败: {}", e))?;
 
     Ok(version_json)
-}
-
-pub async fn download_client_jar(
-    client_url: &str,
-    version_name: &str,
-    dest_dir: &Path,
-    sources: &[&DownloadSource],
-) -> Result<(), String> {
-    let urls: Vec<String> = sources.iter().map(|s| s.mirror_url(client_url)).collect();
-    let jar_path = dest_dir.join(format!("{}.jar", version_name));
-    fetcher::fetch_fallback(&urls, &jar_path, None::<fn(u64, u64)>)
-        .await
-        .map_err(|e| format!("下载 client jar 失败: {}", e))?;
-    Ok(())
 }

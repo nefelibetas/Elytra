@@ -113,6 +113,15 @@ impl TaskManager {
         }
     }
 
+    /// 任务失败：移除任务注册。
+    /// 不整删 cleanup_path——失败时已下载的内容（client jar/libs/assets 均有 sha1 校验、
+    /// 0B 文件由空响应防护清理）可被重试/修复自愈复用；整删会导致原版版本 JSON 等
+    /// 依赖链丢失（loader 安装依赖 versions/{mc} 的原版 JSON），且需全部重新下载。
+    /// 主动取消（cancel）仍整删，语义不变。
+    pub fn fail(&self, id: &str) {
+        self.inner.lock().unwrap().tasks.remove(id);
+    }
+
     pub fn list(&self) -> Vec<TaskProgress> {
         let inner = self.inner.lock().unwrap();
         inner.tasks.values().filter_map(|h| h.progress.try_lock().ok().map(|p| p.clone())).collect()

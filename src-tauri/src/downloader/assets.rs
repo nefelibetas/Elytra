@@ -3,11 +3,16 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
+use tokio::sync::Semaphore;
 use tokio::time::{sleep, Duration};
 
 use super::hash::file_sha1_matches;
 use crate::config::downloader::model::DownloaderConfig;
 use crate::downloader::fetcher;
+
+/// 资源下载失败止损阈值：超过即停（资源数庞大，大量失败通常是源整体不可达，
+/// 继续下发只是空耗——与 libraries 的"收齐错误"语义相反，那是可修复的个别缺失）。
+const MAX_ASSET_ERRORS: usize = 10;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AssetsIndex {
@@ -60,16 +65,17 @@ pub async fn fetch_asset_index(
 pub async fn download_assets(
     index_url: &str,
     index_id: &str,
-    index_sha1: Option<&str>,
+    index_sha1: &str,
     config: &DownloaderConfig,
-    mc_dir: &Path,
-    counter: Option<Arc<AtomicU32>>,
-    bytes_counter: Option<Arc<AtomicU64>>,
+    concurrency: usize,
+    counter: Arc<AtomicU32>,
+    bytes_counter: Arc<AtomicU64>,
 ) -> Result<(), Vec<String>> {
     let sources: Vec<&crate::config::downloader::model::DownloadSource> =
         config.file_sources_list();
+    let mc_dir = config.minecraft_dir_abs();
 
-    let index_text = fetch_asset_index(config, mc_dir, index_url, Some(index_id), index_sha1)
+    let index_text = fetch_asset_index(config, &mc_dir, index_url, Some(index_id), Some(index_sha1))
         .await
         .map_err(|e| vec![e])?;
 
@@ -77,11 +83,12 @@ pub async fn download_assets(
         .map_err(|e| vec![format!("failed to parse asset index: {}", e)])?;
 
     let objects_dir = mc_dir.join("assets").join("objects");
+    let sem = Arc::new(Semaphore::new(concurrency));
     let mut handles = Vec::new();
     let mut errors = Vec::new();
 
     for obj in index.objects.values() {
-        if errors.len() >= 10 {
+        if errors.len() >= MAX_ASSET_ERRORS {
             errors.push("too many errors, stopping".into());
             break;
         }
@@ -99,29 +106,33 @@ pub async fn download_assets(
             .collect();
         let ctr = counter.clone();
         let bc = bytes_counter.clone();
+        let permit = sem.clone();
         handles.push(tokio::spawn(async move {
+            let _permit = permit.acquire_owned().await.unwrap();
             let mut last_err = String::new();
             for attempt in 0..3 {
                 if attempt > 0 {
                     sleep(Duration::from_millis(200)).await;
                 }
                 // 字节级进度：增量累加进全局计数（每次重试从 0 重新开始，增量不会为负）
-                let progress: Option<_> = bc.as_ref().map(|_| {
+                let progress = {
                     let file_done = Arc::new(AtomicU64::new(0));
                     let fd = file_done.clone();
                     let b = bc.clone();
                     move |downloaded: u64, _total: u64| {
                         let prev = fd.swap(downloaded, Ordering::Relaxed);
-                        if let Some(b) = &b {
-                            b.fetch_add(downloaded.saturating_sub(prev), Ordering::Relaxed);
-                        }
+                        b.fetch_add(downloaded.saturating_sub(prev), Ordering::Relaxed);
                     }
-                });
-                match fetcher::fetch_fallback(&urls, &dest, progress).await {
+                };
+                match fetcher::fetch_fallback(&urls, &dest, Some(progress)).await {
                     Ok(_dl) => {
-                        if let Some(c) = &ctr {
-                            c.fetch_add(1, Ordering::Relaxed);
+                        // 下载后 sha1 校验（镜像源可能返回坏内容）：不匹配删除并重试
+                        if !file_sha1_matches(&dest, &hash) {
+                            let _ = std::fs::remove_file(&dest);
+                            last_err = format!("{}: sha1 校验失败", hash);
+                            continue;
                         }
+                        ctr.fetch_add(1, Ordering::Relaxed);
                         return Ok(());
                     }
                     Err(e) => last_err = format!("{}: {}", hash, e),

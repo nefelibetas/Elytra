@@ -1,13 +1,12 @@
 use std::path::{Path, PathBuf};
 
 use crate::config::launcher::model::{AuthMode, GcType, LauncherConfig, MemoryMode};
-use crate::downloader::extract::{classifier_artifact, matches_rules, native_classifier_matches, os_classifier_key};
+use crate::downloader::extract::{
+    legacy_classifier_artifact, matches_rules, modern_native_matches, modern_natives_key,
+    NativesKind,
+};
+use crate::constants;
 use crate::downloader::model::VersionJson;
-
-/// 启动器标识
-const LAUNCHER_NAME: &str = "Elytra";
-const LAUNCHER_VERSION: &str = "0.1.0";
-const LAUNCHER_CLIENT_ID: &str = "elytra";
 
 /// 完整的启动命令，按执行顺序排列。
 pub struct LaunchCommand {
@@ -61,7 +60,7 @@ fn substitute<'a>(template: &str, ctx: &TemplateContext<'a>) -> String {
     s = s.replace("${resolution_height}", &ctx.resolution_height.to_string());
     s = s.replace("${launcher_name}", ctx.launcher_name);
     s = s.replace("${launcher_version}", ctx.launcher_version);
-    s = s.replace("${clientid}", LAUNCHER_CLIENT_ID);
+    s = s.replace("${clientid}", constants::CLIENT_ID);
     s = s.replace("${quickPlayPath}", "");
     s
 }
@@ -238,8 +237,8 @@ pub fn build_launch_command(
                 &classpath_str,
                 classpath_sep,
                 &version_json.id,
-                LAUNCHER_NAME,
-                LAUNCHER_VERSION,
+                constants::LAUNCHER_BRAND,
+                constants::APP_VERSION,
             );
             // 跳过 -Xmx / -Xms（内存由我们统一设置）
             if substituted.starts_with("-Xmx") || substituted.starts_with("-Xms") {
@@ -271,11 +270,11 @@ pub fn build_launch_command(
     // 启动器品牌标识（官方 arguments.jvm 可能已包含，去重）
     push_unique(
         &mut system_props,
-        format!("-Dminecraft.launcher.brand={}", LAUNCHER_NAME),
+        format!("-Dminecraft.launcher.brand={}", constants::LAUNCHER_BRAND),
     );
     push_unique(
         &mut system_props,
-        format!("-Dminecraft.launcher.version={}", LAUNCHER_VERSION),
+        format!("-Dminecraft.launcher.version={}", constants::APP_VERSION),
     );
 
     // 编码
@@ -371,8 +370,8 @@ pub fn build_launch_command(
         version_type: &version_json.r#type,
         resolution_width,
         resolution_height,
-        launcher_name: LAUNCHER_NAME,
-        launcher_version: LAUNCHER_VERSION,
+        launcher_name: constants::LAUNCHER_BRAND,
+        launcher_version: constants::APP_VERSION,
     };
 
     let game_args = match &version_json.arguments.game {
@@ -473,8 +472,8 @@ fn build_classpath(version_json: &VersionJson, lib_dir: &Path, client_jar: &Path
                 continue;
             }
         }
-        // 架构匹配（排除 x86/arm64 等非当前架构的 native 变体）
-        if !native_classifier_matches(&lib.name) {
+        // 新式 natives：库名后缀过滤非当前平台的架构变体（排除 x86/arm64 等）
+        if lib.natives_kind() == Some(NativesKind::Modern) && !modern_native_matches(&lib.name) {
             continue;
         }
         let Some(dls) = &lib.downloads else { continue };
@@ -484,11 +483,11 @@ fn build_classpath(version_json: &VersionJson, lib_dir: &Path, client_jar: &Path
             cp.push(lib_dir.join(&artifact.path));
         }
 
-        // 新式 native classifier JAR（无 natives 字段）
-        if lib.natives.is_none() {
+        // 新式 natives 且带 classifiers：取当前平台 JAR（历史兼容分支，现代数据无此结构）
+        if lib.natives_kind() == Some(NativesKind::Modern) {
             if let Some(classifiers) = &dls.classifiers {
-                if let Some(key) = os_classifier_key(None) {
-                    if let Some(artifact) = classifiers.get(key) {
+                if let Some(key) = modern_natives_key() {
+                    if let Some(artifact) = classifiers.get(&key) {
                         cp.push(lib_dir.join(&artifact.path));
                     }
                 }
@@ -511,12 +510,10 @@ fn push_unique(list: &mut Vec<String>, arg: String) {
 
 /// 检查版本是否包含旧式 natives 库（lwjgl 2.x，有 `natives` 字段）。
 pub fn has_old_style_natives(version_json: &VersionJson) -> bool {
-    version_json.libraries.iter().any(|lib| {
-        lib.natives
-            .as_ref()
-            .map(|n| n.contains_key(crate::downloader::extract::TARGET_OS))
-            .unwrap_or(false)
-    })
+    version_json
+        .libraries
+        .iter()
+        .any(|l| l.natives_kind() == Some(NativesKind::Legacy))
 }
 
 /// 确保 natives 目录就绪：所有版本都创建 `.minecraft/natives/<ver>/` 根目录
@@ -545,10 +542,7 @@ pub fn ensure_old_style_natives(
     let mut errors: Vec<String> = Vec::new();
     for lib in &version_json.libraries {
         // 仅旧式（natives 字段）参与解压；has_old_style_natives 保证版本整体含旧式库
-        let Some(classifier_key) = lib.natives.as_ref().and_then(|n| n.get(crate::downloader::extract::TARGET_OS)) else {
-            continue;
-        };
-        let Some(artifact) = classifier_artifact(lib, classifier_key) else {
+        let Some(artifact) = legacy_classifier_artifact(lib) else {
             continue;
         };
         let jar = lib_dir.join(&artifact.path);

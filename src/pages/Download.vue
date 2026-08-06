@@ -37,6 +37,12 @@ interface LoaderItem {
   icon: string;
 }
 
+interface FabricApiVer {
+  version: string;
+  download_url: string;
+  filename: string;
+}
+
 type Tab = "vanilla" | "mod" | "modpack" | "datapack" | "resourcepack" | "shader";
 
 const currentTab = ref<Tab>("vanilla");
@@ -60,6 +66,18 @@ const loaders: LoaderItem[] = CATEGORIES
   .filter(c => c.key !== "vanilla")
   .map(c => ({ key: c.key, name: c.title, icon: c.icon }));
 
+// Injects fabric-api right after fabric for strict ordering
+const displayLoaders = computed<LoaderItem[]>(() => {
+  const list: LoaderItem[] = [];
+  for (const ld of loaders) {
+    list.push(ld);
+    if (ld.key === "fabric" && selectedMainLoader.value === "fabric") {
+      list.push({ key: "fabric-api", name: "Fabric API", icon: loaderIcon.fabric });
+    }
+  }
+  return list;
+});
+
 // Loader version data cache
 const loaderData = ref<Record<string, string[]>>({});
 const loaderLoading = ref<Record<string, boolean>>({});
@@ -68,6 +86,11 @@ const loaderLoading = ref<Record<string, boolean>>({});
 const selectedMainLoader = ref<string | null>(null);
 const selectedLoaderVersions = ref<Record<string, string>>({});
 const expandedLoader = ref<Record<string, boolean>>({});
+
+// Fabric API state
+const fabricApiData = ref<Record<string, FabricApiVer[]>>({});
+const fabricApiLoading = ref(false);
+const fabricApiExpanded = ref(false);
 
 async function updateResolvedDirName() {
   const sv = selectedVersion.value;
@@ -82,7 +105,78 @@ async function updateResolvedDirName() {
 
 watch([selectedVersion, selectedLoaderVersions, selectedMainLoader], updateResolvedDirName, { deep: true });
 
-function isMainLoader(key: string) { return !["optifine", "liteloader"].includes(key); }
+// Auto-fetch Fabric API when Fabric is selected
+watch(selectedMainLoader, (ld) => {
+  const mc = selectedVersion.value?.id;
+  if (ld === "fabric" && mc) {
+    fetchFabricApi(mc);
+  } else if (ld !== "fabric") {
+    delete selectedLoaderVersions.value["fabric-api"];
+  }
+});
+
+watch(() => selectedVersion.value?.id, (mc) => {
+  if (selectedMainLoader.value === "fabric" && mc) {
+    delete selectedLoaderVersions.value["fabric-api"];
+    fabricApiData.value = {};
+    fetchFabricApi(mc);
+  }
+});
+
+function isMainLoader(key: string) { return key !== "optifine"; }
+
+// ── Fabric API ──
+async function fetchFabricApi(mcVer: string) {
+  if (fabricApiData.value[mcVer]) return;
+  if (fabricApiLoading.value) return;
+  fabricApiLoading.value = true;
+  try {
+    const versions = await invoke<FabricApiVer[]>("get_fabric_api_versions", { mcVersion: mcVer });
+    fabricApiData.value[mcVer] = versions;
+    if (versions.length > 0 && !selectedLoaderVersions.value["fabric-api"]) {
+      selectedLoaderVersions.value["fabric-api"] = versions[0].version;
+    }
+  } catch {
+    fabricApiData.value[mcVer] = [];
+  } finally {
+    fabricApiLoading.value = false;
+  }
+}
+
+function toggleFabricApi() {
+  fabricApiExpanded.value = !fabricApiExpanded.value;
+}
+
+function selectFabricApi(ver: FabricApiVer) {
+  selectedLoaderVersions.value["fabric-api"] = ver.version;
+  fabricApiExpanded.value = false;
+}
+
+function clearFabricApi() {
+  delete selectedLoaderVersions.value["fabric-api"];
+  // ponytail: re-auto-select latest if data exists
+  const mc = selectedVersion.value?.id;
+  if (mc) {
+    const data = fabricApiData.value[mc];
+    if (data && data.length > 0) {
+      selectedLoaderVersions.value["fabric-api"] = data[0].version;
+    }
+  }
+}
+
+function getFabricApiVersions(mcVer: string): FabricApiVer[] {
+  return fabricApiData.value[mcVer] ?? [];
+}
+
+/** 选了 Fabric 但 Fabric API 列表未就绪（加载中/拉取失败/未选择）时禁止下载。 */
+function fabricApiUnready(): boolean {
+  if (selectedMainLoader.value !== "fabric") return false;
+  const sv = selectedVersion.value;
+  if (!sv) return false;
+  if (selectedLoaderVersions.value["fabric-api"]) return false;
+  const data = fabricApiData.value[sv.id];
+  return fabricApiLoading.value || !data || data.length === 0;
+}
 
 // Fetch loader versions from API
 async function fetchLoaderVersions(ld: string, mcVersion: string) {
@@ -97,7 +191,6 @@ async function fetchLoaderVersions(ld: string, mcVersion: string) {
     optifine: "get_optifine_versions",
     neoforge: "get_neoforge_versions",
     quilt: "get_quilt_versions",
-    liteloader: "get_liteloader_versions",
   } as Record<string, string>)[ld];
   try {
     const versions = await invoke<string[]>(cmdName, { mcVersion });
@@ -158,7 +251,6 @@ async function selectVersion(v: VersionMeta) {
     fetchLoaderVersions("fabric", mcVer),
     fetchLoaderVersions("quilt", mcVer),
     fetchLoaderVersions("optifine", mcVer),
-    fetchLoaderVersions("liteloader", mcVer),
   ]);
 }
 
@@ -222,10 +314,7 @@ const dlSubmitting = ref(false);
 
 const loaderMinVersion: Record<string, string> = {
   forge: "1.1", neoforge: "1.20.2", fabric: "1.14", quilt: "1.14.4",
-  optifine: "1.2.5", liteloader: "1.5.2",
-};
-const loaderMaxVersion: Record<string, string> = {
-  liteloader: "1.12.2",
+  optifine: "1.2.5",
 };
 
 function versionTuple(v: string): number[] {
@@ -243,22 +332,9 @@ function versionGte(ver: string, min: string): boolean {
   return true;
 }
 
-function versionGt(ver: string, other: string): boolean {
-  const a = versionTuple(ver);
-  const b = versionTuple(other);
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    const va = a[i] ?? 0;
-    const vb = b[i] ?? 0;
-    if (va !== vb) return va > vb;
-  }
-  return false;
-}
-
 function loaderSupported(ld: string, mcVersion: string): boolean {
   const min = loaderMinVersion[ld];
-  const max = loaderMaxVersion[ld];
   if (min && !versionGte(mcVersion, min)) return false;
-  if (max && versionGt(mcVersion, max)) return false;
   return true;
 }
 
@@ -273,16 +349,29 @@ function showLoader(ld: string): boolean {
 async function startDownload() {
   const sv = selectedVersion.value;
   if (!sv) return;
+  if (fabricApiUnready()) return;
   ensureListen();
 
   const mainLd = selectedMainLoader.value;
   const mainVer = mainLd ? selectedLoaderVersions.value[mainLd] : undefined;
   const ofVer = selectedLoaderVersions.value["optifine"];
+  const faVer = selectedLoaderVersions.value["fabric-api"];
+  let faUrl = "";
+  let faVerStr = "";
+  if (faVer) {
+    const data = fabricApiData.value[sv.id] ?? [];
+    const found = data.find(v => v.version === faVer);
+    if (found) {
+      faUrl = found.download_url;
+      faVerStr = found.version;
+    }
+  }
 
   dlSubmitting.value = true;
   await dlState.startTask(
     sv.id, sv.url, sv.id, router.currentRoute.value.fullPath,
     mainLd ?? undefined, mainVer, ofVer, resolvedDirName.value || undefined,
+    faUrl || undefined, faVerStr || undefined,
   );
   dlSubmitting.value = false;
   selectedVersion.value = null;
@@ -391,46 +480,83 @@ onMounted(() => {
           </div>
 
           <TransitionGroup name="ld">
-            <div v-for="ld in loaders" :key="ld.key" v-show="showLoader(ld.key)" class="det-card det-ld">
-              <button class="det-ld-hdr" :class="{ clickable: getLoaderVersions(ld.key, selectedVersion.id).length }"
-                @click="getLoaderVersions(ld.key, selectedVersion.id).length && toggleLoader(ld.key)">
-                <img v-if="loaderIcon[ld.key]" :src="loaderIcon[ld.key]" width="32" height="32" class="det-ld-icon" alt="" />
-                <span class="det-ld-info">
-                  <span class="det-ld-title">{{ ld.name }}</span>
-                  <span class="det-ld-sub">
-                    <template v-if="selectedLoaderVersions[ld.key]">{{ ld.name }} {{ selectedLoaderVersions[ld.key] }}</template>
-                    <template v-else-if="loaderLoading[ld.key]">正在加载...</template>
-                    <template v-else-if="getLoaderVersions(ld.key, selectedVersion.id).length">可以添加</template>
-                    <template v-else>无</template>
+            <template v-for="ld in displayLoaders" :key="ld.key">
+              <div v-if="ld.key !== 'fabric-api'" v-show="showLoader(ld.key)" class="det-card det-ld">
+                <button class="det-ld-hdr" :class="{ clickable: getLoaderVersions(ld.key, selectedVersion.id).length }"
+                  @click="getLoaderVersions(ld.key, selectedVersion.id).length && toggleLoader(ld.key)">
+                  <img v-if="loaderIcon[ld.key]" :src="loaderIcon[ld.key]" width="32" height="32" class="det-ld-icon" alt="" />
+                  <span class="det-ld-info">
+                    <span class="det-ld-title">{{ ld.name }}</span>
+                    <span class="det-ld-sub">
+                      <template v-if="selectedLoaderVersions[ld.key]">{{ ld.name }} {{ selectedLoaderVersions[ld.key] }}</template>
+                      <template v-else-if="loaderLoading[ld.key]">正在加载...</template>
+                      <template v-else-if="getLoaderVersions(ld.key, selectedVersion.id).length">可以添加</template>
+                      <template v-else>无</template>
+                    </span>
                   </span>
-                </span>
-                <span v-if="selectedLoaderVersions[ld.key] || getLoaderVersions(ld.key, selectedVersion.id).length" class="det-ld-actions">
-                  <button v-if="selectedLoaderVersions[ld.key]" class="det-ld-remove" @click.stop="clearLoaderVer(ld.key)" title="移除">
-                    <svg viewBox="0 0 12 12" width="10" height="10" fill="currentColor">
-                      <polygon points="1,1 5,5 9,1 11,3 7,7 11,11 9,13 5,9 1,13 -1,11 3,7 -1,3" />
+                  <span v-if="selectedLoaderVersions[ld.key] || getLoaderVersions(ld.key, selectedVersion.id).length" class="det-ld-actions">
+                    <button v-if="selectedLoaderVersions[ld.key]" class="det-ld-remove" @click.stop="clearLoaderVer(ld.key)" title="移除">
+                      <svg viewBox="0 0 12 12" width="10" height="10" fill="currentColor">
+                        <polygon points="1,1 5,5 9,1 11,3 7,7 11,11 9,13 5,9 1,13 -1,11 3,7 -1,3" />
+                      </svg>
+                    </button>
+                    <svg v-if="getLoaderVersions(ld.key, selectedVersion.id).length" class="det-ld-arrow" :class="{ open: expandedLoader[ld.key] }" viewBox="0 0 12 12" width="12" height="12" fill="currentColor">
+                      <polygon points="1,3 11,3 6,10" />
                     </svg>
-                  </button>
-                  <svg v-if="getLoaderVersions(ld.key, selectedVersion.id).length" class="det-ld-arrow" :class="{ open: expandedLoader[ld.key] }" viewBox="0 0 12 12" width="12" height="12" fill="currentColor">
-                    <polygon points="1,3 11,3 6,10" />
-                  </svg>
-                </span>
-              </button>
-              <Transition name="expand">
-                <div v-if="expandedLoader[ld.key] && getLoaderVersions(ld.key, selectedVersion.id).length" class="det-ld-body">
-                  <div v-for="ver in getLoaderVersions(ld.key, selectedVersion.id)" :key="ver"
-                      class="det-ld-ver"
-                      @click="selectLoaderVer(ld.key, ver)">
-                    <img v-if="loaderIcon[ld.key]" :src="loaderIcon[ld.key]" width="24" height="24" class="det-ld-ver-icon" alt="" />
-                    <span class="det-ld-ver-text">{{ ver }}</span>
+                  </span>
+                </button>
+                <Transition name="expand">
+                  <div v-if="expandedLoader[ld.key] && getLoaderVersions(ld.key, selectedVersion.id).length" class="det-ld-body">
+                    <div v-for="ver in getLoaderVersions(ld.key, selectedVersion.id)" :key="ver"
+                        class="det-ld-ver"
+                        @click="selectLoaderVer(ld.key, ver)">
+                      <img v-if="loaderIcon[ld.key]" :src="loaderIcon[ld.key]" width="24" height="24" class="det-ld-ver-icon" alt="" />
+                      <span class="det-ld-ver-text">{{ ver }}</span>
+                    </div>
                   </div>
-                </div>
-              </Transition>
-            </div>
+                </Transition>
+              </div>
+              <div v-else class="det-card det-ld">
+                <button class="det-ld-hdr" :class="{ clickable: getFabricApiVersions(selectedVersion.id).length }"
+                  @click="getFabricApiVersions(selectedVersion.id).length && toggleFabricApi()">
+                  <img :src="loaderIcon.fabric" width="32" height="32" class="det-ld-icon" alt="" />
+                  <span class="det-ld-info">
+                    <span class="det-ld-title">Fabric API</span>
+                    <span class="det-ld-sub">
+                      <template v-if="selectedLoaderVersions['fabric-api']">Fabric API {{ selectedLoaderVersions['fabric-api'] }}</template>
+                      <template v-else-if="fabricApiLoading">正在加载...</template>
+                      <template v-else-if="getFabricApiVersions(selectedVersion.id).length">可以添加</template>
+                      <template v-else>无</template>
+                    </span>
+                  </span>
+                  <span v-if="selectedLoaderVersions['fabric-api'] || getFabricApiVersions(selectedVersion.id).length" class="det-ld-actions">
+                    <button v-if="selectedLoaderVersions['fabric-api']" class="det-ld-remove" @click.stop="clearFabricApi()" title="移除">
+                      <svg viewBox="0 0 12 12" width="10" height="10" fill="currentColor">
+                        <polygon points="1,1 5,5 9,1 11,3 7,7 11,11 9,13 5,9 1,13 -1,11 3,7 -1,3" />
+                      </svg>
+                    </button>
+                    <svg v-if="getFabricApiVersions(selectedVersion.id).length" class="det-ld-arrow" :class="{ open: fabricApiExpanded }" viewBox="0 0 12 12" width="12" height="12" fill="currentColor">
+                      <polygon points="1,3 11,3 6,10" />
+                    </svg>
+                  </span>
+                </button>
+                <Transition name="expand">
+                  <div v-if="fabricApiExpanded && getFabricApiVersions(selectedVersion.id).length" class="det-ld-body">
+                    <div v-for="ver in getFabricApiVersions(selectedVersion.id)" :key="ver.version"
+                        class="det-ld-ver"
+                        @click="selectFabricApi(ver)">
+                      <img :src="loaderIcon.fabric" width="24" height="24" class="det-ld-ver-icon" alt="" />
+                      <span class="det-ld-ver-text">{{ ver.version }}</span>
+                    </div>
+                  </div>
+                </Transition>
+              </div>
+            </template>
           </TransitionGroup>
 
           <div class="dl-spacer"></div>
           <div class="dl-footer">
-            <button v-if="!dlSubmitting" class="dl-btn" @click="startDownload">
+            <button v-if="!dlSubmitting" class="dl-btn" :disabled="fabricApiUnready()" @click="startDownload">
               开始下载
             </button>
             <p v-else class="dl-done">已加入下载队列</p>

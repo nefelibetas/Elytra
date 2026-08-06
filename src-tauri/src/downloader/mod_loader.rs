@@ -4,6 +4,20 @@ use std::path::{Path, PathBuf};
 use crate::config::downloader::model::{DownloadSource, DownloaderConfig};
 use crate::downloader::fetcher::{self, http};
 
+fn maven_path(name: &str) -> String {
+    let parts: Vec<&str> = name.split(':').collect();
+    if parts.len() < 3 {
+        return format!("{}.jar", name.replace(':', "_"));
+    }
+    let group = parts[0].replace('.', "/");
+    let artifact = parts[1];
+    let version = parts[2];
+    format!(
+        "{}/{}/{}/{}-{}.jar",
+        group, artifact, version, artifact, version
+    )
+}
+
 pub struct InstallInfo {
     pub version_dir_name: String,
     pub version_json_path: PathBuf,
@@ -14,14 +28,20 @@ async fn install_loader_via_profile(
     mc_version: &str,
     loader_version: &str,
     dir_suffix: &str,
+    parent_text: &str,
     profile_url_tpl: &str,
-    loader_jar_url_tpl: &str,
     config: &DownloaderConfig,
 ) -> Result<InstallInfo, String> {
     let source = config.file_primary_source().ok_or("no active source")?;
     let mc = config.minecraft_dir_abs();
     let dir_name = format!("{}-{}-{}", mc_version, dir_suffix, loader_version);
     let vdir = mc.join("versions").join(&dir_name);
+
+    // 原版父 JSON 由调用方保证（run_task 已拉取），仅做内存合并；
+    // 不创建/覆盖 versions/{mc}/——Fabric 版本是完整独立 JSON（inheritsFrom 已删），
+    // 原版目录只应在用户单独下载原版时由下载流程创建
+    let mut merged: serde_json::Value =
+        serde_json::from_str(parent_text).map_err(|e| format!("解析原版版本 JSON 失败: {}", e))?;
 
     let profile_url = source.url(
         profile_url_tpl,
@@ -32,41 +52,90 @@ async fn install_loader_via_profile(
         .send()
         .await
         .map_err(|e| format!("获取 profile 失败: {}", e))?;
-    let mut profile: serde_json::Value = resp
+    let profile: serde_json::Value = resp
         .json()
         .await
         .map_err(|e| format!("解析 profile 失败: {}", e))?;
 
-    if let Some(libs) = profile["libraries"].as_array_mut() {
-        for lib in libs {
-            if let Some(dls) = lib["downloads"].as_object_mut() {
-                if let Some(artifact) = dls.get_mut("artifact") {
-                    if let Some(url) = artifact["url"].as_str() {
-                        artifact["url"] = serde_json::Value::String(source.mirror_url(url));
-                    }
+    if let Some(fabric_jvm) = profile["arguments"]["jvm"].as_array() {
+        if !fabric_jvm.is_empty() {
+            if let Some(jvm) = merged["arguments"]["jvm"].as_array_mut() {
+                for arg in fabric_jvm {
+                    jvm.push(arg.clone());
                 }
+            } else {
+                merged["arguments"]["jvm"] = serde_json::Value::Array(fabric_jvm.clone());
             }
         }
     }
-    if let Some(main_jar) = profile["mainJar"].as_object_mut() {
-        if let Some(url) = main_jar["url"].as_str() {
-            main_jar["url"] = serde_json::Value::String(source.mirror_url(url));
+
+    merged["id"] = serde_json::Value::String(dir_name.clone());
+    if let Some(mc) = profile["mainClass"].as_str() {
+        merged["mainClass"] = serde_json::Value::String(mc.to_string());
+    }
+
+    if let Some(fabric_libs) = profile["libraries"].as_array() {
+        if let Some(libs) = merged["libraries"].as_array_mut() {
+            for lib in fabric_libs {
+                let name = match lib["name"].as_str() {
+                    Some(n) if !n.is_empty() => n,
+                    _ => continue,
+                };
+                let mp = maven_path(name);
+                let base_url = lib["url"].as_str().unwrap_or(&source.maven_url);
+                let full_url = format!("{}/{}", base_url.trim_end_matches('/'), mp);
+                let sha1 = lib["sha1"].as_str().unwrap_or("");
+                let size = lib["size"].as_u64().unwrap_or(0);
+
+                let mut new_lib = lib.clone();
+                if let Some(obj) = new_lib.as_object_mut() {
+                    obj.remove("md5");
+                    obj.remove("sha256");
+                    obj.remove("sha512");
+                    obj.remove("url");
+                    obj.remove("mainJar");
+                }
+                new_lib["downloads"] = serde_json::json!({
+                    "artifact": {
+                        "path": mp,
+                        "url": full_url,
+                        "sha1": sha1,
+                        "size": size,
+                    }
+                });
+                libs.push(new_lib);
+            }
         }
     }
 
-    let json = serde_json::to_string_pretty(&profile).map_err(|e| format!("序列化失败: {}", e))?;
+    if let Some(obj) = merged.as_object_mut() {
+        obj.remove("inheritsFrom");
+    }
+
     std::fs::create_dir_all(&vdir).map_err(|e| format!("创建目录失败: {}", e))?;
     let json_path = vdir.join(format!("{}.json", dir_name));
-    std::fs::write(&json_path, &json).map_err(|e| format!("写入 JSON 失败: {}", e))?;
+    let json_str =
+        serde_json::to_string_pretty(&merged).map_err(|e| format!("序列化失败: {}", e))?;
+    std::fs::write(&json_path, &json_str).map_err(|e| format!("写入 JSON 失败: {}", e))?;
 
-    let jar_name = format!("{}-loader-{}.jar", dir_suffix, loader_version);
-    let jar_url = source.url(loader_jar_url_tpl, &[("ver", loader_version)]);
-    let jar_path = vdir.join(&jar_name);
-    fetcher::fetch(&jar_url, &jar_path, None::<fn(u64, u64)>)
-        .await
-        .map_err(|e| format!("下载 loader 失败: {}", e))?;
+    let lib_dir = mc.join("libraries");
+    let libraries: Vec<crate::downloader::model::Library> =
+        serde_json::from_value(merged["libraries"].clone()).unwrap_or_default();
+    let sources: Vec<&DownloadSource> = config.file_sources_list();
+    // 静默下载：一次性计数器（无进度展示场景）
+    let counter = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let bytes = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    crate::downloader::library::download_libraries(
+        &libraries,
+        &lib_dir,
+        config.concurrency as usize,
+        &sources,
+        counter,
+        bytes,
+    )
+    .await
+    .map_err(|e| format!("下载库失败:\n{}", e.join("\n")))?;
 
-    // Copy client.jar from parent version to make this dir self-contained
     let parent_jar = mc
         .join("versions")
         .join(mc_version)
@@ -79,13 +148,14 @@ async fn install_loader_via_profile(
     Ok(InstallInfo {
         version_dir_name: dir_name,
         version_json_path: json_path,
-        jar_path,
+        jar_path: dir_jar,
     })
 }
 
 pub async fn install_fabric(
     mc_version: &str,
     loader_version: &str,
+    parent_text: &str,
     config: &DownloaderConfig,
 ) -> Result<InstallInfo, String> {
     let source = config.file_primary_source().ok_or("no active source")?;
@@ -93,8 +163,8 @@ pub async fn install_fabric(
         mc_version,
         loader_version,
         "fabric",
+        parent_text,
         &source.fabric_profile_url,
-        &source.fabric_loader_url,
         config,
     )
     .await
@@ -356,7 +426,10 @@ pub async fn install_optifine(
     config: &DownloaderConfig,
 ) -> Result<InstallInfo, String> {
     let config = config.clone();
-    let source = config.file_primary_source().ok_or("no active source")?.clone();
+    let source = config
+        .file_primary_source()
+        .ok_or("no active source")?
+        .clone();
     let mc = config.minecraft_dir_abs();
     let dir_name = format!("{}-optifine-{}", mc_version, patch);
     let vdir = mc.join("versions").join(&dir_name);

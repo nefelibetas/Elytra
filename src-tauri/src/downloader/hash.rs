@@ -7,6 +7,9 @@ pub fn sha1_hex(data: &[u8]) -> String {
 }
 
 pub fn file_sha1_matches(path: &Path, expected: &str) -> bool {
+    if expected.is_empty() {
+        return path.exists();
+    }
     let data = match std::fs::read(path) {
         Ok(d) => d,
         Err(_) => return false,

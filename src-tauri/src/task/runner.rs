@@ -1,6 +1,3 @@
-//! 下载任务编排：完整下载（run_task）与补全（run_repair_task）的步骤执行与进度上报。
-//! 命令层（commands/task.rs）只负责注册任务与 spawn，执行逻辑全部在本模块。
-
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -9,8 +6,9 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 use crate::config::downloader::model::{DownloadSource, DownloaderConfig};
+use crate::constants;
 use crate::downloader::fetcher;
-use crate::downloader::installer;
+use crate::downloader::mod_loader;
 use crate::downloader::model::VersionJson;
 use crate::persist;
 use crate::task::{self, TaskProgress};
@@ -29,30 +27,71 @@ pub struct MissingReport {
     pub libraries: u32,
     /// 缺失的资源文件数量
     pub assets: u32,
+    /// 缺失/损坏的 native classifier JAR 数量（sha1 校验）
+    pub natives: u32,
 }
 
 /// 读取版本目录的 version json（按文件名扫描，不假设文件名=目录名）。
+/// JSON 是修复的唯一数据源（libs/assets/natives 清单都在里面），缺失时无法本地重建：
+/// 原版目录可能被重命名过、loader 目录的 json 是 installer 合成的，只能删除重装。
 fn read_version_json(vdir: &std::path::Path) -> Result<VersionJson, String> {
-    let vj_path = crate::config::launcher::args::find_file_in_dir(vdir, "json")
-        .ok_or_else(|| format!("版本目录下未找到 JSON 文件: {}", vdir.display()))?;
-    let text = std::fs::read_to_string(&vj_path)
-        .map_err(|e| format!("读取版本文件失败：{e}"))?;
-    serde_json::from_str(&text).map_err(|e| format!("解析版本文件失败：{e}"))
+    let vj_path =
+        crate::config::launcher::args::find_file_in_dir(vdir, "json").ok_or_else(|| {
+            format!(
+                "版本 JSON 缺失\n目录 {} 下未找到 JSON 文件，无法修复，请删除该版本后重新下载安装",
+                vdir.display()
+            )
+        })?;
+    let text = std::fs::read_to_string(&vj_path).map_err(|e| format!("读取版本文件失败：{e}"))?;
+    serde_json::from_str(&text).map_err(|e| {
+        format!(
+            "版本 JSON 损坏\n{} 解析失败: {e}，请删除该版本后重新下载安装",
+            vj_path.display()
+        )
+    })
 }
 
-/// 扫描版本缺失文件（client.jar / 支持库 / 资源），不发起下载。
-/// 支持库按本地 sha1 比对，资源按 assets index 与本地缓存比对（多线程）。
+/// 统计缺失/损坏的 native classifier JAR 数（sha1 校验，与 process_natives 同遍历逻辑）。
+fn count_natives_missing(libraries: &[crate::downloader::model::Library], lib_dir: &Path) -> u32 {
+    use crate::downloader::extract::legacy_classifier_artifact;
+    use crate::downloader::hash::file_sha1_matches;
+    libraries
+        .iter()
+        .filter(|lib| {
+            // 仅旧式 natives 参与；新式作为普通库由 count_pending 统计
+            let Some(artifact) = legacy_classifier_artifact(lib) else {
+                return false;
+            };
+            let dest = lib_dir.join(&artifact.path);
+            !(dest.exists() && file_sha1_matches(&dest, &artifact.sha1))
+        })
+        .count() as u32
+}
+
+/// 扫描版本缺失文件（client.jar / 支持库 / 资源 / natives），不发起下载。
+/// 支持库与资源按本地 sha1 比对，资源按 assets index 与本地缓存比对（多线程）。
 pub async fn scan_missing(version_dir_name: &str) -> Result<MissingReport, String> {
     use crate::downloader::library;
 
-    let config: DownloaderConfig = persist::read("downloader").unwrap_or_default();
+    let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
     let mc = config.minecraft_dir_abs();
     let vdir = mc.join("versions").join(version_dir_name);
     let vj = read_version_json(&vdir)?;
 
-    // 1. client.jar（扫描目录内实际 jar；存在但 0 字节视为损坏/缺失）
+    // 1. client.jar（扫描目录内实际 jar；0 字节或 sha1 不匹配视为缺失/损坏）
     let jar_missing = match crate::config::launcher::args::find_file_in_dir(&vdir, "jar") {
-        Some(p) => p.metadata().map(|m| m.len() == 0).unwrap_or(true),
+        Some(p) => {
+            let len_zero = p.metadata().map(|m| m.len() == 0).unwrap_or(true);
+            if len_zero {
+                true
+            } else {
+                vj.downloads
+                    .client
+                    .as_ref()
+                    .map(|c| !crate::downloader::hash::file_sha1_matches(&p, &c.sha1))
+                    .unwrap_or(false)
+            }
+        }
         None => true,
     };
 
@@ -60,13 +99,27 @@ pub async fn scan_missing(version_dir_name: &str) -> Result<MissingReport, Strin
     let lib_dir = mc.join("libraries");
     let lib_pending = library::count_pending(&vj.libraries, &lib_dir) as u32;
 
-    // 3. 资源（sha1 比对本地缓存，多线程；非下载任务，无需进度回调）
-    let (asst_pending, _) = count_assets_all(&vj.asset_index.url, &config, &mc, |_, _| {}, |_, _| {}).await;
+    // 3. natives（classifier JAR 存在且 sha1 匹配才算完整）
+    let natives_pending = count_natives_missing(&vj.libraries, &lib_dir);
+
+    // 4. 资源（sha1 比对本地缓存，多线程；带 index id/sha1 走本地缓存，避免重复拉取；
+    //    拉取/解析失败显式报错，不再静默视为"完整"）
+    let (asst_pending, _) = count_assets_all(
+        &vj.asset_index.url,
+        Some(&vj.asset_index.id),
+        Some(&vj.asset_index.sha1),
+        &config,
+        &mc,
+        |_, _| {},
+        |_, _| {},
+    )
+    .await?;
 
     Ok(MissingReport {
         client_jar: jar_missing,
         libraries: lib_pending,
         assets: asst_pending,
+        natives: natives_pending,
     })
 }
 
@@ -82,7 +135,9 @@ pub fn repair_steps(report: &MissingReport) -> Vec<String> {
     if report.assets > 0 {
         steps.push("下载资源文件".to_string());
     }
-    steps.push("处理 native 库".to_string());
+    if report.natives > 0 {
+        steps.push("处理 native 库".to_string());
+    }
     steps
 }
 
@@ -95,7 +150,7 @@ pub async fn run_repair_task(
     version_dir_name: &str,
     report: MissingReport,
 ) {
-    let config: DownloaderConfig = persist::read("downloader").unwrap_or_default();
+    let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
     let sources: Vec<DownloadSource> = config.file_sources_list().into_iter().cloned().collect();
     let src_refs: Vec<&DownloadSource> = sources.iter().collect();
     let mc = config.minecraft_dir_abs();
@@ -108,10 +163,12 @@ pub async fn run_repair_task(
     let jar_missing = report.client_jar;
     let lib_pending = report.libraries;
     let asst_pending = report.assets;
-    let total_files = if jar_missing { 1u32 } else { 0u32 } + lib_pending + asst_pending;
+    let natives_pending = report.natives;
+    let total_files =
+        if jar_missing { 1u32 } else { 0u32 } + lib_pending + asst_pending + natives_pending;
     println!(
-        "[repair] {} missing: jar={} libs={} assets={} total={}",
-        version_dir_name, jar_missing, lib_pending, asst_pending, total_files
+        "[repair] {} missing: jar={} libs={} assets={} natives={} total={}",
+        version_dir_name, jar_missing, lib_pending, asst_pending, natives_pending, total_files
     );
     if total_files == 0 {
         return task::update_and_emit(&app, progress, |p| {
@@ -144,7 +201,8 @@ pub async fn run_repair_task(
     } else {
         None
     };
-    let natives_idx = idx;
+    // natives 恒为最后一个步骤，无需推进 idx
+    let natives_idx = (natives_pending > 0).then_some(idx);
 
     set_total(&app, progress, total_files, 0);
     set_completed(&app, progress, 0, 0);
@@ -185,9 +243,16 @@ pub async fn run_repair_task(
 
     let jar = async {
         if jar_missing {
-            // 清理目录内损坏（0 字节）的 jar，避免与下载目标并存
+            // 清理目录内损坏（0 字节或 sha1 不匹配）的 jar，避免与下载目标并存
             if let Some(bad) = crate::config::launcher::args::find_file_in_dir(&vdir, "jar") {
-                if bad.metadata().map(|m| m.len() == 0).unwrap_or(false) {
+                let bad_jar = bad.metadata().map(|m| m.len() == 0).unwrap_or(true)
+                    || vj
+                        .downloads
+                        .client
+                        .as_ref()
+                        .map(|c| !crate::downloader::hash::file_sha1_matches(&bad, &c.sha1))
+                        .unwrap_or(false);
+                if bad_jar {
                     let _ = std::fs::remove_file(&bad);
                 }
             }
@@ -226,18 +291,18 @@ pub async fn run_repair_task(
         &lib_dir,
         config.concurrency as usize,
         &src_refs,
-        Some(Arc::clone(&lib_counter)),
-        Some(Arc::clone(&bytes_counter)),
+        Arc::clone(&lib_counter),
+        Arc::clone(&bytes_counter),
     );
 
     let asst = crate::downloader::assets::download_assets(
         &vj.asset_index.url,
         &vj.asset_index.id,
-        Some(&vj.asset_index.sha1),
+        &vj.asset_index.sha1,
         &config,
-        &mc,
-        Some(Arc::clone(&asst_counter)),
-        Some(Arc::clone(&bytes_counter)),
+        config.concurrency as usize,
+        Arc::clone(&asst_counter),
+        Arc::clone(&bytes_counter),
     );
 
     let parallel = tokio::try_join!(jar, libs, asst);
@@ -247,7 +312,11 @@ pub async fn run_repair_task(
         return set_cancelled(&app, progress);
     }
     if let Err(errors) = parallel {
-        println!("[repair] {} download failed: {}", version_dir_name, errors.join("; "));
+        println!(
+            "[repair] {} download failed: {}",
+            version_dir_name,
+            errors.join("; ")
+        );
         return set_error(&app, progress, errors.join("; "));
     }
 
@@ -262,21 +331,27 @@ pub async fn run_repair_task(
         step_done(&app, progress, i);
     }
 
-    // natives（幂等：已解压跳过）
-    set_phase(&app, progress, "", "处理 native 库", natives_idx, "running");
-    if let Err(errors) = crate::downloader::extract::process_natives(
-        &vj.libraries,
-        &lib_dir,
-        &src_refs,
-        None,
-        None,
-    )
-    .await
-    {
-        println!("[repair] {} natives failed: {}", version_dir_name, errors.join("; "));
-        return set_error(&app, progress, errors.join("; "));
+    // natives（幂等：已解压跳过；仅报告有缺失时才执行，与 steps 索引对应）
+    if let Some(i) = natives_idx {
+        set_phase(&app, progress, "", "处理 native 库", i, "running");
+        if let Err(errors) = crate::downloader::extract::process_natives(
+            &vj.libraries,
+            &lib_dir,
+            &src_refs,
+            Arc::clone(&lib_counter),
+            Arc::clone(&bytes_counter),
+        )
+        .await
+        {
+            println!(
+                "[repair] {} natives failed: {}",
+                version_dir_name,
+                errors.join("; ")
+            );
+            return set_error(&app, progress, errors.join("; "));
+        }
+        step_done(&app, progress, i);
     }
-    step_done(&app, progress, natives_idx);
 
     task::update_and_emit(&app, progress, |p| {
         p.status = "done".into();
@@ -286,7 +361,8 @@ pub async fn run_repair_task(
     });
 }
 
-/// 完整下载任务主体：version json → client.jar / libraries / assets → natives → ModLoader/OptiFine。
+/// 完整下载任务主体：version json → client.jar / libraries / assets → natives → ModLoader/OptiFine → Fabric API。
+#[allow(clippy::too_many_arguments)]
 pub async fn run_task(
     app: AppHandle,
     cancel: &Arc<AtomicBool>,
@@ -298,22 +374,35 @@ pub async fn run_task(
     main_loader_version: Option<&str>,
     optifine_patch: Option<&str>,
     version_dir_name: Option<String>,
+    fabric_api_url: Option<&str>,
+    fabric_api_version: Option<&str>,
 ) {
-    let config: DownloaderConfig = persist::read("downloader").unwrap_or_default();
+    let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
     let sources: Vec<DownloadSource> = config.file_sources_list().into_iter().cloned().collect();
     let src_refs: Vec<&DownloadSource> = sources.iter().collect();
     let mc = config.minecraft_dir_abs();
 
-    set_phase(&app, progress, "running", "下载原版json文件", STEP_VERJSON, "running");
-    if cancelled(cancel) { return set_cancelled(&app, progress); }
+    set_phase(
+        &app,
+        progress,
+        "running",
+        "下载原版json文件",
+        STEP_VERJSON,
+        "running",
+    );
+    if cancelled(cancel) {
+        return set_cancelled(&app, progress);
+    }
 
     // ── Step 0: fetch version.json in-memory ──
-    let vj = match fetch_version_json(version_url, &config).await {
+    let (vj, parent_text) = match fetch_version_json(version_url, &config).await {
         Ok(v) => v,
         Err(e) => return set_error(&app, progress, e),
     };
     step_done(&app, progress, STEP_VERJSON);
-    if cancelled(cancel) { return set_cancelled(&app, progress); }
+    if cancelled(cancel) {
+        return set_cancelled(&app, progress);
+    }
 
     // Determine target dir & register cleanup
     let dir_name: String;
@@ -330,12 +419,13 @@ pub async fn run_task(
         vdir = p;
     }
 
-    // 确保目录存在并写入 version JSON（所有路径都需要）
+    // 确保目录存在；非 loader 模式下写入原版 version JSON（loader 模式由 installer 写合并 JSON）
     std::fs::create_dir_all(&vdir).ok();
-    if let Ok(json) = serde_json::to_string_pretty(&vj) {
-        // JSON 文件用版本 ID 命名，不是目录名（目录可能因冲突被重命名）
-        let jp = vdir.join(format!("{}.json", version_id));
-        std::fs::write(&jp, &json).ok();
+    if main_loader.is_none() {
+        if let Ok(json) = serde_json::to_string_pretty(&vj) {
+            let jp = vdir.join(format!("{}.json", version_id));
+            std::fs::write(&jp, &json).ok();
+        }
     }
     task::global().set_cleanup_path(&progress.try_lock().unwrap().task_id, vdir.clone());
 
@@ -345,7 +435,8 @@ pub async fn run_task(
     let lib_pending = crate::downloader::library::count_pending(&vj.libraries, &lib_dir) as u32;
     let lib_existing = lib_total_all - lib_pending;
     let lib_total_bytes = crate::downloader::library::total_lib_bytes(&vj.libraries);
-    let lib_existing_bytes = crate::downloader::library::existing_lib_bytes(&vj.libraries, &lib_dir);
+    let lib_existing_bytes =
+        crate::downloader::library::existing_lib_bytes(&vj.libraries, &lib_dir);
 
     let jar_exists = vj.downloads.client.is_some();
     let jar_total = if jar_exists { 1u32 } else { 0u32 };
@@ -355,8 +446,10 @@ pub async fn run_task(
     let mut asst_total_all = 0u32;
     let mut asst_total_bytes = 0u64;
     task::update_and_emit(&app, progress, |p| p.current_phase = "获取资源清单".into());
-    let (asst_pending, asst_pending_bytes) = count_assets_all(
+    let (asst_pending, asst_pending_bytes) = match count_assets_all(
         &vj.asset_index.url,
+        Some(&vj.asset_index.id),
+        Some(&vj.asset_index.sha1),
         &config,
         &mc,
         |total, total_bytes| {
@@ -364,28 +457,53 @@ pub async fn run_task(
             asst_total_bytes = total_bytes;
             // 清单齐了：剩余=全量总数，已完成仅 version json
             set_total(
-                &app, progress,
+                &app,
+                progress,
                 1 + jar_total + lib_total_all + total,
                 1 + jar_total_bytes + lib_total_bytes + total_bytes,
             );
             set_completed(&app, progress, 1, 1);
-            task::update_and_emit(&app, progress, |p| p.current_phase = "检测本地资源文件".into());
+            task::update_and_emit(&app, progress, |p| {
+                p.current_phase = "检测本地资源文件".into()
+            });
         },
         |checked_files, checked_bytes| {
             // 检测中：已完成 = version json + 已存在库 + 已检测资产（文件与字节）
-            set_completed(&app, progress, 1 + lib_existing + checked_files, 1 + lib_existing_bytes + checked_bytes);
+            set_completed(
+                &app,
+                progress,
+                1 + lib_existing + checked_files,
+                1 + lib_existing_bytes + checked_bytes,
+            );
         },
     )
-    .await;
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => return set_error(&app, progress, e),
+    };
     let asst_existing = asst_total_all.saturating_sub(asst_pending);
     let asst_existing_bytes = asst_total_bytes.saturating_sub(asst_pending_bytes);
     set_completed(
-        &app, progress,
+        &app,
+        progress,
         1 + lib_existing + asst_existing,
         1 + lib_existing_bytes + asst_existing_bytes,
     );
 
-    let total_files = 1 + jar_total + lib_total_all + asst_total_all;
+    // 收尾步骤（natives/ModLoader/OptiFine/Fabric API）按步骤计入总文件数，
+    // 否则下载完成时剩余文件提前归零、进度虚高 100%（收尾期间仍显示"剩余 0"）
+    let mut total_files = 1 + jar_total + lib_total_all + asst_total_all;
+    total_files += 1; // natives（恒执行）
+    if main_loader.is_some() && main_loader_version.is_some() {
+        total_files += 1;
+    }
+    if optifine_patch.is_some() {
+        total_files += 1;
+    }
+    if fabric_api_version.is_some() {
+        total_files += 1;
+    }
     let initial_completed = 1 + lib_existing + asst_existing;
     let total_bytes = 1 + jar_total_bytes + lib_total_bytes + asst_total_bytes;
     let initial_bytes = 1 + lib_existing_bytes + asst_existing_bytes;
@@ -399,9 +517,30 @@ pub async fn run_task(
     let bytes_counter = Arc::<AtomicU64>::new(AtomicU64::new(0));
 
     // Set all phases to running BEFORE spawning emit loop to avoid lock races
-    set_phase(&app, progress, "", "下载原版客户端文件", STEP_CLIENT, "running");
-    set_phase(&app, progress, "", "下载原版支持库文件", STEP_LIBS, "running");
-    set_phase(&app, progress, "", "下载原版资源文件", STEP_ASSETS, "running");
+    set_phase(
+        &app,
+        progress,
+        "",
+        "下载原版客户端文件",
+        STEP_CLIENT,
+        "running",
+    );
+    set_phase(
+        &app,
+        progress,
+        "",
+        "下载原版支持库文件",
+        STEP_LIBS,
+        "running",
+    );
+    set_phase(
+        &app,
+        progress,
+        "",
+        "下载原版资源文件",
+        STEP_ASSETS,
+        "running",
+    );
 
     let emit_handle = EmitLoop {
         app: app.clone(),
@@ -440,9 +579,12 @@ pub async fn run_task(
                     jar_total.store(total, Ordering::Relaxed);
                 }
             };
-            fetcher::fetch_fallback(&urls, &jar_path, Some(cb)).await.map_err(|e| vec![e.to_string()])?;
+            fetcher::fetch_fallback(&urls, &jar_path, Some(cb))
+                .await
+                .map_err(|e| vec![e.to_string()])?;
             // client.jar sha1 完整性校验（防止镜像 CDN 返回不完整/错误内容）
-            if !c.sha1.is_empty() && !crate::downloader::hash::file_sha1_matches(&jar_path, &c.sha1) {
+            if !c.sha1.is_empty() && !crate::downloader::hash::file_sha1_matches(&jar_path, &c.sha1)
+            {
                 let _ = std::fs::remove_file(&jar_path);
                 return Err(vec!["client.jar 校验失败（sha1 不匹配）".to_string()]);
             }
@@ -453,30 +595,48 @@ pub async fn run_task(
 
     let lib_dir = mc.join("libraries");
     let libs = crate::downloader::library::download_libraries(
-        &vj.libraries, &lib_dir, config.concurrency as usize, &src_refs,
-        Some(Arc::clone(&lib_counter)), Some(Arc::clone(&bytes_counter)),
+        &vj.libraries,
+        &lib_dir,
+        config.concurrency as usize,
+        &src_refs,
+        Arc::clone(&lib_counter),
+        Arc::clone(&bytes_counter),
     );
 
     let asst = crate::downloader::assets::download_assets(
-        &vj.asset_index.url, &vj.asset_index.id, Some(&vj.asset_index.sha1),
-        &config, &mc, Some(Arc::clone(&asst_counter)), Some(Arc::clone(&bytes_counter)),
+        &vj.asset_index.url,
+        &vj.asset_index.id,
+        &vj.asset_index.sha1,
+        &config,
+        config.concurrency as usize,
+        Arc::clone(&asst_counter),
+        Arc::clone(&bytes_counter),
     );
 
     let parallel = tokio::try_join!(jar, libs, asst);
     emit_handle.abort();
 
     // 失败/取消优先上报，避免先发 100% 完成误导前端
-    if cancelled(cancel) { return set_cancelled(&app, progress); }
+    if cancelled(cancel) {
+        return set_cancelled(&app, progress);
+    }
     if let Err(errors) = parallel {
         return set_error(&app, progress, errors.join("; "));
     }
-    if cancelled(cancel) { return set_cancelled(&app, progress); }
+    if cancelled(cancel) {
+        return set_cancelled(&app, progress);
+    }
 
     // Emit final state after downloads complete (emit loop may have been aborted mid-cycle)
     {
         let mut p = progress.lock().unwrap();
-        p.completed_files = total_files;
-        p.progress = 100.0;
+        // 收尾步骤（natives/ModLoader/OptiFine/Fabric API）尚未执行：
+        // completed 只计已完成的下载（不再顶格，剩余文件保持真实）
+        p.completed_files = initial_completed
+            + jar_counter.load(Ordering::Relaxed)
+            + lib_counter.load(Ordering::Relaxed)
+            + asst_counter.load(Ordering::Relaxed);
+        p.progress = 99.9; // 封顶：100% 只由任务收尾显式设置
         p.speed_bps = 0.0;
         if let Some(st) = p.steps.get_mut(STEP_CLIENT) {
             st.status = "done".into();
@@ -496,44 +656,113 @@ pub async fn run_task(
     // ── Native classifier JAR 下载 ──
     set_phase(&app, progress, "", "处理 native 库", STEP_LIBS, "running");
     let natives = crate::downloader::extract::process_natives(
-        &vj.libraries, &lib_dir, &src_refs,
-        Some(Arc::clone(&lib_counter)), Some(Arc::clone(&bytes_counter)),
-    ).await;
+        &vj.libraries,
+        &lib_dir,
+        &src_refs,
+        Arc::clone(&lib_counter),
+        Arc::clone(&bytes_counter),
+    )
+    .await;
     if let Err(errors) = natives {
         return set_error(&app, progress, errors.join("; "));
     }
-    if cancelled(cancel) { return set_cancelled(&app, progress); }
+    bump_completed(&app, progress);
+    if cancelled(cancel) {
+        return set_cancelled(&app, progress);
+    }
 
     // ── ModLoader ──
     let mut step_idx = 4usize;
     if let (Some(ld), Some(lv)) = (main_loader, main_loader_version) {
-        set_phase(&app, progress, "", &format!("安装 {}", ld), step_idx, "running");
+        set_phase(
+            &app,
+            progress,
+            "",
+            &format!("安装 {}", ld),
+            step_idx,
+            "running",
+        );
         let result = match ld {
-            "fabric" => installer::install_fabric(mc_version, lv, &config).await,
-            "forge" => installer::install_forge(mc_version, lv, &config).await,
-            "neoforge" => installer::install_neoforge(mc_version, lv, &config).await,
-            "quilt" => installer::install_fabric(mc_version, lv, &config).await,
+            "fabric" => mod_loader::install_fabric(mc_version, lv, &parent_text, &config).await,
+            "forge" => mod_loader::install_forge(mc_version, lv, &config).await,
+            "neoforge" => mod_loader::install_neoforge(mc_version, lv, &config).await,
+            "quilt" => mod_loader::install_fabric(mc_version, lv, &parent_text, &config).await,
             _ => Err(format!("未知加载器: {}", ld)),
         };
         match result {
-            Ok(_) => step_done(&app, progress, step_idx),
+            Ok(_) => {
+                step_done(&app, progress, step_idx);
+                bump_completed(&app, progress);
+            }
             Err(e) => return set_error(&app, progress, e),
         }
         step_idx += 1;
     }
-    if cancelled(cancel) { return set_cancelled(&app, progress); }
+    if cancelled(cancel) {
+        return set_cancelled(&app, progress);
+    }
 
     // ── OptiFine ──
     if let Some(of) = optifine_patch {
         set_phase(&app, progress, "", "安装 OptiFine", step_idx, "running");
-        match installer::install_optifine(mc_version, of, "HD_U", &config).await {
-            Ok(_) => step_done(&app, progress, step_idx),
+        match mod_loader::install_optifine(mc_version, of, "HD_U", &config).await {
+            Ok(_) => {
+                step_done(&app, progress, step_idx);
+                bump_completed(&app, progress);
+            }
             Err(e) => return set_error(&app, progress, e),
+        }
+        step_idx += 1;
+    }
+    if cancelled(cancel) {
+        return set_cancelled(&app, progress);
+    }
+
+    // ── Fabric API ──
+    if let (Some(url), Some(ver)) = (fabric_api_url, fabric_api_version) {
+        set_phase(
+            &app,
+            progress,
+            "",
+            &format!("下载 Fabric API {}", ver),
+            step_idx,
+            "running",
+        );
+        // URL 最后一段做 percent-decode（文件名中的 `+` 被编码为 %2B）
+        let filename = percent_encoding::percent_decode_str(
+            url.rsplit('/').next().unwrap_or("fabric-api.jar"),
+        )
+        .decode_utf8_lossy()
+        .into_owned();
+        // 版本隔离：游戏从 gameDir/mods（= versions/<id>/mods）加载 mod
+        let mods_dir = vdir.join("mods");
+        std::fs::create_dir_all(&mods_dir).ok();
+        let dest = mods_dir.join(filename);
+        // 多源候选：Modrinth 官方 CDN → MCIM 换域名镜像 → BMCLAPI maven 镜像
+        // （官方 CDN 国内不可达时快速降级，避免单 URL 长时间假死）
+        let mut urls = vec![url.to_string()];
+        let mcim = url.replace("https://cdn.modrinth.com", "https://mod.mcimirror.top");
+        if mcim != url {
+            urls.push(mcim);
+        }
+        if let Some(bmclapi) = sources.iter().find(|s| s.manifest_url.contains("bmclapi")) {
+            urls.push(format!(
+                "{}/net/fabricmc/fabric-api/fabric-api/{ver}/fabric-api-{ver}.jar",
+                bmclapi.maven_url
+            ));
+        }
+        match fetcher::fetch_bounded(&urls, &dest, None::<fn(u64, u64)>).await {
+            Ok(_) => {
+                step_done(&app, progress, step_idx);
+                bump_completed(&app, progress);
+            }
+            Err(e) => return set_error(&app, progress, format!("下载 Fabric API 失败\n{}", e)),
         }
     }
 
     task::update_and_emit(&app, progress, |p| {
         p.status = "done".into();
+        p.completed_files = p.total_files;
         p.progress = 100.0;
         p.current_phase = "完成".into();
     });
@@ -581,8 +810,7 @@ impl EmitLoop {
                 let ad = self.asst_done.load(Ordering::Relaxed);
                 let completed = self.initial_completed + jd + ld + ad;
                 // 字节维度：initial（已存在）+ jar 当前字节 + libs/assets 下载增量
-                let completed_bytes =
-                    self.initial_bytes + jb + self.bytes.load(Ordering::Relaxed);
+                let completed_bytes = self.initial_bytes + jb + self.bytes.load(Ordering::Relaxed);
 
                 let done = {
                     let mut p = self.progress.lock().unwrap();
@@ -593,7 +821,11 @@ impl EmitLoop {
                     let dt = now.duration_since(last_sample).as_secs_f64();
                     if dt >= 0.3 && cur_bytes >= last_bytes {
                         let instant = (cur_bytes - last_bytes) as f64 / dt;
-                        speed_ema = if speed_ema <= 0.0 { instant } else { speed_ema * 0.6 + instant * 0.4 };
+                        speed_ema = if speed_ema <= 0.0 {
+                            instant
+                        } else {
+                            speed_ema * 0.6 + instant * 0.4
+                        };
                         last_bytes = cur_bytes;
                         last_sample = now;
                     }
@@ -666,9 +898,18 @@ fn cancelled(cancel: &Arc<AtomicBool>) -> bool {
     cancel.load(Ordering::SeqCst)
 }
 
-fn set_phase(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, status: &str, phase: &str, step: usize, step_status: &str) {
+fn set_phase(
+    app: &AppHandle,
+    progress: &Arc<Mutex<TaskProgress>>,
+    status: &str,
+    phase: &str,
+    step: usize,
+    step_status: &str,
+) {
     task::update_and_emit(app, progress, |p| {
-        if !status.is_empty() { p.status = status.into(); }
+        if !status.is_empty() {
+            p.status = status.into();
+        }
         p.current_phase = phase.into();
         if let Some(st) = p.steps.get_mut(step) {
             st.status = step_status.into();
@@ -714,11 +955,26 @@ fn set_completed(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, files: u3
     });
 }
 
+/// 收尾步骤（natives/ModLoader/OptiFine/Fabric API）每完成一个，文件计数 +1。
+/// 与 total_files 中的收尾步骤数对应，保证收尾期间剩余文件显示真实。
+fn bump_completed(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>) {
+    task::update_and_emit(app, progress, |p| {
+        p.completed_files = p.completed_files.saturating_add(1);
+        update_progress(p);
+    });
+}
+
 fn set_error(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, msg: String) {
     task::update_and_emit(app, progress, |p| {
         p.status = "error".into();
         p.error = Some(msg);
     });
+    // 移除任务注册（前端收到 error 事件后清理卡片）。
+    // 不整删下载产物：半截/0B 文件由 sha1 校验与空响应防护在重试时自愈，
+    // 已下载内容保留可复用（含 loader 依赖的原版版本 JSON）。
+    if let Ok(p) = progress.try_lock() {
+        task::global().fail(&p.task_id);
+    }
 }
 
 fn set_cancelled(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>) {
@@ -728,30 +984,40 @@ fn set_cancelled(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>) {
     });
 }
 
+/// 拉取并解析版本 JSON，同时保留原始文本（ModLoader 合并需保留未知字段）。
 async fn fetch_version_json(
     version_url: &str,
     config: &DownloaderConfig,
-) -> Result<VersionJson, String> {
+) -> Result<(VersionJson, String), String> {
     let text = crate::downloader::version::fetch_version_json_text(version_url, config).await?;
-    serde_json::from_str(&text).map_err(|e| format!("解析 version json 失败: {}", e))
+    let vj: VersionJson =
+        serde_json::from_str(&text).map_err(|e| format!("解析 version json 失败: {}", e))?;
+    Ok((vj, text))
 }
 
 /// Count total and pending assets (sha1-matched against local cache, multi-threaded).
+/// 拉取/解析失败返回 Err（调用方显式报错，不再静默视为"完整"）。
+/// `index_id`/`index_sha1` 非空时走 fetch_asset_index 的本地缓存（读缓存命中则免网络，否则拉取并写缓存）。
 async fn count_assets_all(
     asset_index_url: &str,
+    index_id: Option<&str>,
+    index_sha1: Option<&str>,
     config: &DownloaderConfig,
     mc_dir: &Path,
     mut on_total: impl FnMut(u32, u64),
     mut on_checked: impl FnMut(u32, u64),
-) -> (u32, u64) {
+) -> Result<(u32, u64), String> {
     use crate::downloader::hash::file_sha1_matches;
-    let text = match crate::downloader::assets::fetch_asset_index(config, mc_dir, asset_index_url, None, None)
-        .await
-    {
-        Ok(t) => t,
-        _ => return (0, 0),
-    };
-    let idx: serde_json::Value = match serde_json::from_str(&text) { Ok(v) => v, _ => return (0, 0) };
+    let text = crate::downloader::assets::fetch_asset_index(
+        config,
+        mc_dir,
+        asset_index_url,
+        index_id,
+        index_sha1,
+    )
+    .await?;
+    let idx: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("解析资源索引失败: {e}"))?;
     let objects_dir = mc_dir.join("assets").join("objects");
 
     // 先收集全部 (hash, 目标路径, size)，再分块多线程 sha1 校验（数千个文件，单线程过慢）
@@ -759,15 +1025,21 @@ async fn count_assets_all(
     let mut total_bytes: u64 = 0;
     if let Some(map) = idx["objects"].as_object() {
         for (_path, obj) in map {
-            let Some(hash) = obj.get("hash").and_then(|v| v.as_str()) else { continue; };
+            let Some(hash) = obj.get("hash").and_then(|v| v.as_str()) else {
+                continue;
+            };
             let size = obj.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
             total_bytes += size;
-            items.push((hash.to_string(), objects_dir.join(&hash[..2]).join(hash), size));
+            items.push((
+                hash.to_string(),
+                objects_dir.join(&hash[..2]).join(hash),
+                size,
+            ));
         }
     }
     let total = items.len() as u32;
     if total == 0 {
-        return (0, 0);
+        return Ok((0, 0));
     }
     // 清单已拿到：先报总数（文件数 + 字节），让调用方立即 set_total（剩余=大数字，而非检测完才出现）
     on_total(total, total_bytes);
@@ -802,7 +1074,7 @@ async fn count_assets_all(
                         pb_local += *size;
                     }
                     done += 1;
-                    if done % 500 == 0 {
+                    if done.is_multiple_of(500) {
                         checked.fetch_add(done, std::sync::atomic::Ordering::Relaxed);
                         let _ = tx.send(done);
                         done = 0;
@@ -822,10 +1094,10 @@ async fn count_assets_all(
             );
         }
     });
-    (
+    Ok((
         pending.load(std::sync::atomic::Ordering::Relaxed),
         pending_bytes.load(std::sync::atomic::Ordering::Relaxed),
-    )
+    ))
 }
 
 #[cfg(test)]
@@ -838,6 +1110,7 @@ mod tests {
             client_jar: true,
             libraries: 3,
             assets: 12,
+            natives: 2,
         });
         assert_eq!(
             steps,
@@ -852,13 +1125,14 @@ mod tests {
 
     #[test]
     fn test_repair_steps_partial() {
-        // 仅缺资源：步骤只含资源 + native
+        // 仅缺资源：步骤只含资源（natives 完整时不附加 native 步骤）
         let steps = repair_steps(&MissingReport {
             client_jar: false,
             libraries: 0,
             assets: 5,
+            natives: 0,
         });
-        assert_eq!(steps, vec!["下载资源文件", "处理 native 库"]);
+        assert_eq!(steps, vec!["下载资源文件"]);
     }
 
     #[test]
@@ -867,7 +1141,81 @@ mod tests {
             client_jar: true,
             libraries: 0,
             assets: 0,
+            natives: 0,
         });
-        assert_eq!(steps, vec!["下载客户端文件", "处理 native 库"]);
+        assert_eq!(steps, vec!["下载客户端文件"]);
+    }
+
+    #[test]
+    fn test_repair_steps_only_natives() {
+        // 仅缺 natives：步骤只含 native（此前 natives 永远附在末尾导致永远无法触发）
+        let steps = repair_steps(&MissingReport {
+            client_jar: false,
+            libraries: 0,
+            assets: 0,
+            natives: 1,
+        });
+        assert_eq!(steps, vec!["处理 native 库"]);
+    }
+
+    #[test]
+    fn test_count_natives_missing() {
+        use crate::downloader::hash::sha1_hex;
+        use crate::downloader::model::{Artifact, Library, LibraryDownloads};
+        use std::collections::HashMap;
+
+        let tmp = std::env::temp_dir().join(format!("elytra_natives_test_{}", std::process::id()));
+        let lib_dir = tmp.join("libraries");
+        std::fs::create_dir_all(&lib_dir).unwrap();
+
+        let good_sha1 = sha1_hex(b"good");
+        let good_path = "net/example/natives-good.jar";
+        let good_dest = lib_dir.join(good_path);
+        std::fs::create_dir_all(good_dest.parent().unwrap()).unwrap();
+        std::fs::write(&good_dest, b"good").unwrap();
+
+        let bad_path = "net/example/natives-bad.jar";
+        let bad_dest = lib_dir.join(bad_path);
+        std::fs::create_dir_all(bad_dest.parent().unwrap()).unwrap();
+        std::fs::write(&bad_dest, b"corrupted").unwrap();
+
+        let missing_path = "net/example/natives-missing.jar";
+
+        let mk = |classifier_path: &str, sha1: &str| Library {
+            name: "net.example:lib:1.0".into(),
+            downloads: Some(LibraryDownloads {
+                artifact: None,
+                classifiers: Some(HashMap::from([(
+                    "natives-windows".into(),
+                    Artifact {
+                        path: classifier_path.into(),
+                        url: "".into(),
+                        sha1: sha1.into(),
+                        size: 0,
+                    },
+                )])),
+            }),
+            rules: None,
+            natives: Some(HashMap::from([(
+                "windows".into(),
+                "natives-windows".into(),
+            )])),
+            extract: None,
+        };
+
+        let libs = vec![
+            Library {
+                name: "plain".into(),
+                downloads: None,
+                rules: None,
+                natives: None,
+                extract: None,
+            },
+            mk(good_path, &good_sha1),    // 存在且 sha1 匹配 → 完整
+            mk(bad_path, &good_sha1),     // 存在但 sha1 不匹配 → 缺失
+            mk(missing_path, &good_sha1), // 不存在 → 缺失
+        ];
+        assert_eq!(count_natives_missing(&libs, &lib_dir), 2);
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }

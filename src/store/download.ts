@@ -95,6 +95,8 @@ export const dlState = reactive({
     mainLoaderVersion?: string,
     optifinePatch?: string,
     versionDirName?: string,
+    fabricApiUrl?: string,
+    fabricApiVersion?: string,
   ) {
     const taskId = await invoke<string>("start_download", {
       versionId,
@@ -104,6 +106,8 @@ export const dlState = reactive({
       mainLoaderVersion: mainLoaderVersion || null,
       optifinePatch: optifinePatch || null,
       versionDirName: versionDirName || null,
+      fabricApiUrl: fabricApiUrl || null,
+      fabricApiVersion: fabricApiVersion || null,
     })
     this.addTask({
       taskId,
@@ -127,6 +131,8 @@ export const dlState = reactive({
   },
 
   onTaskDone: null as ((taskName: string, prevRoute: string) => void) | null,
+  /** 任务失败回调：弹出错误 dialog + 跳回来源页（失败资源由后端清理）。 */
+  onTaskError: null as ((taskName: string, error: string, prevRoute: string) => void) | null,
 })
 
 // ── Event listener ──────────────────────────
@@ -144,6 +150,13 @@ export function ensureListen() {
         // 任务完成：从前端清理（触发完成通知后移除）
         const prev = dlState.tasks[idx]?.previousRoute;
         dlState.onTaskDone?.(p.name || "下载任务", prev || "/");
+        dlState.removeTask(p.task_id);
+        return
+      }
+      if (p.status === "error") {
+        // 任务失败：弹错误 dialog + 清理卡片并退出下载管理（残留由后端清理）
+        const prev = dlState.tasks[idx]?.previousRoute;
+        dlState.onTaskError?.(p.name || "下载任务", p.error || "未知错误", prev || "/");
         dlState.removeTask(p.task_id);
         return
       }

@@ -15,7 +15,6 @@ export const LOADER_KEYS = [
   "fabric",
   "quilt",
   "optifine",
-  "liteloader",
 ] as const;
 
 export const LOADER_TITLES: Record<string, string> = {
@@ -25,7 +24,6 @@ export const LOADER_TITLES: Record<string, string> = {
   fabric: "Fabric",
   quilt: "Quilt",
   optifine: "OptiFine",
-  liteloader: "LiteLoader",
 };
 
 export const LOADER_ICONS: Record<string, string> = {
@@ -35,7 +33,6 @@ export const LOADER_ICONS: Record<string, string> = {
   fabric: fabricIcon,
   quilt: quiltIcon,
   optifine: optifineIcon,
-  liteloader: "",
 };
 
 export interface CategoryMeta {

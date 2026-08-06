@@ -6,14 +6,16 @@ use reqwest::Client;
 
 /// 当前全局下载限速（bytes/s，0 = 无限制）。每次下载开始读取一次。
 pub fn max_speed_bps() -> u64 {
-    crate::persist::read::<crate::config::downloader::model::DownloaderConfig>("downloader")
+    crate::persist::read::<crate::config::downloader::model::DownloaderConfig>(SECT_DOWNLOADER)
         .map(|c| c.max_speed)
         .unwrap_or(0)
 }
 
+use crate::constants::{SECT_DOWNLOADER, UA_DOWNLOAD};
+
 fn build_client() -> Client {
     Client::builder()
-        .user_agent("ElytraLauncher/1.0")
+        .user_agent(UA_DOWNLOAD)
         .timeout(std::time::Duration::from_secs(300))
         .pool_max_idle_per_host(16)
         .build()
@@ -21,18 +23,6 @@ fn build_client() -> Client {
 }
 
 pub fn http() -> &'static Client {
-    static C: OnceLock<Client> = OnceLock::new();
-    C.get_or_init(build_client)
-}
-
-/// Client dedicated to library downloads (separate connection pool).
-pub fn http_libs() -> &'static Client {
-    static C: OnceLock<Client> = OnceLock::new();
-    C.get_or_init(build_client)
-}
-
-/// Client dedicated to asset downloads (separate connection pool).
-pub fn http_assets() -> &'static Client {
     static C: OnceLock<Client> = OnceLock::new();
     C.get_or_init(build_client)
 }
@@ -77,30 +67,7 @@ pub async fn fetch_fallback(
         let url = urls.first().map(String::as_str).unwrap_or("");
         return fetch_with(http(), url, dest, progress).await;
     }
-    let mut last_err = None;
-    for url in urls {
-        // 每源独立 client（连接超时 2s：连接缓慢即判"过慢"，传输不限时）
-        let client = match reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(2))
-            .build()
-        {
-            Ok(c) => c,
-            Err(e) => {
-                last_err = Some(FetchError::Network(e.to_string()));
-                continue;
-            }
-        };
-        let max_speed = max_speed_bps();
-        match fetch_once(&client, url, dest, &progress, max_speed).await {
-            Ok(r) => return Ok(r),
-            Err(e) => {
-                // 失败清理残留（下一次尝试会重新创建）
-                let _ = std::fs::remove_file(dest);
-                last_err = Some(e);
-            }
-        }
-    }
-    Err(last_err.unwrap())
+    fetch_from_sources(urls, dest, &progress, None).await
 }
 
 /// Like `fetch` but uses a specific client (for dedicated connection pools per category).
@@ -122,8 +89,55 @@ pub async fn fetch_with(
                 // 失败清理残留（下一次尝试或后续下载会重新创建）
                 let _ = std::fs::remove_file(dest);
                 if attempt + 1 < MAX_ATTEMPTS {
-                    tokio::time::sleep(std::time::Duration::from_millis(500 * (1 << attempt))).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(500 * (1 << attempt)))
+                        .await;
                 }
+                last_err = Some(e);
+            }
+        }
+    }
+    Err(last_err.unwrap())
+}
+
+/// 单文件多源下载：每源独立 client（连接 2s + 总超时 60s），
+/// 主源失败/过慢/空响应立即换下一源。用于 Fabric API 等无 sha1 校验的小文件：
+/// 避免单 URL 长时间假死（官方 CDN 国内不可达时快速降级镜像）。
+pub async fn fetch_bounded(
+    urls: &[String],
+    dest: &Path,
+    progress: Option<impl Fn(u64, u64)>,
+) -> Result<DownloadResult, FetchError> {
+    fetch_from_sources(urls, dest, &progress, Some(Duration::from_secs(60))).await
+}
+
+/// 多源循环：每源独立 client（连接 2s：连接缓慢即判"过慢"即换源），失败清理残留。
+/// `total_timeout` 为 None 时传输不限时（大文件，慢速但稳定的源不被砍）；
+/// 为 Some 时整请求限时（小文件，防 body 挂起假死）。
+async fn fetch_from_sources<F: Fn(u64, u64)>(
+    urls: &[String],
+    dest: &Path,
+    progress: &Option<F>,
+    total_timeout: Option<Duration>,
+) -> Result<DownloadResult, FetchError> {
+    let max_speed = max_speed_bps();
+    let mut last_err = None;
+    for url in urls {
+        let mut builder = reqwest::Client::builder().connect_timeout(Duration::from_secs(2));
+        if let Some(t) = total_timeout {
+            builder = builder.timeout(t);
+        }
+        let client = match builder.build() {
+            Ok(c) => c,
+            Err(e) => {
+                last_err = Some(FetchError::Network(e.to_string()));
+                continue;
+            }
+        };
+        match fetch_once(&client, url, dest, progress, max_speed).await {
+            Ok(r) => return Ok(r),
+            Err(e) => {
+                // 失败清理残留（下一源会重新创建）
+                let _ = std::fs::remove_file(dest);
                 last_err = Some(e);
             }
         }
@@ -138,11 +152,13 @@ async fn fetch_once<F: Fn(u64, u64)>(
     progress: &Option<F>,
     max_speed: u64,
 ) -> Result<DownloadResult, FetchError> {
-    let response = client.get(url).send()
+    let response = client
+        .get(url)
+        .send()
         .await
         .map_err(|e| FetchError::Network(e.to_string()))?;
 
-    // HTTP 状态检查：4xx/5xx 视为失败（此前 404 会当作成功写入错误页面）
+    // HTTP 状态检查：4xx/5xx 视为失败
     let status = response.status();
     if !status.is_success() {
         return Err(FetchError::Network(format!("HTTP {status}")));
@@ -190,6 +206,14 @@ async fn fetch_once<F: Fn(u64, u64)>(
     } else {
         0
     };
+
+    // 空响应防护：0 字节文件视为失败（Minecraft 下载物无合法空文件）。
+    // 此前服务端响应 headers 但 body 挂起/为空时会留下 0B 残留并误报成功。
+    if downloaded == 0 {
+        drop(file);
+        let _ = std::fs::remove_file(dest);
+        return Err(FetchError::Network("empty response body".into()));
+    }
 
     Ok(DownloadResult {
         bytes: downloaded,

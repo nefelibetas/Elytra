@@ -6,10 +6,37 @@ use std::sync::Arc;
 
 use crate::config::downloader::model::DownloadSource;
 use crate::downloader::fetcher;
+use crate::downloader::hash::file_sha1_matches;
 use crate::downloader::model::{Artifact, ExtractRules, Library, OsRule, Rule};
 
-/// 当前目标 OS（与 matches_rules 保持一致）。
-/// 支持 Windows / Linux；macOS 仅保证编译（native classifier 惯例为 osx），不做适配。
+/// natives 代际：区分旧式（classifiers 解压）与新式（库名后缀独立变体）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativesKind {
+    /// 旧式：`natives` 字段 + `downloads.classifiers`（lwjgl 2.x 及 LWJGL 3 早期）
+    Legacy,
+    /// 新式：架构变体独立库，库名带 `:natives-{os}` 后缀（1.13+）
+    Modern,
+}
+
+impl Library {
+    /// 统一入口：判定 natives 代际；普通库返回 None。
+    /// 先查库名后缀（新式），再查 natives 字段（旧式），两代互斥。
+    pub fn natives_kind(&self) -> Option<NativesKind> {
+        if self
+            .name
+            .rsplit(':')
+            .next()
+            .is_some_and(|c| c.starts_with("natives-"))
+        {
+            Some(NativesKind::Modern)
+        } else if self.natives.is_some() {
+            Some(NativesKind::Legacy)
+        } else {
+            None
+        }
+    }
+}
+
 #[cfg(target_os = "windows")]
 pub const TARGET_OS: &str = "windows";
 #[cfg(target_os = "linux")]
@@ -17,9 +44,6 @@ pub const TARGET_OS: &str = "linux";
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 pub const TARGET_OS: &str = "osx";
 
-/// 将 Library 的 Rule 列表匹配当前 OS（allow/disallow + os 匹配）。
-/// 下载过滤（downloader/library.rs）与启动 classpath 过滤（launcher/args.rs）共用，
-/// 修改必须同时考虑两侧语义。
 pub fn matches_rules(rules: &[Rule]) -> bool {
     let mut allowed = false;
     for rule in rules {
@@ -36,36 +60,39 @@ pub fn matches_rules(rules: &[Rule]) -> bool {
     allowed
 }
 
-/// 返回当前 OS 对应的 classifier key。
-///
-/// - 旧式（`natives` 字段存在）：从 map 中查，如 `"windows" → "natives-windows"`
-/// - 新式（无 `natives`）：按约定 `"natives-windows"` / `"natives-linux"` / `"natives-osx"`
-pub fn os_classifier_key(natives: Option<&HashMap<String, String>>) -> Option<&str> {
-    if let Some(map) = natives {
-        map.get(TARGET_OS).map(|s| s.as_str())
-    } else {
-        match TARGET_OS {
-            "windows" => Some("natives-windows"),
-            "linux" => Some("natives-linux"),
-            "osx" | "macos" => Some("natives-osx"),
-            _ => None,
-        }
+/// 旧式：查表取当前平台的 natives classifier key（lwjgl 2.x 的 `natives` 字段映射）。
+fn legacy_natives_key(natives: &HashMap<String, String>) -> Option<&str> {
+    natives.get(TARGET_OS).map(|s| s.as_str())
+}
+
+/// 新式：当前平台的约定 classifier key（"natives-windows" / "natives-linux" / "natives-osx"）。
+pub fn modern_natives_key() -> Option<String> {
+    match TARGET_OS {
+        "windows" => Some("natives-windows".into()),
+        "linux" => Some("natives-linux".into()),
+        "osx" | "macos" => Some("natives-osx".into()),
+        _ => None,
     }
 }
 
+/// 旧式：取某库当前平台的 natives classifier artifact（查 natives map → downloads.classifiers）。
+/// 下载侧（process_natives）与启动解压侧（args.rs ensure_old_style_natives）共用。
+pub fn legacy_classifier_artifact(lib: &Library) -> Option<&Artifact> {
+    let key = legacy_natives_key(lib.natives.as_ref()?)?;
+    classifier_artifact(lib, key)
+}
+
 /// 取某库 `downloads.classifiers` 中指定 classifier key 的 artifact。
-/// 下载侧（process_natives）与启动解压侧（launcher/args.rs ensure_old_style_natives）共用，
-/// 避免两侧各自穿过 Option 链取 classifier 的样板重复。
-pub fn classifier_artifact<'a>(lib: &'a Library, key: &str) -> Option<&'a Artifact> {
+fn classifier_artifact<'a>(lib: &'a Library, key: &str) -> Option<&'a Artifact> {
     lib.downloads.as_ref()?.classifiers.as_ref()?.get(key)
 }
 
-/// 判断库名中的 native classifier 是否匹配当前 OS + 架构。
+/// 新式：判断库名中的 native classifier 是否匹配当前 OS + 架构。
 ///
 /// 现代版本中每个架构变体是独立 library，且 rules 只写 `allow windows`，
 /// 需要靠库名后缀区分：`natives-windows`（x64）/ `natives-windows-x86` / `natives-windows-arm64`。
 /// x64 Windows 只接受无架构后缀的 `natives-windows`。
-pub fn native_classifier_matches(lib_name: &str) -> bool {
+pub fn modern_native_matches(lib_name: &str) -> bool {
     let Some(classifier) = lib_name.rsplit(':').next() else {
         return true;
     };
@@ -97,17 +124,19 @@ pub async fn process_natives(
     libraries: &[Library],
     libraries_dir: &Path,
     sources: &[&DownloadSource],
-    counter: Option<Arc<AtomicU32>>,
-    bytes_counter: Option<Arc<AtomicU64>>,
+    counter: Arc<AtomicU32>,
+    bytes_counter: Arc<AtomicU64>,
 ) -> Result<(), Vec<String>> {
     let mut errors: Vec<String> = Vec::new();
 
     for lib in libraries {
-        let Some(classifier_key) = os_classifier_key(lib.natives.as_ref()) else { continue };
-        let Some(artifact) = classifier_artifact(lib, classifier_key) else { continue };
+        // 仅旧式（natives 字段 + classifiers）参与；新式 natives 作为普通库由 should_download 覆盖
+        let Some(artifact) = legacy_classifier_artifact(lib) else {
+            continue;
+        };
 
         let dest = libraries_dir.join(&artifact.path);
-        if dest.exists() {
+        if dest.exists() && file_sha1_matches(&dest, &artifact.sha1) {
             continue;
         }
         if let Some(parent) = dest.parent() {
@@ -117,15 +146,20 @@ pub async fn process_natives(
             }
         }
         // 每个源各构造一个 URL，下载时主源过慢/失败自动降级
-        let urls: Vec<String> = sources.iter().map(|s| s.mirror_url(&artifact.url)).collect();
+        let urls: Vec<String> = sources
+            .iter()
+            .map(|s| s.mirror_url(&artifact.url))
+            .collect();
         match fetcher::fetch_fallback(&urls, &dest, None::<fn(u64, u64)>).await {
             Ok(dl) => {
-                if let Some(c) = counter.as_ref() {
-                    c.fetch_add(1, Ordering::Relaxed);
+                // 下载后 sha1 校验（镜像源可能返回坏内容）：不匹配删除并报错
+                if !file_sha1_matches(&dest, &artifact.sha1) {
+                    let _ = std::fs::remove_file(&dest);
+                    errors.push(format!("{}: sha1 校验失败", lib.name));
+                    continue;
                 }
-                if let Some(b) = bytes_counter.as_ref() {
-                    b.fetch_add(dl.bytes, Ordering::SeqCst);
-                }
+                counter.fetch_add(1, Ordering::Relaxed);
+                bytes_counter.fetch_add(dl.bytes, Ordering::SeqCst);
             }
             Err(e) => errors.push(format!("{}: {}", lib.name, e)),
         }
@@ -145,10 +179,8 @@ pub fn extract_jar(
     out_dir: &Path,
     extract: Option<&ExtractRules>,
 ) -> Result<(), String> {
-    let file =
-        std::fs::File::open(jar_path).map_err(|e| format!("打开 JAR 失败: {}", e))?;
-    let mut archive =
-        zip::ZipArchive::new(file).map_err(|e| format!("读取 JAR 失败: {}", e))?;
+    let file = std::fs::File::open(jar_path).map_err(|e| format!("打开 JAR 失败: {}", e))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取 JAR 失败: {}", e))?;
 
     let excludes: Vec<&str> = extract
         .map(|e| e.exclude.iter().map(|s| s.as_str()).collect())
@@ -194,21 +226,100 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_native_classifier_matches() {
+    fn test_modern_native_matches() {
         // Windows x64：只接受无后缀的 natives-windows
-        assert!(native_classifier_matches("org.lwjgl:lwjgl-freetype:3.4.1:natives-windows"));
-        assert!(!native_classifier_matches("org.lwjgl:lwjgl-freetype:3.4.1:natives-windows-x86"));
-        assert!(!native_classifier_matches("org.lwjgl:lwjgl-freetype:3.4.1:natives-windows-arm64"));
+        assert!(modern_native_matches(
+            "org.lwjgl:lwjgl-freetype:3.4.1:natives-windows"
+        ));
+        assert!(!modern_native_matches(
+            "org.lwjgl:lwjgl-freetype:3.4.1:natives-windows-x86"
+        ));
+        assert!(!modern_native_matches(
+            "org.lwjgl:lwjgl-freetype:3.4.1:natives-windows-arm64"
+        ));
 
         // 非当前 OS
-        assert!(!native_classifier_matches("org.lwjgl:lwjgl-freetype:3.4.1:natives-linux"));
-        assert!(!native_classifier_matches("org.lwjgl:lwjgl-freetype:3.4.1:natives-macos"));
+        assert!(!modern_native_matches(
+            "org.lwjgl:lwjgl-freetype:3.4.1:natives-linux"
+        ));
+        assert!(!modern_native_matches(
+            "org.lwjgl:lwjgl-freetype:3.4.1:natives-macos"
+        ));
 
         // 普通库（无 natives 后缀）不受影响
-        assert!(native_classifier_matches("org.lwjgl:lwjgl-freetype:3.4.1"));
-        assert!(native_classifier_matches("com.google.guava:guava:33.0.0-jre"));
+        assert!(modern_native_matches("org.lwjgl:lwjgl-freetype:3.4.1"));
+        assert!(modern_native_matches("com.google.guava:guava:33.0.0-jre"));
 
         // 无冒号分隔的库名
-        assert!(native_classifier_matches("some-library"));
+        assert!(modern_native_matches("some-library"));
+    }
+
+    #[test]
+    fn test_legacy_classifier_artifact_windows() {
+        use crate::downloader::model::LibraryDownloads;
+        use std::collections::HashMap;
+
+        let lib = Library {
+            name: "org.lwjgl.lwjgl:lwjgl-platform:2.9.4".into(),
+            downloads: Some(LibraryDownloads {
+                artifact: None,
+                classifiers: Some(HashMap::from([(
+                    "natives-windows".to_string(),
+                    Artifact {
+                        path: "org/lwjgl/lwjgl-platform-2.9.4-natives-windows.jar".into(),
+                        url: "https://libraries.minecraft.net/...".into(),
+                        sha1: "abc".into(),
+                        size: 613748,
+                    },
+                )])),
+            }),
+            rules: None,
+            natives: Some(HashMap::from([
+                ("windows".into(), "natives-windows".into()),
+                ("osx".into(), "natives-osx".into()),
+                ("linux".into(), "natives-linux".into()),
+            ])),
+            extract: None,
+        };
+        let artifact = legacy_classifier_artifact(&lib).expect("Windows 应命中 natives-windows");
+        assert_eq!(
+            artifact.path,
+            "org/lwjgl/lwjgl-platform-2.9.4-natives-windows.jar"
+        );
+    }
+
+    #[test]
+    fn test_natives_kind_legacy_modern_plain() {
+        use std::collections::HashMap;
+
+        // 旧式：natives 字段（1.12.2 lwjgl-platform 2.9.4 形态）
+        let legacy = Library {
+            name: "org.lwjgl.lwjgl:lwjgl-platform:2.9.4-nightly-20150209".into(),
+            downloads: None,
+            rules: None,
+            natives: Some(HashMap::from([("windows".into(), "natives-windows".into())])),
+            extract: None,
+        };
+        assert_eq!(legacy.natives_kind(), Some(NativesKind::Legacy));
+
+        // 新式：库名后缀（26.2 lwjgl 3.4.1 形态）
+        let modern = Library {
+            name: "org.lwjgl:lwjgl:3.4.1:natives-windows".into(),
+            downloads: None,
+            rules: None,
+            natives: None,
+            extract: None,
+        };
+        assert_eq!(modern.natives_kind(), Some(NativesKind::Modern));
+
+        // 普通库：无 natives 字段、无后缀
+        let plain = Library {
+            name: "com.azure:azure-json:1.4.0".into(),
+            downloads: None,
+            rules: None,
+            natives: None,
+            extract: None,
+        };
+        assert_eq!(plain.natives_kind(), None);
     }
 }
