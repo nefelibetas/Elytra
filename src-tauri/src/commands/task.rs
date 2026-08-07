@@ -3,7 +3,8 @@
 use tauri::AppHandle;
 
 use crate::task::{
-    self, runner, DownloadFileItem, DownloadFileTask, DownloadFilesTask, DownloadTask, TaskSpec,
+    self, files, repair, runner, DownloadFileItem, DownloadFileTask, DownloadFilesTask,
+    DownloadTask, TaskSpec,
 };
 
 /// 提交完整下载/安装任务：注册到 TaskManager 并后台执行，返回任务 id。
@@ -47,7 +48,7 @@ fn spawn_files_task(app: AppHandle, task: DownloadFilesTask) -> Result<String, S
         task.steps(),
         move |a, cancel, progress| {
             tauri::async_runtime::spawn(async move {
-                runner::run_files_task(a, &cancel, &progress, &task).await;
+                files::run_files_task(a, &cancel, &progress, &task).await;
             });
         },
     )
@@ -82,8 +83,8 @@ pub async fn download_single_file(
 
 /// 扫描版本缺失文件（client.jar / 支持库 / 资源），不发起下载。
 #[tauri::command]
-pub async fn scan_missing_files(version_dir_name: String) -> Result<runner::MissingReport, String> {
-    runner::scan_missing(&version_dir_name).await
+pub async fn scan_missing_files(version_dir_name: String) -> Result<repair::MissingReport, String> {
+    repair::scan_missing(&version_dir_name).await
 }
 
 /// 提交补全任务到下载管理：只下载实际缺失的部分，步骤按缺失情况动态生成。
@@ -93,9 +94,9 @@ pub async fn submit_missing_download(
     app: AppHandle,
     version_dir_name: String,
 ) -> Result<String, String> {
-    let report = runner::scan_missing(&version_dir_name).await?;
+    let report = repair::scan_missing(&version_dir_name).await?;
 
-    let steps = runner::repair_steps(&report);
+    let steps = repair::repair_steps(&report);
     let tm = task::global();
     let (task_id, cancel, progress) = tm.create(
         &format!("{} 版本修复", version_dir_name),
@@ -103,7 +104,7 @@ pub async fn submit_missing_download(
     );
 
     tauri::async_runtime::spawn(async move {
-        runner::run_repair_task(app, &cancel, &progress, &version_dir_name, report).await;
+        repair::run_repair_task(app, &cancel, &progress, &version_dir_name, report).await;
     });
 
     Ok(task_id)
