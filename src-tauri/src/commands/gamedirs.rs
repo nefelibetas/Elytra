@@ -135,31 +135,16 @@ pub fn rename_version_dir(version_name: String, new_name: String) -> Result<(), 
     std::fs::rename(&from, &to).map_err(|e| format!("重命名失败：{e}"))
 }
 
-/// 用系统资源管理器打开指定目录（插件 open_path 的 scope 限制无法覆盖动态路径，故自实现）。
+/// 用系统文件管理器打开指定目录（tauri-plugin-opener Rust 侧 API，不受 JS scope 限制；
+/// 打开前校验存在，避免 explorer 对无效路径回退打开"文档"）。
 #[tauri::command]
-pub fn open_folder(path: String) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    let mut cmd = {
-        use std::os::windows::process::CommandExt;
-        let mut c = std::process::Command::new("explorer");
-        c.arg(&path);
-        c.creation_flags(0x08000000);
-        c
-    };
-    #[cfg(target_os = "macos")]
-    let mut cmd = {
-        let mut c = std::process::Command::new("open");
-        c.arg(&path);
-        c
-    };
-    #[cfg(target_os = "linux")]
-    let mut cmd = {
-        let mut c = std::process::Command::new("xdg-open");
-        c.arg(&path);
-        c
-    };
-    cmd.spawn()
-        .map(|_| ())
+pub fn open_folder(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    if !std::path::Path::new(&path).exists() {
+        return Err(format!("目录不存在：{path}"));
+    }
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_path(path, None::<&str>)
         .map_err(|e| format!("打开文件夹失败：{e}"))
 }
 
