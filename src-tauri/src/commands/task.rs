@@ -2,44 +2,82 @@
 
 use tauri::AppHandle;
 
-use crate::task::{self, runner};
+use crate::task::{
+    self, runner, DownloadFileItem, DownloadFileTask, DownloadFilesTask, DownloadTask, TaskSpec,
+};
 
 /// 提交完整下载/安装任务：注册到 TaskManager 并后台执行，返回任务 id。
-#[allow(clippy::too_many_arguments)]
+/// 任务配置（含 ModLoader 选择）统一经 DownloadTask 传入，入口先做信任边界校验。
+/// 任务名与步骤由 TaskSpec 分析生成（与 runner 执行顺序一致）。
 #[tauri::command]
-pub async fn start_download(
+pub async fn start_download(app: AppHandle, task: DownloadTask) -> Result<String, String> {
+    task.validate()?;
+    spawn_task(
+        app,
+        task.name(),
+        task.steps(),
+        move |a, cancel, progress| {
+            tauri::async_runtime::spawn(async move {
+                runner::run_task(a, &cancel, &progress, &task).await;
+            });
+        },
+    )
+}
+
+/// 注册任务并 spawn 执行（命令层共用样板）。
+fn spawn_task(
     app: AppHandle,
-    version_id: String,
-    version_url: String,
-    mc_version: String,
-    main_loader: Option<String>,
-    main_loader_version: Option<String>,
-    optifine_patch: Option<String>,
-    version_dir_name: Option<String>,
-    fabric_api_url: Option<String>,
-    fabric_api_version: Option<String>,
+    name: String,
+    steps: Vec<crate::task::StepSpec>,
+    run: impl FnOnce(AppHandle, std::sync::Arc<std::sync::atomic::AtomicBool>, std::sync::Arc<std::sync::Mutex<crate::task::TaskProgress>>) + Send + 'static,
 ) -> Result<String, String> {
-    let task_name = match (&main_loader, &main_loader_version) {
-        (Some(ld), Some(lv)) => format!("{} {}-{} 安装", mc_version, ld, lv),
-        _ => format!("{} 下载", version_id),
-    };
-
-    let mut steps = vec!["下载原版json文件", "下载原版客户端文件", "下载原版支持库文件", "下载原版资源文件"];
-    if main_loader.is_some() { steps.push("安装 ModLoader"); }
-    if optifine_patch.is_some() { steps.push("安装 OptiFine"); }
-    if fabric_api_version.is_some() { steps.push("安装 Fabric API"); }
-
+    let step_names: Vec<&str> = steps.iter().map(|s| s.name.as_str()).collect();
     let tm = task::global();
-    let (task_id, cancel, progress) = tm.create(&task_name, &steps);
-
-    tauri::async_runtime::spawn(async move {
-        runner::run_task(app, &cancel, &progress, &version_id, &version_url, &mc_version,
-                         main_loader.as_deref(), main_loader_version.as_deref(),
-                         optifine_patch.as_deref(), version_dir_name,
-                         fabric_api_url.as_deref(), fabric_api_version.as_deref()).await;
-    });
-
+    let (task_id, cancel, progress) = tm.create(&name, &step_names);
+    run(app, cancel, progress);
     Ok(task_id)
+}
+
+/// 批量文件下载任务的注册 + spawn（单文件是批量特例，统一走这里）。
+fn spawn_files_task(app: AppHandle, task: DownloadFilesTask) -> Result<String, String> {
+    task.validate()?;
+    spawn_task(
+        app,
+        task.name(),
+        task.steps(),
+        move |a, cancel, progress| {
+            tauri::async_runtime::spawn(async move {
+                runner::run_files_task(a, &cancel, &progress, &task).await;
+            });
+        },
+    )
+}
+
+/// 提交批量文件下载任务（多个 mod / 资源包 / 数据包 / 光影包）到下载管理。
+/// 返回任务 id。
+#[tauri::command]
+pub async fn download_files(app: AppHandle, task: DownloadFilesTask) -> Result<String, String> {
+    spawn_files_task(app, task)
+}
+
+/// 提交单文件下载任务（mod / 资源包 / 数据包 / 光影包）到下载管理。
+/// 单文件是批量任务的特例：构造单元素批量任务，统一走批量 runner。
+/// 返回任务 id。
+#[tauri::command]
+pub async fn download_single_file(
+    app: AppHandle,
+    task: DownloadFileTask,
+) -> Result<String, String> {
+    task.validate()?;
+    let batch = DownloadFilesTask {
+        version_dir_name: task.version_dir_name,
+        files: vec![DownloadFileItem {
+            kind: task.kind,
+            url: task.url,
+            filename: task.filename,
+        }],
+    };
+    spawn_files_task(app, batch)
 }
 
 /// 扫描版本缺失文件（client.jar / 支持库 / 资源），不发起下载。

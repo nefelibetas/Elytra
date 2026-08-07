@@ -11,14 +11,8 @@ use crate::downloader::fetcher;
 use crate::downloader::mod_loader;
 use crate::downloader::model::VersionJson;
 use crate::persist;
-use crate::task::{self, TaskProgress};
+use crate::task::{self, DownloadFilesTask, DownloadTask, StepInfo, StepKind, TaskProgress, TaskSpec};
 
-const STEP_VERJSON: usize = 0;
-const STEP_CLIENT: usize = 1;
-const STEP_LIBS: usize = 2;
-const STEP_ASSETS: usize = 3;
-
-/// 扫描结果：缺失文件统计（补全文件功能，前端展示用）。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct MissingReport {
     /// 是否缺失客户端 client.jar
@@ -225,14 +219,22 @@ pub async fn run_repair_task(
         jar_done: Arc::clone(&jar_counter),
         lib_done: Arc::clone(&lib_counter),
         asst_done: Arc::clone(&asst_counter),
+        // repair 的 natives 在 EmitLoop 生命周期之外单独执行，计数/标志全为占位
+        natives_done: Arc::new(AtomicU32::new(0)),
         jar_bytes: Arc::clone(&jar_bytes),
         jar_total: Arc::clone(&jar_total),
         bytes: Arc::clone(&bytes_counter),
         jar_step: jar_idx,
         lib_step: libs_idx,
         asst_step: asst_idx,
+        natives_step: None,
+        cfg_done: Arc::new(AtomicBool::new(false)),
+        libs_done: Arc::new(AtomicBool::new(false)),
+        optifine_done: Arc::new(AtomicBool::new(false)),
+        fabric_done: Arc::new(AtomicBool::new(false)),
         lib_pending,
         asst_pending,
+        natives_pending: 0,
         initial_completed: 0,
         total_files,
         initial_bytes: 0,
@@ -320,6 +322,9 @@ pub async fn run_repair_task(
         return set_error(&app, progress, errors.join("; "));
     }
 
+    // 收尾心跳：natives 等后续步骤期间保持速度/字节进度（EmitLoop 已 abort）
+    let _tail_loop = spawn_tail_loop(&app, progress, Arc::clone(&bytes_counter));
+
     // 各下载步骤标记完成（按实际索引）
     if let Some(i) = jar_idx {
         step_done(&app, progress, i);
@@ -362,56 +367,33 @@ pub async fn run_repair_task(
 }
 
 /// 完整下载任务主体：version json → client.jar / libraries / assets → natives → ModLoader/OptiFine → Fabric API。
-#[allow(clippy::too_many_arguments)]
+/// 任务配置（含 ModLoader 选择）由命令层校验后经 DownloadTask 传入。
 pub async fn run_task(
     app: AppHandle,
     cancel: &Arc<AtomicBool>,
     progress: &Arc<Mutex<TaskProgress>>,
-    version_id: &str,
-    version_url: &str,
-    mc_version: &str,
-    main_loader: Option<&str>,
-    main_loader_version: Option<&str>,
-    optifine_patch: Option<&str>,
-    version_dir_name: Option<String>,
-    fabric_api_url: Option<&str>,
-    fabric_api_version: Option<&str>,
+    task: &DownloadTask,
 ) {
     let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
     let sources: Vec<DownloadSource> = config.file_sources_list().into_iter().cloned().collect();
     let src_refs: Vec<&DownloadSource> = sources.iter().collect();
     let mc = config.minecraft_dir_abs();
 
-    set_phase(
-        &app,
-        progress,
-        "running",
-        "下载原版json文件",
-        STEP_VERJSON,
-        "running",
-    );
-    if cancelled(cancel) {
-        return set_cancelled(&app, progress);
-    }
+    let version_id = &task.version_id;
+    let version_url = &task.version_url;
+    let mc_version = &task.mc_version;
+    let loader = task.loader.as_ref();
+    let optifine_patch = task.optifine_patch.as_deref();
+    let fabric_api = task.fabric_api.as_ref();
 
-    // ── Step 0: fetch version.json in-memory ──
-    let (vj, parent_text) = match fetch_version_json(version_url, &config).await {
-        Ok(v) => v,
-        Err(e) => return set_error(&app, progress, e),
-    };
-    step_done(&app, progress, STEP_VERJSON);
-    if cancelled(cancel) {
-        return set_cancelled(&app, progress);
-    }
-
-    // Determine target dir & register cleanup
+    // ── 目标目录提前确定（不依赖 version JSON），并做同路径互斥 ──
     let dir_name: String;
     let vdir: std::path::PathBuf;
-    if let Some(ref pre) = version_dir_name {
-        dir_name = pre.clone();
+    if let Some(pre) = task.version_dir_name.as_deref() {
+        dir_name = pre.to_string();
         vdir = mc.join("versions").join(&dir_name);
-    } else if let (Some(ld), Some(lv)) = (main_loader, main_loader_version) {
-        dir_name = format!("{}-{}-{}", mc_version, ld, lv);
+    } else if let Some(loader) = loader {
+        dir_name = format!("{}-{}-{}", mc_version, loader.kind.name(), loader.version);
         vdir = mc.join("versions").join(&dir_name);
     } else {
         let (name, p) = crate::downloader::resolve_version_dir(&mc, version_id);
@@ -419,9 +401,46 @@ pub async fn run_task(
         vdir = p;
     }
 
+    // 同版本互斥：路径被其他任务占用时拒绝，避免并发互相覆盖/清理
+    let _lock = match task::PathLock::try_acquire(task::global(), &vdir) {
+        Some(l) => l,
+        None => {
+            return set_error(
+                &app,
+                progress,
+                format!("该版本正在被其他任务下载:\n{}", vdir.display()),
+            )
+        }
+    };
+
+    // 步骤分析：初始完整列表（json 步骤恒在，索引 0；零缺失维度检测后过滤）
+    let mut specs = task.steps();
+
+    set_phase(
+        &app,
+        progress,
+        "running",
+        &specs[0].name,
+        0,
+        "running",
+    );
+    if cancelled(cancel) {
+        return set_cancelled(&app, progress);
+    }
+
+    // ── 阶段 A：fetch version.json in-memory（唯一硬前置，client/libs/assets/natives/ModLoader 均依赖）──
+    let (vj, parent_text) = match fetch_version_json(version_url, &config).await {
+        Ok(v) => v,
+        Err(e) => return set_error(&app, progress, e),
+    };
+    step_done(&app, progress, 0);
+    if cancelled(cancel) {
+        return set_cancelled(&app, progress);
+    }
+
     // 确保目录存在；非 loader 模式下写入原版 version JSON（loader 模式由 installer 写合并 JSON）
     std::fs::create_dir_all(&vdir).ok();
-    if main_loader.is_none() {
+    if loader.is_none() {
         if let Ok(json) = serde_json::to_string_pretty(&vj) {
             let jp = vdir.join(format!("{}.json", version_id));
             std::fs::write(&jp, &json).ok();
@@ -442,6 +461,9 @@ pub async fn run_task(
     let jar_total = if jar_exists { 1u32 } else { 0u32 };
     let jar_total_bytes = vj.downloads.client.as_ref().map(|c| c.size).unwrap_or(0);
 
+    // natives 缺失数预计算（下载阶段独立计数器；total 计入 pending 数）
+    let natives_pending = count_natives_missing(&vj.libraries, &lib_dir);
+
     // 资源清单：fetch asset index（网络）→ 报资产总数（文件+字节）；再多线程 sha1 检测本地（逐批上报）
     let mut asst_total_all = 0u32;
     let mut asst_total_bytes = 0u64;
@@ -455,7 +477,7 @@ pub async fn run_task(
         |total, total_bytes| {
             asst_total_all = total;
             asst_total_bytes = total_bytes;
-            // 清单齐了：剩余=全量总数，已完成仅 version json
+            // 清单齐了：剩余=全量总数，已完成仅 version json（近似值，检测后覆盖为最终总数）
             set_total(
                 &app,
                 progress,
@@ -491,72 +513,96 @@ pub async fn run_task(
         1 + lib_existing_bytes + asst_existing_bytes,
     );
 
-    // 收尾步骤（natives/ModLoader/OptiFine/Fabric API）按步骤计入总文件数，
-    // 否则下载完成时剩余文件提前归零、进度虚高 100%（收尾期间仍显示"剩余 0"）
-    let mut total_files = 1 + jar_total + lib_total_all + asst_total_all;
-    total_files += 1; // natives（恒执行）
-    if main_loader.is_some() && main_loader_version.is_some() {
-        total_files += 1;
+    // ── 重建步骤列表：零缺失维度过滤（json 保持 done）──
+    // 步骤 = 任务的函数：缺失检测结果决定哪些维度实际出现在步骤栏
+    if lib_pending == 0 {
+        specs.retain(|s| s.kind != StepKind::Libraries);
+    }
+    if asst_pending == 0 {
+        specs.retain(|s| s.kind != StepKind::Assets);
+    }
+    task::update_and_emit(&app, progress, |p| {
+        p.steps = specs
+            .iter()
+            .enumerate()
+            .map(|(i, s)| StepInfo {
+                name: s.name.clone(),
+                status: if i == 0 { "done".into() } else { "pending".into() },
+                progress: if i == 0 { 100.0 } else { 0.0 },
+            })
+            .collect();
+    });
+
+    // ── 动态步骤索引（执行点按 StepKind 定位，无硬编码常量）──
+    let pos = |k: StepKind| specs.iter().position(|s| s.kind == k);
+    let i_jar = pos(StepKind::ClientJar);
+    let i_libs = pos(StepKind::Libraries);
+    let i_asst = pos(StepKind::Assets);
+    let i_nat = pos(StepKind::Natives);
+    let i_cfg = pos(StepKind::LoaderConfig);
+    let i_lbs = pos(StepKind::LoaderLibs);
+    let i_of = pos(StepKind::OptiFine);
+    let i_fab = pos(StepKind::FabricApi);
+
+    // ── 总数：version json + jar + 全量库 + 全量资源 + natives 缺失数 + 安装步骤数 ──
+    let mut total_files = 1 + jar_total + lib_total_all + asst_total_all + natives_pending;
+    if loader.is_some() {
+        total_files += 2; // LoaderConfig + LoaderLibs
     }
     if optifine_patch.is_some() {
         total_files += 1;
     }
-    if fabric_api_version.is_some() {
+    if fabric_api.is_some() {
         total_files += 1;
     }
     let initial_completed = 1 + lib_existing + asst_existing;
     let total_bytes = 1 + jar_total_bytes + lib_total_bytes + asst_total_bytes;
     let initial_bytes = 1 + lib_existing_bytes + asst_existing_bytes;
+    set_total(&app, progress, total_files, total_bytes);
+    set_completed(&app, progress, initial_completed, initial_bytes);
 
-    // ── Parallel phase: client.jar + libraries + assets ──
+    // ── 阶段 B：client.jar / libraries / assets / natives / ModLoader / OptiFine / Fabric API 全并行 ──
     let jar_counter = Arc::new(AtomicU32::new(0));
     let jar_bytes_counter = Arc::new(AtomicU64::new(0));
     let jar_total_size = Arc::new(AtomicU64::new(0));
     let lib_counter = Arc::new(AtomicU32::new(0));
     let asst_counter = Arc::new(AtomicU32::new(0));
+    let natives_counter = Arc::new(AtomicU32::new(0));
     let bytes_counter = Arc::<AtomicU64>::new(AtomicU64::new(0));
+    let cfg_done = Arc::new(AtomicBool::new(false));
+    let libs_done = Arc::new(AtomicBool::new(false));
+    let optifine_done = Arc::new(AtomicBool::new(false));
+    let fabric_done = Arc::new(AtomicBool::new(false));
 
-    // Set all phases to running BEFORE spawning emit loop to avoid lock races
-    set_phase(
-        &app,
-        progress,
-        "",
-        "下载原版客户端文件",
-        STEP_CLIENT,
-        "running",
-    );
-    set_phase(
-        &app,
-        progress,
-        "",
-        "下载原版支持库文件",
-        STEP_LIBS,
-        "running",
-    );
-    set_phase(
-        &app,
-        progress,
-        "",
-        "下载原版资源文件",
-        STEP_ASSETS,
-        "running",
-    );
+    // 统一转 running（重建后列表；json 保持 done）——在 spawn EmitLoop 前完成，避免锁竞争
+    for (i, s) in specs.iter().enumerate() {
+        if s.kind != StepKind::VersionJson {
+            set_phase(&app, progress, "", &s.name, i, "running");
+        }
+    }
 
-    let emit_handle = EmitLoop {
+    let _emit_handle = EmitLoop {
         app: app.clone(),
         cancel: Arc::clone(cancel),
         progress: Arc::clone(progress),
         jar_done: Arc::clone(&jar_counter),
         lib_done: Arc::clone(&lib_counter),
         asst_done: Arc::clone(&asst_counter),
+        natives_done: Arc::clone(&natives_counter),
         jar_bytes: Arc::clone(&jar_bytes_counter),
         jar_total: Arc::clone(&jar_total_size),
         bytes: Arc::clone(&bytes_counter),
-        jar_step: Some(STEP_CLIENT),
-        lib_step: Some(STEP_LIBS),
-        asst_step: Some(STEP_ASSETS),
+        jar_step: i_jar,
+        lib_step: i_libs,
+        asst_step: i_asst,
+        natives_step: i_nat,
+        cfg_done: Arc::clone(&cfg_done),
+        libs_done: Arc::clone(&libs_done),
+        optifine_done: Arc::clone(&optifine_done),
+        fabric_done: Arc::clone(&fabric_done),
         lib_pending,
         asst_pending,
+        natives_pending,
         initial_completed,
         total_files,
         initial_bytes,
@@ -590,31 +636,186 @@ pub async fn run_task(
             }
             jar_counter.store(1, Ordering::Relaxed);
         }
+        if let Some(i) = i_jar {
+            step_done(&app, progress, i);
+        }
         Ok::<_, Vec<String>>(())
     };
 
-    let lib_dir = mc.join("libraries");
-    let libs = crate::downloader::library::download_libraries(
-        &vj.libraries,
-        &lib_dir,
-        config.concurrency as usize,
-        &src_refs,
-        Arc::clone(&lib_counter),
-        Arc::clone(&bytes_counter),
-    );
+    let libs = async {
+        crate::downloader::library::download_libraries(
+            &vj.libraries,
+            &lib_dir,
+            config.concurrency as usize,
+            &src_refs,
+            Arc::clone(&lib_counter),
+            Arc::clone(&bytes_counter),
+        )
+        .await?;
+        if let Some(i) = i_libs {
+            step_done(&app, progress, i);
+        }
+        Ok::<_, Vec<String>>(())
+    };
 
-    let asst = crate::downloader::assets::download_assets(
-        &vj.asset_index.url,
-        &vj.asset_index.id,
-        &vj.asset_index.sha1,
-        &config,
-        config.concurrency as usize,
-        Arc::clone(&asst_counter),
-        Arc::clone(&bytes_counter),
-    );
+    let asst = async {
+        crate::downloader::assets::download_assets(
+            &vj.asset_index.url,
+            &vj.asset_index.id,
+            &vj.asset_index.sha1,
+            &config,
+            config.concurrency as usize,
+            Arc::clone(&asst_counter),
+            Arc::clone(&bytes_counter),
+        )
+        .await?;
+        if let Some(i) = i_asst {
+            step_done(&app, progress, i);
+        }
+        Ok::<_, Vec<String>>(())
+    };
 
-    let parallel = tokio::try_join!(jar, libs, asst);
-    emit_handle.abort();
+    let natives = async {
+        crate::downloader::extract::process_natives(
+            &vj.libraries,
+            &lib_dir,
+            &src_refs,
+            Arc::clone(&natives_counter),
+            Arc::clone(&bytes_counter),
+        )
+        .await?;
+        if let Some(i) = i_nat {
+            step_done(&app, progress, i);
+        }
+        Ok::<_, Vec<String>>(())
+    };
+
+    let loader_dl = async {
+        if let Some(loader) = loader {
+            // 阶段钩子：安装内部在对应事件点推进 LoaderConfig/LoaderLibs 两步
+            let hook = |ev: crate::downloader::mod_loader::LoaderEvent| match ev {
+                crate::downloader::mod_loader::LoaderEvent::ConfigDone => {
+                    if let Some(i) = i_cfg {
+                        step_done(&app, progress, i);
+                    }
+                    cfg_done.store(true, Ordering::Relaxed);
+                }
+                crate::downloader::mod_loader::LoaderEvent::LibsDone => {
+                    if let Some(i) = i_lbs {
+                        step_done(&app, progress, i);
+                    }
+                    libs_done.store(true, Ordering::Relaxed);
+                }
+            };
+            let result = match loader.kind {
+                crate::task::LoaderKind::Fabric => mod_loader::install_fabric(
+                    mc_version,
+                    &loader.version,
+                    &parent_text,
+                    &config,
+                    &bytes_counter,
+                    Some(&hook),
+                )
+                .await,
+                crate::task::LoaderKind::Forge => mod_loader::install_forge(
+                    mc_version,
+                    &loader.version,
+                    &parent_text,
+                    &config,
+                    &bytes_counter,
+                    Some(&hook),
+                )
+                .await,
+                crate::task::LoaderKind::NeoForge => mod_loader::install_neoforge(
+                    mc_version,
+                    &loader.version,
+                    &parent_text,
+                    &config,
+                    &bytes_counter,
+                    Some(&hook),
+                )
+                .await,
+                crate::task::LoaderKind::Quilt => mod_loader::install_quilt(
+                    mc_version,
+                    &loader.version,
+                    &parent_text,
+                    &config,
+                    &bytes_counter,
+                    Some(&hook),
+                )
+                .await,
+            };
+            if let Err(e) = result {
+                return Err(vec![e]);
+            }
+        }
+        Ok::<_, Vec<String>>(())
+    };
+
+    let optifine_dl = async {
+        if let Some(of) = optifine_patch {
+            if let Err(e) = mod_loader::install_optifine(mc_version, of, "HD_U", &config).await {
+                return Err(vec![e]);
+            }
+            if let Some(i) = i_of {
+                step_done(&app, progress, i);
+            }
+            optifine_done.store(true, Ordering::Relaxed);
+        }
+        Ok::<_, Vec<String>>(())
+    };
+
+    let fabric_dl = async {
+        if let Some(api) = fabric_api {
+            let url = api.url.as_str();
+            let ver = api.version.as_str();
+            // URL 最后一段做 percent-decode（文件名中的 `+` 被编码为 %2B）
+            let filename = percent_encoding::percent_decode_str(
+                url.rsplit('/').next().unwrap_or("fabric-api.jar"),
+            )
+            .decode_utf8_lossy()
+            .into_owned();
+            // 版本隔离：游戏从 gameDir/mods（= versions/<id>/mods）加载 mod
+            let mods_dir = vdir.join("mods");
+            std::fs::create_dir_all(&mods_dir).ok();
+            let dest = mods_dir.join(filename);
+            // 多源候选：Modrinth 官方 CDN → MCIM 换域名镜像 → BMCLAPI maven 镜像
+            // （官方 CDN 国内不可达时快速降级，避免单 URL 长时间假死）
+            let mut urls = vec![url.to_string()];
+            let mcim = url.replace("https://cdn.modrinth.com", "https://mod.mcimirror.top");
+            if mcim != url {
+                urls.push(mcim);
+            }
+            if let Some(bmclapi) = sources.iter().find(|s| s.manifest_url.contains("bmclapi")) {
+                urls.push(format!(
+                    "{}/net/fabricmc/fabric-api/fabric-api/{ver}/fabric-api-{ver}.jar",
+                    bmclapi.maven_url
+                ));
+            }
+            // 字节级进度：增量累加进 bytes_counter（EmitLoop 显示速度）
+            let file_done = Arc::new(AtomicU64::new(0));
+            let progress_cb = {
+                let fd = file_done.clone();
+                let bc = Arc::clone(&bytes_counter);
+                move |downloaded: u64, _total: u64| {
+                    let prev = fd.swap(downloaded, Ordering::Relaxed);
+                    bc.fetch_add(downloaded.saturating_sub(prev), Ordering::Relaxed);
+                }
+            };
+            match fetcher::fetch_bounded(&urls, &dest, Some(progress_cb)).await {
+                Ok(_) => {
+                    if let Some(i) = i_fab {
+                        step_done(&app, progress, i);
+                    }
+                    fabric_done.store(true, Ordering::Relaxed);
+                }
+                Err(e) => return Err(vec![format!("下载 Fabric API 失败\n{}", e)]),
+            }
+        }
+        Ok::<_, Vec<String>>(())
+    };
+
+    let parallel = tokio::try_join!(jar, libs, asst, natives, loader_dl, optifine_dl, fabric_dl);
 
     // 失败/取消优先上报，避免先发 100% 完成误导前端
     if cancelled(cancel) {
@@ -627,139 +828,7 @@ pub async fn run_task(
         return set_cancelled(&app, progress);
     }
 
-    // Emit final state after downloads complete (emit loop may have been aborted mid-cycle)
-    {
-        let mut p = progress.lock().unwrap();
-        // 收尾步骤（natives/ModLoader/OptiFine/Fabric API）尚未执行：
-        // completed 只计已完成的下载（不再顶格，剩余文件保持真实）
-        p.completed_files = initial_completed
-            + jar_counter.load(Ordering::Relaxed)
-            + lib_counter.load(Ordering::Relaxed)
-            + asst_counter.load(Ordering::Relaxed);
-        p.progress = 99.9; // 封顶：100% 只由任务收尾显式设置
-        p.speed_bps = 0.0;
-        if let Some(st) = p.steps.get_mut(STEP_CLIENT) {
-            st.status = "done".into();
-            st.progress = 100.0;
-        }
-        if let Some(st) = p.steps.get_mut(STEP_LIBS) {
-            st.status = "done".into();
-            st.progress = 100.0;
-        }
-        if let Some(st) = p.steps.get_mut(STEP_ASSETS) {
-            st.status = "done".into();
-            st.progress = 100.0;
-        }
-        crate::task::emit(&app, &p);
-    }
-
-    // ── Native classifier JAR 下载 ──
-    set_phase(&app, progress, "", "处理 native 库", STEP_LIBS, "running");
-    let natives = crate::downloader::extract::process_natives(
-        &vj.libraries,
-        &lib_dir,
-        &src_refs,
-        Arc::clone(&lib_counter),
-        Arc::clone(&bytes_counter),
-    )
-    .await;
-    if let Err(errors) = natives {
-        return set_error(&app, progress, errors.join("; "));
-    }
-    bump_completed(&app, progress);
-    if cancelled(cancel) {
-        return set_cancelled(&app, progress);
-    }
-
-    // ── ModLoader ──
-    let mut step_idx = 4usize;
-    if let (Some(ld), Some(lv)) = (main_loader, main_loader_version) {
-        set_phase(
-            &app,
-            progress,
-            "",
-            &format!("安装 {}", ld),
-            step_idx,
-            "running",
-        );
-        let result = match ld {
-            "fabric" => mod_loader::install_fabric(mc_version, lv, &parent_text, &config).await,
-            "forge" => mod_loader::install_forge(mc_version, lv, &config).await,
-            "neoforge" => mod_loader::install_neoforge(mc_version, lv, &config).await,
-            "quilt" => mod_loader::install_fabric(mc_version, lv, &parent_text, &config).await,
-            _ => Err(format!("未知加载器: {}", ld)),
-        };
-        match result {
-            Ok(_) => {
-                step_done(&app, progress, step_idx);
-                bump_completed(&app, progress);
-            }
-            Err(e) => return set_error(&app, progress, e),
-        }
-        step_idx += 1;
-    }
-    if cancelled(cancel) {
-        return set_cancelled(&app, progress);
-    }
-
-    // ── OptiFine ──
-    if let Some(of) = optifine_patch {
-        set_phase(&app, progress, "", "安装 OptiFine", step_idx, "running");
-        match mod_loader::install_optifine(mc_version, of, "HD_U", &config).await {
-            Ok(_) => {
-                step_done(&app, progress, step_idx);
-                bump_completed(&app, progress);
-            }
-            Err(e) => return set_error(&app, progress, e),
-        }
-        step_idx += 1;
-    }
-    if cancelled(cancel) {
-        return set_cancelled(&app, progress);
-    }
-
-    // ── Fabric API ──
-    if let (Some(url), Some(ver)) = (fabric_api_url, fabric_api_version) {
-        set_phase(
-            &app,
-            progress,
-            "",
-            &format!("下载 Fabric API {}", ver),
-            step_idx,
-            "running",
-        );
-        // URL 最后一段做 percent-decode（文件名中的 `+` 被编码为 %2B）
-        let filename = percent_encoding::percent_decode_str(
-            url.rsplit('/').next().unwrap_or("fabric-api.jar"),
-        )
-        .decode_utf8_lossy()
-        .into_owned();
-        // 版本隔离：游戏从 gameDir/mods（= versions/<id>/mods）加载 mod
-        let mods_dir = vdir.join("mods");
-        std::fs::create_dir_all(&mods_dir).ok();
-        let dest = mods_dir.join(filename);
-        // 多源候选：Modrinth 官方 CDN → MCIM 换域名镜像 → BMCLAPI maven 镜像
-        // （官方 CDN 国内不可达时快速降级，避免单 URL 长时间假死）
-        let mut urls = vec![url.to_string()];
-        let mcim = url.replace("https://cdn.modrinth.com", "https://mod.mcimirror.top");
-        if mcim != url {
-            urls.push(mcim);
-        }
-        if let Some(bmclapi) = sources.iter().find(|s| s.manifest_url.contains("bmclapi")) {
-            urls.push(format!(
-                "{}/net/fabricmc/fabric-api/fabric-api/{ver}/fabric-api-{ver}.jar",
-                bmclapi.maven_url
-            ));
-        }
-        match fetcher::fetch_bounded(&urls, &dest, None::<fn(u64, u64)>).await {
-            Ok(_) => {
-                step_done(&app, progress, step_idx);
-                bump_completed(&app, progress);
-            }
-            Err(e) => return set_error(&app, progress, format!("下载 Fabric API 失败\n{}", e)),
-        }
-    }
-
+    // 收尾（EmitLoop 已完成全部计数自然退出；此处显式设 100%）
     task::update_and_emit(&app, progress, |p| {
         p.status = "done".into();
         p.completed_files = p.total_files;
@@ -768,8 +837,200 @@ pub async fn run_task(
     });
 }
 
+/// 单文件目标路径（纯函数，供单测）：versions/{version_dir}/{kind_dir}/{filename}。
+pub fn file_dest(
+    mc: &Path,
+    version_dir: &str,
+    kind: crate::task::DownloadFileKind,
+    filename: &str,
+) -> std::path::PathBuf {
+    mc.join("versions")
+        .join(version_dir)
+        .join(kind.kind_dir())
+        .join(filename)
+}
+
+/// 批量文件下载任务：mod / 资源包 / 数据包 / 光影包。
+/// 步骤 = 每文件一步；逐文件下载到 .elytra-part 临时文件后 rename，取消/失败清理临时文件。
+/// 进度：文件计数 + 字节累计（当前文件增量），EMA 速度，复用 update_progress。
+pub async fn run_files_task(
+    app: AppHandle,
+    cancel: &Arc<AtomicBool>,
+    progress: &Arc<Mutex<TaskProgress>>,
+    task: &DownloadFilesTask,
+) {
+    let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
+    let mc = config.minecraft_dir_abs();
+
+    let items: Vec<(std::path::PathBuf, std::path::PathBuf)> = task
+        .files
+        .iter()
+        .map(|f| {
+            let dest = file_dest(&mc, &task.version_dir_name, f.kind, &f.filename);
+            let tmp = dest.with_file_name(format!("{}.elytra-part", f.filename));
+            (dest, tmp)
+        })
+        .collect();
+
+    // 全部路径互斥占用：任一被其他任务占用 → 整任务拒绝（可预期，不半途而废）
+    let mut _locks = Vec::new();
+    for (dest, _) in &items {
+        match task::PathLock::try_acquire(task::global(), dest) {
+            Some(l) => _locks.push(l),
+            None => {
+                return set_error(
+                    &app,
+                    progress,
+                    format!("该文件正在被其他任务下载:\n{}", dest.display()),
+                )
+            }
+        }
+    }
+    if cancelled(cancel) {
+        return set_cancelled(&app, progress);
+    }
+    for (dest, _) in &items {
+        if let Some(parent) = dest.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                return set_error(
+                    &app,
+                    progress,
+                    format!("创建目录失败:\n{}\n{}", e, parent.display()),
+                );
+            }
+        }
+    }
+
+    let done_files = Arc::new(AtomicU32::new(0));
+    let acc_bytes = Arc::new(AtomicU64::new(0));
+    let cur_bytes = Arc::new(AtomicU64::new(0));
+    let cur_total = Arc::new(AtomicU64::new(0));
+    let cur_idx = Arc::new(AtomicU32::new(0));
+    let total_files = task.files.len() as u32;
+
+    // 进度上报循环：150ms 心跳，速度按相邻采样差分 + EMA 平滑
+    let emit_handle = tauri::async_runtime::spawn({
+        let app = app.clone();
+        let progress = progress.clone();
+        let done_files = done_files.clone();
+        let acc_bytes = acc_bytes.clone();
+        let cur_bytes = cur_bytes.clone();
+        let cur_total = cur_total.clone();
+        let cur_idx = cur_idx.clone();
+        async move {
+            let mut tick = tokio::time::interval(Duration::from_millis(150));
+            let mut last_bytes = 0u64;
+            let mut last_sample = Instant::now();
+            let mut speed_ema: f64 = 0.0;
+            loop {
+                tick.tick().await;
+                let d = done_files.load(Ordering::Relaxed);
+                let cb = cur_bytes.load(Ordering::Relaxed);
+                let ct = cur_total.load(Ordering::Relaxed);
+                let acc = acc_bytes.load(Ordering::Relaxed);
+                let cur = acc + cb;
+                let now = Instant::now();
+                let dt = now.duration_since(last_sample).as_secs_f64();
+                if dt >= 0.3 && cur >= last_bytes {
+                    let instant = (cur - last_bytes) as f64 / dt;
+                    speed_ema = if speed_ema <= 0.0 {
+                        instant
+                    } else {
+                        speed_ema * 0.6 + instant * 0.4
+                    };
+                    last_bytes = cur;
+                    last_sample = now;
+                }
+                task::update_and_emit(&app, &progress, |p| {
+                    p.completed_files = d;
+                    p.completed_bytes = cur;
+                    p.total_bytes = acc + ct;
+                    p.speed_bps = speed_ema;
+                    if let Some(st) = p.steps.get_mut(cur_idx.load(Ordering::Relaxed) as usize) {
+                        if st.status == "running" {
+                            st.progress = if ct > 0 {
+                                (cb as f64 / ct as f64).min(1.0) * 100.0
+                            } else {
+                                0.0
+                            };
+                        }
+                    }
+                    update_progress(p);
+                });
+            }
+        }
+    });
+
+    for (i, (dest, tmp)) in items.iter().enumerate() {
+        cur_idx.store(i as u32, Ordering::Relaxed);
+        let f = &task.files[i];
+        set_phase(&app, progress, "", &format!("下载 {}", f.filename), i, "running");
+        cur_bytes.store(0, Ordering::Relaxed);
+        cur_total.store(0, Ordering::Relaxed);
+        let cb = {
+            let cur_bytes = cur_bytes.clone();
+            let cur_total = cur_total.clone();
+            move |downloaded: u64, total_size: u64| {
+                cur_bytes.store(downloaded, Ordering::Relaxed);
+                if total_size > 0 {
+                    cur_total.store(total_size, Ordering::Relaxed);
+                }
+            }
+        };
+        let result = fetcher::fetch(&f.url, tmp, Some(cb)).await;
+        if cancelled(cancel) {
+            let _ = std::fs::remove_file(tmp);
+            emit_handle.abort();
+            return set_cancelled(&app, progress);
+        }
+        if let Err(e) = result {
+            let _ = std::fs::remove_file(tmp);
+            emit_handle.abort();
+            return set_error(&app, progress, format!("下载 {} 失败:\n{}", f.filename, e));
+        }
+        // 同名文件直接覆盖（简单策略；sha1 去重等留给未来模组中心）
+        if let Err(e) = std::fs::rename(tmp, dest) {
+            let _ = std::fs::remove_file(tmp);
+            emit_handle.abort();
+            return set_error(&app, progress, format!("写入 {} 失败:\n{}", f.filename, e));
+        }
+        acc_bytes.fetch_add(cur_bytes.load(Ordering::Relaxed), Ordering::Relaxed);
+        cur_bytes.store(0, Ordering::Relaxed);
+        done_files.fetch_add(1, Ordering::Relaxed);
+        step_done(&app, progress, i);
+        task::update_and_emit(&app, progress, |p| {
+            p.current_phase = format!("已完成 {}/{}", i + 1, total_files);
+        });
+        if cancelled(cancel) {
+            emit_handle.abort();
+            return set_cancelled(&app, progress);
+        }
+    }
+    emit_handle.abort();
+
+    task::update_and_emit(&app, progress, |p| {
+        p.status = "done".into();
+        p.progress = 100.0;
+        p.completed_files = total_files;
+        p.total_files = total_files;
+        p.current_phase = "完成".into();
+    });
+    if let Ok(p) = progress.try_lock() {
+        task::global().remove(&p.task_id);
+    }
+}
+
 /// 下载任务共享的进度上报循环：读原子计数器 → 更新分步/总进度 → emit。
 /// run_task（完整下载）与 run_repair_task（补全）共用，消除整段复制。
+/// AtomicBool → u32（completed 计数用）。
+fn b2u(b: &AtomicBool) -> u32 {
+    if b.load(Ordering::Relaxed) {
+        1
+    } else {
+        0
+    }
+}
+
 struct EmitLoop {
     app: AppHandle,
     cancel: Arc<AtomicBool>,
@@ -777,15 +1038,23 @@ struct EmitLoop {
     jar_done: Arc<AtomicU32>,
     lib_done: Arc<AtomicU32>,
     asst_done: Arc<AtomicU32>,
+    natives_done: Arc<AtomicU32>,
     jar_bytes: Arc<AtomicU64>,
     jar_total: Arc<AtomicU64>,
     bytes: Arc<AtomicU64>,
-    /// client.jar 步骤索引（None = 任务无该步骤）
+    /// 各下载/安装步骤索引（None = 任务无该步骤）
     jar_step: Option<usize>,
     lib_step: Option<usize>,
     asst_step: Option<usize>,
+    natives_step: Option<usize>,
+    /// 收尾安装步骤完成标志（EmitLoop 覆盖阶段 B 全程，这些步骤的进度计入 completed）
+    cfg_done: Arc<AtomicBool>,
+    libs_done: Arc<AtomicBool>,
+    optifine_done: Arc<AtomicBool>,
+    fabric_done: Arc<AtomicBool>,
     lib_pending: u32,
     asst_pending: u32,
+    natives_pending: u32,
     /// 初始已完成数（完整下载 = 预扫描已存在文件；补全 = 0）
     initial_completed: u32,
     total_files: u32,
@@ -808,7 +1077,12 @@ impl EmitLoop {
                 let js = self.jar_total.load(Ordering::Relaxed);
                 let ld = self.lib_done.load(Ordering::Relaxed);
                 let ad = self.asst_done.load(Ordering::Relaxed);
-                let completed = self.initial_completed + jd + ld + ad;
+                let nd = self.natives_done.load(Ordering::Relaxed);
+                let flags = b2u(&self.cfg_done)
+                    + b2u(&self.libs_done)
+                    + b2u(&self.optifine_done)
+                    + b2u(&self.fabric_done);
+                let completed = self.initial_completed + jd + ld + ad + nd + flags;
                 // 字节维度：initial（已存在）+ jar 当前字节 + libs/assets 下载增量
                 let completed_bytes = self.initial_bytes + jb + self.bytes.load(Ordering::Relaxed);
 
@@ -832,8 +1106,15 @@ impl EmitLoop {
                     p.speed_bps = speed_ema;
                     p.completed_files = completed;
                     p.completed_bytes = completed_bytes;
+                    // 最终总数（含 natives/安装步骤）每 tick 写回，剩余文件不会变负
+                    p.total_files = self.total_files;
+                    // current_phase：第一个未完成（running）的步骤——各并行路完成时
+                    // 自行 step_done，此判断实时跟随真实活动
+                    if let Some(st) = p.steps.iter().find(|s| s.status == "running") {
+                        p.current_phase = st.name.clone();
+                    }
 
-                    // 分步进度：client.jar 字节级（total 未知时用完成标志），libs/assets 按完成数
+                    // 分步进度：client.jar 字节级（total 未知时用完成标志），其余按完成数
                     if let Some(i) = self.jar_step {
                         if let Some(st) = p.steps.get_mut(i) {
                             if st.status == "running" {
@@ -868,6 +1149,17 @@ impl EmitLoop {
                             }
                         }
                     }
+                    if let Some(i) = self.natives_step {
+                        if let Some(st) = p.steps.get_mut(i) {
+                            if st.status == "running" {
+                                st.progress = if self.natives_pending > 0 {
+                                    (nd as f64 / self.natives_pending as f64 * 100.0).min(100.0)
+                                } else {
+                                    100.0
+                                };
+                            }
+                        }
+                    }
 
                     // 总进度 = 已完成字节 / 总字节（与检测阶段 set_completed 同公式，
                     // 无缝衔接：检测完即 initial/total，下载中继续单调涨；大文件按字节占比，
@@ -883,7 +1175,10 @@ impl EmitLoop {
                     };
 
                     let _ = self.app.emit(crate::events::TASK_PROGRESS, &*p);
-                    completed >= self.total_files || self.cancel.load(Ordering::SeqCst)
+                    // 自然退出：计数到顶，或取消，或任务已离开 running（done/error/cancelled）
+                    completed >= self.total_files
+                        || self.cancel.load(Ordering::SeqCst)
+                        || p.status != "running"
                 };
                 if done {
                     break;
@@ -892,6 +1187,57 @@ impl EmitLoop {
             }
         })
     }
+}
+
+/// 收尾阶段进度心跳：EmitLoop 在并行下载结束时 abort，natives/ModLoader/OptiFine/Fabric API
+/// 期间读 bytes_counter 增量恢复速度与字节进度（避免显示"速度 0 / 进度冻结"）。
+/// 自终止：status 离开 "running"（done/error/cancelled）即退出，无需外部 abort。
+fn spawn_tail_loop(
+    app: &AppHandle,
+    progress: &Arc<Mutex<TaskProgress>>,
+    bytes: Arc<AtomicU64>,
+) -> tauri::async_runtime::JoinHandle<()> {
+    tauri::async_runtime::spawn({
+        let app = app.clone();
+        let progress = progress.clone();
+        async move {
+            let mut tick = tokio::time::interval(Duration::from_millis(150));
+            let mut last_bytes: u64 = 0;
+            let mut last_sample = Instant::now();
+            let mut speed_ema: f64 = 0.0;
+            let mut base_done: u64 = 0;
+            let mut base_cnt: u64 = 0;
+            let mut initialized = false;
+            loop {
+                tick.tick().await;
+                let cur = bytes.load(Ordering::Relaxed);
+                let now = Instant::now();
+                let dt = now.duration_since(last_sample).as_secs_f64();
+                if dt >= 0.3 && cur >= last_bytes {
+                    let instant = (cur - last_bytes) as f64 / dt;
+                    speed_ema = if speed_ema <= 0.0 {
+                        instant
+                    } else {
+                        speed_ema * 0.6 + instant * 0.4
+                    };
+                    last_bytes = cur;
+                    last_sample = now;
+                }
+                let mut p = progress.lock().unwrap();
+                if p.status != "running" {
+                    return;
+                }
+                if !initialized {
+                    base_done = p.completed_bytes;
+                    base_cnt = cur;
+                    initialized = true;
+                }
+                p.speed_bps = speed_ema;
+                p.completed_bytes = base_done + cur.saturating_sub(base_cnt);
+                crate::task::emit(&app, &p);
+            }
+        }
+    })
 }
 
 fn cancelled(cancel: &Arc<AtomicBool>) -> bool {
@@ -955,15 +1301,8 @@ fn set_completed(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, files: u3
     });
 }
 
-/// 收尾步骤（natives/ModLoader/OptiFine/Fabric API）每完成一个，文件计数 +1。
-/// 与 total_files 中的收尾步骤数对应，保证收尾期间剩余文件显示真实。
-fn bump_completed(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>) {
-    task::update_and_emit(app, progress, |p| {
-        p.completed_files = p.completed_files.saturating_add(1);
-        update_progress(p);
-    });
-}
-
+/// 收尾步骤的文件计数已由 EmitLoop 的 completed 公式（natives 计数 + 完成标志）承担，
+/// bump_completed 已删除。
 fn set_error(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, msg: String) {
     task::update_and_emit(app, progress, |p| {
         p.status = "error".into();
@@ -1217,5 +1556,19 @@ mod tests {
         ];
         assert_eq!(count_natives_missing(&libs, &lib_dir), 2);
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn test_file_dest_builds_isolated_path() {
+        let dest = file_dest(
+            Path::new("C:/mc"),
+            "26.2-fabric-0.19.3",
+            crate::task::DownloadFileKind::Mod,
+            "fabric-api-15.0.0.jar",
+        );
+        assert_eq!(
+            dest,
+            Path::new("C:/mc/versions/26.2-fabric-0.19.3/mods/fabric-api-15.0.0.jar")
+        );
     }
 }

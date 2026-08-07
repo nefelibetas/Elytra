@@ -42,6 +42,48 @@ interface ProgressPayload {
   error?: string | null
 }
 
+// ── 任务入参（镜像 Rust task 模块；字段名必须 snake_case，tauri 键名严格匹配）──
+
+export interface LoaderChoice {
+  kind: "fabric" | "forge" | "neoforge" | "quilt"
+  version: string
+}
+
+export interface FabricApi {
+  url: string
+  version: string
+}
+
+export interface DownloadTask {
+  version_id: string
+  version_url: string
+  mc_version: string
+  loader: LoaderChoice | null
+  optifine_patch: string | null
+  version_dir_name: string | null
+  fabric_api: FabricApi | null
+}
+
+export type DownloadFileKind = "mod" | "resourcepack" | "datapack" | "shader";
+
+export interface DownloadFileTask {
+  version_dir_name: string
+  kind: DownloadFileKind
+  url: string
+  filename: string
+}
+
+export interface DownloadFileItem {
+  kind: DownloadFileKind
+  url: string
+  filename: string
+}
+
+export interface DownloadFilesTask {
+  version_dir_name: string
+  files: DownloadFileItem[]
+}
+
 export const dlState = reactive({
   tasks: [] as TaskItem[],
 
@@ -98,17 +140,23 @@ export const dlState = reactive({
     fabricApiUrl?: string,
     fabricApiVersion?: string,
   ) {
-    const taskId = await invoke<string>("start_download", {
-      versionId,
-      versionUrl,
-      mcVersion,
-      mainLoader: mainLoader || null,
-      mainLoaderVersion: mainLoaderVersion || null,
-      optifinePatch: optifinePatch || null,
-      versionDirName: versionDirName || null,
-      fabricApiUrl: fabricApiUrl || null,
-      fabricApiVersion: fabricApiVersion || null,
-    })
+    // 统一入口：散参组装成 DownloadTask 单对象提交（字段名 snake_case）
+    const task: DownloadTask = {
+      version_id: versionId,
+      version_url: versionUrl,
+      mc_version: mcVersion,
+      loader:
+        mainLoader && mainLoaderVersion
+          ? { kind: mainLoader as LoaderChoice["kind"], version: mainLoaderVersion }
+          : null,
+      optifine_patch: optifinePatch || null,
+      version_dir_name: versionDirName || null,
+      fabric_api:
+        fabricApiUrl && fabricApiVersion
+          ? { url: fabricApiUrl, version: fabricApiVersion }
+          : null,
+    }
+    const taskId = await invoke<string>("start_download", { task })
     this.addTask({
       taskId,
       name: "",

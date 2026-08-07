@@ -19,6 +19,7 @@ pub struct DownloadSource {
     pub neoforge_installer_url: String,
     pub fabric_loader_url: String,
     pub fabric_profile_url: String,
+    pub quilt_profile_url: String,
     pub optifine_download_url: String,
 }
 
@@ -77,6 +78,7 @@ fn official() -> DownloadSource {
         neoforge_installer_url: "https://maven.neoforged.net/releases/net/neoforged/neoforge/{ver}/neoforge-{ver}-installer.jar".into(),
         fabric_loader_url: "https://maven.fabricmc.net/net/fabricmc/fabric-loader/{ver}/fabric-loader-{ver}.jar".into(),
         fabric_profile_url: "https://meta.fabricmc.net/v2/versions/loader/{mc}/{loaderVer}/profile/json".into(),
+        quilt_profile_url: "https://meta.quiltmc.org/v3/versions/loader/{mc}/{loaderVer}/profile/json".into(),
         optifine_download_url: "https://bmclapi2.bangbang93.com/optifine/{mc}/{type}/{patch}".into(),
     }
 }
@@ -99,6 +101,8 @@ fn china() -> DownloadSource {
         neoforge_installer_url: "https://bmclapi2.bangbang93.com/maven/net/neoforged/neoforge/{ver}/neoforge-{ver}-installer.jar".into(),
         fabric_loader_url: "https://bmclapi2.bangbang93.com/maven/net/fabricmc/fabric-loader/{ver}/fabric-loader-{ver}.jar".into(),
         fabric_profile_url: "https://bmclapi2.bangbang93.com/fabric-meta/v2/versions/loader/{mc}/{loaderVer}/profile/json".into(),
+        // ponytail: BMCLAPI 无 quilt-meta 镜像，与 quilt_list_url 一致直连官方
+        quilt_profile_url: "https://meta.quiltmc.org/v3/versions/loader/{mc}/{loaderVer}/profile/json".into(),
         optifine_download_url: "https://bmclapi2.bangbang93.com/optifine/{mc}/{type}/{patch}".into(),
     }
 }

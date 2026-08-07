@@ -50,6 +50,8 @@ pub fn run() {
             commands::loader::get_neoforge_versions,
             commands::loader::get_fabric_api_versions,
             commands::task::start_download,
+            commands::task::download_files,
+            commands::task::download_single_file,
             commands::task::cancel_task,
             commands::launch::spawn_game,
             commands::launch::check_launch_env,
