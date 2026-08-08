@@ -102,7 +102,10 @@ fn china() -> DownloadSource {
         maven_url: "https://bmclapi2.bangbang93.com/maven".into(),
         libraries_url: "https://bmclapi2.bangbang93.com/libraries".into(),
 
-        forge_list_url: "https://bmclapi2.bangbang93.com/maven/net/minecraftforge/forge/maven-metadata.xml".into(),
+        // ponytail: BMCLAPI 的 forge maven-metadata 停更于 1.18.2-40.1.0(缺 26.2+ 全部新版本),
+        // 列表直连官方 maven.minecraftforge.net(几十 KB 小文件,官方直连稳定);
+        // 文件层(installer/库)BMCLAPI 镜像 302 实测可用,不受影响
+        forge_list_url: "https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml".into(),
         fabric_list_url: "https://bmclapi2.bangbang93.com/fabric-meta/v2/versions/loader/{mc}".into(),
         neoforge_list_url: "https://bmclapi2.bangbang93.com/maven/net/neoforged/neoforge/maven-metadata.xml".into(),
         quilt_list_url: "https://meta.quiltmc.org/v3/versions/loader/{mc}".into(),
