@@ -20,7 +20,7 @@ ElytraLauncher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前端
 - **后端分层**：`commands/` 只做胶水（读配置 → 调领域函数 → `map_err` 展平 String）；领域逻辑按域归位——下载编排在 `task/runner.rs`，启动在 `config/launcher/`（`args.rs` 命令构建 / `env.rs` 环境准备 / `skin.rs` 离线皮肤），账号在 `auth/`（`microsoft.rs` OAuth / `mojang.rs` 官方 API / `account.rs` 回调与披风上传），下载引擎 `downloader/`，纯数据 `config/`；统一持久化 `persist/`（exe 旁 `Elytra/Settings.toml`，TOML 分 section，全局 Mutex 串行化）；任务由 `task/` TaskManager 单例（`tauri::async_runtime::spawn` + `task-progress` 事件推送）
 - **前端数据流**：`invoke` 返回 taskId → 预注册任务 → 后端推 `task-progress` 事件增量更新 `dlState` → done 时触发回调并移除；`memState` 每 2s 轮询内存
 - **配置联动**：`gamedirs::set_active_game_dir` 会写 downloader section 的 `minecraft_dir`，launch/downloader 都读该字段
-- **下载链路**：manifest → version JSON/client jar → libraries → assets → natives；多源回退（主源 5s 超时降级"过慢"）+ sha1 校验 + 限速 + 并发。natives 新旧两代：旧式（≤1.12，lwjgl 2.x）由 `process_natives` 下载 classifier JAR、启动前 `ensure_old_style_natives` 解压到 `.minecraft/natives/<ver>/`（`.elytra-ready` marker 标记完成）并设 `-Djava.library.path`；新式（1.13+）native JAR 作为普通库进 classpath，仅需创建 natives 目录，LWJGL 自行提取
+- **下载源模式三个**：`file_source_mode`（client/libraries/assets/natives/ModLoader）、`manifest_source_mode`（版本清单）、`community_source_mode`（Modrinth 官方 vs MCIM 镜像，管 Fabric API 版本列表与下载；`is_mirror_url` 按 URL 判定镜像并限制并发）。natives 新旧两代：旧式（≤1.12，lwjgl 2.x）由 `process_natives` 下载 classifier JAR、启动前 `ensure_old_style_natives` 解压到 `.minecraft/natives/<ver>/`（`.elytra-ready` marker 标记完成）并设 `-Djava.library.path`；新式（1.13+）native JAR 作为普通库进 classpath，仅需创建 natives 目录，LWJGL 自行提取
 
 ## Key Directories
 

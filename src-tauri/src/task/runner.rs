@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use tauri::AppHandle;
 
-use crate::config::downloader::model::{DownloadSource, DownloaderConfig};
+use crate::config::downloader::model::{DownloadSource, DownloadSourceMode, DownloaderConfig};
 use crate::constants;
 use crate::downloader::fetcher;
 use crate::downloader::mod_loader;
@@ -300,15 +300,10 @@ pub async fn run_task(
                     jar_total.store(total, Ordering::Relaxed);
                 }
             };
-            fetcher::fetch_fallback(&urls, &jar_path, Some(cb))
+            // 逐源 sha1 校验下载：镜像 CDN 返回不完整/错误内容自动换源重试
+            fetcher::fetch_verified(&urls, &jar_path, Some(cb), &c.sha1)
                 .await
                 .map_err(|e| vec![e.to_string()])?;
-            // client.jar sha1 完整性校验（防止镜像 CDN 返回不完整/错误内容）
-            if !c.sha1.is_empty() && !crate::downloader::hash::file_sha1_matches(&jar_path, &c.sha1)
-            {
-                let _ = std::fs::remove_file(&jar_path);
-                return Err(vec!["client.jar 校验失败（sha1 不匹配）".to_string()]);
-            }
             jar_counter.store(1, Ordering::Relaxed);
         }
         if let Some(i) = i_jar {
@@ -472,7 +467,6 @@ pub async fn run_task(
     let fabric_dl = async {
         if let Some(api) = fabric_api {
             let url = api.url.as_str();
-            let ver = api.version.as_str();
             // URL 最后一段做 percent-decode（文件名中的 `+` 被编码为 %2B）
             let filename = percent_encoding::percent_decode_str(
                 url.rsplit('/').next().unwrap_or("fabric-api.jar"),
@@ -483,19 +477,23 @@ pub async fn run_task(
             let mods_dir = vdir.join("mods");
             std::fs::create_dir_all(&mods_dir).ok();
             let dest = mods_dir.join(filename);
-            // 多源候选：Modrinth 官方 CDN → MCIM 换域名镜像 → BMCLAPI maven 镜像
-            // （官方 CDN 国内不可达时快速降级，避免单 URL 长时间假死）
-            let mut urls = vec![url.to_string()];
+            // 多源候选（社区源模式配置 community_source_mode）：
+            // Modrinth 官方 CDN → MCIM 换域名镜像（国内不可达时快速降级）。
+            // 注意：fabric-api 只发布在 Modrinth/GitHub，maven.fabricmc.net 及其
+            // 镜像（BMCLAPI /maven）上没有该构件，此前追加的 BMCLAPI maven 候选
+            // 永远 404，只会污染"所有源均失败"的错误信息，已移除。
+            let official = url.to_string();
             let mcim = url.replace("https://cdn.modrinth.com", "https://mod.mcimirror.top");
-            if mcim != url {
-                urls.push(mcim);
-            }
-            if let Some(bmclapi) = sources.iter().find(|s| s.manifest_url.contains("bmclapi")) {
-                urls.push(format!(
-                    "{}/net/fabricmc/fabric-api/fabric-api/{ver}/fabric-api-{ver}.jar",
-                    bmclapi.maven_url
-                ));
-            }
+            let urls = if mcim == official {
+                vec![official]
+            } else {
+                match config.community_source_mode {
+                    DownloadSourceMode::OfficialOnly => vec![official],
+                    DownloadSourceMode::ChinaOnly => vec![mcim],
+                    DownloadSourceMode::PreferChina => vec![mcim, official],
+                    DownloadSourceMode::PreferOfficial => vec![official, mcim],
+                }
+            };
             // 字节级进度：增量累加进 bytes_counter（EmitLoop 显示速度）与 Fabric API 步骤计数
             let file_done = Arc::new(AtomicU64::new(0));
             let progress_cb = {

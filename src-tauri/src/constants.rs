@@ -12,6 +12,12 @@ pub const UA_DOWNLOAD: &str = "Elytra Launcher/1.0.0";
 /// Mojang API 调用 User-Agent
 pub const UA_MOJANG_API: &str = "Elytra Launcher/1.0.0 (+https://github.com/nefelibetas/Elytra)";
 
+/// 镜像源（BMCLAPI 等）并发上限。
+/// 官方源实测 128 并发稳定无限制；BMCLAPI 30 并发同文件即触发 429
+/// （`retry-after-short: 60` 窗口），8 为实测安全值，与主流启动器对镜像的保守并发一致。
+/// 前端 Settings.vue 的 MIRROR_CONCURRENCY 需与此同步。
+pub const MIRROR_CONCURRENCY: usize = 8;
+
 /// 配置目录名（exe 旁）
 pub const CONFIG_DIR: &str = "Elytra";
 /// 配置文件名

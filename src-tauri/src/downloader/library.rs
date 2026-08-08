@@ -105,6 +105,8 @@ pub async fn download_libraries(
         let sb = step_bytes.clone();
         handles.push(tokio::spawn(async move {
             let _permit = permit.acquire_owned().await.unwrap();
+            // 跨任务互斥：不同版本任务共用 libraries 目录，防并发写同一文件互相踩踏
+            let _file_lock = crate::task::wait_path_lock(&dest).await;
             // 字节级进度：把本文件已下载字节的增量累加进全局计数（而非完成时整体累加），
             // 让任务层能算出平滑的实时速度。重试时进度从 0 重新开始，saturating_sub 保证不减。
             let progress = {
@@ -119,14 +121,10 @@ pub async fn download_libraries(
                     s.fetch_add(delta, Ordering::Relaxed);
                 }
             };
-            match fetcher::fetch_fallback(&urls, &dest, Some(progress)).await {
+            // 逐源 sha1 校验下载：某源返回内容不匹配（镜像缓存陈旧）自动换下一源重试，
+            // 全部源均不匹配才报错。校验失败时 fetch_verified 内部已删除坏文件。
+            match fetcher::fetch_verified(&urls, &dest, Some(progress), &sha1).await {
                 Ok(_dl) => {
-                    // 下载后 sha1 校验（镜像源可能返回坏内容）：不匹配删除并报错，
-                    // 下次修复/下载会重新获取
-                    if !file_sha1_matches(&dest, &sha1) {
-                        let _ = std::fs::remove_file(&dest);
-                        return Err(format!("{}: sha1 校验失败", dest.display()));
-                    }
                     ctr.fetch_add(1, Ordering::Relaxed);
                     Ok(())
                 }

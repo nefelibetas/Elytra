@@ -151,6 +151,8 @@ pub async fn process_natives(
             .iter()
             .map(|s| s.mirror_url(&artifact.url))
             .collect();
+        // 跨任务互斥：防多任务并发写同一 natives 文件互相踩踏
+        let _file_lock = crate::task::wait_path_lock(&dest).await;
         // 字节级进度：增量累加进全局与 natives 步骤计数（重试时进度从 0 重新开始，增量不会为负）
         let file_done = Arc::new(AtomicU64::new(0));
         let progress = {
@@ -164,14 +166,9 @@ pub async fn process_natives(
                 sb.fetch_add(delta, Ordering::Relaxed);
             }
         };
-        match fetcher::fetch_fallback(&urls, &dest, Some(progress)).await {
+        // 逐源 sha1 校验下载：某源返回内容不匹配自动换下一源重试（镜像缓存陈旧场景）。
+        match fetcher::fetch_verified(&urls, &dest, Some(progress), &artifact.sha1).await {
             Ok(_dl) => {
-                // 下载后 sha1 校验（镜像源可能返回坏内容）：不匹配删除并报错
-                if !file_sha1_matches(&dest, &artifact.sha1) {
-                    let _ = std::fs::remove_file(&dest);
-                    errors.push(format!("{}: sha1 校验失败", lib.name));
-                    continue;
-                }
                 counter.fetch_add(1, Ordering::Relaxed);
             }
             Err(e) => errors.push(format!("{}: {}", lib.name, e)),

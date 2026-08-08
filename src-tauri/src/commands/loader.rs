@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use crate::config::downloader::model::DownloaderConfig;
+use crate::config::downloader::model::{DownloadSourceMode, DownloaderConfig};
 use crate::constants;
 use crate::persist;
 
@@ -132,15 +132,20 @@ pub async fn get_fabric_api_versions(mc_version: String) -> Result<Vec<FabricApi
         "/v2/project/fabric-api/version?loaders=[\"fabric\"]&game_versions=[\"{}\"]",
         mc_version
     );
-    // 主源 api.modrinth.com（国内常不可达）→ MCIM 镜像 mod.mcimirror.top（路径不变）
-    let urls = [
-        format!("https://api.modrinth.com{path}"),
-        format!("https://mod.mcimirror.top/modrinth{path}"),
-    ];
+    // 社区源模式（配置 community_source_mode）：Modrinth 官方 API vs MCIM 镜像
+    let cfg = config();
+    let official = format!("https://api.modrinth.com{path}");
+    let china = format!("https://mod.mcimirror.top/modrinth{path}");
+    let urls = match cfg.community_source_mode {
+        DownloadSourceMode::OfficialOnly => vec![official],
+        DownloadSourceMode::ChinaOnly => vec![china],
+        DownloadSourceMode::PreferChina => vec![china, official],
+        DownloadSourceMode::PreferOfficial => vec![official, china],
+    };
     let mut last_err = String::new();
     for (i, url) in urls.iter().enumerate() {
         let mut req = crate::downloader::fetcher::http().get(url);
-        // 主源过慢（5s）即降级镜像，不等待失败
+        // 主源过慢（5s）即降级备用源，不等待失败
         if i == 0 {
             req = req.timeout(std::time::Duration::from_secs(5));
         }

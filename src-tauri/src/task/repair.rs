@@ -312,15 +312,10 @@ pub async fn run_repair_task(
                         jt2.store(total, Ordering::Relaxed);
                     }
                 };
-                crate::downloader::fetcher::fetch_fallback(&urls, &jar_path, Some(cb))
+                // 逐源 sha1 校验下载：镜像 CDN 返回不完整/错误内容自动换源重试
+                crate::downloader::fetcher::fetch_verified(&urls, &jar_path, Some(cb), &c.sha1)
                     .await
                     .map_err(|e| vec![e.to_string()])?;
-                if !c.sha1.is_empty()
-                    && !crate::downloader::hash::file_sha1_matches(&jar_path, &c.sha1)
-                {
-                    let _ = std::fs::remove_file(&jar_path);
-                    return Err(vec!["client.jar 校验失败（sha1 不匹配）".to_string()]);
-                }
             }
             jar_counter.store(1, Ordering::Relaxed);
         }

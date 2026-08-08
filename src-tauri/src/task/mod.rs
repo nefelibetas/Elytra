@@ -222,6 +222,19 @@ impl Drop for PathLock {
     }
 }
 
+/// 轮询等待获取路径锁（跨任务互斥）：另一任务正占用同一目标路径时
+/// 短暂等待其完成，避免多任务并发写同一文件导致 sha1 校验互相踩踏
+/// （不同版本共用 libraries/assets 目录，PathLock 只锁版本目录不覆盖文件）。
+pub async fn wait_path_lock(path: &std::path::Path) -> PathLock {
+    let tm = global();
+    loop {
+        if let Some(l) = PathLock::try_acquire(tm, path) {
+            return l;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
 pub fn emit(app: &AppHandle, p: &TaskProgress) {
     let _ = app.emit(crate::events::TASK_PROGRESS, p);
 }

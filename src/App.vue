@@ -53,13 +53,47 @@ function onKeyDown(e: KeyboardEvent) {
   }
 }
 
+/** 禁用鼠标侧键（后退/前进）触发的 WebView 历史导航。
+ *  侧键会绕过 Vue 路由栈直接操作浏览器历史，导致页面状态与路由不一致（UI 栈混乱）。
+ *  拦截分两层：
+ *  1. 捕获阶段拦截 mousedown/mouseup/pointer 事件（button 3=后退 4=前进）；
+ *  2. popstate 兜底：若侧键仍在更底层触发了历史导航，立即把 hash 拉回应用当前路由，
+ *     保证 UI 栈稳定。 */
+let pinnedHash = "#/";
+
+function onSideButton(e: MouseEvent) {
+  if (e.button === 3 || e.button === 4) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+}
+
+function onPopState() {
+  const cur = location.hash || "#/";
+  if (pinnedHash && cur !== pinnedHash) {
+    // 不新增历史条目地拉回 hash，并同步 vue-router 当前路由
+    history.replaceState(null, "", pinnedHash);
+    router.replace(pinnedHash.slice(1) || "/").catch(() => {});
+  }
+}
+
 function onContextMenu(e: MouseEvent) {
   e.preventDefault();
 }
 
 onMounted(() => {
+  pinnedHash = location.hash || "#/";
+  router.afterEach(() => {
+    pinnedHash = location.hash || "#/";
+  });
   document.addEventListener("contextmenu", onContextMenu);
   document.addEventListener("keydown", onKeyDown);
+  // 捕获阶段拦截（WebView2 可能不派发冒泡阶段的侧键事件）
+  document.addEventListener("mousedown", onSideButton, true);
+  document.addEventListener("mouseup", onSideButton, true);
+  document.addEventListener("pointerdown", onSideButton, true);
+  document.addEventListener("pointerup", onSideButton, true);
+  window.addEventListener("popstate", onPopState);
   ensureListen();
   // 应用启动即持续监听系统内存（设置页/启动页共用）
   startMemoryMonitor();
@@ -68,6 +102,11 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener("contextmenu", onContextMenu);
   document.removeEventListener("keydown", onKeyDown);
+  document.removeEventListener("mousedown", onSideButton, true);
+  document.removeEventListener("mouseup", onSideButton, true);
+  document.removeEventListener("pointerdown", onSideButton, true);
+  document.removeEventListener("pointerup", onSideButton, true);
+  window.removeEventListener("popstate", onPopState);
 });
 </script>
 
@@ -104,6 +143,11 @@ html, body {
   -webkit-user-select: none;
   user-select: none;
 }
+
+/* 桌面应用 UI：点击聚焦不显示浏览器默认焦点框（黑色 outline）。
+   Tab 键已被拦截、无键盘导航需求，保留 outline 只会产生视觉噪声。 */
+:focus { outline: none; }
+:focus-visible { outline: none; }
 
 #app {
   height: 100%;

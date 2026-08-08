@@ -86,6 +86,10 @@ pub struct LauncherConfig {
     #[serde(default = "default_zh")]
     pub game_language: String,
 
+    /// 正版登录时验证 SSL 证书（默认关闭，规避国内网络证书链不完整问题）。
+    #[serde(default)]
+    pub verify_ssl: bool,
+
     pub jvm_args: Vec<String>,
     pub game_args: Vec<String>,
 
@@ -115,6 +119,7 @@ impl Default for LauncherConfig {
             pre_launch_memory_optimize: false,
             use_high_performance_gpu: true,
             game_language: "auto_zh_CN".into(),
+            verify_ssl: false,
             jvm_args: vec![
                 "-XX:-OmitStackTraceInFastThrow".into(),
                 "-Djdk.lang.Process.allowAmbiguousCommands=True".into(),

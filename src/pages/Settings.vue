@@ -115,6 +115,7 @@ interface LauncherOptions {
   game_args: string[];
   pre_launch_cmd: string;
   gc_type: string;
+  verify_ssl: boolean;
 }
 
 const loWindowTitle = ref("");
@@ -166,6 +167,7 @@ const loGc = ref("TunedG1Gc");
 const loDisableWrapper = ref(false);
 const loDisableAgent = ref(false);
 const loHighGpu = ref(false);
+const loVerifySsl = ref(false);
 
 const gcOptions: { value: string; label: string }[] = [
   { value: "PreferZgc", label: "首选 ZGC（实验性）" },
@@ -196,6 +198,7 @@ async function loadLaunchOptions() {
     loGc.value = cfg.gc_type ?? "TunedG1Gc";
     loDisableWrapper.value = !!cfg.disable_launch_wrapper;
     loDisableAgent.value = !!cfg.disable_lwjgl_unsafe_agent;
+    loVerifySsl.value = !!cfg.verify_ssl;
     // 高性能显卡默认开启：旧配置/旧后端缺字段时按 true 处理
     loHighGpu.value = cfg.use_high_performance_gpu ?? true;
     loGameLang.value = cfg.game_language ?? "auto_zh_CN";
@@ -238,6 +241,7 @@ async function saveLaunchOptions() {
     cfg.gc_type = loGc.value;
     cfg.disable_launch_wrapper = loDisableWrapper.value;
     cfg.disable_lwjgl_unsafe_agent = loDisableAgent.value;
+    cfg.verify_ssl = loVerifySsl.value;
     cfg.use_high_performance_gpu = loHighGpu.value;
     cfg.game_language = loGameLang.value;
     await invoke("save_launch_options", { config: cfg });
@@ -375,23 +379,36 @@ const sourceModeOptions = [
 function sourceModeLabel(v: string) {
   return sourceModeOptions.find((o) => o.value === v)?.label ?? v;
 }
+// 社区下载源：Modrinth 官方 API/CDN vs MCIM 国内镜像（管理 Fabric API 等社区资源）
+const communitySourceOptions = [
+  { value: "preferOfficial", label: "Modrinth 优先", desc: "Modrinth 官方优先，加载缓慢时使用 MCIM 镜像" },
+  { value: "preferChina", label: "MCIM 优先", desc: "MCIM 镜像优先，失败时回退 Modrinth" },
+  { value: "officialOnly", label: "Modrinth", desc: "仅使用 Modrinth 官方，不自动回退" },
+  { value: "chinaOnly", label: "MCIM", desc: "仅使用 MCIM 镜像，不自动回退" },
+];
 
 interface DownloaderConfig {
   file_source_mode: string;
   manifest_source_mode: string;
+  community_source_mode?: string;
   concurrency: number;
   max_speed: number; // bytes/s，0 = 无限制
-  verify_ssl: boolean;
   minecraft_dir: string;
 }
 
 const dlFileMode = ref("preferOfficial");
 const dlManifestMode = ref("preferOfficial");
+const dlCommunityMode = ref("preferOfficial");
 const dlConcurrency = ref(64);
+// 镜像源并发上限（后端 constants.rs MIRROR_CONCURRENCY，改动需同步）：
+// 官方源不限流、镜像源（BMCLAPI）30 并发即触发 429，镜像请求恒为 8 并发
+const MIRROR_CONCURRENCY = 8;
+// 仅镜像模式下并发数由镜像源规定，输入锁定（偏好/官方模式并发给官方源配置）
+const concurrencyLocked = computed(() => dlFileMode.value === "chinaOnly");
 const dlMaxSpeed = ref(0); // MB/s，0 = 无上限
-const dlVerifySsl = ref(false);
 const dlFileOpen = ref(false);
 const dlManifestOpen = ref(false);
+const dlCommunityOpen = ref(false);
 const dlSection = useConfigSection();
 const dlError = dlSection.error;
 const dlMinecraftDir = ref(".minecraft");
@@ -401,12 +418,12 @@ async function loadDownloadConfig() {
     const cfg = await invoke<DownloaderConfig>("get_downloader_config");
     dlFileMode.value = cfg.file_source_mode ?? "preferOfficial";
     dlManifestMode.value = cfg.manifest_source_mode ?? "preferOfficial";
+    dlCommunityMode.value = cfg.community_source_mode ?? "preferOfficial";
     // 旧配置默认线程数为 8，统一迁移到 64
     dlConcurrency.value = (cfg.concurrency === 8 ? 64 : (cfg.concurrency ?? 64));
     dlConcurrency.value = Math.min(256, Math.max(1, dlConcurrency.value));
     const mb = Math.round((cfg.max_speed ?? 0) / (1024 * 1024));
     dlMaxSpeed.value = Math.min(100, Math.max(0, mb));
-    dlVerifySsl.value = !!cfg.verify_ssl;
     dlMinecraftDir.value = cfg.minecraft_dir || ".minecraft";
   } catch {
     // 无配置时保持默认
@@ -419,9 +436,9 @@ async function saveDownloadConfig() {
       config: {
         file_source_mode: dlFileMode.value,
         manifest_source_mode: dlManifestMode.value,
+        community_source_mode: dlCommunityMode.value,
         concurrency: dlConcurrency.value,
         max_speed: dlMaxSpeed.value * 1024 * 1024,
-        verify_ssl: dlVerifySsl.value,
         minecraft_dir: dlMinecraftDir.value,
       },
     });
@@ -431,6 +448,12 @@ async function saveDownloadConfig() {
 function setFileMode(v: string) {
   dlFileMode.value = v;
   dlFileOpen.value = false;
+  saveDownloadConfig();
+}
+
+function setCommunityMode(v: string) {
+  dlCommunityMode.value = v;
+  dlCommunityOpen.value = false;
   saveDownloadConfig();
 }
 function setManifestMode(v: string) {
@@ -622,6 +645,13 @@ const placeholder = computed(() => {
                 >
                   <option value="auto_zh_CN">自动设置为中文</option>
                 </select>
+              </div>
+
+              <div class="lo-row">
+                <label class="lo-check">
+                  <input v-model="loVerifySsl" type="checkbox" @change="saveLaunchOptions" />
+                  <span>在正版登录时验证 SSL 证书</span>
+                </label>
               </div>
             </div>
             <div v-if="launchError" class="err">{{ launchError }}</div>
@@ -882,19 +912,45 @@ const placeholder = computed(() => {
               </div>
             </div>
 
-            <!-- 最大线程数 -->
+            <!-- 社区下载源：Modrinth 官方 vs MCIM 镜像（管理 Fabric API 等社区资源） -->
+            <div class="dl-row">
+              <span class="dl-label">社区下载源</span>
+              <div class="dl-sel" :class="{ open: dlCommunityOpen }">
+                <button class="dl-sel-btn" @click="dlCommunityOpen = !dlCommunityOpen">
+                  <span>{{ communitySourceOptions.find(o => o.value === dlCommunityMode)?.label ?? dlCommunityMode }}</span>
+                  <svg viewBox="0 0 12 12" width="12" height="12" fill="currentColor">
+                    <polygon points="3,4 9,4 6,9" />
+                  </svg>
+                </button>
+                <div v-if="dlCommunityOpen" class="dl-sel-menu">
+                  <button
+                    v-for="opt in communitySourceOptions"
+                    :key="opt.value"
+                    class="dl-sel-item"
+                    :class="{ active: dlCommunityMode === opt.value }"
+                    @click="setCommunityMode(opt.value)"
+                  >
+                    <span class="dl-sel-item-label">{{ opt.label }}</span>
+                    <span class="dl-sel-item-desc">{{ opt.desc }}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 最大线程数（官方源并发；仅镜像模式由镜像源规定并锁定） -->
             <div class="dl-row">
               <span class="dl-label">最大线程数</span>
               <input
                 class="dl-range"
                 type="range"
                 min="1"
-                max="256"
+                :max="concurrencyLocked ? MIRROR_CONCURRENCY : 256"
                 step="1"
                 v-model.number="dlConcurrency"
                 @input="saveDownloadConfig"
+                :disabled="concurrencyLocked"
               />
-              <span class="dl-val">{{ dlConcurrency }} / 256</span>
+              <span class="dl-val">{{ concurrencyLocked ? MIRROR_CONCURRENCY : dlConcurrency }} / 256</span>
             </div>
 
             <!-- 速度限制：0 = 无上限 -->
@@ -912,10 +968,6 @@ const placeholder = computed(() => {
               <span class="dl-val">{{ dlMaxSpeed === 0 ? "无上限" : dlMaxSpeed + " MB/s" }} / 100 MB/s</span>
             </div>
 
-            <label class="lo-check dl-check">
-              <input type="checkbox" v-model="dlVerifySsl" @change="saveDownloadConfig" />
-              <span>在正版登录时验证 SSL 证书</span>
-            </label>
             <div v-if="dlError" class="dl-error">{{ dlError }}</div>
           </div>
         </div>
@@ -1673,11 +1725,13 @@ const placeholder = computed(() => {
 }
 .dl-sel-btn {
   width: 100%;
+  height: 36px;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 7px 12px;
+  padding: 0 12px;
   font-size: 13px;
   color: var(--text-primary);
   background-color: var(--surface-elevated);
@@ -1685,6 +1739,15 @@ const placeholder = computed(() => {
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: border-color 0.15s;
+}
+.dl-sel-btn > span {
+  /* 固定行高并单行省略：中英混排文本在 CJK 字体下 line box 度量不同，
+     会撑高 flex 按钮导致切换选中项时高度抖动 */
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 .dl-sel-btn:hover { border-color: var(--color-brand); }
 .dl-sel-btn svg {
@@ -1707,11 +1770,14 @@ const placeholder = computed(() => {
 }
 .dl-sel-item {
   width: 100%;
+  height: 52px;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 2px;
-  padding: 9px 12px;
+  justify-content: center;
+  gap: 3px;
+  padding: 0 12px;
   background: transparent;
   border: none;
   cursor: pointer;
@@ -1726,10 +1792,21 @@ const placeholder = computed(() => {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
+  /* 固定行高：中英混排的 line box 差异会撑高按钮 */
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 .dl-sel-item-desc {
   font-size: 11.5px;
   color: var(--text-tertiary);
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 /* 滑块（进度条） */

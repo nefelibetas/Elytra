@@ -4,7 +4,6 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
-use tokio::time::{sleep, Duration};
 
 use super::hash::file_sha1_matches;
 use crate::config::downloader::model::DownloaderConfig;
@@ -112,39 +111,29 @@ pub async fn download_assets(
         let permit = sem.clone();
         handles.push(tokio::spawn(async move {
             let _permit = permit.acquire_owned().await.unwrap();
-            let mut last_err = String::new();
-            for attempt in 0..3 {
-                if attempt > 0 {
-                    sleep(Duration::from_millis(200)).await;
+            // 跨任务互斥：多任务共用 assets 目录，防并发写同一资源互相踩踏
+            let _file_lock = crate::task::wait_path_lock(&dest).await;
+            // 字节级进度：增量累加进全局计数（重试从 0 重新开始，增量不会为负）
+            let progress = {
+                let file_done = Arc::new(AtomicU64::new(0));
+                let fd = file_done.clone();
+                let b = bc.clone();
+                let s = sb.clone();
+                move |downloaded: u64, _total: u64| {
+                    let prev = fd.swap(downloaded, Ordering::Relaxed);
+                    let delta = downloaded.saturating_sub(prev);
+                    b.fetch_add(delta, Ordering::Relaxed);
+                    s.fetch_add(delta, Ordering::Relaxed);
                 }
-                // 字节级进度：增量累加进全局计数（每次重试从 0 重新开始，增量不会为负）
-                let progress = {
-                    let file_done = Arc::new(AtomicU64::new(0));
-                    let fd = file_done.clone();
-                    let b = bc.clone();
-                    let s = sb.clone();
-                    move |downloaded: u64, _total: u64| {
-                        let prev = fd.swap(downloaded, Ordering::Relaxed);
-                        let delta = downloaded.saturating_sub(prev);
-                        b.fetch_add(delta, Ordering::Relaxed);
-                        s.fetch_add(delta, Ordering::Relaxed);
-                    }
-                };
-                match fetcher::fetch_fallback(&urls, &dest, Some(progress)).await {
-                    Ok(_dl) => {
-                        // 下载后 sha1 校验（镜像源可能返回坏内容）：不匹配删除并重试
-                        if !file_sha1_matches(&dest, &hash) {
-                            let _ = std::fs::remove_file(&dest);
-                            last_err = format!("{}: sha1 校验失败", hash);
-                            continue;
-                        }
-                        ctr.fetch_add(1, Ordering::Relaxed);
-                        return Ok(());
-                    }
-                    Err(e) => last_err = format!("{}: {}", hash, e),
+            };
+            // 逐源 sha1 校验下载：内容不匹配自动换下一源/下一轮重试（镜像缓存陈旧场景）
+            match fetcher::fetch_verified(&urls, &dest, Some(progress), &hash).await {
+                Ok(_) => {
+                    ctr.fetch_add(1, Ordering::Relaxed);
+                    Ok(())
                 }
+                Err(e) => Err(format!("{}: {}", hash, e)),
             }
-            Err(last_err)
         }));
     }
 

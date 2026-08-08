@@ -137,12 +137,14 @@ pub struct DownloaderConfig {
     /// 版本列表源模式（版本清单 manifest）
     #[serde(default)]
     pub manifest_source_mode: DownloadSourceMode,
+    /// 社区下载源模式（Modrinth 官方 API / CDN vs MCIM 国内镜像）。
+    /// 管理 Fabric API 等社区资源：official = Modrinth API + cdn.modrinth.com，
+    /// china = MCIM（mod.mcimirror.top，镜像 Modrinth/CurseForge API 与文件 CDN）。
+    #[serde(default)]
+    pub community_source_mode: DownloadSourceMode,
     /// 下载速度上限（bytes/s），0 = 无限制
     #[serde(default)]
     pub max_speed: u64,
-    /// 正版登录时验证 SSL 证书（默认关闭）
-    #[serde(default)]
-    pub verify_ssl: bool,
 }
 
 impl Default for DownloaderConfig {
@@ -153,8 +155,8 @@ impl Default for DownloaderConfig {
             minecraft_dir: ".minecraft".into(),
             file_source_mode: DownloadSourceMode::PreferOfficial,
             manifest_source_mode: DownloadSourceMode::PreferOfficial,
+            community_source_mode: DownloadSourceMode::PreferOfficial,
             max_speed: 0,
-            verify_ssl: false,
         }
     }
 }
