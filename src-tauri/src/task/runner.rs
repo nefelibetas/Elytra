@@ -553,6 +553,10 @@ pub async fn run_task(
         p.progress = 100.0;
         p.current_phase = "完成".into();
     });
+    // 终态统一移除后端任务注册（与 set_error/set_cancelled 一致）
+    if let Ok(p) = progress.try_lock() {
+        task::global().fail(&p.task_id);
+    }
 }
 
 /// 拉取并解析版本 JSON，同时保留原始文本（ModLoader 合并需保留未知字段）。

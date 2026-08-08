@@ -354,6 +354,10 @@ pub fn set_completed(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, files
         p.completed_bytes = bytes;
         update_progress(p);
     });
+    // 终态统一移除后端任务注册（与 set_error 一致），task_exists 语义：存在=运行中
+    if let Ok(p) = progress.try_lock() {
+        global().fail(&p.task_id);
+    }
 }
 
 /// 收尾步骤的文件计数已由 EmitLoop 的 completed 公式（natives 计数 + 完成标志）承担，
@@ -376,4 +380,8 @@ pub fn set_cancelled(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>) {
         p.status = TaskStatus::Cancelled;
         p.current_phase = "已取消".into();
     });
+    // 终态统一移除后端任务注册
+    if let Ok(p) = progress.try_lock() {
+        global().fail(&p.task_id);
+    }
 }

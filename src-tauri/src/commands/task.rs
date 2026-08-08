@@ -115,3 +115,10 @@ pub async fn cancel_task(task_id: String) -> Result<(), String> {
     task::global().cancel(&task_id);
     Ok(())
 }
+
+/// 任务是否仍注册（存在 = 运行中；终态已移除）。
+/// 前端预注册任务后查询：查不到说明终态事件可能先于注册到达（竞态），应清理卡片。
+#[tauri::command]
+pub fn task_exists(task_id: String) -> bool {
+    task::global().exists(&task_id)
+}

@@ -4,9 +4,9 @@ pub mod config;
 pub mod constants;
 pub mod downloader;
 mod events;
+mod jdk;
 mod persist;
 pub mod task;
-mod jdk;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -53,6 +53,7 @@ pub fn run() {
             commands::task::download_files,
             commands::task::download_single_file,
             commands::task::cancel_task,
+            commands::task::task_exists,
             commands::launch::spawn_game,
             commands::launch::check_launch_env,
             commands::launch::get_memory_info,

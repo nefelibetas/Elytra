@@ -189,11 +189,16 @@ pub async fn run_repair_task(
         version_dir_name, jar_missing, lib_pending, asst_pending, natives_pending, total_files
     );
     if total_files == 0 {
-        return task::update_and_emit(&app, progress, |p| {
+        task::update_and_emit(&app, progress, |p| {
             p.status = TaskStatus::Done;
             p.progress = 100.0;
             p.current_phase = "文件完整，无需修复".into();
         });
+        // 终态统一移除后端任务注册
+        if let Ok(p) = progress.try_lock() {
+            task::global().fail(&p.task_id);
+        }
+        return;
     }
 
     // 动态步骤 → 各阶段在 steps 中的索引（与 submit 生成的顺序一致）
@@ -402,6 +407,10 @@ pub async fn run_repair_task(
         p.progress = 100.0;
         p.current_phase = "修复完成".into();
     });
+    // 终态统一移除后端任务注册
+    if let Ok(p) = progress.try_lock() {
+        task::global().fail(&p.task_id);
+    }
 }
 
 /// Count total and pending assets (sha1-matched against local cache, multi-threaded).

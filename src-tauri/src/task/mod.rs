@@ -189,8 +189,14 @@ impl TaskManager {
         inner
             .tasks
             .values()
-            .filter_map(|h| h.progress.try_lock().ok().map(|p| p.clone()))
+            .map(|h| h.progress.lock().unwrap().clone())
             .collect()
+    }
+
+    /// 任务是否仍注册（存在 = 运行中；终态已由 fail/remove 移除）。
+    /// 前端用于校正"预注册与终态事件竞态"：查不到即任务已结束。
+    pub fn exists(&self, id: &str) -> bool {
+        self.inner.lock().unwrap().tasks.contains_key(id)
     }
 
     pub fn remove(&self, id: &str) {

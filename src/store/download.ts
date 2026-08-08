@@ -171,6 +171,15 @@ export const dlState = reactive({
       steps: [],
       previousRoute: prevRoute,
     })
+    // 竞态校正：任务可能极快终态（error/done 事件先于预注册到达被忽略，
+    // 卡片以 pending 残留且不再有终态事件）。终态任务已从后端移除，
+    // 查不到即已结束——移除卡片并退出下载管理。
+    const exists = await invoke<boolean>("task_exists", { taskId })
+    if (!exists) {
+      terminalTaskIds.add(taskId)
+      this.removeTask(taskId)
+      this.onTaskError?.("下载任务", "任务已结束（可能极快失败或完成）", prevRoute)
+    }
     return taskId
   },
 
@@ -187,6 +196,9 @@ export const dlState = reactive({
 
 let listening = false
 
+// 已收到终态事件/已移除的任务 id：防迟到的 running 事件让已移除卡片"幽灵复活"
+const terminalTaskIds = new Set<string>()
+
 export function ensureListen() {
   if (listening) return
   listening = true
@@ -196,6 +208,7 @@ export function ensureListen() {
     if (idx >= 0) {
       if (p.status === "done") {
         // 任务完成：从前端清理（触发完成通知后移除）
+        terminalTaskIds.add(p.task_id)
         const prev = dlState.tasks[idx]?.previousRoute;
         dlState.onTaskDone?.(p.name || "下载任务", prev || "/");
         dlState.removeTask(p.task_id);
@@ -203,6 +216,7 @@ export function ensureListen() {
       }
       if (p.status === "error") {
         // 任务失败：弹错误 dialog + 清理卡片并退出下载管理（残留由后端清理）
+        terminalTaskIds.add(p.task_id)
         const prev = dlState.tasks[idx]?.previousRoute;
         dlState.onTaskError?.(p.name || "下载任务", p.error || "未知错误", prev || "/");
         dlState.removeTask(p.task_id);
@@ -219,7 +233,10 @@ export function ensureListen() {
       dlState.tasks[idx].currentPhase = p.current_phase
       dlState.tasks[idx].steps = p.steps
       dlState.tasks[idx].error = p.error ?? undefined
-    } else if (p.status !== "done" && p.status !== "cancelled" && p.status !== "error") {
+    } else if (
+      p.status !== "done" && p.status !== "cancelled" && p.status !== "error"
+      && !terminalTaskIds.has(p.task_id)
+    ) {
       // 后端直接创建的任务（如补全文件）不在前端列表中：首次事件自动注册，
       // 保证下载管理 FAB 与进度可见。
       // done/cancelled/error 均为终态：done 与 error 走上方移除逻辑；cancelled 由取消
