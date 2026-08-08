@@ -1,7 +1,7 @@
 // ── Installer 式安装（Forge / NeoForge）：官方 installer.jar 下载 + ZIP 解析 ──
 
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
@@ -181,8 +181,73 @@ async fn download_and_extract(
     let libraries: Vec<crate::downloader::model::Library> =
         serde_json::from_value(merged["libraries"].clone()).unwrap_or_default();
     // Forge 的 client 合并 jar（79MB）在 installer 的 data/client.lzma（LZMA 压缩）里，
-    // version.json 中该库 URL 为空：先解压到库路径（带 sha1 校验），NeoForge 无此文件跳过。
-    extract_forge_client_lzma(&mut archive, &libraries, &lib_dir)?;
+    // version.json 中该库 URL 为空：经官方 binarypatcher 生成（vanilla client + client.lzma），
+    // NeoForge 无此文件跳过。
+    extract_forge_client_lzma(
+        &mut archive,
+        &libraries,
+        &lib_dir,
+        &mc_dir,
+        dir_name,
+        config,
+    )
+    .await?;
+    // NeoForge：install_profile.libraries 含 `net.neoforged:neoforge:{ver}:universal`
+    // （不在 version.json）。官方部署中 universal 不进 classpath——GameLocator production
+    // 分支从 libraries 目录加载它；放进 classpath 会因"找到 NeoForge 类而无 MC 类"
+    // 误报 "The patched Minecraft jar is missing"。这里仅下载文件到 libraries。
+    // 同时运行 installertools PROCESS_MINECRAFT_JAR 生成 minecraft-client-patched
+    // （GameLocator 新安装方式优先使用它，避免缺 client-srg.jar 报 corrupted）。
+    if let Some(uni) = profile.as_ref().and_then(|p| {
+        p["libraries"]
+            .as_array()
+            .and_then(|a| {
+                a.iter().find(|l| {
+                    l["name"].as_str().is_some_and(|n| {
+                        n.starts_with("net.neoforged:neoforge:") && n.ends_with(":universal")
+                    })
+                })
+            })
+    }) {
+        let neo_version = uni["name"]
+            .as_str()
+            .and_then(|n| n.split(':').nth(2))
+            .unwrap_or("")
+            .to_string();
+        if neo_version.is_empty() {
+            return Err("NeoForge universal 坐标缺少版本号".into());
+        }
+        download_neoforge_universal(uni, &lib_dir, config).await?;
+        // 运行 installertools 生成 patched（前置：等待 vanilla 下载完成）
+        extract_neoforge_client(
+            &mut archive,
+            &libraries,
+            &lib_dir,
+            &mc_dir,
+            dir_name,
+            &neo_version,
+            config,
+        )
+        .await?;
+        // 其余库走统一下载（universal 已单独下载，JSON 无其条目 → 不进 classpath）
+        let sources: Vec<&DownloadSource> = config.file_sources_list();
+        let counter = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        crate::downloader::library::download_libraries(
+            &libraries,
+            &lib_dir,
+            config.concurrency as usize,
+            &sources,
+            counter,
+            bytes.clone(),
+            lib_bytes.clone(),
+        )
+        .await
+        .map_err(|e| format!("下载 {} 支持库失败:\n{}", dir_name, e.join("\n")))?;
+        if let Some(h) = hook {
+            h(LoaderEvent::LibsDone);
+        }
+        return Ok(());
+    }
     // 其余库走统一下载（多源回退 + sha1 校验；URL 为空的库在此被跳过）
     let sources: Vec<&DownloadSource> = config.file_sources_list();
     let counter = Arc::new(std::sync::atomic::AtomicU32::new(0));
@@ -204,15 +269,18 @@ async fn download_and_extract(
     Ok(())
 }
 
-/// Forge 26.x：把 installer 内 `data/client.lzma`（LZMA 压缩的 Forge 合并 client jar）
-/// 解压到 libraries 中 `net.minecraftforge:forge:{ver}:client` 对应路径（该库 URL 为空，
-/// 官方以 lzma 形式随 installer 分发）。NeoForge/旧版无此文件时静默跳过。
-fn extract_forge_client_lzma(
+/// Forge 26.x：用官方 binarypatcher 生成 forge client jar（79MB）。
+/// 流程与 install_profile 的 processors 一致：vanilla client + `data/client.lzma`
+/// （LZMA 压缩补丁）经官方工具合成 → 写入 libraries 中 `forge:{ver}:client` 路径。
+/// 需要 JDK（与启动游戏同一套）运行官方工具；NeoForge/旧版无该库时静默跳过。
+async fn extract_forge_client_lzma(
     archive: &mut zip::ZipArchive<std::fs::File>,
     libraries: &[crate::downloader::model::Library],
     lib_dir: &Path,
+    mc_dir: &Path,
+    dir_name: &str,
+    config: &crate::config::downloader::model::DownloaderConfig,
 ) -> Result<(), String> {
-    use std::io::Read;
     // 定位 URL 为空的 forge client 库（其 path/sha1 由 version.json 给出）
     let Some(art) = libraries.iter().find_map(|l| {
         let a = l.downloads.as_ref()?.artifact.as_ref()?;
@@ -228,34 +296,299 @@ fn extract_forge_client_lzma(
     if dest.exists() && crate::downloader::hash::file_sha1_matches(&dest, &art.sha1) {
         return Ok(());
     }
-    let mut compressed = Vec::new();
-    for i in 0..archive.len() {
-        let mut entry = archive
-            .by_index(i)
-            .map_err(|e| format!("读取安装程序条目失败: {e}"))?;
-        if !entry.name().ends_with("client.lzma") {
+
+    // 1. 从 installer 提取 data/client.lzma
+    let tmp = mc_dir.join(".elytra").join("tmp");
+    std::fs::create_dir_all(&tmp).map_err(|e| format!("创建临时目录失败: {e}"))?;
+    let client_lzma = tmp.join("client.lzma");
+    {
+        let mut found = false;
+        for i in 0..archive.len() {
+            let mut entry = archive
+                .by_index(i)
+                .map_err(|e| format!("读取安装程序条目失败: {e}"))?;
+            if !entry.name().ends_with("client.lzma") {
+                continue;
+            }
+            let mut out = std::fs::File::create(&client_lzma)
+                .map_err(|e| format!("创建文件失败: {e}"))?;
+            std::io::copy(&mut entry, &mut out).map_err(|e| format!("提取 client.lzma 失败: {e}"))?;
+            found = true;
+            break;
+        }
+        if !found {
+            return Ok(()); // 无补丁文件（NeoForge 等），跳过
+        }
+    }
+
+    // 2. 等待 vanilla client 就绪（runner 的 ClientJar 步骤与之并行，轮询至多 120s）
+    // 注意：不能只看大小 >1MB——部分写入的文件也会超过该阈值，zip 损坏会导致工具退出码 1。
+    // 稳定检测：连续 3 次（间隔 500ms）大小不变即视为下载完成。
+    let vanilla_jar = wait_for_vanilla_client(mc_dir, dir_name).await?;
+
+    // 3. 下载官方工具（binarypatcher + classpath 依赖，来自 maven.minecraftforge.net）
+    let tools = tmp.join("forge-tools");
+    std::fs::create_dir_all(&tools).map_err(|e| format!("创建目录失败: {e}"))?;
+    const TOOL_JARS: &[(&str, &str)] = &[
+        ("binarypatcher", "net/minecraftforge/binarypatcher/1.3.4/binarypatcher-1.3.4.jar"),
+        ("hash-utils", "net/minecraftforge/hash-utils/0.2.3/hash-utils-0.2.3.jar"),
+        ("srgutils", "net/minecraftforge/srgutils/0.6.6/srgutils-0.6.6.jar"),
+        ("jopt-simple", "net/sf/jopt-simple/jopt-simple/6.0-alpha-3/jopt-simple-6.0-alpha-3.jar"),
+        ("lzma-java", "com/github/jponge/lzma-java/1.3/lzma-java-1.3.jar"),
+        ("javaxdelta", "com/nothome/javaxdelta/2.0.1/javaxdelta-2.0.1.jar"),
+        ("trove", "trove/trove/1.0.2/trove-1.0.2.jar"),
+    ];
+    let sources: Vec<&crate::config::downloader::model::DownloadSource> =
+        config.file_sources_list();
+    for (name, maven_path) in TOOL_JARS {
+        let tool_dest = tools.join(format!("{name}.jar"));
+        if tool_dest.exists() {
             continue;
         }
-        entry
-            .read_to_end(&mut compressed)
-            .map_err(|e| format!("读取 client.lzma 失败: {e}"))?;
-        break;
+        let urls: Vec<String> = sources
+            .iter()
+            .map(|s| s.mirror_url(&format!("https://maven.minecraftforge.net/{maven_path}")))
+            .collect();
+        crate::downloader::fetcher::fetch_fallback(&urls, &tool_dest, None::<fn(u64, u64)>)
+            .await
+            .map_err(|e| format!("下载 {name} 工具失败: {e}"))?;
     }
-    if compressed.is_empty() {
-        return Ok(());
+
+    // 4. 运行 binarypatcher（与 install_profile 的 client 侧 processor 参数一致）
+    let java = resolve_java()?;
+    let sep = if cfg!(windows) { ";" } else { ":" };
+    let classpath = TOOL_JARS
+        .iter()
+        .map(|(n, _)| tools.join(format!("{n}.jar")).display().to_string())
+        .collect::<Vec<_>>()
+        .join(sep);
+    let output = tokio::process::Command::new(&java)
+        .args([
+            "-cp",
+            &classpath,
+            "net.minecraftforge.binarypatcher.ConsoleTool",
+            "--clean",
+            &vanilla_jar.display().to_string(),
+            "--output",
+            &dest.display().to_string(),
+            "--apply",
+            &client_lzma.display().to_string(),
+            "--data",
+            "--unpatched",
+            "--store",
+            "--marker",
+            ".forge_patched_minecraft",
+        ])
+        .output()
+        .await
+        .map_err(|e| format!("运行 Forge 补丁工具失败: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let tail: Vec<&str> = stderr.lines().rev().take(15).collect();
+        let tail = tail.iter().rev().cloned().collect::<Vec<_>>().join("\n");
+        return Err(format!(
+            "Forge 补丁工具退出码 {:?}\n{}",
+            output.status.code().unwrap_or(-1),
+            tail
+        ));
     }
-    let mut out = Vec::new();
-    lzma_rs::lzma_decompress(&mut compressed.as_slice(), &mut out)
-        .map_err(|e| format!("解压 client.lzma 失败: {e}"))?;
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
-    }
-    std::fs::write(&dest, &out).map_err(|e| format!("写入 client.jar 失败: {e}"))?;
+
+    // 5. sha1 校验
     if !crate::downloader::hash::file_sha1_matches(&dest, &art.sha1) {
         let _ = std::fs::remove_file(&dest);
-        return Err("Forge client.jar 解压后 sha1 校验失败".into());
+        return Err("Forge client.jar 生成后 sha1 校验失败".into());
     }
     Ok(())
+}
+
+/// NeoForge 的 universal jar：install_profile.libraries 才有（version.json 无）。
+/// 官方部署中它不进启动 classpath——GameLocator production 分支经 -DlibraryDirectory
+/// 从 libraries 目录直接加载（作为 mod 加入 pipeline）。若放进 classpath，
+/// RequiredSystemFiles 会找到 NeoForge 类而缺 MC 类 → 误报 "The patched Minecraft jar is missing"。
+/// 因此这里仅下载文件到 libraries 目录，不写进展开 JSON。
+async fn download_neoforge_universal(
+    uni: &serde_json::Value,
+    lib_dir: &Path,
+    config: &crate::config::downloader::model::DownloaderConfig,
+) -> Result<(), String> {
+    let name = uni["name"]
+        .as_str()
+        .ok_or("NeoForge universal 坐标缺失")?;
+    let parts: Vec<&str> = name.split(':').collect();
+    if parts.len() < 4 {
+        return Err(format!("NeoForge universal 坐标格式异常: {name}"));
+    }
+    let (group, artifact, version, classifier) = (parts[0], parts[1], parts[2], parts[3]);
+    let file = format!("{artifact}-{version}-{classifier}.jar");
+    let rel = format!(
+        "{}/{}/{}/{}",
+        group.replace('.', "/"),
+        artifact,
+        version,
+        file
+    );
+    let dest = lib_dir.join(&rel);
+    if dest.exists() && dest.metadata().map(|m| m.len() > 1_000_000).unwrap_or(false) {
+        return Ok(());
+    }
+    let sources: Vec<&crate::config::downloader::model::DownloadSource> =
+        config.file_sources_list();
+    let urls: Vec<String> = sources
+        .iter()
+        .map(|s| s.mirror_url(&format!("https://maven.neoforged.net/releases/{rel}")))
+        .collect();
+    crate::downloader::fetcher::fetch_fallback(&urls, &dest, None::<fn(u64, u64)>)
+        .await
+        .map_err(|e| format!("下载 NeoForge universal 失败: {e}"))?;
+    Ok(())
+}
+
+/// NeoForge 26.x：运行 installertools `PROCESS_MINECRAFT_JAR` 生成
+/// `libraries/net/neoforged/minecraft-client-patched/{ver}/minecraft-client-patched-{ver}.jar`
+/// （GameLocator 新安装方式优先使用它；旧方式缺 client-srg.jar 会报 corrupted）。
+/// 输入：vanilla client + installer 内 `data/client.lzma`（工具内部 LZMA 解压，与 Forge 相同）。
+async fn extract_neoforge_client(
+    archive: &mut zip::ZipArchive<std::fs::File>,
+    _libraries: &[crate::downloader::model::Library],
+    lib_dir: &Path,
+    mc_dir: &Path,
+    dir_name: &str,
+    neo_version: &str,
+    config: &crate::config::downloader::model::DownloaderConfig,
+) -> Result<(), String> {
+    let patched_name = format!("minecraft-client-patched-{neo_version}.jar");
+    let dest = lib_dir
+        .join("net/neoforged/minecraft-client-patched")
+        .join(neo_version)
+        .join(&patched_name);
+    if dest.exists() && dest.metadata().map(|m| m.len() > 1_000_000).unwrap_or(false) {
+        return Ok(());
+    }
+
+    // 1. 提取 data/client.lzma
+    let tmp = mc_dir.join(".elytra").join("tmp");
+    std::fs::create_dir_all(&tmp).map_err(|e| format!("创建临时目录失败: {e}"))?;
+    let client_lzma = tmp.join("client.lzma");
+    {
+        let mut found = false;
+        for i in 0..archive.len() {
+            let mut entry = archive
+                .by_index(i)
+                .map_err(|e| format!("读取安装程序条目失败: {e}"))?;
+            if !entry.name().ends_with("client.lzma") {
+                continue;
+            }
+            let mut out = std::fs::File::create(&client_lzma)
+                .map_err(|e| format!("创建文件失败: {e}"))?;
+            std::io::copy(&mut entry, &mut out)
+                .map_err(|e| format!("提取 client.lzma 失败: {e}"))?;
+            found = true;
+            break;
+        }
+        if !found {
+            return Ok(());
+        }
+    }
+
+    // 2. 等待 vanilla client 就绪（runner 的 ClientJar 步骤与之并行，轮询至多 120s）
+    // 稳定检测：连续 3 次（间隔 500ms）大小不变即视为下载完成（部分写入会损坏 zip）。
+    let vanilla_jar = wait_for_vanilla_client(mc_dir, dir_name).await?;
+
+    // 3. 下载 installertools fatjar（maven.neoforged.net + 镜像）
+    let tools = tmp.join("neoforge-tools");
+    std::fs::create_dir_all(&tools).map_err(|e| format!("创建目录失败: {e}"))?;
+    let tool_path = "net/neoforged/installertools/installertools/4.0.12/installertools-4.0.12-fatjar.jar";
+    let tool_dest = tools.join("installertools-fatjar.jar");
+    if !tool_dest.exists() {
+        let sources: Vec<&crate::config::downloader::model::DownloadSource> =
+            config.file_sources_list();
+        let urls: Vec<String> = sources
+            .iter()
+            .map(|s| s.mirror_url(&format!("https://maven.neoforged.net/releases/{tool_path}")))
+            .collect();
+        crate::downloader::fetcher::fetch_fallback(&urls, &tool_dest, None::<fn(u64, u64)>)
+            .await
+            .map_err(|e| format!("下载 installertools 工具失败: {e}"))?;
+    }
+
+    // 4. 运行 PROCESS_MINECRAFT_JAR
+    let java = resolve_java()?;
+    let output = tokio::process::Command::new(&java)
+        .args([
+            "-cp",
+            &tool_dest.display().to_string(),
+            "net.neoforged.installertools.ConsoleTool",
+            "--task",
+            "PROCESS_MINECRAFT_JAR",
+            "--no-mod-manifest",
+            "--input",
+            &vanilla_jar.display().to_string(),
+            "--output",
+            &dest.display().to_string(),
+            "--extract-libraries-to",
+            &lib_dir.display().to_string(),
+            "--apply-patches",
+            &client_lzma.display().to_string(),
+        ])
+        .output()
+        .await
+        .map_err(|e| format!("运行 NeoForge 补丁工具失败: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let tail: Vec<&str> = stderr.lines().rev().take(15).collect();
+        let tail = tail.iter().rev().cloned().collect::<Vec<_>>().join("\n");
+        return Err(format!(
+            "NeoForge 补丁工具退出码 {:?}\n{}",
+            output.status.code().unwrap_or(-1),
+            tail
+        ));
+    }
+    if !dest.exists() || dest.metadata().map(|m| m.len() < 1_000_000).unwrap_or(true) {
+        return Err("NeoForge patched client 生成失败".into());
+    }
+    Ok(())
+}
+
+/// 等待 runner 的 ClientJar 步骤下载完成（与 install 步骤并行）：
+/// 不能只看大小>1MB（部分写入也会超阈值），连续 3 次（间隔 500ms）大小不变即视为完成。
+/// 上限 120s，超时返回错误。
+async fn wait_for_vanilla_client(mc_dir: &Path, dir_name: &str) -> Result<PathBuf, String> {
+    let vanilla_jar = mc_dir
+        .join("versions")
+        .join(dir_name)
+        .join(format!("{dir_name}.jar"));
+    let mut last_size = 0u64;
+    let mut stable = 0u32;
+    for _ in 0..240 {
+        let size = std::fs::metadata(&vanilla_jar).map(|m| m.len()).unwrap_or(0);
+        if size > 1_000_000 {
+            if size == last_size {
+                stable += 1;
+                if stable >= 3 {
+                    return Ok(vanilla_jar);
+                }
+            } else {
+                stable = 0;
+            }
+            last_size = size;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    Err("等待原版客户端下载超时（120s），无法生成 ModLoader client".into())
+}
+
+/// 运行补丁工具所需的 Java 可执行文件（与游戏启动同一套 JDK 配置）。
+fn resolve_java() -> Result<std::path::PathBuf, String> {    use crate::jdk::model::JdkSelection;
+    let cfg = crate::jdk::read();
+    match cfg.jdk_selection {
+        JdkSelection::Manual { path } => Ok(crate::jdk::java_bin_path(std::path::Path::new(&path))),
+        JdkSelection::Auto => {
+            let jdk = cfg.discovered_jdks.first().ok_or(
+                "未检测到 Java 环境，无法生成 Forge client（需要 JDK 运行官方补丁工具，请先在设置中配置 Java）",
+            )?;
+            Ok(crate::jdk::java_bin_path(std::path::Path::new(&jdk.path)))
+        }
+    }
 }
 
 /// Resolve version.json from ZIP install_profile.json metadata or by scanning.

@@ -496,8 +496,18 @@ fn build_classpath(version_json: &VersionJson, lib_dir: &Path, client_jar: &Path
         }
     }
 
-    // client.jar
-    cp.push(client_jar.to_path_buf());
+    // client.jar（NeoForge 除外）：NeoForge 官方部署中 patched/混淆 vanilla 均不进 classpath，
+    // GameLocator 生产分支经 -DlibraryDirectory 直接从 libraries 目录加载 minecraft-client-patched；
+    // 若把版本目录的混淆 vanilla 放进 classpath，RequiredSystemFiles 会在其上找到全部系统文件，
+    // 误判为 dev 环境报 "Minecraft-Dists attribute" 缺失。
+    let is_neoforge = version_json.libraries.iter().any(|l| {
+        l.name
+            .starts_with("net.neoforged:neoforge:")
+            && l.name.ends_with(":universal")
+    });
+    if !is_neoforge {
+        cp.push(client_jar.to_path_buf());
+    }
 
     cp
 }
