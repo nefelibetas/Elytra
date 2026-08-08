@@ -495,6 +495,9 @@ onMounted(() => {
                       <template v-else-if="loaderLoading[ld.key]">正在加载...</template>
                       <template v-else-if="getLoaderVersions(ld.key, selectedVersion.id).length">可以添加</template>
                       <template v-else>无</template>
+                      <!-- Fabric/Quilt 的 loader 版本无关（meta 不按 MC 版本过滤），
+                           列表内任何版本（含最新）与当前 MC 的兼容性均未验证，需手动确认 -->
+                      <span v-if="ld.key === 'fabric' || ld.key === 'quilt'" class="det-ld-warn" title="该加载器为版本无关构建，meta 不按 MC 版本过滤；最新版也可能与当前 MC 不兼容，安装前请确认">兼容性需确认</span>
                     </span>
                   </span>
                   <span v-if="selectedLoaderVersions[ld.key] || getLoaderVersions(ld.key, selectedVersion.id).length" class="det-ld-actions">
@@ -659,7 +662,13 @@ onMounted(() => {
 .det-ld-icon { flex-shrink: 0; border-radius: 3px; width: 32px; height: 32px; }
 .det-ld-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; text-align: left; }
 .det-ld-title { font-weight: 600; color: var(--text-primary); font-size: 13px; }
-.det-ld-sub { font-size: 11px; color: var(--text-tertiary); }
+.det-ld-sub { font-size: 11px; color: var(--text-tertiary); display: flex; align-items: center; gap: 6px; }
+.det-ld-warn {
+  font-size: 10px;
+  color: #d97706;
+  font-weight: 500;
+  flex-shrink: 0;
+}
 .det-ld-actions { display: flex; align-items: center; gap: 2px; margin-left: auto; }
 .det-ld-remove {
   width: 24px; height: 24px;

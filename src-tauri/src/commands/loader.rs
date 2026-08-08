@@ -49,6 +49,81 @@ fn parse_maven_versions(xml: &str) -> Vec<String> {
         .collect()
 }
 
+/// 分离主版本号与预发布后缀（第一个 '-' 后），如 "0.20.0-beta.9" → ("0.20.0", "-beta.9")。
+fn split_pre(v: &str) -> (String, String) {
+    match v.find('-') {
+        Some(i) => (v[..i].to_string(), v[i..].to_string()),
+        None => (v.to_string(), String::new()),
+    }
+}
+
+/// 语义化版本升序比较："0.20.0" < "0.20.2" < "0.24.0"；预发布（alpha < beta < rc）< 正式。
+fn cmp_version_asc(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let (ma, pa) = split_pre(a);
+    let (mb, pb) = split_pre(b);
+    let nums = |s: &str| -> Vec<u64> { s.split('.').filter_map(|x| x.parse().ok()).collect() };
+    let (na, nb) = (nums(&ma), nums(&mb));
+    for i in 0..na.len().max(nb.len()) {
+        let (va, vb) = (na.get(i).copied().unwrap_or(0), nb.get(i).copied().unwrap_or(0));
+        if va != vb {
+            return va.cmp(&vb);
+        }
+    }
+    let rank = |p: &str| -> u8 {
+        if p.is_empty() {
+            4
+        } else if p.contains("alpha") {
+            0
+        } else if p.contains("beta") {
+            1
+        } else if p.contains("rc") || p.contains("pre") {
+            2
+        } else {
+            3
+        }
+    };
+    match rank(&pa).cmp(&rank(&pb)) {
+        Ordering::Equal => pa.cmp(&pb),
+        o => o,
+    }
+}
+
+/// 语义化版本降序排序（最新在前）："0.24.0" > "0.20.2-beta.1" > "0.20.0-beta.9"。
+/// 不依赖源顺序（Quilt meta 实测乱序、OptiFine pre 系列乱序）。
+fn sort_versions_desc(mut versions: Vec<String>) -> Vec<String> {
+    versions.sort_by(|a, b| cmp_version_asc(b, a));
+    versions
+}
+
+/// OptiFine patch 升序比较：preview（pre 前缀）低于正式版（字母前缀）；
+/// 同级按前缀字母序 + 尾部数字数值序（"pre9" < "pre10"、"G8" < "J1"）。
+fn cmp_optifine_asc(a: &str, b: &str) -> std::cmp::Ordering {
+    let parse = |s: &str| -> (String, u64) {
+        let i = s.find(|c: char| c.is_ascii_digit()).unwrap_or(s.len());
+        (s[..i].to_string(), s[i..].parse().unwrap_or(0))
+    };
+    let (pa, na) = parse(a);
+    let (pb, nb) = parse(b);
+    let rank = |p: &str| -> u8 {
+        if p.starts_with("pre") {
+            0 // 预览版
+        } else {
+            1 // 正式版
+        }
+    };
+    rank(&pa)
+        .cmp(&rank(&pb))
+        .then_with(|| pa.cmp(&pb))
+        .then_with(|| na.cmp(&nb))
+}
+
+/// OptiFine patch 降序：正式版（J1）在前，preview 系列按数值降序（pre15 > pre9）。
+fn sort_optifine_desc(mut versions: Vec<String>) -> Vec<String> {
+    versions.sort_by(|a, b| cmp_optifine_asc(b, a));
+    versions
+}
+
 /// 拉取 maven-metadata.xml 版本列表（多源回退）。
 async fn fetch_maven_versions(
     make_url: impl Fn(&crate::config::downloader::model::DownloadSource) -> String,
@@ -62,16 +137,15 @@ async fn fetch_maven_versions(
 
 #[tauri::command]
 pub async fn get_forge_versions(mc_version: String) -> Result<Vec<String>, String> {
-    // maven-metadata 版本号是 "{mc}-{ver}" 全名（如 "1.21.11-61.2.0"），
-    // 过滤出当前 MC 并剥掉前缀，返回纯 ver；列表老在前，反转为新在前
+    // maven-metadata 版本号是 "{mc}-{ver}" 全名（如 "26.2-65.1.0"），
+    // 过滤出当前 MC 并剥掉前缀，返回纯 ver；语义化降序（最新在前）
     let prefix = format!("{}-", mc_version);
-    let mut versions: Vec<String> = fetch_maven_versions(|s| s.forge_list_url.clone())
+    let versions: Vec<String> = fetch_maven_versions(|s| s.forge_list_url.clone())
         .await?
         .into_iter()
         .filter_map(|v| v.strip_prefix(&prefix).map(|s| s.to_string()))
         .collect();
-    versions.reverse();
-    Ok(versions)
+    Ok(sort_versions_desc(versions))
 }
 
 #[tauri::command]
@@ -80,30 +154,33 @@ pub async fn get_fabric_versions(mc_version: String) -> Result<Vec<String>, Stri
         s.url(&s.fabric_list_url, &[("mc", &mc_version)])
     })
     .await?;
-    Ok(data.into_iter().map(|e| e.loader.version).collect())
+    Ok(sort_versions_desc(
+        data.into_iter().map(|e| e.loader.version).collect(),
+    ))
 }
 
 #[tauri::command]
 pub async fn get_quilt_versions(mc_version: String) -> Result<Vec<String>, String> {
+    // Quilt meta 实测乱序（0.20.0-beta.7 排在 beta.8 前、0.24.0 混在中间），必须显式排序
     let data = fetch_versions::<QuiltEntry>(|s| {
         s.url(&s.quilt_list_url, &[("mc", &mc_version)])
     })
     .await?;
-    Ok(data.into_iter().map(|e| e.loader.version).collect())
+    Ok(sort_versions_desc(
+        data.into_iter().map(|e| e.loader.version).collect(),
+    ))
 }
 
 #[tauri::command]
 pub async fn get_neoforge_versions(mc_version: String) -> Result<Vec<String>, String> {
-    // NeoForge 版本号内嵌 MC 版本："1.21.11" → "21.11.x"，"1.20.4" → "20.4.x"；
-    // maven-metadata 里的快照（如 0.25w14craftmine.x）不匹配前缀自然排除
+    // NeoForge 版本号内嵌 MC 版本："26.2" → "26.2.x"；maven-metadata 里的快照自然排除
     let prefix = format!("{}.", mc_version.strip_prefix("1.").unwrap_or(mc_version.as_str()));
-    let mut versions: Vec<String> = fetch_maven_versions(|s| s.neoforge_list_url.clone())
+    let versions: Vec<String> = fetch_maven_versions(|s| s.neoforge_list_url.clone())
         .await?
         .into_iter()
         .filter(|v| v.starts_with(&prefix))
         .collect();
-    versions.reverse();
-    Ok(versions)
+    Ok(sort_versions_desc(versions))
 }
 
 #[tauri::command]
@@ -112,11 +189,12 @@ pub async fn get_optifine_versions(mc_version: String) -> Result<Vec<String>, St
         s.url(&s.optifine_list_url, &[("mc", &mc_version)])
     })
     .await?;
-    Ok(data
-        .into_iter()
-        .filter(|e| !e.filename.starts_with("preview_"))
-        .map(|e| e.patch)
-        .collect())
+    Ok(sort_optifine_desc(
+        data.into_iter()
+            .filter(|e| !e.filename.starts_with("preview_"))
+            .map(|e| e.patch)
+            .collect(),
+    ))
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -222,5 +300,49 @@ mod tests {
     #[test]
     fn parse_maven_versions_empty_when_no_versions() {
         assert!(parse_maven_versions("<metadata></metadata>").is_empty());
+    }
+
+    /// Quilt meta 实测乱序样例：排序后必须最新在前且数字语义正确
+    /// （0.24.0 > 0.20.2-beta.1 > 0.20.0-beta.9 > 0.20.0-beta.1 > 0.17.0-beta.3）。
+    #[test]
+    fn sort_versions_desc_semantic_order() {
+        let input = vec![
+            "0.20.0-beta.1".to_string(),
+            "0.20.0-beta.9".to_string(),
+            "0.24.0".to_string(),
+            "0.20.2-beta.1".to_string(),
+            "0.17.0-beta.3".to_string(),
+            "0.20.0-beta.7".to_string(),
+        ];
+        assert_eq!(
+            sort_versions_desc(input),
+            vec![
+                "0.24.0",
+                "0.20.2-beta.1",
+                "0.20.0-beta.9",
+                "0.20.0-beta.7",
+                "0.20.0-beta.1",
+                "0.17.0-beta.3",
+            ]
+        );
+        // 多位数段：0.10 > 0.9
+        assert_eq!(
+            sort_versions_desc(vec!["0.9".into(), "0.10".into()]),
+            vec!["0.10", "0.9"]
+        );
+    }
+
+    /// OptiFine pre 系列按数值排序：pre15 > pre14 > pre10 > pre9，正式版（J1）在前。
+    #[test]
+    fn sort_optifine_desc_numeric() {
+        assert_eq!(
+            sort_optifine_desc(vec![
+                "pre9".into(),
+                "J1".into(),
+                "pre15".into(),
+                "pre10".into()
+            ]),
+            vec!["J1", "pre15", "pre10", "pre9"]
+        );
     }
 }
