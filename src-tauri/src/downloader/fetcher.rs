@@ -20,9 +20,15 @@ use crate::constants::{SECT_DOWNLOADER, UA_DOWNLOAD};
 static MIRROR_SEM: LazyLock<Arc<Semaphore>> =
     LazyLock::new(|| Arc::new(Semaphore::new(crate::constants::MIRROR_CONCURRENCY)));
 
-/// 该 URL 是否走镜像源（需受镜像并发限制）。镜像源域名变化时在此追加。
+/// 该 URL 是否走限流（镜像源 + 高并发不稳定的官方 maven，统一限 MIRROR_CONCURRENCY）。
+/// 镜像源域名变化时在此追加；maven.neoforged.net / maven.quiltmc.org / maven.minecraftforge.net
+/// 实测高并发下连接失败（服务器限流），无镜像兜底的源（quilt）尤其依赖此保护。
 fn is_mirror_url(url: &str) -> bool {
-    url.contains("bmclapi") || url.contains("mcimirror")
+    url.contains("bmclapi")
+        || url.contains("mcimirror")
+        || url.contains("maven.neoforged.net")
+        || url.contains("maven.quiltmc.org")
+        || url.contains("maven.minecraftforge.net")
 }
 
 fn build_client() -> Client {
@@ -213,10 +219,17 @@ async fn fetch_from_sources<F: Fn(u64, u64)>(
     if seen.is_empty() {
         return Err(FetchError::InvalidUrl);
     }
-    Err(FetchError::Network(format!(
+    let mut msg = format!(
         "所有下载源均失败（已重试 {MAX_ATTEMPTS} 轮），请检查网络或稍后重试:\n{}",
         seen.join("\n")
-    )))
+    );
+    // 404 = 文件在该源不存在（常见于镜像缓存尚未同步新版本/新构件），引导换版本
+    if seen.iter().any(|s| s.contains("HTTP 404")) {
+        msg.push_str(
+            "\n\n提示：部分源返回 404（该文件在镜像源可能尚未同步，或版本不存在），可稍后重试或选择其他版本",
+        );
+    }
+    Err(FetchError::Network(msg))
 }
 
 async fn fetch_once<F: Fn(u64, u64)>(
@@ -457,6 +470,10 @@ mod tests {
         assert!(!is_mirror_url("https://libraries.minecraft.net/x.jar"));
         assert!(!is_mirror_url("https://piston-data.mojang.com/x.jar"));
         assert!(!is_mirror_url("https://resources.download.minecraft.net/x"));
+        // 高并发不稳的官方 maven 同样限流
+        assert!(is_mirror_url("https://maven.quiltmc.org/repository/release/org/quiltmc/x.jar"));
+        assert!(is_mirror_url("https://maven.neoforged.net/releases/net/neoforged/x.jar"));
+        assert!(is_mirror_url("https://maven.minecraftforge.net/net/minecraftforge/x.jar"));
     }
 
     /// 镜像源（URL 含 bmclapi）请求并发必须被限制在 MIRROR_CONCURRENCY 以内：
