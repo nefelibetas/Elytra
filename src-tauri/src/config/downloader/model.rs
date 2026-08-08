@@ -59,6 +59,17 @@ const REWRITE_RULES: &[(&str, &str)] = &[
         "resources.download.minecraft.net",
         "https://bmclapi2.bangbang93.com/assets",
     ),
+    // ModLoader 官方 maven 对高并发不友好（实测 20 并发即有连接失败），
+    // BMCLAPI 完整镜像 maven.neoforged.net / maven.minecraftforge.net（302 实测可用）。
+    // 仅做备用：官方源仍优先，镜像源兜底，避免整批库下载失败。
+    (
+        "maven.neoforged.net",
+        "https://bmclapi2.bangbang93.com/maven",
+    ),
+    (
+        "maven.minecraftforge.net",
+        "https://bmclapi2.bangbang93.com/maven",
+    ),
 ];
 
 fn official() -> DownloadSource {
@@ -183,5 +194,36 @@ impl DownloaderConfig {
     /// 文件下载按 file_source_mode 的完整源顺序（含备用源，用于过慢降级）。
     pub fn file_sources_list(&self) -> Vec<&DownloadSource> {
         self.sources_in_order(self.file_source_mode)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 镜像源必须把 ModLoader 官方 maven 重写到 BMCLAPI 镜像，
+    /// 官方源保持原样；未知域名不动。
+    #[test]
+    fn mirror_url_rewrites_modloader_maven_on_china_source() {
+        let china = china();
+        assert_eq!(
+            china.mirror_url("https://maven.neoforged.net/releases/net/neoforged/bus/8.0.5/bus-8.0.5.jar"),
+            "https://bmclapi2.bangbang93.com/maven/releases/net/neoforged/bus/8.0.5/bus-8.0.5.jar"
+        );
+        assert_eq!(
+            china.mirror_url("https://maven.minecraftforge.net/net/minecraftforge/forge/1.21/forge-1.21.jar"),
+            "https://bmclapi2.bangbang93.com/maven/net/minecraftforge/forge/1.21/forge-1.21.jar"
+        );
+        // 未知域名保持原样
+        assert_eq!(
+            china.mirror_url("https://libraries.minecraft.net/com/x/y.jar"),
+            "https://bmclapi2.bangbang93.com/libraries/com/x/y.jar"
+        );
+        // 官方源不重写
+        let official = official();
+        assert_eq!(
+            official.mirror_url("https://maven.neoforged.net/releases/net/neoforged/bus/8.0.5/bus-8.0.5.jar"),
+            "https://maven.neoforged.net/releases/net/neoforged/bus/8.0.5/bus-8.0.5.jar"
+        );
     }
 }
