@@ -34,7 +34,6 @@ url = "2"
 percent-encoding = "2"
 getrandom = "0.2"
 zip = "2"
-lzma-rs = "0.3"
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
