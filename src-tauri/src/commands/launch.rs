@@ -420,10 +420,13 @@ pub async fn spawn_game(
     // 高性能显卡：写入 Windows DirectX 用户 GPU 偏好注册表
     platform::apply_gpu_preference(launcher_config.use_high_performance_gpu);
 
-    // 启动子进程
+    // 启动子进程：cwd = 版本隔离的 gameDir，与官方启动器一致——
+    // 游戏相对路径行为正确，crash-reports/logs 落在版本目录而非启动器目录
+    let game_dir = mc_dir.join("versions").join(&version_dir_name);
     let mut command = std::process::Command::new(&cmd.args[0]);
     command
         .args(&cmd.args[1..])
+        .current_dir(&game_dir)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .stdin(std::process::Stdio::null());
@@ -455,14 +458,41 @@ pub async fn spawn_game(
     // 后台线程等待进程退出后通知前端
     let app_handle = app.clone();
     let version_label = version_dir_name.clone();
+    let crash_dir = game_dir.join("crash-reports");
     std::thread::spawn(move || {
         let status = child.wait();
         // 退出码随事件送出：前端据此区分正常退出与崩溃（非 0 → 错误级提示）
         let exit_code = status.ok().and_then(|s| s.code());
-        let _ = app_handle.emit(crate::events::GAME_EXITED, (pid, version_label, exit_code));
+        // 崩溃时定位最新 crash report 文件，随事件交给前端展示
+        let crash_report = if !matches!(exit_code, Some(0)) {
+            latest_crash_report(&crash_dir)
+        } else {
+            None
+        };
+        let _ = app_handle.emit(
+            crate::events::GAME_EXITED,
+            (pid, version_label, exit_code, crash_report),
+        );
     });
 
     Ok(pid)
+}
+
+/// 返回目录下最新的 `crash-*.txt` 文件路径（崩溃报告）。
+fn latest_crash_report(dir: &std::path::Path) -> Option<String> {
+    use std::time::SystemTime;
+    let mut latest: Option<(SystemTime, String)> = None;
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("txt") {
+            continue;
+        }
+        let modified = path.metadata().ok()?.modified().ok()?;
+        if latest.as_ref().is_none_or(|(t, _)| modified > *t) {
+            latest = Some((modified, path.display().to_string()));
+        }
+    }
+    latest.map(|(_, p)| p)
 }
 
 #[cfg(test)]
