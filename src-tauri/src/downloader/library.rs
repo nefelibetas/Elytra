@@ -27,9 +27,9 @@ pub fn count_pending(libraries: &[Library], lib_dir: &Path) -> usize {
     libraries.iter().filter(|lib| {
         if !should_download(lib) { return false; }
         let Some(artifact) = lib.downloads.as_ref().and_then(|d| d.artifact.as_ref()) else { return false; };
-        // URL 为空：由安装器内嵌（如 Forge client.lzma）提供，不计入下载/完整性
-        if artifact.url.is_empty() { return false; }
         let dest = lib_dir.join(&artifact.path);
+        // URL 为空的库（如 Forge client，由安装器 client.lzma 解压提供）无法下载，
+        // 但必须存在且 sha1 匹配——缺失说明安装不完整，应提示重装而非放行
         if dest.exists() && file_sha1_matches(&dest, &artifact.sha1) { return false; }
         true
     }).count()
@@ -45,9 +45,6 @@ pub fn missing_libraries(libraries: &[Library], lib_dir: &Path) -> Vec<String> {
                 return None;
             }
             let artifact = lib.downloads.as_ref()?.artifact.as_ref()?;
-            if artifact.url.is_empty() {
-                return None;
-            }
             let dest = lib_dir.join(&artifact.path);
             if dest.exists() && file_sha1_matches(&dest, &artifact.sha1) {
                 return None;
@@ -97,6 +94,8 @@ pub async fn download_libraries(
     step_bytes: Arc<AtomicU64>,
 ) -> Result<(), Vec<String>> {
     let mut tasks: Vec<(Vec<String>, std::path::PathBuf, String)> = Vec::new();
+    // 安装器内嵌提供、无法网络下载的库（如 Forge client.lzma）缺失时的错误
+    let mut internal_missing: Vec<String> = Vec::new();
 
     for lib in libraries {
         if !should_download(lib) {
@@ -105,17 +104,28 @@ pub async fn download_libraries(
         let Some(artifact) = lib.downloads.as_ref().and_then(|d| d.artifact.as_ref()) else {
             continue;
         };
-        // URL 为空：由安装器内嵌（如 Forge client.lzma）或其他途径提供，不在此下载
+        let dest = libraries_dir.join(&artifact.path);
+        // URL 为空：由安装器内嵌（如 Forge client.lzma）提供，不在此下载；
+        // 文件缺失时无法补救，明确报错提示重装（修复任务不再静默"完成"）
         if artifact.url.is_empty() {
+            if !(dest.exists() && file_sha1_matches(&dest, &artifact.sha1)) {
+                internal_missing.push(format!(
+                    "{}: 该库由安装器内嵌提供，网络无法下载，请重新安装对应版本",
+                    dest.display()
+                ));
+            }
             continue;
         }
-        let dest = libraries_dir.join(&artifact.path);
         if dest.exists() && file_sha1_matches(&dest, &artifact.sha1) {
             continue;
         }
         // 每个源各构造一个 URL，下载时主源过慢/失败自动降级
         let urls: Vec<String> = sources.iter().map(|s| s.mirror_url(&artifact.url)).collect();
         tasks.push((urls, dest, artifact.sha1.clone()));
+    }
+
+    if !internal_missing.is_empty() {
+        return Err(internal_missing);
     }
 
     if tasks.is_empty() {
