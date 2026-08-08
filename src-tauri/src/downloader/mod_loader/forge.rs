@@ -25,12 +25,20 @@ pub async fn install_forge(
     let mc = config.minecraft_dir_abs();
     let dir_name = format!("{}-forge-{}", mc_version, forge_version);
     let vdir = mc.join("versions").join(&dir_name);
-    let url = source.url(
-        &source.forge_installer_url,
-        &[("mc", mc_version), ("ver", forge_version)],
-    );
+    // 安装程序也走多源回退：官方 maven 对国内网络不稳（连接重置/超时），
+    // 按 file_source_mode 的完整源顺序各构造一个 URL，fetch_fallback 依次尝试
+    let installer_urls: Vec<String> = config
+        .file_sources_list()
+        .iter()
+        .map(|s| {
+            s.url(
+                &s.forge_installer_url,
+                &[("mc", mc_version), ("ver", forge_version)],
+            )
+        })
+        .collect();
     download_and_extract(
-        &url,
+        &installer_urls,
         source,
         config,
         &vdir,
@@ -59,9 +67,15 @@ pub async fn install_neoforge(
     let mc = config.minecraft_dir_abs();
     let dir_name = format!("{}-neoforge-{}", mc_version, neo_version);
     let vdir = mc.join("versions").join(&dir_name);
-    let url = source.url(&source.neoforge_installer_url, &[("ver", neo_version)]);
+    // 安装程序也走多源回退：官方 maven 对国内网络不稳（连接重置/超时），
+    // 按 file_source_mode 的完整源顺序各构造一个 URL，fetch_fallback 依次尝试
+    let installer_urls: Vec<String> = config
+        .file_sources_list()
+        .iter()
+        .map(|s| s.url(&s.neoforge_installer_url, &[("ver", neo_version)]))
+        .collect();
     download_and_extract(
-        &url,
+        &installer_urls,
         source,
         config,
         &vdir,
@@ -78,7 +92,7 @@ pub async fn install_neoforge(
 /// 10 参数均为必需数据（URL/源/配置/目标/字节计数/阶段钩子），私有实现细节，不抽象。
 #[allow(clippy::too_many_arguments)]
 async fn download_and_extract(
-    installer_url: &str,
+    installer_urls: &[String],
     source: &DownloadSource,
     config: &DownloaderConfig,
     version_dir: &Path,
@@ -92,7 +106,10 @@ async fn download_and_extract(
     let mc_dir = config.minecraft_dir_abs();
     let tmp = mc_dir.join(".elytra").join("tmp");
     std::fs::create_dir_all(&tmp).map_err(|e| format!("创建临时目录失败: {}", e))?;
-    let installer_name = installer_url.rsplit('/').next().unwrap_or("installer.jar");
+    let installer_name = installer_urls
+        .first()
+        .and_then(|u| u.rsplit('/').next())
+        .unwrap_or("installer.jar");
     let installer_path = tmp.join(installer_name);
     // 字节级进度：增量累加进外部计数器（收尾心跳显示速度）；同时写入 LoaderLibs 步骤计数
     let file_done = Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -111,7 +128,7 @@ async fn download_and_extract(
             }
         }
     };
-    fetcher::fetch(installer_url, &installer_path, Some(progress))
+    fetcher::fetch_fallback(installer_urls, &installer_path, Some(progress))
         .await
         .map_err(|e| format!("下载安装程序失败: {}", e))?;
 
@@ -139,7 +156,8 @@ async fn download_and_extract(
         resolve_version_json(&mut archive, &profile, &json_path, dir_name, parent_text).await?;
 
     // --- jar ---
-    let found_jar = resolve_jar(&mut archive, &profile, source, &jar_path, dir_name).await?;
+    let found_jar =
+        resolve_jar(&mut archive, &profile, source, &jar_path, dir_name, &json_path).await?;
 
     let _ = std::fs::remove_file(&installer_path);
     if !found_json {
@@ -237,7 +255,23 @@ async fn resolve_jar(
     source: &DownloadSource,
     jar_path: &Path,
     dir_name: &str,
+    json_path: &Path,
 ) -> Result<bool, String> {
+    // 新版 Forge（26.x+）：install_profile 无 install 字段，ZIP 里只有 shim/universal（属 library，
+    // 进 classpath 不进版本目录）；client.jar 由 version.json 的 downloads.client（继承 vanilla）提供，
+    // runner 的 ClientJar 步骤下载。此时不需要（也不应）提取任何 Forge jar 覆盖 client。
+    if let Some(p) = profile {
+        if p.get("install").is_none() {
+            if let Ok(json) = std::fs::read_to_string(json_path) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) {
+                    if v.pointer("/downloads/client").is_some() {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+    }
+
     // Strategy 1: install_profile → install.filePath → extract from ZIP
     if let Some(p) = profile {
         if let Some(fp) = p.pointer("/install/filePath").and_then(|v| v.as_str()) {
@@ -253,10 +287,34 @@ async fn resolve_jar(
         }
     }
 
-    // Strategy 2: install_profile → path (maven path) → download from maven
+    // Strategy 2: install_profile → path (maven 坐标或路径) → download from maven
     if let Some(p) = profile {
         if let Some(maven_path) = p["path"].as_str() {
-            let jar_url = format!("{}/{}", source.maven_url.trim_end_matches('/'), maven_path);
+            // maven 坐标 "group:artifact:version[:classifier]" → 路径格式
+            let path = if maven_path.contains(':') {
+                let parts: Vec<&str> = maven_path.split(':').collect();
+                if parts.len() >= 3 {
+                    let (group, artifact, version) = (parts[0], parts[1], parts[2]);
+                    let dir = format!(
+                        "{}/{}/{}/{}",
+                        group.replace('.', "/"),
+                        artifact,
+                        version,
+                        artifact
+                    );
+                    match parts.get(3) {
+                        Some(c) => format!("{}-{}-{}.jar", dir, version, c),
+                        None => format!("{}-{}.jar", dir, version),
+                    }
+                } else {
+                    maven_path.to_string()
+                }
+            } else {
+                maven_path.to_string()
+            };
+            // Forge 构件在 maven.minecraftforge.net（source.maven_url 是 Mojang 库源，不适用）；
+            // 镜像源经 mirror_url 重写到 BMCLAPI /maven/
+            let jar_url = source.mirror_url(&format!("https://maven.minecraftforge.net/{path}"));
             return Ok(fetcher::fetch(&jar_url, jar_path, None::<fn(u64, u64)>)
                 .await
                 .is_ok());
