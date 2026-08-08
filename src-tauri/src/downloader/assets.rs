@@ -62,6 +62,7 @@ pub async fn fetch_asset_index(
     Ok(text)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn download_assets(
     index_url: &str,
     index_id: &str,
@@ -70,6 +71,7 @@ pub async fn download_assets(
     concurrency: usize,
     counter: Arc<AtomicU32>,
     bytes_counter: Arc<AtomicU64>,
+    step_bytes: Arc<AtomicU64>,
 ) -> Result<(), Vec<String>> {
     let sources: Vec<&crate::config::downloader::model::DownloadSource> =
         config.file_sources_list();
@@ -106,6 +108,7 @@ pub async fn download_assets(
             .collect();
         let ctr = counter.clone();
         let bc = bytes_counter.clone();
+        let sb = step_bytes.clone();
         let permit = sem.clone();
         handles.push(tokio::spawn(async move {
             let _permit = permit.acquire_owned().await.unwrap();
@@ -119,9 +122,12 @@ pub async fn download_assets(
                     let file_done = Arc::new(AtomicU64::new(0));
                     let fd = file_done.clone();
                     let b = bc.clone();
+                    let s = sb.clone();
                     move |downloaded: u64, _total: u64| {
                         let prev = fd.swap(downloaded, Ordering::Relaxed);
-                        b.fetch_add(downloaded.saturating_sub(prev), Ordering::Relaxed);
+                        let delta = downloaded.saturating_sub(prev);
+                        b.fetch_add(delta, Ordering::Relaxed);
+                        s.fetch_add(delta, Ordering::Relaxed);
                     }
                 };
                 match fetcher::fetch_fallback(&urls, &dest, Some(progress)).await {

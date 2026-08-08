@@ -1,14 +1,14 @@
 // ── Profile 式安装（Fabric / Quilt）：官方 meta profile JSON → merge_loader_profile 合并 ──
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, AtomicU64};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use crate::config::downloader::model::{DownloadSource, DownloaderConfig};
 use crate::downloader::fetcher::http;
 
 use super::{LoaderEvent, LoaderHook, merge_loader_profile};
 
-/// 8 参数均为必需数据（版本/模板/配置/字节计数/阶段钩子），私有实现细节，不抽象。
+/// 10 参数均为必需数据（版本/模板/配置/字节计数/阶段钩子），私有实现细节，不抽象。
 #[allow(clippy::too_many_arguments)]
 async fn install_loader_via_profile(
     mc_version: &str,
@@ -18,6 +18,8 @@ async fn install_loader_via_profile(
     profile_url_tpl: &str,
     config: &DownloaderConfig,
     bytes: &Arc<AtomicU64>,
+    lib_bytes: &Arc<AtomicU64>,
+    lib_total: &Arc<AtomicU64>,
     hook: Option<LoaderHook<'_>>,
 ) -> Result<(), String> {
     let source = config.file_primary_source().ok_or("no active source")?;
@@ -54,6 +56,14 @@ async fn install_loader_via_profile(
     let libraries: Vec<crate::downloader::model::Library> =
         serde_json::from_value(merged["libraries"].clone()).unwrap_or_default();
     let sources: Vec<&DownloadSource> = config.file_sources_list();
+    // LoaderLibs 步骤字节分母：需下载的 loader 依赖库总字节（本地扫描可算）
+    let pending_bytes = crate::downloader::library::total_lib_bytes(&libraries)
+        .saturating_sub(crate::downloader::library::existing_lib_bytes(
+            &libraries, &lib_dir,
+        ));
+    if pending_bytes > 0 {
+        lib_total.store(pending_bytes, Ordering::Relaxed);
+    }
     // 文件计数保持静默（任务步骤不细分），字节计入外部计数器（收尾心跳显示速度/进度）
     let counter = Arc::new(AtomicU32::new(0));
     crate::downloader::library::download_libraries(
@@ -63,6 +73,7 @@ async fn install_loader_via_profile(
         &sources,
         counter,
         bytes.clone(),
+        lib_bytes.clone(),
     )
     .await
     .map_err(|e| format!("下载库失败:\n{}", e.join("\n")))?;
@@ -82,12 +93,15 @@ async fn install_loader_via_profile(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn install_fabric(
     mc_version: &str,
     loader_version: &str,
     parent_text: &str,
     config: &DownloaderConfig,
     bytes: &Arc<AtomicU64>,
+    lib_bytes: &Arc<AtomicU64>,
+    lib_total: &Arc<AtomicU64>,
     hook: Option<LoaderHook<'_>>,
 ) -> Result<(), String> {
     let source = config.file_primary_source().ok_or("no active source")?;
@@ -99,17 +113,22 @@ pub async fn install_fabric(
         &source.fabric_profile_url,
         config,
         bytes,
+        lib_bytes,
+        lib_total,
         hook,
     )
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn install_quilt(
     mc_version: &str,
     loader_version: &str,
     parent_text: &str,
     config: &DownloaderConfig,
     bytes: &Arc<AtomicU64>,
+    lib_bytes: &Arc<AtomicU64>,
+    lib_total: &Arc<AtomicU64>,
     hook: Option<LoaderHook<'_>>,
 ) -> Result<(), String> {
     let source = config.file_primary_source().ok_or("no active source")?;
@@ -121,6 +140,8 @@ pub async fn install_quilt(
         &source.quilt_profile_url,
         config,
         bytes,
+        lib_bytes,
+        lib_total,
         hook,
     )
     .await

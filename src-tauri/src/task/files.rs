@@ -12,7 +12,7 @@ use crate::constants;
 use crate::downloader::fetcher;
 use crate::persist;
 use crate::task::model::{DownloadFileKind, DownloadFilesTask};
-use crate::task::{self, TaskProgress};
+use crate::task::{self, StepStatus, TaskProgress, TaskStatus};
 
 use super::progress::{
     cancelled, set_cancelled, set_error, set_phase, step_done, update_progress,
@@ -128,7 +128,7 @@ pub async fn run_files_task(
                     p.total_bytes = acc + ct;
                     p.speed_bps = speed_ema;
                     if let Some(st) = p.steps.get_mut(cur_idx.load(Ordering::Relaxed) as usize) {
-                        if st.status == "running" {
+                        if st.status == StepStatus::Running {
                             st.progress = if ct > 0 {
                                 (cb as f64 / ct as f64).min(1.0) * 100.0
                             } else {
@@ -145,7 +145,7 @@ pub async fn run_files_task(
     for (i, (dest, tmp)) in items.iter().enumerate() {
         cur_idx.store(i as u32, Ordering::Relaxed);
         let f = &task.files[i];
-        set_phase(&app, progress, "", &format!("下载 {}", f.filename), i, "running");
+        set_phase(&app, progress, None, &format!("下载 {}", f.filename), i, StepStatus::Running);
         cur_bytes.store(0, Ordering::Relaxed);
         cur_total.store(0, Ordering::Relaxed);
         let cb = {
@@ -190,7 +190,7 @@ pub async fn run_files_task(
     emit_handle.abort();
 
     task::update_and_emit(&app, progress, |p| {
-        p.status = "done".into();
+        p.status = TaskStatus::Done;
         p.progress = 100.0;
         p.completed_files = total_files;
         p.total_files = total_files;

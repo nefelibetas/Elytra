@@ -70,6 +70,7 @@ pub async fn download_libraries(
     sources: &[&DownloadSource],
     counter: Arc<AtomicU32>,
     bytes_counter: Arc<AtomicU64>,
+    step_bytes: Arc<AtomicU64>,
 ) -> Result<(), Vec<String>> {
     let mut tasks: Vec<(Vec<String>, std::path::PathBuf, String)> = Vec::new();
 
@@ -101,6 +102,7 @@ pub async fn download_libraries(
         let permit = sem.clone();
         let ctr = counter.clone();
         let bc = bytes_counter.clone();
+        let sb = step_bytes.clone();
         handles.push(tokio::spawn(async move {
             let _permit = permit.acquire_owned().await.unwrap();
             // 字节级进度：把本文件已下载字节的增量累加进全局计数（而非完成时整体累加），
@@ -109,9 +111,12 @@ pub async fn download_libraries(
                 let file_done = Arc::new(AtomicU64::new(0));
                 let fd = file_done.clone();
                 let b = bc.clone();
+                let s = sb.clone();
                 move |downloaded: u64, _total: u64| {
                     let prev = fd.swap(downloaded, Ordering::Relaxed);
-                    b.fetch_add(downloaded.saturating_sub(prev), Ordering::Relaxed);
+                    let delta = downloaded.saturating_sub(prev);
+                    b.fetch_add(delta, Ordering::Relaxed);
+                    s.fetch_add(delta, Ordering::Relaxed);
                 }
             };
             match fetcher::fetch_fallback(&urls, &dest, Some(progress)).await {

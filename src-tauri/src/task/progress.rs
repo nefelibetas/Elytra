@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter};
 
-use super::{emit, global, update_and_emit, TaskProgress};
+use super::{emit, global, update_and_emit, StepStatus, TaskProgress, TaskStatus};
 
 /// AtomicBool → u32（completed 计数用）。
 fn b2u(b: &AtomicBool) -> u32 {
@@ -32,11 +32,30 @@ pub struct EmitLoop {
     pub jar_bytes: Arc<AtomicU64>,
     pub jar_total: Arc<AtomicU64>,
     pub bytes: Arc<AtomicU64>,
+    /// 分步字节：libs/assets/natives 各自步骤内下载字节增量（分子）
+    pub lib_bytes: Arc<AtomicU64>,
+    pub asst_bytes: Arc<AtomicU64>,
+    pub natives_bytes: Arc<AtomicU64>,
+    /// 分步字节分母：需下载部分的总字节（0 时回退文件数公式）
+    pub lib_pending_bytes: u64,
+    pub asst_pending_bytes: u64,
+    pub natives_pending_bytes: u64,
+    /// 安装步骤字节：LoaderLibs/OptiFine/FabricApi（total 运行时填充 content-length；
+    /// Fabric 场景预填 pending 字节）
+    pub loader_libs_bytes: Arc<AtomicU64>,
+    pub loader_libs_total: Arc<AtomicU64>,
+    pub optifine_bytes: Arc<AtomicU64>,
+    pub optifine_total: Arc<AtomicU64>,
+    pub fabric_bytes: Arc<AtomicU64>,
+    pub fabric_total: Arc<AtomicU64>,
     /// 各下载/安装步骤索引（None = 任务无该步骤）
     pub jar_step: Option<usize>,
     pub lib_step: Option<usize>,
     pub asst_step: Option<usize>,
     pub natives_step: Option<usize>,
+    pub loader_libs_step: Option<usize>,
+    pub optifine_step: Option<usize>,
+    pub fabric_step: Option<usize>,
     /// 收尾安装步骤完成标志（EmitLoop 覆盖阶段 B 全程，这些步骤的进度计入 completed）
     pub cfg_done: Arc<AtomicBool>,
     pub libs_done: Arc<AtomicBool>,
@@ -78,6 +97,11 @@ impl EmitLoop {
 
                 let done = {
                     let mut p = self.progress.lock().unwrap();
+                    // 终态（error/cancelled/收尾 done）事件由 set_error/set_cancelled/任务收尾
+                    // 独占发出；此处不再重复 emit（否则前端会收到第二次终态事件）。
+                    if p.status != TaskStatus::Running {
+                        break;
+                    }
 
                     // 实时速度：字节增量差分 + EMA 平滑（每轮采样，间隔 >=300ms 才更新）
                     let cur_bytes = self.bytes.load(Ordering::Relaxed) + jb;
@@ -100,56 +124,99 @@ impl EmitLoop {
                     p.total_files = self.total_files;
                     // current_phase：第一个未完成（running）的步骤——各并行路完成时
                     // 自行 step_done，此判断实时跟随真实活动
-                    if let Some(st) = p.steps.iter().find(|s| s.status == "running") {
+                    if let Some(st) = p.steps.iter().find(|s| s.status == StepStatus::Running) {
                         p.current_phase = st.name.clone();
                     }
 
-                    // 分步进度：client.jar 字节级（total 未知时用完成标志），其余按完成数
-                    if let Some(i) = self.jar_step {
-                        if let Some(st) = p.steps.get_mut(i) {
-                            if st.status == "running" {
-                                let jar_total = if js > 0 { js } else { self.jar_total_fallback };
-                                st.progress = if jar_total > 0 {
-                                    (jb as f64 / jar_total as f64 * 100.0).min(100.0)
-                                } else {
-                                    (jd as f64) * 100.0
-                                };
+                // 分步进度：client.jar 字节级（total 未知时用完成标志），其余按字节/文件数
+                if let Some(i) = self.jar_step {
+                    if let Some(st) = p.steps.get_mut(i) {
+                        if st.status == StepStatus::Running {
+                            let jar_total = if js > 0 { js } else { self.jar_total_fallback };
+                            st.progress = if jar_total > 0 {
+                                (jb as f64 / jar_total as f64 * 100.0).min(100.0)
+                            } else {
+                                (jd as f64) * 100.0
+                            };
+                        }
+                    }
+                }
+                // libs/assets/natives：字节优先（pending 字节已知时），否则回退文件数
+                let pct_of = |done: u64, total: u64| (done as f64 / total as f64 * 100.0).min(100.0);
+                if let Some(i) = self.lib_step {
+                    if let Some(st) = p.steps.get_mut(i) {
+                        if st.status == StepStatus::Running {
+                            st.progress = if self.lib_pending_bytes > 0 {
+                                pct_of(self.lib_bytes.load(Ordering::Relaxed), self.lib_pending_bytes)
+                            } else if self.lib_pending > 0 {
+                                (ld as f64 / self.lib_pending as f64 * 100.0).min(100.0)
+                            } else {
+                                100.0
+                            };
+                        }
+                    }
+                }
+                if let Some(i) = self.asst_step {
+                    if let Some(st) = p.steps.get_mut(i) {
+                        if st.status == StepStatus::Running {
+                            st.progress = if self.asst_pending_bytes > 0 {
+                                pct_of(self.asst_bytes.load(Ordering::Relaxed), self.asst_pending_bytes)
+                            } else if self.asst_pending > 0 {
+                                (ad as f64 / self.asst_pending as f64 * 100.0).min(100.0)
+                            } else {
+                                100.0
+                            };
+                        }
+                    }
+                }
+                if let Some(i) = self.natives_step {
+                    if let Some(st) = p.steps.get_mut(i) {
+                        if st.status == StepStatus::Running {
+                            st.progress = if self.natives_pending_bytes > 0 {
+                                pct_of(
+                                    self.natives_bytes.load(Ordering::Relaxed),
+                                    self.natives_pending_bytes,
+                                )
+                            } else if self.natives_pending > 0 {
+                                (nd as f64 / self.natives_pending as f64 * 100.0).min(100.0)
+                            } else {
+                                100.0
+                            };
+                        }
+                    }
+                }
+                // 安装步骤：单文件/多文件字节（total 运行时填充，0 时保持 0 直到完成跳 100%）
+                if let Some(i) = self.loader_libs_step {
+                    if let Some(st) = p.steps.get_mut(i) {
+                        if st.status == StepStatus::Running {
+                            let t = self.loader_libs_total.load(Ordering::Relaxed);
+                            if t > 0 {
+                                st.progress =
+                                    pct_of(self.loader_libs_bytes.load(Ordering::Relaxed), t);
                             }
                         }
                     }
-                    if let Some(i) = self.lib_step {
-                        if let Some(st) = p.steps.get_mut(i) {
-                            if st.status == "running" {
-                                st.progress = if self.lib_pending > 0 {
-                                    (ld as f64 / self.lib_pending as f64 * 100.0).min(100.0)
-                                } else {
-                                    100.0
-                                };
+                }
+                if let Some(i) = self.optifine_step {
+                    if let Some(st) = p.steps.get_mut(i) {
+                        if st.status == StepStatus::Running {
+                            let t = self.optifine_total.load(Ordering::Relaxed);
+                            if t > 0 {
+                                st.progress = pct_of(self.optifine_bytes.load(Ordering::Relaxed), t);
                             }
                         }
                     }
-                    if let Some(i) = self.asst_step {
-                        if let Some(st) = p.steps.get_mut(i) {
-                            if st.status == "running" {
-                                st.progress = if self.asst_pending > 0 {
-                                    (ad as f64 / self.asst_pending as f64 * 100.0).min(100.0)
-                                } else {
-                                    100.0
-                                };
+                }
+                if let Some(i) = self.fabric_step {
+                    if let Some(st) = p.steps.get_mut(i) {
+                        if st.status == StepStatus::Running {
+                            let t = self.fabric_total.load(Ordering::Relaxed);
+                            if t > 0 {
+                                st.progress = pct_of(self.fabric_bytes.load(Ordering::Relaxed), t);
                             }
                         }
                     }
-                    if let Some(i) = self.natives_step {
-                        if let Some(st) = p.steps.get_mut(i) {
-                            if st.status == "running" {
-                                st.progress = if self.natives_pending > 0 {
-                                    (nd as f64 / self.natives_pending as f64 * 100.0).min(100.0)
-                                } else {
-                                    100.0
-                                };
-                            }
-                        }
-                    }
+                }
 
                     // 总进度 = 已完成字节 / 总字节（与检测阶段 set_completed 同公式，
                     // 无缝衔接：检测完即 initial/total，下载中继续单调涨；大文件按字节占比，
@@ -165,10 +232,8 @@ impl EmitLoop {
                     };
 
                     let _ = self.app.emit(crate::events::TASK_PROGRESS, &*p);
-                    // 自然退出：计数到顶，或取消，或任务已离开 running（done/error/cancelled）
-                    completed >= self.total_files
-                        || self.cancel.load(Ordering::SeqCst)
-                        || p.status != "running"
+                    // 自然退出：计数到顶，或取消（终态事件仍由 set_cancelled/收尾发出）
+                    completed >= self.total_files || self.cancel.load(Ordering::SeqCst)
                 };
                 if done {
                     break;
@@ -181,7 +246,7 @@ impl EmitLoop {
 
 /// 收尾阶段进度心跳：EmitLoop 在并行下载结束时 abort，natives/ModLoader/OptiFine/Fabric API
 /// 期间读 bytes_counter 增量恢复速度与字节进度（避免显示"速度 0 / 进度冻结"）。
-/// 自终止：status 离开 "running"（done/error/cancelled）即退出，无需外部 abort。
+/// 自终止：status 离开 `TaskStatus::Running`（done/error/cancelled）即退出，无需外部 abort。
 pub fn spawn_tail_loop(
     app: &AppHandle,
     progress: &Arc<Mutex<TaskProgress>>,
@@ -214,7 +279,7 @@ pub fn spawn_tail_loop(
                     last_sample = now;
                 }
                 let mut p = progress.lock().unwrap();
-                if p.status != "running" {
+                if p.status != TaskStatus::Running {
                     return;
                 }
                 if !initialized {
@@ -237,18 +302,18 @@ pub fn cancelled(cancel: &Arc<AtomicBool>) -> bool {
 pub fn set_phase(
     app: &AppHandle,
     progress: &Arc<Mutex<TaskProgress>>,
-    status: &str,
+    status: Option<TaskStatus>,
     phase: &str,
     step: usize,
-    step_status: &str,
+    step_status: StepStatus,
 ) {
     update_and_emit(app, progress, |p| {
-        if !status.is_empty() {
-            p.status = status.into();
+        if let Some(s) = status {
+            p.status = s;
         }
         p.current_phase = phase.into();
         if let Some(st) = p.steps.get_mut(step) {
-            st.status = step_status.into();
+            st.status = step_status;
         }
     });
 }
@@ -256,7 +321,7 @@ pub fn set_phase(
 pub fn step_done(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, idx: usize) {
     update_and_emit(app, progress, |p| {
         if let Some(st) = p.steps.get_mut(idx) {
-            st.status = "done".into();
+            st.status = StepStatus::Done;
             st.progress = 100.0;
         }
     });
@@ -295,7 +360,7 @@ pub fn set_completed(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, files
 /// bump_completed 已删除。
 pub fn set_error(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, msg: String) {
     update_and_emit(app, progress, |p| {
-        p.status = "error".into();
+        p.status = TaskStatus::Error;
         p.error = Some(msg);
     });
     // 移除任务注册（前端收到 error 事件后清理卡片）。
@@ -308,7 +373,7 @@ pub fn set_error(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, msg: Stri
 
 pub fn set_cancelled(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>) {
     update_and_emit(app, progress, |p| {
-        p.status = "cancelled".into();
+        p.status = TaskStatus::Cancelled;
         p.current_phase = "已取消".into();
     });
 }

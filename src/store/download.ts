@@ -219,11 +219,12 @@ export function ensureListen() {
       dlState.tasks[idx].currentPhase = p.current_phase
       dlState.tasks[idx].steps = p.steps
       dlState.tasks[idx].error = p.error ?? undefined
-    } else if (p.status !== "done" && p.status !== "cancelled") {
+    } else if (p.status !== "done" && p.status !== "cancelled" && p.status !== "error") {
       // 后端直接创建的任务（如补全文件）不在前端列表中：首次事件自动注册，
       // 保证下载管理 FAB 与进度可见。
-      // done/cancelled 均为终态：done 走上方移除逻辑；cancelled 由取消流程
-      // （cancelTask + removeTask）主动清理，事件到达时不应重新注册（否则幽灵复活）。
+      // done/cancelled/error 均为终态：done 与 error 走上方移除逻辑；cancelled 由取消
+      // 流程（cancelTask + removeTask）主动清理。终态事件重复到达（如 EmitLoop
+      // 退出的最后一轮）时卡片已移除，不应重新注册（否则幽灵复活）。
       dlState.addTask({
         taskId: p.task_id,
         name: p.name,

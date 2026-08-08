@@ -1,5 +1,8 @@
 // ── OptiFine 安装：下载 OptiFine jar + 生成 minimal version.json ──
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use crate::config::downloader::model::DownloaderConfig;
 use crate::downloader::fetcher;
 
@@ -8,6 +11,9 @@ pub async fn install_optifine(
     patch: &str,
     of_type: &str,
     config: &DownloaderConfig,
+    bytes: &Arc<AtomicU64>,
+    step_bytes: &Arc<AtomicU64>,
+    step_total: &Arc<AtomicU64>,
 ) -> Result<(), String> {
     let config = config.clone();
     let source = config
@@ -26,7 +32,25 @@ pub async fn install_optifine(
 
     std::fs::create_dir_all(&vdir).map_err(|e| format!("创建目录失败: {}", e))?;
     let jar_path = vdir.join(&filename);
-    fetcher::fetch(&jar_url, &jar_path, None::<fn(u64, u64)>)
+    // 字节级进度：增量累加进全局计数（收尾心跳显示速度）与 OptiFine 步骤计数；
+    // total（content-length）写入步骤分母
+    let file_done = Arc::new(AtomicU64::new(0));
+    let progress = {
+        let fd = file_done.clone();
+        let b = bytes.clone();
+        let sb = step_bytes.clone();
+        let st = step_total.clone();
+        move |downloaded: u64, total: u64| {
+            let prev = fd.swap(downloaded, Ordering::Relaxed);
+            let delta = downloaded.saturating_sub(prev);
+            b.fetch_add(delta, Ordering::Relaxed);
+            sb.fetch_add(delta, Ordering::Relaxed);
+            if total > 0 {
+                st.store(total, Ordering::Relaxed);
+            }
+        }
+    };
+    fetcher::fetch(&jar_url, &jar_path, Some(progress))
         .await
         .map_err(|e| format!("下载 OptiFine 失败: {}", e))?;
 

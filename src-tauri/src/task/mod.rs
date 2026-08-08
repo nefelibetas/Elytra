@@ -29,12 +29,32 @@ pub fn global() -> &'static Arc<TaskManager> {
     TM.get().expect("TaskManager not initialized")
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskStatus {
+    #[default]
+    Pending,
+    Running,
+    Done,
+    Error,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum StepStatus {
+    #[default]
+    Pending,
+    Running,
+    Done,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct TaskProgress {
     pub task_id: String,
     pub name: String,
-    pub status: String, // pending | running | done | error | cancelled
-    pub progress: f64,  // 0.0 – 100.0
+    pub status: TaskStatus, // pending | running | done | error | cancelled（serde lowercase）
+    pub progress: f64,      // 0.0 – 100.0
     pub speed_bps: f64,
     pub completed_files: u32,
     pub total_files: u32,
@@ -48,8 +68,8 @@ pub struct TaskProgress {
 #[derive(Debug, Clone, Serialize)]
 pub struct StepInfo {
     pub name: String,
-    pub status: String, // pending | running | done | error
-    pub progress: f64,  // 0–100, meaningful only when status=running
+    pub status: StepStatus, // pending | running | done
+    pub progress: f64,      // 0–100, meaningful only when status=running
 }
 
 pub struct TaskManager {
@@ -95,7 +115,7 @@ impl TaskManager {
         let progress = Arc::new(Mutex::new(TaskProgress {
             task_id: id.clone(),
             name: name.to_string(),
-            status: "pending".into(),
+            status: TaskStatus::Pending,
             progress: 0.0,
             speed_bps: 0.0,
             completed_files: 0,
@@ -107,7 +127,7 @@ impl TaskManager {
                 .iter()
                 .map(|s| StepInfo {
                     name: s.to_string(),
-                    status: "pending".into(),
+                    status: StepStatus::Pending,
                     progress: 0.0,
                 })
                 .collect(),
@@ -152,7 +172,7 @@ impl TaskManager {
                 let _ = std::fs::remove_dir_all(p);
             }
             if let Ok(mut p) = h.progress.try_lock() {
-                p.status = "cancelled".into();
+                p.status = TaskStatus::Cancelled;
             }
             true
         } else {
@@ -242,5 +262,42 @@ mod tests {
         }
         assert!(tm.acquire(p), "守卫 Drop 后占用应成功");
         tm.release(p);
+    }
+
+    #[test]
+    fn task_status_serde_lowercase() {
+        // 序列化结果与前端 payload 约定的字符串一致（前端 ProgressPayload.status 为 string）
+        assert_eq!(
+            serde_json::to_string(&TaskStatus::Pending).unwrap(),
+            "\"pending\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TaskStatus::Running).unwrap(),
+            "\"running\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TaskStatus::Done).unwrap(),
+            "\"done\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TaskStatus::Error).unwrap(),
+            "\"error\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TaskStatus::Cancelled).unwrap(),
+            "\"cancelled\""
+        );
+        assert_eq!(
+            serde_json::to_string(&StepStatus::Pending).unwrap(),
+            "\"pending\""
+        );
+        assert_eq!(
+            serde_json::to_string(&StepStatus::Running).unwrap(),
+            "\"running\""
+        );
+        assert_eq!(
+            serde_json::to_string(&StepStatus::Done).unwrap(),
+            "\"done\""
+        );
     }
 }

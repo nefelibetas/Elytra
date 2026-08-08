@@ -10,12 +10,15 @@ use crate::downloader::fetcher::{self, http};
 
 use super::{LoaderEvent, LoaderHook, expand_inheritance};
 
+#[allow(clippy::too_many_arguments)]
 pub async fn install_forge(
     mc_version: &str,
     forge_version: &str,
     parent_text: &str,
     config: &DownloaderConfig,
     bytes: &Arc<AtomicU64>,
+    lib_bytes: &Arc<AtomicU64>,
+    lib_total: &Arc<AtomicU64>,
     hook: Option<LoaderHook<'_>>,
 ) -> Result<(), String> {
     let source = config.file_primary_source().ok_or("no active source")?;
@@ -26,15 +29,30 @@ pub async fn install_forge(
         &source.forge_installer_url,
         &[("mc", mc_version), ("ver", forge_version)],
     );
-    download_and_extract(&url, source, config, &vdir, &dir_name, parent_text, bytes, hook).await
+    download_and_extract(
+        &url,
+        source,
+        config,
+        &vdir,
+        &dir_name,
+        parent_text,
+        bytes,
+        lib_bytes,
+        lib_total,
+        hook,
+    )
+    .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn install_neoforge(
     mc_version: &str,
     neo_version: &str,
     parent_text: &str,
     config: &DownloaderConfig,
     bytes: &Arc<AtomicU64>,
+    lib_bytes: &Arc<AtomicU64>,
+    lib_total: &Arc<AtomicU64>,
     hook: Option<LoaderHook<'_>>,
 ) -> Result<(), String> {
     let source = config.file_primary_source().ok_or("no active source")?;
@@ -42,10 +60,22 @@ pub async fn install_neoforge(
     let dir_name = format!("{}-neoforge-{}", mc_version, neo_version);
     let vdir = mc.join("versions").join(&dir_name);
     let url = source.url(&source.neoforge_installer_url, &[("ver", neo_version)]);
-    download_and_extract(&url, source, config, &vdir, &dir_name, parent_text, bytes, hook).await
+    download_and_extract(
+        &url,
+        source,
+        config,
+        &vdir,
+        &dir_name,
+        parent_text,
+        bytes,
+        lib_bytes,
+        lib_total,
+        hook,
+    )
+    .await
 }
 
-/// 8 参数均为必需数据（URL/源/配置/目标/字节计数/阶段钩子），私有实现细节，不抽象。
+/// 10 参数均为必需数据（URL/源/配置/目标/字节计数/阶段钩子），私有实现细节，不抽象。
 #[allow(clippy::too_many_arguments)]
 async fn download_and_extract(
     installer_url: &str,
@@ -55,6 +85,8 @@ async fn download_and_extract(
     dir_name: &str,
     parent_text: &str,
     bytes: &Arc<AtomicU64>,
+    lib_bytes: &Arc<AtomicU64>,
+    lib_total: &Arc<AtomicU64>,
     hook: Option<LoaderHook<'_>>,
 ) -> Result<(), String> {
     let mc_dir = config.minecraft_dir_abs();
@@ -62,14 +94,21 @@ async fn download_and_extract(
     std::fs::create_dir_all(&tmp).map_err(|e| format!("创建临时目录失败: {}", e))?;
     let installer_name = installer_url.rsplit('/').next().unwrap_or("installer.jar");
     let installer_path = tmp.join(installer_name);
-    // 字节级进度：增量累加进外部计数器（收尾心跳显示速度）
+    // 字节级进度：增量累加进外部计数器（收尾心跳显示速度）；同时写入 LoaderLibs 步骤计数
     let file_done = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let progress = {
         let fd = file_done.clone();
         let b = bytes.clone();
-        move |downloaded: u64, _total: u64| {
+        let lb = lib_bytes.clone();
+        let lt = lib_total.clone();
+        move |downloaded: u64, total: u64| {
             let prev = fd.swap(downloaded, std::sync::atomic::Ordering::Relaxed);
-            b.fetch_add(downloaded.saturating_sub(prev), std::sync::atomic::Ordering::Relaxed);
+            let delta = downloaded.saturating_sub(prev);
+            b.fetch_add(delta, std::sync::atomic::Ordering::Relaxed);
+            lb.fetch_add(delta, std::sync::atomic::Ordering::Relaxed);
+            if total > 0 {
+                lt.store(total, std::sync::atomic::Ordering::Relaxed);
+            }
         }
     };
     fetcher::fetch(installer_url, &installer_path, Some(progress))

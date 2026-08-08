@@ -111,6 +111,8 @@ pub async fn fetch_bounded(
 }
 
 /// 多源循环：每源独立 client（连接 2s：连接缓慢即判"过慢"即换源），失败清理残留。
+/// 全源一轮失败后整体重试（最多 3 轮，退避 500ms×2^n）——抗单次网络抖动/瞬时故障，
+/// 避免"每个源各失败一次就放弃"导致任务失败。
 /// `total_timeout` 为 None 时传输不限时（大文件，慢速但稳定的源不被砍）；
 /// 为 Some 时整请求限时（小文件，防 body 挂起假死）。
 async fn fetch_from_sources<F: Fn(u64, u64)>(
@@ -120,29 +122,41 @@ async fn fetch_from_sources<F: Fn(u64, u64)>(
     total_timeout: Option<Duration>,
 ) -> Result<DownloadResult, FetchError> {
     let max_speed = max_speed_bps();
+    const MAX_ATTEMPTS: u32 = 3;
     let mut last_err = None;
-    for url in urls {
-        let mut builder = reqwest::Client::builder().connect_timeout(Duration::from_secs(2));
-        if let Some(t) = total_timeout {
-            builder = builder.timeout(t);
+    for attempt in 0..MAX_ATTEMPTS {
+        for url in urls {
+            let mut builder = reqwest::Client::builder().connect_timeout(Duration::from_secs(2));
+            if let Some(t) = total_timeout {
+                builder = builder.timeout(t);
+            }
+            let client = match builder.build() {
+                Ok(c) => c,
+                Err(e) => {
+                    last_err = Some(FetchError::Network(e.to_string()));
+                    continue;
+                }
+            };
+            match fetch_once(&client, url, dest, progress, max_speed).await {
+                Ok(r) => return Ok(r),
+                Err(e) => {
+                    // 失败清理残留（下一源/下一轮会重新创建）
+                    let _ = std::fs::remove_file(dest);
+                    last_err = Some(e);
+                }
+            }
         }
-        let client = match builder.build() {
-            Ok(c) => c,
-            Err(e) => {
-                last_err = Some(FetchError::Network(e.to_string()));
-                continue;
-            }
-        };
-        match fetch_once(&client, url, dest, progress, max_speed).await {
-            Ok(r) => return Ok(r),
-            Err(e) => {
-                // 失败清理残留（下一源会重新创建）
-                let _ = std::fs::remove_file(dest);
-                last_err = Some(e);
-            }
+        if attempt + 1 < MAX_ATTEMPTS {
+            tokio::time::sleep(std::time::Duration::from_millis(500 * (1 << attempt))).await;
         }
     }
-    Err(last_err.unwrap())
+    match last_err {
+        Some(FetchError::Network(e)) => Err(FetchError::Network(format!(
+            "所有下载源均失败（已重试 {MAX_ATTEMPTS} 轮），请检查网络或稍后重试:\n{e}"
+        ))),
+        Some(e) => Err(e),
+        None => Err(FetchError::InvalidUrl),
+    }
 }
 
 async fn fetch_once<F: Fn(u64, u64)>(

@@ -1,14 +1,33 @@
 <script setup lang="ts">
+import { ref } from "vue"
 import { dlState, TaskItem } from "../store/download"
 import { showToast } from "../utils/toast"
 import { useRouter } from "vue-router"
 
 const router = useRouter()
 
+/** 批量文件任务步骤可能很多，默认折叠到前 N 个。 */
+const MAX_VISIBLE_STEPS = 8
+const expandedSteps = ref<Set<string>>(new Set())
+
 function fmtSpeed(bps: number): string {
   if (bps >= 1_000_000) return (bps / 1_000_000).toFixed(2) + " MB/s"
   if (bps >= 1_000) return (bps / 1_000).toFixed(2) + " KB/s"
   return bps.toFixed(2) + " B/s"
+}
+
+function visibleSteps(task: TaskItem) {
+  if (expandedSteps.value.has(task.taskId) || task.steps.length <= MAX_VISIBLE_STEPS) {
+    return task.steps
+  }
+  return task.steps.slice(0, MAX_VISIBLE_STEPS)
+}
+
+function toggleSteps(taskId: string) {
+  const s = new Set(expandedSteps.value)
+  if (s.has(taskId)) s.delete(taskId)
+  else s.add(taskId)
+  expandedSteps.value = s
 }
 
 async function handleCancel(task: TaskItem) {
@@ -56,8 +75,26 @@ async function handleCancel(task: TaskItem) {
               </svg>
             </button>
           </div>
-          <div v-if="task.currentPhase" class="tc-phase">{{ task.currentPhase }}</div>
+          <div v-if="task.status === 'pending'" class="tc-phase">等待中</div>
           <div v-if="task.status === 'error' && task.error" class="tc-err">{{ task.error }}</div>
+
+          <div class="tc-steps">
+            <div v-for="st in visibleSteps(task)" :key="st.name" class="tc-step">
+              <span class="tc-st-icon" :class="st.status">
+                <svg v-if="st.status === 'done'" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6.5 5 9.5 10 3.5" /></svg>
+                <svg v-else-if="st.status === 'running'" class="tc-spin" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1a5 5 0 1 1-4.95 4" /></svg>
+                <span v-else class="tc-dot"></span>
+              </span>
+              <span class="tc-st-name">{{ st.name }}</span>
+              <div v-if="st.status === 'running'" class="tc-st-bar">
+                <div class="tc-st-bar-fill" :style="{ width: st.progress + '%' }"></div>
+              </div>
+              <span v-if="st.status !== 'pending'" class="tc-st-pct">{{ Math.floor(st.progress) }}%</span>
+            </div>
+            <button v-if="task.steps.length > MAX_VISIBLE_STEPS" class="tc-more" @click="toggleSteps(task.taskId)">
+              {{ expandedSteps.has(task.taskId) ? "收起" : `显示全部 ${task.steps.length} 项` }}
+            </button>
+          </div>
         </div>
       </TransitionGroup>
     </main>
@@ -175,6 +212,93 @@ async function handleCancel(task: TaskItem) {
   color: var(--text-tertiary);
   line-height: 1.4;
 }
+
+.tc-steps {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.tc-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 18px;
+}
+
+.tc-st-icon {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+}
+.tc-st-icon.running { color: var(--color-brand); }
+.tc-st-icon.done { color: #22c55e; }
+
+.tc-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: var(--text-tertiary);
+  opacity: 0.6;
+}
+
+.tc-spin {
+  animation: tc-spin 0.9s linear infinite;
+}
+@keyframes tc-spin {
+  to { transform: rotate(360deg); }
+}
+
+.tc-st-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--text-primary);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tc-st-bar {
+  flex: 0 0 64px;
+  height: 3px;
+  border-radius: 2px;
+  background-color: var(--surface-hover);
+  overflow: hidden;
+}
+.tc-st-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  background-color: var(--color-brand);
+  transition: width 0.15s ease;
+}
+
+.tc-st-pct {
+  flex: none;
+  width: 34px;
+  text-align: right;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+
+.tc-more {
+  align-self: flex-start;
+  margin-top: 2px;
+  border: none;
+  background: none;
+  padding: 1px 0;
+  font-size: 11px;
+  color: var(--color-brand);
+  cursor: pointer;
+}
+.tc-more:hover { text-decoration: underline; }
 
 /* transition */
 .task-enter-active, .task-leave-active { transition: all 0.25s ease; }

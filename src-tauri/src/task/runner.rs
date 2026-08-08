@@ -15,7 +15,9 @@ use crate::task::progress::{
     cancelled, set_cancelled, set_completed, set_error, set_phase, set_total, step_done, EmitLoop,
 };
 use crate::task::repair::{count_assets_all, count_natives_missing};
-use crate::task::{self, DownloadTask, StepInfo, StepKind, TaskProgress, TaskSpec};
+use crate::task::{
+    self, DownloadTask, StepInfo, StepKind, StepStatus, TaskProgress, TaskSpec, TaskStatus,
+};
 
 /// 完整下载任务主体：version json → client.jar / libraries / assets → natives → ModLoader/OptiFine → Fabric API。
 /// 任务配置（含 ModLoader 选择）由命令层校验后经 DownloadTask 传入。
@@ -67,7 +69,7 @@ pub async fn run_task(
     // 步骤分析：初始完整列表（json 步骤恒在，索引 0；零缺失维度检测后过滤）
     let mut specs = task.steps();
 
-    set_phase(&app, progress, "running", &specs[0].name, 0, "running");
+    set_phase(&app, progress, Some(TaskStatus::Running), &specs[0].name, 0, StepStatus::Running);
     if cancelled(cancel) {
         return set_cancelled(&app, progress);
     }
@@ -172,9 +174,9 @@ pub async fn run_task(
             .map(|(i, s)| StepInfo {
                 name: s.name.clone(),
                 status: if i == 0 {
-                    "done".into()
+                    StepStatus::Done
                 } else {
-                    "pending".into()
+                    StepStatus::Pending
                 },
                 progress: if i == 0 { 100.0 } else { 0.0 },
             })
@@ -217,6 +219,16 @@ pub async fn run_task(
     let asst_counter = Arc::new(AtomicU32::new(0));
     let natives_counter = Arc::new(AtomicU32::new(0));
     let bytes_counter = Arc::<AtomicU64>::new(AtomicU64::new(0));
+    // 分步字节计数器（libs/assets/natives 各步骤独立；安装步骤带运行时 total）
+    let lib_step_bytes = Arc::new(AtomicU64::new(0));
+    let asst_step_bytes = Arc::new(AtomicU64::new(0));
+    let natives_step_bytes = Arc::new(AtomicU64::new(0));
+    let loader_libs_step_bytes = Arc::new(AtomicU64::new(0));
+    let loader_libs_step_total = Arc::new(AtomicU64::new(0));
+    let optifine_step_bytes = Arc::new(AtomicU64::new(0));
+    let optifine_step_total = Arc::new(AtomicU64::new(0));
+    let fabric_step_bytes = Arc::new(AtomicU64::new(0));
+    let fabric_step_total = Arc::new(AtomicU64::new(0));
     let cfg_done = Arc::new(AtomicBool::new(false));
     let libs_done = Arc::new(AtomicBool::new(false));
     let optifine_done = Arc::new(AtomicBool::new(false));
@@ -225,7 +237,7 @@ pub async fn run_task(
     // 统一转 running（重建后列表；json 保持 done）——在 spawn EmitLoop 前完成，避免锁竞争
     for (i, s) in specs.iter().enumerate() {
         if s.kind != StepKind::VersionJson {
-            set_phase(&app, progress, "", &s.name, i, "running");
+            set_phase(&app, progress, None, &s.name, i, StepStatus::Running);
         }
     }
 
@@ -240,10 +252,25 @@ pub async fn run_task(
         jar_bytes: Arc::clone(&jar_bytes_counter),
         jar_total: Arc::clone(&jar_total_size),
         bytes: Arc::clone(&bytes_counter),
+        lib_bytes: Arc::clone(&lib_step_bytes),
+        asst_bytes: Arc::clone(&asst_step_bytes),
+        natives_bytes: Arc::clone(&natives_step_bytes),
+        lib_pending_bytes: lib_total_bytes.saturating_sub(lib_existing_bytes),
+        asst_pending_bytes: asst_total_bytes.saturating_sub(asst_existing_bytes),
+        natives_pending_bytes: crate::task::repair::natives_missing_bytes(&vj.libraries, &lib_dir),
+        loader_libs_bytes: Arc::clone(&loader_libs_step_bytes),
+        loader_libs_total: Arc::clone(&loader_libs_step_total),
+        optifine_bytes: Arc::clone(&optifine_step_bytes),
+        optifine_total: Arc::clone(&optifine_step_total),
+        fabric_bytes: Arc::clone(&fabric_step_bytes),
+        fabric_total: Arc::clone(&fabric_step_total),
         jar_step: i_jar,
         lib_step: i_libs,
         asst_step: i_asst,
         natives_step: i_nat,
+        loader_libs_step: i_lbs,
+        optifine_step: i_of,
+        fabric_step: i_fab,
         cfg_done: Arc::clone(&cfg_done),
         libs_done: Arc::clone(&libs_done),
         optifine_done: Arc::clone(&optifine_done),
@@ -298,6 +325,7 @@ pub async fn run_task(
             &src_refs,
             Arc::clone(&lib_counter),
             Arc::clone(&bytes_counter),
+            Arc::clone(&lib_step_bytes),
         )
         .await?;
         if let Some(i) = i_libs {
@@ -315,6 +343,7 @@ pub async fn run_task(
             config.concurrency as usize,
             Arc::clone(&asst_counter),
             Arc::clone(&bytes_counter),
+            Arc::clone(&asst_step_bytes),
         )
         .await?;
         if let Some(i) = i_asst {
@@ -330,6 +359,7 @@ pub async fn run_task(
             &src_refs,
             Arc::clone(&natives_counter),
             Arc::clone(&bytes_counter),
+            Arc::clone(&natives_step_bytes),
         )
         .await?;
         if let Some(i) = i_nat {
@@ -363,6 +393,8 @@ pub async fn run_task(
                         &parent_text,
                         &config,
                         &bytes_counter,
+                        &loader_libs_step_bytes,
+                        &loader_libs_step_total,
                         Some(&hook),
                     )
                     .await
@@ -374,6 +406,8 @@ pub async fn run_task(
                         &parent_text,
                         &config,
                         &bytes_counter,
+                        &loader_libs_step_bytes,
+                        &loader_libs_step_total,
                         Some(&hook),
                     )
                     .await
@@ -385,6 +419,8 @@ pub async fn run_task(
                         &parent_text,
                         &config,
                         &bytes_counter,
+                        &loader_libs_step_bytes,
+                        &loader_libs_step_total,
                         Some(&hook),
                     )
                     .await
@@ -396,6 +432,8 @@ pub async fn run_task(
                         &parent_text,
                         &config,
                         &bytes_counter,
+                        &loader_libs_step_bytes,
+                        &loader_libs_step_total,
                         Some(&hook),
                     )
                     .await
@@ -410,7 +448,17 @@ pub async fn run_task(
 
     let optifine_dl = async {
         if let Some(of) = optifine_patch {
-            if let Err(e) = mod_loader::install_optifine(mc_version, of, "HD_U", &config).await {
+            if let Err(e) = mod_loader::install_optifine(
+                mc_version,
+                of,
+                "HD_U",
+                &config,
+                &bytes_counter,
+                &optifine_step_bytes,
+                &optifine_step_total,
+            )
+            .await
+            {
                 return Err(vec![e]);
             }
             if let Some(i) = i_of {
@@ -448,14 +496,21 @@ pub async fn run_task(
                     bmclapi.maven_url
                 ));
             }
-            // 字节级进度：增量累加进 bytes_counter（EmitLoop 显示速度）
+            // 字节级进度：增量累加进 bytes_counter（EmitLoop 显示速度）与 Fabric API 步骤计数
             let file_done = Arc::new(AtomicU64::new(0));
             let progress_cb = {
                 let fd = file_done.clone();
                 let bc = Arc::clone(&bytes_counter);
-                move |downloaded: u64, _total: u64| {
+                let fb = Arc::clone(&fabric_step_bytes);
+                let ft = Arc::clone(&fabric_step_total);
+                move |downloaded: u64, total: u64| {
                     let prev = fd.swap(downloaded, Ordering::Relaxed);
-                    bc.fetch_add(downloaded.saturating_sub(prev), Ordering::Relaxed);
+                    let delta = downloaded.saturating_sub(prev);
+                    bc.fetch_add(delta, Ordering::Relaxed);
+                    fb.fetch_add(delta, Ordering::Relaxed);
+                    if total > 0 {
+                        ft.store(total, Ordering::Relaxed);
+                    }
                 }
             };
             match fetcher::fetch_bounded(&urls, &dest, Some(progress_cb)).await {
@@ -486,7 +541,7 @@ pub async fn run_task(
 
     // 收尾（EmitLoop 已完成全部计数自然退出；此处显式设 100%）
     task::update_and_emit(&app, progress, |p| {
-        p.status = "done".into();
+        p.status = TaskStatus::Done;
         p.completed_files = p.total_files;
         p.progress = 100.0;
         p.current_phase = "完成".into();

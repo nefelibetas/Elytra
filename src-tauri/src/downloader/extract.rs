@@ -126,6 +126,7 @@ pub async fn process_natives(
     sources: &[&DownloadSource],
     counter: Arc<AtomicU32>,
     bytes_counter: Arc<AtomicU64>,
+    step_bytes: Arc<AtomicU64>,
 ) -> Result<(), Vec<String>> {
     let mut errors: Vec<String> = Vec::new();
 
@@ -150,8 +151,21 @@ pub async fn process_natives(
             .iter()
             .map(|s| s.mirror_url(&artifact.url))
             .collect();
-        match fetcher::fetch_fallback(&urls, &dest, None::<fn(u64, u64)>).await {
-            Ok(dl) => {
+        // 字节级进度：增量累加进全局与 natives 步骤计数（重试时进度从 0 重新开始，增量不会为负）
+        let file_done = Arc::new(AtomicU64::new(0));
+        let progress = {
+            let fd = file_done.clone();
+            let bc = bytes_counter.clone();
+            let sb = step_bytes.clone();
+            move |downloaded: u64, _total: u64| {
+                let prev = fd.swap(downloaded, Ordering::Relaxed);
+                let delta = downloaded.saturating_sub(prev);
+                bc.fetch_add(delta, Ordering::Relaxed);
+                sb.fetch_add(delta, Ordering::Relaxed);
+            }
+        };
+        match fetcher::fetch_fallback(&urls, &dest, Some(progress)).await {
+            Ok(_dl) => {
                 // 下载后 sha1 校验（镜像源可能返回坏内容）：不匹配删除并报错
                 if !file_sha1_matches(&dest, &artifact.sha1) {
                     let _ = std::fs::remove_file(&dest);
@@ -159,7 +173,6 @@ pub async fn process_natives(
                     continue;
                 }
                 counter.fetch_add(1, Ordering::Relaxed);
-                bytes_counter.fetch_add(dl.bytes, Ordering::SeqCst);
             }
             Err(e) => errors.push(format!("{}: {}", lib.name, e)),
         }
