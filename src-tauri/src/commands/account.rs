@@ -19,7 +19,7 @@ pub async fn start_ms_login(app: AppHandle) -> Result<String, String> {
         .await
         .map_err(|e| format!("回调端口 {CALLBACK_PORT} 被占用：{e}"))?;
 
-    let auth_url = microsoft::build_auth_url(&state, &pkce);
+    let auth_url = microsoft::build_auth_url(&state, &pkce).map_err(|e| e.to_string())?;
 
     // 后台等待一次回调（含超时），完成后端口自动释放
     let app_handle = app.clone();

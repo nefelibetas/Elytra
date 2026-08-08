@@ -3,9 +3,14 @@ use base64::Engine;
 use serde_json::json;
 use sha2::Digest;
 
-pub const MS_CLIENT_ID: &str = "PASTE_MS_CLIENT_ID";
 pub const CALLBACK_PORT: u16 = 27205;
 pub const REDIRECT_URI: &str = "http://localhost:27205";
+
+/// 微软 OAuth 客户端 ID（构建时从 .env 注入，见 constants::MS_CLIENT_ID）。
+/// 缺失（未配置 .env / 未重编译）时返回 NotConfigured。
+fn ms_client_id() -> Result<&'static str, MsError> {
+    crate::constants::MS_CLIENT_ID.ok_or(MsError::NotConfigured)
+}
 
 // ── 端点 ─────────────────────────────────────────────────────────
 const AUTH_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize";
@@ -120,15 +125,16 @@ fn urlencode(s: &str) -> String {
 }
 
 /// 构建授权 URL。
-pub fn build_auth_url(state: &str, pkce: &Pkce) -> String {
-    format!(
+pub fn build_auth_url(state: &str, pkce: &Pkce) -> Result<String, MsError> {
+    let client_id = ms_client_id()?;
+    Ok(format!(
         "{AUTH_URL}?client_id={}&response_type=code&redirect_uri={}&response_mode=query&scope={}&state={}&code_challenge={}&code_challenge_method=S256",
-        urlencode(MS_CLIENT_ID),
+        urlencode(client_id),
         urlencode(REDIRECT_URI),
         urlencode(SCOPE),
         urlencode(state),
         urlencode(&pkce.challenge),
-    )
+    ))
 }
 
 // ── OAuth token 交换 ─────────────────────────────────────────────
@@ -173,11 +179,12 @@ async fn exchange_code(
     code: &str,
     verifier: &str,
 ) -> Result<MsTokens, MsError> {
+    let client_id = ms_client_id()?;
     let resp = client
         .post(TOKEN_URL)
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body(form_body(&[
-            ("client_id", MS_CLIENT_ID),
+            ("client_id", client_id),
             ("scope", SCOPE),
             ("code", code),
             ("redirect_uri", REDIRECT_URI),
@@ -192,11 +199,12 @@ async fn exchange_code(
 
 /// 用 refresh_token 刷新微软 token。
 async fn refresh_ms(client: &reqwest::Client, refresh_token: &str) -> Result<MsTokens, MsError> {
+    let client_id = ms_client_id()?;
     let resp = client
         .post(REFRESH_URL)
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body(form_body(&[
-            ("client_id", MS_CLIENT_ID),
+            ("client_id", client_id),
             ("scope", SCOPE),
             ("refresh_token", refresh_token),
             ("grant_type", "refresh_token"),
@@ -424,9 +432,6 @@ fn build_auth_client() -> reqwest::Client {
 
 /// 授权码 → 完整登录。
 pub async fn login_with_code(code: &str, verifier: &str) -> Result<MsAccount, MsError> {
-    if MS_CLIENT_ID.starts_with("PASTE_") {
-        return Err(MsError::NotConfigured);
-    }
     let client = build_auth_client();
     let tokens = exchange_code(&client, code, verifier).await?;
     complete_after_ms_token(&client, &tokens).await
@@ -434,9 +439,6 @@ pub async fn login_with_code(code: &str, verifier: &str) -> Result<MsAccount, Ms
 
 /// refresh_token → 刷新并重新拉取完整账号。
 pub async fn refresh_login(account: &MsAccount) -> Result<MsAccount, MsError> {
-    if MS_CLIENT_ID.starts_with("PASTE_") {
-        return Err(MsError::NotConfigured);
-    }
     let client = build_auth_client();
     let tokens = refresh_ms(&client, &account.refresh_token).await?;
     complete_after_ms_token(&client, &tokens).await
@@ -471,7 +473,10 @@ mod tests {
     #[test]
     fn test_build_auth_url() {
         let pkce = generate_pkce();
-        let url = build_auth_url("st8", &pkce);
+        // 依赖 .env 注入的 MS_CLIENT_ID;无 .env 的 CI 环境跳过
+        let Ok(url) = build_auth_url("st8", &pkce) else {
+            return;
+        };
         assert!(url.starts_with(AUTH_URL));
         assert!(url.contains("response_type=code"));
         assert!(url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A27205"));

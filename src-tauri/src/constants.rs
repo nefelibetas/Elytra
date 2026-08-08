@@ -18,6 +18,15 @@ pub const UA_MOJANG_API: &str = "Elytra Launcher/1.0.0 (+https://github.com/nefe
 /// 前端 Settings.vue 的 MIRROR_CONCURRENCY 需与此同步。
 pub const MIRROR_CONCURRENCY: usize = 8;
 
+/// CurseForge API Key（构建时从项目根 `.env` 注入，不提交 git）。
+/// 所有 api.curseforge.com 与 forgecdn.net 请求（含文件下载，2026-07-16 起强制）
+/// 都必须携带 x-api-key 头；未配置时为 None，此时 CurseForge 源不可用。
+pub const CURSEFORGE_API_KEY: Option<&str> = option_env!("ELYTRA_CURSEFORGE_API_KEY");
+
+/// 微软 OAuth 客户端 ID（构建时从项目根 `.env` 注入，不提交 git）。
+/// 未配置时为 None，此时微软正版登录返回 NotConfigured。
+pub const MS_CLIENT_ID: Option<&str> = option_env!("ELYTRA_MS_CLIENT_ID");
+
 /// 配置目录名（exe 旁）
 pub const CONFIG_DIR: &str = "Elytra";
 /// 配置文件名
@@ -35,3 +44,18 @@ pub const SECT_OFFLINE_SKIN: &str = "offline_skin";
 pub const SECT_MS_ACCOUNT: &str = "ms_account";
 /// persist section: 游戏目录
 pub const SECT_GAME_DIRS: &str = "game_dirs";
+
+#[cfg(test)]
+mod tests {
+    /// CurseForge key 经 build.rs 从 .env 注入。
+    /// 无 .env 的环境（CI/他人克隆）为 None 时跳过，有则校验格式，确保注入链路完整。
+    #[test]
+    fn curseforge_key_injected_via_env() {
+        if let Some(key) = super::CURSEFORGE_API_KEY {
+            assert!(
+                key.starts_with("$2a$10$"),
+                "CurseForge key 应为 bcrypt 格式（$2a$10$ 前缀），当前值异常: {key:?}"
+            );
+        }
+    }
+}
