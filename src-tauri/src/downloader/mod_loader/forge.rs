@@ -169,8 +169,91 @@ async fn download_and_extract(
     if !found_jar {
         return Err("未找到 client.jar".into());
     }
+
+    // ── 下载展开后 JSON 的全部库（vanilla 库已存在自动跳过，实际拉取 ModLoader 增量）──
+    // Forge/NeoForge 26.x 的本体（universal/fancymodloader 等）以 library 形式进 classpath，
+    // 安装阶段必须一并下载，否则启动时缺库。
+    let lib_dir = mc_dir.join("libraries");
+    let json_text =
+        std::fs::read_to_string(&json_path).map_err(|e| format!("读取 version.json 失败: {e}"))?;
+    let merged: serde_json::Value =
+        serde_json::from_str(&json_text).map_err(|e| format!("解析 version.json 失败: {e}"))?;
+    let libraries: Vec<crate::downloader::model::Library> =
+        serde_json::from_value(merged["libraries"].clone()).unwrap_or_default();
+    // Forge 的 client 合并 jar（79MB）在 installer 的 data/client.lzma（LZMA 压缩）里，
+    // version.json 中该库 URL 为空：先解压到库路径（带 sha1 校验），NeoForge 无此文件跳过。
+    extract_forge_client_lzma(&mut archive, &libraries, &lib_dir)?;
+    // 其余库走统一下载（多源回退 + sha1 校验；URL 为空的库在此被跳过）
+    let sources: Vec<&DownloadSource> = config.file_sources_list();
+    let counter = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    crate::downloader::library::download_libraries(
+        &libraries,
+        &lib_dir,
+        config.concurrency as usize,
+        &sources,
+        counter,
+        bytes.clone(),
+        lib_bytes.clone(),
+    )
+    .await
+    .map_err(|e| format!("下载 {} 支持库失败:\n{}", dir_name, e.join("\n")))?;
+
     if let Some(h) = hook {
         h(LoaderEvent::LibsDone);
+    }
+    Ok(())
+}
+
+/// Forge 26.x：把 installer 内 `data/client.lzma`（LZMA 压缩的 Forge 合并 client jar）
+/// 解压到 libraries 中 `net.minecraftforge:forge:{ver}:client` 对应路径（该库 URL 为空，
+/// 官方以 lzma 形式随 installer 分发）。NeoForge/旧版无此文件时静默跳过。
+fn extract_forge_client_lzma(
+    archive: &mut zip::ZipArchive<std::fs::File>,
+    libraries: &[crate::downloader::model::Library],
+    lib_dir: &Path,
+) -> Result<(), String> {
+    use std::io::Read;
+    // 定位 URL 为空的 forge client 库（其 path/sha1 由 version.json 给出）
+    let Some(art) = libraries.iter().find_map(|l| {
+        let a = l.downloads.as_ref()?.artifact.as_ref()?;
+        if a.url.is_empty() && l.name.contains(":forge:") {
+            Some(a)
+        } else {
+            None
+        }
+    }) else {
+        return Ok(());
+    };
+    let dest = lib_dir.join(&art.path);
+    if dest.exists() && crate::downloader::hash::file_sha1_matches(&dest, &art.sha1) {
+        return Ok(());
+    }
+    let mut compressed = Vec::new();
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| format!("读取安装程序条目失败: {e}"))?;
+        if !entry.name().ends_with("client.lzma") {
+            continue;
+        }
+        entry
+            .read_to_end(&mut compressed)
+            .map_err(|e| format!("读取 client.lzma 失败: {e}"))?;
+        break;
+    }
+    if compressed.is_empty() {
+        return Ok(());
+    }
+    let mut out = Vec::new();
+    lzma_rs::lzma_decompress(&mut compressed.as_slice(), &mut out)
+        .map_err(|e| format!("解压 client.lzma 失败: {e}"))?;
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
+    }
+    std::fs::write(&dest, &out).map_err(|e| format!("写入 client.jar 失败: {e}"))?;
+    if !crate::downloader::hash::file_sha1_matches(&dest, &art.sha1) {
+        let _ = std::fs::remove_file(&dest);
+        return Err("Forge client.jar 解压后 sha1 校验失败".into());
     }
     Ok(())
 }

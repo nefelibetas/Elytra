@@ -456,8 +456,10 @@ pub async fn spawn_game(
     let app_handle = app.clone();
     let version_label = version_dir_name.clone();
     std::thread::spawn(move || {
-        let _ = child.wait();
-        let _ = app_handle.emit(crate::events::GAME_EXITED, (pid, version_label));
+        let status = child.wait();
+        // 退出码随事件送出：前端据此区分正常退出与崩溃（非 0 → 错误级提示）
+        let exit_code = status.ok().and_then(|s| s.code());
+        let _ = app_handle.emit(crate::events::GAME_EXITED, (pid, version_label, exit_code));
     });
 
     Ok(pid)

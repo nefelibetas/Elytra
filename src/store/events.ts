@@ -4,5 +4,5 @@
 export const EVT_TASK_PROGRESS = "task-progress";
 /** 微软登录完成回调（{ ok, account, error }） */
 export const EVT_MS_LOGIN_COMPLETE = "ms-login-complete";
-/** 游戏进程退出（[pid, versionLabel] 元组） */
+/** 游戏进程退出（[pid, versionLabel, exitCode] 元组；exitCode 非 0 = 异常退出） */
 export const EVT_GAME_EXITED = "game-exited";

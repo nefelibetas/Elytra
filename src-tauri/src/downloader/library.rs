@@ -27,10 +27,34 @@ pub fn count_pending(libraries: &[Library], lib_dir: &Path) -> usize {
     libraries.iter().filter(|lib| {
         if !should_download(lib) { return false; }
         let Some(artifact) = lib.downloads.as_ref().and_then(|d| d.artifact.as_ref()) else { return false; };
+        // URL 为空：由安装器内嵌（如 Forge client.lzma）提供，不计入下载/完整性
+        if artifact.url.is_empty() { return false; }
         let dest = lib_dir.join(&artifact.path);
         if dest.exists() && file_sha1_matches(&dest, &artifact.sha1) { return false; }
         true
     }).count()
+}
+
+/// 缺失/校验失败的支持库路径清单（与 count_pending 同过滤条件）。
+/// 供完整性检测/启动前检查展示具体缺什么，便于用户复制排查。
+pub fn missing_libraries(libraries: &[Library], lib_dir: &Path) -> Vec<String> {
+    libraries
+        .iter()
+        .filter_map(|lib| {
+            if !should_download(lib) {
+                return None;
+            }
+            let artifact = lib.downloads.as_ref()?.artifact.as_ref()?;
+            if artifact.url.is_empty() {
+                return None;
+            }
+            let dest = lib_dir.join(&artifact.path);
+            if dest.exists() && file_sha1_matches(&dest, &artifact.sha1) {
+                return None;
+            }
+            Some(artifact.path.clone())
+        })
+        .collect()
 }
 
 /// Count libraries that need to be present (passes filter + has artifact), regardless of local state.
@@ -81,6 +105,10 @@ pub async fn download_libraries(
         let Some(artifact) = lib.downloads.as_ref().and_then(|d| d.artifact.as_ref()) else {
             continue;
         };
+        // URL 为空：由安装器内嵌（如 Forge client.lzma）或其他途径提供，不在此下载
+        if artifact.url.is_empty() {
+            continue;
+        }
         let dest = libraries_dir.join(&artifact.path);
         if dest.exists() && file_sha1_matches(&dest, &artifact.sha1) {
             continue;

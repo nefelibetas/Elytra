@@ -442,8 +442,18 @@ onMounted(async () => {
     },
   );
 
-  await listen<[number, string]>(EVT_GAME_EXITED, (ev) => {
+  await listen<[number, string, number | null]>(EVT_GAME_EXITED, (ev) => {
     console.log("Game exited:", ev.payload);
+    const [, label, exitCode] = ev.payload;
+    // 退出码非 0：游戏异常退出（崩溃/启动失败）——不再静默，弹错误级提示
+    // body 仅友好提示（AlertDialog 只显示首行），完整信息进复制区
+    if (exitCode !== null && exitCode !== 0) {
+      alertMsg.value =
+        `游戏异常退出（退出码 ${exitCode}），请查看日志或重新启动\n` +
+        `版本：${label}\n退出码：${exitCode}\n日志：.minecraft/logs/elytra-launch.log`;
+      alertCopyable.value = true;
+      showAlert.value = true;
+    }
   });
 });
 </script>

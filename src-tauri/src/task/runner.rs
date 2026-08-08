@@ -53,6 +53,10 @@ pub async fn run_task(
         dir_name = name;
         vdir = p;
     }
+    // 任务开始前该版本目录是否已存在：
+    // - 全新下载（目录不存在）→ 下载失败时整删残缺目录，免手动清理
+    // - 补全文件（目录已存在，如重下缺失库/修复）→ 失败不删，保留已有版本
+    let vdir_existed_before = vdir.exists();
 
     // 同版本互斥：路径被其他任务占用时拒绝，避免并发互相覆盖/清理
     let _lock = match task::PathLock::try_acquire(task::global(), &vdir) {
@@ -531,6 +535,11 @@ pub async fn run_task(
         return set_cancelled(&app, progress);
     }
     if let Err(errors) = parallel {
+        // 全新下载失败：整删残缺版本目录（含未写全的 json/jar），免手动清理；
+        // 补全文件（任务开始前目录已存在）不删，避免误删已有版本
+        if !vdir_existed_before {
+            let _ = std::fs::remove_dir_all(&vdir);
+        }
         return set_error(&app, progress, errors.join("; "));
     }
     if cancelled(cancel) {

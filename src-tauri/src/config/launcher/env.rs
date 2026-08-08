@@ -107,9 +107,17 @@ pub fn pre_launch_check(
 
     // 2. libraries（复用下载侧过滤 + sha1 校验：缺失/损坏都算）
     let lib_dir = mc_dir.join("libraries");
-    let lib_pending = crate::downloader::library::count_pending(&version_json.libraries, &lib_dir);
-    if lib_pending > 0 {
-        missing.push(format!("缺失支持库 {lib_pending} 个（含 sha1 校验）"));
+    let missing_libs =
+        crate::downloader::library::missing_libraries(&version_json.libraries, &lib_dir);
+    if !missing_libs.is_empty() {
+        let mut msg = format!("缺失支持库 {} 个（含 sha1 校验）", missing_libs.len());
+        for p in missing_libs.iter().take(20) {
+            msg.push_str(&format!("\n  {}", p));
+        }
+        if missing_libs.len() > 20 {
+            msg.push_str(&format!("\n  … 其余 {} 个", missing_libs.len() - 20));
+        }
+        missing.push(msg);
     }
 
     // 3. assets index
