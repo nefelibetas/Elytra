@@ -615,6 +615,11 @@ onMounted(() => {
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .card { background-color: var(--surface-card); border: 1px solid var(--border-default); border-radius: var(--radius-md); }
+.card-body {
+  overflow: hidden;
+  /* 与 VersionCard 一致：底部圆角贴合 .card 圆角，最后一项 hover 背景不露直角 */
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+}
 .card-title {
   display: flex; align-items: center; gap: 8px;
   padding: 12px 16px; font-size: 14px; font-weight: 600;

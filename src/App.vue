@@ -190,7 +190,7 @@ input, textarea {
   --surface-header: var(--color-brand);
   --surface-card: #FFFFFF;
   --surface-elevated: #FFFFFF;
-  --surface-hover: rgba(0, 0, 0, 0.03);
+  --surface-hover: rgba(0, 0, 0, 0.07);
 
   /* border */
   --border-default: #E5E7EB;

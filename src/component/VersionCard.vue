@@ -49,6 +49,9 @@ const bodyHeight = computed(() => {
 
 .card-body {
   overflow: hidden;
+  /* 底部圆角贴合 .card 的 border-radius：列表最后一项 hover 的直角背景
+     被 overflow 裁剪时不再"顶着"卡片圆角形成方角 */
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
   transition: max-height 0.3s ease, opacity 0.25s ease;
   opacity: 1;
 }
