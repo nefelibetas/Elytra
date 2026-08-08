@@ -381,10 +381,10 @@ function sourceModeLabel(v: string) {
 }
 // 社区下载源：Modrinth 官方 API/CDN vs MCIM 国内镜像（管理 Fabric API 等社区资源）
 const communitySourceOptions = [
-  { value: "preferOfficial", label: "Modrinth 优先", desc: "Modrinth 官方优先，加载缓慢时使用 MCIM 镜像" },
-  { value: "preferChina", label: "MCIM 优先", desc: "MCIM 镜像优先，失败时回退 Modrinth" },
-  { value: "officialOnly", label: "Modrinth", desc: "仅使用 Modrinth 官方，不自动回退" },
-  { value: "chinaOnly", label: "MCIM", desc: "仅使用 MCIM 镜像，不自动回退" },
+  { value: "preferOfficial", label: "Modrinth/CurseForge 优先", desc: "Modrinth/CurseForge 官方优先，加载缓慢时使用镜像" },
+  { value: "preferChina", label: "镜像 优先", desc: "镜像优先，失败时回退 Modrinth/CurseForge 官方" },
+  { value: "officialOnly", label: "Modrinth/CurseForge", desc: "仅使用 Modrinth/CurseForge 官方，不自动回退" },
+  { value: "chinaOnly", label: "镜像", desc: "仅使用镜像，不自动回退" },
 ];
 
 interface DownloaderConfig {
@@ -1741,9 +1741,9 @@ const placeholder = computed(() => {
   transition: border-color 0.15s;
 }
 .dl-sel-btn > span {
-  /* 固定行高并单行省略：中英混排文本在 CJK 字体下 line box 度量不同，
-     会撑高 flex 按钮导致切换选中项时高度抖动 */
-  line-height: 1;
+  /* 固定行高并单行省略：容器高度已固定，行高变化不会再引起高度抖动。
+     1.4 保证 CJK 字形（ink box 超出 line box）不被上下裁剪 */
+  line-height: 1.4;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1792,8 +1792,8 @@ const placeholder = computed(() => {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
-  /* 固定行高：中英混排的 line box 差异会撑高按钮 */
-  line-height: 1;
+  /* 行高 1.4：CJK 字形 ink 超出 line box，1 会被上下裁剪（容器高度已固定，不会抖动） */
+  line-height: 1.4;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1802,7 +1802,7 @@ const placeholder = computed(() => {
 .dl-sel-item-desc {
   font-size: 11.5px;
   color: var(--text-tertiary);
-  line-height: 1;
+  line-height: 1.4;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
