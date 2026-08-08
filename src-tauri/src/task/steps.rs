@@ -49,7 +49,7 @@ impl TaskSpec for DownloadTask {
     /// 步骤序列（顺序即执行顺序；零缺失维度由 runner 检测后过滤）。
     fn steps(&self) -> Vec<StepSpec> {
         let mut v = vec![
-            StepSpec { name: "下载原版json文件".into(), kind: StepKind::VersionJson },
+            StepSpec { name: "获取版本清单".into(), kind: StepKind::VersionJson },
             StepSpec { name: "下载原版客户端文件".into(), kind: StepKind::ClientJar },
             StepSpec { name: "下载原版支持库文件".into(), kind: StepKind::Libraries },
             StepSpec { name: "下载原版资源文件".into(), kind: StepKind::Assets },
@@ -64,9 +64,9 @@ impl TaskSpec for DownloadTask {
         if self.fabric_api.is_some() {
             v.push(StepSpec { name: "下载 Fabric API".into(), kind: StepKind::FabricApi });
         }
-        // 生成配置放最后：依赖本体/库就绪，UI 上作为收尾步骤展示
+        // 生成最终配置放最后：依赖本体/库就绪，UI 上作为收尾步骤展示
         if let Some(l) = &self.loader {
-            v.push(StepSpec { name: format!("生成 {} 配置", l.kind.display_name()), kind: StepKind::LoaderConfig });
+            v.push(StepSpec { name: format!("生成 {} 最终配置", l.kind.display_name()), kind: StepKind::LoaderConfig });
         }
         v
     }
@@ -110,7 +110,7 @@ mod tests {
         };
         assert_eq!(
             names(&valid_task()),
-            vec!["下载原版json文件", "下载原版客户端文件", "下载原版支持库文件", "下载原版资源文件", "处理 native 库"]
+            vec!["获取版本清单", "下载原版客户端文件", "下载原版支持库文件", "下载原版资源文件", "处理 native 库"]
         );
 
         // Fabric + Fabric API：追加 下载本体/Fabric API/生成配置(最后)
@@ -121,9 +121,9 @@ mod tests {
         assert_eq!(
             n,
             vec![
-                "下载原版json文件", "下载原版客户端文件", "下载原版支持库文件",
+                "获取版本清单", "下载原版客户端文件", "下载原版支持库文件",
                 "下载原版资源文件", "处理 native 库", "下载 Fabric 本体",
-                "下载 Fabric API", "生成 Fabric 配置"
+                "下载 Fabric API", "生成 Fabric 最终配置"
             ]
         );
 
