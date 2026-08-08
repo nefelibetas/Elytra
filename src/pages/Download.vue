@@ -107,6 +107,8 @@ watch([selectedVersion, selectedLoaderVersions, selectedMainLoader], updateResol
 
 // Auto-fetch Fabric API when Fabric is selected
 watch(selectedMainLoader, (ld) => {
+  // 未选主 ModLoader 时隐藏 OptiFine：同时清掉残留选择，防止被静默提交
+  if (!ld) delete selectedLoaderVersions.value["optifine"];
   const mc = selectedVersion.value?.id;
   if (ld === "fabric" && mc) {
     fetchFabricApi(mc);
@@ -341,7 +343,8 @@ function loaderSupported(ld: string, mcVersion: string): boolean {
 function showLoader(ld: string): boolean {
   const mc = selectedVersion.value?.id;
   if (mc && !loaderSupported(ld, mc)) return false;
-  if (!isMainLoader(ld)) return true;
+  // OptiFine 依附于主 ModLoader：未选主 loader 时不显示
+  if (!isMainLoader(ld)) return !!selectedMainLoader.value;
   if (!selectedMainLoader.value) return true;
   return ld === selectedMainLoader.value;
 }
