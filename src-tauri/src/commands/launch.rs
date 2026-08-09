@@ -431,10 +431,33 @@ pub async fn spawn_game(
         .stderr(std::process::Stdio::piped())
         .stdin(std::process::Stdio::null());
     #[cfg(target_os = "windows")]
-    {
+    let mut child = {
         use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000);
-    }
+        // 游戏进程应与启动器生命周期解耦，否则关闭启动器（或其终端）会连游戏一起关闭：
+        // 游戏作为启动器的子进程，会自动加入启动器所在的 Job Object
+        // （如 VS Code 终端建的 KILL_ON_JOB_CLOSE job），job 关闭时游戏被连带杀死。
+        // 用 CREATE_BREAKAWAY_FROM_JOB 让游戏脱离该 job；
+        // 但宿主 job 不允许 breakaway 时，带该标志的 CreateProcess 会直接失败
+        // ERROR_ACCESS_DENIED(5)（实测复现），此时回退为不带该标志重试——
+        // 游戏留在 job 中（关终端仍会被连带关闭，Windows 硬限制），但能正常启动。
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+        let mut flags = CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB;
+        loop {
+            command.creation_flags(flags);
+            match command.spawn() {
+                Ok(c) => break c,
+                Err(e)
+                    if e.raw_os_error() == Some(5)
+                        && flags & CREATE_BREAKAWAY_FROM_JOB != 0 =>
+                {
+                    flags &= !CREATE_BREAKAWAY_FROM_JOB; // 最多重试一次
+                }
+                Err(e) => return Err(format!("启动游戏失败: {e}")),
+            }
+        }
+    };
+    #[cfg(not(target_os = "windows"))]
     let mut child = command
         .spawn()
         .map_err(|e| format!("启动游戏失败: {}", e))?;
