@@ -2,13 +2,13 @@
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
 
 use crate::config::downloader::model::{DownloadSource, DownloaderConfig};
 use crate::downloader::fetcher::{self, http};
 
-use super::{LoaderEvent, LoaderHook, expand_inheritance};
+use super::{expand_inheritance, LoaderEvent, LoaderHook};
 
 #[allow(clippy::too_many_arguments)]
 pub async fn install_forge(
@@ -156,8 +156,15 @@ async fn download_and_extract(
         resolve_version_json(&mut archive, &profile, &json_path, dir_name, parent_text).await?;
 
     // --- jar ---
-    let found_jar =
-        resolve_jar(&mut archive, &profile, source, &jar_path, dir_name, &json_path).await?;
+    let found_jar = resolve_jar(
+        &mut archive,
+        &profile,
+        source,
+        &jar_path,
+        dir_name,
+        &json_path,
+    )
+    .await?;
 
     let _ = std::fs::remove_file(&installer_path);
     if !found_json {
@@ -199,15 +206,13 @@ async fn download_and_extract(
     // 同时运行 installertools PROCESS_MINECRAFT_JAR 生成 minecraft-client-patched
     // （GameLocator 新安装方式优先使用它，避免缺 client-srg.jar 报 corrupted）。
     if let Some(uni) = profile.as_ref().and_then(|p| {
-        p["libraries"]
-            .as_array()
-            .and_then(|a| {
-                a.iter().find(|l| {
-                    l["name"].as_str().is_some_and(|n| {
-                        n.starts_with("net.neoforged:neoforge:") && n.ends_with(":universal")
-                    })
+        p["libraries"].as_array().and_then(|a| {
+            a.iter().find(|l| {
+                l["name"].as_str().is_some_and(|n| {
+                    n.starts_with("net.neoforged:neoforge:") && n.ends_with(":universal")
                 })
             })
+        })
     }) {
         let neo_version = uni["name"]
             .as_str()
@@ -310,9 +315,10 @@ async fn extract_forge_client_lzma(
             if !entry.name().ends_with("client.lzma") {
                 continue;
             }
-            let mut out = std::fs::File::create(&client_lzma)
-                .map_err(|e| format!("创建文件失败: {e}"))?;
-            std::io::copy(&mut entry, &mut out).map_err(|e| format!("提取 client.lzma 失败: {e}"))?;
+            let mut out =
+                std::fs::File::create(&client_lzma).map_err(|e| format!("创建文件失败: {e}"))?;
+            std::io::copy(&mut entry, &mut out)
+                .map_err(|e| format!("提取 client.lzma 失败: {e}"))?;
             found = true;
             break;
         }
@@ -330,12 +336,30 @@ async fn extract_forge_client_lzma(
     let tools = tmp.join("forge-tools");
     std::fs::create_dir_all(&tools).map_err(|e| format!("创建目录失败: {e}"))?;
     const TOOL_JARS: &[(&str, &str)] = &[
-        ("binarypatcher", "net/minecraftforge/binarypatcher/1.3.4/binarypatcher-1.3.4.jar"),
-        ("hash-utils", "net/minecraftforge/hash-utils/0.2.3/hash-utils-0.2.3.jar"),
-        ("srgutils", "net/minecraftforge/srgutils/0.6.6/srgutils-0.6.6.jar"),
-        ("jopt-simple", "net/sf/jopt-simple/jopt-simple/6.0-alpha-3/jopt-simple-6.0-alpha-3.jar"),
-        ("lzma-java", "com/github/jponge/lzma-java/1.3/lzma-java-1.3.jar"),
-        ("javaxdelta", "com/nothome/javaxdelta/2.0.1/javaxdelta-2.0.1.jar"),
+        (
+            "binarypatcher",
+            "net/minecraftforge/binarypatcher/1.3.4/binarypatcher-1.3.4.jar",
+        ),
+        (
+            "hash-utils",
+            "net/minecraftforge/hash-utils/0.2.3/hash-utils-0.2.3.jar",
+        ),
+        (
+            "srgutils",
+            "net/minecraftforge/srgutils/0.6.6/srgutils-0.6.6.jar",
+        ),
+        (
+            "jopt-simple",
+            "net/sf/jopt-simple/jopt-simple/6.0-alpha-3/jopt-simple-6.0-alpha-3.jar",
+        ),
+        (
+            "lzma-java",
+            "com/github/jponge/lzma-java/1.3/lzma-java-1.3.jar",
+        ),
+        (
+            "javaxdelta",
+            "com/nothome/javaxdelta/2.0.1/javaxdelta-2.0.1.jar",
+        ),
         ("trove", "trove/trove/1.0.2/trove-1.0.2.jar"),
     ];
     let sources: Vec<&crate::config::downloader::model::DownloadSource> =
@@ -411,9 +435,7 @@ async fn download_neoforge_universal(
     lib_dir: &Path,
     config: &crate::config::downloader::model::DownloaderConfig,
 ) -> Result<(), String> {
-    let name = uni["name"]
-        .as_str()
-        .ok_or("NeoForge universal 坐标缺失")?;
+    let name = uni["name"].as_str().ok_or("NeoForge universal 坐标缺失")?;
     let parts: Vec<&str> = name.split(':').collect();
     if parts.len() < 4 {
         return Err(format!("NeoForge universal 坐标格式异常: {name}"));
@@ -428,7 +450,12 @@ async fn download_neoforge_universal(
         file
     );
     let dest = lib_dir.join(&rel);
-    if dest.exists() && dest.metadata().map(|m| m.len() > 1_000_000).unwrap_or(false) {
+    if dest.exists()
+        && dest
+            .metadata()
+            .map(|m| m.len() > 1_000_000)
+            .unwrap_or(false)
+    {
         return Ok(());
     }
     let sources: Vec<&crate::config::downloader::model::DownloadSource> =
@@ -461,7 +488,12 @@ async fn extract_neoforge_client(
         .join("net/neoforged/minecraft-client-patched")
         .join(neo_version)
         .join(&patched_name);
-    if dest.exists() && dest.metadata().map(|m| m.len() > 1_000_000).unwrap_or(false) {
+    if dest.exists()
+        && dest
+            .metadata()
+            .map(|m| m.len() > 1_000_000)
+            .unwrap_or(false)
+    {
         return Ok(());
     }
 
@@ -478,8 +510,8 @@ async fn extract_neoforge_client(
             if !entry.name().ends_with("client.lzma") {
                 continue;
             }
-            let mut out = std::fs::File::create(&client_lzma)
-                .map_err(|e| format!("创建文件失败: {e}"))?;
+            let mut out =
+                std::fs::File::create(&client_lzma).map_err(|e| format!("创建文件失败: {e}"))?;
             std::io::copy(&mut entry, &mut out)
                 .map_err(|e| format!("提取 client.lzma 失败: {e}"))?;
             found = true;
@@ -497,7 +529,8 @@ async fn extract_neoforge_client(
     // 3. 下载 installertools fatjar（maven.neoforged.net + 镜像）
     let tools = tmp.join("neoforge-tools");
     std::fs::create_dir_all(&tools).map_err(|e| format!("创建目录失败: {e}"))?;
-    let tool_path = "net/neoforged/installertools/installertools/4.0.12/installertools-4.0.12-fatjar.jar";
+    let tool_path =
+        "net/neoforged/installertools/installertools/4.0.12/installertools-4.0.12-fatjar.jar";
     let tool_dest = tools.join("installertools-fatjar.jar");
     if !tool_dest.exists() {
         let sources: Vec<&crate::config::downloader::model::DownloadSource> =
@@ -560,7 +593,9 @@ async fn wait_for_vanilla_client(mc_dir: &Path, dir_name: &str) -> Result<PathBu
     let mut last_size = 0u64;
     let mut stable = 0u32;
     for _ in 0..240 {
-        let size = std::fs::metadata(&vanilla_jar).map(|m| m.len()).unwrap_or(0);
+        let size = std::fs::metadata(&vanilla_jar)
+            .map(|m| m.len())
+            .unwrap_or(0);
         if size > 1_000_000 {
             if size == last_size {
                 stable += 1;
@@ -578,7 +613,8 @@ async fn wait_for_vanilla_client(mc_dir: &Path, dir_name: &str) -> Result<PathBu
 }
 
 /// 运行补丁工具所需的 Java 可执行文件（与游戏启动同一套 JDK 配置）。
-fn resolve_java() -> Result<std::path::PathBuf, String> {    use crate::jdk::model::JdkSelection;
+fn resolve_java() -> Result<std::path::PathBuf, String> {
+    use crate::jdk::model::JdkSelection;
     let cfg = crate::jdk::read();
     match cfg.jdk_selection {
         JdkSelection::Manual { path } => Ok(crate::jdk::java_bin_path(std::path::Path::new(&path))),
