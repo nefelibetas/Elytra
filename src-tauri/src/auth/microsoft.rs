@@ -48,6 +48,8 @@ pub enum MsError {
     NoProfile(String),
     /// 网络/HTTP 异常
     Http(String),
+    /// 认证服务限流（429）——临时性，等待后自动恢复；反复快速重试会延长限流
+    RateLimited(&'static str),
     /// 响应格式异常
     Malformed(String),
 }
@@ -63,6 +65,10 @@ impl std::fmt::Display for MsError {
             MsError::NoPurchase => write!(f, "该账号未购买 Minecraft"),
             MsError::NoProfile(e) => write!(f, "获取游戏档案失败\n{e}"),
             MsError::Http(e) => write!(f, "网络请求失败\n{e}"),
+            MsError::RateLimited(what) => write!(
+                f,
+                "{what}请求过于频繁(429)\nMinecraft/微软认证服务临时限流,请等待几分钟后重试;频繁重试会延长限流时间"
+            ),
             MsError::Malformed(e) => write!(f, "响应解析失败\n{e}"),
         }
     }
@@ -237,6 +243,9 @@ async fn authenticate_xbl(
         .await?;
     let status = resp.status();
     let json: serde_json::Value = resp.json().await?;
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Err(MsError::RateLimited("Xbox Live 鉴权"));
+    }
     if !status.is_success() {
         return Err(MsError::Http(format!(
             "Xbox Live 鉴权失败({status}): {}",
@@ -274,6 +283,9 @@ async fn authenticate_xsts(
         .await?;
     let status = resp.status();
     let json: serde_json::Value = resp.json().await?;
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Err(MsError::RateLimited("Xbox 鉴权"));
+    }
     if status == reqwest::StatusCode::UNAUTHORIZED {
         let xerr = json.get("XErr").and_then(|v| v.as_i64()).unwrap_or(0);
         return Err(MsError::Xsts(xerr));
@@ -324,6 +336,9 @@ async fn minecraft_login(
         .await?;
     let status = resp.status();
     let json: serde_json::Value = resp.json().await?;
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Err(MsError::RateLimited("Minecraft 登录"));
+    }
     if !status.is_success() {
         return Err(MsError::Http(format!(
             "Minecraft 登录失败({status}): {}",
