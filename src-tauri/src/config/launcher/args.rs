@@ -191,8 +191,9 @@ pub fn build_launch_command(
     user_properties: &str,
 ) -> LaunchCommand {
     // ── 路径 ──
-    // natives 目录统一放在 .minecraft/natives/<ver>/（首次启动解压一次，后续复用）
-    let natives_dir = mc_dir.join("natives").join(&version_json.id);
+    // natives 目录按 MC 版本共享（同 MC 的 vanilla/ModLoader 版本 native 库一致，
+    // 避免每个版本在 natives/<版本id>/ 各解压一份 LWJGL 运行时产物，约 16MB/份）
+    let natives_dir = mc_dir.join("natives").join(mc_version_of(version_dir_name));
     let lib_dir = mc_dir.join("libraries");
     let assets_dir = mc_dir.join("assets");
     let version_dir = mc_dir.join("versions").join(version_dir_name);
@@ -527,7 +528,26 @@ pub fn has_old_style_natives(version_json: &VersionJson) -> bool {
         .any(|l| l.natives_kind() == Some(NativesKind::Legacy))
 }
 
-/// 确保 natives 目录就绪：所有版本都创建 `.minecraft/natives/<ver>/` 根目录
+/// 从版本目录名提取 MC 版本（与前端 utils/versionClassify 一致）：
+/// 找 `-{loader_key}-` 标记取标记前部分；无标记（vanilla）取整个目录名。
+/// natives 目录按 MC 版本共享——同一 MC 的 vanilla/ModLoader 版本 native 库一致，
+/// 避免每个版本在 natives/<版本id>/ 各解压一份（LWJGL 运行时解压产物约 16MB/份）。
+pub fn mc_version_of(dir_name: &str) -> &str {
+    const LOADER_KEYS: &[&str] = &["fabric", "forge", "neoforge", "quilt", "optifine"];
+    // 冲突重命名 {id}_n 后缀（与前端 classifyVersion 的 /_\d+$/ 等价）
+    let base = dir_name.split('_').next().unwrap_or(dir_name);
+    for key in LOADER_KEYS {
+        let marker = format!("-{key}-");
+        if let Some(idx) = base.find(&marker) {
+            if idx > 0 {
+                return &base[..idx];
+            }
+        }
+    }
+    base
+}
+
+/// 确保 natives 目录就绪：所有版本都创建 `.minecraft/natives/<mc>/` 根目录
 /// （官方 arguments.jvm 的 SharedLibraryExtractPath 等参数指向它，LWJGL 需要目录存在）。
 /// 旧式版本（lwjgl 2.x）额外把 natives classifier JAR 解压到该目录。
 pub fn ensure_old_style_natives(

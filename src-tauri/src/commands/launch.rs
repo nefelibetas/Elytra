@@ -82,7 +82,9 @@ fn verify_env(
     version_dir_name: &str,
 ) -> Result<(), String> {
     env::pre_launch_check(version_json, mc_dir, version_dir_name)?;
-    let natives_dir = mc_dir.join("natives").join(&version_json.id);
+    let natives_dir = mc_dir
+        .join("natives")
+        .join(crate::config::launcher::args::mc_version_of(version_dir_name));
     crate::config::launcher::args::ensure_old_style_natives(
         version_json,
         &mc_dir.join("libraries"),
@@ -521,6 +523,19 @@ mod tests {
             );
             assert!(s.ends_with("pause\r\n"));
         }
+    }
+
+    #[test]
+    fn test_mc_version_of() {
+        use crate::config::launcher::args::mc_version_of;
+        assert_eq!(mc_version_of("26.2"), "26.2");
+        assert_eq!(mc_version_of("26.2-forge-65.1.0"), "26.2");
+        assert_eq!(mc_version_of("26.2-neoforge-26.2.0.53-beta"), "26.2");
+        assert_eq!(mc_version_of("1.20.1-pre1-forge-40.1.0"), "1.20.1-pre1");
+        assert_eq!(mc_version_of("1.18.2-fabric-0.16.11"), "1.18.2");
+        assert_eq!(mc_version_of("1.12.2"), "1.12.2");
+        // 冲突重命名后缀 {id}_n 不影响 MC 版本提取
+        assert_eq!(mc_version_of("26.2-forge-65.1.0_1"), "26.2");
     }
 
     /// 构造一个最小可用的版本 JSON（旧格式 minecraftArguments，保底参数路径）。
