@@ -182,6 +182,13 @@ pub async fn process_natives(
     }
 }
 
+/// 把单个 ZIP 条目解压到目标文件（ModLoader installer 流程共用）。
+pub fn extract_entry_to(entry: &mut zip::read::ZipFile, dest: &Path) -> Result<(), String> {
+    let mut out = std::fs::File::create(dest).map_err(|e| format!("创建文件失败: {}", e))?;
+    std::io::copy(entry, &mut out).map_err(|e| format!("解压失败: {}", e))?;
+    Ok(())
+}
+
 /// 将 JAR（ZIP）解压到 `out_dir`，跳过 `extract.exclude` 中的路径。
 /// 公开给启动命令构建使用（旧式 natives 运行时解压到临时目录）。
 pub fn extract_jar(

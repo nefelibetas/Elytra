@@ -1,12 +1,16 @@
 // ── ModLoader 引擎：公共纯函数 + 子模块 re-export ──
-// fabric.rs（profile 式：Fabric/Quilt）、forge.rs（installer 式：Forge/NeoForge）、optifine.rs。
+// fabric.rs（profile 式：Fabric/Quilt）、forge.rs（installer 式 Forge 共用流程 + 共享工具）、
+// neoforge.rs（installer 式 NeoForge 专属）、optifine.rs、version_query.rs（版本列表查询）。
 
 pub mod fabric;
 pub mod forge;
+pub mod neoforge;
 pub mod optifine;
+pub mod version_query;
 
 pub use fabric::{install_fabric, install_quilt};
-pub use forge::{install_forge, install_neoforge};
+pub use forge::install_forge;
+pub use neoforge::install_neoforge;
 pub use optifine::install_optifine;
 
 fn maven_path(name: &str) -> String {
