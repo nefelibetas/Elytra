@@ -34,6 +34,9 @@ fn is_mirror_url(url: &str) -> bool {
 fn build_client() -> Client {
     Client::builder()
         .user_agent(UA_DOWNLOAD)
+        // connect 黑洞防挂死：部分镜像 302 到不可达对象存储节点（749333.xyz 实测 TCP 黑洞），
+        // 全局 client 无连接超时会挂满 300s；2s 连接超时只在新建连接时生效，不影响连接池复用
+        .connect_timeout(std::time::Duration::from_secs(2))
         .timeout(std::time::Duration::from_secs(300))
         .pool_max_idle_per_host(16)
         .build()
