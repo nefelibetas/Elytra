@@ -58,6 +58,17 @@ fn curseforge_loader_id(loader: &str) -> Option<i64> {
     }
 }
 
+/// CurseForge 项目大类 classId（光影包等非 mod 类别走 classId 过滤）。
+fn curseforge_class_id(category: &str) -> Option<i64> {
+    match category {
+        "shader" => Some(6552),
+        "resourcepack" => Some(12),
+        "datapack" => Some(6945),
+        "modpack" => Some(4471),
+        _ => None,
+    }
+}
+
 /// 从 CurseForge gameVersions（如 ["Client","NeoForge","Server","26.2"]）提取已知 loader 名。
 fn curseforge_loaders(game_versions: &[String]) -> Vec<String> {
     game_versions
@@ -95,6 +106,7 @@ async fn search_modrinth(
     query: &str,
     game_version: Option<&str>,
     loader: Option<&str>,
+    category: Option<&str>,
     offset: u64,
 ) -> Result<ModSearchPage, String> {
     let mut facets: Vec<Vec<String>> = Vec::new();
@@ -103,6 +115,10 @@ async fn search_modrinth(
     }
     if let Some(ld) = loader {
         facets.push(vec![format!("categories:{}", ld)]);
+    }
+    // 光影包等非 mod 项目类型（Modrinth 的 project_type facet）
+    if let Some(cat) = category {
+        facets.push(vec![format!("project_type:{}", cat)]);
     }
     let mut params: Vec<(&str, String)> = vec![
         ("query", query.to_string()),
@@ -229,6 +245,7 @@ async fn search_curseforge(
     query: &str,
     game_version: Option<&str>,
     loader: Option<&str>,
+    category: Option<&str>,
     offset: u64,
 ) -> Result<ModSearchPage, String> {
     let mut params: Vec<(&str, String)> = vec![
@@ -245,6 +262,11 @@ async fn search_curseforge(
     if let Some(ld) = loader {
         if let Some(id) = curseforge_loader_id(ld) {
             params.push(("modLoaderType", id.to_string()));
+        }
+    }
+    if let Some(cat) = category {
+        if let Some(id) = curseforge_class_id(cat) {
+            params.push(("classId", id.to_string()));
         }
     }
     let data = curseforge_get("/mods/search", &params).await?;
@@ -321,17 +343,18 @@ async fn curseforge_versions(
         .collect())
 }
 
-/// 搜索（按来源分派）。
+/// 搜索（按来源分派）。`category` 为项目类型（如 shader）或 None（普通 mod）。
 pub async fn search_mods(
     source: &str,
     query: &str,
     game_version: Option<&str>,
     loader: Option<&str>,
+    category: Option<&str>,
     offset: u64,
 ) -> Result<ModSearchPage, String> {
     match source {
-        "modrinth" => search_modrinth(query, game_version, loader, offset).await,
-        "curseforge" => search_curseforge(query, game_version, loader, offset).await,
+        "modrinth" => search_modrinth(query, game_version, loader, category, offset).await,
+        "curseforge" => search_curseforge(query, game_version, loader, category, offset).await,
         other => Err(format!("未知 Mod 来源: {}", other)),
     }
 }
@@ -360,7 +383,7 @@ mod tests {
     /// Modrinth 无需 key，任何环境可跑（单发小请求）。
     #[tokio::test]
     async fn search_modrinth_works() {
-        let page = search_modrinth("jei", Some("1.21.1"), Some("fabric"), 0).await;
+        let page = search_modrinth("jei", Some("1.21.1"), Some("fabric"), None, 0).await;
         assert!(page.is_ok(), "Modrinth 搜索应成功: {:?}", page.err());
         let page = page.unwrap();
         assert!(!page.items.is_empty(), "搜 jei 应返回结果");
@@ -375,7 +398,7 @@ mod tests {
     /// 空关键字：对齐 PCL2 行为，返回按下载量排序的热门列表。
     #[tokio::test]
     async fn modrinth_empty_query_returns_popular() {
-        let page = search_modrinth("", None, None, 0).await.unwrap();
+        let page = search_modrinth("", None, None, None, 0).await.unwrap();
         assert!(!page.items.is_empty(), "空关键字应返回热门 Mod");
         let first = &page.items[0];
         assert!(
@@ -396,7 +419,7 @@ mod tests {
             eprintln!("跳过: 未配置 CurseForge API Key");
             return;
         }
-        let page = search_curseforge("jei", Some("1.21.1"), None, 0).await;
+        let page = search_curseforge("jei", Some("1.21.1"), None, None, 0).await;
         assert!(page.is_ok(), "CurseForge 搜索应成功: {:?}", page.err());
         let page = page.unwrap();
         assert!(!page.items.is_empty(), "搜 jei 应返回结果");
@@ -417,7 +440,7 @@ mod tests {
             eprintln!("跳过: 未配置 CurseForge API Key");
             return;
         }
-        let page = search_curseforge("just enough items", Some("1.21.1"), None, 0)
+        let page = search_curseforge("just enough items", Some("1.21.1"), None, None, 0)
             .await
             .unwrap();
         assert!(
