@@ -1,0 +1,236 @@
+<script setup lang="ts">
+// 启动选项卡片 + 内存分配卡片
+import { onMounted } from "vue";
+import { memState } from "../store/memory";
+import {
+  loWindowTitle, loPriority, loWinMode, loWinW, loWinH, loGameLang,
+  loMemMode, loMemMb, loMemOptimize, loVerifySsl, launchError,
+  memUsedMb, memGameMb, memUsedPct, memGamePct, memLabelLeft, fmtGb,
+  saveLaunchOptions, loadLaunchOptions,
+} from "../store/launchOptions";
+
+onMounted(loadLaunchOptions);
+</script>
+
+<template>
+  <div class="stg-card">
+    <div class="stg-card-hdr">
+      <h3>启动选项</h3>
+      <div class="stg-card-sub">游戏启动行为设置</div>
+    </div>
+    <div class="launch-opts">
+      <div class="lo-row">
+        <label class="lo-label" for="lo-title">游戏窗口标题</label>
+        <input
+          id="lo-title"
+          v-model="loWindowTitle"
+          class="lo-input"
+          type="text"
+          placeholder="不修改（默认）"
+          maxlength="64"
+          @change="saveLaunchOptions"
+        />
+      </div>
+
+      <div class="lo-row">
+        <label class="lo-label" for="lo-prio">进程优先级</label>
+        <select
+          id="lo-prio"
+          v-model="loPriority"
+          class="lo-select"
+          @change="saveLaunchOptions"
+        >
+          <option value="Low">低</option>
+          <option value="Normal">中（平衡）</option>
+          <option value="High">高</option>
+          <option value="RealTime">实时</option>
+        </select>
+      </div>
+
+      <div class="lo-row">
+        <label class="lo-label" for="lo-winsize">窗口大小</label>
+        <div class="lo-winsize">
+          <select
+            id="lo-winsize"
+            v-model="loWinMode"
+            class="lo-select"
+            @change="saveLaunchOptions"
+          >
+            <option value="Default">默认（不设置）</option>
+            <option value="Custom">自定义</option>
+          </select>
+          <template v-if="loWinMode === 'Custom'">
+            <input
+              v-model.number="loWinW"
+              class="lo-input lo-num"
+              type="number"
+              min="320"
+              max="7680"
+              placeholder="宽"
+              @change="saveLaunchOptions"
+            />
+            <span class="lo-times">×</span>
+            <input
+              v-model.number="loWinH"
+              class="lo-input lo-num"
+              type="number"
+              min="240"
+              max="4320"
+              placeholder="高"
+              @change="saveLaunchOptions"
+            />
+          </template>
+        </div>
+      </div>
+
+      <div class="lo-row">
+        <label class="lo-label" for="lo-lang">游戏语言</label>
+        <select
+          id="lo-lang"
+          v-model="loGameLang"
+          class="lo-select"
+          @change="saveLaunchOptions"
+        >
+          <option value="auto_zh_CN">自动设置为中文</option>
+        </select>
+      </div>
+
+      <div class="lo-row">
+        <label class="lo-check">
+          <input v-model="loVerifySsl" type="checkbox" @change="saveLaunchOptions" />
+          <span>在正版登录时验证 SSL 证书</span>
+        </label>
+      </div>
+    </div>
+    <div v-if="launchError" class="err">{{ launchError }}</div>
+  </div>
+
+  <div class="stg-card">
+    <div class="stg-card-hdr">
+      <h3>内存分配</h3>
+      <div class="stg-card-sub">游戏内存分配与系统内存状态</div>
+    </div>
+    <div class="launch-opts">
+      <div class="lo-row">
+        <label class="lo-check">
+          <input type="radio" value="Auto" v-model="loMemMode" @change="saveLaunchOptions" />
+          <span>自动配置</span>
+        </label>
+      </div>
+      <div class="lo-row">
+        <label class="lo-check">
+          <input type="radio" value="Custom" v-model="loMemMode" @change="saveLaunchOptions" />
+          <span>自定义</span>
+        </label>
+        <input
+          v-model.number="loMemMb"
+          class="mem-slider"
+          :class="{ disabled: loMemMode !== 'Custom' }"
+          type="range"
+          :min="1024"
+          :max="memState.availMb || 4096"
+          step="256"
+          :disabled="loMemMode !== 'Custom'"
+          @change="saveLaunchOptions"
+        />
+        <span class="mem-slider-val" :class="{ disabled: loMemMode !== 'Custom' }">{{ fmtGb(loMemMb) }}</span>
+      </div>
+      <div class="lo-row">
+        <label class="lo-check">
+          <input v-model="loMemOptimize" type="checkbox" @change="saveLaunchOptions" />
+          <span>启动游戏前进行内存优化</span>
+        </label>
+      </div>
+      <div class="mem-status">
+        <div class="mem-bar-labels">
+          <span class="mem-bar-label">已使用 {{ fmtGb(memUsedMb) }}</span>
+          <span v-if="memGamePct > 0" class="mem-bar-label" :style="{ left: memLabelLeft(memUsedPct) }">游戏分配 {{ fmtGb(memGameMb) }}</span>
+        </div>
+        <div class="mem-bar">
+          <div class="mem-seg mem-used" :style="{ width: memUsedPct + '%' }"></div>
+          <div class="mem-seg mem-game" :style="{ width: memGamePct + '%' }"></div>
+          <div class="mem-seg mem-free"></div>
+        </div>
+        <div class="mem-total">{{ fmtGb(memUsedMb) }} / {{ fmtGb(memState.totalMb) }}</div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style>
+@import "../styles/settings-shared.css";
+</style>
+
+<style scoped>
+/* ===== 内存分配 ===== */
+.mem-slider {
+  flex: 1;
+  accent-color: var(--color-brand);
+  cursor: pointer;
+}
+
+.mem-slider.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.mem-slider-val {
+  flex: none;
+  width: 72px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  text-align: right;
+}
+
+.mem-slider-val.disabled {
+  opacity: 0.45;
+}
+
+.mem-status {
+  margin-top: 2px;
+}
+
+.mem-bar-labels {
+  position: relative;
+  height: 16px;
+}
+
+.mem-bar-label {
+  position: absolute;
+  /* 左对齐：文本起始紧贴色条左侧 */
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.mem-bar {
+  display: flex;
+  height: 10px;
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--border-default);
+}
+
+.mem-seg {
+  height: 100%;
+  transition: width 0.4s ease;
+}
+
+.mem-used {
+  background: #e74c3c;
+}
+
+.mem-game {
+  background: #059669;
+}
+
+.mem-free {
+  flex: 1;
+}
+
+.mem-total {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+</style>

@@ -1,0 +1,210 @@
+/* Settings 各卡片组件共享样式（组件内以非 scoped <style> @import 引入；
+   类名均带 stg-/lo- 前缀，全局唯一，无污染风险） */
+
+/* ===== 卡片 ===== */
+.stg-card {
+  background: var(--surface-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: 20px 24px;
+}
+
+/* 多卡片上下间距 */
+.stg-card + .stg-card {
+  margin-top: 16px;
+}
+
+.stg-card-hdr {
+  margin-bottom: 16px;
+}
+
+.stg-card-hdr h3 {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.stg-card-sub {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.stg-card-sub .stg-warn {
+  margin-left: 6px;
+  color: #d9534f; /* 柔和红，非刺眼 */
+}
+
+/* ===== 通用控件 ===== */
+.tool-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.tool-btn:hover:not(:disabled) {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
+}
+
+.tool-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 状态提示 */
+.loading-hint {
+  color: var(--text-secondary);
+  font-size: 13px;
+  padding: 10px 0 0;
+}
+
+.err {
+  color: #e74c3c;
+  font-size: 13px;
+  padding: 10px 0 0;
+}
+
+/* ===== 表单行（启动选项 / Java 高级项共用） ===== */
+.launch-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.lo-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 32px;
+}
+
+.lo-label {
+  flex: none;
+  width: 96px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.lo-select {
+  flex: 1;
+  height: 30px;
+  padding: 0 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background-color: var(--surface-input, var(--surface-card));
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.lo-select:hover,
+.lo-select:focus {
+  border-color: var(--color-brand);
+}
+
+.lo-input {
+  flex: 1;
+  height: 30px;
+  padding: 0 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background-color: var(--surface-input, var(--surface-card));
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.lo-input:hover,
+.lo-input:focus {
+  border-color: var(--color-brand);
+}
+
+.lo-winsize {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lo-winsize .lo-select {
+  flex: none;
+  width: 140px;
+}
+
+.lo-num {
+  flex: 1;
+  min-width: 0;
+}
+
+.lo-times {
+  flex: none;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+.lo-top {
+  align-items: flex-start;
+}
+
+.lo-top .lo-label {
+  padding-top: 6px;
+}
+
+.lo-textarea {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  font-family: inherit;
+  color: var(--text-primary);
+  background-color: var(--surface-input, var(--surface-card));
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  outline: none;
+  resize: none;
+  /* 参数文本不折行：超宽时横向滚动 */
+  white-space: nowrap;
+  overflow-x: auto;
+  overflow-y: auto;
+  transition: border-color 0.15s;
+}
+
+.lo-textarea:hover,
+.lo-textarea:focus {
+  border-color: var(--color-brand);
+}
+
+.lo-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lo-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.lo-check input[type="checkbox"] {
+  accent-color: var(--color-brand);
+  cursor: pointer;
+}
