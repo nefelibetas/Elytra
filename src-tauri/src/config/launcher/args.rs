@@ -218,108 +218,17 @@ pub fn build_launch_command(
         .collect::<Vec<_>>()
         .join(classpath_sep);
 
-    // ── JVM 参数 ──
-    let mut jvm_preamble: Vec<String> = Vec::new(); // -cp 之前
-    let mut system_props: Vec<String> = Vec::new(); // -D 类
-    let mut jvm_tuning: Vec<String> = Vec::new(); // -cp 之后、mainClass 之前
-
-    // 从版本 JSON 的 arguments.jvm 提取
-    if let Some(jvm_args) = &version_json.arguments.jvm {
-        let raw = extract_args(jvm_args, has_custom_resolution);
-        for arg in raw {
-            // 跳过 -cp / -classpath / ${classpath}（classpath 由我们自行构建，
-            // 若 ${classpath} 被替换后不跳过，会变成 -cp 之前的裸 classpath 被 java 当主类）
-            if arg == "-cp" || arg == "-classpath" || arg == "${classpath}" {
-                continue;
-            }
-            let substituted = substitute_jvm(
-                &arg,
-                &natives_dir.to_string_lossy(),
-                &lib_dir.to_string_lossy(),
-                &classpath_str,
-                classpath_sep,
-                &version_json.id,
-                constants::LAUNCHER_BRAND,
-                constants::APP_VERSION,
-            );
-            // 跳过 -Xmx / -Xms（内存由我们统一设置）
-            if substituted.starts_with("-Xmx") || substituted.starts_with("-Xms") {
-                continue;
-            }
-            if substituted.starts_with("-D") {
-                system_props.push(substituted);
-            } else {
-                jvm_preamble.push(substituted);
-            }
-        }
-    }
-
-    // JDK 22+ 前置兼容标志（官方 arguments.jvm 可能已包含，去重）
-    if java_major_version >= 22 {
-        push_unique(
-            &mut jvm_preamble,
-            "--sun-misc-unsafe-memory-access=allow".into(),
-        );
-        push_unique(
-            &mut jvm_preamble,
-            "--enable-native-access=ALL-UNNAMED".into(),
-        );
-    }
-
-    // Native 库系统属性：旧式版本设置 -Djava.library.path（目录由启动前 ensure 保证就绪）
-    add_native_props(&mut system_props, &natives_dir, version_json);
-
-    // 启动器品牌标识（官方 arguments.jvm 可能已包含，去重）
-    push_unique(
-        &mut system_props,
-        format!("-Dminecraft.launcher.brand={}", constants::LAUNCHER_BRAND),
+    // ── JVM 参数（preamble / system props / tuning 三段）──
+    let (jvm_preamble, system_props, jvm_tuning) = collect_jvm_args(
+        version_json,
+        &natives_dir,
+        &lib_dir,
+        &classpath_str,
+        java_major_version,
+        config,
+        &version_dir,
+        has_custom_resolution,
     );
-    push_unique(
-        &mut system_props,
-        format!("-Dminecraft.launcher.version={}", constants::APP_VERSION),
-    );
-
-    // 编码
-    system_props.push("-Dstdout.encoding=UTF-8".into());
-    system_props.push("-Dstderr.encoding=UTF-8".into());
-
-    // 游戏进程读取 Windows 系统代理（梯子/PAC 场景下 sessionserver/textures 才能拉取皮肤）
-    system_props.push("-Djava.net.useSystemProxies=true".into());
-
-    // 游戏窗口标题（1.13+ 读取 minecraft.window.title 系统属性；空 = 不改）
-    if !config.window_title.is_empty() {
-        system_props.push(format!("-Dminecraft.window.title={}", config.window_title));
-    }
-
-    // 游戏语言：自动设置为中文（-Duser.language 影响游戏/资源本地化）
-    if config.game_language == "auto_zh_CN" {
-        system_props.push("-Duser.language=zh_CN".into());
-        system_props.push("-Duser.country=CN".into());
-    }
-
-    // 内存
-    let mem_mb = match config.memory {
-        MemoryMode::Auto => memory::guess_auto_memory(&version_dir),
-        MemoryMode::Custom(mb) => mb,
-    };
-    jvm_tuning.push(format!("-Xmx{}m", mem_mb));
-
-    // GC 参数
-    jvm_tuning.extend(memory::gc_args(&config.gc_type));
-
-    // 用户自定义 JVM 参数（放在 -cp 后面，mainClass 前面）
-    let mut user_jvm: Vec<String> = Vec::new();
-    for arg in &config.jvm_args {
-        // 禁用 LWJGL Unsafe Agent：剔除 -javaagent:lwjgl-unsafe-agent 类参数
-        if config.disable_lwjgl_unsafe_agent
-            && arg.starts_with("-javaagent:")
-            && arg.to_lowercase().contains("lwjgl-unsafe-agent")
-        {
-            continue;
-        }
-        user_jvm.push(arg.clone());
-    }
-    jvm_tuning.extend(user_jvm);
 
     // ── 主类 ──
     let mut main_class = version_json.main_class.clone();
@@ -376,73 +285,13 @@ pub fn build_launch_command(
         launcher_version: constants::APP_VERSION,
     };
 
-    let game_args = match &version_json.arguments.game {
-        Some(game_arr) if !game_arr.is_empty() => {
-            // 新格式：arguments.game 数组
-            let raw = extract_args(game_arr, has_custom_resolution);
-            raw.iter().map(|a| substitute(a, &game_ctx)).collect()
-        }
-        _ => {
-            // 旧格式：minecraftArguments 模板字符串
-            if let Some(tpl) = &version_json.minecraft_arguments {
-                // 旧格式：模板是空格分隔的参数串，替换后按空白拆分（与官方启动器一致）
-                substitute(tpl, &game_ctx)
-                    .split_whitespace()
-                    .map(String::from)
-                    .collect()
-            } else {
-                // 最低保底
-                let mut base = vec![
-                    "--username".into(),
-                    game_ctx.auth_player_name.to_string(),
-                    "--version".into(),
-                    game_ctx.version_name.to_string(),
-                    "--gameDir".into(),
-                    game_ctx.game_directory.to_string(),
-                    "--assetsDir".into(),
-                    game_ctx.assets_root.to_string(),
-                    "--assetIndex".into(),
-                    game_ctx.assets_index_name.to_string(),
-                    "--uuid".into(),
-                    game_ctx.auth_uuid.to_string(),
-                    "--accessToken".into(),
-                    game_ctx.auth_access_token.to_string(),
-                    "--userType".into(),
-                    game_ctx.user_type.to_string(),
-                    "--versionType".into(),
-                    game_ctx.version_type.to_string(),
-                ];
-                if has_custom_resolution {
-                    base.extend([
-                        "--width".into(),
-                        game_ctx.resolution_width.to_string(),
-                        "--height".into(),
-                        game_ctx.resolution_height.to_string(),
-                    ]);
-                }
-                base
-            }
-        }
-    };
-
-    // ── 组装完整命令行 ──
-    let mut game_args = game_args;
-    // 主动注入 user properties（1.17+ 官方 json 已移除 token，Main 仍解析；
-    // 参数名 1.17+ 为 camelCase：--userProperties / --profileProperties，旧版为连字符
-    // --user-properties（由 json token 替换覆盖，不重复追加）；
-    // 1.18+ 的 Minecraft.getProfileProperties 直接消费 --profileProperties（非空即注入纹理），
-    // --userProperties 供 authlib 合并进选中档案；1.19.3+ Main 移除解析
-    // （allowsUnrecognizedOptions 静默忽略，与 PCL「仅 1.19.2 以下」一致）
-    if !user_properties.is_empty()
-        && !game_args
-            .iter()
-            .any(|a| a == "--user-properties" || a == "--userProperties")
-    {
-        game_args.push("--userProperties".into());
-        game_args.push(user_properties.to_string());
-        game_args.push("--profileProperties".into());
-        game_args.push(user_properties.to_string());
-    }
+    // ── 游戏参数（新格式数组 / 旧格式模板 / 保底参数）──
+    let game_args = build_game_args(
+        version_json,
+        &game_ctx,
+        has_custom_resolution,
+        user_properties,
+    );
 
     let mut args = Vec::new();
     args.push(java_path.to_string_lossy().to_string());
@@ -528,24 +377,9 @@ pub fn has_old_style_natives(version_json: &VersionJson) -> bool {
         .any(|l| l.natives_kind() == Some(NativesKind::Legacy))
 }
 
-/// 从版本目录名提取 MC 版本（与前端 utils/versionClassify 一致）：
-/// 找 `-{loader_key}-` 标记取标记前部分；无标记（vanilla）取整个目录名。
-/// natives 目录按 MC 版本共享——同一 MC 的 vanilla/ModLoader 版本 native 库一致，
-/// 避免每个版本在 natives/<版本id>/ 各解压一份（LWJGL 运行时解压产物约 16MB/份）。
-pub fn mc_version_of(dir_name: &str) -> &str {
-    const LOADER_KEYS: &[&str] = &["fabric", "forge", "neoforge", "quilt", "optifine"];
-    // 冲突重命名 {id}_n 后缀（与前端 classifyVersion 的 /_\d+$/ 等价）
-    let base = dir_name.split('_').next().unwrap_or(dir_name);
-    for key in LOADER_KEYS {
-        let marker = format!("-{key}-");
-        if let Some(idx) = base.find(&marker) {
-            if idx > 0 {
-                return &base[..idx];
-            }
-        }
-    }
-    base
-}
+/// 从版本目录名提取 MC 版本（natives 目录按 MC 版本共享——同一 MC 的 vanilla/ModLoader
+/// 版本 native 库一致，避免每个版本在 natives/<版本id>/ 各解压一份（LWJGL 运行时解压产物约 16MB/份）。
+pub use crate::util::mc_version_from_dir as mc_version_of;
 
 /// 确保 natives 目录就绪：所有版本都创建 `.minecraft/natives/<mc>/` 根目录
 /// （官方 arguments.jvm 的 SharedLibraryExtractPath 等参数指向它，LWJGL 需要目录存在）。
@@ -631,4 +465,201 @@ pub fn find_file_in_dir(dir: &std::path::Path, ext: &str) -> Option<std::path::P
                 None
             }
         })
+}
+
+/// 组装 JVM 参数三段：
+/// - preamble：-cp 之前（版本 JSON 参数 + JDK 22+ 兼容标志）
+/// - system_props：-D 类（natives/品牌/编码/代理/窗口标题/语言）
+/// - tuning：-cp 之后、mainClass 之前（内存/GC/用户自定义）
+#[allow(clippy::too_many_arguments)]
+fn collect_jvm_args(
+    version_json: &VersionJson,
+    natives_dir: &Path,
+    lib_dir: &Path,
+    classpath_str: &str,
+    java_major_version: u32,
+    config: &LauncherConfig,
+    version_dir: &Path,
+    has_custom_resolution: bool,
+) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let mut jvm_preamble: Vec<String> = Vec::new(); // -cp 之前
+    let mut system_props: Vec<String> = Vec::new(); // -D 类
+    let mut jvm_tuning: Vec<String> = Vec::new(); // -cp 之后、mainClass 之前
+    let classpath_sep = ";";
+
+    // 从版本 JSON 的 arguments.jvm 提取
+    if let Some(jvm_args) = &version_json.arguments.jvm {
+        let raw = extract_args(jvm_args, has_custom_resolution);
+        for arg in raw {
+            // 跳过 -cp / -classpath / ${classpath}（classpath 由我们自行构建，
+            // 若 ${classpath} 被替换后不跳过，会变成 -cp 之前的裸 classpath 被 java 当主类）
+            if arg == "-cp" || arg == "-classpath" || arg == "${classpath}" {
+                continue;
+            }
+            let substituted = substitute_jvm(
+                &arg,
+                &natives_dir.to_string_lossy(),
+                &lib_dir.to_string_lossy(),
+                classpath_str,
+                classpath_sep,
+                &version_json.id,
+                constants::LAUNCHER_BRAND,
+                constants::APP_VERSION,
+            );
+            // 跳过 -Xmx / -Xms（内存由我们统一设置）
+            if substituted.starts_with("-Xmx") || substituted.starts_with("-Xms") {
+                continue;
+            }
+            if substituted.starts_with("-D") {
+                system_props.push(substituted);
+            } else {
+                jvm_preamble.push(substituted);
+            }
+        }
+    }
+
+    // JDK 22+ 前置兼容标志（官方 arguments.jvm 可能已包含，去重）
+    if java_major_version >= 22 {
+        push_unique(
+            &mut jvm_preamble,
+            "--sun-misc-unsafe-memory-access=allow".into(),
+        );
+        push_unique(
+            &mut jvm_preamble,
+            "--enable-native-access=ALL-UNNAMED".into(),
+        );
+    }
+
+    // Native 库系统属性：旧式版本设置 -Djava.library.path（目录由启动前 ensure 保证就绪）
+    add_native_props(&mut system_props, natives_dir, version_json);
+
+    // 启动器品牌标识（官方 arguments.jvm 可能已包含，去重）
+    push_unique(
+        &mut system_props,
+        format!("-Dminecraft.launcher.brand={}", constants::LAUNCHER_BRAND),
+    );
+    push_unique(
+        &mut system_props,
+        format!("-Dminecraft.launcher.version={}", constants::APP_VERSION),
+    );
+
+    // 编码
+    system_props.push("-Dstdout.encoding=UTF-8".into());
+    system_props.push("-Dstderr.encoding=UTF-8".into());
+
+    // 游戏进程读取 Windows 系统代理（梯子/PAC 场景下 sessionserver/textures 才能拉取皮肤）
+    system_props.push("-Djava.net.useSystemProxies=true".into());
+
+    // 游戏窗口标题（1.13+ 读取 minecraft.window.title 系统属性；空 = 不改）
+    if !config.window_title.is_empty() {
+        system_props.push(format!("-Dminecraft.window.title={}", config.window_title));
+    }
+
+    // 游戏语言：自动设置为中文（-Duser.language 影响游戏/资源本地化）
+    if config.game_language == "auto_zh_CN" {
+        system_props.push("-Duser.language=zh_CN".into());
+        system_props.push("-Duser.country=CN".into());
+    }
+
+    // 内存
+    let mem_mb = match config.memory {
+        MemoryMode::Auto => memory::guess_auto_memory(version_dir),
+        MemoryMode::Custom(mb) => mb,
+    };
+    jvm_tuning.push(format!("-Xmx{}m", mem_mb));
+
+    // GC 参数
+    jvm_tuning.extend(memory::gc_args(&config.gc_type));
+
+    // 用户自定义 JVM 参数（放在 -cp 后面，mainClass 前面）
+    let mut user_jvm: Vec<String> = Vec::new();
+    for arg in &config.jvm_args {
+        // 禁用 LWJGL Unsafe Agent：剔除 -javaagent:lwjgl-unsafe-agent 类参数
+        if config.disable_lwjgl_unsafe_agent
+            && arg.starts_with("-javaagent:")
+            && arg.to_lowercase().contains("lwjgl-unsafe-agent")
+        {
+            continue;
+        }
+        user_jvm.push(arg.clone());
+    }
+    jvm_tuning.extend(user_jvm);
+
+    (jvm_preamble, system_props, jvm_tuning)
+}
+
+/// 生成游戏参数：新格式 arguments.game 数组（含 feature 过滤）/ 旧格式
+/// minecraftArguments 模板（空白拆分）/ 无参数版本的最低保底参数。
+/// 随后按需注入 --userProperties / --profileProperties（1.17+ 官方 json 已移除 token，
+/// Main 仍解析；参数名 1.17+ 为 camelCase，旧版为连字符 --user-properties（由 json token
+/// 替换覆盖，不重复追加）；1.18+ 的 Minecraft.getProfileProperties 直接消费
+/// --profileProperties（非空即注入纹理），1.19.3+ Main 移除解析
+/// （allowsUnrecognizedOptions 静默忽略，与 PCL「仅 1.19.2 以下」一致）。
+fn build_game_args(
+    version_json: &VersionJson,
+    game_ctx: &TemplateContext<'_>,
+    has_custom_resolution: bool,
+    user_properties: &str,
+) -> Vec<String> {
+    let mut game_args = match &version_json.arguments.game {
+        Some(game_arr) if !game_arr.is_empty() => {
+            // 新格式：arguments.game 数组
+            let raw = extract_args(game_arr, has_custom_resolution);
+            raw.iter().map(|a| substitute(a, game_ctx)).collect()
+        }
+        _ => {
+            // 旧格式：minecraftArguments 模板字符串
+            if let Some(tpl) = &version_json.minecraft_arguments {
+                // 旧格式：模板是空格分隔的参数串，替换后按空白拆分（与官方启动器一致）
+                substitute(tpl, game_ctx)
+                    .split_whitespace()
+                    .map(String::from)
+                    .collect()
+            } else {
+                // 最低保底
+                let mut base = vec![
+                    "--username".into(),
+                    game_ctx.auth_player_name.to_string(),
+                    "--version".into(),
+                    game_ctx.version_name.to_string(),
+                    "--gameDir".into(),
+                    game_ctx.game_directory.to_string(),
+                    "--assetsDir".into(),
+                    game_ctx.assets_root.to_string(),
+                    "--assetIndex".into(),
+                    game_ctx.assets_index_name.to_string(),
+                    "--uuid".into(),
+                    game_ctx.auth_uuid.to_string(),
+                    "--accessToken".into(),
+                    game_ctx.auth_access_token.to_string(),
+                    "--userType".into(),
+                    game_ctx.user_type.to_string(),
+                    "--versionType".into(),
+                    game_ctx.version_type.to_string(),
+                ];
+                if has_custom_resolution {
+                    base.extend([
+                        "--width".into(),
+                        game_ctx.resolution_width.to_string(),
+                        "--height".into(),
+                        game_ctx.resolution_height.to_string(),
+                    ]);
+                }
+                base
+            }
+        }
+    };
+
+    // 主动注入 user properties（见函数注释，1.17+ 与 1.19.3+ 语义差异）
+    if !user_properties.is_empty()
+        && !game_args
+            .iter()
+            .any(|a| a == "--user-properties" || a == "--userProperties")
+    {
+        game_args.push("--userProperties".into());
+        game_args.push(user_properties.to_string());
+        game_args.push("--profileProperties".into());
+        game_args.push(user_properties.to_string());
+    }
+    game_args
 }
