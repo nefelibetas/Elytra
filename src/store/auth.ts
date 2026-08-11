@@ -1,7 +1,11 @@
 // 认证状态单例（Launch / VersionSetup 共用）。
 // 收敛原先两处手写的 authMode localStorage 键、get_ms_account、get_last_offline_username 契约。
-import { ref } from "vue";
+import { ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { EVT_MS_LOGIN_COMPLETE } from "./events";
+import { showError } from "./alert";
+import { avatarState, renderPremiumAvatar } from "./avatar";
 
 export type AuthMode = "premium" | "offline";
 
@@ -21,6 +25,12 @@ export const authMode = ref<AuthMode>(
 );
 export const msAccount = ref<MsAccountInfo | null>(null);
 export const username = ref("");
+
+// 账号变化（登录/退出）时渲染正版头像（模块级注册一次，避免路由往返累积监听）
+watch(msAccount, () => {
+  avatarState.avatarError = false;
+  renderPremiumAvatar(msAccount.value?.uuid ?? "");
+});
 
 export function setAuthMode(mode: AuthMode) {
   authMode.value = mode;
@@ -43,4 +53,47 @@ export async function loadLastUsername() {
   } catch {
     // ignore
   }
+}
+
+// ── 微软登录流程 ──
+
+export const msLoginState = ref<"idle" | "waiting">("idle");
+
+export async function startMsLogin() {
+  msLoginState.value = "waiting";
+  try {
+    await invoke("start_ms_login");
+    // 结果由 ms-login-complete 事件推送
+  } catch (e) {
+    msLoginState.value = "idle";
+    showError(String(e), true);
+  }
+}
+
+export async function logoutMs() {
+  try {
+    await invoke("clear_ms_account");
+  } catch {
+    // ignore
+  }
+  msAccount.value = null;
+}
+
+let loginListenerReady = false;
+
+/** 幂等注册 ms-login-complete 监听（页面 onMounted 调用一次）。 */
+export async function ensureLoginListener() {
+  if (loginListenerReady) return;
+  loginListenerReady = true;
+  await listen<{ ok: boolean; account: MsAccountInfo | null; error: string | null }>(
+    EVT_MS_LOGIN_COMPLETE,
+    (ev) => {
+      msLoginState.value = "idle";
+      if (ev.payload.ok && ev.payload.account) {
+        msAccount.value = ev.payload.account;
+      } else {
+        showError(ev.payload.error || "登录失败", true);
+      }
+    },
+  );
 }
