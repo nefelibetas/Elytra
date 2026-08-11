@@ -3,6 +3,7 @@ import { ref } from "vue"
 import { dlState, TaskItem } from "../store/download"
 import { showToast } from "../utils/toast"
 import { useRouter } from "vue-router"
+import ScrollTopFab from "../component/ScrollTopFab.vue"
 
 const router = useRouter()
 
@@ -98,6 +99,7 @@ async function handleCancel(task: TaskItem) {
         </div>
       </TransitionGroup>
     </main>
+    <ScrollTopFab />
   </div>
 </template>
 
