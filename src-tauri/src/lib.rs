@@ -7,6 +7,7 @@ mod events;
 mod jdk;
 mod persist;
 pub mod task;
+pub mod util;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

@@ -58,8 +58,7 @@ pub async fn fetch_texture_id(uuid: String) -> Result<String, String> {
     let url = textures["textures"]["SKIN"]["url"]
         .as_str()
         .ok_or("该账号未设置皮肤")?;
-    url.rsplit('/')
-        .next()
+    crate::util::url_file_name(url)
         .map(str::to_string)
         .ok_or_else(|| "皮肤地址格式异常".to_string())
 }
@@ -197,7 +196,7 @@ pub async fn fetch_player_skin(player_name: String) -> Result<serde_json::Value,
     let textures = mojang::profile_textures(&uuid).await?;
     let texture_id = textures["textures"]["SKIN"]["url"]
         .as_str()
-        .and_then(|u| u.rsplit('/').next())
+        .and_then(crate::util::url_file_name)
         .unwrap_or("");
     Ok(serde_json::json!({ "uuid": uuid, "texture_id": texture_id }))
 }
