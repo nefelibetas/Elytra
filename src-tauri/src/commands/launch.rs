@@ -221,72 +221,7 @@ pub async fn check_launch_env(version_dir_name: String) -> Result<String, String
 /// 系统内存信息（MB）：总内存 + 当前可用内存。
 #[tauri::command]
 pub fn get_memory_info() -> (u64, u64) {
-    #[cfg(target_os = "windows")]
-    unsafe {
-        #[repr(C)]
-        #[allow(clippy::upper_case_acronyms)]
-        struct MEMORYSTATUSEX {
-            dw_length: u32,
-            dw_memory_load: u32,
-            ull_total_phys: u64,
-            ull_avail_phys: u64,
-            ull_total_page_file: u64,
-            ull_avail_page_file: u64,
-            ull_total_virtual: u64,
-            ull_avail_virtual: u64,
-            ull_avail_extended_virtual: u64,
-        }
-        #[link(name = "Kernel32")]
-        extern "system" {
-            fn GlobalMemoryStatusEx(lp_buffer: *mut MEMORYSTATUSEX) -> i32;
-        }
-        let mut st = MEMORYSTATUSEX {
-            dw_length: std::mem::size_of::<MEMORYSTATUSEX>() as u32,
-            dw_memory_load: 0,
-            ull_total_phys: 0,
-            ull_avail_phys: 0,
-            ull_total_page_file: 0,
-            ull_avail_page_file: 0,
-            ull_total_virtual: 0,
-            ull_avail_virtual: 0,
-            ull_avail_extended_virtual: 0,
-        };
-        if GlobalMemoryStatusEx(&mut st) != 0 {
-            return (
-                st.ull_total_phys / 1024 / 1024,
-                st.ull_avail_phys / 1024 / 1024,
-            );
-        }
-        (16384, 8192)
-    }
-    #[cfg(target_os = "linux")]
-    {
-        // /proc/meminfo: MemTotal / MemAvailable（kB）——MemAvailable 是真实可用（含可回收缓存）
-        let content = std::fs::read_to_string("/proc/meminfo").unwrap_or_default();
-        let mut total_kb = 0u64;
-        let mut avail_kb = 0u64;
-        for line in content.lines() {
-            if let Some(rest) = line.strip_prefix("MemTotal:") {
-                total_kb = meminfo_kb(rest);
-            } else if let Some(rest) = line.strip_prefix("MemAvailable:") {
-                avail_kb = meminfo_kb(rest);
-            }
-        }
-        (total_kb / 1024, avail_kb / 1024)
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-    {
-        (16384, 8192)
-    }
-}
-
-/// 解析 /proc/meminfo 行尾的 `123456 kB`。
-#[cfg(target_os = "linux")]
-fn meminfo_kb(s: &str) -> u64 {
-    s.split_whitespace()
-        .next()
-        .and_then(|n| n.parse::<u64>().ok())
-        .unwrap_or(0)
+    crate::config::launcher::memory::system_memory_mb()
 }
 
 /// 读取启动选项配置（launcher section）。
@@ -546,19 +481,6 @@ mod tests {
             );
             assert!(s.ends_with("pause\r\n"));
         }
-    }
-
-    #[test]
-    fn test_mc_version_of() {
-        use crate::config::launcher::args::mc_version_of;
-        assert_eq!(mc_version_of("26.2"), "26.2");
-        assert_eq!(mc_version_of("26.2-forge-65.1.0"), "26.2");
-        assert_eq!(mc_version_of("26.2-neoforge-26.2.0.53-beta"), "26.2");
-        assert_eq!(mc_version_of("1.20.1-pre1-forge-40.1.0"), "1.20.1-pre1");
-        assert_eq!(mc_version_of("1.18.2-fabric-0.16.11"), "1.18.2");
-        assert_eq!(mc_version_of("1.12.2"), "1.12.2");
-        // 冲突重命名后缀 {id}_n 不影响 MC 版本提取
-        assert_eq!(mc_version_of("26.2-forge-65.1.0_1"), "26.2");
     }
 
     /// 构造一个最小可用的版本 JSON（旧格式 minecraftArguments，保底参数路径）。

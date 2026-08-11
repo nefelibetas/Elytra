@@ -54,19 +54,12 @@ fn count_mods(version_dir: &Path) -> u32 {
 /// - 基准比例 60%（0 mod）；每 mod +0.3%，60 个 mod 封顶（最多 78%）
 /// - 封顶剩余内存的 85%（留呼吸空间防 OOM）；下限 2GB
 pub fn guess_auto_memory(version_dir: &Path) -> u32 {
-    auto_alloc_memory(available_system_memory_mb(), count_mods(version_dir))
+    auto_alloc_memory(system_memory_mb().1, count_mods(version_dir))
 }
 
-/// 自动分配公式（纯函数，便于测试）：剩余内存 × 比例，封顶 85%，下限 2GB。
-fn auto_alloc_memory(available_mb: u64, mods: u32) -> u32 {
-    let ratio = 0.60 + 0.003 * (mods.min(60) as f64);
-    let alloc = (available_mb as f64 * ratio).min(available_mb as f64 * 0.85);
-    alloc.max(2048.0) as u32
-}
-
-#[cfg(target_os = "windows")]
-fn available_system_memory_mb() -> u64 {
-    // 使用 Windows API 获取物理内存
+/// 系统物理内存（MB）：(总内存, 可用内存)。三平台统一入口，启动内存显示与自动分配共用。
+pub fn system_memory_mb() -> (u64, u64) {
+    #[cfg(target_os = "windows")]
     unsafe {
         #[allow(clippy::upper_case_acronyms)]
         type DWORD = u32;
@@ -100,16 +93,49 @@ fn available_system_memory_mb() -> u64 {
             ull_avail_extended_virtual: 0,
         };
         if GlobalMemoryStatusEx(&mut status) != 0 {
-            status.ull_avail_phys / (1024 * 1024)
+            (
+                status.ull_total_phys / 1024 / 1024,
+                status.ull_avail_phys / 1024 / 1024,
+            )
         } else {
-            4096
+            (16384, 8192)
         }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // /proc/meminfo: MemTotal / MemAvailable（kB）——MemAvailable 是真实可用（含可回收缓存）
+        let content = std::fs::read_to_string("/proc/meminfo").unwrap_or_default();
+        let mut total_kb = 0u64;
+        let mut avail_kb = 0u64;
+        for line in content.lines() {
+            if let Some(rest) = line.strip_prefix("MemTotal:") {
+                total_kb = meminfo_kb(rest);
+            } else if let Some(rest) = line.strip_prefix("MemAvailable:") {
+                avail_kb = meminfo_kb(rest);
+            }
+        }
+        (total_kb / 1024, avail_kb / 1024)
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        (16384, 8192)
     }
 }
 
-#[cfg(not(target_os = "windows"))]
-fn available_system_memory_mb() -> u64 {
-    4096
+/// 解析 /proc/meminfo 行尾的 `123456 kB`。
+#[cfg(target_os = "linux")]
+fn meminfo_kb(s: &str) -> u64 {
+    s.split_whitespace()
+        .next()
+        .and_then(|n| n.parse::<u64>().ok())
+        .unwrap_or(0)
+}
+
+/// 自动分配公式（纯函数，便于测试）：剩余内存 × 比例，封顶 85%，下限 2GB。
+fn auto_alloc_memory(available_mb: u64, mods: u32) -> u32 {
+    let ratio = 0.60 + 0.003 * (mods.min(60) as f64);
+    let alloc = (available_mb as f64 * ratio).min(available_mb as f64 * 0.85);
+    alloc.max(2048.0) as u32
 }
 
 #[cfg(test)]
