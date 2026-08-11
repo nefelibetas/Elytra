@@ -16,7 +16,8 @@ use crate::task::progress::{
 };
 use crate::task::repair::{count_assets_all, count_natives_missing};
 use crate::task::{
-    self, DownloadTask, StepInfo, StepKind, StepStatus, TaskProgress, TaskSpec, TaskStatus,
+    self, DownloadTask, StepInfo, StepKind, StepSpec, StepStatus, TaskProgress, TaskSpec,
+    TaskStatus,
 };
 
 /// 完整下载任务主体：version json → client.jar / libraries / assets → natives → ModLoader/OptiFine → Fabric API。
@@ -40,19 +41,7 @@ pub async fn run_task(
     let fabric_api = task.fabric_api.as_ref();
 
     // ── 目标目录提前确定（不依赖 version JSON），并做同路径互斥 ──
-    let dir_name: String;
-    let vdir: std::path::PathBuf;
-    if let Some(pre) = task.version_dir_name.as_deref() {
-        dir_name = pre.to_string();
-        vdir = mc.join("versions").join(&dir_name);
-    } else if let Some(loader) = loader {
-        dir_name = format!("{}-{}-{}", mc_version, loader.kind.name(), loader.version);
-        vdir = mc.join("versions").join(&dir_name);
-    } else {
-        let (name, p) = crate::downloader::resolve_version_dir(&mc, version_id);
-        dir_name = name;
-        vdir = p;
-    }
+    let TargetDir { dir_name, vdir } = resolve_target_dir(task, &mc);
     // 任务开始前该版本目录是否已存在：
     // - 全新下载（目录不存在）→ 下载失败时整删残缺目录，免手动清理
     // - 补全文件（目录已存在，如重下缺失库/修复）→ 失败不删，保留已有版本
@@ -98,108 +87,15 @@ pub async fn run_task(
     }
     task::global().set_cleanup_path(&progress.try_lock().unwrap().task_id, vdir.clone());
 
-    // ── 检测本地已有文件：先给全量总数（剩余=大数字），检测中实时上报已完成字节，避免 UI 死等 ──
+    // ── 阶段 B：本地缺失检测 + 步骤布局 + 总进度基线（含资产清单 fetch 与多线程 sha1 检测）──
     let lib_dir = mc.join("libraries");
-    let lib_total_all = crate::downloader::library::count_total(&vj.libraries) as u32;
-    let lib_pending = crate::downloader::library::count_pending(&vj.libraries, &lib_dir) as u32;
-    let lib_existing = lib_total_all - lib_pending;
-    let lib_total_bytes = crate::downloader::library::total_lib_bytes(&vj.libraries);
-    let lib_existing_bytes =
-        crate::downloader::library::existing_lib_bytes(&vj.libraries, &lib_dir);
-
-    let jar_exists = vj.downloads.client.is_some();
-    let jar_total = if jar_exists { 1u32 } else { 0u32 };
-    let jar_total_bytes = vj.downloads.client.as_ref().map(|c| c.size).unwrap_or(0);
-
-    // natives 缺失数预计算（下载阶段独立计数器；total 计入 pending 数）
-    let natives_pending = count_natives_missing(&vj.libraries, &lib_dir);
-
-    // 资源清单：fetch asset index（网络）→ 报资产总数（文件+字节）；再多线程 sha1 检测本地（逐批上报）
-    let mut asst_total_all = 0u32;
-    let mut asst_total_bytes = 0u64;
-    task::update_and_emit(&app, progress, |p| p.current_phase = "获取资源清单".into());
-    let (asst_pending, asst_pending_bytes) = match count_assets_all(
-        &vj.asset_index.url,
-        Some(&vj.asset_index.id),
-        Some(&vj.asset_index.sha1),
-        &config,
-        &mc,
-        |total, total_bytes| {
-            asst_total_all = total;
-            asst_total_bytes = total_bytes;
-            // 清单齐了：剩余=全量总数，已完成仅 version json（近似值，检测后覆盖为最终总数）
-            set_total(
-                &app,
-                progress,
-                1 + jar_total + lib_total_all + total,
-                1 + jar_total_bytes + lib_total_bytes + total_bytes,
-            );
-            set_completed(&app, progress, 1, 1);
-            task::update_and_emit(&app, progress, |p| {
-                p.current_phase = "检测本地资源文件".into()
-            });
-        },
-        |checked_files, checked_bytes| {
-            // 检测中：已完成 = version json + 已存在库 + 已检测资产（文件与字节）
-            set_completed(
-                &app,
-                progress,
-                1 + lib_existing + checked_files,
-                1 + lib_existing_bytes + checked_bytes,
-            );
-        },
-    )
-    .await
+    let scan = match init_local_scan(&app, progress, &vj, &config, &mc, &lib_dir, &mut specs).await
     {
-        Ok(v) => v,
+        Ok(s) => s,
         Err(e) => return set_error(&app, progress, e),
     };
-    let asst_existing = asst_total_all.saturating_sub(asst_pending);
-    let asst_existing_bytes = asst_total_bytes.saturating_sub(asst_pending_bytes);
-    set_completed(
-        &app,
-        progress,
-        1 + lib_existing + asst_existing,
-        1 + lib_existing_bytes + asst_existing_bytes,
-    );
-
-    // ── 重建步骤列表：零缺失维度过滤（json 保持 done）──
-    // 步骤 = 任务的函数：缺失检测结果决定哪些维度实际出现在步骤栏
-    if lib_pending == 0 {
-        specs.retain(|s| s.kind != StepKind::Libraries);
-    }
-    if asst_pending == 0 {
-        specs.retain(|s| s.kind != StepKind::Assets);
-    }
-    task::update_and_emit(&app, progress, |p| {
-        p.steps = specs
-            .iter()
-            .enumerate()
-            .map(|(i, s)| StepInfo {
-                name: s.name.clone(),
-                status: if i == 0 {
-                    StepStatus::Done
-                } else {
-                    StepStatus::Pending
-                },
-                progress: if i == 0 { 100.0 } else { 0.0 },
-            })
-            .collect();
-    });
-
-    // ── 动态步骤索引（执行点按 StepKind 定位，无硬编码常量）──
-    let pos = |k: StepKind| specs.iter().position(|s| s.kind == k);
-    let i_jar = pos(StepKind::ClientJar);
-    let i_libs = pos(StepKind::Libraries);
-    let i_asst = pos(StepKind::Assets);
-    let i_nat = pos(StepKind::Natives);
-    let i_cfg = pos(StepKind::LoaderConfig);
-    let i_lbs = pos(StepKind::LoaderLibs);
-    let i_of = pos(StepKind::OptiFine);
-    let i_fab = pos(StepKind::FabricApi);
-
-    // ── 总数：version json + jar + 全量库 + 全量资源 + natives 缺失数 + 安装步骤数 ──
-    let mut total_files = 1 + jar_total + lib_total_all + asst_total_all + natives_pending;
+    // 安装步骤数：version json + jar + 全量库 + 全量资源 + natives 缺失数 + 安装步骤数
+    let mut total_files = 1 + scan.jar_total + scan.lib_total_all + scan.asst_total_all + scan.natives_pending;
     if loader.is_some() {
         total_files += 2; // LoaderConfig + LoaderLibs
     }
@@ -209,11 +105,17 @@ pub async fn run_task(
     if fabric_api.is_some() {
         total_files += 1;
     }
-    let initial_completed = 1 + lib_existing + asst_existing;
-    let total_bytes = 1 + jar_total_bytes + lib_total_bytes + asst_total_bytes;
-    let initial_bytes = 1 + lib_existing_bytes + asst_existing_bytes;
-    set_total(&app, progress, total_files, total_bytes);
-    set_completed(&app, progress, initial_completed, initial_bytes);
+    set_total(&app, progress, total_files, scan.total_bytes);
+    set_completed(&app, progress, scan.initial_completed, scan.initial_bytes);
+    // 动态步骤索引（执行点按 StepKind 定位，无硬编码常量）
+    let i_jar = scan.jar_step;
+    let i_libs = scan.lib_step;
+    let i_asst = scan.asst_step;
+    let i_nat = scan.natives_step;
+    let i_cfg = scan.cfg_step;
+    let i_lbs = scan.libs_step;
+    let i_of = scan.optifine_step;
+    let i_fab = scan.fabric_step;
 
     // ── 阶段 B：client.jar / libraries / assets / natives / ModLoader / OptiFine / Fabric API 全并行 ──
     let jar_counter = Arc::new(AtomicU32::new(0));
@@ -259,9 +161,9 @@ pub async fn run_task(
         lib_bytes: Arc::clone(&lib_step_bytes),
         asst_bytes: Arc::clone(&asst_step_bytes),
         natives_bytes: Arc::clone(&natives_step_bytes),
-        lib_pending_bytes: lib_total_bytes.saturating_sub(lib_existing_bytes),
-        asst_pending_bytes: asst_total_bytes.saturating_sub(asst_existing_bytes),
-        natives_pending_bytes: crate::task::repair::natives_missing_bytes(&vj.libraries, &lib_dir),
+        lib_pending_bytes: scan.lib_total_bytes.saturating_sub(scan.lib_existing_bytes),
+        asst_pending_bytes: scan.asst_pending_bytes,
+        natives_pending_bytes: scan.natives_pending_bytes,
         loader_libs_bytes: Arc::clone(&loader_libs_step_bytes),
         loader_libs_total: Arc::clone(&loader_libs_step_total),
         optifine_bytes: Arc::clone(&optifine_step_bytes),
@@ -279,13 +181,13 @@ pub async fn run_task(
         libs_done: Arc::clone(&libs_done),
         optifine_done: Arc::clone(&optifine_done),
         fabric_done: Arc::clone(&fabric_done),
-        lib_pending,
-        asst_pending,
-        natives_pending,
-        initial_completed,
+        lib_pending: scan.lib_pending,
+        asst_pending: scan.asst_pending,
+        natives_pending: scan.natives_pending,
+        initial_completed: scan.initial_completed,
         total_files,
-        initial_bytes,
-        total_bytes,
+        initial_bytes: scan.initial_bytes,
+        total_bytes: scan.total_bytes,
         jar_total_fallback: vj.downloads.client.as_ref().map(|c| c.size).unwrap_or(0),
     }
     .spawn();
@@ -473,7 +375,7 @@ pub async fn run_task(
             let url = api.url.as_str();
             // URL 最后一段做 percent-decode（文件名中的 `+` 被编码为 %2B）
             let filename = percent_encoding::percent_decode_str(
-                url.rsplit('/').next().unwrap_or("fabric-api.jar"),
+                crate::util::url_file_name(url).unwrap_or("fabric-api.jar"),
             )
             .decode_utf8_lossy()
             .into_owned();
@@ -568,4 +470,189 @@ async fn fetch_version_json(
     let vj: VersionJson =
         serde_json::from_str(&text).map_err(|e| format!("解析 version json 失败: {}", e))?;
     Ok((vj, text))
+}
+
+/// 目标目录解析结果：目录名 / 路径。
+struct TargetDir {
+    dir_name: String,
+    vdir: std::path::PathBuf,
+}
+
+/// 解析目标版本目录（不依赖 version JSON）：
+/// 预指定（补全/修复）→ 原样；loader 任务 → `{mc}-{loader}-{ver}`；
+/// 原版 → `versions/{id}` 冲突时 `{id}_{n}`（缺 client jar 的残缺目录复用重下）。
+fn resolve_target_dir(task: &DownloadTask, mc: &std::path::Path) -> TargetDir {
+    if let Some(pre) = task.version_dir_name.as_deref() {
+        return TargetDir {
+            dir_name: pre.to_string(),
+            vdir: mc.join("versions").join(pre),
+        };
+    }
+    if let Some(loader) = task.loader.as_ref() {
+        let dir_name = format!(
+            "{}-{}-{}",
+            task.mc_version,
+            loader.kind.name(),
+            loader.version
+        );
+        return TargetDir {
+            dir_name: dir_name.clone(),
+            vdir: mc.join("versions").join(&dir_name),
+        };
+    }
+    let (name, p) = crate::downloader::resolve_version_dir(mc, &task.version_id);
+    TargetDir {
+        dir_name: name,
+        vdir: p,
+    }
+}
+
+/// 本地状态检测与步骤布局输出（run_task 阶段 B 的产物）：
+/// 各维度缺失数/字节、动态步骤索引、总进度基线。
+struct LocalScan {
+    lib_pending: u32,
+    lib_total_all: u32,
+    lib_total_bytes: u64,
+    lib_existing_bytes: u64,
+    jar_total: u32,
+    natives_pending: u32,
+    natives_pending_bytes: u64,
+    asst_total_all: u32,
+    asst_pending: u32,
+    asst_pending_bytes: u64,
+    jar_step: Option<usize>,
+    lib_step: Option<usize>,
+    asst_step: Option<usize>,
+    natives_step: Option<usize>,
+    cfg_step: Option<usize>,
+    libs_step: Option<usize>,
+    optifine_step: Option<usize>,
+    fabric_step: Option<usize>,
+    total_bytes: u64,
+    initial_completed: u32,
+    initial_bytes: u64,
+}
+
+/// 阶段 B：检测本地已有文件（库/jar/natives 快查 + 资产清单 fetch + 多线程 sha1），
+/// 重建步骤列表（零缺失维度过滤），并给出总进度基线（先全量总数后覆盖，避免 UI 死等）。
+/// 期间实时上报检测进度；资产清单 fetch 失败返回 Err（调用方 set_error）。
+async fn init_local_scan(
+    app: &AppHandle,
+    progress: &Arc<Mutex<TaskProgress>>,
+    vj: &VersionJson,
+    config: &DownloaderConfig,
+    mc: &std::path::Path,
+    lib_dir: &std::path::Path,
+    specs: &mut Vec<StepSpec>,
+) -> Result<LocalScan, String> {
+    let lib_total_all = crate::downloader::library::count_total(&vj.libraries) as u32;
+    let lib_pending = crate::downloader::library::count_pending(&vj.libraries, lib_dir) as u32;
+    let lib_existing = lib_total_all - lib_pending;
+    let lib_total_bytes = crate::downloader::library::total_lib_bytes(&vj.libraries);
+    let lib_existing_bytes = crate::downloader::library::existing_lib_bytes(&vj.libraries, lib_dir);
+
+    let jar_total = if vj.downloads.client.is_some() { 1u32 } else { 0u32 };
+    let jar_total_bytes = vj.downloads.client.as_ref().map(|c| c.size).unwrap_or(0);
+
+    // natives 缺失数预计算（下载阶段独立计数器；total 计入 pending 数）
+    let natives_pending = count_natives_missing(&vj.libraries, lib_dir);
+    let natives_pending_bytes = crate::task::repair::natives_missing_bytes(&vj.libraries, lib_dir);
+
+    // 资源清单：fetch asset index（网络）→ 报资产总数（文件+字节）；再多线程 sha1 检测本地（逐批上报）
+    let mut asst_total_all = 0u32;
+    let mut asst_total_bytes = 0u64;
+    task::update_and_emit(app, progress, |p| p.current_phase = "获取资源清单".into());
+    let (asst_pending, asst_pending_bytes) = count_assets_all(
+        &vj.asset_index.url,
+        Some(&vj.asset_index.id),
+        Some(&vj.asset_index.sha1),
+        config,
+        mc,
+        |total, total_bytes| {
+            asst_total_all = total;
+            asst_total_bytes = total_bytes;
+            // 清单齐了：剩余=全量总数，已完成仅 version json（近似值，检测后覆盖为最终总数）
+            set_total(
+                app,
+                progress,
+                1 + jar_total + lib_total_all + total,
+                1 + jar_total_bytes + lib_total_bytes + total_bytes,
+            );
+            set_completed(app, progress, 1, 1);
+            task::update_and_emit(app, progress, |p| {
+                p.current_phase = "检测本地资源文件".into()
+            });
+        },
+        |checked_files, checked_bytes| {
+            // 检测中：已完成 = version json + 已存在库 + 已检测资产（文件与字节）
+            set_completed(
+                app,
+                progress,
+                1 + lib_existing + checked_files,
+                1 + lib_existing_bytes + checked_bytes,
+            );
+        },
+    )
+    .await?;
+    let asst_existing = asst_total_all.saturating_sub(asst_pending);
+    let asst_existing_bytes = asst_total_bytes.saturating_sub(asst_pending_bytes);
+    set_completed(
+        app,
+        progress,
+        1 + lib_existing + asst_existing,
+        1 + lib_existing_bytes + asst_existing_bytes,
+    );
+
+    // 重建步骤列表：零缺失维度过滤（json 保持 done）——步骤 = 任务的函数：
+    // 缺失检测结果决定哪些维度实际出现在步骤栏
+    if lib_pending == 0 {
+        specs.retain(|s| s.kind != StepKind::Libraries);
+    }
+    if asst_pending == 0 {
+        specs.retain(|s| s.kind != StepKind::Assets);
+    }
+    task::update_and_emit(app, progress, |p| {
+        p.steps = specs
+            .iter()
+            .enumerate()
+            .map(|(i, s)| StepInfo {
+                name: s.name.clone(),
+                status: if i == 0 {
+                    StepStatus::Done
+                } else {
+                    StepStatus::Pending
+                },
+                progress: if i == 0 { 100.0 } else { 0.0 },
+            })
+            .collect();
+    });
+
+    let pos = |k: StepKind| specs.iter().position(|s| s.kind == k);
+    let initial_completed = 1 + lib_existing + asst_existing;
+    let total_bytes = 1 + jar_total_bytes + lib_total_bytes + asst_total_bytes;
+    let initial_bytes = 1 + lib_existing_bytes + asst_existing_bytes;
+
+    Ok(LocalScan {
+        lib_pending,
+        lib_total_all,
+        lib_total_bytes,
+        lib_existing_bytes,
+        jar_total,
+        natives_pending,
+        natives_pending_bytes,
+        asst_total_all,
+        asst_pending,
+        asst_pending_bytes,
+        jar_step: pos(StepKind::ClientJar),
+        lib_step: pos(StepKind::Libraries),
+        asst_step: pos(StepKind::Assets),
+        natives_step: pos(StepKind::Natives),
+        cfg_step: pos(StepKind::LoaderConfig),
+        libs_step: pos(StepKind::LoaderLibs),
+        optifine_step: pos(StepKind::OptiFine),
+        fabric_step: pos(StepKind::FabricApi),
+        total_bytes,
+        initial_completed,
+        initial_bytes,
+    })
 }
