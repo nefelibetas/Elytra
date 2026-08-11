@@ -2,7 +2,6 @@
 // 来源为本地状态：Modrinth 无需 key；CurseForge 需 .env 配置的 API Key（后端校验）
 import { reactive, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { showToast } from "../utils/toast";
 
 export interface ModSearchResult {
   id: string;
@@ -17,19 +16,6 @@ export interface ModSearchResult {
 export interface ModSearchPage {
   items: ModSearchResult[];
   total: number;
-}
-
-export interface ModVersion {
-  version_id: string;
-  version_number: string;
-  game_versions: string[];
-  loaders: string[];
-  filename: string;
-  download_url: string;
-  file_size: number;
-  sha1: string | null;
-  date_published: string;
-  downloads: number;
 }
 
 export interface ModDisplayItem extends ModSearchResult {
@@ -52,7 +38,7 @@ export const modLoaderOptions = [
 let autoSearched = false;
 
 /** 剥离 markdown/KaTeX 标记（Modrinth 描述支持 KaTeX，`$$...$$`、`**加粗**` 等会原样返回，UI 纯文本显示需清洗） */
-function cleanText(s: string): string {
+export function cleanText(s: string): string {
   return s
     .replace(/\$\$(.*?)\$\$/g, "$1")
     .replace(/\*\*(.*?)\*\*/g, "$1")
@@ -61,7 +47,7 @@ function cleanText(s: string): string {
     .trim();
 }
 
-function toDisplayItem(h: ModSearchResult, source: "modrinth" | "curseforge"): ModDisplayItem {
+export function toDisplayItem(h: ModSearchResult, source: "modrinth" | "curseforge"): ModDisplayItem {
   return {
     ...h,
     title: cleanText(h.title),
@@ -71,17 +57,20 @@ function toDisplayItem(h: ModSearchResult, source: "modrinth" | "curseforge"): M
   };
 }
 
-/** 聚合搜索：两源并发，单源失败降级为空；按标题去重保留下载量高的一侧；总数取两源较大值（去重无法精确） */
-async function searchAllSources(
+/** 聚合搜索：两源并发，单源失败降级为空；按标题去重保留下载量高的一侧；总数取两源较大值（去重无法精确）。
+ *  `category` 为项目类型过滤（如 "shader"），普通 mod 传 null。 */
+export async function searchAllSources(
   query: string,
   gameVersion: string,
   loader: string,
+  category: string | null,
   offset: number,
 ): Promise<{ items: ModDisplayItem[]; total: number }> {
   const params = {
     query,
     gameVersion: gameVersion || null,
     loader: loader || null,
+    category,
     offset,
   };
   const [mr, cf] = await Promise.all([
@@ -117,16 +106,6 @@ export const modSearch = reactive({
   results: [] as ModDisplayItem[],
   total: 0,
   page: 1,
-  versions: {} as Record<string, ModVersion[]>,
-  versionsLoading: {} as Record<string, boolean>,
-  expanded: {} as Record<string, boolean>,
-
-  /** 清空版本相关缓存（换页/重搜时调用） */
-  clearVersions() {
-    this.versions = {};
-    this.versionsLoading = {};
-    this.expanded = {};
-  },
 
   async search(page = 1) {
     this.searching = true;
@@ -134,7 +113,7 @@ export const modSearch = reactive({
     try {
       const offset = (page - 1) * MOD_PAGE_SIZE;
       if (this.source === "all") {
-        const res = await searchAllSources(this.query.trim(), this.gameVersion, this.loader, offset);
+        const res = await searchAllSources(this.query.trim(), this.gameVersion, this.loader, null, offset);
         this.results = res.items;
         this.total = res.total;
       } else {
@@ -150,7 +129,6 @@ export const modSearch = reactive({
       }
       this.page = page;
       this.searched = true;
-      this.clearVersions();
     } catch (e) {
       this.error = String(e);
       this.searched = true;
@@ -171,28 +149,7 @@ export const modSearch = reactive({
     this.page = 1;
     this.searched = false;
     this.error = "";
-    this.clearVersions();
     this.search();
-  },
-
-  async toggleVersions(item: ModDisplayItem) {
-    this.expanded[item.key] = !this.expanded[item.key];
-    if (!this.expanded[item.key]) return;
-    if (this.versions[item.key] || this.versionsLoading[item.key]) return;
-    this.versionsLoading[item.key] = true;
-    try {
-      this.versions[item.key] = await invoke<ModVersion[]>("get_mod_versions", {
-        source: item.source,
-        projectId: item.id,
-        gameVersion: this.gameVersion || null,
-        loader: this.loader || null,
-      });
-    } catch (e) {
-      this.versions[item.key] = [];
-      showToast(String(e));
-    } finally {
-      this.versionsLoading[item.key] = false;
-    }
   },
 
   /** 首次进入 Mod 页自动搜索热门（对齐 PCL2）；仅触发一次 */

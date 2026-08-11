@@ -1,0 +1,98 @@
+<script setup lang="ts">
+// 数据包搜索结果列表：加载/错误/空态 + 结果行 + 分页器（底部栏计数最右）
+import { datapackSearch, datapackTotalPages } from "../store/categorySearch";
+import { fmtCount } from "../utils/format";
+import IconImage from "./IconImage.vue";
+</script>
+
+<template>
+  <div class="da-result-card">
+    <div v-if="datapackSearch.error" class="da-state err">{{ datapackSearch.error }}</div>
+    <div v-else-if="datapackSearch.searching" class="da-loading">
+      <div class="spinner"></div>
+      <p class="da-loading-text">{{ datapackSearch.query.trim() ? "正在搜索数据包..." : "正在加载热门数据包..." }}</p>
+    </div>
+    <div v-else-if="datapackSearch.searched && datapackSearch.results.length === 0" class="da-state">未找到相关数据包，试试更换关键字或放宽筛选条件</div>
+    <template v-else-if="datapackSearch.searched">
+      <div class="da-list">
+        <div v-for="m in datapackSearch.results" :key="m.key" class="da-card">
+          <div class="da-card-body" :title="m.description">
+            <IconImage :src="m.icon_url" :size="32" />
+            <span class="da-info">
+              <span class="da-title-row">
+                <span class="da-title">{{ m.title }}</span>
+                <span v-if="datapackSearch.source === 'all'" class="da-badge" :class="m.source">{{ m.source === "modrinth" ? "Modrinth" : "CurseForge" }}</span>
+              </span>
+              <span class="da-sub">{{ m.author }} · {{ fmtCount(m.downloads) }} 次下载</span>
+            </span>
+          </div>
+        </div>
+      </div>
+      <!-- 底部栏：分页器居中，结果计数固定最右侧 -->
+      <div class="da-footer">
+        <div v-if="datapackTotalPages > 1" class="da-pager">
+          <button class="da-pager-btn" :disabled="datapackSearch.page <= 1" @click="datapackSearch.search(datapackSearch.page - 1)">上一页</button>
+          <span class="da-pager-info">{{ datapackSearch.page }} / {{ datapackTotalPages }}</span>
+          <button class="da-pager-btn" :disabled="datapackSearch.page >= datapackTotalPages" @click="datapackSearch.search(datapackSearch.page + 1)">下一页</button>
+        </div>
+        <span class="da-result-count">共 {{ datapackSearch.total }} 个结果</span>
+      </div>
+    </template>
+    <div v-else class="da-state">输入关键字搜索，或直接搜索查看热门数据包</div>
+  </div>
+</template>
+
+<style scoped>
+.da-result-card {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+  background: var(--surface-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.da-state { text-align: center; color: var(--text-tertiary); font-size: 13px; padding: 40px 0; }
+.da-state.err { color: #e74c3c; }
+.da-loading { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 40px 0; }
+.da-loading-text { font-size: 13px; color: var(--text-tertiary); }
+.spinner {
+  width: 36px; height: 36px;
+  border: 3px solid var(--border-default); border-top-color: var(--color-brand);
+  border-radius: 50%; animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.da-list { display: flex; flex-direction: column; padding: 6px 8px; }
+.da-card { overflow: hidden; }
+.da-card + .da-card { border-top: 1px solid var(--border-subtle, var(--border-default)); }
+.da-card-body {
+  width: 100%; display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px; background: transparent;
+  color: var(--text-primary); font-size: 13px; user-select: none;
+  transition: background 0.1s;
+}
+.da-card-body:hover { background-color: var(--surface-hover); }
+.da-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; text-align: left; }
+.da-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.da-title { font-weight: 600; font-size: 13px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.da-badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; color: #fff; flex-shrink: 0; font-weight: 600; }
+.da-badge.modrinth { background: #1bd96a; }
+.da-badge.curseforge { background: #f16436; }
+.da-sub { font-size: 11px; color: var(--text-tertiary); }
+
+/* 底部栏：分页器居中，结果计数绝对定位最右侧 */
+.da-footer { position: relative; padding: 6px 16px 14px; }
+.da-pager { display: flex; align-items: center; justify-content: center; gap: 12px; }
+.da-result-count {
+  position: absolute; right: 16px; top: 50%; transform: translateY(-50%);
+  font-size: 12px; color: var(--text-tertiary); user-select: none;
+}
+.da-pager-btn {
+  padding: 5px 14px;
+  border: 1px solid var(--border-default); border-radius: var(--radius-sm);
+  background: var(--surface-card); color: var(--text-primary); font-size: 12px;
+  cursor: pointer; transition: all 0.15s;
+}
+.da-pager-btn:hover:not(:disabled) { border-color: var(--color-brand); }
+.da-pager-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.da-pager-info { font-size: 12px; color: var(--text-tertiary); user-select: none; }
+</style>
