@@ -202,30 +202,7 @@ pub async fn run_repair_task(
     }
 
     // 动态步骤 → 各阶段在 steps 中的索引（与 submit 生成的顺序一致）
-    let mut idx = 0usize;
-    let jar_idx = if jar_missing {
-        let i = idx;
-        idx += 1;
-        Some(i)
-    } else {
-        None
-    };
-    let libs_idx = if lib_pending > 0 {
-        let i = idx;
-        idx += 1;
-        Some(i)
-    } else {
-        None
-    };
-    let asst_idx = if asst_pending > 0 {
-        let i = idx;
-        idx += 1;
-        Some(i)
-    } else {
-        None
-    };
-    // natives 恒为最后一个步骤，无需推进 idx
-    let natives_idx = (natives_pending > 0).then_some(idx);
+    let (jar_idx, libs_idx, asst_idx, natives_idx) = repair_step_indices(&report);
 
     set_total(&app, progress, total_files, 0);
     set_completed(&app, progress, 0, 0);
@@ -288,44 +265,16 @@ pub async fn run_repair_task(
     }
     .spawn();
 
-    let jar = async {
-        if jar_missing {
-            // 清理目录内损坏（0 字节或 sha1 不匹配）的 jar，避免与下载目标并存
-            if let Some(bad) = crate::config::launcher::args::find_file_in_dir(&vdir, "jar") {
-                let bad_jar = bad.metadata().map(|m| m.len() == 0).unwrap_or(true)
-                    || vj
-                        .downloads
-                        .client
-                        .as_ref()
-                        .map(|c| !crate::downloader::hash::file_sha1_matches(&bad, &c.sha1))
-                        .unwrap_or(false);
-                if bad_jar {
-                    let _ = std::fs::remove_file(&bad);
-                }
-            }
-            if let Some(ref c) = vj.downloads.client {
-                let urls: Vec<String> = sources.iter().map(|src| src.mirror_url(&c.url)).collect();
-                let jar_path = vdir.join(format!("{version_dir_name}.jar"));
-                let jbc2 = Arc::clone(&jar_bytes);
-                let jt2 = Arc::clone(&jar_total);
-                if c.size > 0 {
-                    jt2.store(c.size, Ordering::Relaxed);
-                }
-                let cb = move |downloaded: u64, total: u64| {
-                    jbc2.store(downloaded, Ordering::Relaxed);
-                    if total > 0 {
-                        jt2.store(total, Ordering::Relaxed);
-                    }
-                };
-                // 逐源 sha1 校验下载：镜像 CDN 返回不完整/错误内容自动换源重试
-                crate::downloader::fetcher::fetch_verified(&urls, &jar_path, Some(cb), &c.sha1)
-                    .await
-                    .map_err(|e| vec![e.to_string()])?;
-            }
-            jar_counter.store(1, Ordering::Relaxed);
-        }
-        Ok::<_, Vec<String>>(())
-    };
+    let jar = repair_jar(
+        &vj,
+        &vdir,
+        version_dir_name,
+        jar_missing,
+        &sources,
+        &jar_counter,
+        &jar_bytes,
+        &jar_total,
+    );
 
     let lib_dir = mc.join("libraries");
     let libs = crate::downloader::library::download_libraries(
@@ -411,6 +360,86 @@ pub async fn run_repair_task(
     if let Ok(p) = progress.try_lock() {
         task::global().fail(&p.task_id);
     }
+}
+
+/// 按缺失情况生成修复步骤索引（与 repair_steps 的生成顺序一致：
+/// jar → libs → assets → natives；natives 恒为最后一位，无需推进）。
+fn repair_step_indices(report: &MissingReport) -> (Option<usize>, Option<usize>, Option<usize>, Option<usize>) {
+    let mut idx = 0usize;
+    let jar_idx = if report.client_jar {
+        let i = idx;
+        idx += 1;
+        Some(i)
+    } else {
+        None
+    };
+    let libs_idx = if report.libraries > 0 {
+        let i = idx;
+        idx += 1;
+        Some(i)
+    } else {
+        None
+    };
+    let asst_idx = if report.assets > 0 {
+        let i = idx;
+        idx += 1;
+        Some(i)
+    } else {
+        None
+    };
+    // natives 恒为最后一个步骤，无需推进 idx
+    let natives_idx = (report.natives > 0).then_some(idx);
+    (jar_idx, libs_idx, asst_idx, natives_idx)
+}
+
+/// 修复 client.jar：清理损坏（0 字节/sha1 不匹配）旧文件后逐源 sha1 校验下载。
+#[allow(clippy::too_many_arguments)]
+async fn repair_jar(
+    vj: &VersionJson,
+    vdir: &Path,
+    version_dir_name: &str,
+    jar_missing: bool,
+    sources: &[DownloadSource],
+    jar_counter: &Arc<AtomicU32>,
+    jar_bytes: &Arc<AtomicU64>,
+    jar_total: &Arc<AtomicU64>,
+) -> Result<(), Vec<String>> {
+    if jar_missing {
+        // 清理目录内损坏（0 字节或 sha1 不匹配）的 jar，避免与下载目标并存
+        if let Some(bad) = crate::config::launcher::args::find_file_in_dir(vdir, "jar") {
+            let bad_jar = bad.metadata().map(|m| m.len() == 0).unwrap_or(true)
+                || vj
+                    .downloads
+                    .client
+                    .as_ref()
+                    .map(|c| !crate::downloader::hash::file_sha1_matches(&bad, &c.sha1))
+                    .unwrap_or(false);
+            if bad_jar {
+                let _ = std::fs::remove_file(&bad);
+            }
+        }
+        if let Some(ref c) = vj.downloads.client {
+            let urls: Vec<String> = sources.iter().map(|src| src.mirror_url(&c.url)).collect();
+            let jar_path = vdir.join(format!("{version_dir_name}.jar"));
+            let jbc2 = Arc::clone(jar_bytes);
+            let jt2 = Arc::clone(jar_total);
+            if c.size > 0 {
+                jt2.store(c.size, Ordering::Relaxed);
+            }
+            let cb = move |downloaded: u64, total: u64| {
+                jbc2.store(downloaded, Ordering::Relaxed);
+                if total > 0 {
+                    jt2.store(total, Ordering::Relaxed);
+                }
+            };
+            // 逐源 sha1 校验下载：镜像 CDN 返回不完整/错误内容自动换源重试
+            crate::downloader::fetcher::fetch_verified(&urls, &jar_path, Some(cb), &c.sha1)
+                .await
+                .map_err(|e| vec![e.to_string()])?;
+        }
+        jar_counter.store(1, Ordering::Relaxed);
+    }
+    Ok(())
 }
 
 /// Count total and pending assets (sha1-matched against local cache, multi-threaded).
