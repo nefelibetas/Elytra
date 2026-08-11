@@ -2,6 +2,52 @@
 
 use serde::{Deserialize, Serialize};
 
+/// 任务状态（进度事件 payload，前端 ProgressPayload.status 为 string）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskStatus {
+    #[default]
+    Pending,
+    Running,
+    Done,
+    Error,
+    Cancelled,
+}
+
+/// 步骤状态（进度事件 payload）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum StepStatus {
+    #[default]
+    Pending,
+    Running,
+    Done,
+}
+
+/// 任务进度快照（task-progress 事件推送体）。
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskProgress {
+    pub task_id: String,
+    pub name: String,
+    pub status: TaskStatus, // pending | running | done | error | cancelled（serde lowercase）
+    pub progress: f64,      // 0.0 – 100.0
+    pub speed_bps: f64,
+    pub completed_files: u32,
+    pub total_files: u32,
+    pub completed_bytes: u64,
+    pub total_bytes: u64,
+    pub current_phase: String,
+    pub steps: Vec<StepInfo>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StepInfo {
+    pub name: String,
+    pub status: StepStatus, // pending | running | done
+    pub progress: f64,      // 0–100, meaningful only when status=running
+}
+
 /// ModLoader 种类。前端传 "fabric"/"forge"/"neoforge"/"quilt"。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LoaderKind {

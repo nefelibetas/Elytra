@@ -29,26 +29,6 @@ pub fn global() -> &'static Arc<TaskManager> {
     TM.get().expect("TaskManager not initialized")
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum TaskStatus {
-    #[default]
-    Pending,
-    Running,
-    Done,
-    Error,
-    Cancelled,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum StepStatus {
-    #[default]
-    Pending,
-    Running,
-    Done,
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub struct TaskProgress {
     pub task_id: String,
