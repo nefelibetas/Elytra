@@ -49,6 +49,8 @@ pub fn run() {
             commands::loader::get_optifine_versions,
             commands::loader::get_neoforge_versions,
             commands::loader::get_fabric_api_versions,
+            commands::mods::search_mods,
+            commands::mods::get_mod_versions,
             commands::task::start_download,
             commands::task::download_files,
             commands::task::download_single_file,
