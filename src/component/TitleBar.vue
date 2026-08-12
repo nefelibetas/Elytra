@@ -3,7 +3,8 @@ import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ArrowLeft, Play, Download, Settings, Minus, X } from "@lucide/vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { detailTitle } from "../store/modDetail";
+import { detailTitle, modDetail } from "../store/modDetail";
+import { downloadTabState } from "../store/downloadTab";
 
 const route = useRoute();
 const router = useRouter();
@@ -57,8 +58,9 @@ function goBack() {
     return;
   }
   if (p === "/mod-detail") {
-    // Mod 详情可能从任意社区 tab 进入，返回来源页
-    router.back();
+    // Mod 详情可能从任意社区 tab 进入：回下载页并恢复来源 tab 与滚动位置
+    downloadTabState.current = modDetail.backTab;
+    router.push("/download");
     return;
   }
   // 其余详情页（download-detail）返回启动页；store 级 previousRoute 无赋值点，恒为 "/"

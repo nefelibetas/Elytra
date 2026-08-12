@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 下载页容器：导航 + 各 tab 内容编排（具体逻辑在 store/组件中，本文件不做业务）
-import { ref, watch, onMounted } from "vue";
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from "vue";
 import DownloadTab from "../component/DownloadTab.vue";
 import VanillaList from "../component/VanillaList.vue";
 import VanillaDetail from "../component/VanillaDetail.vue";
@@ -18,6 +18,7 @@ import ScrollTopFab from "../component/ScrollTopFab.vue";
 import { vdState } from "../store/versionDownload";
 import { modSearch } from "../store/modSearch";
 import { loadDownloadConfig } from "../store/downloaderConfig";
+import { downloadTabState } from "../store/downloadTab";
 import { Box, Puzzle, Archive, CodeXml, Layers, Sun } from "@lucide/vue";
 import {
   shaderSearch,
@@ -26,13 +27,11 @@ import {
   modpackSearch,
 } from "../store/categorySearch";
 
-type Tab = "vanilla" | "mod" | "modpack" | "datapack" | "resourcepack" | "shader";
-
-const currentTab = ref<Tab>("vanilla");
+const tab = computed(() => downloadTabState.current);
 /** 右侧滚动容器（切 tab 时复位滚动位置） */
 const bodyEl = ref<HTMLElement>();
 
-onMounted(() => {
+onMounted(async () => {
   vdState.fetchManifest();
   // 加载下载配置（翻译显示模式等）：保证社区搜索前配置已从持久化读入
   loadDownloadConfig();
@@ -43,10 +42,19 @@ onMounted(() => {
   resourcepackSearch.ensureAutoSearch();
   datapackSearch.ensureAutoSearch();
   modpackSearch.ensureAutoSearch();
+  // 从详情页返回时恢复该 tab 的滚动位置（组件重建，DOM 需先渲染完成）
+  await nextTick();
+  const el = bodyEl.value;
+  if (el) el.scrollTop = downloadTabState.scrollTop[downloadTabState.current];
+});
+
+onBeforeUnmount(() => {
+  const el = bodyEl.value;
+  if (el) downloadTabState.scrollTop[downloadTabState.current] = el.scrollTop;
 });
 
 // 首次进入社区 tab 自动搜索热门（预加载已触发时直接跳过）；切 tab 滚动复位到最上方
-watch(currentTab, (t) => {
+watch(tab, (t) => {
   bodyEl.value?.scrollTo({ top: 0, behavior: "smooth" });
   if (t === "mod") modSearch.ensureAutoSearch();
   if (t === "shader") shaderSearch.ensureAutoSearch();
@@ -59,34 +67,34 @@ watch(currentTab, (t) => {
 <template>
   <div class="dl">
     <nav class="dl-nav">
-      <DownloadTab :active="currentTab === 'vanilla'" @click="currentTab = 'vanilla'" @refresh="vdState.refresh()">
+      <DownloadTab :active="tab === 'vanilla'" @click="downloadTabState.current = 'vanilla'" @refresh="vdState.refresh()">
         <template #icon>
           <Box :size="16" :stroke-width="1.4" />
         </template>
         原版游戏
       </DownloadTab>
       <div class="nav-divider"><span>社区资源</span></div>
-      <DownloadTab :active="currentTab === 'mod'" @click="currentTab = 'mod'" @refresh="modSearch.reset()">
+      <DownloadTab :active="tab === 'mod'" @click="downloadTabState.current = 'mod'" @refresh="modSearch.reset()">
         <template #icon>
           <Puzzle :size="16" :stroke-width="1.4" />
         </template>Mod
       </DownloadTab>
-      <DownloadTab :active="currentTab === 'modpack'" @click="currentTab = 'modpack'" @refresh="modpackSearch.reset()">
+      <DownloadTab :active="tab === 'modpack'" @click="downloadTabState.current = 'modpack'" @refresh="modpackSearch.reset()">
         <template #icon>
           <Archive :size="16" :stroke-width="1.4" />
         </template>整合包
       </DownloadTab>
-      <DownloadTab :active="currentTab === 'datapack'" @click="currentTab = 'datapack'" @refresh="datapackSearch.reset()">
+      <DownloadTab :active="tab === 'datapack'" @click="downloadTabState.current = 'datapack'" @refresh="datapackSearch.reset()">
         <template #icon>
           <CodeXml :size="16" :stroke-width="1.4" />
         </template>数据包
       </DownloadTab>
-      <DownloadTab :active="currentTab === 'resourcepack'" @click="currentTab = 'resourcepack'" @refresh="resourcepackSearch.reset()">
+      <DownloadTab :active="tab === 'resourcepack'" @click="downloadTabState.current = 'resourcepack'" @refresh="resourcepackSearch.reset()">
         <template #icon>
           <Layers :size="16" :stroke-width="1.4" />
         </template>资源包
       </DownloadTab>
-      <DownloadTab :active="currentTab === 'shader'" @click="currentTab = 'shader'" @refresh="shaderSearch.reset()">
+      <DownloadTab :active="tab === 'shader'" @click="downloadTabState.current = 'shader'" @refresh="shaderSearch.reset()">
         <template #icon>
           <Sun :size="16" :stroke-width="1.4" />
         </template>光影包
@@ -95,41 +103,41 @@ watch(currentTab, (t) => {
 
     <div ref="bodyEl" class="dl-body">
       <Transition name="page" mode="out-in">
-        <div v-if="currentTab === 'vanilla' && !vdState.selectedVersion" key="list" class="dl-page">
+        <div v-if="tab === 'vanilla' && !vdState.selectedVersion" key="list" class="dl-page">
           <VanillaList />
         </div>
 
-        <div v-else-if="currentTab === 'vanilla' && vdState.selectedVersion" key="detail" class="dl-page">
+        <div v-else-if="tab === 'vanilla' && vdState.selectedVersion" key="detail" class="dl-page">
           <VanillaDetail />
         </div>
 
-        <div v-else-if="currentTab === 'mod'" key="mod" class="dl-page mod-dl-page">
+        <div v-else-if="tab === 'mod'" key="mod" class="dl-page mod-dl-page">
           <ModSearchBar />
           <ModResultList />
         </div>
 
-        <div v-else-if="currentTab === 'shader'" key="shader" class="dl-page mod-dl-page">
+        <div v-else-if="tab === 'shader'" key="shader" class="dl-page mod-dl-page">
           <ShaderSearchBar />
           <ShaderResultList />
         </div>
 
-        <div v-else-if="currentTab === 'resourcepack'" key="resourcepack" class="dl-page mod-dl-page">
+        <div v-else-if="tab === 'resourcepack'" key="resourcepack" class="dl-page mod-dl-page">
           <ResourcepackSearchBar />
           <ResourcepackResultList />
         </div>
 
-        <div v-else-if="currentTab === 'datapack'" key="datapack" class="dl-page mod-dl-page">
+        <div v-else-if="tab === 'datapack'" key="datapack" class="dl-page mod-dl-page">
           <DatapackSearchBar />
           <DatapackResultList />
         </div>
 
-        <div v-else-if="currentTab === 'modpack'" key="modpack" class="dl-page mod-dl-page">
+        <div v-else-if="tab === 'modpack'" key="modpack" class="dl-page mod-dl-page">
           <ModpackSearchBar />
           <ModpackResultList />
         </div>
 
         <div v-else key="other" class="dl-page">
-          <h2>{{ currentTab }}</h2>
+          <h2>{{ tab }}</h2>
         </div>
       </Transition>
     </div>

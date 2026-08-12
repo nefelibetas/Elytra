@@ -3,14 +3,18 @@
 import { reactive } from "vue";
 import router from "../router";
 import type { ModDisplayItem } from "./modSearch";
+import { downloadTabState, type DownloadTab } from "./downloadTab";
 
 export const modDetail = reactive({
   item: null as ModDisplayItem | null,
+  /** 进入详情时记录的来源 tab（返回下载页时恢复） */
+  backTab: "mod" as DownloadTab,
 });
 
-/** 选中 item → 存入 store 并跳转 /mod-detail（返回键可用 router.back 回来源页）。 */
+/** 选中 item → 存入 store 并跳转 /mod-detail（返回键可回下载页并恢复来源 tab）。 */
 export function openModDetail(item: ModDisplayItem) {
   modDetail.item = item;
+  modDetail.backTab = downloadTabState.current;
   router.push({
     path: "/mod-detail",
     query: { source: item.source, id: item.id },
