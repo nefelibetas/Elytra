@@ -12,10 +12,10 @@ export const sourceModeOptions = [
 
 // 社区下载源：Modrinth 官方 API/CDN vs MCIM 国内镜像（管理 Fabric API 等社区资源）
 export const communitySourceOptions = [
-  { value: "preferOfficial", label: "Modrinth/CurseForge 优先", desc: "Modrinth/CurseForge 官方优先，加载缓慢时使用镜像" },
-  { value: "preferChina", label: "镜像 优先", desc: "镜像优先，失败时回退 Modrinth/CurseForge 官方" },
-  { value: "officialOnly", label: "Modrinth/CurseForge", desc: "仅使用 Modrinth/CurseForge 官方，不自动回退" },
-  { value: "chinaOnly", label: "镜像", desc: "仅使用镜像，不自动回退" },
+  { value: "preferOfficial", label: "优先Modrinth/CurseForge官方", desc: "优先Modrinth/CurseForge官方，加载缓慢时使用MCIM镜像站" },
+  { value: "preferChina", label: "优先MCIM镜像站", desc: "优先MCIM镜像站，失败时回退Modrinth/CurseForge官方" },
+  { value: "officialOnly", label: "仅Modrinth/CurseForge", desc: "仅使用Modrinth/CurseForge官方" },
+  { value: "chinaOnly", label: "仅MCIM镜像", desc: "仅使用MCIM镜像站" },
 ];
 
 export function sourceModeLabel(v: string) {
