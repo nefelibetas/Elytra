@@ -27,6 +27,8 @@ import {
 type Tab = "vanilla" | "mod" | "modpack" | "datapack" | "resourcepack" | "shader";
 
 const currentTab = ref<Tab>("vanilla");
+/** 右侧滚动容器（切 tab 时复位滚动位置） */
+const bodyEl = ref<HTMLElement>();
 
 onMounted(() => {
   vdState.fetchManifest();
@@ -39,8 +41,9 @@ onMounted(() => {
   modpackSearch.ensureAutoSearch();
 });
 
-// 首次进入社区 tab 自动搜索热门（预加载已触发时直接跳过）
+// 首次进入社区 tab 自动搜索热门（预加载已触发时直接跳过）；切 tab 滚动复位到最上方
 watch(currentTab, (t) => {
+  bodyEl.value?.scrollTo({ top: 0, behavior: "smooth" });
   if (t === "mod") modSearch.ensureAutoSearch();
   if (t === "shader") shaderSearch.ensureAutoSearch();
   if (t === "resourcepack") resourcepackSearch.ensureAutoSearch();
@@ -116,7 +119,7 @@ watch(currentTab, (t) => {
       </DownloadTab>
     </nav>
 
-    <div class="dl-body">
+    <div ref="bodyEl" class="dl-body">
       <Transition name="page" mode="out-in">
         <div v-if="currentTab === 'vanilla' && !vdState.selectedVersion" key="list" class="dl-page">
           <VanillaList />

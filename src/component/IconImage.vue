@@ -1,19 +1,71 @@
 <script setup lang="ts">
 // 图标/图片占位组件：加载前显示大号原版游戏（草方块）图标占位，
 // 加载完成后淡入真实图片；请求失败保持占位。
-// 占位用 fill 矢量（无背景色块、无描边缩放毛边，任意尺寸锐利）
-import { ref } from "vue";
+// 加载状态由独立 Image() 探针驱动（先绑监听再赋 src，事件必达）；
+// 实测 Modrinth CDN 图标当前网络失败率高（307 目标节点概率性黑洞）：
+// 探针带 6s 超时 + 失败重试 2 次（共 3 次尝试），仍失败才显示占位。
+import { ref, watch } from "vue";
 
-defineProps<{ src?: string | null; size?: number }>();
+const props = defineProps<{ src?: string | null; size?: number }>();
 
 const loaded = ref(false);
 const failed = ref(false);
+
+const PROBE_TIMEOUT_MS = 6000;
+const PROBE_RETRIES = 2;
+
+watch(
+  () => props.src,
+  (src) => {
+    loaded.value = false;
+    failed.value = false;
+    if (!src) return;
+    let attempt = 0;
+    const tryLoad = () => {
+      const probe = new Image();
+      const timer = setTimeout(() => {
+        if (attempt < PROBE_RETRIES) {
+          attempt++;
+          tryLoad();
+        } else {
+          failed.value = true;
+        }
+      }, PROBE_TIMEOUT_MS);
+      probe.onload = () => {
+        clearTimeout(timer);
+        loaded.value = true;
+      };
+      probe.onerror = () => {
+        clearTimeout(timer);
+        if (attempt < PROBE_RETRIES) {
+          attempt++;
+          tryLoad();
+        } else {
+          failed.value = true;
+        }
+      };
+      probe.src = src;
+    };
+    tryLoad();
+  },
+  { immediate: true }
+);
 </script>
 
 <template>
   <span class="icon-box" :style="{ width: (size ?? 32) + 'px', height: (size ?? 32) + 'px' }">
-    <!-- 占位：outline 草方块（与左侧"原版游戏"tab 同款描边风格），无背景 -->
-    <svg class="icon-ph" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+    <!-- 占位：outline 草方块（与左侧"原版游戏"tab 同款描边风格），无背景；
+         加载成功后必须移除（v-if）——透明背景 PNG 会透出下层占位 -->
+    <svg
+      v-if="!loaded && !failed"
+      class="icon-ph"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
       <path d="M8 1.5L14 5l-6 3.5L2 5z" />
       <path d="M2 5v6l6 3.5V8.5" />
       <path d="M14 5v6l-6 3.5V8.5" />
@@ -25,10 +77,7 @@ const failed = ref(false);
       :height="size ?? 32"
       :class="{ loaded }"
       alt=""
-      loading="lazy"
       decoding="async"
-      @load="loaded = true"
-      @error="failed = true"
     />
   </span>
 </template>
