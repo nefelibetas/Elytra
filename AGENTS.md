@@ -27,8 +27,9 @@ ElytraLauncher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前端
 |路径|职责|
 |---|---|
 |`src-tauri/src/commands/`|8 个命令模块：jdk / downloader / loader / task / account / gamedirs / launch / mods（真薄胶水；`launch.rs` 额外含进程管理，编排均已下沉）|
-|`src-tauri/src/config/`|纯数据模型：`launcher/`（`model.rs` 配置 + `args.rs` 命令构建（`collect_jvm_args`/`build_game_args` 拆分）+ `env.rs` 环境准备 + `memory.rs`（GC 参数 + `system_memory_mb()` 系统内存统一入口，供启动显示与自动分配共用）+ `platform.rs` + `skin.rs` 离线皮肤）、`downloader/model.rs`（多源与回退，`source.rs` 为 DownloaderConfig 网络 impl 分离文件：`fetch_with_fallback`/`fetch_json_with_fallback` 主源 2s 超时降级）、`offline_skin.rs`、`game_dirs.rs`|
+|`src-tauri/src/config/`|纯数据模型：`launcher/`（`model.rs` 配置 + `args.rs` 命令构建（`collect_jvm_args`/`build_game_args` 拆分）+ `env.rs` 环境准备 + `memory.rs`（GC 参数 + `system_memory_mb()` 系统内存统一入口，供启动显示与自动分配共用）+ `platform.rs` + `skin.rs` 离线皮肤）、`downloader/model.rs`（多源与回退，`source.rs` 为 DownloaderConfig 网络 impl 分离文件：`fetch_with_fallback`/`fetch_json_with_fallback` 主源 4s 超时降级 + **按主源 URL 的内存 TTL 缓存 10 分钟**（maven-metadata/loader 列表等低频变化数据））、`offline_skin.rs`、`game_dirs.rs`|
 |`src-tauri/src/downloader/`|下载引擎：manifest / version / library / assets / fetcher / hash / model / extract / mods / mod_loader（`TARGET_OS`、`matches_rules`/`native_classifier_matches`/`os_classifier_key` 平台判定与规则过滤的唯一实现、`extract_jar`/`extract_entry_to` ZIP 解压）|
+|`src-tauri/src/downloader/mods.rs`|Mod 双源搜索域（Modrinth/CurseForge）：`search_mods(source, query, game_version, loader, category, offset, page_size)`——`category` 为项目类型（shader=6552/resourcepack=12/datapack=6945/modpack=4471 映射 CurseForge classId + Modrinth project_type facet），`page_size` 每源条数（聚合模式前端传 15）|
 |`src-tauri/src/downloader/mod_loader/`|ModLoader 引擎：`mod.rs`（公共纯函数 `maven_path`/`merge_loader_profile`/`expand_inheritance` + 事件钩子 LoaderEvent/LoaderHook + re-export）、`fabric.rs`（profile 式 Fabric/Quilt）、`forge.rs`（installer 式共用流程 `download_and_extract` + Forge 专属 + 共享工具）、`neoforge.rs`（installer 式 NeoForge 专属）、`optifine.rs`、`version_query.rs`（版本列表查询：maven XML 解析 + 语义化排序 + Fabric API）|
 |`src-tauri/src/auth/`|微软 OAuth PKCE（`microsoft.rs`）+ 官方 API 客户端（`mojang.rs`：玩家查询/皮肤纹理）+ 账号服务（`account.rs`：登录回调/披风/上传）+ MsAccount（`model.rs`）|
 |`src-tauri/src/jdk/`|JDK 扫描/版本解析/存储（`scanner.rs`/`model.rs`/`mod.rs`：`java_bin_path`/`parse_java_major`）|
@@ -36,8 +37,8 @@ ElytraLauncher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前端
 |`src-tauri/src/task/`|`mod.rs`（TaskManager 单例 + PathLock 路径互斥 + `pub use model::*` 门面）+ `model.rs`（任务规格 + TaskProgress/StepInfo/TaskStatus 进度模型）+ `steps.rs`（StepSpec/步骤分析）+ `runner.rs`（run_task 编排，`resolve_target_dir`/`init_local_scan` 拆段）+ `repair.rs`（scan_missing/run_repair_task，`repair_step_indices`/`repair_jar` 拆段）+ `progress.rs`（EmitLoop 心跳/进度上报）+ `files.rs`（批量文件下载任务）|
 |`src-tauri/src/util.rs`|跨域公共纯函数：`url_file_name`（URL 取文件名）、`mc_version_from_dir`（版本目录名 → MC 版本，含 loader 标记定位与 `{id}_n` 剥离）|
 |`src/pages/`|Launch（启动页容器：左列进度/账号/启动区编排 + 右列占位，业务在 store/组件）、Download（下载容器：仅导航+tab 编排，业务在 store/组件）、Settings（设置容器：仅导航+tab 编排，业务在 store/组件）、DownloadDetail（任务管理）、VersionSelect（版本选择容器：左目录+右列表编排，业务在 store/gameDirs 与组件）、VersionSetup（版本设置容器：仅导航+tab 编排，业务在组件）|
-|`src/store/`|`download.ts`（dlState）、`memory.ts`（memState）、`modSearch.ts`（Mod 搜索聚合/分页/展开）、`versionDownload.ts`（vdState：manifest/版本选择/loader/Fabric API/提交下载，状态跨路由保留）、`launch.ts`（启动流程/已装版本/游戏退出监听）、`accountUi.ts`（账号菜单/皮肤/披风）、`auth.ts`（账号模式/微软登录流程/事件监听，含模块级 watch(msAccount) 头像联动）、`avatar.ts`（正版+离线头像渲染）、`alert.ts`（全局错误弹窗）、`selectedVersion.ts`（版本选择 localStorage 单例）、`jdkConfig.ts`（JDK 扫描/选择）、`launchOptions.ts`（启动选项/内存）、`offlineSkinConfig.ts`（离线皮肤）、`downloaderConfig.ts`（下载源/线程/限速）、`gameDirs.ts`（版本选择页：目录增删改/激活/右键菜单 + 版本列表）——模块级 reactive/ref 单例；`useConfigSection`（utils）可在 store 模块顶层调用（纯 ref，无生命周期依赖）|
-|`src/component/`|TitleBar / DownloadFAB / DownloadTab / VersionCard / VersionItem / AlertDialog / DialogModal / ScrollTopFab（长列表滚动回顶，自动绑最近滚动祖先，右下 88px 避让全局 DownloadFAB）/ VanillaList（原版版本列表页）/ VanillaDetail（版本详情+loader 选择页）/ ModSearchBar（Mod 搜索表单）/ ModResultList（Mod 搜索结果+分页）/ LaunchProgress（启动进度面板）/ AccountSection（正版/离线切换+用户区+菜单）/ LaunchSection（启动按钮区）/ CapeDialog（披风选择）/ SettingsOfflineSkin / SettingsLaunchOptions（启动选项+内存）/ SettingsJdk（Java+高级项）/ SettingsDownload（下载源）/ GameDirList（版本选择左列：目录+右键菜单）/ GameVersionList（版本选择右列：分类卡片）/ VersionSetupOverview（版本设置概览：快捷方式/补全/导出/删除）——页面组件直接 import store，无 props 链；Settings 系列组件用非 scoped style @import `src/styles/settings-shared.css`（stg-/lo- 前缀类全局唯一）|
+|`src/store/`|`download.ts`（dlState）、`memory.ts`（memState）、`modSearch.ts`（Mod 搜索聚合/分页/热门预加载；导出 `searchAllSources`/`cleanText`/`toDisplayItem` 供分类复用）、`categorySearch.ts`（分类资源搜索工厂 `createCategorySearch(category)` 生成 shader/resourcepack/datapack/modpack 四个独立实例 + TotalPages）、`versionDownload.ts`（vdState：manifest/版本选择/loader/Fabric API/提交下载，状态跨路由保留）、`launch.ts`（启动流程/已装版本/游戏退出监听）、`accountUi.ts`（账号菜单/皮肤/披风）、`auth.ts`（账号模式/微软登录流程/事件监听，含模块级 watch(msAccount) 头像联动）、`avatar.ts`（正版+离线头像渲染）、`alert.ts`（全局错误弹窗）、`selectedVersion.ts`（版本选择 localStorage 单例）、`jdkConfig.ts`（JDK 扫描/选择）、`launchOptions.ts`（启动选项/内存）、`offlineSkinConfig.ts`（离线皮肤）、`downloaderConfig.ts`（下载源/线程/限速）、`gameDirs.ts`（版本选择页：目录增删改/激活/右键菜单 + 版本列表）——模块级 reactive/ref 单例；`useConfigSection`（utils）可在 store 模块顶层调用（纯 ref，无生命周期依赖）|
+|`src/component/`|TitleBar / DownloadFAB / DownloadTab（hover 刷新按钮，emit refresh）/ VersionCard / VersionItem / AlertDialog / DialogModal / ScrollTopFab（长列表滚动回顶，自动绑最近滚动祖先，右下 88px 避让全局 DownloadFAB）/ VanillaList（原版版本列表页）/ VanillaDetail（版本详情+loader 选择页）/ ModSearchBar / ModResultList / ShaderSearchBar / ShaderResultList / ResourcepackSearchBar / ResourcepackResultList / DatapackSearchBar / DatapackResultList / ModpackSearchBar / ModpackResultList（社区资源搜索：搜索表单 + 结果卡片，四分类复制自 Mod 版改绑 store 与文案）/ IconImage（图标占位组件：Image() 探针驱动 + 6s 超时重试 2 次 + 成功后占位 svg 从 DOM 移除——透明 PNG 透出占位的坑）/ LaunchProgress（启动进度面板）/ AccountSection（正版/离线切换+用户区+菜单）/ LaunchSection（启动按钮区）/ CapeDialog（披风选择）/ SettingsOfflineSkin / SettingsLaunchOptions（启动选项+内存）/ SettingsJdk（Java+高级项）/ SettingsDownload（下载源）/ GameDirList（版本选择左列：目录+右键菜单）/ GameVersionList（版本选择右列：分类卡片）/ VersionSetupOverview（版本设置概览：快捷方式/补全/导出/删除）——页面组件直接 import store，无 props 链；Settings 系列组件用非 scoped style @import `src/styles/settings-shared.css`（stg-/lo- 前缀类全局唯一）|
 |`src/utils/`|versionClassify（目录名 `{mc}-{loader}-{ver}` 解析）、versionIcons、format（fmtCount/fmtSize/fmtModDate/fmtDateTime 收口）|
 
 ## Development Commands
@@ -49,7 +50,7 @@ pnpm dev            # 仅 vite dev server（:1420 strictPort）
 pnpm build          # vue-tsc --noEmit（全量类型检查）+ vite build → dist/
 cd src-tauri && cargo check    # Rust 编译检查
 cd src-tauri && cargo clippy   # Rust lint
-cd src-tauri && cargo test --lib -- --test-threads=1   # 单元测试（76 个；并行会偶发竞争——persist 共用 Settings.toml + 网络测试抖动）
+cd src-tauri && cargo test --lib -- --test-threads=1   # 单元测试（77 个；并行会偶发竞争——persist 共用 Settings.toml + 网络测试抖动）
 ```
 
 **测试红线**：`download_snapshot_full` 已标 `#[ignore]`（真实下载数百 MB 到 `D:\download_test`），`cargo test` 全量默认不触发；显式 `cargo test --test downloader_test -- --ignored` 才跑。`fetch_manifest_works` 需网络（单发小请求），离线环境会失败。
@@ -63,7 +64,7 @@ cd src-tauri && cargo test --lib -- --test-threads=1   # 单元测试（76 个�
 - **注册**：新命令 = `commands/<file>.rs` 加 `#[tauri::command] pub fn`，再在 `lib.rs` 的 `generate_handler![commands::<file>::<fn>, ...]` 追加**全限定路径**——`commands/mod.rs` 只有 `pub mod`，re-export 不能代替
 - **错误消息**：中文，约定"首行短文案 + `\n` 详细技术信息"
 - **持久化**：配置一律 `persist::read::<T>("section").unwrap_or_default()`；结构体实现 `Default`；`save` 前读改写（全局锁串行化）
-- **下载**：`fetch_with`（3 次重试+退避）/`fetch_fallback`（多源 URL 列表）/`fetch_json_with_fallback`（主源 5s 超时降级）；`file_sha1_matches` 整文件读内存
+- **下载**：`fetch_with`（3 次重试+退避）/`fetch_fallback`（多源 URL 列表）/`fetch_json_with_fallback`（主源 4s 超时降级 + 10 分钟 TTL 缓存）；`file_sha1_matches` 整文件读内存；全局 `http()` client 带 2s connect_timeout（镜像 302 到不可达对象存储节点的防挂死）
 - **版本目录**：`versions/{id}` 冲突时 `{id}_{n}`；目录内 jar/json 文件名可能 ≠ 目录名，一律扫描兜底
 
 ### 前端 Vue/TS
@@ -74,6 +75,7 @@ cd src-tauri && cargo test --lib -- --test-threads=1   # 单元测试（76 个�
 - **样式**：CSS 变量统一在 App.vue `:root`（`--color-brand`/`--text-*`/`--surface-*`/`--radius-*` 等），组件页面一律 `var()` 引用、`<style scoped>`；图标用内联 SVG（`fill=currentColor`），无图标库
 - **错误提示两级**：toast（`window.__showToast`，2.5s）vs AlertDialog（复杂错误，带复制按钮）
 - **展开/收起必须有动画**：一律用 `<Transition name="expand">` + `.expand-enter-to/.expand-leave-from { max-height: 1000px }` 显式目标值；`max-height` 写在 active 类上会因同特异性覆盖 from 态导致**无动画**（Download.vue loader/mod 展开的既有坑，勿回退）
+- **社区资源搜索（Mod/光影/资源包/数据包/整合包）**：搜索表单 + 结果列表组件成对复制（绑各自 store），无 props 链；聚合模式（来源=全部）每源只取 `AGG_PAGE_SIZE=15` 条（页大小减半控图片量），合并按标题去重后展示 ≤15 条；进入下载页 onMounted 并发预加载全部社区 tab 热门（`ensureAutoSearch` 幂等）；左侧 Tab 刷新按钮 = 各 store 的 `reset()`（清条件重搜热门）
 - **路由**：hash 路由（`createWebHashHistory`），`meta.transition` 驱动页面动画
 
 ## Important Files
@@ -108,7 +110,7 @@ cd src-tauri && cargo test --lib -- --test-threads=1   # 单元测试（76 个�
 
 ## Testing & QA
 
-- **无前端测试**；Rust 侧 76 个单元测试，全部 `#[test]`（网络型用 `#[tokio::test]`）
+- **无前端测试**；Rust 侧 77 个单元测试，全部 `#[test]`（网络型用 `#[tokio::test]`）
 - **单元测试只测纯函数**：PKCE、URL 组装、启动命令构建（`build_launch_command` + `minimal_version_json()` 助手）、离线皮肤 UUID 算法（与 Java `UUID.hashCode() & 1` 一致性）、内存分配公式、util（URL 文件名/版本目录解析）、maven XML 解析与语义化排序、Mod 双源搜索、修复步骤规划、persist 读写回环
 - **断言风格**：`assert_eq!` 精确值为主（argv 位置、公式值、错误码消息）；行为不变量用 `assert!` + 中文 message
 - **平台隔离**：Windows 专属逻辑（BAT 脚本渲染）用 `#[cfg(target_os = "windows")]`
@@ -132,6 +134,6 @@ cd src-tauri && cargo test --lib -- --test-threads=1   # 单元测试（76 个�
 5. `task::init()` 必须在 `run()` 开头调用，否则 `task::global()` panic
 6. 事件名 `task-progress` / `ms-login-complete` / `game-exited` 前后端字符串要一致
 7. App.vue 拦截 F12/DevTools/全选/Tab/ESC 快捷键——调试注意
-8. 长页面单文件巨大（Launch 1566 行、Settings 1815 行），改动前先 grep 定位
+8. 页面已全部容器化（业务在 store/组件，单文件 ≤134 行），改动前先 grep 定位组件/store 归属
 9. 版本选择持久化：localStorage 双键 `elytra.selectedVersion` + `elytra.selectedVersionDir`
 10. AGENTS.md 本身被 `.gitignore` 忽略（本地文件）；README.md 是空文件
