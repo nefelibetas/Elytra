@@ -186,14 +186,14 @@ input, textarea {
   --text-inverse: #FFFFFF;
 
   /* surface */
-  --surface-page: #F8F7FC;
+  --surface-page: #EFEDF7;
   --surface-header: var(--color-brand);
   --surface-card: #FFFFFF;
   --surface-elevated: #FFFFFF;
   --surface-hover: rgba(0, 0, 0, 0.07);
 
   /* border */
-  --border-default: #E5E7EB;
+  --border-default: #E1E3EC;
   --border-strong: #D1D5DB;
 
   /* shadow */
