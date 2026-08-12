@@ -5,6 +5,7 @@
 // 实测 Modrinth CDN 图标当前网络失败率高（307 目标节点概率性黑洞）：
 // 探针带 6s 超时 + 失败重试 2 次（共 3 次尝试），仍失败才显示占位。
 import { ref, watch } from "vue";
+import { Box } from "@lucide/vue";
 
 const props = defineProps<{ src?: string | null; size?: number }>();
 
@@ -56,20 +57,11 @@ watch(
   <span class="icon-box" :style="{ width: (size ?? 32) + 'px', height: (size ?? 32) + 'px' }">
     <!-- 占位：outline 草方块（与左侧"原版游戏"tab 同款描边风格），无背景；
          加载成功后必须移除（v-if）——透明背景 PNG 会透出下层占位 -->
-    <svg
+    <Box
       v-if="!loaded && !failed"
       class="icon-ph"
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="1.2"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-    >
-      <path d="M8 1.5L14 5l-6 3.5L2 5z" />
-      <path d="M2 5v6l6 3.5V8.5" />
-      <path d="M14 5v6l-6 3.5V8.5" />
-    </svg>
+      :stroke-width="1.2"
+    />
     <img
       v-if="src && !failed"
       :src="src"

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 原版版本详情页：版本信息头 + ModLoader 选择卡片组（含 Fabric API）+ 下载
 import { useRouter } from "vue-router";
+import { ArrowLeft, X, ChevronDown } from "@lucide/vue";
 import {
   vdState, displayLoaders, loaderIcon, vanillaIcon,
 } from "../store/versionDownload";
@@ -24,7 +25,7 @@ const sv = () => vdState.selectedVersion!;
   <div class="det-card">
     <div class="det-hdr">
       <button class="det-back" @click="vdState.backToList" title="返回">
-        <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2L4 8l6 6" /></svg>
+        <ArrowLeft :size="16" />
       </button>
       <img :src="vdState.selectedMainLoader && loaderIcon[vdState.selectedMainLoader] ? loaderIcon[vdState.selectedMainLoader] : versionIcon(sv())" width="28" height="28" class="det-icon" alt="" />
       <input class="det-input" v-model="vdState.versionInput" />
@@ -52,13 +53,9 @@ const sv = () => vdState.selectedVersion!;
           </span>
           <span v-if="vdState.selectedLoaderVersions[ld.key] || vdState.getLoaderVersions(ld.key, sv().id).length" class="det-ld-actions">
             <button v-if="vdState.selectedLoaderVersions[ld.key]" class="det-ld-remove" @click.stop="vdState.clearLoaderVer(ld.key)" title="移除">
-              <svg viewBox="0 0 12 12" width="10" height="10" fill="currentColor">
-                <polygon points="1,1 5,5 9,1 11,3 7,7 11,11 9,13 5,9 1,13 -1,11 3,7 -1,3" />
-              </svg>
+              <X :size="10" />
             </button>
-            <svg v-if="vdState.getLoaderVersions(ld.key, sv().id).length" class="det-ld-arrow" :class="{ open: vdState.expandedLoader[ld.key] }" viewBox="0 0 12 12" width="12" height="12" fill="currentColor">
-              <polygon points="1,3 11,3 6,10" />
-            </svg>
+            <ChevronDown v-if="vdState.getLoaderVersions(ld.key, sv().id).length" class="det-ld-arrow" :class="{ open: vdState.expandedLoader[ld.key] }" :size="12" />
           </span>
         </button>
         <Transition name="expand">
@@ -87,13 +84,9 @@ const sv = () => vdState.selectedVersion!;
           </span>
           <span v-if="vdState.selectedLoaderVersions['fabric-api'] || vdState.getFabricApiVersions(sv().id).length" class="det-ld-actions">
             <button v-if="vdState.selectedLoaderVersions['fabric-api']" class="det-ld-remove" @click.stop="vdState.clearFabricApi()" title="移除">
-              <svg viewBox="0 0 12 12" width="10" height="10" fill="currentColor">
-                <polygon points="1,1 5,5 9,1 11,3 7,7 11,11 9,13 5,9 1,13 -1,11 3,7 -1,3" />
-              </svg>
+              <X :size="10" />
             </button>
-            <svg v-if="vdState.getFabricApiVersions(sv().id).length" class="det-ld-arrow" :class="{ open: vdState.fabricApiExpanded }" viewBox="0 0 12 12" width="12" height="12" fill="currentColor">
-              <polygon points="1,3 11,3 6,10" />
-            </svg>
+            <ChevronDown v-if="vdState.getFabricApiVersions(sv().id).length" class="det-ld-arrow" :class="{ open: vdState.fabricApiExpanded }" :size="12" />
           </span>
         </button>
         <Transition name="expand">

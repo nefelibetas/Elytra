@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 版本选择页左侧：游戏目录列表 + 右键菜单 + 添加文件夹 + 重命名 dialog
 import { onMounted, onUnmounted } from "vue";
+import { Ellipsis, FolderPlus } from "@lucide/vue";
 import AlertDialog from "./AlertDialog.vue";
 import {
   dirs, activePath, dirsError, itemMenu,
@@ -36,11 +37,7 @@ onUnmounted(() => window.removeEventListener("click", onWindowClick));
           title="更多操作"
           @click.stop="openItemMenu($event, d)"
         >
-          <svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor">
-            <circle cx="8" cy="3" r="1.6" />
-            <circle cx="8" cy="8" r="1.6" />
-            <circle cx="8" cy="13" r="1.6" />
-          </svg>
+          <Ellipsis :size="15" :fill="'currentColor'" :stroke="'none'" />
         </button>
       </div>
     </div>
@@ -49,9 +46,7 @@ onUnmounted(() => window.removeEventListener("click", onWindowClick));
     <div class="vs-group-label">添加或导入</div>
     <div class="vs-add-list">
       <div class="vs-add-item" @click="addFolder">
-        <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
-          <path d="M2 3a1 1 0 011-1h3l2 2h6a1 1 0 011 1v8a1 1 0 01-1 1H3a1 1 0 01-1-1V3z" />
-        </svg>
+        <FolderPlus :size="14" />
         <span>添加已有文件夹</span>
       </div>
     </div>

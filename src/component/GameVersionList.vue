@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 版本选择页右侧：当前目录版本列表（按 ModLoader/原版分类卡片）+ 删除版本 dialog
 import { useRouter } from "vue-router";
+import { Settings2, Trash2 } from "@lucide/vue";
 import AlertDialog from "./AlertDialog.vue";
 import VersionCard from "./VersionCard.vue";
 import VersionItem from "./VersionItem.vue";
@@ -58,29 +59,14 @@ function goDownload() {
               title="版本设置"
               @click.stop="goSetup(v.name)"
             >
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <line x1="21" y1="4" x2="14" y2="4"/>
-                <line x1="10" y1="4" x2="3" y2="4"/>
-                <line x1="21" y1="12" x2="12" y2="12"/>
-                <line x1="8" y1="12" x2="3" y2="12"/>
-                <line x1="21" y1="20" x2="16" y2="20"/>
-                <line x1="12" y1="20" x2="3" y2="20"/>
-                <line x1="14" y1="2" x2="14" y2="6"/>
-                <line x1="8" y1="10" x2="8" y2="14"/>
-                <line x1="16" y1="18" x2="16" y2="22"/>
-              </svg>
+              <Settings2 :size="15" />
             </button>
             <button
               class="vs-item-del"
               title="删除版本"
               @click.stop="openDelete(v.name)"
             >
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="3 6 5 6 21 6" />
-                <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
-                <path d="M10 11v6M14 11v6" />
-                <path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" />
-              </svg>
+              <Trash2 :size="15" />
             </button>
           </template>
         </VersionItem>

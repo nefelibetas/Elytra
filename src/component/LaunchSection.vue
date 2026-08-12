@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 启动区：启动按钮（下载游戏入口）+ 版本选择 / 版本设置
 import { useRouter } from "vue-router";
+import { LayoutGrid, Settings2 } from "@lucide/vue";
 import { isLaunching, doLaunch } from "../store/launch";
 import { selectedVersion } from "../store/selectedVersion";
 
@@ -36,23 +37,11 @@ function goDownload() {
 
       <div class="launch-actions">
         <button class="secondary-btn" @click="router.push('/version-select')">
-          <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
-            <path d="M2 2h5v5H2V2zm7 0h5v5H9V2zM2 9h5v5H2V9zm7 0h5v5H9V9z" />
-          </svg>
+          <LayoutGrid :size="14" />
           <span>版本选择</span>
         </button>
         <button v-if="selectedVersion" class="secondary-btn" @click="router.push({ path: '/version-setup', query: { name: selectedVersion } })">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-            <line x1="21" y1="4" x2="14" y2="4"/>
-            <line x1="10" y1="4" x2="3" y2="4"/>
-            <line x1="21" y1="12" x2="12" y2="12"/>
-            <line x1="8" y1="12" x2="3" y2="12"/>
-            <line x1="21" y1="20" x2="16" y2="20"/>
-            <line x1="12" y1="20" x2="3" y2="20"/>
-            <line x1="14" y1="2" x2="14" y2="6"/>
-            <line x1="8" y1="10" x2="8" y2="14"/>
-            <line x1="16" y1="18" x2="16" y2="22"/>
-          </svg>
+          <Settings2 :size="14" />
           <span>版本设置</span>
         </button>
       </div>

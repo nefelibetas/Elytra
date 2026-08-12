@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Check } from "@lucide/vue";
 import type { StepStatus } from "../store/download";
 
 defineProps<{ status: StepStatus }>();
@@ -6,7 +7,7 @@ defineProps<{ status: StepStatus }>();
 
 <template>
   <span class="sd-icon">
-    <svg v-if="status === 'done'" viewBox="0 0 14 14" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7l3.5 3.5L12 3" /></svg>
+    <Check v-if="status === 'done'" :size="13" :stroke-width="2" />
     <span v-else-if="status === 'running'" class="sd-spin"></span>
     <span v-else class="sd-dot"></span>
   </span>

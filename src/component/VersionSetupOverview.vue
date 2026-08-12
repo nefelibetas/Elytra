@@ -2,6 +2,7 @@
 // 版本设置-概览 tab：版本信息 + 快捷方式 + 高级管理（补全/导出/删除）+ 重命名/删除 dialog
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { Pencil, Folder, Save, Puzzle, CodeXml, CloudDownload, Trash2 } from "@lucide/vue";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { classifyVersion } from "../utils/versionClassify";
@@ -201,9 +202,7 @@ async function exportScript() {
       >
         <template #action>
           <button class="setup-icon-btn" title="重命名版本" @click="openRename">
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M17 3a2.8 2.8 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
-            </svg>
+            <Pencil :size="15" />
           </button>
         </template>
       </VersionItem>
@@ -214,23 +213,15 @@ async function exportScript() {
       <div class="setup-card-title">快捷方式</div>
       <div class="setup-btn-row">
         <button class="setup-btn" @click="openFolder('version')">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
-          </svg>
+          <Folder :size="15" />
           <span>版本文件夹</span>
         </button>
         <button class="setup-btn" @click="openFolder('saves')">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" />
-            <path d="M17 21v-8H7v8M7 3v5h8" />
-          </svg>
+          <Save :size="15" />
           <span>存档文件夹</span>
         </button>
         <button class="setup-btn" @click="openFolder('mods')">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M10 13a5 5 0 007.5.5l3-3a5 5 0 00-7-7l-1.7 1.7" />
-            <path d="M14 11a5 5 0 00-7.5-.5l-3 3a5 5 0 007 7l1.7-1.7" />
-          </svg>
+          <Puzzle :size="15" />
           <span>Mod 文件夹</span>
         </button>
       </div>
@@ -241,26 +232,15 @@ async function exportScript() {
       <div class="setup-card-title">高级管理</div>
       <div class="setup-btn-row">
         <button class="setup-btn" @click="exportScript">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="16 18 22 12 16 6" />
-            <polyline points="8 6 2 12 8 18" />
-          </svg>
+          <CodeXml :size="15" />
           <span>导出启动脚本</span>
         </button>
         <button class="setup-btn" @click="repairFiles">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M20 14.7A7 7 0 0012 3a7 7 0 00-6.9 5.4A5 5 0 005 18h11a4 4 0 004-3.3z" />
-            <path d="M12 12v5M9.5 14.5L12 17l2.5-2.5" />
-          </svg>
+          <CloudDownload :size="15" />
           <span>补全文件</span>
         </button>
         <button class="setup-btn danger" @click="deleteDialog = true">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="3 6 5 6 21 6" />
-            <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
-            <path d="M10 11v6M14 11v6" />
-            <path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" />
-          </svg>
+          <Trash2 :size="15" />
           <span>删除版本</span>
         </button>
       </div>

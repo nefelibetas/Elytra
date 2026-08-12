@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 设置页容器：导航 + 各 tab 内容编排（业务在 store/组件，本文件不做配置逻辑）
 import { ref } from "vue";
+import { SlidersHorizontal, Download } from "@lucide/vue";
 import SettingsOfflineSkin from "../component/SettingsOfflineSkin.vue";
 import SettingsLaunchOptions from "../component/SettingsLaunchOptions.vue";
 import SettingsJdk from "../component/SettingsJdk.vue";
@@ -21,9 +22,7 @@ const currentTab = ref<Tab>("launch");
         :class="{ active: currentTab === 'launch' }"
         @click="currentTab = 'launch'"
       >
-        <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
-          <path d="M3 2h10a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3a1 1 0 011-1zm1 2v2h8V4H4zm0 4v4h8V8H4z" />
-        </svg>
+        <SlidersHorizontal :size="16" />
         启动设置
       </button>
       <button
@@ -31,9 +30,7 @@ const currentTab = ref<Tab>("launch");
         :class="{ active: currentTab === 'download' }"
         @click="currentTab = 'download'"
       >
-        <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
-          <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 12V3a5 5 0 010 10z" />
-        </svg>
+        <Download :size="16" />
         下载设置
       </button>
     </nav>

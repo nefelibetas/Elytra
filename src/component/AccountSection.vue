@@ -2,6 +2,7 @@
 // 账号区：正版/离线切换 + 用户区（头像/用户名/登录/操作菜单）。
 // 菜单跟随鼠标 Teleport 到 body；window click 关闭菜单（组件挂载周期内注册）。
 import { computed, onMounted, onUnmounted, watch } from "vue";
+import { ShieldCheck, User, UserRound, Shirt, Pencil, LogOut } from "@lucide/vue";
 import {
   authMode, msAccount, username, setAuthMode, msLoginState, startMsLogin, logoutMs,
 } from "../store/auth";
@@ -28,9 +29,7 @@ onUnmounted(() => window.removeEventListener("click", accountUi.closeMenus));
           :class="{ active: authMode === 'premium' }"
           @click="setAuthMode('premium')"
         >
-          <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
-            <path d="M8 1L3 5v3.5C3 12.3 5.3 15.5 8 16c2.7-.5 5-3.7 5-7.5V5L8 1z" />
-          </svg>
+          <ShieldCheck :size="16" />
           <span>正版</span>
         </button>
         <button
@@ -38,9 +37,7 @@ onUnmounted(() => window.removeEventListener("click", accountUi.closeMenus));
           :class="{ active: authMode === 'offline' }"
           @click="setAuthMode('offline')"
         >
-          <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
-            <path d="M8 2a4 4 0 100 8 4 4 0 000-8zm-6 9c0-1.3 2.7-2 6-2s6 .7 6 2v1H2v-1z" />
-          </svg>
+          <User :size="16" />
           <span>离线</span>
         </button>
       </div>
@@ -58,11 +55,7 @@ onUnmounted(() => window.removeEventListener("click", accountUi.closeMenus));
               draggable="false"
               @error="avatarState.avatarError = true"
             />
-            <svg v-else viewBox="0 0 40 40" width="44" height="44" fill="currentColor">
-              <circle cx="20" cy="20" r="20" />
-              <circle cx="20" cy="15" r="6" fill="var(--surface-elevated)" opacity="0.8" />
-              <ellipse cx="20" cy="30" rx="10" ry="7" fill="var(--surface-elevated)" opacity="0.8" />
-            </svg>
+            <UserRound v-else :size="44" />
           </div>
           <div v-if="authMode === 'premium'" class="uname" :class="{ 'uname-empty': !msAccount }">
             {{ msAccount?.name || '未登录' }}
@@ -85,27 +78,19 @@ onUnmounted(() => window.removeEventListener("click", accountUi.closeMenus));
           <template v-else-if="msAccount">
             <!-- 衣服：皮肤/披风菜单 -->
             <button class="icon-btn" title="皮肤与披风" @click.stop="accountUi.openSkinMenu($event)">
-              <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
-                <path d="M5.5 2h5c.6 0 1.2.4 1.5 1l2.8 1.2c.5.2.7.8.5 1.3l-.4.9c-.2.4-.6.6-1 .6H14v5.5a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 11.5V7h-.4c-.4 0-.8-.2-1-.6l-.4-.9c-.2-.5 0-1.1.5-1.3L4 3c.3-.6.9-1 1.5-1zm.5 1.5v2.5a2 2 0 004 0v-2.5h-4z" />
-              </svg>
+              <Shirt :size="14" />
             </button>
             <!-- 编辑：账号信息菜单（修改密码 / 修改玩家名） -->
             <button class="icon-btn" title="编辑信息" @click.stop="accountUi.openEditMenu($event)">
-              <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
-                <path d="M11.3 1.3a1.8 1.8 0 012.6 2.6L5.6 12.2l-3.5 1 1-3.5 8.2-8.4zm.9 1.7a.5.5 0 00-.7 0L4 10.6l.4 1 1 .4 7.6-7.5a.5.5 0 000-.7l-.8-.8z" />
-              </svg>
+              <Pencil :size="14" />
             </button>
             <!-- 登出 -->
             <button class="icon-btn" title="退出登录" @click="logoutMs">
-              <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
-                <path d="M10.5 3h-5a1 1 0 00-1 1v8a1 1 0 001 1h5a1 1 0 001-1V4a1 1 0 00-1-1zM4 1h8a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V3a2 2 0 012-2zm2 5h4v1H6V6zm0 2h4v1H6V8zm0 2h4v1H6v-1z" />
-              </svg>
+              <LogOut :size="14" />
             </button>
           </template>
           <button v-else class="act-btn" @click="startMsLogin">
-            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
-              <path d="M8 1L3 5v3.5C3 12.3 5.3 15.5 8 16c2.7-.5 5-3.7 5-7.5V5L8 1z" />
-            </svg>
+            <ShieldCheck :size="14" />
             <span>登录微软账号</span>
           </button>
         </div>

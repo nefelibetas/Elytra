@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 离线皮肤设置卡片 + 皮肤种类选择 dialog
 import { onMounted } from "vue";
+import { Save, RefreshCw, Pencil, RotateCcw } from "@lucide/vue";
 import AlertDialog from "./AlertDialog.vue";
 import {
   skinOptions, skinType, skinPlayerName, skinCustomPath, skinCustomModel,
@@ -42,33 +43,22 @@ onMounted(loadOfflineSkin);
           @change="saveOfflineSkin"
         />
         <button class="tool-btn" @click="savePlayerSkin">
-          <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
-            <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 12V3a5 5 0 010 10z" />
-          </svg>
+          <Save :size="14" />
           保存皮肤
         </button>
         <button class="tool-btn" @click="refreshPlayerSkin">
-          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M14 8a6 6 0 01-11 3.5"/>
-            <polygon points="3,14 2.5,10 7,11" stroke="none" fill="currentColor"/>
-            <path d="M2 8a6 6 0 0111-3.5"/>
-            <polygon points="13,2 13.5,6 9,5" stroke="none" fill="currentColor"/>
-          </svg>
+          <RefreshCw :size="14" />
           刷新
         </button>
       </div>
       <div v-if="skinType === 'custom'" class="skin-sub-row">
         <template v-if="skinCustomPath">
           <button class="tool-btn" @click="pickCustomSkin">
-            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
-              <path d="M11.3 1.3a1.8 1.8 0 012.6 2.6L5.6 12.2l-3.5 1 1-3.5 8.2-8.4zm.9 1.7a.5.5 0 00-.7 0L4 10.6l.4 1 1 .4 7.6-7.5a.5.5 0 000-.7l-.8-.8z" />
-            </svg>
+            <Pencil :size="14" />
             更改皮肤
           </button>
           <button class="tool-btn" @click="resetCustomSkin">
-            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
-              <path d="M8 3a5 5 0 105 5h-2a3 3 0 11-3-3v2L4 4l4-3v2z" />
-            </svg>
+            <RotateCcw :size="14" />
             重置皮肤
           </button>
           <span class="skin-model-note">模型：{{ skinCustomModel === 'alex' ? 'Alex（纤细）' : skinCustomModel === 'auto' ? '启动器决定' : 'Steve（经典）' }}</span>

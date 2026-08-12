@@ -2,6 +2,7 @@
 // 启动页容器：左列（启动进度 / 账号区 + 启动区）编排 + 右列占位 + 错误弹窗。
 // 业务逻辑在 store（launch/auth/accountUi/avatar/alert），本文件仅做初始化编排。
 import { onMounted } from "vue";
+import { FileText } from "@lucide/vue";
 import AlertDialog from "../component/AlertDialog.vue";
 import LaunchProgress from "../component/LaunchProgress.vue";
 import AccountSection from "../component/AccountSection.vue";
@@ -43,12 +44,7 @@ onMounted(async () => {
 
     <div class="right">
       <div v-if="!selectedVersion" class="right-hint">
-        <svg viewBox="0 0 48 48" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3">
-          <rect x="8" y="10" width="32" height="28" rx="3"/>
-          <line x1="16" y1="20" x2="32" y2="20"/>
-          <line x1="16" y1="26" x2="28" y2="26"/>
-          <line x1="16" y1="32" x2="24" y2="32"/>
-        </svg>
+        <FileText :size="48" opacity="0.3" />
         <p>选择一个游戏版本</p>
       </div>
       <div v-else class="right-placeholder"></div>

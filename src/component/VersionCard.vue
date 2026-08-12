@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { ChevronDown } from "@lucide/vue";
 
 const props = defineProps<{
   title: string;
@@ -20,9 +21,7 @@ const bodyHeight = computed(() => {
     <div class="card-title" @click="emit('toggle')">
       <span>{{ title }}</span>
       <span class="card-count">{{ count }}</span>
-      <svg class="chevron" viewBox="0 0 12 12" width="14" height="14" fill="currentColor">
-        <polygon points="1,3 11,3 6,10" />
-      </svg>
+      <ChevronDown class="chevron" :size="14" />
     </div>
     <div class="card-body" :style="{ maxHeight: bodyHeight }">
       <slot />

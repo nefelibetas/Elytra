@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { RefreshCw } from "@lucide/vue";
 defineProps<{ active?: boolean }>();
 const emit = defineEmits<{ click: []; refresh: [] }>();
 </script>
@@ -10,12 +11,7 @@ const emit = defineEmits<{ click: []; refresh: [] }>();
       <span><slot /></span>
     </button>
     <button class="tab-refresh" @click.stop="emit('refresh')" title="刷新">
-      <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M14 8a6 6 0 01-11 3.5"/>
-        <polygon points="3,14 2.5,10 7,11" stroke="none" fill="currentColor"/>
-        <path d="M2 8a6 6 0 0111-3.5"/>
-        <polygon points="13,2 13.5,6 9,5" stroke="none" fill="currentColor"/>
-      </svg>
+      <RefreshCw :size="14" />
     </button>
   </div>
 </template>

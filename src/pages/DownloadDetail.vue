@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue"
+import { X, Check, LoaderCircle } from "@lucide/vue"
 import { dlState, TaskItem } from "../store/download"
 import { showToast } from "../utils/toast"
 import { useRouter } from "vue-router"
@@ -71,9 +72,7 @@ async function handleCancel(task: TaskItem) {
           <div class="tc-hdr">
             <span class="tc-name">{{ task.name || "下载任务" }}</span>
             <button class="tc-cancel" title="取消并清理" @click="handleCancel(task)">
-              <svg viewBox="0 0 12 12" width="12" height="12" fill="currentColor">
-                <polygon points="1,1 5,5 9,1 11,3 7,7 11,11 9,13 5,9 1,13 -1,11 3,7 -1,3" />
-              </svg>
+              <X :size="12" />
             </button>
           </div>
           <div v-if="task.status === 'pending'" class="tc-phase">等待中</div>
@@ -82,8 +81,8 @@ async function handleCancel(task: TaskItem) {
           <div class="tc-steps">
             <div v-for="st in visibleSteps(task)" :key="st.name" class="tc-step">
               <span class="tc-st-icon" :class="st.status">
-                <svg v-if="st.status === 'done'" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6.5 5 9.5 10 3.5" /></svg>
-                <svg v-else-if="st.status === 'running'" class="tc-spin" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1a5 5 0 1 1-4.95 4" /></svg>
+                <Check v-if="st.status === 'done'" :size="10" :stroke-width="2" />
+                <LoaderCircle v-else-if="st.status === 'running'" class="tc-spin" :size="10" :stroke-width="2" />
                 <span v-else class="tc-dot"></span>
               </span>
               <span class="tc-st-name">{{ st.name }}</span>

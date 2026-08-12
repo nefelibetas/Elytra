@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // Java 运行时卡片：选择器下拉 + 扫描/自定义目录 + 高级项（JVM 参数/GC/复选框）
 import { onMounted } from "vue";
+import { Zap, ChevronDown, Check, RefreshCw, FolderPlus } from "@lucide/vue";
 import {
   jdkList, autoMode, activeJdk, pickerOpen, loading, jdkError,
   pickerLabel, pickerSub, refreshJdks, selectCustomDir, selectAuto, selectJdk,
@@ -26,15 +27,11 @@ onMounted(loadConfig);
       <div class="jdk-picker-wrap">
         <button class="jdk-picker" :class="{ open: pickerOpen }" @click="pickerOpen = !pickerOpen">
           <span class="jdk-picker-main">
-            <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
-              <path d="M11 1L5 7v8h6V7L7 3l4-4V1z" />
-            </svg>
+            <Zap :size="16" />
             {{ pickerLabel }}
           </span>
           <span class="jdk-picker-sub">{{ pickerSub }}</span>
-          <svg class="jdk-chevron" :class="{ flip: pickerOpen }" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 6l5 5 5-5" />
-          </svg>
+          <ChevronDown class="jdk-chevron" :class="{ flip: pickerOpen }" :size="12" />
         </button>
 
         <!-- 展开列表 -->
@@ -45,7 +42,7 @@ onMounted(loadConfig);
                 <span class="jdk-opt-title">自动选择</span>
                 <span class="jdk-opt-sub">根据游戏版本需求自动匹配</span>
               </div>
-              <svg v-if="autoMode" viewBox="0 0 14 14" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7l3.5 3.5L12 3" /></svg>
+              <Check v-if="autoMode" :size="14" />
             </button>
             <div v-if="jdkList.length" class="jdk-drop-divider"></div>
             <button
@@ -60,7 +57,7 @@ onMounted(loadConfig);
                 <span class="jdk-opt-sub">{{ jdk.vendor }} · {{ jdk.bits }} 位</span>
                 <span class="jdk-opt-path">{{ jdk.path }}</span>
               </div>
-              <svg v-if="!autoMode && activeJdk && activeJdk.path === jdk.path" viewBox="0 0 14 14" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7l3.5 3.5L12 3" /></svg>
+              <Check v-if="!autoMode && activeJdk && activeJdk.path === jdk.path" :size="14" />
             </button>
             <div v-if="!jdkList.length" class="jdk-drop-empty">暂无扫描结果，点击右上角「刷新」</div>
           </div>
@@ -68,18 +65,11 @@ onMounted(loadConfig);
       </div>
 
       <button class="tool-btn" :disabled="loading" @click="refreshJdks">
-        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M14 8a6 6 0 01-11 3.5"/>
-          <polygon points="3,14 2.5,10 7,11" stroke="none" fill="currentColor"/>
-          <path d="M2 8a6 6 0 0111-3.5"/>
-          <polygon points="13,2 13.5,6 9,5" stroke="none" fill="currentColor"/>
-        </svg>
+        <RefreshCw :size="14" />
         刷新
       </button>
       <button class="tool-btn" :disabled="loading" @click="selectCustomDir">
-        <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
-          <path d="M2 3a1 1 0 011-1h3l2 2h6a1 1 0 011 1v8a1 1 0 01-1 1H3a1 1 0 01-1-1V3z" />
-        </svg>
+        <FolderPlus :size="14" />
         自定义目录
       </button>
     </div>

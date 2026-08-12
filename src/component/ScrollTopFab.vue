@@ -3,6 +3,7 @@
 // 滚动超过阈值出现、回到顶部附近隐藏，带出现/隐藏动画。
 // 位置固定右下 88px，避开全局 DownloadFAB（右下 24px，52px 高）。
 import { onBeforeUnmount, onMounted, ref } from "vue";
+import { ArrowUp } from "@lucide/vue";
 
 const visible = ref(false);
 const THRESHOLD = 300;
@@ -46,7 +47,7 @@ onBeforeUnmount(() => {
   <div ref="wrap" class="scroll-top-fab-wrap">
     <Transition name="fab-up">
       <button v-if="visible" class="scroll-top-fab" @click="scrollTop" title="回到顶部">
-        <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M3.5 7.5L8 3l4.5 4.5" /></svg>
+        <ArrowUp :size="16" />
       </button>
     </Transition>
   </div>
