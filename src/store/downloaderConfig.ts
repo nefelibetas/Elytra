@@ -22,6 +22,17 @@ export function sourceModeLabel(v: string) {
   return sourceModeOptions.find((o) => o.value === v)?.label ?? v;
 }
 
+// 社区搜索结果翻译显示模式（默认仅中文；en 模式后端跳过翻译请求）
+// 标题译名来自内置表（热门 Mod 社区常用名），简介翻译来自 MCIM
+export const translateDisplayOptions = [
+  { value: "zh", label: "仅中文", desc: "标题与简介显示中文（默认）" },
+  { value: "en", label: "仅英文", desc: "不请求翻译，显示英文原文" },
+];
+
+export function translateModeLabel(v: string) {
+  return translateDisplayOptions.find((o) => o.value === v)?.label ?? v;
+}
+
 interface DownloaderConfig {
   file_source_mode: string;
   manifest_source_mode: string;
@@ -29,6 +40,7 @@ interface DownloaderConfig {
   concurrency: number;
   max_speed: number; // bytes/s，0 = 无限制
   minecraft_dir: string;
+  translate_display?: string;
 }
 
 const section = useConfigSection();
@@ -47,7 +59,9 @@ export const dlMaxSpeed = ref(0); // MB/s，0 = 无上限
 export const dlFileOpen = ref(false);
 export const dlManifestOpen = ref(false);
 export const dlCommunityOpen = ref(false);
+export const dlTranslateOpen = ref(false);
 export const dlMinecraftDir = ref(".minecraft");
+export const dlTranslateMode = ref<"zh" | "en">("zh");
 
 export async function loadDownloadConfig() {
   try {
@@ -61,6 +75,11 @@ export async function loadDownloadConfig() {
     const mb = Math.round((cfg.max_speed ?? 0) / (1024 * 1024));
     dlMaxSpeed.value = Math.min(100, Math.max(0, mb));
     dlMinecraftDir.value = cfg.minecraft_dir || ".minecraft";
+    const mode = cfg.translate_display;
+    if (mode === "zh" || mode === "both" || mode === "en") {
+      // both（中英对照）已移除，旧配置按仅中文处理
+      dlTranslateMode.value = mode === "both" ? "zh" : mode;
+    }
   } catch {
     // 无配置时保持默认
   }
@@ -76,6 +95,7 @@ export async function saveDownloadConfig() {
         concurrency: dlConcurrency.value,
         max_speed: dlMaxSpeed.value * 1024 * 1024,
         minecraft_dir: dlMinecraftDir.value,
+        translate_display: dlTranslateMode.value,
       },
     });
   });
@@ -96,5 +116,13 @@ export function setCommunityMode(v: string) {
 export function setManifestMode(v: string) {
   dlManifestMode.value = v;
   dlManifestOpen.value = false;
+  saveDownloadConfig();
+}
+
+export function setTranslateMode(v: string) {
+  if (v === "zh" || v === "en") {
+    dlTranslateMode.value = v;
+  }
+  dlTranslateOpen.value = false;
   saveDownloadConfig();
 }

@@ -1,8 +1,16 @@
 <script setup lang="ts">
 // 资源包搜索结果列表：加载/错误/空态 + 结果行 + 分页器（底部栏计数最右）
 import { resourcepackSearch, resourcepackTotalPages } from "../store/categorySearch";
+import type { ModDisplayItem } from "../store/modSearch";
+import { dlTranslateMode } from "../store/downloaderConfig";
+import { openModDetail } from "../store/modDetail";
 import { fmtCount } from "../utils/format";
 import IconImage from "./IconImage.vue";
+
+/** 结果卡片悬浮提示：zh = 中文简介；en = 英文简介 */
+function cardTitle(m: ModDisplayItem): string {
+  return dlTranslateMode.value === "zh" ? (m.translated ?? m.description) : m.description;
+}
 </script>
 
 <template>
@@ -16,14 +24,20 @@ import IconImage from "./IconImage.vue";
     <template v-else-if="resourcepackSearch.searched">
       <div class="rp-list">
         <div v-for="m in resourcepackSearch.results" :key="m.key" class="rp-card">
-          <div class="rp-card-body" :title="m.description">
+          <div class="rp-card-body" :title="cardTitle(m)" @click="openModDetail(m)">
             <IconImage :src="m.icon_url" :size="32" />
             <span class="rp-info">
               <span class="rp-title-row">
-                <span class="rp-title">{{ m.title }}</span>
+                <span class="rp-title">{{ m.title_zh ?? m.title }}</span>
+                <span v-if="dlTranslateMode === 'zh' && m.title_zh" class="rp-title-en"> | {{ m.title }}</span>
                 <span v-if="resourcepackSearch.source === 'all'" class="rp-badge" :class="m.source">{{ m.source === "modrinth" ? "Modrinth" : "CurseForge" }}</span>
+                <span class="rp-sub">{{ fmtCount(m.downloads) }} 次下载</span>
               </span>
-              <span class="rp-sub">{{ m.author }} · {{ fmtCount(m.downloads) }} 次下载</span>
+              <span v-if="dlTranslateMode !== 'en'" class="rp-desc">{{ m.translated ?? m.description }}</span>
+              <span v-if="m.loaders.length || m.game_version_range" class="rp-support">
+                <span v-for="ld in m.loaders" :key="ld" class="rp-ld">{{ ld }}</span>
+                <span v-if="m.game_version_range" class="rp-gv">{{ m.game_version_range }}</span>
+              </span>
             </span>
           </div>
         </div>
@@ -71,13 +85,33 @@ import IconImage from "./IconImage.vue";
   transition: background 0.1s;
 }
 .rp-card-body:hover { background-color: var(--surface-hover); }
+.rp-card-body { cursor: pointer; }
 .rp-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; text-align: left; }
 .rp-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .rp-title { font-weight: 600; font-size: 13px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 原名：与译名样式不一致（弱化、更小、常规字重） */
+.rp-title-en {
+  font-size: 11px; font-weight: 400; color: var(--text-tertiary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .rp-badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; color: #fff; flex-shrink: 0; font-weight: 600; }
 .rp-badge.modrinth { background: #1bd96a; }
 .rp-badge.curseforge { background: #f16436; }
-.rp-sub { font-size: 11px; color: var(--text-tertiary); }
+.rp-sub { flex-shrink: 0; margin-left: auto; font-size: 11px; color: var(--text-tertiary); white-space: nowrap; }
+.rp-desc {
+  font-size: 11px; color: var(--text-tertiary); line-height: 1.4;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 100%;
+}
+.rp-support { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.rp-ld {
+  flex-shrink: 0; font-size: 10px; font-weight: 600; padding: 0 5px;
+  border-radius: 6px; background: var(--color-brand-bg); color: var(--color-brand);
+}
+.rp-gv {
+  font-size: 10px; color: var(--text-tertiary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 
 /* 底部栏：分页器居中，结果计数绝对定位最右侧 */
 .rp-footer { position: relative; padding: 6px 16px 14px; }

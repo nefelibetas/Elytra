@@ -1,6 +1,9 @@
-//! Mod 搜索 / 版本查询（Modrinth 官方 API + CurseForge 官方 API）。
+﻿//! Mod 搜索 / 版本查询（Modrinth 官方 API + CurseForge 官方 API）。
 //! 两个平台 API 完全不同（ID 体系、鉴权、返回结构），分开实现、统一出参。
 //! CurseForge 需要 x-api-key（constants.rs 经 .env 注入）；Modrinth 无需 key。
+//! 搜索结果的简介翻译由 MCIM 镜像提供（英文原文 → 中文简介），失败静默降级为英文。
+
+use std::collections::HashMap;
 
 use serde::Serialize;
 
@@ -10,19 +13,142 @@ use crate::downloader::fetcher;
 const MODRINTH_API: &str = "https://api.modrinth.com";
 const CURSEFORGE_API: &str = "https://api.curseforge.com/v1";
 const CURSEFORGE_GAME_ID: &str = "432";
+/// MCIM 镜像站（Modrinth/CurseForge API 与翻译数据镜像）
+const MCIM_API: &str = "https://mod.mcimirror.top";
 /// 搜索类交互请求超时（默认 client 300s 太长，搜索卡住不该让前端挂 5 分钟）
 const QUERY_TIMEOUT_SECS: u64 = 10;
+/// 翻译缓存 TTL（10 分钟，低频变化数据，对齐 downloader/source.rs 缓存模式）
+const TRANSLATION_CACHE_TTL_SECS: u64 = 600;
+
+/// 翻译缓存：id → (查询时间, 中文简介)。模块级 Mutex 串行化；防翻页/重复搜索反复请求。
+static TRANSLATION_CACHE: std::sync::LazyLock<
+    std::sync::Mutex<HashMap<String, (std::time::Instant, String)>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ModSearchResult {
     pub id: String,
     pub title: String,
     pub description: String,
+    /// MCIM 中文简介翻译（无翻译/翻译失败为 None；仅社区搜索开启翻译时填充）
+    pub translated: Option<String>,
+    /// 支持的 ModLoader（fabric/forge/neoforge/quilt，去重保序；未知/无则为空）
+    pub loaders: Vec<String>,
+    /// 支持的 MC 游戏版本范围（"最低 ~ 最高"，如 "1.17.1 ~ 1.21.1"；
+    /// 仅一个有效版本时显示单个；无版本/无法解析为 None）
+    pub game_version_range: Option<String>,
     pub author: String,
     pub downloads: u64,
     pub icon_url: Option<String>,
     pub page_url: String,
 }
+
+/// 已知 ModLoader 名（用于从 Modrinth categories 中过滤 loader 标签）。
+const KNOWN_LOADERS: [&str; 4] = ["fabric", "forge", "neoforge", "quilt"];
+
+/// 从 Modrinth 搜索 hit 的 categories 数组提取已知 loader 名（去重保序）。
+fn modrinth_loaders(categories: &serde_json::Value) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    if let Some(arr) = categories.as_array() {
+        for c in arr {
+            let Some(name) = c.as_str() else { continue };
+            let lower = name.to_lowercase();
+            if KNOWN_LOADERS.contains(&lower.as_str()) && !out.contains(&lower) {
+                out.push(lower);
+            }
+        }
+    }
+    out
+}
+
+/// 解析 MC 版本号为数值段（"1.21.1" → [1,21,1]）；含非数字段（snapshot 如 "24w14a"）返回 None。
+fn parse_game_version(v: &str) -> Option<Vec<u64>> {
+    v.split('.').map(|seg| seg.parse::<u64>().ok()).collect()
+}
+
+/// 数值段逐段比较；段数不足按 0 补足（"1.20" 与 "1.20.0" 相等）；任一侧无法解析返回 None。
+fn compare_game_versions(a: &str, b: &str) -> Option<std::cmp::Ordering> {
+    let pa = parse_game_version(a)?;
+    let pb = parse_game_version(b)?;
+    for i in 0..pa.len().max(pb.len()) {
+        let x = pa.get(i).copied().unwrap_or(0);
+        let y = pb.get(i).copied().unwrap_or(0);
+        if x != y {
+            return Some(x.cmp(&y));
+        }
+    }
+    Some(std::cmp::Ordering::Equal)
+}
+
+/// 版本列表 → 范围字符串：仅一个有效版本显示单个，多个显示 "最低 ~ 最高"；无有效版本返回 None。
+fn version_range(versions: &[String]) -> Option<String> {
+    let valid: Vec<&String> = versions
+        .iter()
+        .filter(|v| parse_game_version(v).is_some())
+        .collect();
+    if valid.is_empty() {
+        return None;
+    }
+    let min = valid
+        .iter()
+        .min_by(|a, b| compare_game_versions(a, b).unwrap())
+        .copied()?;
+    let max = valid
+        .iter()
+        .max_by(|a, b| compare_game_versions(a, b).unwrap())
+        .copied()?;
+    if min == max {
+        Some(min.clone())
+    } else {
+        Some(format!("{} ~ {}", min, max))
+    }
+}
+
+/// Modrinth 支持的 MC 版本范围：latest_version 与 versions 合并后取 min ~ max。
+fn modrinth_version_range(hit: &serde_json::Value) -> Option<String> {
+    let mut versions: Vec<String> = Vec::new();
+    if let Some(latest) = hit["latest_version"].as_str() {
+        versions.push(latest.to_string());
+    }
+    if let Some(arr) = hit["versions"].as_array() {
+        for v in arr {
+            if let Some(s) = v.as_str() {
+                versions.push(s.to_string());
+            }
+        }
+    }
+    version_range(&versions)
+}
+
+/// 从 CurseForge latestFilesIndexes 提取 (loaders, game_version_range)：modLoader 数字映射
+/// 已知 loader；gameVersion 全量收集后取 min ~ max 范围。
+fn curseforge_support_fields(data: &serde_json::Value) -> (Vec<String>, Option<String>) {
+    let mut loaders: Vec<String> = Vec::new();
+    let mut versions: Vec<String> = Vec::new();
+    if let Some(arr) = data["latestFilesIndexes"].as_array() {
+        for idx in arr {
+            if let Some(ml) = idx["modLoader"].as_u64() {
+                let name = match ml {
+                    1 => "forge",
+                    4 => "fabric",
+                    5 => "quilt",
+                    6 => "neoforge",
+                    _ => "",
+                };
+                if !name.is_empty() && !loaders.contains(&name.to_string()) {
+                    loaders.push(name.to_string());
+                }
+            }
+            if let Some(gv) = idx["gameVersion"].as_str() {
+                if !gv.is_empty() {
+                    versions.push(gv.to_string());
+                }
+            }
+        }
+    }
+    (loaders, version_range(&versions))
+}
+
 
 /// 搜索分页结果（两平台分页语义不同：Modrinth offset / CurseForge index，统一透传页码起点）。
 #[derive(Debug, Clone, Serialize)]
@@ -98,6 +224,97 @@ async fn get_json(url: &str) -> Result<serde_json::Value, String> {
         .map_err(|e| format!("解析 JSON 失败: {}", e))
 }
 
+/// 解析 MCIM 翻译响应（两源字段名不同：modrinth 用 project_id 字符串、curseforge 用 modid 数字），
+/// 返回 id → 中文简介；空简介条目跳过。
+fn parse_translations(source: &str, data: &serde_json::Value) -> HashMap<String, String> {
+    let Some(arr) = data.as_array() else {
+        return HashMap::new();
+    };
+    let key = if source == "modrinth" { "project_id" } else { "modid" };
+    arr.iter()
+        .filter_map(|v| {
+            let id = v[key]
+                .as_str()
+                .map(str::to_string)
+                .or_else(|| v[key].as_u64().map(|n| n.to_string()))?;
+            let translated = v["translated"].as_str()?.trim();
+            if translated.is_empty() {
+                return None;
+            }
+            Some((id, translated.to_string()))
+        })
+        .collect()
+}
+
+/// 构造 MCIM 翻译批量请求体。
+/// 注意：两源字段与类型不同——modrinth 的 `project_ids` 是字符串数组；
+/// curseforge 的 `modids` 要求**整数数组**（字符串数组会被 MCIM 400 拒绝，
+/// 曾导致 CF 侧全部简介翻译静默丢失）。非数字 id 防御性过滤，全过滤返回 None（跳过请求）。
+fn translation_body(source: &str, ids: &[String]) -> Option<serde_json::Value> {
+    if source == "modrinth" {
+        if ids.is_empty() {
+            return None;
+        }
+        return Some(serde_json::json!({ "project_ids": ids }));
+    }
+    let modids: Vec<i64> = ids.iter().filter_map(|s| s.parse().ok()).collect();
+    if modids.is_empty() {
+        return None;
+    }
+    Some(serde_json::json!({ "modids": modids }))
+}
+
+/// 批量查 MCIM 中文简介翻译（POST /translate/{source}）。先查内存缓存（10 分钟 TTL），
+/// 只请求未命中的 id；网络失败/无翻译静默降级（返回空 map，不阻塞搜索结果）。
+async fn fetch_translations(source: &str, ids: &[String]) -> HashMap<String, String> {
+    if ids.is_empty() {
+        return HashMap::new();
+    }
+    let now = std::time::Instant::now();
+    let mut result: HashMap<String, String> = HashMap::new();
+    let missed: Vec<String> = {
+        let cache = TRANSLATION_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        ids.iter()
+            .filter(|id| match cache.get(*id) {
+                Some((at, text))
+                    if now.duration_since(*at).as_secs() < TRANSLATION_CACHE_TTL_SECS =>
+                {
+                    result.insert((*id).clone(), text.clone());
+                    false
+                }
+                _ => true,
+            })
+            .cloned()
+            .collect()
+    };
+    if missed.is_empty() {
+        return result;
+    }
+    let Some(body) = translation_body(source, &missed) else {
+        return result;
+    };
+    let resp = fetcher::http()
+        .post(format!("{}/translate/{}", MCIM_API, source))
+        .json(&body)
+        .timeout(std::time::Duration::from_secs(QUERY_TIMEOUT_SECS))
+        .send()
+        .await;
+    let data = match resp {
+        Ok(r) if r.status().is_success() => match r.json::<serde_json::Value>().await {
+            Ok(v) => v,
+            Err(_) => return result,
+        },
+        _ => return result,
+    };
+
+    let mut cache = TRANSLATION_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    for (id, text) in parse_translations(source, &data) {
+        cache.insert(id.clone(), (now, text.clone()));
+        result.insert(id, text);
+    }
+    result
+}
+
 // ── Modrinth（无需 key）──
 
 async fn search_modrinth(
@@ -145,10 +362,14 @@ async fn search_modrinth(
     let items: Vec<ModSearchResult> = hits
         .iter()
         .filter_map(|h| {
+            let title = h["title"].as_str()?.to_string();
             Some(ModSearchResult {
                 id: h["project_id"].as_str()?.to_string(),
-                title: h["title"].as_str()?.to_string(),
+                title,
                 description: h["description"].as_str().unwrap_or("").to_string(),
+                translated: None,
+                loaders: modrinth_loaders(&h["categories"]),
+                game_version_range: modrinth_version_range(h),
                 author: h["author"].as_str().unwrap_or("").to_string(),
                 downloads: h["downloads"].as_u64().unwrap_or(0),
                 icon_url: h["icon_url"].as_str().map(str::to_string),
@@ -275,10 +496,15 @@ async fn search_curseforge(
     let items: Vec<ModSearchResult> = arr
         .iter()
         .filter_map(|m| {
+            let (loaders, version_range) = curseforge_support_fields(m);
+            let title = m["name"].as_str()?.to_string();
             Some(ModSearchResult {
                 id: m["id"].as_u64()?.to_string(),
-                title: m["name"].as_str()?.to_string(),
+                title,
                 description: m["summary"].as_str().unwrap_or("").to_string(),
+                translated: None,
+                loaders,
+                game_version_range: version_range,
                 author: m["authors"]
                     .as_array()?
                     .first()?
@@ -344,7 +570,9 @@ async fn curseforge_versions(
 }
 
 /// 搜索（按来源分派）。`category` 为项目类型（如 shader）或 None（普通 mod）；
-/// `page_size` 每源条数（聚合模式前端传减半值，单源默认 30）。
+/// `page_size` 每源条数（聚合模式前端传减半值，单源默认 30）；
+/// `translate` 为 true 时对结果批量查 MCIM 中文简介（失败静默降级为英文）。
+#[allow(clippy::too_many_arguments)]
 pub async fn search_mods(
     source: &str,
     query: &str,
@@ -353,16 +581,29 @@ pub async fn search_mods(
     category: Option<&str>,
     offset: u64,
     page_size: u32,
+    translate: bool,
 ) -> Result<ModSearchPage, String> {
-    match source {
+    let mut page = match source {
         "modrinth" => {
-            search_modrinth(query, game_version, loader, category, offset, page_size).await
+            search_modrinth(query, game_version, loader, category, offset, page_size).await?
         }
         "curseforge" => {
-            search_curseforge(query, game_version, loader, category, offset, page_size).await
+            search_curseforge(query, game_version, loader, category, offset, page_size).await?
         }
-        other => Err(format!("未知 Mod 来源: {}", other)),
+        other => return Err(format!("未知 Mod 来源: {}", other)),
+    };
+    if translate {
+        // 标题译名/mcmod_id：搜索构造时已由内置百科表填充（无网络开销）；
+        // 此处仅补 MCIM 简介翻译（失败静默降级）
+        if !page.items.is_empty() {
+            let ids: Vec<String> = page.items.iter().map(|i| i.id.clone()).collect();
+            let tr = fetch_translations(source, &ids).await;
+            for item in &mut page.items {
+                item.translated = tr.get(&item.id).cloned();
+            }
+        }
     }
+    Ok(page)
 }
 
 /// 版本列表（按来源分派）。
@@ -466,4 +707,178 @@ mod tests {
         ];
         assert_eq!(curseforge_loaders(&gv), vec!["neoforge"]);
     }
+
+    /// 翻译响应解析：Modrinth 用 project_id（字符串），CurseForge 用 modid（数字）。
+    #[test]
+    fn parse_translations_two_sources() {
+        let mr = serde_json::json!([
+            { "project_id": "AANobbMI", "translated": "高性能渲染引擎替代品", "original": "A high-performance..." },
+            { "project_id": "P7dR8mSH", "translated": "轻量级模块化 API", "original": "Lightweight..." }
+        ]);
+        let m = parse_translations("modrinth", &mr);
+        assert_eq!(m.len(), 2, "应解析出 2 条翻译");
+        assert_eq!(m.get("AANobbMI").map(String::as_str), Some("高性能渲染引擎替代品"));
+
+        let cf = serde_json::json!([
+            { "modid": 238222, "translated": "查看物品和配方", "original": "View Items and Recipes" }
+        ]);
+        let c = parse_translations("curseforge", &cf);
+        assert_eq!(c.get("238222").map(String::as_str), Some("查看物品和配方"), "modid 数字应转字符串");
+    }
+
+    /// 翻译响应解析容错：非数组 / 空简介 / 缺字段都跳过，不 panic。
+    #[test]
+    fn parse_translations_tolerates_bad_input() {
+        assert!(parse_translations("modrinth", &serde_json::json!({})).is_empty(), "非数组返回空");
+        let with_empty = serde_json::json!([
+            { "project_id": "a", "translated": "" },
+            { "project_id": "b" }
+        ]);
+        assert!(parse_translations("modrinth", &with_empty).is_empty(), "空简介/缺字段跳过");
+        let other_source = serde_json::json!([{ "project_id": "x", "translated": "中文" }]);
+        assert!(parse_translations("curseforge", &other_source).is_empty(), "字段名不匹配返回空");
+    }
+
+    /// 翻译请求体：Modrinth 用字符串数组；CurseForge 必须整数数组（字符串数组会被 MCIM 400）。
+    #[test]
+    fn translation_body_source_formats() {
+        let mr = translation_body(
+            "modrinth",
+            &["AANobbMI".to_string(), "P7dR8mSH".to_string()],
+        )
+        .unwrap();
+        assert_eq!(
+            mr,
+            serde_json::json!({ "project_ids": ["AANobbMI", "P7dR8mSH"] }),
+            "Modrinth 用字符串数组"
+        );
+
+        let cf = translation_body("curseforge", &["238222".to_string(), "394468".to_string()])
+            .unwrap();
+        assert_eq!(
+            cf,
+            serde_json::json!({ "modids": [238222, 394468] }),
+            "CurseForge 必须整数数组，字符串数组会 400"
+        );
+        assert!(
+            cf["modids"].as_array().unwrap().iter().all(|v| v.is_i64()),
+            "CurseForge modids 元素必须是整数"
+        );
+    }
+
+    /// 翻译请求体容错：空 ids / 全非数字 id 返回 None（跳过请求）。
+    #[test]
+    fn translation_body_tolerates_bad_ids() {
+        assert!(translation_body("modrinth", &[]).is_none(), "空 ids 不请求");
+        assert!(translation_body("curseforge", &[]).is_none(), "空 ids 不请求");
+        assert!(
+            translation_body("curseforge", &["abc".to_string()]).is_none(),
+            "全非数字 id 不请求"
+        );
+        let mixed = translation_body(
+            "curseforge",
+            &["abc".to_string(), "238222".to_string()],
+        )
+        .unwrap();
+        assert_eq!(
+            mixed,
+            serde_json::json!({ "modids": [238222] }),
+            "非数字 id 过滤，保留有效数字"
+        );
+    }
+
+    /// MCIM 翻译 API 真实请求（需网络）：sodium 的 Modrinth 内部 ID 应有中文简介。
+    #[tokio::test]
+    async fn mcim_translation_api_works() {
+        let tr = fetch_translations("modrinth", &["AANobbMI".to_string()]).await;
+        assert!(
+            !tr.is_empty(),
+            "MCIM 翻译应返回 sodium 的中文简介，实际: {:?}",
+            tr
+        );
+    }
+
+    /// MCIM 翻译 API 真实请求（需网络）：CurseForge 侧用字符串 id 应正常返回（回归：曾 400）。
+    #[tokio::test]
+    async fn mcim_translation_curseforge_works() {
+        let tr = fetch_translations("curseforge", &["238222".to_string()]).await;
+        assert!(
+            !tr.is_empty(),
+            "CurseForge 翻译应返回 JEI 的中文简介（字符串 id 需转整数数组），实际: {:?}",
+            tr
+        );
+    }
+
+    /// Modrinth loader 提取：categories 中过滤已知 loader，杂项/重复忽略。
+    #[test]
+    fn modrinth_loaders_filters_known_ones() {
+        let cats = serde_json::json!(["Fabric", "Mechanic", "fabric", "forge", "Adventure"]);
+        assert_eq!(
+            modrinth_loaders(&cats),
+            vec!["fabric", "forge"],
+            "大小写不敏感且去重保序"
+        );
+        assert!(modrinth_loaders(&serde_json::json!(["Adventure"])).is_empty(), "无 loader 返回空");
+        assert!(modrinth_loaders(&serde_json::json!(null)).is_empty(), "非数组返回空");
+    }
+
+    /// 版本比较：数值段逐段比较，段数不足补 0，非法版本（snapshot）返回 None。
+    #[test]
+    fn compare_game_versions_numeric_semantics() {
+        use std::cmp::Ordering;
+        assert_eq!(compare_game_versions("1.21.1", "1.20.1"), Some(Ordering::Greater));
+        assert_eq!(compare_game_versions("1.9.4", "1.21.1"), Some(Ordering::Less), "按数值而非字符串比较");
+        assert_eq!(compare_game_versions("1.20", "1.20.0"), Some(Ordering::Equal), "段数不足补 0");
+        assert_eq!(compare_game_versions("24w14a", "1.21.1"), None, "snapshot 无法解析");
+        assert_eq!(compare_game_versions("1.21.1", "1.21.1"), Some(Ordering::Equal));
+    }
+
+    /// Modrinth 版本范围：latest_version 与 versions 合并，过滤 snapshot，取 min ~ max。
+    #[test]
+    fn modrinth_version_range_min_to_max() {
+        let hit = serde_json::json!({
+            "latest_version": "1.21.1",
+            "versions": ["1.20.1", "1.19.4", "24w14a", "1.9.4", "1.21.1"]
+        });
+        assert_eq!(
+            modrinth_version_range(&hit),
+            Some("1.9.4 ~ 1.21.1".to_string()),
+            "snapshot 过滤，min ~ max"
+        );
+        let single = serde_json::json!({ "latest_version": "1.20.1", "versions": ["1.20.1"] });
+        assert_eq!(
+            modrinth_version_range(&single),
+            Some("1.20.1".to_string()),
+            "仅一个有效版本显示单个"
+        );
+        assert_eq!(modrinth_version_range(&serde_json::json!({})), None, "无版本返回 None");
+        assert_eq!(
+            modrinth_version_range(&serde_json::json!({ "latest_version": "24w14a" })),
+            None,
+            "全部非法返回 None"
+        );
+    }
+
+    /// CurseForge 支持字段提取：modLoader 数字映射已知 loader，版本取 min ~ max 范围。
+    #[test]
+    fn curseforge_support_fields_maps_loader_ids() {
+        let data = serde_json::json!({
+            "latestFilesIndexes": [
+                { "gameVersion": "1.20.1", "modLoader": 4 },
+                { "gameVersion": "1.20.1", "modLoader": 4 },
+                { "gameVersion": "1.19.2", "modLoader": 1 },
+                { "gameVersion": "1.19.2", "modLoader": 6 },
+                { "gameVersion": "1.21.1", "modLoader": 999 },
+                { "gameVersion": "1.17.1", "modLoader": 5 }
+            ]
+        });
+        let (loaders, range) = curseforge_support_fields(&data);
+        assert_eq!(loaders, vec!["fabric", "forge", "neoforge", "quilt"], "数字映射去重");
+        assert_eq!(range, Some("1.17.1 ~ 1.21.1".to_string()), "版本取 min ~ max");
+        assert_eq!(
+            curseforge_support_fields(&serde_json::json!({})),
+            (Vec::<String>::new(), None)
+        );
+    }
+
 }

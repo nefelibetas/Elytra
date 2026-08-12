@@ -2,11 +2,22 @@
 // 来源为本地状态：Modrinth 无需 key；CurseForge 需 .env 配置的 API Key（后端校验）
 import { reactive, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { dlTranslateMode } from "./downloaderConfig";
 
 export interface ModSearchResult {
   id: string;
   title: string;
+  /** 内置百科表提供的中文译名（无译名/未开启翻译为 null） */
+  title_zh: string | null;
+  /** MC百科条目 id（内置表 slug 匹配；未收录为 null）→ https://www.mcmod.cn/class/{id}.html */
+  mcmod_id: number | null;
   description: string;
+  /** MCIM 中文简介翻译（无翻译/未开启翻译为 null） */
+  translated: string | null;
+  /** 支持的 ModLoader（fabric/forge/neoforge/quilt，可能为空） */
+  loaders: string[];
+  /** 支持的 MC 游戏版本范围（"最低 ~ 最高"；无则 null） */
+  game_version_range: string | null;
   author: string;
   downloads: number;
   icon_url: string | null;
@@ -50,13 +61,24 @@ export function cleanText(s: string): string {
 }
 
 export function toDisplayItem(h: ModSearchResult, source: "modrinth" | "curseforge"): ModDisplayItem {
+  // 译名与原名相同（忽略大小写，如 Fabric API）时视为无译名：只显示一个，避免 "X | X"
+  const titleZh =
+    h.title_zh && h.title_zh.trim().toLowerCase() !== h.title.trim().toLowerCase()
+      ? h.title_zh
+      : null;
   return {
     ...h,
+    title_zh: titleZh,
     title: cleanText(h.title),
     description: cleanText(h.description),
     source,
     key: `${source}:${h.id}`,
   };
+}
+
+/** 翻译显示模式：仅英文（en）时后端跳过翻译请求 */
+export function needsTranslation(): boolean {
+  return dlTranslateMode.value !== "en";
 }
 
 /** 聚合搜索：两源并发，单源失败降级为空；按标题去重保留下载量高的一侧；总数取两源较大值（去重无法精确）。
@@ -77,6 +99,7 @@ export async function searchAllSources(
     category,
     pageSize,
     offset,
+    translate: needsTranslation(),
   };
   const [mr, cf] = await Promise.all([
     invoke<ModSearchPage>("search_mods", { ...params, source: "modrinth" }).catch(() => null),
@@ -130,6 +153,7 @@ export const modSearch = reactive({
           loader: this.loader || null,
           pageSize,
           offset,
+          translate: needsTranslation(),
         });
         this.results = res.items.map(h => toDisplayItem(h, this.source as "modrinth" | "curseforge"));
         this.total = res.total;

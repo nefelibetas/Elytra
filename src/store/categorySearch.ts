@@ -3,7 +3,7 @@
 // 固定 category（project_type / CurseForge classId），无加载器。
 import { reactive, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { searchAllSources, toDisplayItem, type ModDisplayItem } from "./modSearch";
+import { searchAllSources, toDisplayItem, needsTranslation, type ModDisplayItem } from "./modSearch";
 
 const PAGE_SIZE = 30;
 /** 聚合模式每源条数（页大小一半）：两源合并去重后展示 ≤15 条，每页图片请求量减半 */
@@ -44,6 +44,7 @@ export function createCategorySearch(category: string) {
             category,
             pageSize,
             offset,
+            translate: needsTranslation(),
           });
           this.results = res.items.map(h => toDisplayItem(h, this.source as "modrinth" | "curseforge"));
           this.total = res.total;

@@ -4,7 +4,8 @@
 use crate::downloader::mods as mods_domain;
 
 /// 搜索 Mod / 光影包等（按来源分派：modrinth / curseforge；category 为项目类型过滤；
-/// page_size 每源条数，聚合模式前端传减半值，默认 30）。
+/// page_size 每源条数，聚合模式前端传减半值，默认 30；translate 默认开启中文简介翻译）。
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn search_mods(
     source: String,
@@ -14,6 +15,7 @@ pub async fn search_mods(
     category: Option<String>,
     page_size: Option<u32>,
     offset: Option<u64>,
+    translate: Option<bool>,
 ) -> Result<mods_domain::ModSearchPage, String> {
     mods_domain::search_mods(
         &source,
@@ -23,6 +25,7 @@ pub async fn search_mods(
         category.as_deref(),
         offset.unwrap_or(0),
         page_size.unwrap_or(30),
+        translate.unwrap_or(true),
     )
     .await
 }

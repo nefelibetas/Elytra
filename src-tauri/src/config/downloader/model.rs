@@ -159,6 +159,10 @@ pub struct DownloaderConfig {
     /// 下载速度上限（bytes/s），0 = 无限制
     #[serde(default)]
     pub max_speed: u64,
+    /// 社区搜索结果翻译显示模式：zh = 仅中文、both = 中英对照、en = 仅英文。
+    /// 仅前端展示使用（后端仅存储透传；en 模式下搜索命令跳过翻译请求）。
+    #[serde(default)]
+    pub translate_display: String,
 }
 
 impl Default for DownloaderConfig {
@@ -171,6 +175,7 @@ impl Default for DownloaderConfig {
             manifest_source_mode: DownloadSourceMode::PreferOfficial,
             community_source_mode: DownloadSourceMode::PreferOfficial,
             max_speed: 0,
+            translate_display: "zh".into(),
         }
     }
 }

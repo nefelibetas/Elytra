@@ -1,12 +1,14 @@
 <script setup lang="ts">
 // 下载设置卡片（管理游戏下载源）：文件/版本列表/社区源 + 线程数 + 速度限制
 import { onMounted } from "vue";
+import { ChevronDown } from "@lucide/vue";
 import {
   dlFileMode, dlManifestMode, dlCommunityMode, dlConcurrency, dlMaxSpeed,
-  dlFileOpen, dlManifestOpen, dlCommunityOpen, dlError,
+  dlFileOpen, dlManifestOpen, dlCommunityOpen, dlTranslateOpen, dlTranslateMode, dlError,
   sourceModeOptions, communitySourceOptions, sourceModeLabel,
+  translateDisplayOptions, translateModeLabel,
   concurrencyLocked, MIRROR_CONCURRENCY,
-  saveDownloadConfig, setFileMode, setCommunityMode, setManifestMode,
+  saveDownloadConfig, setFileMode, setCommunityMode, setManifestMode, setTranslateMode,
   loadDownloadConfig,
 } from "../store/downloaderConfig";
 
@@ -26,9 +28,7 @@ onMounted(loadDownloadConfig);
       <div class="dl-sel" :class="{ open: dlFileOpen }">
         <button class="dl-sel-btn" @click="dlFileOpen = !dlFileOpen">
           <span>{{ sourceModeLabel(dlFileMode) }}</span>
-          <svg viewBox="0 0 12 12" width="12" height="12" fill="currentColor">
-            <polygon points="3,4 9,4 6,9" />
-          </svg>
+          <ChevronDown :size="12" />
         </button>
         <div v-if="dlFileOpen" class="dl-sel-menu">
           <button
@@ -51,9 +51,7 @@ onMounted(loadDownloadConfig);
       <div class="dl-sel" :class="{ open: dlManifestOpen }">
         <button class="dl-sel-btn" @click="dlManifestOpen = !dlManifestOpen">
           <span>{{ sourceModeLabel(dlManifestMode) }}</span>
-          <svg viewBox="0 0 12 12" width="12" height="12" fill="currentColor">
-            <polygon points="3,4 9,4 6,9" />
-          </svg>
+          <ChevronDown :size="12" />
         </button>
         <div v-if="dlManifestOpen" class="dl-sel-menu">
           <button
@@ -76,9 +74,7 @@ onMounted(loadDownloadConfig);
       <div class="dl-sel" :class="{ open: dlCommunityOpen }">
         <button class="dl-sel-btn" @click="dlCommunityOpen = !dlCommunityOpen">
           <span>{{ communitySourceOptions.find(o => o.value === dlCommunityMode)?.label ?? dlCommunityMode }}</span>
-          <svg viewBox="0 0 12 12" width="12" height="12" fill="currentColor">
-            <polygon points="3,4 9,4 6,9" />
-          </svg>
+          <ChevronDown :size="12" />
         </button>
         <div v-if="dlCommunityOpen" class="dl-sel-menu">
           <button
@@ -87,6 +83,29 @@ onMounted(loadDownloadConfig);
             class="dl-sel-item"
             :class="{ active: dlCommunityMode === opt.value }"
             @click="setCommunityMode(opt.value)"
+          >
+            <span class="dl-sel-item-label">{{ opt.label }}</span>
+            <span class="dl-sel-item-desc">{{ opt.desc }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 翻译显示：社区搜索结果简介的显示语言（仅中文/中英对照/仅英文） -->
+    <div class="dl-row">
+      <span class="dl-label">翻译显示</span>
+      <div class="dl-sel" :class="{ open: dlTranslateOpen }">
+        <button class="dl-sel-btn" @click="dlTranslateOpen = !dlTranslateOpen">
+          <span>{{ translateModeLabel(dlTranslateMode) }}</span>
+          <ChevronDown :size="12" />
+        </button>
+        <div v-if="dlTranslateOpen" class="dl-sel-menu">
+          <button
+            v-for="opt in translateDisplayOptions"
+            :key="opt.value"
+            class="dl-sel-item"
+            :class="{ active: dlTranslateMode === opt.value }"
+            @click="setTranslateMode(opt.value)"
           >
             <span class="dl-sel-item-label">{{ opt.label }}</span>
             <span class="dl-sel-item-desc">{{ opt.desc }}</span>
