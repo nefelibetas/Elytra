@@ -12,8 +12,6 @@ const CURSEFORGE_API: &str = "https://api.curseforge.com/v1";
 const CURSEFORGE_GAME_ID: &str = "432";
 /// 搜索类交互请求超时（默认 client 300s 太长，搜索卡住不该让前端挂 5 分钟）
 const QUERY_TIMEOUT_SECS: u64 = 10;
-/// 每页条数（两平台保持一致，前端分页器按此推算总页数）
-const PAGE_SIZE: u64 = 30;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ModSearchResult {
@@ -108,6 +106,7 @@ async fn search_modrinth(
     loader: Option<&str>,
     category: Option<&str>,
     offset: u64,
+    page_size: u32,
 ) -> Result<ModSearchPage, String> {
     let mut facets: Vec<Vec<String>> = Vec::new();
     if let Some(gv) = game_version {
@@ -122,7 +121,7 @@ async fn search_modrinth(
     }
     let mut params: Vec<(&str, String)> = vec![
         ("query", query.to_string()),
-        ("limit", PAGE_SIZE.to_string()),
+        ("limit", page_size.to_string()),
         ("offset", offset.to_string()),
     ];
     if !facets.is_empty() {
@@ -247,9 +246,10 @@ async fn search_curseforge(
     loader: Option<&str>,
     category: Option<&str>,
     offset: u64,
+    page_size: u32,
 ) -> Result<ModSearchPage, String> {
     let mut params: Vec<(&str, String)> = vec![
-        ("pageSize", PAGE_SIZE.to_string()),
+        ("pageSize", page_size.to_string()),
         ("index", offset.to_string()),
     ];
     // 空关键字：不传 searchFilter（API 无热门概念，返回按名称序列表——API 限制）
@@ -343,7 +343,8 @@ async fn curseforge_versions(
         .collect())
 }
 
-/// 搜索（按来源分派）。`category` 为项目类型（如 shader）或 None（普通 mod）。
+/// 搜索（按来源分派）。`category` 为项目类型（如 shader）或 None（普通 mod）；
+/// `page_size` 每源条数（聚合模式前端传减半值，单源默认 30）。
 pub async fn search_mods(
     source: &str,
     query: &str,
@@ -351,10 +352,15 @@ pub async fn search_mods(
     loader: Option<&str>,
     category: Option<&str>,
     offset: u64,
+    page_size: u32,
 ) -> Result<ModSearchPage, String> {
     match source {
-        "modrinth" => search_modrinth(query, game_version, loader, category, offset).await,
-        "curseforge" => search_curseforge(query, game_version, loader, category, offset).await,
+        "modrinth" => {
+            search_modrinth(query, game_version, loader, category, offset, page_size).await
+        }
+        "curseforge" => {
+            search_curseforge(query, game_version, loader, category, offset, page_size).await
+        }
         other => Err(format!("未知 Mod 来源: {}", other)),
     }
 }
@@ -383,7 +389,7 @@ mod tests {
     /// Modrinth 无需 key，任何环境可跑（单发小请求）。
     #[tokio::test]
     async fn search_modrinth_works() {
-        let page = search_modrinth("jei", Some("1.21.1"), Some("fabric"), None, 0).await;
+        let page = search_modrinth("jei", Some("1.21.1"), Some("fabric"), None, 0, 30).await;
         assert!(page.is_ok(), "Modrinth 搜索应成功: {:?}", page.err());
         let page = page.unwrap();
         assert!(!page.items.is_empty(), "搜 jei 应返回结果");
@@ -398,7 +404,7 @@ mod tests {
     /// 空关键字：对齐 PCL2 行为，返回按下载量排序的热门列表。
     #[tokio::test]
     async fn modrinth_empty_query_returns_popular() {
-        let page = search_modrinth("", None, None, None, 0).await.unwrap();
+        let page = search_modrinth("", None, None, None, 0, 30).await.unwrap();
         assert!(!page.items.is_empty(), "空关键字应返回热门 Mod");
         let first = &page.items[0];
         assert!(
@@ -419,7 +425,7 @@ mod tests {
             eprintln!("跳过: 未配置 CurseForge API Key");
             return;
         }
-        let page = search_curseforge("jei", Some("1.21.1"), None, None, 0).await;
+        let page = search_curseforge("jei", Some("1.21.1"), None, None, 0, 30).await;
         assert!(page.is_ok(), "CurseForge 搜索应成功: {:?}", page.err());
         let page = page.unwrap();
         assert!(!page.items.is_empty(), "搜 jei 应返回结果");
@@ -440,7 +446,7 @@ mod tests {
             eprintln!("跳过: 未配置 CurseForge API Key");
             return;
         }
-        let page = search_curseforge("just enough items", Some("1.21.1"), None, None, 0)
+        let page = search_curseforge("just enough items", Some("1.21.1"), None, None, 0, 30)
             .await
             .unwrap();
         assert!(

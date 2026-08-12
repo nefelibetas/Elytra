@@ -25,6 +25,8 @@ export interface ModDisplayItem extends ModSearchResult {
 }
 
 const MOD_PAGE_SIZE = 30;
+/** 聚合模式每源条数（页大小一半）：两源合并去重后展示 ≤15 条，每页图片请求量减半 */
+const AGG_PAGE_SIZE = 15;
 
 export const modLoaderOptions = [
   { value: "", label: "不限加载器" },
@@ -58,19 +60,22 @@ export function toDisplayItem(h: ModSearchResult, source: "modrinth" | "cursefor
 }
 
 /** 聚合搜索：两源并发，单源失败降级为空；按标题去重保留下载量高的一侧；总数取两源较大值（去重无法精确）。
- *  `category` 为项目类型过滤（如 "shader"），普通 mod 传 null。 */
+ *  `category` 为项目类型过滤（如 "shader"），普通 mod 传 null。
+ *  `pageSize` 每源条数：聚合模式传页大小一半（15），合并去重后展示 ≤15 条。 */
 export async function searchAllSources(
   query: string,
   gameVersion: string,
   loader: string,
   category: string | null,
   offset: number,
+  pageSize: number,
 ): Promise<{ items: ModDisplayItem[]; total: number }> {
   const params = {
     query,
     gameVersion: gameVersion || null,
     loader: loader || null,
     category,
+    pageSize,
     offset,
   };
   const [mr, cf] = await Promise.all([
@@ -111,9 +116,10 @@ export const modSearch = reactive({
     this.searching = true;
     this.error = "";
     try {
-      const offset = (page - 1) * MOD_PAGE_SIZE;
+      const pageSize = this.source === "all" ? AGG_PAGE_SIZE : MOD_PAGE_SIZE;
+      const offset = (page - 1) * pageSize;
       if (this.source === "all") {
-        const res = await searchAllSources(this.query.trim(), this.gameVersion, this.loader, null, offset);
+        const res = await searchAllSources(this.query.trim(), this.gameVersion, this.loader, null, offset, pageSize);
         this.results = res.items;
         this.total = res.total;
       } else {
@@ -122,6 +128,7 @@ export const modSearch = reactive({
           query: this.query.trim(),
           gameVersion: this.gameVersion || null,
           loader: this.loader || null,
+          pageSize,
           offset,
         });
         this.results = res.items.map(h => toDisplayItem(h, this.source as "modrinth" | "curseforge"));
@@ -160,4 +167,7 @@ export const modSearch = reactive({
   },
 });
 
-export const modTotalPages = computed(() => Math.max(1, Math.ceil(modSearch.total / MOD_PAGE_SIZE)));
+export const modTotalPages = computed(() => {
+  const pageSize = modSearch.source === "all" ? AGG_PAGE_SIZE : MOD_PAGE_SIZE;
+  return Math.max(1, Math.ceil(modSearch.total / pageSize));
+});

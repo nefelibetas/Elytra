@@ -6,6 +6,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { searchAllSources, toDisplayItem, type ModDisplayItem } from "./modSearch";
 
 const PAGE_SIZE = 30;
+/** 聚合模式每源条数（页大小一半）：两源合并去重后展示 ≤15 条，每页图片请求量减半 */
+const AGG_PAGE_SIZE = 15;
 
 export function createCategorySearch(category: string) {
   /** 首次进入对应 tab 自动搜索热门只触发一次（预加载/重置后不重复） */
@@ -27,9 +29,10 @@ export function createCategorySearch(category: string) {
       this.searching = true;
       this.error = "";
       try {
-        const offset = (page - 1) * PAGE_SIZE;
+        const pageSize = this.source === "all" ? AGG_PAGE_SIZE : PAGE_SIZE;
+        const offset = (page - 1) * pageSize;
         if (this.source === "all") {
-          const res = await searchAllSources(this.query.trim(), this.gameVersion, "", category, offset);
+          const res = await searchAllSources(this.query.trim(), this.gameVersion, "", category, offset, pageSize);
           this.results = res.items;
           this.total = res.total;
         } else {
@@ -39,6 +42,7 @@ export function createCategorySearch(category: string) {
             gameVersion: this.gameVersion || null,
             loader: null,
             category,
+            pageSize,
             offset,
           });
           this.results = res.items.map(h => toDisplayItem(h, this.source as "modrinth" | "curseforge"));
@@ -77,18 +81,17 @@ export function createCategorySearch(category: string) {
   });
 }
 
+function totalPages(search: { source: string; total: number }): number {
+  const pageSize = search.source === "all" ? AGG_PAGE_SIZE : PAGE_SIZE;
+  return Math.max(1, Math.ceil(search.total / pageSize));
+}
+
 export const shaderSearch = createCategorySearch("shader");
 export const resourcepackSearch = createCategorySearch("resourcepack");
 export const datapackSearch = createCategorySearch("datapack");
 export const modpackSearch = createCategorySearch("modpack");
 
-export const shaderTotalPages = computed(() => Math.max(1, Math.ceil(shaderSearch.total / PAGE_SIZE)));
-export const resourcepackTotalPages = computed(() =>
-  Math.max(1, Math.ceil(resourcepackSearch.total / PAGE_SIZE))
-);
-export const datapackTotalPages = computed(() =>
-  Math.max(1, Math.ceil(datapackSearch.total / PAGE_SIZE))
-);
-export const modpackTotalPages = computed(() =>
-  Math.max(1, Math.ceil(modpackSearch.total / PAGE_SIZE))
-);
+export const shaderTotalPages = computed(() => totalPages(shaderSearch));
+export const resourcepackTotalPages = computed(() => totalPages(resourcepackSearch));
+export const datapackTotalPages = computed(() => totalPages(datapackSearch));
+export const modpackTotalPages = computed(() => totalPages(modpackSearch));
