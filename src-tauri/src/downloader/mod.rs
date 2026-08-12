@@ -9,6 +9,7 @@ pub mod mods;
 pub mod model;
 pub mod source;
 pub mod version;
+pub mod wiki_entry;
 
 use std::path::Path;
 

@@ -29,6 +29,10 @@ static TRANSLATION_CACHE: std::sync::LazyLock<
 pub struct ModSearchResult {
     pub id: String,
     pub title: String,
+    /// MC百科内置条目表提供的中文译名（英文标题 → 中文名；未收录为 None）
+    pub title_zh: Option<String>,
+    /// MC百科条目 id（内置表 slug 匹配；未收录为 None）→ https://www.mcmod.cn/class/{id}.html
+    pub mcmod_id: Option<u32>,
     pub description: String,
     /// MCIM 中文简介翻译（无翻译/翻译失败为 None；仅社区搜索开启翻译时填充）
     pub translated: Option<String>,
@@ -363,9 +367,16 @@ async fn search_modrinth(
         .iter()
         .filter_map(|h| {
             let title = h["title"].as_str()?.to_string();
+            let entry = crate::downloader::wiki_entry::WIKI
+                .lookup("modrinth", h["slug"].as_str().unwrap_or(""));
+            let title_zh = entry
+                .and_then(|e| e.chinese_raw.as_deref())
+                .and_then(crate::downloader::wiki_entry::chinese_name);
             Some(ModSearchResult {
                 id: h["project_id"].as_str()?.to_string(),
                 title,
+                title_zh,
+                mcmod_id: entry.map(|e| e.mcmod_id),
                 description: h["description"].as_str().unwrap_or("").to_string(),
                 translated: None,
                 loaders: modrinth_loaders(&h["categories"]),
@@ -498,9 +509,16 @@ async fn search_curseforge(
         .filter_map(|m| {
             let (loaders, version_range) = curseforge_support_fields(m);
             let title = m["name"].as_str()?.to_string();
+            let entry = crate::downloader::wiki_entry::WIKI
+                .lookup("curseforge", m["slug"].as_str().unwrap_or(""));
+            let title_zh = entry
+                .and_then(|e| e.chinese_raw.as_deref())
+                .and_then(crate::downloader::wiki_entry::chinese_name);
             Some(ModSearchResult {
                 id: m["id"].as_u64()?.to_string(),
                 title,
+                title_zh,
+                mcmod_id: entry.map(|e| e.mcmod_id),
                 description: m["summary"].as_str().unwrap_or("").to_string(),
                 translated: None,
                 loaders,
