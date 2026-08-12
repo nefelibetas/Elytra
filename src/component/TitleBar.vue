@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { ArrowLeft, Play, Download, Settings, Minus, X } from "@lucide/vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { detailTitle } from "../store/modDetail";
 
 const route = useRoute();
 const router = useRouter();
@@ -10,6 +12,7 @@ const appWindow = getCurrentWindow();
 const isDetail = computed(
   () =>
     route.path === "/download-detail" ||
+    route.path === "/mod-detail" ||
     route.path === "/version-select" ||
     route.path === "/version-setup",
 );
@@ -19,6 +22,10 @@ const barTitle = computed(() => {
   if (route.path === "/version-select") return "版本选择";
   if (route.path === "/version-setup") {
     return `版本设置 - ${String(route.query.name ?? "")}`;
+  }
+  if (route.path === "/mod-detail") {
+    // Mod 详情：有译名时 "翻译名（原名）"，否则原名
+    return detailTitle() || "Mod 详情";
   }
   return "下载管理";
 });
@@ -49,6 +56,11 @@ function goBack() {
     router.push("/version-select");
     return;
   }
+  if (p === "/mod-detail") {
+    // Mod 详情可能从任意社区 tab 进入，返回来源页
+    router.back();
+    return;
+  }
   // 其余详情页（download-detail）返回启动页；store 级 previousRoute 无赋值点，恒为 "/"
   router.push("/");
 }
@@ -60,7 +72,7 @@ function goBack() {
       <div v-if="isDetail" key="detail" class="bar-inner">
         <div class="tl">
           <button class="back-btn" @click="goBack">
-            <svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2L4 8l6 6" /></svg>
+            <ArrowLeft :size="18" />
             <span>{{ barTitle }}</span>
           </button>
         </div>
@@ -76,24 +88,9 @@ function goBack() {
             :to="item.path"
             class="nav" :class="{ active: isActive(item.path) }"
           >
-            <svg v-if="item.icon === 'play'" viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
-              <polygon points="3,1 14,8 3,15" />
-            </svg>
-            <svg v-if="item.icon === 'download'" viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
-              <rect x="2" y="12" width="12" height="2" rx="1" />
-              <polygon points="7,1 9,1 9,7 11.5,4.5 13,6 8,11 3,6 4.5,4.5 7,7" />
-            </svg>
-            <svg v-if="item.icon === 'settings'" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-              <line x1="21" y1="4" x2="14" y2="4"/>
-              <line x1="10" y1="4" x2="3" y2="4"/>
-              <line x1="21" y1="12" x2="12" y2="12"/>
-              <line x1="8" y1="12" x2="3" y2="12"/>
-              <line x1="21" y1="20" x2="16" y2="20"/>
-              <line x1="12" y1="20" x2="3" y2="20"/>
-              <line x1="14" y1="2" x2="14" y2="6"/>
-              <line x1="8" y1="10" x2="8" y2="14"/>
-              <line x1="16" y1="18" x2="16" y2="22"/>
-            </svg>
+            <Play v-if="item.icon === 'play'" :size="16" />
+            <Download v-if="item.icon === 'download'" :size="16" />
+            <Settings v-if="item.icon === 'settings'" :size="16" />
             <span class="label">{{ item.label }}</span>
           </router-link>
         </nav>
@@ -102,14 +99,10 @@ function goBack() {
 
     <div class="tr">
       <button class="win" @click="minimize" title="最小化">
-        <svg viewBox="0 0 12 12" width="12" height="12" fill="currentColor">
-          <rect x="1.5" y="5.5" width="9" height="1" rx="0.5" />
-        </svg>
+        <Minus :size="12" />
       </button>
       <button class="win close" @click="closeWindow" title="关闭">
-        <svg viewBox="0 0 12 12" width="12" height="12" fill="currentColor">
-          <polygon points="1,1 5,5 9,1 11,3 7,7 11,11 9,13 5,9 1,13 -1,11 3,7 -1,3" />
-        </svg>
+        <X :size="12" />
       </button>
     </div>
   </header>
