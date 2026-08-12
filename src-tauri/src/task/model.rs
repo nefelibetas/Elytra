@@ -154,7 +154,7 @@ impl DownloadFileKind {
             DownloadFileKind::Mod => "mods",
             DownloadFileKind::ResourcePack => "resourcepacks",
             DownloadFileKind::DataPack => "datapacks",
-            DownloadFileKind::Shader => "shaders",
+            DownloadFileKind::Shader => "shaderpacks",
         }
     }
 }
@@ -270,7 +270,7 @@ mod tests {
         assert_eq!(DownloadFileKind::Mod.kind_dir(), "mods");
         assert_eq!(DownloadFileKind::ResourcePack.kind_dir(), "resourcepacks");
         assert_eq!(DownloadFileKind::DataPack.kind_dir(), "datapacks");
-        assert_eq!(DownloadFileKind::Shader.kind_dir(), "shaders");
+        assert_eq!(DownloadFileKind::Shader.kind_dir(), "shaderpacks");
     }
 
     fn valid_task() -> DownloadTask {

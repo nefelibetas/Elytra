@@ -35,6 +35,25 @@ export interface ModDisplayItem extends ModSearchResult {
   key: string;
 }
 
+/** 项目版本文件（镜像 Rust downloader::mods::ModVersion；命令 get_mod_versions）。 */
+export interface ModVersion {
+  version_id: string;
+  version_number: string;
+  game_versions: string[];
+  loaders: string[];
+  filename: string;
+  download_url: string;
+  file_size: number;
+  sha1: string | null;
+  date_published: string;
+  downloads: number;
+}
+
+/** 查询项目版本文件列表（Modrinth/CurseForge 均支持；分类项目同样适用）。 */
+export function fetchVersions(source: string, projectId: string): Promise<ModVersion[]> {
+  return invoke<ModVersion[]>("get_mod_versions", { source, projectId });
+}
+
 const MOD_PAGE_SIZE = 30;
 /** 聚合模式每源条数（页大小一半）：两源合并去重后展示 ≤15 条，每页图片请求量减半 */
 const AGG_PAGE_SIZE = 15;
