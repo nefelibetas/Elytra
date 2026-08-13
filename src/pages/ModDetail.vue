@@ -1,15 +1,12 @@
 <script setup lang="ts">
 // 项目详情页（Mod / 光影包 / 资源包 / 数据包 / 整合包共用）：
-// 信息卡片 + 版本文件列表 + 下载（modpack 无落盘目录映射，仅展示版本并提供来源页跳转）。
-import { ref, computed, watch } from "vue";
-import { invoke } from "@tauri-apps/api/core";
+// 信息卡片 + 版本文件列表（过滤展示，下载走来源页）。
+import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { showToast } from "../utils/toast";
 import { modDetail } from "../store/modDetail";
-import { dlTranslateMode } from "../store/downloaderConfig";
-import { dlState } from "../store/download";
+import { dlTranslateMode, dlShowReleaseOnly } from "../store/downloaderConfig";
 import { fetchVersions, type ModVersion } from "../store/modSearch";
-import { selectedVersion } from "../store/selectedVersion";
 import { fmtCount, fmtSize, fmtModDate } from "../utils/format";
 import IconImage from "../component/IconImage.vue";
 
@@ -25,13 +22,115 @@ const versions = ref<ModVersion[]>([]);
 const loadingVersions = ref(false);
 const versionError = ref("");
 
+// ── 版本列表过滤（本地过滤，选项从已加载版本收集，无需额外请求）──
+
+const loaderFilter = ref("");
+const gameVersionFilter = ref("");
+
+/** 加载器选项固定优先级（其余按出现顺序兜底） */
+const LOADER_ORDER = ["fabric", "forge", "neoforge", "quilt"];
+const loaderOptions = computed(() =>
+  Array.from(new Set(versions.value.flatMap(v => v.loaders))).sort(
+    (a, b) => (LOADER_ORDER.indexOf(a) + 1 || 99) - (LOADER_ORDER.indexOf(b) + 1 || 99),
+  ),
+);
+
+/** 主版本归类：提取开头 major.minor（"1.20.4"/"1.20.5-pre1"/"26.3-snapshot-8" → "1.20"/"26.3"）；快照等无数字点分前缀原样保留 */
+function majorVersion(gv: string): string {
+  const m = gv.match(/^\d+\.\d+/);
+  return m ? m[0] : gv;
+}
+
+/** 当前加载器过滤下的版本文件（版本选项的数据源：只统计该 ModLoader 可用的版本） */
+const loaderScopedVersions = computed(() =>
+  loaderFilter.value
+    ? versions.value.filter(v => v.loaders.includes(loaderFilter.value))
+    : versions.value,
+);
+
+/** 游戏版本选项：基于当前 ModLoader 统计（按主版本归类），数值化降序（最新在前） */
+const gameVersionOptions = computed(() =>
+  Array.from(new Set(loaderScopedVersions.value.flatMap(v => v.game_versions).map(majorVersion))).sort((a, b) =>
+    new Intl.Collator(undefined, { numeric: true }).compare(b, a),
+  ),
+);
+
+// 切换加载器后已选版本可能不在新选项里，自动清空
+watch(gameVersionOptions, () => {
+  if (gameVersionFilter.value && !gameVersionOptions.value.includes(gameVersionFilter.value)) {
+    gameVersionFilter.value = "";
+  }
+});
+
+const filteredVersions = computed(() =>
+  versions.value.filter(
+    v =>
+      (!loaderFilter.value || v.loaders.includes(loaderFilter.value)) &&
+      (!gameVersionFilter.value || v.game_versions.some(gv => majorVersion(gv) === gameVersionFilter.value)),
+  ),
+);
+
+function loaderLabel(l: string): string {
+  return l.charAt(0).toUpperCase() + l.slice(1);
+}
+
+// ── 自定义下拉（原生 select 弹出层高度在 WebView2 无法限制，选项多时过高）──
+
+const openFilter = ref<"" | "loader" | "game">("");
+
+const POP_MAX_H = 260;
+/** 弹层最大高度：按下方可视空间动态计算（始终向下展开且不扩展外层滚动容器的 scrollHeight） */
+const popMaxH = ref(POP_MAX_H);
+
+const loaderDrop = ref<HTMLElement | null>(null);
+const gameDrop = ref<HTMLElement | null>(null);
+
+function toggleFilter(kind: "" | "loader" | "game") {
+  if (openFilter.value === kind) {
+    openFilter.value = "";
+    return;
+  }
+  const drop = kind === "loader" ? loaderDrop.value : gameDrop.value;
+  if (drop) {
+    const rect = drop.getBoundingClientRect();
+    popMaxH.value = Math.max(80, Math.min(POP_MAX_H, window.innerHeight - rect.bottom - 8));
+  }
+  openFilter.value = kind;
+}
+
+function pickLoader(l: string) {
+  loaderFilter.value = l;
+  openFilter.value = "";
+}
+
+function pickGame(gv: string) {
+  gameVersionFilter.value = gv;
+  openFilter.value = "";
+}
+
+function onDocPointerDown() {
+  openFilter.value = "";
+}
+onMounted(() => document.addEventListener("pointerdown", onDocPointerDown));
+onBeforeUnmount(() => document.removeEventListener("pointerdown", onDocPointerDown));
+
+/** 快照/预发布/候选等非正式版本标记（周快照 26w14a、新式 26.3-snapshot-8、-pre1、-rc1、candidate） */
+const SNAPSHOT_RE = /\d{2}w\d{2}|snapshot|pre\d*|rc\d*|candidate/i;
+const isSnapshot = (gv: string): boolean => SNAPSHOT_RE.test(gv);
+
 async function loadVersions() {
   const it = item.value;
   if (!it) return;
   loadingVersions.value = true;
   versionError.value = "";
+  loaderFilter.value = "";
+  gameVersionFilter.value = "";
   try {
-    versions.value = await fetchVersions(it.source, it.id);
+    const all = await fetchVersions(it.source, it.id);
+    // 仅显示正式版：剔除所有支持的版本都是快照/预发布的文件（混版文件保留）
+    versions.value = dlShowReleaseOnly.value
+      ? all.filter(v => v.game_versions.some(gv => !isSnapshot(gv)))
+      : all;
   } catch (e) {
     versionError.value = String(e);
   } finally {
@@ -72,68 +171,6 @@ async function copyName() {
     showToast("复制失败");
   }
 }
-
-/** 来源 tab → 下载落盘目录 kind（整合包无目录映射，返回 null）。 */
-function kindFromTab(): "mod" | "shader" | "resourcepack" | "datapack" | null {
-  const map: Record<string, "mod" | "shader" | "resourcepack" | "datapack" | null> = {
-    mod: "mod",
-    shader: "shader",
-    resourcepack: "resourcepack",
-    datapack: "datapack",
-    modpack: null,
-    vanilla: null,
-  };
-  return map[modDetail.backTab] ?? null;
-}
-
-/** kind → 实际落盘目录（镜像后端 DownloadFileKind::kind_dir）。 */
-const kindDirLabel: Record<string, string> = {
-  mod: "mods",
-  shader: "shaderpacks",
-  resourcepack: "resourcepacks",
-  datapack: "datapacks",
-};
-
-/** 提交单文件下载到下载管理；目标版本目录 = 启动页当前选择的版本。 */
-async function downloadVersion(v: ModVersion) {
-  if (!item.value) return;
-  const kind = kindFromTab();
-  if (!kind) return;
-  if (!selectedVersion.value) {
-    showToast("请先在启动页选择要安装的游戏版本");
-    return;
-  }
-  try {
-    const taskId = await invoke<string>("download_single_file", {
-      task: {
-        version_dir_name: selectedVersion.value,
-        kind,
-        url: v.download_url,
-        filename: v.filename,
-      },
-    });
-    dlState.addTask({
-      taskId,
-      name: v.filename,
-      status: "pending",
-      progress: 0,
-      speedBps: 0,
-      completedFiles: 0,
-      totalFiles: 0,
-      completedBytes: 0,
-      totalBytes: 0,
-      currentPhase: "等待中",
-      steps: [],
-      previousRoute: "/download",
-    });
-    // 竞态校正：极快终态任务（error/done）可能已被移除，清理残留卡片
-    const exists = await invoke<boolean>("task_exists", { taskId });
-    if (!exists) dlState.removeTask(taskId);
-    showToast("已加入下载任务");
-  } catch (e) {
-    showToast(`下载提交失败：${e}`);
-  }
-}
 </script>
 
 <template>
@@ -165,10 +202,30 @@ async function downloadVersion(v: ModVersion) {
     <!-- 卡片二：版本文件列表 -->
     <div class="md-card md-versions">
       <div class="mv-head">
-        <span class="mv-title">版本文件</span>
-        <span class="mv-hint">
-          {{ kindFromTab() ? `下载到已选版本 ${selectedVersion || "(未选择)"} 的 ${kindDirLabel[kindFromTab()!]} 目录` : "整合包请前往来源页下载" }}
-        </span>
+        <span class="mv-title">版本文件<span v-if="!loadingVersions" class="mv-count"> | {{ filteredVersions.length }} 个版本</span></span>
+        <span class="mv-spacer"></span>
+
+        <div ref="loaderDrop" class="mv-drop" @pointerdown.stop @click.stop="toggleFilter('loader')">
+          <span class="mv-drop-label">{{ loaderFilter ? loaderLabel(loaderFilter) : "全部加载器" }}</span>
+          <span class="mv-drop-arrow" :class="{ open: openFilter === 'loader' }"></span>
+          <Transition name="expand">
+            <div v-if="openFilter === 'loader'" class="mv-drop-pop" :style="{ '--pop-h': popMaxH + 'px' }">
+              <div class="mv-drop-opt" :class="{ sel: !loaderFilter }" @click.stop="pickLoader('')">全部加载器</div>
+              <div v-for="l in loaderOptions" :key="l" class="mv-drop-opt" :class="{ sel: loaderFilter === l }" @click.stop="pickLoader(l)">{{ loaderLabel(l) }}</div>
+            </div>
+          </Transition>
+        </div>
+
+        <div ref="gameDrop" class="mv-drop" @pointerdown.stop @click.stop="toggleFilter('game')">
+          <span class="mv-drop-label">{{ gameVersionFilter || "全部版本" }}</span>
+          <span class="mv-drop-arrow" :class="{ open: openFilter === 'game' }"></span>
+          <Transition name="expand">
+            <div v-if="openFilter === 'game'" class="mv-drop-pop" :style="{ '--pop-h': popMaxH + 'px' }">
+              <div class="mv-drop-opt" :class="{ sel: !gameVersionFilter }" @click.stop="pickGame('')">全部版本</div>
+              <div v-for="gv in gameVersionOptions" :key="gv" class="mv-drop-opt" :class="{ sel: gameVersionFilter === gv }" @click.stop="pickGame(gv)">{{ gv }}</div>
+            </div>
+          </Transition>
+        </div>
       </div>
 
       <div v-if="loadingVersions" class="mv-state">
@@ -181,7 +238,8 @@ async function downloadVersion(v: ModVersion) {
       </div>
       <div v-else-if="versions.length === 0" class="mv-state">暂无可用版本</div>
       <div v-else class="mv-list">
-        <div v-for="v in versions" :key="v.version_id" class="mv-item">
+        <div v-if="filteredVersions.length === 0" class="mv-state">没有匹配的版本，试试调整过滤条件</div>
+        <div v-for="v in filteredVersions" :key="v.version_id" class="mv-item">
           <div class="mv-info">
             <span class="mv-name" :title="v.filename">{{ v.filename }}</span>
             <span class="mv-tags">
@@ -193,7 +251,6 @@ async function downloadVersion(v: ModVersion) {
             <span class="mv-date">{{ fmtModDate(v.date_published) }}</span>
             <span class="mv-size">{{ fmtSize(v.file_size) }}</span>
           </span>
-          <button v-if="kindFromTab()" class="mv-btn" @click="downloadVersion(v)">下载</button>
         </div>
       </div>
     </div>
@@ -338,8 +395,8 @@ async function downloadVersion(v: ModVersion) {
 
 .mv-head {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
+  align-items: center;
+  gap: 8px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border-subtle, var(--border-default));
 }
@@ -350,12 +407,112 @@ async function downloadVersion(v: ModVersion) {
   color: var(--text-primary);
 }
 
-.mv-hint {
+/* 数量统计：与标题样式区分（弱化、更小、常规字重） */
+.mv-count {
   font-size: 11px;
+  font-weight: 400;
   color: var(--text-tertiary);
+}
+
+.mv-spacer {
+  flex: 1;
+}
+
+/* ── 自定义下拉 ── */
+
+.mv-drop {
+  position: relative;
+  flex: 0 0 170px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-card);
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.15s;
+}
+.mv-drop:hover,
+.mv-drop.open {
+  border-color: var(--color-brand);
+}
+
+.mv-drop-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.mv-drop-arrow {
+  flex-shrink: 0;
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--text-tertiary);
+  transition: transform 0.15s;
+}
+.mv-drop-arrow.open {
+  transform: rotate(180deg);
+}
+
+.mv-drop-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  max-height: var(--pop-h, 260px);
+  overflow-y: auto;
+  background: var(--surface-card);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.25));
+  padding: 4px;
+}
+
+.mv-drop-opt {
+  padding: 6px 10px;
+  border-radius: var(--radius-xs, 4px);
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.1s, color 0.1s;
+}
+.mv-drop-opt:hover {
+  background: var(--surface-hover);
+  color: var(--color-brand);
+}
+.mv-drop-opt.sel {
+  color: var(--color-brand);
+  font-weight: 600;
+}
+
+/* expand 动画：目标值必须写在 enter-to/leave-from（写在 active 上会因同特异性覆盖 from 态导致无动画） */
+.expand-enter-active,
+.expand-leave-active {
+  transition: max-height 0.2s ease, opacity 0.15s ease;
+  overflow: hidden;
+}
+.expand-enter-from,
+.expand-leave-to {
+  max-height: 0;
+  opacity: 0;
+}
+.expand-enter-to,
+.expand-leave-from {
+  max-height: var(--pop-h, 260px);
+  opacity: 1;
 }
 
 .mv-state {
@@ -441,24 +598,6 @@ async function downloadVersion(v: ModVersion) {
 }
 .mv-date { font-size: 10.5px; color: var(--text-tertiary); }
 .mv-size { font-size: 11px; color: var(--text-secondary); }
-
-.mv-btn {
-  flex-shrink: 0;
-  padding: 5px 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--surface-card);
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.mv-btn:hover {
-  border-color: var(--color-brand);
-  color: var(--color-brand);
-  background: var(--color-brand-bg);
-}
 
 .md-empty {
   height: 100%;

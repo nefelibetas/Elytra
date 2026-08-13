@@ -5,6 +5,7 @@ import { ChevronDown } from "@lucide/vue";
 import {
   dlFileMode, dlManifestMode, dlCommunityMode, dlConcurrency, dlMaxSpeed,
   dlFileOpen, dlManifestOpen, dlCommunityOpen, dlTranslateOpen, dlTranslateMode, dlError,
+  dlShowReleaseOnly,
   sourceModeOptions, communitySourceOptions, sourceModeLabel,
   translateDisplayOptions, translateModeLabel,
   concurrencyLocked, MIRROR_CONCURRENCY,
@@ -112,6 +113,14 @@ onMounted(loadDownloadConfig);
           </button>
         </div>
       </div>
+    </div>
+
+    <!-- 社区资源版本过滤：快照/预发布/候选等非正式版本（默认开启过滤） -->
+    <div class="dl-row">
+      <label class="lo-check">
+        <input v-model="dlShowReleaseOnly" type="checkbox" @change="saveDownloadConfig" />
+        <span>社区资源仅显示正式版（过滤快照/预发布版本）</span>
+      </label>
     </div>
 
     <!-- 最大线程数（官方源并发；仅镜像模式由镜像源规定并锁定） -->

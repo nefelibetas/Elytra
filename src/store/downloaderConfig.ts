@@ -41,6 +41,7 @@ interface DownloaderConfig {
   max_speed: number; // bytes/s，0 = 无限制
   minecraft_dir: string;
   translate_display?: string;
+  show_release_only?: boolean;
 }
 
 const section = useConfigSection();
@@ -62,6 +63,8 @@ export const dlCommunityOpen = ref(false);
 export const dlTranslateOpen = ref(false);
 export const dlMinecraftDir = ref(".minecraft");
 export const dlTranslateMode = ref<"zh" | "en">("zh");
+/** 社区资源版本列表仅显示正式版（默认开启，过滤快照/预发布/候选版本） */
+export const dlShowReleaseOnly = ref(true);
 
 export async function loadDownloadConfig() {
   try {
@@ -80,6 +83,7 @@ export async function loadDownloadConfig() {
       // both（中英对照）已移除，旧配置按仅中文处理
       dlTranslateMode.value = mode === "both" ? "zh" : mode;
     }
+    dlShowReleaseOnly.value = cfg.show_release_only ?? true;
   } catch {
     // 无配置时保持默认
   }
@@ -96,6 +100,7 @@ export async function saveDownloadConfig() {
         max_speed: dlMaxSpeed.value * 1024 * 1024,
         minecraft_dir: dlMinecraftDir.value,
         translate_display: dlTranslateMode.value,
+        show_release_only: dlShowReleaseOnly.value,
       },
     });
   });

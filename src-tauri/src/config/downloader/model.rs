@@ -163,6 +163,14 @@ pub struct DownloaderConfig {
     /// 仅前端展示使用（后端仅存储透传；en 模式下搜索命令跳过翻译请求）。
     #[serde(default)]
     pub translate_display: String,
+    /// 社区资源版本列表是否只显示正式版（过滤快照/预发布/候选等非正式版本）。
+    /// 仅前端展示使用，后端仅存储透传。
+    #[serde(default = "default_show_release_only")]
+    pub show_release_only: bool,
+}
+
+fn default_show_release_only() -> bool {
+    true
 }
 
 impl Default for DownloaderConfig {
@@ -176,6 +184,7 @@ impl Default for DownloaderConfig {
             community_source_mode: DownloadSourceMode::PreferOfficial,
             max_speed: 0,
             translate_display: "zh".into(),
+            show_release_only: true,
         }
     }
 }
