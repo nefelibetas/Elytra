@@ -155,6 +155,66 @@ pub(crate) fn expand_inheritance(
     Ok(merged)
 }
 
+/// 声明式处理器输出校验（Forge/NeoForge 安装幂等）：
+/// 运行 Java 补丁工具**之前**判定"输出是否已是最新"，全部命中则跳过 JVM 调用——
+/// 重装/修复场景不再白白跑 binarypatcher/installertools（数秒～数十秒 + 杀软误报风险）。
+/// - 期望 sha1 已知（Forge：version.json 的 `forge:{ver}:client` 库 sha1）→ 存在且 sha1 匹配；
+/// - 期望 sha1 未知（NeoForge patched jar 无公开 hash）→ 存在且体积 ≥1MB 粗校验（对齐旧行为，
+///   部分写入的残留不会误判）。
+pub(crate) fn processor_outputs_are_current(
+    outputs: &[(&std::path::Path, Option<&str>)],
+) -> bool {
+    outputs
+        .iter()
+        .all(|(p, sha1)| match sha1 {
+            Some(h) => crate::downloader::hash::file_sha1_matches(p, h),
+            None => p.metadata().map(|m| m.len() >= 1_000_000).unwrap_or(false),
+        })
+}
+
+/// 运行安装器 Java 工具并收集输出（stdout/stderr 完整返回），轮询取消标志：
+/// cancel 置位时 kill 子进程——用户取消任务后 binarypatcher/installertools 不再白跑。
+/// 使用 tokio::select! 同时等待进程退出与排空输出 pipe（避免大输出撑满 pipe 阻塞子进程）。
+pub(crate) async fn run_installer_command(
+    mut child: tokio::process::Child,
+    cancel: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    label: &str,
+) -> Result<std::process::Output, String> {
+    use std::sync::atomic::Ordering;
+    use tokio::io::AsyncReadExt;
+
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| format!("{label} stdout 不可用"))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| format!("{label} stderr 不可用"))?;
+    let mut out_buf: Vec<u8> = Vec::new();
+    let mut err_buf: Vec<u8> = Vec::new();
+
+    let status = loop {
+        if cancel.load(Ordering::SeqCst) {
+            let _ = child.kill().await;
+        }
+        tokio::select! {
+            st = child.wait() => break st.map_err(|e| format!("运行{label}失败: {e}"))?,
+            n = stdout.read_buf(&mut out_buf) => { let _ = n; }
+            n = stderr.read_buf(&mut err_buf) => { let _ = n; }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {}
+        }
+    };
+    // 进程退出后 flush pipe 剩余数据
+    let _ = stdout.read_to_end(&mut out_buf).await;
+    let _ = stderr.read_to_end(&mut err_buf).await;
+    Ok(std::process::Output {
+        status,
+        stdout: out_buf,
+        stderr: err_buf,
+    })
+}
+
 /// ModLoader 安装的阶段事件（runner 钩子：推进步骤状态/置完成标志）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoaderEvent {
@@ -182,6 +242,33 @@ mod tests {
         },
         "type": "release"
     }"#;
+
+    #[test]
+    fn processor_outputs_are_current_sha1_or_size() {
+        let dir = std::env::temp_dir().join("elytra_test_processor_outputs");
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("out.jar");
+        std::fs::write(&p, b"data").unwrap();
+        // sha1 已知：匹配 → 最新（跳过运行）；不匹配 → 需重跑
+        let sha = crate::downloader::hash::sha1_hex(b"data");
+        assert!(processor_outputs_are_current(&[(&p, Some(&sha))]));
+        assert!(
+            !processor_outputs_are_current(&[(&p, Some("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"))]),
+            "sha1 不匹配必须判定需重跑"
+        );
+        // 无 sha1 来源：体积阈值粗校验（≥1MB 视为就绪，对齐 NeoForge 旧行为）
+        assert!(
+            !processor_outputs_are_current(&[(&p, None)]),
+            "不足 1MB 不应判定就绪"
+        );
+        std::fs::write(&p, vec![0u8; 1_100_000]).unwrap();
+        assert!(processor_outputs_are_current(&[(&p, None)]));
+        // 文件缺失 → 需重跑（两种校验都失败）
+        let missing = dir.join("missing.jar");
+        assert!(!processor_outputs_are_current(&[(&missing, Some(&sha))]));
+        assert!(!processor_outputs_are_current(&[(&missing, None)]));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn maven_path_full_coordinate() {

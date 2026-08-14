@@ -42,6 +42,11 @@ pub async fn run_task(
 
     // ── 目标目录提前确定（不依赖 version JSON），并做同路径互斥 ──
     let TargetDir { dir_name, vdir } = resolve_target_dir(task, &mc);
+    // 本地运行时复用根探测（迁移场景）：从版本目录向上找含 assets/+libraries/ 的
+    // .minecraft 根（HMCL/PCL2/官方启动器迁移用户已有数百 MB 文件），
+    // 命中后 libraries/assets/client jar 先走 size+sha1 校验的本地复制，免全量重下。
+    // 全新 .minecraft（无 libraries/）探测为 None，行为与现状一致。
+    let reuse_root = crate::downloader::reuse::LocalRuntimeSource::discover(&vdir);
     // 任务开始前该版本目录是否已存在：
     // - 全新下载（目录不存在）→ 下载失败时整删残缺目录，免手动清理
     // - 补全文件（目录已存在，如重下缺失库/修复）→ 失败不删，保留已有版本
@@ -193,8 +198,7 @@ pub async fn run_task(
     .spawn();
 
     let jar = async {
-        if let Some(ref c) = vj.downloads.client {
-            let urls: Vec<String> = sources.iter().map(|src| src.mirror_url(&c.url)).collect();
+        if let Some(c) = &vj.downloads.client {
             let jar_path = vdir.join(format!("{}.jar", dir_name));
             let jbytes = Arc::clone(&jar_bytes_counter);
             let jar_total = Arc::clone(&jar_total_size);
@@ -206,11 +210,40 @@ pub async fn run_task(
                     jar_total.store(total, Ordering::Relaxed);
                 }
             };
-            // 逐源 sha1 校验下载：镜像 CDN 返回不完整/错误内容自动换源重试
-            fetcher::fetch_verified(&urls, &jar_path, Some(cb), &c.sha1)
+            // 本地运行时复用：迁移用户已有同版本 client jar（size+sha1 校验通过）→ 本地复制；
+            // 失败降级网络下载（与 libraries/assets 一致，不致命）
+            let client_rel = format!("versions/{}/{}.jar", dir_name, dir_name);
+            if let Some(src) = reuse_root.as_ref().and_then(|r| {
+                crate::downloader::reuse::classify_local_artifact(
+                    r,
+                    &client_rel,
+                    Some(c.size),
+                    Some(&c.sha1),
+                )
+            }) {
+                if let Err(e) = crate::downloader::reuse::copy_verified_local(
+                    &src,
+                    &jar_path,
+                    c.size,
+                    Some(cb.clone()),
+                )
                 .await
-                .map_err(|e| vec![e.to_string()])?;
-            jar_counter.store(1, Ordering::Relaxed);
+                {
+                    let urls: Vec<String> =
+                        sources.iter().map(|src| src.mirror_url(&c.url)).collect();
+                    fetcher::fetch_verified(&urls, &jar_path, Some(cb), &c.sha1)
+                        .await
+                        .map_err(|e2| vec![format!("{e2}（本地复用失败: {e}）")])?;
+                }
+                jar_counter.store(1, Ordering::Relaxed);
+            } else {
+                // 逐源 sha1 校验下载：镜像 CDN 返回不完整/错误内容自动换源重试
+                let urls: Vec<String> = sources.iter().map(|src| src.mirror_url(&c.url)).collect();
+                fetcher::fetch_verified(&urls, &jar_path, Some(cb), &c.sha1)
+                    .await
+                    .map_err(|e| vec![e.to_string()])?;
+                jar_counter.store(1, Ordering::Relaxed);
+            }
         }
         if let Some(i) = i_jar {
             step_done(&app, progress, i);
@@ -224,6 +257,7 @@ pub async fn run_task(
             &lib_dir,
             config.concurrency as usize,
             &src_refs,
+            reuse_root.clone(),
             Arc::clone(&lib_counter),
             Arc::clone(&bytes_counter),
             Arc::clone(&lib_step_bytes),
@@ -242,6 +276,7 @@ pub async fn run_task(
             &vj.asset_index.sha1,
             &config,
             config.concurrency as usize,
+            reuse_root.clone(),
             Arc::clone(&asst_counter),
             Arc::clone(&bytes_counter),
             Arc::clone(&asst_step_bytes),
@@ -309,6 +344,7 @@ pub async fn run_task(
                         &bytes_counter,
                         &loader_libs_step_bytes,
                         &loader_libs_step_total,
+                        cancel,
                         Some(&hook),
                     )
                     .await
@@ -322,6 +358,7 @@ pub async fn run_task(
                         &bytes_counter,
                         &loader_libs_step_bytes,
                         &loader_libs_step_total,
+                        cancel,
                         Some(&hook),
                     )
                     .await
@@ -397,7 +434,9 @@ pub async fn run_task(
                     DownloadSourceMode::OfficialOnly => vec![official],
                     DownloadSourceMode::ChinaOnly => vec![mcim],
                     DownloadSourceMode::PreferChina => vec![mcim, official],
-                    DownloadSourceMode::PreferOfficial => vec![official, mcim],
+                    DownloadSourceMode::PreferOfficial | DownloadSourceMode::Auto => {
+                        vec![official, mcim]
+                    }
                 }
             };
             // 字节级进度：增量累加进 bytes_counter（EmitLoop 显示速度）与 Fabric API 步骤计数

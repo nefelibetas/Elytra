@@ -1,9 +1,11 @@
 use std::path::Path;
-use std::sync::{Arc, LazyLock, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use reqwest::Client;
 use tokio::sync::Semaphore;
+
+use crate::config::downloader::model::{DownloadSourceMode, DownloaderConfig, ResourceClass};
 
 /// 当前全局下载限速（bytes/s，0 = 无限制）。每次下载开始读取一次。
 pub fn max_speed_bps() -> u64 {
@@ -29,6 +31,190 @@ fn is_mirror_url(url: &str) -> bool {
         || url.contains("maven.neoforged.net")
         || url.contains("maven.quiltmc.org")
         || url.contains("maven.minecraftforge.net")
+}
+
+/// 真镜像源判定（路由排序/镜像候选用，不含"官方 maven 限流"语义）：
+/// 仅 BMCLAPI / MCIM 域。is_mirror_url 承担限流职责（含官方不稳 maven），
+/// 路由的"镜像优先/追加候选"必须只看这里，避免官方 neoforged maven 被误判为镜像。
+fn is_mirror_domain(url: &str) -> bool {
+    url.contains("bmclapi") || url.contains("mcimirror")
+}
+
+// ── 自适应路由（#5）：URL 自动分类 + 镜像候选即时生成 + 健康度排序 ──
+
+/// 单条下载路由。
+#[derive(Debug, Clone)]
+pub struct DownloadRoute {
+    pub url: String,
+    /// 是否镜像源（并发限流判定与排序权重）。
+    pub is_mirror: bool,
+}
+
+/// 显式镜像路由表：任意官方 URL 即时生成 BMCLAPI 镜像候选
+/// （官方 URL 始终保留在候选列表中保底），取代"主源是 BMCLAPI 才重写"的源模板限制。
+/// 与 model.rs 的 REWRITE_RULES 同构（镜像 URL 形态保持一致），并补充 fabric-meta。
+const MIRROR_ROUTES: &[(&str, &str)] = &[
+    (
+        "resources.download.minecraft.net",
+        "https://bmclapi2.bangbang93.com/assets",
+    ),
+    (
+        "libraries.minecraft.net",
+        "https://bmclapi2.bangbang93.com/libraries",
+    ),
+    ("piston-meta.mojang.com", "https://bmclapi2.bangbang93.com"),
+    ("piston-data.mojang.com", "https://bmclapi2.bangbang93.com"),
+    ("launcher.mojang.com", "https://bmclapi2.bangbang93.com"),
+    ("launchermeta.mojang.com", "https://bmclapi2.bangbang93.com"),
+    // ModLoader 官方 maven → BMCLAPI /maven（完整镜像，302 实测可用）
+    (
+        "maven.neoforged.net",
+        "https://bmclapi2.bangbang93.com/maven",
+    ),
+    (
+        "maven.minecraftforge.net",
+        "https://bmclapi2.bangbang93.com/maven",
+    ),
+    ("maven.fabricmc.net", "https://bmclapi2.bangbang93.com/maven"),
+    // fabric 版本清单镜像（quilt 无镜像，保持直连官方）
+    (
+        "meta.fabricmc.net",
+        "https://bmclapi2.bangbang93.com/fabric-meta",
+    ),
+];
+
+/// 为官方 URL 生成镜像候选（无命中返回空）。
+fn mirror_candidates(original: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for (domain, replacement) in MIRROR_ROUTES {
+        if original.contains(domain) {
+            let path = original.split(domain).nth(1).unwrap_or("");
+            out.push(format!("{replacement}{path}"));
+        }
+    }
+    out
+}
+
+/// 单条路由的健康状态（全进程共享，按 URL 记录）。
+#[derive(Debug, Clone, Default)]
+struct RouteHealth {
+    /// 连续失败次数（成功后清零）。
+    failures: u32,
+    /// 连续失败 >=3 时的冷却截止（冷却期内路由排到最末）。
+    cooldown_until: Option<Instant>,
+    /// 成功样本数（无样本 = 冷启动，排序权重最低）。
+    samples: u32,
+    /// TTFB EWMA（毫秒，α=0.25，计划对齐 Axolotl）。
+    ttfb_ewma_ms: f64,
+}
+
+impl RouteHealth {
+    fn in_cooldown(&self) -> bool {
+        self.cooldown_until.is_some_and(|t| t > Instant::now())
+    }
+}
+
+fn route_health_map() -> &'static Mutex<std::collections::HashMap<String, RouteHealth>> {
+    static M: OnceLock<Mutex<std::collections::HashMap<String, RouteHealth>>> = OnceLock::new();
+    M.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+fn route_health(url: &str) -> RouteHealth {
+    route_health_map().lock().unwrap().get(url).cloned().unwrap_or_default()
+}
+
+/// 记录成功：清零连续失败与冷却，TTFB EWMA 更新（α=0.25）。
+fn record_route_success(url: &str, ttfb_ms: f64) {
+    let mut m = route_health_map().lock().unwrap();
+    let h = m.entry(url.to_string()).or_default();
+    h.failures = 0;
+    h.cooldown_until = None;
+    h.samples = h.samples.saturating_add(1);
+    h.ttfb_ewma_ms = if h.samples <= 1 {
+        ttfb_ms
+    } else {
+        h.ttfb_ewma_ms * 0.75 + ttfb_ms * 0.25
+    };
+}
+
+/// 记录失败：连续失败数 +1；>=3 进入 30s 冷却（冷却中的源排在路由最末）。
+fn record_route_failure(url: &str) {
+    const COOLDOWN_SECS: u64 = 30;
+    const FAILURE_THRESHOLD: u32 = 3;
+    let mut m = route_health_map().lock().unwrap();
+    let h = m.entry(url.to_string()).or_default();
+    h.failures = h.failures.saturating_add(1);
+    if h.failures >= FAILURE_THRESHOLD {
+        h.cooldown_until = Some(Instant::now() + Duration::from_secs(COOLDOWN_SECS));
+    }
+}
+
+/// 当前文件下载源模式（Auto 时启用健康度路由；路由层兜底读全局配置）。
+fn source_mode() -> DownloadSourceMode {
+    crate::persist::read::<DownloaderConfig>(SECT_DOWNLOADER)
+        .map(|c| c.file_source_mode)
+        .unwrap_or_default()
+}
+
+/// 生成路由序列（fetch_from_sources 入口）：
+/// 原始 URL 列表（去重保序）→ 追加自动镜像候选（列表未含镜像时）→ 排序：
+/// - Loader 类资源镜像前置（mirror_first_loader：Loader 资源永远镜像先行，官方保底）；
+/// - Auto 模式按健康度：Loader 镜像优先 → 冷却中 → 连续失败多 → 无样本 → TTFB 升序。
+fn resolve_download_routes(urls: &[String], mode: DownloadSourceMode) -> Vec<DownloadRoute> {
+    let mut seen: Vec<String> = Vec::new();
+    for u in urls {
+        if !u.is_empty() && !seen.contains(u) {
+            seen.push(u.clone());
+        }
+    }
+    let first = seen.first().map(String::as_str).unwrap_or("");
+    let class = crate::config::downloader::model::infer_resource_class(first);
+    // 原始列表已含镜像（调用方手工构造的双源）则不重复追加
+    if !seen.iter().any(|u| is_mirror_domain(u)) {
+        for cand in mirror_candidates(first) {
+            if !seen.contains(&cand) {
+                seen.push(cand);
+            }
+        }
+    }
+    let mut routes: Vec<DownloadRoute> = seen
+        .into_iter()
+        .map(|url| DownloadRoute {
+            is_mirror: is_mirror_domain(&url),
+            url,
+        })
+        .collect();
+    match mode {
+        DownloadSourceMode::Auto => {
+            // 健康度排序（稳定：同键保持原始顺序 = 调用方源顺序）
+            // 键值越小越靠前：非冷却 → Loader 镜像优先 → 失败少 → 有样本 → TTFB 小。
+            // 冷却优先级高于镜像优先：镜像被冷却时排最末（计划："冷却中 → 失败多 → 无样本"）。
+            routes.sort_by_key(|r| {
+                let h = route_health(&r.url);
+                let loader_mirror_first =
+                    u8::from(!(class == ResourceClass::Loader && r.is_mirror));
+                let cooldown = u8::from(h.in_cooldown());
+                let has_sample = u8::from(h.samples == 0);
+                (
+                    cooldown,
+                    loader_mirror_first,
+                    h.failures,
+                    has_sample,
+                    h.ttfb_ewma_ms as u64,
+                )
+            });
+        }
+        DownloadSourceMode::PreferChina
+        | DownloadSourceMode::PreferOfficial
+        | DownloadSourceMode::OfficialOnly
+        | DownloadSourceMode::ChinaOnly => {
+            // 非 Auto：仅 mirror_first_loader 规则生效（其余保持调用方顺序）
+            if class == ResourceClass::Loader && mode == DownloadSourceMode::PreferChina {
+                routes.sort_by_key(|r| !r.is_mirror); // 镜像 key=false → 排前，官方保底排后
+            }
+        }
+    }
+    routes
 }
 
 fn build_client() -> Client {
@@ -134,7 +320,7 @@ pub async fn fetch_with(
     let mut last_err = None;
     for attempt in 0..MAX_ATTEMPTS {
         match fetch_once(client, url, dest, &progress, max_speed, expected_sha1).await {
-            Ok(r) => return Ok(r),
+            Ok(out) => return Ok(out.dl),
             Err(e) => {
                 // 失败清理残留（下一次尝试或后续下载会重新创建）
                 let _ = std::fs::remove_file(dest);
@@ -166,6 +352,13 @@ pub async fn fetch_bounded(
 /// `total_timeout` 为 None 时传输不限时（大文件，慢速但稳定的源不被砍）；
 /// 为 Some 时整请求限时（小文件，防 body 挂起假死）。
 /// `expected_sha1` 非空时逐源校验：内容不匹配视同该源失败，换下一源/下一轮。
+/// 单次请求结果（含 TTFB 供健康度记录）。
+struct FetchOnceOutput {
+    dl: DownloadResult,
+    /// 首字节耗时（毫秒，发送请求到响应头到达）。
+    ttfb_ms: f64,
+}
+
 async fn fetch_from_sources<F: Fn(u64, u64)>(
     urls: &[String],
     dest: &Path,
@@ -175,10 +368,13 @@ async fn fetch_from_sources<F: Fn(u64, u64)>(
 ) -> Result<DownloadResult, FetchError> {
     let max_speed = max_speed_bps();
     const MAX_ATTEMPTS: u32 = 3;
+    // 自适应路由：去重 + 自动镜像候选（官方保底）+ mirror_first_loader/健康度排序。
+    // 调用方传入的源顺序在非 Auto 模式下保持不变（向后兼容）。
+    let routes = resolve_download_routes(urls, source_mode());
     // 收集每源/每轮全部错误（展示时去重），避免最后一个源覆盖前面的失败原因
     let mut errors: Vec<FetchError> = Vec::new();
     for attempt in 0..MAX_ATTEMPTS {
-        for url in urls {
+        for route in &routes {
             let mut builder = reqwest::Client::builder().connect_timeout(Duration::from_secs(2));
             if let Some(t) = total_timeout {
                 builder = builder.timeout(t);
@@ -186,19 +382,24 @@ async fn fetch_from_sources<F: Fn(u64, u64)>(
             let client = match builder.build() {
                 Ok(c) => c,
                 Err(e) => {
-                    errors.push(FetchError::Network(format!("{url}: {e}")));
+                    errors.push(FetchError::Network(format!("{}: {e}", route.url)));
                     continue;
                 }
             };
-            match fetch_once(&client, url, dest, progress, max_speed, expected_sha1).await {
-                Ok(r) => return Ok(r),
+            match fetch_once(&client, &route.url, dest, progress, max_speed, expected_sha1).await
+            {
+                Ok(out) => {
+                    record_route_success(&route.url, out.ttfb_ms);
+                    return Ok(out.dl);
+                }
                 Err(e) => {
                     // 失败清理残留（下一源/下一轮会重新创建）
                     let _ = std::fs::remove_file(dest);
+                    record_route_failure(&route.url);
                     // 非校验类错误附带源 URL，便于用户定位哪个源失败
                     errors.push(match e {
                         FetchError::Checksum => FetchError::Checksum,
-                        other => FetchError::Network(format!("{url}: {other}")),
+                        other => FetchError::Network(format!("{}: {other}", route.url)),
                     });
                 }
             }
@@ -242,7 +443,7 @@ async fn fetch_once<F: Fn(u64, u64)>(
     progress: &Option<F>,
     max_speed: u64,
     expected_sha1: Option<&str>,
-) -> Result<DownloadResult, FetchError> {
+) -> Result<FetchOnceOutput, FetchError> {
     // 镜像源并发限制：镜像请求独立于任务信号量（官方源不限流、镜像源 30 并发即 429）。
     // permit 持有到本次传输结束，队列自然摊薄对镜像源的瞬时请求速率。
     let _mirror_permit = if is_mirror_url(url) {
@@ -256,11 +457,13 @@ async fn fetch_once<F: Fn(u64, u64)>(
     } else {
         None
     };
+    let request_start = Instant::now();
     let response = client
         .get(url)
         .send()
         .await
         .map_err(|e| FetchError::Network(e.to_string()))?;
+    let ttfb_ms = request_start.elapsed().as_secs_f64() * 1000.0;
 
     // HTTP 状态检查：4xx/5xx 视为失败
     let status = response.status();
@@ -331,9 +534,12 @@ async fn fetch_once<F: Fn(u64, u64)>(
         }
     }
 
-    Ok(DownloadResult {
-        bytes: downloaded,
-        speed,
+    Ok(FetchOnceOutput {
+        dl: DownloadResult {
+            bytes: downloaded,
+            speed,
+        },
+        ttfb_ms,
     })
 }
 
@@ -477,6 +683,118 @@ mod tests {
         assert!(is_mirror_url("https://maven.quiltmc.org/repository/release/org/quiltmc/x.jar"));
         assert!(is_mirror_url("https://maven.neoforged.net/releases/net/neoforged/x.jar"));
         assert!(is_mirror_url("https://maven.minecraftforge.net/net/minecraftforge/x.jar"));
+    }
+
+    /// 镜像候选生成：mojang/library/loader 域 → BMCLAPI 镜像（与 model.rs REWRITE_RULES 同构）。
+    #[test]
+    fn mirror_candidates_generate_bmclapi_urls() {
+        assert_eq!(
+            mirror_candidates("https://libraries.minecraft.net/com/x/y.jar"),
+            vec!["https://bmclapi2.bangbang93.com/libraries/com/x/y.jar"]
+        );
+        assert_eq!(
+            mirror_candidates("https://resources.download.minecraft.net/ab/hash"),
+            vec!["https://bmclapi2.bangbang93.com/assets/ab/hash"]
+        );
+        assert_eq!(
+            mirror_candidates("https://maven.neoforged.net/releases/net/neoforged/x/1.0/x-1.0.jar"),
+            vec!["https://bmclapi2.bangbang93.com/maven/releases/net/neoforged/x/1.0/x-1.0.jar"]
+        );
+        assert_eq!(
+            mirror_candidates("https://meta.fabricmc.net/v2/versions/loader/1.20.4"),
+            vec!["https://bmclapi2.bangbang93.com/fabric-meta/v2/versions/loader/1.20.4"]
+        );
+        // 未知域不生成
+        assert!(mirror_candidates("https://example.com/x.jar").is_empty());
+    }
+
+    /// 路由解析：去重保序 + 未含镜像时自动追加候选。
+    #[test]
+    fn resolve_routes_dedupes_and_appends_mirror_candidate() {
+        let urls = vec![
+            "https://libraries.minecraft.net/com/x/y.jar".to_string(),
+            "https://libraries.minecraft.net/com/x/y.jar".to_string(), // 重复
+        ];
+        let routes = resolve_download_routes(&urls, DownloadSourceMode::PreferOfficial);
+        assert_eq!(routes.len(), 2, "去重后原始 1 + 镜像候选 1");
+        assert_eq!(routes[0].url, "https://libraries.minecraft.net/com/x/y.jar");
+        assert_eq!(routes[1].url, "https://bmclapi2.bangbang93.com/libraries/com/x/y.jar");
+        assert!(!routes[0].is_mirror);
+        assert!(routes[1].is_mirror);
+        // 调用方已含镜像（手工双源）→ 不再重复追加
+        let urls2 = vec![
+            "https://maven.fabricmc.net/a.jar".to_string(),
+            "https://bmclapi2.bangbang93.com/maven/a.jar".to_string(),
+        ];
+        let routes2 = resolve_download_routes(&urls2, DownloadSourceMode::PreferOfficial);
+        assert_eq!(routes2.len(), 2);
+    }
+
+    /// mirror_first_loader：PreferChina 下 Loader 类镜像前置（官方保底排后）。
+    #[test]
+    fn resolve_routes_loader_mirror_first_in_china_mode() {
+        let urls = vec![
+            "https://maven.minecraftforge.net/net/minecraftforge/forge/1.21/forge-1.21-installer.jar"
+                .to_string(),
+            "https://bmclapi2.bangbang93.com/maven/net/minecraftforge/forge/1.21/forge-1.21-installer.jar"
+                .to_string(),
+        ];
+        let routes = resolve_download_routes(&urls, DownloadSourceMode::PreferChina);
+        assert!(
+            routes[0].is_mirror,
+            "Loader 资源镜像应前置，实际: {}",
+            routes[0].url
+        );
+        assert!(!routes[1].is_mirror, "官方保底排后");
+        // PreferOfficial 下保持调用方顺序（官方先行）
+        let routes2 = resolve_download_routes(&urls, DownloadSourceMode::PreferOfficial);
+        assert!(!routes2[0].is_mirror);
+    }
+
+    /// 健康度：连续失败 >=3 进入冷却（Auto 排序中冷却路由排最末）。
+    #[test]
+    fn route_health_cooldown_after_consecutive_failures() {
+        let url = "https://example.com/bad-route.jar";
+        let mut h = route_health(url);
+        assert_eq!(h.failures, 0);
+        assert!(!h.in_cooldown());
+        record_route_failure(url);
+        record_route_failure(url);
+        record_route_failure(url);
+        h = route_health(url);
+        assert_eq!(h.failures, 3);
+        assert!(h.in_cooldown(), "连续 3 次失败应进入 30s 冷却");
+        // 成功重置失败数并清除冷却
+        record_route_success(url, 120.0);
+        h = route_health(url);
+        assert_eq!(h.failures, 0);
+        assert!(!h.in_cooldown());
+        assert_eq!(h.samples, 1);
+        // TTFB EWMA 更新（α=0.25）
+        record_route_success(url, 200.0);
+        h = route_health(url);
+        assert!((h.ttfb_ewma_ms - 140.0).abs() < 0.01, "EWMA 应收敛到 140，实际 {}", h.ttfb_ewma_ms);
+    }
+
+    /// Auto 模式：冷却中的路由排最末；Loader 镜像冷启动优先。
+    #[test]
+    fn resolve_routes_auto_sorts_by_health() {
+        let official = "https://maven.neoforged.net/releases/x.jar".to_string();
+        let mirror = "https://bmclapi2.bangbang93.com/maven/releases/x.jar".to_string();
+        let urls = vec![official.clone(), mirror.clone()];
+        // 冷启动（无样本）：Loader 镜像优先
+        let routes = resolve_download_routes(&urls, DownloadSourceMode::Auto);
+        assert!(routes[0].is_mirror, "Auto + Loader 冷启动镜像优先: {}", routes[0].url);
+        // 镜像连续失败进入冷却 → 官方排前
+        record_route_failure(&mirror);
+        record_route_failure(&mirror);
+        record_route_failure(&mirror);
+        let routes2 = resolve_download_routes(&urls, DownloadSourceMode::Auto);
+        assert!(
+            !routes2[0].is_mirror,
+            "冷却中的镜像应排最末，实际: {}",
+            routes2[0].url
+        );
     }
 
     /// 镜像源（URL 含 bmclapi）请求并发必须被限制在 MIRROR_CONCURRENCY 以内：

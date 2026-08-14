@@ -3,7 +3,7 @@
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::config::downloader::model::{DownloadSource, DownloaderConfig};
@@ -21,6 +21,7 @@ pub async fn install_forge(
     bytes: &Arc<AtomicU64>,
     lib_bytes: &Arc<AtomicU64>,
     lib_total: &Arc<AtomicU64>,
+    cancel: &Arc<AtomicBool>,
     hook: Option<LoaderHook<'_>>,
 ) -> Result<(), String> {
     let source = config.file_primary_source().ok_or("no active source")?;
@@ -49,6 +50,7 @@ pub async fn install_forge(
         bytes,
         lib_bytes,
         lib_total,
+        cancel,
         hook,
     )
     .await
@@ -67,6 +69,7 @@ pub(super) async fn download_and_extract(
     bytes: &Arc<AtomicU64>,
     lib_bytes: &Arc<AtomicU64>,
     lib_total: &Arc<AtomicU64>,
+    cancel: &Arc<AtomicBool>,
     hook: Option<LoaderHook<'_>>,
 ) -> Result<(), String> {
     let mc_dir = config.minecraft_dir_abs();
@@ -163,6 +166,7 @@ pub(super) async fn download_and_extract(
         &mc_dir,
         dir_name,
         config,
+        cancel,
     )
     .await?;
     // NeoForge：install_profile.libraries 含 `net.neoforged:neoforge:{ver}:universal`
@@ -198,6 +202,7 @@ pub(super) async fn download_and_extract(
             dir_name,
             &neo_version,
             config,
+            cancel,
         )
         .await?;
         // 其余库走统一下载（universal 已单独下载，JSON 无其条目 → 不进 classpath）
@@ -208,6 +213,7 @@ pub(super) async fn download_and_extract(
             &lib_dir,
             config.concurrency as usize,
             &sources,
+            None, // loader 安装内库下载不走复用（run_task 主流程才探测复用根）
             counter,
             bytes.clone(),
             lib_bytes.clone(),
@@ -227,6 +233,7 @@ pub(super) async fn download_and_extract(
         &lib_dir,
         config.concurrency as usize,
         &sources,
+        None, // 同上：loader 安装内库下载不走复用
         counter,
         bytes.clone(),
         lib_bytes.clone(),
@@ -251,6 +258,7 @@ async fn extract_forge_client_lzma(
     mc_dir: &Path,
     dir_name: &str,
     config: &crate::config::downloader::model::DownloaderConfig,
+    cancel: &Arc<AtomicBool>,
 ) -> Result<(), String> {
     // 定位 URL 为空的 forge client 库（其 path/sha1 由 version.json 给出）
     let Some(art) = libraries.iter().find_map(|l| {
@@ -264,7 +272,10 @@ async fn extract_forge_client_lzma(
         return Ok(());
     };
     let dest = lib_dir.join(&art.path);
-    if dest.exists() && crate::downloader::hash::file_sha1_matches(&dest, &art.sha1) {
+    // 幂等跳过：输出（client 合并 jar）已存在且 sha1 匹配 → 不运行补丁工具。
+    // 声明式输出校验在运行前完成（processor_outputs_are_current），
+    // 重装/修复场景直接进下一步，不再 spawn JVM。
+    if super::processor_outputs_are_current(&[(&dest, Some(&art.sha1))]) {
         return Ok(());
     }
 
@@ -296,7 +307,7 @@ async fn extract_forge_client_lzma(
     // 2. 等待 vanilla client 就绪（runner 的 ClientJar 步骤与之并行，轮询至多 120s）
     // 注意：不能只看大小 >1MB——部分写入的文件也会超过该阈值，zip 损坏会导致工具退出码 1。
     // 稳定检测：连续 3 次（间隔 500ms）大小不变即视为下载完成。
-    let vanilla_jar = wait_for_vanilla_client(mc_dir, dir_name).await?;
+    let vanilla_jar = wait_for_vanilla_client(mc_dir, dir_name, cancel).await?;
 
     // 3. 下载官方工具（binarypatcher + classpath 依赖，来自 maven.minecraftforge.net）
     let tools = tmp.join("forge-tools");
@@ -344,7 +355,8 @@ async fn extract_forge_client_lzma(
             .map_err(|e| format!("下载 {name} 工具失败: {e}"))?;
     }
 
-    // 4. 运行 binarypatcher（与 install_profile 的 client 侧 processor 参数一致）
+    // 4. 运行 binarypatcher（与 install_profile 的 client 侧 processor 参数一致）。
+    // 轮询 cancel 标志：用户取消任务时 kill 工具进程，避免"取消后工具仍跑数十秒"。
     let java = resolve_java()?;
     let sep = if cfg!(windows) { ";" } else { ":" };
     let classpath = TOOL_JARS
@@ -352,7 +364,7 @@ async fn extract_forge_client_lzma(
         .map(|(n, _)| tools.join(format!("{n}.jar")).display().to_string())
         .collect::<Vec<_>>()
         .join(sep);
-    let output = tokio::process::Command::new(&java)
+    let child = tokio::process::Command::new(&java)
         .args([
             "-cp",
             &classpath,
@@ -369,9 +381,16 @@ async fn extract_forge_client_lzma(
             "--marker",
             ".forge_patched_minecraft",
         ])
-        .output()
-        .await
-        .map_err(|e| format!("运行 Forge 补丁工具失败: {e}"))?;
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("启动 Forge 补丁工具失败: {e}"))?;
+    let output = crate::downloader::mod_loader::run_installer_command(
+        child,
+        cancel,
+        "Forge 补丁工具",
+    )
+    .await?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let tail: Vec<&str> = stderr.lines().rev().take(15).collect();
@@ -393,8 +412,12 @@ async fn extract_forge_client_lzma(
 
 /// 等待 runner 的 ClientJar 步骤下载完成（与 install 步骤并行）：
 /// 不能只看大小>1MB（部分写入也会超阈值），连续 3 次（间隔 500ms）大小不变即视为完成。
-/// 上限 120s，超时返回错误。
-pub(super) async fn wait_for_vanilla_client(mc_dir: &Path, dir_name: &str) -> Result<PathBuf, String> {
+/// 上限 120s，超时返回错误；任务取消时立即返回（kill 由调用方处理）。
+pub(super) async fn wait_for_vanilla_client(
+    mc_dir: &Path,
+    dir_name: &str,
+    cancel: &Arc<AtomicBool>,
+) -> Result<PathBuf, String> {
     let vanilla_jar = mc_dir
         .join("versions")
         .join(dir_name)
@@ -402,6 +425,9 @@ pub(super) async fn wait_for_vanilla_client(mc_dir: &Path, dir_name: &str) -> Re
     let mut last_size = 0u64;
     let mut stable = 0u32;
     for _ in 0..240 {
+        if cancel.load(Ordering::SeqCst) {
+            return Err("任务已取消".into());
+        }
         let size = std::fs::metadata(&vanilla_jar)
             .map(|m| m.len())
             .unwrap_or(0);

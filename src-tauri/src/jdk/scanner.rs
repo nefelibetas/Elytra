@@ -58,7 +58,8 @@ fn probe_home(dir: &Path, found: &mut Vec<JdkInfo>, seen: &mut HashSet<String>, 
     }
 }
 
-fn inspect(java_home: &Path) -> Result<JdkInfo, String> {
+/// 探测单个 JAVA_HOME 目录的版本信息（jdk/download.rs 的 managed runtime 注册复用）。
+pub(crate) fn inspect(java_home: &Path) -> Result<JdkInfo, String> {
     let java_bin = crate::jdk::java_bin_path(java_home);
     if !java_bin.exists() {
         return Err(format!("未找到 Java 可执行文件: {}", java_bin.display()));

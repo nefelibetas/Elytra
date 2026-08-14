@@ -17,6 +17,33 @@ pub fn file_sha1_matches(path: &Path, expected: &str) -> bool {
     sha1_hex(&data) == expected
 }
 
+/// 分块流式 sha1 校验（与 file_sha1_matches 同语义，但避免整文件读内存）：
+/// 本地运行时复用场景可能面对数百 MB 的 client jar / 数千个 assets，
+/// 1MB 分块读取把峰值内存从文件大小降到常量（AGENTS.md 的整读取舍在
+/// 复用路径不成立——一次校验多个大文件会爆内存）。
+pub fn file_sha1_matches_streaming(path: &Path, expected: &str) -> bool {
+    if expected.is_empty() {
+        return path.exists();
+    }
+    use sha1::Digest;
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return false,
+    };
+    use std::io::Read;
+    let mut reader = std::io::BufReader::with_capacity(1024 * 1024, file);
+    let mut hasher = sha1::Sha1::new();
+    let mut buf = vec![0u8; 1024 * 1024];
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => hasher.update(&buf[..n]),
+        }
+    }
+    let hash = hasher.finalize();
+    hash.iter().map(|b| format!("{:02x}", b)).collect::<String>() == expected
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

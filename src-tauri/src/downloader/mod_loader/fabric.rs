@@ -71,6 +71,7 @@ async fn install_loader_via_profile(
         &lib_dir,
         config.concurrency as usize,
         &sources,
+        None, // loader 安装内库下载不走本地运行时复用（run_task 主流程才探测复用根）
         counter,
         bytes.clone(),
         lib_bytes.clone(),

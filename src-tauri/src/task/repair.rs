@@ -282,6 +282,7 @@ pub async fn run_repair_task(
         &lib_dir,
         config.concurrency as usize,
         &src_refs,
+        None, // 修复任务不走本地运行时复用（保持"缺失补全"语义）
         Arc::clone(&lib_counter),
         Arc::clone(&bytes_counter),
         Arc::new(AtomicU64::new(0)), // 占位：repair 分步进度走文件数回退
@@ -293,6 +294,7 @@ pub async fn run_repair_task(
         &vj.asset_index.sha1,
         &config,
         config.concurrency as usize,
+        None, // 同上：修复任务不走复用
         Arc::clone(&asst_counter),
         Arc::clone(&bytes_counter),
         Arc::new(AtomicU64::new(0)), // 占位

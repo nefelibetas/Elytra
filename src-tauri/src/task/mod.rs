@@ -15,6 +15,7 @@ pub mod progress;
 pub mod repair;
 pub mod runner;
 pub mod steps;
+pub mod store;
 
 pub use model::*;
 pub use steps::*;
@@ -23,6 +24,9 @@ static TM: OnceLock<Arc<TaskManager>> = OnceLock::new();
 
 pub fn init() {
     TM.set(Arc::new(TaskManager::default())).ok();
+    // 崩溃恢复（#6）：上次进程退出时残留 running 快照 → interrupted，
+    // 前端启动后经 list_interrupted_tasks 拉取并询问恢复。
+    store::mark_crashed_as_interrupted();
 }
 
 pub fn global() -> &'static Arc<TaskManager> {
@@ -36,6 +40,8 @@ pub struct TaskProgress {
     pub status: TaskStatus, // pending | running | done | error | cancelled（serde lowercase）
     pub progress: f64,      // 0.0 – 100.0
     pub speed_bps: f64,
+    /// 预计剩余秒数（剩余字节 / 当前速度）；停滞（>4s 无字节推进）或速度过低时 None。
+    pub eta_seconds: Option<u64>,
     pub completed_files: u32,
     pub total_files: u32,
     pub completed_bytes: u64,
@@ -56,12 +62,24 @@ pub struct TaskManager {
     inner: Mutex<Inner>,
 }
 
+/// 挂起任务的用户决策（WaitingForUser：批量下载单文件失败时暂停，用户选跳过/重试/取消）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaitingDecision {
+    /// 跳过该文件，继续剩余文件
+    Skip,
+    /// 重试该文件
+    Retry,
+    /// 取消整个任务
+    Cancel,
+}
+
 impl Default for TaskManager {
     fn default() -> Self {
         Self {
             inner: Mutex::new(Inner {
                 tasks: HashMap::new(),
                 active_paths: HashMap::new(),
+                waiting: HashMap::new(),
                 counter: 0,
             }),
         }
@@ -72,6 +90,8 @@ struct Inner {
     tasks: HashMap<String, TaskHandle>,
     /// 被下载任务占用的路径（版本目录 / 目标文件），同路径并发互斥
     active_paths: HashMap<std::path::PathBuf, ()>,
+    /// 挂起等待用户决策的任务（task_id → 决策槽；任务侧轮询，命令侧写入）
+    waiting: HashMap<String, Arc<Mutex<Option<WaitingDecision>>>>,
     counter: u64,
 }
 
@@ -98,6 +118,7 @@ impl TaskManager {
             status: TaskStatus::Pending,
             progress: 0.0,
             speed_bps: 0.0,
+            eta_seconds: None,
             completed_files: 0,
             total_files: 0,
             completed_bytes: 0,
@@ -153,6 +174,8 @@ impl TaskManager {
             }
             if let Ok(mut p) = h.progress.try_lock() {
                 p.status = TaskStatus::Cancelled;
+                // 终态快照持久化（与 fail 收口一致）
+                store::update_status(id, TaskStatus::Cancelled);
             }
             true
         } else {
@@ -161,6 +184,12 @@ impl TaskManager {
     }
 
     pub fn fail(&self, id: &str) {
+        // 终态快照持久化：移除内存注册前记录 status（崩溃/重启后恢复依据）。
+        // 所有终态（done/error/cancelled）统一收口此处——DB 故障静默，不影响任务。
+        if let Some(h) = self.inner.lock().unwrap().tasks.get(id) {
+            let status = h.progress.lock().unwrap().status;
+            store::update_status(id, status);
+        }
         self.inner.lock().unwrap().tasks.remove(id);
     }
 
@@ -181,6 +210,40 @@ impl TaskManager {
 
     pub fn remove(&self, id: &str) {
         self.inner.lock().unwrap().tasks.remove(id);
+        self.inner.lock().unwrap().waiting.remove(id);
+    }
+
+    /// 登记挂起等待用户决策：返回决策槽（任务侧轮询）。重复登记返回同一槽。
+    pub fn begin_wait(&self, id: &str) -> Arc<Mutex<Option<WaitingDecision>>> {
+        let mut inner = self.inner.lock().unwrap();
+        inner
+            .waiting
+            .entry(id.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(None)))
+            .clone()
+    }
+
+    /// 用户写入决策（命令侧）。任务未在挂起状态时返回 false。
+    pub fn decide(&self, id: &str, decision: WaitingDecision) -> bool {
+        let inner = self.inner.lock().unwrap();
+        match inner.waiting.get(id) {
+            Some(slot) => {
+                *slot.lock().unwrap() = Some(decision);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// 任务侧轮询当前决策（挂起期间每 200ms 调用）；未决策返回 None。
+    pub fn waiting_decision(&self, id: &str) -> Option<WaitingDecision> {
+        let inner = self.inner.lock().unwrap();
+        inner.waiting.get(id).and_then(|s| *s.lock().unwrap())
+    }
+
+    /// 清理挂起登记（决策已收到 / 任务终态）。
+    pub fn end_wait(&self, id: &str) {
+        self.inner.lock().unwrap().waiting.remove(id);
     }
 }
 
@@ -297,6 +360,39 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&StepStatus::Done).unwrap(),
             "\"done\""
+        );
+    }
+
+    /// WaitingForUser：begin_wait 后轮询无决策；decide 后轮询命中；end_wait 清理；
+    /// 未挂起任务 decide 返回 false。
+    #[test]
+    fn waiting_decision_flow() {
+        let tm = Arc::new(TaskManager::default());
+        let slot = tm.begin_wait("t1");
+        assert!(tm.waiting_decision("t1").is_none(), "未决策时轮询应为 None");
+        // 任务侧轮询（模拟 200ms 后用户决策）
+        std::thread::spawn({
+            let tm = tm.clone();
+            move || {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                tm.decide("t1", WaitingDecision::Skip);
+            }
+        });
+        // 任务侧等待循环（简化：轮询至多 1s）
+        let mut got = None;
+        for _ in 0..10 {
+            if let Some(d) = tm.waiting_decision("t1") {
+                got = Some(d);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        assert_eq!(got, Some(WaitingDecision::Skip), "决策应被任务侧读到");
+        drop(slot);
+        tm.end_wait("t1");
+        assert!(
+            !tm.decide("t1", WaitingDecision::Cancel),
+            "已清理的挂起任务 decide 应返回 false"
         );
     }
 }

@@ -5,6 +5,7 @@ use tokio::sync::Semaphore;
 
 use super::extract::{matches_rules, modern_native_matches, NativesKind};
 use super::hash::file_sha1_matches;
+use super::reuse::{classify_local_artifact, copy_verified_local, LocalRuntimeSource};
 use crate::config::downloader::model::DownloadSource;
 use crate::downloader::fetcher;
 use crate::downloader::model::Library;
@@ -84,16 +85,23 @@ pub fn existing_lib_bytes(libraries: &[Library], lib_dir: &Path) -> u64 {
     }).sum()
 }
 
+/// 批量下载支持库（多源回退 + sha1 校验）。
+/// `reuse`：可选本地运行时复用根——dest 缺失且复用根有 size+sha1 匹配的同相对路径文件时，
+/// 本地复制（计入进度）而非网络下载；未命中照常走网络（迁移用户省数百 MB）。
+#[allow(clippy::too_many_arguments)]
 pub async fn download_libraries(
     libraries: &[Library],
     libraries_dir: &Path,
     concurrency: usize,
     sources: &[&DownloadSource],
+    reuse: Option<LocalRuntimeSource>,
     counter: Arc<AtomicU32>,
     bytes_counter: Arc<AtomicU64>,
     step_bytes: Arc<AtomicU64>,
 ) -> Result<(), Vec<String>> {
-    let mut tasks: Vec<(Vec<String>, std::path::PathBuf, String)> = Vec::new();
+    // (多源 URL, 目标, sha1, 本地复用源路径)
+    let mut tasks: Vec<(Vec<String>, std::path::PathBuf, String, Option<std::path::PathBuf>)> =
+        Vec::new();
     // 安装器内嵌提供、无法网络下载的库（如 Forge client.lzma）缺失时的错误
     let mut internal_missing: Vec<String> = Vec::new();
 
@@ -119,9 +127,23 @@ pub async fn download_libraries(
         if dest.exists() && file_sha1_matches(&dest, &artifact.sha1) {
             continue;
         }
+        // 本地运行时复用：dest 缺失时先问复用根（size + sha1 双校验，绝不盲复制）。
+        // 命中 → 复制任务（与网络下载同一进度/计数路径）；未命中 → 网络下载。
+        let local = reuse.as_ref().and_then(|r| {
+            classify_local_artifact(
+                r,
+                &format!("libraries/{}", artifact.path),
+                Some(artifact.size),
+                Some(&artifact.sha1),
+            )
+        });
+        if let Some(local) = local {
+            tasks.push((Vec::new(), dest, artifact.sha1.clone(), Some(local)));
+            continue;
+        }
         // 每个源各构造一个 URL，下载时主源过慢/失败自动降级
         let urls: Vec<String> = sources.iter().map(|s| s.mirror_url(&artifact.url)).collect();
-        tasks.push((urls, dest, artifact.sha1.clone()));
+        tasks.push((urls, dest, artifact.sha1.clone(), None));
     }
 
     if !internal_missing.is_empty() {
@@ -136,7 +158,7 @@ pub async fn download_libraries(
     let mut errors = Vec::new();
     let mut handles = Vec::new();
 
-    for (urls, dest, sha1) in tasks {
+    for (urls, dest, sha1, local_src) in tasks {
         let permit = sem.clone();
         let ctr = counter.clone();
         let bc = bytes_counter.clone();
@@ -159,14 +181,38 @@ pub async fn download_libraries(
                     s.fetch_add(delta, Ordering::Relaxed);
                 }
             };
-            // 逐源 sha1 校验下载：某源返回内容不匹配（镜像缓存陈旧）自动换下一源重试，
-            // 全部源均不匹配才报错。校验失败时 fetch_verified 内部已删除坏文件。
-            match fetcher::fetch_verified(&urls, &dest, Some(progress), &sha1).await {
-                Ok(_dl) => {
-                    ctr.fetch_add(1, Ordering::Relaxed);
-                    Ok(())
+            // 复用分支：本地复制（进度语义与下载一致）；失败降级为网络下载，不致命
+            if let Some(src) = local_src {
+                match copy_verified_local(&src, &dest, 0, Some(progress.clone())).await {
+                    Ok(_) => {
+                        ctr.fetch_add(1, Ordering::Relaxed);
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        match fetcher::fetch_verified(&urls, &dest, Some(progress), &sha1).await {
+                            Ok(_dl) => {
+                                ctr.fetch_add(1, Ordering::Relaxed);
+                                Ok(())
+                            }
+                            Err(e2) => Err(format!(
+                                "{}: {}（本地复用失败: {}）",
+                                dest.display(),
+                                e2,
+                                e
+                            )),
+                        }
+                    }
                 }
-                Err(e) => Err(format!("{}: {}", dest.display(), e)),
+            } else {
+                // 逐源 sha1 校验下载：某源返回内容不匹配（镜像缓存陈旧）自动换下一源重试，
+                // 全部源均不匹配才报错。校验失败时 fetch_verified 内部已删除坏文件。
+                match fetcher::fetch_verified(&urls, &dest, Some(progress), &sha1).await {
+                    Ok(_dl) => {
+                        ctr.fetch_add(1, Ordering::Relaxed);
+                        Ok(())
+                    }
+                    Err(e) => Err(format!("{}: {}", dest.display(), e)),
+                }
             }
         }));
     }

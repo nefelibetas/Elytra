@@ -25,6 +25,17 @@ pub fn save_jdk_config(config: JdkConfig) -> Result<(), String> {
     jdk::save(&config)
 }
 
+/// 下载缺失的 JDK（Mojang 官方 runtime → Azul Zulu 回退），完成后注册进 discovered_jdks。
+/// 前端 SettingsJdk 的"下载缺失 JDK"按钮调用；下载在 async 命令内进行，不阻塞主线程。
+#[tauri::command]
+pub async fn install_jdk(major: u32) -> Result<JdkInfo, String> {
+    let config: crate::config::downloader::model::DownloaderConfig =
+        crate::persist::read(crate::constants::SECT_DOWNLOADER).unwrap_or_default();
+    let info = crate::jdk::download::auto_install(major, &config).await?;
+    merge_scanned(vec![info.clone()]);
+    Ok(info)
+}
+
 fn merge_scanned(found: Vec<JdkInfo>) {
     if found.is_empty() {
         return;

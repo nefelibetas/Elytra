@@ -1,0 +1,330 @@
+//! ── 安装任务持久化（#6 一期）：任务快照 SQLite 存储，崩溃/重启不丢任务 ──
+//! 设计：Elytra 下载任务天然幂等（文件级 sha1 校验 + 已存在跳过 + 残缺目录复用），
+//! 因此"恢复" = 用快照中的 JobSpec 重跑一次，已下载完的文件自动跳过（等价断点续跑），
+//! 不需要 Axolotl 的精确断点续跑。
+//! 快照生命周期：spawn 时写 running → 终态（done/error/cancelled）经 TaskManager::fail/cancel
+//! 收口更新 → 进程崩溃残留 running → 下次启动 task::init() 标记 interrupted → 前端询问恢复。
+//! 库文件：exe 旁 `Elytra/tasks.db`（与 Settings.toml 同目录约定，AGENTS.md 红线：TOML 路径不动）。
+
+use std::future::Future;
+use std::sync::LazyLock;
+
+use serde::{Deserialize, Serialize};
+use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::{Row, SqlitePool};
+
+use crate::task::model::{DownloadFilesTask, DownloadTask};
+use crate::task::TaskStatus;
+
+/// 任务恢复凭证：重建任务所需的最小信息（三路任务各一）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum JobSpec {
+    /// 完整下载/安装（原版/ModLoader/OptiFine/Fabric API）
+    Download(DownloadTask),
+    /// 批量文件下载（mod / 资源包 / 数据包 / 光影包）
+    Files(DownloadFilesTask),
+    /// 版本补全（修复）
+    Repair { version_dir_name: String },
+}
+
+impl JobSpec {
+    /// 任务类型描述（前端恢复询问展示）。
+    pub fn kind_label(&self) -> &'static str {
+        match self {
+            JobSpec::Download(_) => "版本下载/安装",
+            JobSpec::Files(_) => "文件下载",
+            JobSpec::Repair { .. } => "版本补全",
+        }
+    }
+}
+
+/// 任务快照状态（与 TaskStatus serde 一致的小写字符串）。
+pub fn status_str(status: TaskStatus) -> &'static str {
+    match status {
+        TaskStatus::Pending => "pending",
+        TaskStatus::Running => "running",
+        TaskStatus::Done => "done",
+        TaskStatus::Error => "error",
+        TaskStatus::Cancelled => "cancelled",
+    }
+}
+
+/// 供前端展示的中断任务条目。
+#[derive(Debug, Clone, Serialize)]
+pub struct InterruptedJob {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    /// 快照最后更新时间（unix 秒）
+    pub updated_at: i64,
+}
+
+fn db_path() -> std::path::PathBuf {
+    crate::persist::exe_dir()
+        .join(crate::constants::CONFIG_DIR)
+        .join("tasks.db")
+}
+
+/// 同步执行异步 DB 操作（任务级低频操作，阻塞毫秒级可接受）。
+/// 优先复用当前线程的 tokio handle（测试/tauri runtime 内调用不再创建新 runtime），
+/// 无 runtime 上下文时自维护一个兜底 runtime（后台线程/独立进程可用）。
+fn block_on<F: Future>(fut: F) -> F::Output {
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        handle.block_on(fut)
+    } else {
+        static RT: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .worker_threads(2)
+                .build()
+                .expect("tokio runtime")
+        });
+        RT.block_on(fut)
+    }
+}
+
+fn pool() -> Result<&'static SqlitePool, String> {
+    POOL.as_ref().map_err(|e| e.clone())
+}
+
+static POOL: LazyLock<Result<SqlitePool, String>> = LazyLock::new(|| {
+    let path = db_path();
+    block_on(async {
+        // 直接以路径连接（Windows 绝对路径用 URL 形式会被误拆 host/盘符）
+        use sqlx::sqlite::SqliteConnectOptions;
+        let opts = SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts)
+            .await
+            .map_err(|e| format!("打开任务数据库失败: {e}"))?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS install_jobs (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                spec_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .map_err(|e| format!("初始化任务表失败: {e}"))?;
+        Ok::<SqlitePool, String>(pool)
+    })
+});
+
+fn now() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// 写入任务快照（INSERT OR REPLACE；spawn 时调用，status=running）。
+/// DB 故障静默忽略（任务运行不依赖持久化，仅影响崩溃恢复能力）。
+pub fn save_snapshot(id: &str, name: &str, spec: &JobSpec, status: TaskStatus) {
+    let Ok(pool) = pool() else {
+        return;
+    };
+    let spec_json = match serde_json::to_string(spec) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let st = status_str(status);
+    let ts = now();
+    let id_owned = id.to_string();
+    let name_owned = name.to_string();
+    let _ = block_on(async move {
+        sqlx::query(
+            "INSERT OR REPLACE INTO install_jobs (id, name, spec_json, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(id_owned)
+        .bind(name_owned)
+        .bind(spec_json)
+        .bind(st)
+        .bind(ts)
+        .bind(ts)
+        .execute(pool)
+        .await
+    });
+}
+
+/// 更新快照状态（终态收口：TaskManager::fail / cancel 调用）。
+pub fn update_status(id: &str, status: TaskStatus) {
+    let Ok(pool) = pool() else {
+        return;
+    };
+    let st = status_str(status);
+    let ts = now();
+    let id_owned = id.to_string();
+    let _ = block_on(async move {
+        sqlx::query("UPDATE install_jobs SET status = ?, updated_at = ? WHERE id = ?")
+            .bind(st)
+            .bind(ts)
+            .bind(id_owned)
+            .execute(pool)
+            .await
+    });
+}
+
+/// 启动时把残留 running 标记为 interrupted（进程崩溃现场），
+/// 供前端 `list_interrupted_tasks` 拉取询问恢复。
+pub fn mark_crashed_as_interrupted() {
+    let Ok(pool) = pool() else {
+        return;
+    };
+    let ts = now();
+    let _ = block_on(async move {
+        sqlx::query(
+            "UPDATE install_jobs SET status = 'interrupted', updated_at = ? WHERE status = 'running'",
+        )
+        .bind(ts)
+        .execute(pool)
+        .await
+    });
+}
+
+/// 列出中断（running/interrupted）任务快照，按更新时间倒序。
+/// kind 按 spec 反序列化。注意：rows 先物化出 block_on（block_on 内不得再嵌套
+/// block_on——tokio 禁止"runtime 内启动 runtime"），逐条补查在外部做。
+pub fn list_interrupted() -> Vec<InterruptedJob> {
+    let Ok(pool) = pool() else {
+        return Vec::new();
+    };
+    let rows: Vec<(String, String, i64)> = block_on(async move {
+        let rows = sqlx::query(
+            "SELECT id, name, updated_at FROM install_jobs
+             WHERE status IN ('running', 'interrupted')
+             ORDER BY updated_at DESC",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+        rows.into_iter()
+            .map(|r| {
+                (
+                    r.get::<String, _>("id"),
+                    r.get::<String, _>("name"),
+                    r.get::<i64, _>("updated_at"),
+                )
+            })
+            .collect()
+    });
+    rows.into_iter()
+        .map(|(id, name, updated_at)| InterruptedJob {
+            id: id.clone(),
+            name,
+            kind: kind_of(&id).unwrap_or_default(),
+            updated_at,
+        })
+        .collect()
+}
+
+/// 加载任务快照（恢复用）；同时返回名称。
+pub fn load_spec(id: &str) -> Option<(String, JobSpec)> {
+    let Ok(pool) = pool() else {
+        return None;
+    };
+    let id_owned = id.to_string();
+    block_on(async move {
+        let row = sqlx::query("SELECT name, spec_json FROM install_jobs WHERE id = ?")
+            .bind(id_owned)
+            .fetch_optional(pool)
+            .await
+            .ok()??;
+        let name: String = row.get("name");
+        let spec_json: String = row.get("spec_json");
+        let spec: JobSpec = serde_json::from_str(&spec_json).ok()?;
+        Some((name, spec))
+    })
+}
+
+/// 删除快照（恢复/清理时）。
+pub fn remove_snapshot(id: &str) {
+    let Ok(pool) = pool() else {
+        return;
+    };
+    let id_owned = id.to_string();
+    let _ = block_on(async move {
+        sqlx::query("DELETE FROM install_jobs WHERE id = ?")
+            .bind(id_owned)
+            .execute(pool)
+            .await
+    });
+}
+
+/// 任务类型标签（供 list 展示；按 spec 反序列化）。
+pub fn kind_of(id: &str) -> Option<String> {
+    load_spec(id).map(|(_, spec)| spec.kind_label().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::task::model::DownloadTask;
+
+    /// 清理测试专用任务 id（避免污染其他测试）。
+    fn cleanup(ids: &[&str]) {
+        for id in ids {
+            remove_snapshot(id);
+        }
+    }
+
+    #[test]
+    fn snapshot_roundtrip_and_status_flow() {
+        let id = format!("test_snapshot_{}", std::process::id());
+        cleanup(&[&id]);
+
+        let task = DownloadTask {
+            version_id: "1.20.4".into(),
+            version_url: "https://example.com/1.20.4.json".into(),
+            mc_version: "1.20.4".into(),
+            loader: None,
+            optifine_patch: None,
+            version_dir_name: None,
+            fabric_api: None,
+        };
+        save_snapshot(&id, "测试任务", &JobSpec::Download(task), TaskStatus::Running);
+
+        // running 可被列出
+        let listed = list_interrupted();
+        assert!(
+            listed.iter().any(|j| j.id == id),
+            "running 快照应出现在中断列表"
+        );
+        // load spec 还原
+        let (name, spec) = load_spec(&id).expect("快照应可加载");
+        assert_eq!(name, "测试任务");
+        match spec {
+            JobSpec::Download(t) => assert_eq!(t.version_id, "1.20.4"),
+            other => panic!("应还原为 Download 类型，实际 {:?}", std::mem::discriminant(&other)),
+        }
+        // 终态后不再出现在中断列表
+        update_status(&id, TaskStatus::Done);
+        assert!(
+            !list_interrupted().iter().any(|j| j.id == id),
+            "done 后不应出现在中断列表"
+        );
+        cleanup(&[&id]);
+    }
+
+    #[test]
+    fn mark_crashed_marks_running_as_interrupted() {
+        let id = format!("test_crash_{}", std::process::id());
+        cleanup(&[&id]);
+        save_snapshot(&id, "崩溃现场", &JobSpec::Repair { version_dir_name: "26.2".into() }, TaskStatus::Running);
+        mark_crashed_as_interrupted();
+        // interrupted 仍可列出（恢复询问依据）
+        assert!(
+            list_interrupted().iter().any(|j| j.id == id),
+            "interrupted 快照应可列出供恢复"
+        );
+        cleanup(&[&id]);
+    }
+}

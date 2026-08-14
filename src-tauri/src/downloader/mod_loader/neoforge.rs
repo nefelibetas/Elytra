@@ -1,7 +1,7 @@
 // ── NeoForge 安装（installer 式，与 Forge 共用 download_and_extract 流程）──
 
 use std::path::Path;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Arc;
 
 use super::forge::{download_and_extract, resolve_java, wait_for_vanilla_client};
@@ -17,6 +17,7 @@ pub async fn install_neoforge(
     bytes: &Arc<AtomicU64>,
     lib_bytes: &Arc<AtomicU64>,
     lib_total: &Arc<AtomicU64>,
+    cancel: &Arc<AtomicBool>,
     hook: Option<LoaderHook<'_>>,
 ) -> Result<(), String> {
     let source = config.file_primary_source().ok_or("no active source")?;
@@ -40,6 +41,7 @@ pub async fn install_neoforge(
         bytes,
         lib_bytes,
         lib_total,
+        cancel,
         hook,
     )
     .await
@@ -94,6 +96,7 @@ pub(super) async fn download_neoforge_universal(
 /// `libraries/net/neoforged/minecraft-client-patched/{ver}/minecraft-client-patched-{ver}.jar`
 /// （GameLocator 新安装方式优先使用它；旧方式缺 client-srg.jar 会报 corrupted）。
 /// 输入：vanilla client + installer 内 `data/client.lzma`（工具内部 LZMA 解压，与 Forge 相同）。
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn extract_neoforge_client(
     archive: &mut zip::ZipArchive<std::fs::File>,
     _libraries: &[crate::downloader::model::Library],
@@ -102,18 +105,16 @@ pub(super) async fn extract_neoforge_client(
     dir_name: &str,
     neo_version: &str,
     config: &DownloaderConfig,
+    cancel: &Arc<AtomicBool>,
 ) -> Result<(), String> {
     let patched_name = format!("minecraft-client-patched-{neo_version}.jar");
     let dest = lib_dir
         .join("net/neoforged/minecraft-client-patched")
         .join(neo_version)
         .join(&patched_name);
-    if dest.exists()
-        && dest
-            .metadata()
-            .map(|m| m.len() > 1_000_000)
-            .unwrap_or(false)
-    {
+    // 幂等跳过：patched jar 无公开 sha1，按"存在且 ≥1MB"粗校验（processor_outputs_are_current），
+    // 重装/修复场景不重新运行 installertools（避免杀软误报 + 数秒～数十秒 JVM 开销）。
+    if super::processor_outputs_are_current(&[(&dest, None)]) {
         return Ok(());
     }
 
@@ -144,7 +145,7 @@ pub(super) async fn extract_neoforge_client(
 
     // 2. 等待 vanilla client 就绪（runner 的 ClientJar 步骤与之并行，轮询至多 120s）
     // 稳定检测：连续 3 次（间隔 500ms）大小不变即视为下载完成（部分写入会损坏 zip）。
-    let vanilla_jar = wait_for_vanilla_client(mc_dir, dir_name).await?;
+    let vanilla_jar = wait_for_vanilla_client(mc_dir, dir_name, cancel).await?;
 
     // 3. 下载 installertools fatjar（maven.neoforged.net + 镜像）
     let tools = tmp.join("neoforge-tools");
@@ -164,9 +165,9 @@ pub(super) async fn extract_neoforge_client(
             .map_err(|e| format!("下载 installertools 工具失败: {e}"))?;
     }
 
-    // 4. 运行 PROCESS_MINECRAFT_JAR
+    // 4. 运行 PROCESS_MINECRAFT_JAR（轮询取消：cancel 置位时 kill 工具进程）
     let java = resolve_java()?;
-    let output = tokio::process::Command::new(&java)
+    let child = tokio::process::Command::new(&java)
         .args([
             "-cp",
             &tool_dest.display().to_string(),
@@ -183,9 +184,11 @@ pub(super) async fn extract_neoforge_client(
             "--apply-patches",
             &client_lzma.display().to_string(),
         ])
-        .output()
-        .await
-        .map_err(|e| format!("运行 NeoForge 补丁工具失败: {e}"))?;
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("启动 NeoForge 补丁工具失败: {e}"))?;
+    let output = super::run_installer_command(child, cancel, "NeoForge 补丁工具").await?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let tail: Vec<&str> = stderr.lines().rev().take(15).collect();

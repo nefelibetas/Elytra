@@ -9,7 +9,11 @@ pub async fn fetch_version_json_text(
     config: &DownloaderConfig,
 ) -> Result<String, String> {
     config
-        .fetch_with_fallback(config.file_source_mode, |s| s.mirror_url(version_url))
+        .fetch_with_fallback(
+            config.file_source_mode,
+            crate::downloader::source::CacheBehaviour::DefaultTtl,
+            |s| s.mirror_url(version_url),
+        )
         .await
         .map_err(|e| format!("获取 version json 失败: {e}"))
 }

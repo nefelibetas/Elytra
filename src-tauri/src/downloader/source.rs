@@ -9,13 +9,29 @@ use std::time::{Duration, Instant};
 use crate::config::downloader::model::{DownloadSource, DownloadSourceMode, DownloaderConfig};
 use crate::downloader::fetcher::http;
 
+/// 元数据请求的缓存/网络行为（离线模式 strict cache-only 的语义载体）：
+/// - `DefaultTtl`：缓存优先（TTL 内命中直接返回），未命中发网络并写缓存——默认行为；
+/// - `CacheOnly`：只读缓存——命中返回，未命中直接报错，**绝不发网络请求**（离线模式）；
+/// - `MustRevalidate`：忽略缓存读，强制网络并写缓存（在线场景显式刷新）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CacheBehaviour {
+    #[default]
+    DefaultTtl,
+    CacheOnly,
+    MustRevalidate,
+}
+
 impl DownloaderConfig {
     /// 按模式返回依次尝试的源列表。
+    /// Auto（自适应路由）：源顺序仅作 URL 模板构造兜底，实际路由由 fetcher 层
+    /// 按资源类 + 健康度决定（官方 → 镜像候选即时生成），此处按官方优先。
     pub(crate) fn sources_in_order(&self, mode: DownloadSourceMode) -> Vec<&DownloadSource> {
         match mode {
             DownloadSourceMode::OfficialOnly => vec![&self.sources[0]],
             DownloadSourceMode::ChinaOnly => vec![&self.sources[1]],
-            DownloadSourceMode::PreferOfficial => vec![&self.sources[0], &self.sources[1]],
+            DownloadSourceMode::PreferOfficial | DownloadSourceMode::Auto => {
+                vec![&self.sources[0], &self.sources[1]]
+            }
             DownloadSourceMode::PreferChina => vec![&self.sources[1], &self.sources[0]],
         }
     }
@@ -29,18 +45,32 @@ impl DownloaderConfig {
     /// 优先模式：主源超过 SLOW_SOURCE_TIMEOUT_SECS 未完成（过慢）即降级到备用源，不等待失败。
     /// 结果按主源 URL 缓存 TTL 10 分钟（maven-metadata / loader 列表等低频变化数据，
     /// 冷启动后二次访问免网络等待）。
+    /// `cache` 为 `CacheOnly` 时只读缓存、绝不发网络（离线模式语义）。
     pub async fn fetch_with_fallback(
         &self,
         mode: DownloadSourceMode,
+        cache: CacheBehaviour,
         make_url: impl Fn(&DownloadSource) -> String,
     ) -> Result<String, String> {
         let key = make_url(self.sources_in_order(mode)[0]);
-        if let Some(cached) = list_cache_get(&key) {
-            return Ok(cached);
+        match cache {
+            CacheBehaviour::CacheOnly => list_cache_get(&key).ok_or_else(|| {
+                "离线模式：该元数据无缓存（需联网获取一次后才能离线使用，请联网后重试）".to_string()
+            }),
+            CacheBehaviour::MustRevalidate => {
+                let text = self.fetch_with_fallback_uncached(mode, make_url).await?;
+                list_cache_set(key, text.clone());
+                Ok(text)
+            }
+            CacheBehaviour::DefaultTtl => {
+                if let Some(cached) = list_cache_get(&key) {
+                    return Ok(cached);
+                }
+                let text = self.fetch_with_fallback_uncached(mode, make_url).await?;
+                list_cache_set(key, text.clone());
+                Ok(text)
+            }
         }
-        let text = self.fetch_with_fallback_uncached(mode, make_url).await?;
-        list_cache_set(key, text.clone());
-        Ok(text)
     }
 
     async fn fetch_with_fallback_uncached(
@@ -74,12 +104,14 @@ impl DownloaderConfig {
     }
 
     /// Try fetching JSON from each source; returns first success（经文本层缓存复用）。
+    /// `cache` 为 `CacheOnly` 时只读缓存、绝不发网络（离线模式语义）。
     pub async fn fetch_json_with_fallback<T: serde::de::DeserializeOwned>(
         &self,
         mode: DownloadSourceMode,
+        cache: CacheBehaviour,
         make_url: impl Fn(&DownloadSource) -> String,
     ) -> Result<T, String> {
-        let text = self.fetch_with_fallback(mode, make_url).await?;
+        let text = self.fetch_with_fallback(mode, cache, make_url).await?;
         serde_json::from_str(&text).map_err(|e| format!("解析 JSON 失败: {}", e))
     }
 }
@@ -124,5 +156,52 @@ mod tests {
         assert_eq!(list_cache_get(url).as_deref(), Some("v1"));
         list_cache_set(url.into(), "v2".into());
         assert_eq!(list_cache_get(url).as_deref(), Some("v2"), "覆盖写应生效");
+    }
+
+    #[tokio::test]
+    async fn cache_only_reads_cache_and_rejects_miss() {
+        let cfg = DownloaderConfig::default();
+        let make = |s: &DownloadSource| format!("{}/cacheonly-key.json", s.manifest_url);
+        let key = make(cfg.sources_in_order(DownloadSourceMode::PreferOfficial)[0]);
+        // 未命中：CacheOnly 直接报错（绝不发网络请求——即使 URL 不可达也只报缓存缺失）
+        let err = cfg
+            .fetch_with_fallback(
+                DownloadSourceMode::PreferOfficial,
+                CacheBehaviour::CacheOnly,
+                make,
+            )
+            .await
+            .unwrap_err();
+        assert!(err.contains("离线模式"), "CacheOnly 未命中应报离线错误: {err}");
+        // 命中：返回缓存内容，不发网络
+        list_cache_set(key, "cached-v1".into());
+        let ok = cfg
+            .fetch_with_fallback(
+                DownloadSourceMode::PreferOfficial,
+                CacheBehaviour::CacheOnly,
+                make,
+            )
+            .await
+            .unwrap();
+        assert_eq!(ok, "cached-v1");
+    }
+
+    #[tokio::test]
+    async fn must_revalidate_ignores_cache() {
+        let cfg = DownloaderConfig::default();
+        let make = |s: &DownloadSource| format!("{}/mustrevalidate-key.json", s.manifest_url);
+        let key = make(cfg.sources_in_order(DownloadSourceMode::PreferOfficial)[0]);
+        list_cache_set(key, "stale".into());
+        // MustRevalidate 忽略缓存读，强制发网络（该路径不存在 → HTTP 404 / 网络错误），
+        // 不会返回缓存中的 stale 内容；离线环境同样报网络错误，测试不依赖网络可用性。
+        let err = cfg
+            .fetch_with_fallback(
+                DownloadSourceMode::PreferOfficial,
+                CacheBehaviour::MustRevalidate,
+                make,
+            )
+            .await
+            .unwrap_err();
+        assert!(!err.is_empty());
     }
 }

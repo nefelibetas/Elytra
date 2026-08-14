@@ -5,14 +5,14 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 use crate::config::downloader::model::DownloaderConfig;
 use crate::constants;
 use crate::downloader::fetcher;
 use crate::persist;
 use crate::task::model::{DownloadFileKind, DownloadFilesTask};
-use crate::task::{self, StepStatus, TaskProgress, TaskStatus};
+use crate::task::{self, StepStatus, TaskProgress, TaskStatus, WaitingDecision};
 
 use super::progress::{
     cancelled, set_cancelled, set_error, set_phase, step_done, update_progress,
@@ -31,6 +31,14 @@ pub fn file_dest(
         .join(filename)
 }
 
+/// task-waiting-user 事件 payload（前端 mirror）。
+#[derive(serde::Serialize, Clone)]
+pub struct WaitingUserPayload {
+    pub task_id: String,
+    pub file_name: String,
+    pub error: String,
+}
+
 /// 批量文件下载任务：mod / 资源包 / 数据包 / 光影包。
 /// 步骤 = 每文件一步；逐文件下载到 .elytra-part 临时文件后 rename，取消/失败清理临时文件。
 /// 进度：文件计数 + 字节累计（当前文件增量），EMA 速度，复用 update_progress。
@@ -42,6 +50,7 @@ pub async fn run_files_task(
 ) {
     let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
     let mc = config.minecraft_dir_abs();
+    let task_id = progress.lock().unwrap().task_id.clone();
 
     let items: Vec<(std::path::PathBuf, std::path::PathBuf)> = task
         .files
@@ -158,18 +167,51 @@ pub async fn run_files_task(
                 }
             }
         };
-        let result = fetcher::fetch(&f.url, tmp, Some(cb)).await;
-        if cancelled(cancel) {
-            let _ = std::fs::remove_file(tmp);
+        // 单文件下载 + 失败重试循环：用户可决策"跳过/重试/取消"（WaitingForUser 暂停），
+        // 不再一文件失败整任务失败——批量 mod 下载常见单文件源失效（404/镜像未同步）。
+        let mut decided = WaitingDecision::Retry;
+        while decided == WaitingDecision::Retry {
+            let result = fetcher::fetch(&f.url, tmp, Some(&cb)).await;
+            if cancelled(cancel) {
+                let _ = std::fs::remove_file(tmp);
+                emit_handle.abort();
+                return set_cancelled(&app, progress);
+            }
+            match result {
+                Ok(_) => decided = WaitingDecision::Skip, // 下载成功，跳出重试循环
+                Err(e) => {
+                    let _ = std::fs::remove_file(tmp);
+                    // 暂停：发事件给前端弹窗，轮询用户决策（200ms，cancel 视为取消）
+                    let slot = task::global().begin_wait(&task_id);
+                    let _ = app.emit(
+                        crate::events::TASK_WAITING_USER,
+                        WaitingUserPayload {
+                            task_id: task_id.clone(),
+                            file_name: f.filename.clone(),
+                            error: e.to_string(),
+                        },
+                    );
+                    decided = loop {
+                        if cancelled(cancel) {
+                            task::global().end_wait(&task_id);
+                            emit_handle.abort();
+                            return set_cancelled(&app, progress);
+                        }
+                        if let Some(d) = task::global().waiting_decision(&task_id) {
+                            task::global().end_wait(&task_id);
+                            break d;
+                        }
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                    };
+                    drop(slot);
+                }
+            }
+        }
+        if decided == WaitingDecision::Cancel {
             emit_handle.abort();
             return set_cancelled(&app, progress);
         }
-        if let Err(e) = result {
-            let _ = std::fs::remove_file(tmp);
-            emit_handle.abort();
-            return set_error(&app, progress, format!("下载 {} 失败:\n{}", f.filename, e));
-        }
-        // 同名文件直接覆盖（简单策略；sha1 去重等留给未来模组中心）
+        // Skip 或成功：跳过该文件继续（用户明示跳过 → 该步视为完成）
         if let Err(e) = std::fs::rename(tmp, dest) {
             let _ = std::fs::remove_file(tmp);
             emit_handle.abort();

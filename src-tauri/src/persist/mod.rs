@@ -1,4 +1,5 @@
 mod store;
+pub mod secrets;
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;

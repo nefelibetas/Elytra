@@ -25,6 +25,7 @@ pub enum StepStatus {
 }
 
 /// 任务进度快照（task-progress 事件推送体）。
+/// 注意：task/mod.rs 有同名字段的镜像定义（模块门面实际生效），此处同步维护。
 #[derive(Debug, Clone, Serialize)]
 pub struct TaskProgress {
     pub task_id: String,
@@ -32,6 +33,8 @@ pub struct TaskProgress {
     pub status: TaskStatus, // pending | running | done | error | cancelled（serde lowercase）
     pub progress: f64,      // 0.0 – 100.0
     pub speed_bps: f64,
+    /// 预计剩余秒数；停滞（>4s 无字节推进）或速度过低时 None。
+    pub eta_seconds: Option<u64>,
     pub completed_files: u32,
     pub total_files: u32,
     pub completed_bytes: u64,

@@ -79,6 +79,7 @@ impl EmitLoop {
         tokio::spawn(async move {
             let mut last_bytes: u64 = 0;
             let mut last_sample = Instant::now();
+            let mut last_progress_at = Instant::now();
             let mut speed_ema: f64 = 0.0;
             loop {
                 let jd = self.jar_done.load(Ordering::Relaxed);
@@ -106,6 +107,9 @@ impl EmitLoop {
                     // 实时速度：字节增量差分 + EMA 平滑（每轮采样，间隔 >=300ms 才更新）
                     let cur_bytes = self.bytes.load(Ordering::Relaxed) + jb;
                     let now = Instant::now();
+                    if cur_bytes > last_bytes {
+                        last_progress_at = now; // 有实际字节推进才刷新停滞时钟
+                    }
                     let dt = now.duration_since(last_sample).as_secs_f64();
                     if dt >= 0.3 && cur_bytes >= last_bytes {
                         let instant = (cur_bytes - last_bytes) as f64 / dt;
@@ -118,6 +122,17 @@ impl EmitLoop {
                         last_sample = now;
                     }
                     p.speed_bps = speed_ema;
+                    // ETA：剩余字节 / 速度；停滞（>4s 无推进）或速度过低（<1KB/s）时置 None，
+                    // 不显示假数字（镜像黑洞/下载死掉时进度条干等）。
+                    let remaining = self.total_bytes.saturating_sub(completed_bytes);
+                    p.eta_seconds = if speed_ema >= 1024.0
+                        && remaining > 0
+                        && now.duration_since(last_progress_at) <= Duration::from_secs(4)
+                    {
+                        Some((remaining as f64 / speed_ema).ceil() as u64)
+                    } else {
+                        None
+                    };
                     p.completed_files = completed;
                     p.completed_bytes = completed_bytes;
                     // 最终总数（含 natives/安装步骤）每 tick 写回，剩余文件不会变负
@@ -259,6 +274,7 @@ pub fn spawn_tail_loop(
             let mut tick = tokio::time::interval(Duration::from_millis(150));
             let mut last_bytes: u64 = 0;
             let mut last_sample = Instant::now();
+            let mut last_progress_at = Instant::now();
             let mut speed_ema: f64 = 0.0;
             let mut base_done: u64 = 0;
             let mut base_cnt: u64 = 0;
@@ -267,6 +283,9 @@ pub fn spawn_tail_loop(
                 tick.tick().await;
                 let cur = bytes.load(Ordering::Relaxed);
                 let now = Instant::now();
+                if cur > last_bytes {
+                    last_progress_at = now;
+                }
                 let dt = now.duration_since(last_sample).as_secs_f64();
                 if dt >= 0.3 && cur >= last_bytes {
                     let instant = (cur - last_bytes) as f64 / dt;
@@ -289,6 +308,16 @@ pub fn spawn_tail_loop(
                 }
                 p.speed_bps = speed_ema;
                 p.completed_bytes = base_done + cur.saturating_sub(base_cnt);
+                // ETA：剩余字节 / 速度；停滞（>4s 无推进）或速度过低时 None
+                let remaining = p.total_bytes.saturating_sub(p.completed_bytes);
+                p.eta_seconds = if speed_ema >= 1024.0
+                    && remaining > 0
+                    && now.duration_since(last_progress_at) <= Duration::from_secs(4)
+                {
+                    Some((remaining as f64 / speed_ema).ceil() as u64)
+                } else {
+                    None
+                };
                 emit(&app, &p);
             }
         }

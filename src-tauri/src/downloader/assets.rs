@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 
 use super::hash::file_sha1_matches;
+use super::reuse::{classify_local_artifact, copy_verified_local, LocalRuntimeSource};
 use crate::config::downloader::model::DownloaderConfig;
 use crate::downloader::fetcher;
 
@@ -48,7 +49,11 @@ pub async fn fetch_asset_index(
 
     // 资源索引：主源过慢（5s）自动降级到备用源
     let text = config
-        .fetch_with_fallback(config.file_source_mode, |s| s.mirror_url(index_url))
+        .fetch_with_fallback(
+            config.file_source_mode,
+            crate::downloader::source::CacheBehaviour::DefaultTtl,
+            |s| s.mirror_url(index_url),
+        )
         .await
         .map_err(|e| format!("获取资源索引失败: {e}"))?;
 
@@ -61,6 +66,9 @@ pub async fn fetch_asset_index(
     Ok(text)
 }
 
+/// 批量下载资源文件（objects/{sub}/{hash}，逐文件 sha1 校验）。
+/// `reuse`：可选本地运行时复用根——dest 缺失且复用根有 size+sha1 匹配的同 hash 文件时
+/// 本地复制（计入进度）而非网络下载（迁移场景 assets 数百 MB 免重下）。
 #[allow(clippy::too_many_arguments)]
 pub async fn download_assets(
     index_url: &str,
@@ -68,6 +76,7 @@ pub async fn download_assets(
     index_sha1: &str,
     config: &DownloaderConfig,
     concurrency: usize,
+    reuse: Option<LocalRuntimeSource>,
     counter: Arc<AtomicU32>,
     bytes_counter: Arc<AtomicU64>,
     step_bytes: Arc<AtomicU64>,
@@ -94,13 +103,18 @@ pub async fn download_assets(
             break;
         }
         let hash = obj.hash.clone();
+        let obj_size = obj.size; // 提前取值：spawn 的 async move 不能借用 index
         let sub = hash[..2].to_string();
         let dest = objects_dir.join(&sub).join(&hash);
         if dest.exists() && file_sha1_matches(&dest, &hash) {
             continue;
         }
 
-        // 每个源各构造一个 URL，下载时主源过慢/失败自动降级
+        // 本地运行时复用：dest 缺失时先问复用根（hash 即 sha1，size 校验 + 流式 sha1）。
+        // 命中 → 复制；未命中 → 网络下载（多源 URL 照常构造）。
+        let local = reuse.as_ref().and_then(|r| {
+            classify_local_artifact(r, &format!("assets/objects/{}/{}", sub, hash), Some(obj_size), Some(&hash))
+        });
         let urls: Vec<String> = sources
             .iter()
             .map(|s| format!("{}/{}/{}", s.resource_url, sub, hash))
@@ -126,13 +140,32 @@ pub async fn download_assets(
                     s.fetch_add(delta, Ordering::Relaxed);
                 }
             };
-            // 逐源 sha1 校验下载：内容不匹配自动换下一源/下一轮重试（镜像缓存陈旧场景）
-            match fetcher::fetch_verified(&urls, &dest, Some(progress), &hash).await {
-                Ok(_) => {
-                    ctr.fetch_add(1, Ordering::Relaxed);
-                    Ok(())
+            // 复用分支：本地复制；失败降级为网络下载，不致命
+            if let Some(src) = local {
+                match copy_verified_local(&src, &dest, obj_size, Some(progress.clone())).await {
+                    Ok(_) => {
+                        ctr.fetch_add(1, Ordering::Relaxed);
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        match fetcher::fetch_verified(&urls, &dest, Some(progress), &hash).await {
+                            Ok(_) => {
+                                ctr.fetch_add(1, Ordering::Relaxed);
+                                Ok(())
+                            }
+                            Err(e2) => Err(format!("{}: {}（本地复用失败: {}）", hash, e2, e)),
+                        }
+                    }
                 }
-                Err(e) => Err(format!("{}: {}", hash, e)),
+            } else {
+                // 逐源 sha1 校验下载：内容不匹配自动换下一源/下一轮重试（镜像缓存陈旧场景）
+                match fetcher::fetch_verified(&urls, &dest, Some(progress), &hash).await {
+                    Ok(_) => {
+                        ctr.fetch_add(1, Ordering::Relaxed);
+                        Ok(())
+                    }
+                    Err(e) => Err(format!("{}: {}", hash, e)),
+                }
             }
         }));
     }

@@ -40,8 +40,12 @@ async fn fetch_versions<T: serde::de::DeserializeOwned>(
     make_url: impl Fn(&DownloadSource) -> String,
 ) -> Result<Vec<T>, String> {
     let cfg = config();
-    cfg.fetch_json_with_fallback::<Vec<T>>(cfg.file_source_mode, make_url)
-        .await
+    cfg.fetch_json_with_fallback::<Vec<T>>(
+        cfg.file_source_mode,
+        crate::downloader::source::CacheBehaviour::DefaultTtl,
+        make_url,
+    )
+    .await
 }
 
 /// 拉取 maven-metadata.xml 版本列表（多源回退）。
@@ -50,7 +54,11 @@ async fn fetch_maven_versions(
 ) -> Result<Vec<String>, String> {
     let cfg = config();
     let xml = cfg
-        .fetch_with_fallback(cfg.file_source_mode, make_url)
+        .fetch_with_fallback(
+            cfg.file_source_mode,
+            crate::downloader::source::CacheBehaviour::DefaultTtl,
+            make_url,
+        )
         .await?;
     Ok(parse_maven_versions(&xml))
 }
@@ -208,7 +216,7 @@ pub async fn fabric_api_versions(mc_version: &str) -> Result<Vec<FabricApiVersio
         DownloadSourceMode::OfficialOnly => vec![official],
         DownloadSourceMode::ChinaOnly => vec![china],
         DownloadSourceMode::PreferChina => vec![china, official],
-        DownloadSourceMode::PreferOfficial => vec![official, china],
+        DownloadSourceMode::PreferOfficial | DownloadSourceMode::Auto => vec![official, china],
     };
     let mut last_err = String::new();
     for (i, url) in urls.iter().enumerate() {

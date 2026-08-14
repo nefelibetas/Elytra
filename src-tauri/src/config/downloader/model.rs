@@ -121,9 +121,66 @@ fn china() -> DownloadSource {
     }
 }
 
+/// 资源类（按 URL host 自动推断，供下载路由选择镜像候选/排序）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceClass {
+    /// 客户端 jar / assets 索引 / version json（piston-meta/piston-data/launcher 域）
+    Game,
+    /// assets 对象文件（resources.download.minecraft.net）
+    Asset,
+    /// 支持库（libraries.minecraft.net）
+    Library,
+    /// ModLoader 构件与清单（maven.minecraftforge.net / maven.neoforged.net / maven.fabricmc.net / meta.fabricmc.net）
+    Loader,
+    /// Java runtime（piston-meta 且路径含 java-runtime）
+    Java,
+    /// Modrinth / CurseForge 社区资源（cdn.modrinth.com / forgecdn / MCIM 镜像）
+    Community,
+    /// 未识别
+    Other,
+}
+
+/// 按 URL host 推断资源类（BMCLAPI/MCIM 镜像 URL 按映射前域名推断）。
+/// 未知 → Other（不做镜像候选生成，保持原始 URL 列表）。
+pub fn infer_resource_class(url: &str) -> ResourceClass {
+    if url.contains("java-runtime") && url.contains("piston") {
+        return ResourceClass::Java;
+    }
+    if url.contains("resources.download.minecraft.net")
+        || (url.contains("bmclapi") && url.contains("/assets/"))
+    {
+        return ResourceClass::Asset;
+    }
+    if url.contains("libraries.minecraft.net") {
+        return ResourceClass::Library;
+    }
+    if url.contains("piston-meta")
+        || url.contains("piston-data")
+        || url.contains("launcher.mojang.com")
+        || url.contains("launchermeta.mojang.com")
+    {
+        return ResourceClass::Game;
+    }
+    if url.contains("minecraftforge.net")
+        || url.contains("neoforged.net")
+        || url.contains("fabricmc.net")
+    {
+        return ResourceClass::Loader;
+    }
+    if url.contains("modrinth.com")
+        || url.contains("forgecdn.net")
+        || url.contains("curseforge.com")
+        || url.contains("mcimirror.top")
+    {
+        return ResourceClass::Community;
+    }
+    ResourceClass::Other
+}
+
 /// 下载源选择模式：
 /// - officialOnly / chinaOnly：固定单一源，失败不回退
 /// - preferOfficial / preferChina：优先主源，失败时回退到另一源
+/// - auto：按资源类 + 路由健康度自适应排序（镜像候选自动生成，Loader 资源镜像先行）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum DownloadSourceMode {
@@ -132,6 +189,8 @@ pub enum DownloadSourceMode {
     PreferChina,
     OfficialOnly,
     ChinaOnly,
+    /// 自适应：文件下载按 URL 自动分类，镜像候选即时生成并按健康度排序。
+    Auto,
 }
 
 fn default_sources() -> Vec<DownloadSource> {
@@ -201,9 +260,9 @@ impl DownloaderConfig {
     /// 文件下载主源（按 file_source_mode 选择），文件下载失败不会跨源回退。
     pub fn file_primary_source(&self) -> Option<&DownloadSource> {
         match self.file_source_mode {
-            DownloadSourceMode::OfficialOnly | DownloadSourceMode::PreferOfficial => {
-                self.sources.first()
-            }
+            DownloadSourceMode::OfficialOnly
+            | DownloadSourceMode::PreferOfficial
+            | DownloadSourceMode::Auto => self.sources.first(),
             DownloadSourceMode::ChinaOnly | DownloadSourceMode::PreferChina => self.sources.last(),
         }
     }
