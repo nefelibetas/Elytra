@@ -79,6 +79,16 @@ export async function logoutMs() {
   msAccount.value = null;
 }
 
+/** 取消进行中的微软登录：abort 后端回调等待（释放端口），界面回到可重新登录态。 */
+export async function cancelMsLogin() {
+  msLoginState.value = "idle";
+  try {
+    await invoke("cancel_ms_login");
+  } catch {
+    // 端口清理失败不影响前端状态（后端超时 5 分钟后自动释放）
+  }
+}
+
 let loginListenerReady = false;
 
 /** 幂等注册 ms-login-complete 监听（页面 onMounted 调用一次）。 */

@@ -4,7 +4,7 @@ import { reactive, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { StepStatus } from "./download";
-import { EVT_GAME_EXITED } from "./events";
+import { EVT_GAME_EXITED, EVT_GAME_WINDOW_VISIBLE } from "./events";
 import { authMode, msAccount, username, type MsAccountInfo } from "./auth";
 import { selectedVersion, setSelected, getSavedDir } from "./selectedVersion";
 import { showError } from "./alert";
@@ -135,10 +135,18 @@ export async function doLaunch(navigateToDownload: () => void) {
       await invoke("save_last_offline_username", { username: name });
     }
 
-    // ③ 等待游戏窗口出现（JVM 启动 + 游戏初始化约需数秒）
-    await new Promise(r => setTimeout(r, 4000));
+    // ③ 等待游戏窗口出现（后端轮询可见窗口推送事件；90s 兜底防卡死）
+    step("等待游戏窗口", "running");
+    const windowShown = await waitGameWindow(selectedVersion.value);
     step("等待游戏窗口", "done");
     launchState.phase = "done";
+    if (!windowShown) {
+      showError(
+        "未检测到游戏窗口（启动可能缓慢或进程已退出），请查看日志\n" +
+        "版本：\n日志：.minecraft/logs/elytra-launch.log",
+        true,
+      );
+    }
 
     // 完成后稍作停留再切回原样
     setTimeout(() => {
@@ -151,6 +159,34 @@ export async function doLaunch(navigateToDownload: () => void) {
 }
 
 let gameExitListenerReady = false;
+
+/** 等待游戏主窗口：window-visible 事件到达（后端轮询命中）即成功；
+ *  进程先退出则按窗口是否已出现过判定；90s 无事件兜底失败（防卡死）。 */
+function waitGameWindow(label: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let windowSeen = false;
+    const unlisteners: Array<() => void> = [];
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      for (const u of unlisteners) u();
+      resolve(ok);
+    };
+    const timer = setTimeout(() => finish(false), 90_000);
+    listen<[number, string]>(EVT_GAME_WINDOW_VISIBLE, (ev) => {
+      if (ev.payload[1] !== label) return;
+      windowSeen = true;
+      finish(true);
+    }).then(u => unlisteners.push(u));
+    listen<[number, string, number | null, string | null]>(EVT_GAME_EXITED, (ev) => {
+      if (ev.payload[1] !== label) return;
+      // 任意退出码：窗口已见则视为"已成功等待"，否则判定失败
+      finish(windowSeen);
+    }).then(u => unlisteners.push(u));
+  });
+}
 
 /** 幂等注册 game-exited 监听（页面 onMounted 调用一次）：非零退出码弹错误提示。 */
 export async function ensureGameExitListener() {

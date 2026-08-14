@@ -11,7 +11,8 @@ import { CATEGORY_ICONS } from "../utils/versionIcons";
 import VersionItem from "./VersionItem.vue";
 import AlertDialog from "./AlertDialog.vue";
 import { dlState } from "../store/download";
-import { authMode, msAccount, loadMsAccount } from "../store/auth";
+import { authMode, msAccount, loadMsAccount, username as offlineUsername } from "../store/auth";
+import { selectedVersion, setSelected, clearSelected } from "../store/selectedVersion";
 
 const route = useRoute();
 const router = useRouter();
@@ -74,8 +75,10 @@ async function confirmRename() {
       newName,
     });
     renameDialog.value = false;
-    // 重命名后回到版本选择页并刷新列表
-    router.push({ path: "/version-select", query: { refresh: String(Date.now()) } });
+    // 重命名后保持选中（启动页按钮仍指向该版本新名）
+    setSelected(newName);
+    // 回到版本选择页并刷新列表（进入页面 onMounted 自动刷新）
+    router.push({ path: "/version-select" });
   } catch (e) {
     renameError.value = String(e);
   }
@@ -91,7 +94,11 @@ async function confirmDelete() {
   try {
     await invoke("delete_version_dir", { versionName: versionName.value });
     showToast(`版本「${versionName.value}」已经删除`);
-    router.push({ path: "/version-select", query: { refresh: String(Date.now()) } });
+    // 删除的是当前选中版本 → 清理持久化选择（启动页按钮回到"下载游戏"入口）
+    if (selectedVersion.value === versionName.value) {
+      clearSelected();
+    }
+    router.push({ path: "/version-select" });
   } catch (e) {
     showToast(String(e));
   }
@@ -170,8 +177,11 @@ async function exportScript() {
       uuid = acc.uuid;
       xuid = acc.xuid;
     } else {
+      // 优先当前输入框用户名（未启动过也正确），回退上次保存，最后 Steve
       username =
-        (await invoke<string>("get_last_offline_username")) || "Steve";
+        offlineUsername.value.trim() ||
+        (await invoke<string>("get_last_offline_username")) ||
+        "Steve";
     }
 
     await invoke("export_launch_script", {

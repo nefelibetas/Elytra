@@ -6,7 +6,7 @@ import AlertDialog from "./AlertDialog.vue";
 import VersionCard from "./VersionCard.vue";
 import VersionItem from "./VersionItem.vue";
 import {
-  versions, versionsLoading, versionsError, expanded, categories,
+  versions, versionsLoading, versionsError, expanded, categories, searchQuery,
   pickVersion, openDelete,
   deleteDialog, deleteTarget, confirmDeleteVersion,
 } from "../store/gameDirs";
@@ -36,42 +36,55 @@ function goDownload() {
       <p>该目录下没有已安装的游戏版本</p>
       <button class="vs-empty-btn" @click="goDownload">下载游戏</button>
     </div>
-    <div v-else class="vs-cards">
-      <VersionCard
-        v-for="cat in categories"
-        :key="cat.key"
-        :title="cat.title"
-        :count="cat.items.length"
-        :expanded="expanded[cat.key]"
-        @toggle="expanded[cat.key] = !expanded[cat.key]"
-      >
-        <VersionItem
-          v-for="v in cat.items"
-          :key="v.name"
-          :icon-src="v.icon"
-          :version-id="v.name"
-          :subtitle="v.loaderVersion || '原版'"
-          @select="selectAndBack(v.name)"
+    <template v-else>
+      <div class="vs-search">
+        <input
+          v-model="searchQuery"
+          class="vs-search-input"
+          type="text"
+          placeholder="搜索版本…"
+        />
+      </div>
+      <div v-if="categories.length === 0" class="vs-empty">
+        <p>没有匹配「{{ searchQuery.trim() }}」的版本</p>
+      </div>
+      <div v-else class="vs-cards">
+        <VersionCard
+          v-for="cat in categories"
+          :key="cat.key"
+          :title="cat.title"
+          :count="cat.items.length"
+          :expanded="expanded[cat.key]"
+          @toggle="expanded[cat.key] = !expanded[cat.key]"
         >
-          <template #action>
-            <button
-              class="vs-item-setup"
-              v-tooltip="'版本设置'"
-              @click.stop="goSetup(v.name)"
-            >
-              <Settings2 :size="15" />
-            </button>
-            <button
-              class="vs-item-del"
-              v-tooltip="'删除版本'"
-              @click.stop="openDelete(v.name)"
-            >
-              <Trash2 :size="15" />
-            </button>
-          </template>
-        </VersionItem>
-      </VersionCard>
-    </div>
+          <VersionItem
+            v-for="v in cat.items"
+            :key="v.name"
+            :icon-src="v.icon"
+            :version-id="v.name"
+            :subtitle="v.loaderVersion || '原版'"
+            @select="selectAndBack(v.name)"
+          >
+            <template #action>
+              <button
+                class="vs-item-setup"
+                v-tooltip="'版本设置'"
+                @click.stop="goSetup(v.name)"
+              >
+                <Settings2 :size="15" />
+              </button>
+              <button
+                class="vs-item-del"
+                v-tooltip="'删除版本'"
+                @click.stop="openDelete(v.name)"
+              >
+                <Trash2 :size="15" />
+              </button>
+            </template>
+          </VersionItem>
+        </VersionCard>
+      </div>
+    </template>
 
     <!-- 删除版本确认 dialog -->
     <AlertDialog v-model="deleteDialog" title="删除版本" :divider="false">
@@ -101,6 +114,31 @@ function goDownload() {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+/* 搜索框：版本列表顶部，flex 占位保持卡片布局稳定 */
+.vs-search {
+  margin-bottom: 12px;
+}
+
+.vs-search-input {
+  width: 100%;
+  padding: 7px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.vs-search-input:focus {
+  border-color: var(--color-brand);
+}
+
+.vs-search-input::placeholder {
+  color: var(--text-tertiary);
 }
 
 /* 版本选择场景：item 之间不显示分割线（下载页保持原样） */
