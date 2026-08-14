@@ -8,3 +8,5 @@ export const EVT_TASK_WAITING_USER = "task-waiting-user";
 export const EVT_MS_LOGIN_COMPLETE = "ms-login-complete";
 /** 游戏进程退出（[pid, versionLabel, exitCode, crashReport]；exitCode 非 0 = 异常退出，crashReport 为最新崩溃报告路径或 null） */
 export const EVT_GAME_EXITED = "game-exited";
+/** 游戏主窗口可见（[pid, versionLabel]；后端 EnumWindows 轮询判定） */
+export const EVT_GAME_WINDOW_VISIBLE = "game-window-visible";

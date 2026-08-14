@@ -4,7 +4,7 @@
 import { computed, onMounted, onUnmounted, watch } from "vue";
 import { ShieldCheck, User, UserRound, Shirt, Pencil, LogOut } from "@lucide/vue";
 import {
-  authMode, msAccount, username, setAuthMode, msLoginState, startMsLogin, logoutMs,
+  authMode, msAccount, username, setAuthMode, msLoginState, startMsLogin, logoutMs, cancelMsLogin,
 } from "../store/auth";
 import { avatarState, scheduleOfflineRender } from "../store/avatar";
 import { accountUi } from "../store/accountUi";
@@ -74,6 +74,7 @@ onUnmounted(() => window.removeEventListener("click", accountUi.closeMenus));
           <div v-if="msLoginState === 'waiting'" class="ms-login-waiting">
             <span class="ls-spin"></span>
             <span>请在浏览器中完成登录…</span>
+            <button class="ms-cancel" @click="cancelMsLogin">取消</button>
           </div>
           <template v-else-if="msAccount">
             <!-- 衣服：皮肤/披风菜单 -->
@@ -259,7 +260,8 @@ onUnmounted(() => window.removeEventListener("click", accountUi.closeMenus));
   font-weight: 400;
 }
 
-/* premium hover actions：始终占位（不影响头像/用户名位置），仅切换透明度 */
+/* premium hover actions：始终占位（不影响头像/用户名位置），仅切换透明度。
+   显示条件 hover / 键盘焦点（:focus-within）/ 菜单展开——三者任一即显示。 */
 .user-actions {
   position: relative;
   z-index: 1; /* 盖过 .user-area::before 热区，保证按钮可点击 */
@@ -271,6 +273,7 @@ onUnmounted(() => window.removeEventListener("click", accountUi.closeMenus));
 }
 
 .user-area:hover .user-actions,
+.user-area:focus-within .user-actions,
 .user-area.menu-open .user-actions {
   opacity: 1;
   pointer-events: auto;
@@ -335,6 +338,22 @@ onUnmounted(() => window.removeEventListener("click", accountUi.closeMenus));
   gap: 8px;
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+.ms-cancel {
+  padding: 2px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.ms-cancel:hover {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
 }
 
 .ls-spin {

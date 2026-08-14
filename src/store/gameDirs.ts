@@ -181,6 +181,13 @@ export async function confirmAdd() {
       path: addPath.value,
     });
     addDialog.value = false;
+    // 添加后自动激活新目录（刚加入的目录通常就是要用的），并加载其版本列表
+    const added = dirs.value.find(d => d.path === addPath.value);
+    if (added && added.path !== activePath.value) {
+      await selectDir(added);
+    } else if (added) {
+      await loadVersions();
+    }
   } catch (e) {
     addError.value = String(e);
   }
@@ -222,12 +229,19 @@ export const expanded = ref<Record<string, boolean>>(
   Object.fromEntries(CATEGORIES.map(c => [c.key, true])),
 );
 
+/** 版本过滤关键字（右侧列表顶部搜索框；按名称模糊匹配，大小写不敏感）。 */
+export const searchQuery = ref("");
+
 export const categories = computed(() =>
   CATEGORIES.map(c => ({
     ...c,
     items: versions.value
       .map(name => ({ name, ...classifyVersion(name) }))
       .filter(e => e.category === c.key)
+      .filter(e => {
+        const q = searchQuery.value.trim().toLowerCase();
+        return !q || e.name.toLowerCase().includes(q);
+      })
       .map(e => ({ ...e, icon: CATEGORY_ICONS[e.category] ?? CATEGORY_ICONS.vanilla })),
   })).filter(c => c.items.length > 0),
 );
