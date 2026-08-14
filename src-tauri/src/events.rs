@@ -6,5 +6,7 @@ pub const TASK_PROGRESS: &str = "task-progress";
 pub const MS_LOGIN_COMPLETE: &str = "ms-login-complete";
 /// 游戏进程退出（[pid, version_label] 元组）
 pub const GAME_EXITED: &str = "game-exited";
+/// 游戏主窗口可见（[pid, version_label] 元组；spawn 后后端轮询 EnumWindows 判定）
+pub const GAME_WINDOW_VISIBLE: &str = "game-window-visible";
 /// 批量文件下载失败挂起，等待用户决策（{ task_id, file_name, error }）
 pub const TASK_WAITING_USER: &str = "task-waiting-user";

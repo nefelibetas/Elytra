@@ -8,10 +8,19 @@ use crate::auth::model::MsAccount;
 use crate::auth::mojang;
 use crate::constants;
 
+/// 当前进行中的登录回调等待任务（取消登录时 abort 以释放回调端口；完成后残留无害，下次启动覆盖）。
+static LOGIN_TASK: std::sync::LazyLock<parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>>> =
+    std::sync::LazyLock::new(|| parking_lot::Mutex::new(None));
+
 /// 启动 Microsoft 登录：起本地回调服务、打开浏览器，返回授权 URL。
 /// 结果通过 `ms-login-complete` 事件推送。
 #[tauri::command]
 pub async fn start_ms_login(app: AppHandle) -> Result<String, String> {
+    // 中止上次未完成的登录（若有）：释放回调端口，保证重复点击登录可重入
+    if let Some(h) = LOGIN_TASK.lock().take() {
+        h.abort();
+    }
+
     let state = microsoft::generate_state();
     let pkce = microsoft::generate_pkce();
 
@@ -23,9 +32,10 @@ pub async fn start_ms_login(app: AppHandle) -> Result<String, String> {
 
     // 后台等待一次回调（含超时），完成后端口自动释放
     let app_handle = app.clone();
-    tokio::task::spawn(async move {
+    let handle = tokio::task::spawn(async move {
         account::wait_callback(app_handle, listener, &state, &pkce).await;
     });
+    *LOGIN_TASK.lock() = Some(handle);
 
     // 打开系统浏览器
     use tauri_plugin_opener::OpenerExt;
@@ -34,6 +44,14 @@ pub async fn start_ms_login(app: AppHandle) -> Result<String, String> {
         .map_err(|e| format!("打开浏览器失败：{e}"))?;
 
     Ok(auth_url)
+}
+
+/// 取消进行中的微软登录（abort 回调等待任务，释放回调端口；幂等，无任务时无操作）。
+#[tauri::command]
+pub fn cancel_ms_login() {
+    if let Some(h) = LOGIN_TASK.lock().take() {
+        h.abort();
+    }
 }
 
 /// 读取已保存的正版账号（无则 None）。
