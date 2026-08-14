@@ -415,27 +415,100 @@ pub async fn spawn_game(
         std::thread::spawn(move || drain_to_file(&mut se, &lp, true));
     }
 
-    // 后台线程等待进程退出后通知前端
+    // 后台线程：轮询游戏主窗口出现（可见后推送 game-window-visible）并等待进程退出。
+    // 合一循环：try_wait 非阻塞查退出，窗口轮询独立，进程退出后推送 game-exited 结束。
     let app_handle = app.clone();
     let version_label = version_dir_name.clone();
     let crash_dir = game_dir.join("crash-reports");
     std::thread::spawn(move || {
-        let status = child.wait();
-        // 退出码随事件送出：前端据此区分正常退出与崩溃（非 0 → 错误级提示）
-        let exit_code = status.ok().and_then(|s| s.code());
-        // 崩溃时定位最新 crash report 文件，随事件交给前端展示
-        let crash_report = if !matches!(exit_code, Some(0)) {
-            latest_crash_report(&crash_dir)
-        } else {
-            None
-        };
-        let _ = app_handle.emit(
-            crate::events::GAME_EXITED,
-            (pid, version_label, exit_code, crash_report),
-        );
+        let mut window_notified = false;
+        loop {
+            // 进程已退出：推送退出事件（含崩溃报告）并结束
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    // 退出码随事件送出：前端据此区分正常退出与崩溃（非 0 → 错误级提示）
+                    let exit_code = status.code();
+                    // 崩溃时定位最新 crash report 文件，随事件交给前端展示
+                    let crash_report = if !matches!(exit_code, Some(0)) {
+                        latest_crash_report(&crash_dir)
+                    } else {
+                        None
+                    };
+                    let _ = app_handle.emit(
+                        crate::events::GAME_EXITED,
+                        (pid, version_label, exit_code, crash_report),
+                    );
+                    return;
+                }
+                Ok(None) => {}
+                Err(_) => {
+                    // try_wait 失败（状态查询异常）：按未知退出处理，避免线程永久挂起
+                    let _ = app_handle.emit(
+                        crate::events::GAME_EXITED,
+                        (pid, version_label, None::<i32>, None::<String>),
+                    );
+                    return;
+                }
+            }
+            // 主窗口尚未可见：轮询一次（Windows EnumWindows 按 pid 匹配可见顶层窗口）
+            if !window_notified && process_has_visible_window(pid) {
+                window_notified = true;
+                let _ = app_handle.emit(
+                    crate::events::GAME_WINDOW_VISIBLE,
+                    (pid, version_label.clone()),
+                );
+            }
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        }
     });
 
     Ok(pid)
+}
+
+/// 该进程是否存在可见顶层窗口（Minecraft 主窗口）。
+/// Windows: EnumWindows 按 pid 匹配 + IsWindowVisible 判定；
+/// 其他平台无此能力，直接视为可见（保持旧行为，前端另有 90s 超时兜底）。
+#[cfg(target_os = "windows")]
+fn process_has_visible_window(pid: u32) -> bool {
+    use std::ffi::c_void;
+
+    extern "system" {
+        fn EnumWindows(
+            lp_enum_func: unsafe extern "system" fn(*mut c_void, isize) -> i32,
+            l_param: isize,
+        ) -> i32;
+        fn GetWindowThreadProcessId(h_wnd: *mut c_void, lpdw_process_id: *mut u32) -> u32;
+        fn IsWindowVisible(h_wnd: *mut c_void) -> i32;
+    }
+
+    #[repr(C)]
+    struct Search {
+        pid: u32,
+        found: bool,
+    }
+
+    unsafe extern "system" fn enum_proc(hwnd: *mut c_void, lparam: isize) -> i32 {
+        let s = &mut *(lparam as *mut Search);
+        let mut wpid: u32 = 0;
+        GetWindowThreadProcessId(hwnd, &mut wpid);
+        if wpid == s.pid && IsWindowVisible(hwnd) != 0 {
+            s.found = true;
+            0 // 停止枚举
+        } else {
+            1 // 继续
+        }
+    }
+
+    let mut search = Search { pid, found: false };
+    unsafe {
+        EnumWindows(enum_proc, &mut search as *mut Search as isize);
+    }
+    search.found
+}
+
+#[cfg(not(target_os = "windows"))]
+fn process_has_visible_window(_pid: u32) -> bool {
+    true
 }
 
 /// 返回目录下最新的 `crash-*.txt` 文件路径（崩溃报告）。

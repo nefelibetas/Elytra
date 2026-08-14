@@ -37,6 +37,8 @@ zip = "2"
 # 安装任务持久化（#6）：SQLite 存任务快照，崩溃/重启后恢复。
 # 运行时 SqlitePoolOptions（无 migrate 宏）；与 TOML 并存期间 Settings.toml 读写路径不动
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+# 锁：立即 unwrap 的场景用 parking_lot（无 poisoning 路径，guard 更小更快）
+parking_lot = "0.12"
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

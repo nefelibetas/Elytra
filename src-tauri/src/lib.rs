@@ -70,6 +70,7 @@ pub fn run() {
             commands::launch::get_last_offline_username,
             commands::launch::save_last_offline_username,
             commands::account::start_ms_login,
+            commands::account::cancel_ms_login,
             commands::account::get_ms_account,
             commands::account::clear_ms_account,
             commands::account::refresh_ms_account,
