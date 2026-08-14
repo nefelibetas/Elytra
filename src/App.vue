@@ -4,7 +4,7 @@ import { useRouter } from "vue-router";
 import TitleBar from "./component/TitleBar.vue";
 import DownloadFAB from "./component/DownloadFAB.vue";
 import AlertDialog from "./component/AlertDialog.vue";
-import { dlState, ensureListen } from "./store/download";
+import { dlState, ensureListen, checkInterrupted, waitingUser, decideWaitingTask } from "./store/download";
 import { startMemoryMonitor } from "./store/memory";
 import { toastState, showToast } from "./utils/toast";
 
@@ -95,6 +95,8 @@ onMounted(() => {
   document.addEventListener("pointerup", onSideButton, true);
   window.addEventListener("popstate", onPopState);
   ensureListen();
+  // 崩溃/重启恢复检查：拉取上次未完成的任务（DownloadDetail 横幅询问恢复）
+  checkInterrupted();
   // 应用启动即持续监听系统内存（设置页/启动页共用）
   startMemoryMonitor();
 });
@@ -127,6 +129,22 @@ onUnmounted(() => {
     <AlertDialog v-model="errorDialog" title="下载失败" :message="errorMessage" copyable>
       <p>下载失败，已清理该任务下载的文件，请重试</p>
     </AlertDialog>
+
+    <!-- 批量文件下载失败挂起：用户决策 跳过/重试/取消（WaitingForUser） -->
+    <Transition name="fade">
+      <div v-if="waitingUser" class="dialog-overlay" @click.self.stop>
+        <div class="waiting-dialog">
+          <h3 class="wd-title">下载失败</h3>
+          <p class="wd-file">{{ waitingUser.file_name }}</p>
+          <p class="wd-err">{{ waitingUser.error }}</p>
+          <div class="wd-actions">
+            <button class="wd-btn wd-retry" @click="decideWaitingTask('retry')">重试</button>
+            <button class="wd-btn" @click="decideWaitingTask('skip')">跳过</button>
+            <button class="wd-btn wd-cancel" @click="decideWaitingTask('cancel')">取消任务</button>
+          </div>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -145,9 +163,9 @@ html, body {
 }
 
 /* 桌面应用 UI：点击聚焦不显示浏览器默认焦点框（黑色 outline）。
-   Tab 键已被拦截、无键盘导航需求，保留 outline 只会产生视觉噪声。 */
+   键盘/编程聚焦保留品牌色可见轮廓（可访问性底线；Tab 键拦截时仅对编程焦点生效，无害）。 */
 :focus { outline: none; }
-:focus-visible { outline: none; }
+:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
 
 #app {
   height: 100%;
@@ -158,6 +176,12 @@ html, body {
 input, textarea {
   -webkit-user-select: text;
   user-select: text;
+}
+
+/* placeholder 全局统一（组件级自定义可覆盖） */
+::placeholder {
+  color: var(--text-tertiary);
+  opacity: 1;
 }
 
 :root {
@@ -171,35 +195,48 @@ input, textarea {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
-  /* brand */
-  --color-brand: #6366F1;
-  --color-brand-dark: #4F46E5;
-  --color-brand-hover: #5558E8;
-  --color-brand-bg: rgba(99, 102, 241, 0.08);
-  --color-brand-glow: rgba(99, 102, 241, 0.25);
-  --color-brand-gradient: linear-gradient(135deg, #6366F1, #818CF8);
+  /* brand —— 默认主题 Grass（草方块绿）：取自 Minecraft 草方块/翡翠。
+    多主题体系：data-theme 覆盖块见下（end 末影紫 / nether 下界橙 / ice 冰霜青）。
+    accent 小面积使用（标题栏非色块，激活态/启动按钮/焦点才用品牌色） */
+  --color-brand: #059669;
+  --color-brand-dark: #047857;
+  --color-brand-hover: #047857;
+  --color-brand-bg: rgba(5, 150, 105, 0.08);
+  --color-brand-glow: rgba(5, 150, 105, 0.22);
+  --color-brand-gradient: linear-gradient(135deg, #059669, #10B981);
 
   /* text */
-  --text-primary: #1E1B4B;
+  --text-primary: #1F2937;
   --text-secondary: #6B7280;
   --text-tertiary: #9CA3AF;
   --text-inverse: #FFFFFF;
 
   /* surface */
-  --surface-page: #EFEDF7;
-  --surface-header: var(--color-brand);
+  --surface-page: #F2F6F3;
+  --surface-header: var(--surface-elevated);
   --surface-card: #FFFFFF;
   --surface-elevated: #FFFFFF;
-  --surface-hover: rgba(0, 0, 0, 0.07);
+  --surface-input: var(--surface-card);
+  --surface-hover: rgba(15, 23, 42, 0.05);
 
   /* border */
-  --border-default: #E1E3EC;
-  --border-strong: #D1D5DB;
+  --border-default: #DFE5E1;
+  --border-strong: #CBD5D1;
 
   /* shadow */
-  --shadow-sm: 0 1px 2px rgba(30, 27, 75, 0.06);
-  --shadow-md: 0 2px 8px rgba(30, 27, 75, 0.08);
-  --shadow-lg: 0 4px 16px rgba(30, 27, 75, 0.10);
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 2px 8px rgba(15, 23, 42, 0.08);
+  --shadow-lg: 0 4px 16px rgba(15, 23, 42, 0.10);
+
+  /* 语义色（错误/成功/警示；危险操作与状态统一收口） */
+  --color-danger: #E5484D;
+  --color-danger-bg: rgba(229, 72, 77, 0.1);
+  --color-success: #10B981;
+  --color-warning: #D97706;
+
+  /* 弹窗遮罩 */
+  --overlay: rgba(15, 23, 42, 0.5);
+  --toast-bg: #1F2937;
 
   /* radius */
   --radius-sm: 6px;
@@ -207,7 +244,85 @@ input, textarea {
   --radius-lg: 12px;
 
   /* scrollbar */
-  --scrollbar-thumb: #D1D5DB;
+  --scrollbar-thumb: #CBD5D1;
+}
+
+/* ===== 主题 End（末影紫）：取自 Minecraft 末地 ===== */
+[data-theme="end"] {
+  --color-brand: #7C3AED;
+  --color-brand-dark: #6D28D9;
+  --color-brand-hover: #6D28D9;
+  --color-brand-bg: rgba(124, 58, 237, 0.08);
+  --color-brand-glow: rgba(124, 58, 237, 0.2);
+  --color-brand-gradient: linear-gradient(135deg, #7C3AED, #A855F7);
+
+  --text-primary: #241B45;
+  --text-secondary: #6B6580;
+  --text-tertiary: #9A93B0;
+
+  --surface-page: #F6F3FB;
+  --surface-hover: rgba(36, 27, 69, 0.06);
+
+  --border-default: #E3DEF1;
+  --border-strong: #D2CBEA;
+
+  --shadow-sm: 0 1px 2px rgba(36, 27, 69, 0.06);
+  --shadow-md: 0 2px 8px rgba(36, 27, 69, 0.08);
+  --shadow-lg: 0 4px 16px rgba(36, 27, 69, 0.10);
+
+  --scrollbar-thumb: #D2CBEA;
+}
+
+/* ===== 主题 Nether（下界橙/烈焰）：取自 Minecraft 下界 ===== */
+[data-theme="nether"] {
+  --color-brand: #EA580C;
+  --color-brand-dark: #C2410C;
+  --color-brand-hover: #C2410C;
+  --color-brand-bg: rgba(234, 88, 12, 0.08);
+  --color-brand-glow: rgba(234, 88, 12, 0.2);
+  --color-brand-gradient: linear-gradient(135deg, #EA580C, #F97316);
+
+  --text-primary: #292524;
+  --text-secondary: #78716C;
+  --text-tertiary: #A8A29E;
+
+  --surface-page: #FBF5F0;
+  --surface-hover: rgba(41, 37, 36, 0.05);
+
+  --border-default: #EDE3DC;
+  --border-strong: #DED2C8;
+
+  --shadow-sm: 0 1px 2px rgba(41, 37, 36, 0.06);
+  --shadow-md: 0 2px 8px rgba(41, 37, 36, 0.08);
+  --shadow-lg: 0 4px 16px rgba(41, 37, 36, 0.10);
+
+  --scrollbar-thumb: #DED2C8;
+}
+
+/* ===== 主题 Ice（冰霜青）：取自 Minecraft 冰霜/钻石 ===== */
+[data-theme="ice"] {
+  --color-brand: #0EA5E9;
+  --color-brand-dark: #0284C7;
+  --color-brand-hover: #0284C7;
+  --color-brand-bg: rgba(14, 165, 233, 0.08);
+  --color-brand-glow: rgba(14, 165, 233, 0.2);
+  --color-brand-gradient: linear-gradient(135deg, #0EA5E9, #38BDF8);
+
+  --text-primary: #1E293B;
+  --text-secondary: #64748B;
+  --text-tertiary: #94A3B8;
+
+  --surface-page: #F2F7FA;
+  --surface-hover: rgba(15, 23, 42, 0.05);
+
+  --border-default: #DCE7EE;
+  --border-strong: #C6D6E0;
+
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 2px 8px rgba(15, 23, 42, 0.08);
+  --shadow-lg: 0 4px 16px rgba(15, 23, 42, 0.10);
+
+  --scrollbar-thumb: #C6D6E0;
 }
 
 * {
@@ -262,7 +377,7 @@ input, textarea {
   position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
   z-index: 9999;
   padding: 10px 24px; border-radius: var(--radius-md);
-  background: #1E1B4B; color: #fff;
+  background: var(--toast-bg); color: #fff;
   font-size: 13px; font-weight: 500;
   white-space: nowrap; box-shadow: var(--shadow-lg);
   pointer-events: none;
@@ -271,4 +386,86 @@ input, textarea {
 .toast-leave-active { transition: all 0.2s ease-in; }
 .toast-enter-from { opacity: 0; transform: translateX(-50%) translateY(16px); }
 .toast-leave-to   { opacity: 0; transform: translateX(-50%) translateY(16px); }
+
+/* 文件下载失败等待决策弹窗（WaitingForUser） */
+.dialog-overlay {
+  position: fixed; inset: 0; z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--overlay);
+}
+
+.waiting-dialog {
+  width: 380px; max-width: calc(100vw - 48px);
+  padding: 20px 22px;
+  background: var(--surface-card);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+
+.wd-title { margin: 0 0 10px; font-size: 15px; color: var(--text-primary); }
+
+.wd-file {
+  margin: 0 0 6px; font-size: 13px; font-weight: 600;
+  color: var(--text-primary); word-break: break-all;
+}
+
+.wd-err {
+  margin: 0 0 16px; font-size: 12px; color: var(--text-tertiary);
+  word-break: break-all; max-height: 64px; overflow-y: auto;
+}
+
+.wd-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+.wd-btn {
+  padding: 6px 14px; font-size: 13px; cursor: pointer;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  background: var(--surface-page); color: var(--text-primary);
+  transition: all 0.15s;
+}
+
+.wd-btn:hover { border-color: var(--color-brand); }
+.wd-retry { background: var(--color-brand); border-color: var(--color-brand); color: #fff; }
+.wd-retry:hover { opacity: 0.9; }
+.wd-cancel { color: var(--color-danger); }
+.wd-cancel:hover { border-color: var(--color-danger); }
+
+.fade-enter-active, .fade-leave-active { transition: opacity 0.15s ease; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
+
+/* v-tooltip 气泡（替换 UA 原生 title tooltip） */
+.elytra-tooltip {
+  position: fixed;
+  z-index: 99999;
+  max-width: 320px;
+  padding: 6px 10px;
+  background: var(--toast-bg);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.5;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+  word-break: break-word;
+  white-space: pre-line;
+}
+
+.elytra-tooltip.visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+.elytra-tooltip.below::after {
+  content: "";
+  position: absolute;
+  top: -5px;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-bottom-color: var(--toast-bg);
+  border-top: none;
+}
 </style>

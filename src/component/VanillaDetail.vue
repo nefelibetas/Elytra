@@ -24,7 +24,7 @@ const sv = () => vdState.selectedVersion!;
 <template>
   <div class="det-card">
     <div class="det-hdr">
-      <button class="det-back" @click="vdState.backToList" title="返回">
+      <button class="det-back" @click="vdState.backToList" v-tooltip="'返回'">
         <ArrowLeft :size="16" />
       </button>
       <img :src="vdState.selectedMainLoader && loaderIcon[vdState.selectedMainLoader] ? loaderIcon[vdState.selectedMainLoader] : versionIcon(sv())" width="28" height="28" class="det-icon" alt="" />
@@ -48,11 +48,11 @@ const sv = () => vdState.selectedVersion!;
               <template v-else>无</template>
               <!-- Fabric/Quilt 的 loader 版本无关（meta 不按 MC 版本过滤），
                    列表内任何版本（含最新）与当前 MC 的兼容性均未验证，需手动确认 -->
-              <span v-if="ld.key === 'fabric' || ld.key === 'quilt'" class="det-ld-warn" title="该加载器为版本无关构建，meta 不按 MC 版本过滤；最新版也可能与当前 MC 不兼容，安装前请确认">兼容性需确认</span>
+              <span v-if="ld.key === 'fabric' || ld.key === 'quilt'" class="det-ld-warn" v-tooltip="'该加载器为版本无关构建，meta 不按 MC 版本过滤；最新版也可能与当前 MC 不兼容，安装前请确认'">兼容性需确认</span>
             </span>
           </span>
           <span v-if="vdState.selectedLoaderVersions[ld.key] || vdState.getLoaderVersions(ld.key, sv().id).length" class="det-ld-actions">
-            <button v-if="vdState.selectedLoaderVersions[ld.key]" class="det-ld-remove" @click.stop="vdState.clearLoaderVer(ld.key)" title="移除">
+            <button v-if="vdState.selectedLoaderVersions[ld.key]" class="det-ld-remove" @click.stop="vdState.clearLoaderVer(ld.key)" v-tooltip="'移除'">
               <X :size="10" />
             </button>
             <ChevronDown v-if="vdState.getLoaderVersions(ld.key, sv().id).length" class="det-ld-arrow" :class="{ open: vdState.expandedLoader[ld.key] }" :size="12" />
@@ -83,7 +83,7 @@ const sv = () => vdState.selectedVersion!;
             </span>
           </span>
           <span v-if="vdState.selectedLoaderVersions['fabric-api'] || vdState.getFabricApiVersions(sv().id).length" class="det-ld-actions">
-            <button v-if="vdState.selectedLoaderVersions['fabric-api']" class="det-ld-remove" @click.stop="vdState.clearFabricApi()" title="移除">
+            <button v-if="vdState.selectedLoaderVersions['fabric-api']" class="det-ld-remove" @click.stop="vdState.clearFabricApi()" v-tooltip="'移除'">
               <X :size="10" />
             </button>
             <ChevronDown v-if="vdState.getFabricApiVersions(sv().id).length" class="det-ld-arrow" :class="{ open: vdState.fabricApiExpanded }" :size="12" />
@@ -149,7 +149,7 @@ const sv = () => vdState.selectedVersion!;
 .det-ld-sub { font-size: 11px; color: var(--text-tertiary); display: flex; align-items: center; gap: 6px; }
 .det-ld-warn {
   font-size: 10px;
-  color: #d97706;
+  color: var(--color-warning);
   font-weight: 500;
   flex-shrink: 0;
 }
@@ -162,7 +162,7 @@ const sv = () => vdState.selectedVersion!;
   cursor: pointer; border-radius: var(--radius-sm);
   transition: all 0.15s; flex-shrink: 0;
 }
-.det-ld-remove:hover { color: #e74c3c; background-color: rgba(231, 76, 60, 0.1); }
+.det-ld-remove:hover { color: var(--color-danger); background-color: var(--color-danger-bg); }
 .det-ld-arrow { flex-shrink: 0; color: var(--text-tertiary); transition: transform 0.2s; }
 .det-ld-arrow.open { transform: rotate(180deg); }
 .det-ld-ver {
@@ -188,9 +188,9 @@ const sv = () => vdState.selectedVersion!;
   align-self: center; display: inline-flex; align-items: center; gap: 8px;
 }
 .dl-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.dl-btn:hover:not(:disabled) { background-color: var(--color-brand-hover, #4f46e5); box-shadow: var(--shadow-md); }
+.dl-btn:hover:not(:disabled) { background-color: var(--color-brand-hover); box-shadow: var(--shadow-md); }
 .dl-btn:active:not(:disabled) { transform: scale(0.97); }
-.dl-done { font-size: 14px; font-weight: 600; color: #059669; text-align: center; padding: 10px 40px; }
+.dl-done { font-size: 14px; font-weight: 600; color: var(--color-success); text-align: center; padding: 10px 40px; }
 
 /* expand：max-height 目标值必须写在 enter-to/leave-from（写在 active 上会因同特异性覆盖 from 态导致无动画），
    且目标值与展开区自身 max-height 一致（320px），内容超高时内部滚动不撑出窗口 */

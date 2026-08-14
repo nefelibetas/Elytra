@@ -10,7 +10,7 @@ const emit = defineEmits<{ click: []; refresh: [] }>();
       <slot name="icon" />
       <span><slot /></span>
     </button>
-    <button class="tab-refresh" @click.stop="emit('refresh')" title="刷新">
+    <button class="tab-refresh" @click.stop="emit('refresh')" v-tooltip="'刷新'">
       <RefreshCw :size="14" />
     </button>
   </div>

@@ -1,14 +1,15 @@
 <script setup lang="ts">
 // 设置页容器：导航 + 各 tab 内容编排（业务在 store/组件，本文件不做配置逻辑）
 import { ref } from "vue";
-import { SlidersHorizontal, Download } from "@lucide/vue";
+import { SlidersHorizontal, Download, Palette } from "@lucide/vue";
 import SettingsOfflineSkin from "../component/SettingsOfflineSkin.vue";
 import SettingsLaunchOptions from "../component/SettingsLaunchOptions.vue";
 import SettingsJdk from "../component/SettingsJdk.vue";
 import SettingsDownload from "../component/SettingsDownload.vue";
+import SettingsAppearance from "../component/SettingsAppearance.vue";
 import ScrollTopFab from "../component/ScrollTopFab.vue";
 
-type Tab = "launch" | "download";
+type Tab = "launch" | "download" | "appearance";
 
 const currentTab = ref<Tab>("launch");
 </script>
@@ -33,6 +34,14 @@ const currentTab = ref<Tab>("launch");
         <Download :size="16" />
         下载设置
       </button>
+      <button
+        class="stg-tab"
+        :class="{ active: currentTab === 'appearance' }"
+        @click="currentTab = 'appearance'"
+      >
+        <Palette :size="16" />
+        外观
+      </button>
     </nav>
 
     <div class="stg-body">
@@ -45,8 +54,13 @@ const currentTab = ref<Tab>("launch");
         </div>
 
         <!-- 下载设置：管理游戏下载源 -->
-        <div v-else key="download" class="stg-page">
+        <div v-else-if="currentTab === 'download'" key="download" class="stg-page">
           <SettingsDownload />
+        </div>
+
+        <!-- 外观：亮色 / 暗色 / 跟随系统 -->
+        <div v-else key="appearance" class="stg-page">
+          <SettingsAppearance />
         </div>
       </Transition>
     </div>

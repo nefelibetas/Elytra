@@ -56,14 +56,14 @@ function goDownload() {
           <template #action>
             <button
               class="vs-item-setup"
-              title="版本设置"
+              v-tooltip="'版本设置'"
               @click.stop="goSetup(v.name)"
             >
               <Settings2 :size="15" />
             </button>
             <button
               class="vs-item-del"
-              title="删除版本"
+              v-tooltip="'删除版本'"
               @click.stop="openDelete(v.name)"
             >
               <Trash2 :size="15" />
@@ -144,8 +144,8 @@ function goDownload() {
 }
 
 .vs-item-del:hover {
-  background-color: rgba(231, 76, 60, 0.1);
-  color: #e74c3c;
+  background-color: var(--color-danger-bg);
+  color: var(--color-danger);
 }
 
 .vs-hint {
@@ -196,7 +196,7 @@ function goDownload() {
 
 .vs-err {
   font-size: 12px;
-  color: #e74c3c;
+  color: var(--color-danger);
   padding: 6px 8px;
 }
 
@@ -240,8 +240,8 @@ function goDownload() {
 }
 
 .dialog-btn.danger {
-  background: #e74c3c;
-  border-color: #e74c3c;
+  background: var(--color-danger);
+  border-color: var(--color-danger);
   color: #fff;
 }
 

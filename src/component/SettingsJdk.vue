@@ -1,18 +1,40 @@
 <script setup lang="ts">
-// Java 运行时卡片：选择器下拉 + 扫描/自定义目录 + 高级项（JVM 参数/GC/复选框）
-import { onMounted } from "vue";
-import { Zap, ChevronDown, Check, RefreshCw, FolderPlus } from "@lucide/vue";
+// Java 运行时卡片：选择器下拉 + 扫描/自定义目录 + 下载缺失 JDK + 高级项（JVM 参数/GC/复选框）
+import { onMounted, ref } from "vue";
+import { Zap, ChevronDown, Check, RefreshCw, FolderPlus, Download } from "@lucide/vue";
+import DropSelect, { type SelOption } from "./DropSelect.vue";
 import {
   jdkList, autoMode, activeJdk, pickerOpen, loading, jdkError,
   pickerLabel, pickerSub, refreshJdks, selectCustomDir, selectAuto, selectJdk,
-  loadConfig,
+  installJdk, loadConfig,
 } from "../store/jdkConfig";
 import {
   loJvmArgs, loGameArgs, loPreCmd, loGc, loDisableWrapper, loDisableAgent, loHighGpu,
   gcOptions, saveLaunchOptions,
 } from "../store/launchOptions";
+import { showToast } from "../utils/toast";
 
 onMounted(loadConfig);
+
+/** 下载目标 Java 主版本（Mojang runtime 组件覆盖 8/17/21/25）。 */
+const downloadMajor = ref(17);
+
+/** 下载版本下拉选项（DropSelect 用）。 */
+const jdkDownloadOptions: SelOption[] = [
+  { value: "8", label: "Java 8" },
+  { value: "17", label: "Java 17" },
+  { value: "21", label: "Java 21" },
+  { value: "25", label: "Java 25" },
+];
+
+async function handleInstallJdk() {
+  try {
+    await installJdk(downloadMajor.value);
+    showToast(`Java ${downloadMajor.value} 下载并配置完成`);
+  } catch (e) {
+    showToast(String(e));
+  }
+}
 </script>
 
 <template>
@@ -22,59 +44,76 @@ onMounted(loadConfig);
       <span class="stg-card-sub">选择用于启动游戏的 Java 版本，或由启动器自动匹配</span>
     </div>
 
-    <!-- 选择行：下拉 + 右侧按钮 -->
+    <!-- 选择行：下拉 + 扫描类操作 -->
     <div class="jdk-toolbar">
-      <div class="jdk-picker-wrap">
-        <button class="jdk-picker" :class="{ open: pickerOpen }" @click="pickerOpen = !pickerOpen">
-          <span class="jdk-picker-main">
-            <Zap :size="16" />
-            {{ pickerLabel }}
-          </span>
-          <span class="jdk-picker-sub">{{ pickerSub }}</span>
-          <ChevronDown class="jdk-chevron" :class="{ flip: pickerOpen }" :size="12" />
-        </button>
+      <div class="jdk-toolbar-row">
+        <div class="jdk-picker-wrap">
+          <button class="jdk-picker" :class="{ open: pickerOpen }" @click="pickerOpen = !pickerOpen">
+            <span class="jdk-picker-main">
+              <Zap :size="16" />
+              {{ pickerLabel }}
+            </span>
+            <span class="jdk-picker-sub">{{ pickerSub }}</span>
+            <ChevronDown class="jdk-chevron" :class="{ flip: pickerOpen }" :size="12" />
+          </button>
 
-        <!-- 展开列表 -->
-        <Transition name="drop">
-          <div v-if="pickerOpen" class="jdk-dropdown">
-            <button class="jdk-opt" :class="{ selected: autoMode }" @click="selectAuto">
-              <div class="jdk-opt-main">
-                <span class="jdk-opt-title">自动选择</span>
-                <span class="jdk-opt-sub">根据游戏版本需求自动匹配</span>
-              </div>
-              <Check v-if="autoMode" :size="14" />
-            </button>
-            <div v-if="jdkList.length" class="jdk-drop-divider"></div>
-            <button
-              v-for="jdk in jdkList"
-              :key="jdk.path"
-              class="jdk-opt"
-              :class="{ selected: !autoMode && activeJdk && activeJdk.path === jdk.path }"
-              @click="selectJdk(jdk)"
-            >
-              <div class="jdk-opt-main">
-                <span class="jdk-opt-title">{{ jdk.version }}</span>
-                <span class="jdk-opt-sub">{{ jdk.vendor }} · {{ jdk.bits }} 位</span>
-                <span class="jdk-opt-path">{{ jdk.path }}</span>
-              </div>
-              <Check v-if="!autoMode && activeJdk && activeJdk.path === jdk.path" :size="14" />
-            </button>
-            <div v-if="!jdkList.length" class="jdk-drop-empty">暂无扫描结果，点击右上角「刷新」</div>
-          </div>
-        </Transition>
+          <!-- 展开列表 -->
+          <Transition name="drop">
+            <div v-if="pickerOpen" class="jdk-dropdown">
+              <button class="jdk-opt" :class="{ selected: autoMode }" @click="selectAuto">
+                <div class="jdk-opt-main">
+                  <span class="jdk-opt-title">自动选择</span>
+                  <span class="jdk-opt-sub">根据游戏版本需求自动匹配</span>
+                </div>
+                <Check v-if="autoMode" :size="14" />
+              </button>
+              <div v-if="jdkList.length" class="jdk-drop-divider"></div>
+              <button
+                v-for="jdk in jdkList"
+                :key="jdk.path"
+                class="jdk-opt"
+                :class="{ selected: !autoMode && activeJdk && activeJdk.path === jdk.path }"
+                @click="selectJdk(jdk)"
+              >
+                <div class="jdk-opt-main">
+                  <span class="jdk-opt-title">{{ jdk.version }}</span>
+                  <span class="jdk-opt-sub">{{ jdk.vendor }} · {{ jdk.bits }} 位</span>
+                  <span class="jdk-opt-path">{{ jdk.path }}</span>
+                </div>
+                <Check v-if="!autoMode && activeJdk && activeJdk.path === jdk.path" :size="14" />
+              </button>
+              <div v-if="!jdkList.length" class="jdk-drop-empty">暂无扫描结果，点击「刷新」扫描</div>
+            </div>
+          </Transition>
+        </div>
+
+        <button class="tool-btn" :disabled="loading" @click="refreshJdks">
+          <RefreshCw :size="14" />
+          刷新
+        </button>
+        <button class="tool-btn" :disabled="loading" @click="selectCustomDir">
+          <FolderPlus :size="14" />
+          自定义目录
+        </button>
       </div>
 
-      <button class="tool-btn" :disabled="loading" @click="refreshJdks">
-        <RefreshCw :size="14" />
-        刷新
-      </button>
-      <button class="tool-btn" :disabled="loading" @click="selectCustomDir">
-        <FolderPlus :size="14" />
-        自定义目录
-      </button>
+      <!-- 下载行：安装缺失 Java（Mojang 官方/备用源自动安装） -->
+      <div class="jdk-dl-group">
+        <span class="jdk-dl-label">下载缺失 JDK</span>
+        <DropSelect
+          :model-value="String(downloadMajor)"
+          :options="jdkDownloadOptions"
+          width="96px"
+          @update:model-value="downloadMajor = Number($event)"
+        />
+        <button class="tool-btn jdk-dl-btn" :disabled="loading" @click="handleInstallJdk">
+          <Download :size="14" />
+          {{ loading ? "下载中..." : "下载" }}
+        </button>
+      </div>
     </div>
 
-    <div v-if="loading" class="loading-hint">正在扫描...</div>
+    <div v-if="loading" class="loading-hint">正在处理...</div>
     <div v-else-if="jdkError" class="err">{{ jdkError }}</div>
 
     <div class="jdk-divider"></div>
@@ -123,14 +162,12 @@ onMounted(loadConfig);
 
       <div class="lo-row">
         <label class="lo-label" for="lo-gc">内存管理</label>
-        <select
+        <DropSelect
           id="lo-gc"
-          v-model="loGc"
-          class="lo-select"
-          @change="saveLaunchOptions"
-        >
-          <option v-for="g in gcOptions" :key="g.value" :value="g.value">{{ g.label }}</option>
-        </select>
+          :model-value="loGc"
+          :options="gcOptions.map(g => ({ value: g.value, label: g.label }))"
+          @update:model-value="loGc = $event; saveLaunchOptions()"
+        />
       </div>
 
       <div class="lo-checks">
@@ -159,8 +196,37 @@ onMounted(loadConfig);
 /* ===== JDK 工具栏 ===== */
 .jdk-toolbar {
   display: flex;
-  align-items: flex-start;
+  flex-direction: column;
   gap: 10px;
+}
+
+/* 第一行：选择器 + 扫描类操作（刷新/自定义目录） */
+.jdk-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 第二行：下载安装容器（与扫描操作分组隔离） */
+.jdk-dl-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--surface-page);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+}
+
+.jdk-dl-label {
+  flex: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.jdk-dl-btn {
+  padding: 7px 14px;
 }
 
 .jdk-picker-wrap {
@@ -239,7 +305,7 @@ onMounted(loadConfig);
   background: var(--surface-card);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  box-shadow: 0 8px 24px rgba(30, 27, 75, 0.12);
+  box-shadow: var(--shadow-md);
   z-index: 100;
   padding: 6px;
 }

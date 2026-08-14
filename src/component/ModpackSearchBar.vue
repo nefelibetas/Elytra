@@ -1,7 +1,22 @@
 <script setup lang="ts">
 // 整合包搜索表单卡片：名称（独立一行）/ 来源 / 版本 / [搜索] [重置条件]（无加载器）
+import { computed } from "vue";
 import { modpackSearch } from "../store/categorySearch";
 import { releases } from "../store/versionDownload";
+import DropSelect, { type SelOption } from "./DropSelect.vue";
+
+/** 来源选项（DropSelect 用）。 */
+const sourceOptions: SelOption[] = [
+  { value: "all", label: "全部" },
+  { value: "curseforge", label: "CurseForge" },
+  { value: "modrinth", label: "Modrinth" },
+];
+
+/** 版本选项：全部 + 正式版列表。 */
+const versionOptions = computed<SelOption[]>(() => [
+  { value: "", label: "全部" },
+  ...releases.value.map((r) => ({ value: r.id, label: r.id })),
+]);
 </script>
 
 <template>
@@ -14,16 +29,21 @@ import { releases } from "../store/versionDownload";
       </div>
       <div class="mo-form-row">
         <label class="mo-form-label" for="modpackSourceSelect">来源</label>
-        <select id="modpackSourceSelect" class="mo-select mo-source-select" v-model="modpackSearch.source">
-          <option value="all">全部</option>
-          <option value="curseforge">CurseForge</option>
-          <option value="modrinth">Modrinth</option>
-        </select>
+        <DropSelect
+          id="modpackSourceSelect"
+          :model-value="modpackSearch.source"
+          :options="sourceOptions"
+          width="140px"
+          @update:model-value="modpackSearch.source = $event as typeof modpackSearch.source"
+        />
         <label class="mo-form-label" for="modpackVerSelect">版本</label>
-        <select id="modpackVerSelect" class="mo-select" v-model="modpackSearch.gameVersion">
-          <option value="">全部</option>
-          <option v-for="r in releases" :key="r.id" :value="r.id">{{ r.id }}</option>
-        </select>
+        <DropSelect
+          id="modpackVerSelect"
+          :model-value="modpackSearch.gameVersion"
+          :options="versionOptions"
+          class="mo-fill"
+          @update:model-value="modpackSearch.gameVersion = $event"
+        />
       </div>
       <div class="mo-form-actions">
         <button class="mo-btn mo-btn-primary" :disabled="modpackSearch.searching" @click="modpackSearch.search()">
@@ -46,12 +66,11 @@ import { releases } from "../store/versionDownload";
   transition: border-color 0.15s;
 }
 .mo-input:focus { border-color: var(--color-brand); }
-.mo-select {
-  flex: 1; min-width: 120px; height: 30px; padding: 0 8px;
-  border: 1px solid var(--border-default); border-radius: var(--radius-sm);
-  background: var(--surface-card); color: var(--text-primary); font-size: 12px; outline: none;
+/* DropSelect 填充 flex 行（class 落根 .ds） */
+.mo-form-row .mo-fill {
+  flex: 1;
+  min-width: 120px;
 }
-.mo-source-select { flex: 0 0 140px; }
 .mo-form-actions { display: flex; justify-content: flex-end; gap: 10px; }
 .mo-btn {
   padding: 6px 24px;
@@ -61,7 +80,7 @@ import { releases } from "../store/versionDownload";
 }
 .mo-btn:hover { border-color: var(--color-brand); }
 .mo-btn-primary { background: var(--color-brand); border-color: var(--color-brand); color: #fff; }
-.mo-btn-primary:hover { background-color: var(--color-brand-hover, #4f46e5); }
+.mo-btn-primary:hover { background-color: var(--color-brand-hover); }
 .mo-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .mo-spin {
   width: 12px; height: 12px; border: 2px solid rgba(255, 255, 255, 0.4);

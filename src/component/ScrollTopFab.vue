@@ -46,7 +46,7 @@ onBeforeUnmount(() => {
 <template>
   <div ref="wrap" class="scroll-top-fab-wrap">
     <Transition name="fab-up">
-      <button v-if="visible" class="scroll-top-fab" @click="scrollTop" title="回到顶部">
+      <button v-if="visible" class="scroll-top-fab" @click="scrollTop" v-tooltip="'回到顶部'">
         <ArrowUp :size="16" />
       </button>
     </Transition>
@@ -69,7 +69,7 @@ onBeforeUnmount(() => {
 }
 .scroll-top-fab:hover {
   color: var(--color-brand);
-  box-shadow: 0 6px 24px rgba(99, 102, 241, 0.25);
+  box-shadow: 0 6px 24px var(--color-brand-glow);
   transform: scale(1.05);
 }
 .scroll-top-fab:active { transform: scale(0.95); }

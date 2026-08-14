@@ -2,6 +2,7 @@
 // 启动选项卡片 + 内存分配卡片
 import { onMounted } from "vue";
 import { memState } from "../store/memory";
+import DropSelect, { type SelOption } from "./DropSelect.vue";
 import {
   loWindowTitle, loPriority, loWinMode, loWinW, loWinH, loGameLang,
   loMemMode, loMemMb, loMemOptimize, loVerifySsl, launchError,
@@ -10,6 +11,20 @@ import {
 } from "../store/launchOptions";
 
 onMounted(loadLaunchOptions);
+
+/** 进程优先级选项（DropSelect 用）。 */
+const priorityOptions: SelOption[] = [
+  { value: "Low", label: "低" },
+  { value: "Normal", label: "中（平衡）" },
+  { value: "High", label: "高" },
+  { value: "RealTime", label: "实时" },
+];
+
+/** 窗口大小选项（DropSelect 用）。 */
+const winsizeOptions: SelOption[] = [
+  { value: "Default", label: "默认（不设置）" },
+  { value: "Custom", label: "自定义" },
+];
 </script>
 
 <template>
@@ -34,31 +49,24 @@ onMounted(loadLaunchOptions);
 
       <div class="lo-row">
         <label class="lo-label" for="lo-prio">进程优先级</label>
-        <select
+        <DropSelect
           id="lo-prio"
-          v-model="loPriority"
-          class="lo-select"
-          @change="saveLaunchOptions"
-        >
-          <option value="Low">低</option>
-          <option value="Normal">中（平衡）</option>
-          <option value="High">高</option>
-          <option value="RealTime">实时</option>
-        </select>
+          :model-value="loPriority"
+          :options="priorityOptions"
+          @update:model-value="loPriority = $event as typeof loPriority; saveLaunchOptions()"
+        />
       </div>
 
       <div class="lo-row">
         <label class="lo-label" for="lo-winsize">窗口大小</label>
         <div class="lo-winsize">
-          <select
+          <DropSelect
             id="lo-winsize"
-            v-model="loWinMode"
-            class="lo-select"
-            @change="saveLaunchOptions"
-          >
-            <option value="Default">默认（不设置）</option>
-            <option value="Custom">自定义</option>
-          </select>
+            :model-value="loWinMode"
+            :options="winsizeOptions"
+            width="140px"
+            @update:model-value="loWinMode = $event as typeof loWinMode; saveLaunchOptions()"
+          />
           <template v-if="loWinMode === 'Custom'">
             <input
               v-model.number="loWinW"
@@ -85,14 +93,12 @@ onMounted(loadLaunchOptions);
 
       <div class="lo-row">
         <label class="lo-label" for="lo-lang">游戏语言</label>
-        <select
+        <DropSelect
           id="lo-lang"
-          v-model="loGameLang"
-          class="lo-select"
-          @change="saveLaunchOptions"
-        >
-          <option value="auto_zh_CN">自动设置为中文</option>
-        </select>
+          :model-value="loGameLang"
+          :options="[{ value: 'auto_zh_CN', label: '自动设置为中文' }]"
+          @update:model-value="loGameLang = $event; saveLaunchOptions()"
+        />
       </div>
 
       <div class="lo-row">
@@ -131,6 +137,7 @@ onMounted(loadLaunchOptions);
           :max="memState.availMb || 4096"
           step="256"
           :disabled="loMemMode !== 'Custom'"
+          :style="{ '--range-pct': ((loMemMb - 1024) / ((memState.availMb || 4096) - 1024) * 100) + '%' }"
           @change="saveLaunchOptions"
         />
         <span class="mem-slider-val" :class="{ disabled: loMemMode !== 'Custom' }">{{ fmtGb(loMemMb) }}</span>
@@ -165,7 +172,6 @@ onMounted(loadLaunchOptions);
 /* ===== 内存分配 ===== */
 .mem-slider {
   flex: 1;
-  accent-color: var(--color-brand);
   cursor: pointer;
 }
 
@@ -217,11 +223,11 @@ onMounted(loadLaunchOptions);
 }
 
 .mem-used {
-  background: #e74c3c;
+  background: var(--color-danger);
 }
 
 .mem-game {
-  background: #059669;
+  background: var(--color-success);
 }
 
 .mem-free {

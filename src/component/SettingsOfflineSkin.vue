@@ -124,12 +124,26 @@ onMounted(loadOfflineSkin);
 }
 
 .skin-opt input[type="radio"] {
-  accent-color: var(--color-brand);
+  appearance: none;
+  -webkit-appearance: none;
   width: 14px;
   height: 14px;
+  border: 1.5px solid var(--text-tertiary);
+  border-radius: 50%;
   cursor: pointer;
   flex: none;
   margin: 0;
+  display: inline-block;
+  transition: border-color 0.15s;
+}
+
+.skin-opt input[type="radio"]:hover {
+  border-color: var(--color-brand);
+}
+
+.skin-opt input[type="radio"]:checked {
+  border-color: var(--color-brand);
+  background: radial-gradient(circle, var(--color-brand) 0 45%, transparent 55%);
 }
 
 .skin-opt-label {

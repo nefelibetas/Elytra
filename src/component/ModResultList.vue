@@ -23,7 +23,7 @@ function cardTitle(m: ModDisplayItem): string {
     <template v-else-if="modSearch.searched">
       <div class="mod-list">
         <div v-for="m in modSearch.results" :key="m.key" class="mod-card">
-          <div class="mod-card-body" :title="cardTitle(m)" @click="openModDetail(m)">
+          <div class="mod-card-body" v-tooltip="cardTitle(m)" @click="openModDetail(m)">
             <IconImage :src="m.icon_url" :size="32" />
             <span class="mod-info">
               <span class="mod-title-row">
@@ -64,7 +64,7 @@ function cardTitle(m: ModDisplayItem): string {
   overflow: hidden;
 }
 .mod-state { text-align: center; color: var(--text-tertiary); font-size: 13px; padding: 40px 0; }
-.mod-state.err { color: #e74c3c; }
+.mod-state.err { color: var(--color-danger); }
 .mod-loading { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 40px 0; }
 .mod-loading-text { font-size: 13px; color: var(--text-tertiary); }
 .spinner {

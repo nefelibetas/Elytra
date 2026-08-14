@@ -51,11 +51,11 @@ onUnmounted(() => window.removeEventListener("click", accountUi.closeMenus));
               v-if="avatarUrl && !avatarState.avatarError"
               :src="avatarUrl"
               alt="avatar"
-              width="68"
+              width="52"
               draggable="false"
               @error="avatarState.avatarError = true"
             />
-            <UserRound v-else :size="44" />
+            <UserRound v-else :size="34" />
           </div>
           <div v-if="authMode === 'premium'" class="uname" :class="{ 'uname-empty': !msAccount }">
             {{ msAccount?.name || '未登录' }}
@@ -77,15 +77,15 @@ onUnmounted(() => window.removeEventListener("click", accountUi.closeMenus));
           </div>
           <template v-else-if="msAccount">
             <!-- 衣服：皮肤/披风菜单 -->
-            <button class="icon-btn" title="皮肤与披风" @click.stop="accountUi.openSkinMenu($event)">
+            <button class="icon-btn" v-tooltip="'皮肤与披风'" @click.stop="accountUi.openSkinMenu($event)">
               <Shirt :size="14" />
             </button>
             <!-- 编辑：账号信息菜单（修改密码 / 修改玩家名） -->
-            <button class="icon-btn" title="编辑信息" @click.stop="accountUi.openEditMenu($event)">
+            <button class="icon-btn" v-tooltip="'编辑信息'" @click.stop="accountUi.openEditMenu($event)">
               <Pencil :size="14" />
             </button>
             <!-- 登出 -->
-            <button class="icon-btn" title="退出登录" @click="logoutMs">
+            <button class="icon-btn" v-tooltip="'退出登录'" @click="logoutMs">
               <LogOut :size="14" />
             </button>
           </template>
@@ -204,8 +204,8 @@ onUnmounted(() => window.removeEventListener("click", accountUi.closeMenus));
 }
 
 .avatar {
-  width: 72px;
-  height: 72px;
+  width: 56px;
+  height: 56px;
   border-radius: 0;
   overflow: hidden;
   color: var(--color-brand);
@@ -227,7 +227,7 @@ onUnmounted(() => window.removeEventListener("click", accountUi.closeMenus));
 }
 
 .uname {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
 }

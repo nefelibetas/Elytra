@@ -1,7 +1,8 @@
-import { reactive } from "vue"
+import { reactive, ref } from "vue"
 import { listen } from "@tauri-apps/api/event"
-import { EVT_TASK_PROGRESS } from "./events"
+import { EVT_TASK_PROGRESS, EVT_TASK_WAITING_USER } from "./events"
 import { invoke } from "@tauri-apps/api/core"
+import { showToast } from "../utils/toast"
 
 export type StepStatus = "pending" | "running" | "done";
 
@@ -17,6 +18,8 @@ export interface TaskItem {
   status: "pending" | "running" | "done" | "error" | "cancelled"
   progress: number
   speedBps: number
+  /** 预计剩余秒数；停滞或速度过低时为 null */
+  etaSeconds: number | null
   completedFiles: number
   totalFiles: number
   completedBytes: number
@@ -33,6 +36,7 @@ interface ProgressPayload {
   status: string
   progress: number
   speed_bps: number
+  eta_seconds: number | null
   completed_files: number
   total_files: number
   completed_bytes: number
@@ -106,6 +110,19 @@ export const dlState = reactive({
       .reduce((s, t) => s + t.speedBps, 0)
   },
 
+  /** 聚合预计剩余时间：总剩余字节 ÷ 总速度；总速度过低（<1KB/s，停滞）时 null。 */
+  get totalEtaSeconds(): number | null {
+    const running = this.tasks.filter(t => t.status === "running")
+    if (running.length === 0) return null
+    const remain = running.reduce(
+      (s, t) => s + Math.max(0, t.totalBytes - t.completedBytes),
+      0,
+    )
+    const speed = running.reduce((s, t) => s + t.speedBps, 0)
+    if (remain <= 0 || speed < 1024) return null
+    return Math.ceil(remain / speed)
+  },
+
   get remainingFiles(): number {
     return this.tasks
       .filter(t => t.status === "running")
@@ -163,6 +180,7 @@ export const dlState = reactive({
       status: "pending",
       progress: 0,
       speedBps: 0,
+      etaSeconds: null,
       completedFiles: 0,
       totalFiles: 0,
       completedBytes: 0,
@@ -202,6 +220,10 @@ const terminalTaskIds = new Set<string>()
 export function ensureListen() {
   if (listening) return
   listening = true
+  listen<WaitingUserPayload>(EVT_TASK_WAITING_USER, (ev) => {
+    // 批量文件下载失败挂起：弹窗询问 跳过/重试/取消
+    waitingUser.value = ev.payload
+  })
   listen<ProgressPayload>(EVT_TASK_PROGRESS, (ev) => {
     const p = ev.payload
     const idx = dlState.tasks.findIndex(t => t.taskId === p.task_id)
@@ -226,6 +248,7 @@ export function ensureListen() {
       dlState.tasks[idx].status = p.status as TaskItem["status"]
       dlState.tasks[idx].progress = p.progress
       dlState.tasks[idx].speedBps = p.speed_bps
+      dlState.tasks[idx].etaSeconds = p.eta_seconds
       dlState.tasks[idx].completedFiles = p.completed_files
       dlState.tasks[idx].totalFiles = p.total_files
       dlState.tasks[idx].completedBytes = p.completed_bytes
@@ -248,6 +271,7 @@ export function ensureListen() {
         status: p.status as TaskItem["status"],
         progress: p.progress,
         speedBps: p.speed_bps,
+        etaSeconds: p.eta_seconds,
         completedFiles: p.completed_files,
         totalFiles: p.total_files,
         completedBytes: p.completed_bytes,
@@ -259,4 +283,80 @@ export function ensureListen() {
       })
     }
   })
+}
+
+// ── 中断任务恢复（#6 一期）：上次进程退出未完成的任务 → 询问/恢复/忽略 ──
+
+/** 后端中断任务条目（镜像 Rust task::store::InterruptedJob）。 */
+export interface InterruptedJob {
+  id: string;
+  name: string;
+  kind: string;
+  updated_at: number;
+}
+
+/** task-waiting-user 事件 payload（镜像 Rust task::files::WaitingUserPayload）。 */
+export interface WaitingUserPayload {
+  task_id: string;
+  file_name: string;
+  error: string;
+}
+
+/** 挂起等待用户决策的文件下载任务（非 null 时前端弹窗）。 */
+export const waitingUser = ref<WaitingUserPayload | null>(null);
+
+/** 对挂起任务作出决策：skip=跳过该文件继续，retry=重试，cancel=取消任务。 */
+export async function decideWaitingTask(action: "skip" | "retry" | "cancel") {
+  const w = waitingUser.value;
+  if (!w) return;
+  waitingUser.value = null; // 先关弹窗（决策后任务侧继续/结束）
+  try {
+    await invoke("decide_waiting_task", { taskId: w.task_id, action });
+  } catch (e) {
+    showToast(String(e));
+  }
+}
+
+/** 上次未完成任务列表（App.vue 挂载时拉取；DownloadDetail 横幅展示）。 */
+export const interruptedJobs = ref<InterruptedJob[]>([]);
+
+/** 应用启动时检查：拉取上次未完成的任务（进程崩溃/重启残留）。 */
+export async function checkInterrupted() {
+  try {
+    interruptedJobs.value = await invoke<InterruptedJob[]>("list_interrupted_tasks");
+  } catch {
+    interruptedJobs.value = [];
+  }
+}
+
+/**
+ * 恢复全部中断任务：逐个 resume_task（后端读快照重跑，已下载文件 sha1 命中自动跳过，
+ * 等价断点续跑）。恢复的任务经 task-progress 事件自动注册进下载管理。
+ */
+export async function resumeAllInterrupted() {
+  const jobs = [...interruptedJobs.value];
+  let failed = 0;
+  for (const j of jobs) {
+    try {
+      await invoke("resume_task", { taskId: j.id });
+    } catch {
+      failed++;
+    }
+  }
+  interruptedJobs.value = [];
+  if (failed === 0) {
+    showToast(`已恢复 ${jobs.length} 个未完成的任务`);
+  } else if (jobs.length > 0) {
+    showToast(`恢复完成（${failed} 个失败，可能已过期）`);
+  }
+}
+
+/** 忽略（放弃恢复）：删除后端快照，本次及后续启动不再提示。 */
+export async function dismissInterrupted(jobId: string) {
+  try {
+    await invoke("dismiss_interrupted_task", { taskId: jobId });
+  } catch {
+    // 忽略失败不影响本地清理
+  }
+  interruptedJobs.value = interruptedJobs.value.filter((j) => j.id !== jobId);
 }

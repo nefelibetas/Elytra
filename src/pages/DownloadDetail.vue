@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue"
-import { X, Check, LoaderCircle } from "@lucide/vue"
-import { dlState, TaskItem } from "../store/download"
+import { X, Check, LoaderCircle, RotateCcw } from "@lucide/vue"
+import { dlState, TaskItem, interruptedJobs, resumeAllInterrupted, dismissInterrupted } from "../store/download"
 import { showToast } from "../utils/toast"
 import { useRouter } from "vue-router"
 import ScrollTopFab from "../component/ScrollTopFab.vue"
@@ -16,6 +16,15 @@ function fmtSpeed(bps: number): string {
   if (bps >= 1_000_000) return (bps / 1_000_000).toFixed(2) + " MB/s"
   if (bps >= 1_000) return (bps / 1_000).toFixed(2) + " KB/s"
   return bps.toFixed(2) + " B/s"
+}
+
+/** 预计剩余时间格式化；null（停滞/速度过低）显示 —。 */
+function fmtEta(secs: number | null): string {
+  if (secs == null) return "—"
+  if (secs < 60) return `${secs} 秒`
+  const m = Math.floor(secs / 60)
+  if (m < 60) return `${m} 分 ${secs % 60} 秒`
+  return `${Math.floor(m / 60)} 时 ${m % 60} 分`
 }
 
 function visibleSteps(task: TaskItem) {
@@ -52,6 +61,10 @@ async function handleCancel(task: TaskItem) {
           <span class="summary-value mono">{{ fmtSpeed(dlState.totalSpeedBps) }}</span>
         </div>
         <div class="summary-row">
+          <span class="summary-label">预计剩余</span>
+          <span class="summary-value mono">{{ fmtEta(dlState.totalEtaSeconds) }}</span>
+        </div>
+        <div class="summary-row">
           <span class="summary-label">剩余文件</span>
           <span class="summary-value mono">{{ dlState.remainingFiles }}</span>
         </div>
@@ -63,6 +76,27 @@ async function handleCancel(task: TaskItem) {
     </aside>
 
     <main class="dd-right">
+      <!-- 崩溃/重启恢复横幅：上次未完成的任务可一键恢复（幂等重跑） -->
+      <div v-if="interruptedJobs.length" class="resume-banner">
+        <span class="rb-text">
+          检测到 {{ interruptedJobs.length }} 个上次未完成的任务
+          <span class="rb-sub">{{ interruptedJobs.map(j => j.name).join("、") }}</span>
+        </span>
+        <button class="rb-btn rb-primary" @click="resumeAllInterrupted">
+          <RotateCcw :size="12" />
+          恢复
+        </button>
+        <button
+          v-for="j in interruptedJobs"
+          :key="j.id"
+          class="rb-btn"
+          v-tooltip="'放弃该任务，不再提示'"
+          @click="dismissInterrupted(j.id)"
+        >
+          忽略
+        </button>
+      </div>
+
       <div v-if="dlState.tasks.length === 0" class="empty">
         <p>暂无下载任务</p>
       </div>
@@ -71,7 +105,7 @@ async function handleCancel(task: TaskItem) {
         <div v-for="task in dlState.tasks" :key="task.taskId" class="task-card">
           <div class="tc-hdr">
             <span class="tc-name">{{ task.name || "下载任务" }}</span>
-            <button class="tc-cancel" title="取消并清理" @click="handleCancel(task)">
+            <button class="tc-cancel" v-tooltip="'取消并清理'" @click="handleCancel(task)">
               <X :size="12" />
             </button>
           </div>
@@ -150,6 +184,34 @@ async function handleCancel(task: TaskItem) {
   height: 100%; color: var(--text-tertiary); font-size: 14px;
 }
 
+/* 崩溃恢复横幅 */
+.resume-banner {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 14px; margin-bottom: 12px;
+  background: var(--color-brand-bg);
+  border: 1px solid var(--color-brand);
+  border-radius: var(--radius-md);
+  font-size: 13px; color: var(--text-primary);
+}
+
+.rb-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.rb-sub {
+  font-size: 12px; color: var(--text-tertiary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.rb-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 12px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-card); color: var(--text-primary);
+  font-size: 12px; cursor: pointer; transition: all 0.15s;
+}
+
+.rb-btn:hover { border-color: var(--color-brand); }
+.rb-primary { background: var(--color-brand); border-color: var(--color-brand); color: #fff; }
+.rb-primary:hover { opacity: 0.9; }
+
 .task-list {
   display: flex; flex-direction: column; gap: 12px;
 }
@@ -195,14 +257,14 @@ async function handleCancel(task: TaskItem) {
   color: var(--text-tertiary); transition: all 0.15s;
 }
 .tc-cancel:hover {
-  background-color: rgba(231,76,60,0.1);
-  color: #e74c3c;
+  background-color: var(--color-danger-bg);
+  color: var(--color-danger);
 }
 
 .tc-err {
   margin-top: 8px;
   font-size: 12px;
-  color: #e74c3c;
+  color: var(--color-danger);
   line-height: 1.5;
   word-break: break-all;
 }
@@ -238,7 +300,7 @@ async function handleCancel(task: TaskItem) {
   color: var(--text-tertiary);
 }
 .tc-st-icon.running { color: var(--color-brand); }
-.tc-st-icon.done { color: #22c55e; }
+.tc-st-icon.done { color: var(--color-success); }
 
 .tc-dot {
   width: 5px;

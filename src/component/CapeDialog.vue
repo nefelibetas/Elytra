@@ -67,7 +67,7 @@ import { accountUi } from "../store/accountUi";
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #fff;
+  background: var(--surface-card);
   transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
 }
 

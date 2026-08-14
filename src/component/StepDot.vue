@@ -21,7 +21,7 @@ defineProps<{ status: StepStatus }>();
   justify-content: center;
   width: 16px;
   height: 16px;
-  color: #059669;
+  color: var(--color-success);
 }
 
 .sd-dot {
@@ -35,7 +35,7 @@ defineProps<{ status: StepStatus }>();
 .sd-spin {
   width: 12px;
   height: 12px;
-  border: 2px solid rgba(255, 255, 255, 0.2);
+  border: 2px solid var(--border-strong);
   border-top-color: var(--text-secondary);
   border-radius: 50%;
   display: block;

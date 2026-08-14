@@ -126,6 +126,7 @@ async function repairFiles() {
       status: "pending",
       progress: 0,
       speedBps: 0,
+      etaSeconds: null,
       completedFiles: 0,
       totalFiles: 0,
       completedBytes: 0,
@@ -201,7 +202,7 @@ async function exportScript() {
         :subtitle="info.category === 'vanilla' ? '原版' : info.categoryTitle + ' ' + info.loaderVersion"
       >
         <template #action>
-          <button class="setup-icon-btn" title="重命名版本" @click="openRename">
+          <button class="setup-icon-btn" v-tooltip="'重命名版本'" @click="openRename">
             <Pencil :size="15" />
           </button>
         </template>
@@ -282,7 +283,7 @@ async function exportScript() {
 <style scoped>
 .vs-err {
   font-size: 12px;
-  color: #e74c3c;
+  color: var(--color-danger);
   padding: 6px 8px;
 }
 
@@ -337,14 +338,14 @@ async function exportScript() {
 }
 
 .setup-btn.danger {
-  color: #e74c3c;
+  color: var(--color-danger);
   border-color: rgba(231, 76, 60, 0.4);
 }
 
 .setup-btn.danger:hover {
   background: rgba(231, 76, 60, 0.08);
-  border-color: #e74c3c;
-  color: #e74c3c;
+  border-color: var(--color-danger);
+  color: var(--color-danger);
 }
 
 /* hover 重命名按钮 */
@@ -424,8 +425,8 @@ async function exportScript() {
 }
 
 .dialog-btn.danger {
-  background: #e74c3c;
-  border-color: #e74c3c;
+  background: var(--color-danger);
+  border-color: var(--color-danger);
   color: #fff;
 }
 

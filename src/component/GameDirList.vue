@@ -30,11 +30,11 @@ onUnmounted(() => window.removeEventListener("click", onWindowClick));
       >
         <div class="vs-dir-main">
           <div class="vs-dir-title">{{ d.name }}</div>
-          <div class="vs-dir-sub" :title="d.path">{{ d.path }}</div>
+          <div class="vs-dir-sub" v-tooltip="d.path">{{ d.path }}</div>
         </div>
         <button
           class="vs-dir-more"
-          title="更多操作"
+          v-tooltip="'更多操作'"
           @click.stop="openItemMenu($event, d)"
         >
           <Ellipsis :size="15" :fill="'currentColor'" :stroke="'none'" />
@@ -229,7 +229,7 @@ onUnmounted(() => window.removeEventListener("click", onWindowClick));
 
 .vs-err {
   font-size: 12px;
-  color: #e74c3c;
+  color: var(--color-danger);
   padding: 6px 8px;
 }
 

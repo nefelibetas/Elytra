@@ -133,6 +133,7 @@ onMounted(loadDownloadConfig);
         :max="concurrencyLocked ? MIRROR_CONCURRENCY : 256"
         step="1"
         v-model.number="dlConcurrency"
+        :style="{ '--range-pct': ((concurrencyLocked ? MIRROR_CONCURRENCY : dlConcurrency) / 256 * 100) + '%' }"
         @input="saveDownloadConfig"
         :disabled="concurrencyLocked"
       />
@@ -149,6 +150,7 @@ onMounted(loadDownloadConfig);
         max="100"
         step="1"
         v-model.number="dlMaxSpeed"
+        :style="{ '--range-pct': dlMaxSpeed + '%' }"
         @input="saveDownloadConfig"
       />
       <span class="dl-val">{{ dlMaxSpeed === 0 ? "无上限" : dlMaxSpeed + " MB/s" }} / 100 MB/s</span>
@@ -273,7 +275,6 @@ onMounted(loadDownloadConfig);
 .dl-range {
   flex: 1;
   min-width: 0;
-  accent-color: var(--color-brand);
 }
 .dl-val {
   flex: 0 0 auto;
@@ -288,6 +289,6 @@ onMounted(loadDownloadConfig);
 .dl-error {
   margin-top: 8px;
   font-size: 12px;
-  color: #e74c3c;
+  color: var(--color-danger);
 }
 </style>

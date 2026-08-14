@@ -24,7 +24,7 @@ function cardTitle(m: ModDisplayItem): string {
     <template v-else-if="modpackSearch.searched">
       <div class="mo-list">
         <div v-for="m in modpackSearch.results" :key="m.key" class="mo-card">
-          <div class="mo-card-body" :title="cardTitle(m)" @click="openModDetail(m)">
+          <div class="mo-card-body" v-tooltip="cardTitle(m)" @click="openModDetail(m)">
             <IconImage :src="m.icon_url" :size="32" />
             <span class="mo-info">
               <span class="mo-title-row">
@@ -65,7 +65,7 @@ function cardTitle(m: ModDisplayItem): string {
   overflow: hidden;
 }
 .mo-state { text-align: center; color: var(--text-tertiary); font-size: 13px; padding: 40px 0; }
-.mo-state.err { color: #e74c3c; }
+.mo-state.err { color: var(--color-danger); }
 .mo-loading { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 40px 0; }
 .mo-loading-text { font-size: 13px; color: var(--text-tertiary); }
 .spinner {

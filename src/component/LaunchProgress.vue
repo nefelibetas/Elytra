@@ -74,7 +74,7 @@ import { selectedVersion } from "../store/selectedVersion";
 .lp-done {
   text-align: center;
   font-size: 13px;
-  color: #059669;
+  color: var(--color-success);
   font-weight: 500;
 }
 </style>

@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useConfigSection } from "../utils/useConfigSection";
 
 export const sourceModeOptions = [
+  { value: "auto", label: "智能模式", desc: "按资源类型自动选源：Loader 资源优先国内镜像，其余按健康度自动排序" },
   { value: "preferOfficial", label: "优先官方源", desc: "官方源优先，加载缓慢时使用国内镜像源" },
   { value: "preferChina", label: "优先镜像源", desc: "国内镜像源优先，失败时回退官方源" },
   { value: "officialOnly", label: "官方源", desc: "仅使用官方源，不自动回退" },

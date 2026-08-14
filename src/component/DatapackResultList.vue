@@ -24,7 +24,7 @@ function cardTitle(m: ModDisplayItem): string {
     <template v-else-if="datapackSearch.searched">
       <div class="da-list">
         <div v-for="m in datapackSearch.results" :key="m.key" class="da-card">
-          <div class="da-card-body" :title="cardTitle(m)" @click="openModDetail(m)">
+          <div class="da-card-body" v-tooltip="cardTitle(m)" @click="openModDetail(m)">
             <IconImage :src="m.icon_url" :size="32" />
             <span class="da-info">
               <span class="da-title-row">
@@ -65,7 +65,7 @@ function cardTitle(m: ModDisplayItem): string {
   overflow: hidden;
 }
 .da-state { text-align: center; color: var(--text-tertiary); font-size: 13px; padding: 40px 0; }
-.da-state.err { color: #e74c3c; }
+.da-state.err { color: var(--color-danger); }
 .da-loading { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 40px 0; }
 .da-loading-text { font-size: 13px; color: var(--text-tertiary); }
 .spinner {

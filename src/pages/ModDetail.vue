@@ -241,7 +241,7 @@ async function copyName() {
         <div v-if="filteredVersions.length === 0" class="mv-state">没有匹配的版本，试试调整过滤条件</div>
         <div v-for="v in filteredVersions" :key="v.version_id" class="mv-item">
           <div class="mv-info">
-            <span class="mv-name" :title="v.filename">{{ v.filename }}</span>
+            <span class="mv-name" v-tooltip="v.filename">{{ v.filename }}</span>
             <span class="mv-tags">
               <span v-for="gv in v.game_versions.slice(0, 3)" :key="gv" class="mv-tag gv">{{ gv }}</span>
               <span v-for="ld in v.loaders" :key="ld" class="mv-tag ld">{{ ld }}</span>
@@ -526,7 +526,7 @@ async function copyName() {
   font-size: 12.5px;
   color: var(--text-tertiary);
 }
-.mv-state.err { color: #e74c3c; }
+.mv-state.err { color: var(--color-danger); }
 .mv-state-text { font-size: 12.5px; color: var(--text-tertiary); }
 .mv-retry { flex: 0 0 auto; padding: 5px 20px; font-size: 12px; }
 

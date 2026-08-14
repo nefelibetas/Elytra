@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ArrowLeft, Play, Download, Settings, Minus, X } from "@lucide/vue";
+import { ArrowLeft, Play, Download, Settings, Minus, X, Feather } from "@lucide/vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { detailTitle, modDetail } from "../store/modDetail";
 import { downloadTabState } from "../store/downloadTab";
@@ -82,7 +82,10 @@ function goBack() {
       </div>
       <div v-else key="main" class="bar-inner">
         <div class="tl">
-          <span class="logo">Elytra</span>
+          <span class="logo">
+            <Feather :size="15" class="logo-wing" />
+            Elytra
+          </span>
         </div>
         <nav class="tc">
           <router-link
@@ -100,10 +103,10 @@ function goBack() {
     </Transition>
 
     <div class="tr">
-      <button class="win" @click="minimize" title="最小化">
+      <button class="win" @click="minimize" v-tooltip="'最小化'">
         <Minus :size="12" />
       </button>
-      <button class="win close" @click="closeWindow" title="关闭">
+      <button class="win close" @click="closeWindow" v-tooltip="'关闭'">
         <X :size="12" />
       </button>
     </div>
@@ -116,7 +119,7 @@ function goBack() {
   z-index: 10;
   height: var(--titlebar-h);
   min-height: var(--titlebar-h);
-  background-color: var(--surface-header);
+  background: var(--color-brand-gradient);
   display: flex;
   align-items: center;
   padding: 0 12px;
@@ -136,22 +139,27 @@ function goBack() {
   height: 30px;
   display: flex;
   align-items: center;
+  gap: 6px;
   border-radius: var(--radius-md);
-  background-color: rgba(255, 255, 255, 0.9);
+  background-color: rgba(255, 255, 255, 0.95);
+}
+
+.logo-wing {
+  color: var(--color-brand-dark);
 }
 
 .back-btn {
   display: flex; align-items: center; gap: 6px;
   padding: 4px 10px;
   border: none; background: transparent;
-  color: rgba(255,255,255,0.8);
+  color: rgba(255,255,255,0.85);
   cursor: pointer; border-radius: var(--radius-sm);
   font-size: 14px; font-weight: 500;
   transition: all 0.15s;
   outline: none;
 }
 .back-btn svg { flex-shrink: 0; }
-.back-btn:hover { background-color: rgba(255,255,255,0.12); color: #fff; }
+.back-btn:hover { background-color: rgba(255,255,255,0.15); color: #fff; }
 .back-btn { white-space: nowrap; }
 
 .dt-title {
@@ -174,7 +182,7 @@ function goBack() {
   gap: 6px;
   padding: 6px 14px;
   border-radius: var(--radius-sm);
-  color: rgba(255, 255, 255, 0.65);
+  color: rgba(255, 255, 255, 0.7);
   text-decoration: none;
   font-size: 13px;
   font-weight: 500;
@@ -183,13 +191,13 @@ function goBack() {
 }
 
 .nav:hover {
-  color: rgba(255, 255, 255, 0.9);
-  background-color: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  background-color: rgba(255, 255, 255, 0.14);
 }
 
 .nav.active {
   color: #fff;
-  background-color: rgba(255, 255, 255, 0.18);
+  background-color: rgba(255, 255, 255, 0.22);
 }
 
 .label { font-size: 13px; }
@@ -206,7 +214,7 @@ function goBack() {
   width: 30px; height: 30px;
   display: flex; align-items: center; justify-content: center;
   border: none; background: transparent;
-  color: rgba(255, 255, 255, 0.6);
+  color: rgba(255, 255, 255, 0.65);
   cursor: pointer;
   border-radius: var(--radius-sm);
   transition: all 0.15s;
@@ -214,12 +222,12 @@ function goBack() {
 }
 
 .win:hover {
-  background-color: rgba(255, 255, 255, 0.15);
+  background-color: rgba(255, 255, 255, 0.16);
   color: #fff;
 }
 
 .close:hover {
-  background-color: rgba(0, 0, 0, 0.25);
+  background-color: rgba(255, 255, 255, 0.24);
   color: #fff;
 }
 

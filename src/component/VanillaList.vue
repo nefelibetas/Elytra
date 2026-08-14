@@ -40,7 +40,7 @@ import cobbleIcon from "../assets/cobble.png";
 </template>
 
 <style scoped>
-.state.err { color: #e74c3c; font-size: 14px; text-align: center; padding: 40px; }
+.state.err { color: var(--color-danger); font-size: 14px; text-align: center; padding: 40px; }
 .loading-card {
   display: flex; flex-direction: column; align-items: center; gap: 16px;
   padding: 40px 56px; background-color: var(--surface-card);

@@ -45,7 +45,7 @@ function openDetail() {
   color: var(--color-brand);
 }
 .fab:hover {
-  box-shadow: 0 6px 24px rgba(99,102,241,0.3);
+  box-shadow: 0 6px 24px var(--color-brand-glow);
   transform: scale(1.05);
 }
 .fab:active { transform: scale(0.95); }

@@ -1,7 +1,22 @@
 <script setup lang="ts">
 // 光影包搜索表单卡片：名称（独立一行）/ 来源 / 版本 / [搜索] [重置条件]（无加载器）
+import { computed } from "vue";
 import { shaderSearch } from "../store/categorySearch";
 import { releases } from "../store/versionDownload";
+import DropSelect, { type SelOption } from "./DropSelect.vue";
+
+/** 来源选项（DropSelect 用）。 */
+const sourceOptions: SelOption[] = [
+  { value: "all", label: "全部" },
+  { value: "curseforge", label: "CurseForge" },
+  { value: "modrinth", label: "Modrinth" },
+];
+
+/** 版本选项：全部 + 正式版列表。 */
+const versionOptions = computed<SelOption[]>(() => [
+  { value: "", label: "全部" },
+  ...releases.value.map((r) => ({ value: r.id, label: r.id })),
+]);
 </script>
 
 <template>
@@ -14,16 +29,21 @@ import { releases } from "../store/versionDownload";
       </div>
       <div class="sh-form-row">
         <label class="sh-form-label" for="shSourceSelect">来源</label>
-        <select id="shSourceSelect" class="sh-select sh-source-select" v-model="shaderSearch.source">
-          <option value="all">全部</option>
-          <option value="curseforge">CurseForge</option>
-          <option value="modrinth">Modrinth</option>
-        </select>
+        <DropSelect
+          id="shSourceSelect"
+          :model-value="shaderSearch.source"
+          :options="sourceOptions"
+          width="140px"
+          @update:model-value="shaderSearch.source = $event as typeof shaderSearch.source"
+        />
         <label class="sh-form-label" for="shVerSelect">版本</label>
-        <select id="shVerSelect" class="sh-select" v-model="shaderSearch.gameVersion">
-          <option value="">全部</option>
-          <option v-for="r in releases" :key="r.id" :value="r.id">{{ r.id }}</option>
-        </select>
+        <DropSelect
+          id="shVerSelect"
+          :model-value="shaderSearch.gameVersion"
+          :options="versionOptions"
+          class="sh-fill"
+          @update:model-value="shaderSearch.gameVersion = $event"
+        />
       </div>
       <div class="sh-form-actions">
         <button class="sh-btn sh-btn-primary" :disabled="shaderSearch.searching" @click="shaderSearch.search()">
@@ -46,12 +66,11 @@ import { releases } from "../store/versionDownload";
   transition: border-color 0.15s;
 }
 .sh-input:focus { border-color: var(--color-brand); }
-.sh-select {
-  flex: 1; min-width: 120px; height: 30px; padding: 0 8px;
-  border: 1px solid var(--border-default); border-radius: var(--radius-sm);
-  background: var(--surface-card); color: var(--text-primary); font-size: 12px; outline: none;
+/* DropSelect 填充 flex 行（class 落根 .ds） */
+.sh-form-row .sh-fill {
+  flex: 1;
+  min-width: 120px;
 }
-.sh-source-select { flex: 0 0 140px; }
 .sh-form-actions { display: flex; justify-content: flex-end; gap: 10px; }
 .sh-btn {
   padding: 6px 24px;
@@ -61,7 +80,7 @@ import { releases } from "../store/versionDownload";
 }
 .sh-btn:hover { border-color: var(--color-brand); }
 .sh-btn-primary { background: var(--color-brand); border-color: var(--color-brand); color: #fff; }
-.sh-btn-primary:hover { background-color: var(--color-brand-hover, #4f46e5); }
+.sh-btn-primary:hover { background-color: var(--color-brand-hover); }
 .sh-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .sh-spin {
   width: 12px; height: 12px; border: 2px solid rgba(255, 255, 255, 0.4);

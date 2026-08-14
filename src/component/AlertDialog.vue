@@ -99,7 +99,7 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(30, 27, 75, 0.35);
+  background: var(--overlay);
   backdrop-filter: blur(2px);
 }
 
@@ -107,7 +107,7 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
   width: 380px;
   background: var(--surface-card);
   border-radius: var(--radius-lg);
-  box-shadow: 0 8px 32px rgba(30, 27, 75, 0.15);
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
   user-select: none;
 }

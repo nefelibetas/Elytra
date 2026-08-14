@@ -73,6 +73,24 @@ export async function selectCustomDir() {
   loading.value = false;
 }
 
+/** 下载缺失的 JDK（Mojang 官方 runtime → Azul 回退），完成后注册进列表并自动选中。 */
+export async function installJdk(major: number): Promise<JdkInfo> {
+  loading.value = true;
+  try {
+    const info = await invoke<JdkInfo>("install_jdk", { major });
+    if (!jdkList.value.some((e) => e.path === info.path)) {
+      jdkList.value.push(info);
+    }
+    autoMode.value = false;
+    activeJdk.value = info;
+    pickerOpen.value = false;
+    await saveConfig();
+    return info;
+  } finally {
+    loading.value = false;
+  }
+}
+
 export function selectAuto() {
   autoMode.value = true;
   activeJdk.value = null;
