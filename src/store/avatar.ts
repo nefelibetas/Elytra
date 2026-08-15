@@ -1,9 +1,23 @@
-// 头像渲染：正版（visage 服务端 3D 头部）+ 离线（五种皮肤类型 2D 头部 / 像素脸回退）。
+// 头像渲染：正版（visage 服务端 3D 头部）+ 离线（哈希决定 Steve/Alex 默认皮肤 2D 头部 / 像素脸回退）。
 // 模块级单例（替代原 composable）：状态在 avatarState，渲染函数直接导出，store/组件均可调用。
 import { reactive } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { hashName, randomIsAlex } from "../utils/offlineSkin";
 import { showError } from "./alert";
+
+/** FNV-1a 哈希（与 Rust 侧 config/launcher/skin.rs hash_name 一致）。 */
+function hashName(name: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < name.length; i++) {
+    h ^= name.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/** 离线皮肤模型决策：哈希奇数 → Alex（slim）。 */
+function randomIsAlex(name: string): boolean {
+  return hashName(name) % 2 === 1;
+}
 
 export const avatarState = reactive({
   premiumAvatar: "",
@@ -14,7 +28,6 @@ export const avatarState = reactive({
 // 模块级去重缓存：账号/用户名未变不重复请求（路由切换重挂载不重复请求、不闪占位）
 let lastPremiumUuid = "";
 let lastOfflineName = "";
-let lastOfflineKey = "";
 let avatarTimer: number | undefined;
 
 /** 正版：后端经 visage 3D 渲染服务获取头部图（浏览器无法设置自定义 UA，走后端）。
@@ -71,67 +84,51 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-/** 离线头像：按「离线皮肤」设置渲染（对齐 PCL2 五种），失败回退像素脸。
- * 全部类型均为 2D 头像（原始纹理截取头部，无帽子层）：
- * - random：用户名哈希确定性选 Steve/Alex 默认皮肤
- * - steve / alex：固定对应默认皮肤
- * - player：指定正版玩家的 sessionserver 纹理
- * - custom：本地皮肤文件 */
+/** 离线头像：按用户名哈希确定性渲染 Steve/Alex 默认皮肤（与游戏内一致），失败回退像素脸。
+ * 一律 2D 头像（游戏内置纹理截取头部，无帽子层）。 */
 export async function renderOfflineAvatar(name: string) {
   const trimmed = name.trim();
   if (!trimmed) {
     avatarState.offlineAvatar = "";
     return;
   }
+  if (lastOfflineName === trimmed) {
+    return; // 用户名未变 → 不重复请求（含进行中）
+  }
+  lastOfflineName = trimmed;
+  const head = await renderOfflineHead(trimmed);
+  if (head) {
+    avatarState.offlineAvatar = head;
+  } else {
+    lastOfflineName = ""; // 失败允许下次重试（如版本 jar 就绪后）
+    avatarState.offlineAvatar = generatePixelFace(trimmed);
+  }
+}
+
+// ── 离线头像缓存（用户名 → Steve/Alex 2D 头部 dataURL；切换回已有用户名秒出，不重复 IO）──
+
+const OFFLINE_HEAD_CACHE = new Map<string, string>();
+
+/** 渲染离线用户名的 Steve/Alex 默认皮肤 2D 头部（哈希决定模型，与主头像/游戏内一致）。
+ * 缓存按用户名复用（仅缓存成功结果，失败不缓存以便之后重试）；失败返回 ""（调用方回退）。 */
+export async function renderOfflineHead(name: string): Promise<string> {
+  const trimmed = name.trim();
+  if (!trimmed) return "";
+  const cached = OFFLINE_HEAD_CACHE.get(trimmed);
+  if (cached !== undefined) return cached;
   try {
-    const cfg = await invoke<{
-      skin_type: string;
-      player_name: string;
-      custom_path: string;
-    }>("get_offline_skin");
-    // 用户名与离线皮肤设置均未变 → 不重复请求（含进行中；设置变更时 key 变化自动重新渲染）
-    const key = `${cfg.skin_type}|${cfg.player_name}|${cfg.custom_path}`;
-    if (lastOfflineName === trimmed && lastOfflineKey === key) {
-      return;
-    }
-    lastOfflineName = trimmed;
-    lastOfflineKey = key;
-    if (cfg.skin_type === "player") {
-      const p = cfg.player_name.trim();
-      if (!p) {
-        generateOfflineAvatar(trimmed);
-        return;
-      }
-      // 2D 头像：sessionserver 取正版玩家纹理 → 截取头部
-      const b64 = await invoke<string>("fetch_player_skin_texture", { playerName: p });
-      avatarState.offlineAvatar = await renderSkinHead(b64);
-      return;
-    }
-    if (cfg.skin_type === "custom") {
-      if (!cfg.custom_path) {
-        generateOfflineAvatar(trimmed);
-        return;
-      }
-      await renderCustomSkinFile(cfg.custom_path, trimmed);
-      return;
-    }
-    // random：哈希确定性选默认皮肤；steve/alex：固定对应默认皮肤
-    // 一律 2D 头像：游戏内置纹理（经典蓝衬衫 Steve / 绿衬衫 Alex）截取头部
-    const skinKind =
-      cfg.skin_type === "alex" ||
-      (cfg.skin_type === "random" && randomIsAlex(trimmed))
-        ? "alex"
-        : "steve";
+    const skinKind = randomIsAlex(trimmed) ? "alex" : "steve";
     const b64 = await invoke<string>("fetch_default_skin", { skin: skinKind });
-    avatarState.offlineAvatar = await renderSkinHead(b64);
+    const head = await renderSkinHead(b64);
+    OFFLINE_HEAD_CACHE.set(trimmed, head);
+    return head;
   } catch {
-    generateOfflineAvatar(trimmed);
+    return "";
   }
 }
 
 /** 截取皮肤正面头部（8×8 格）放大成 2D 大头像（无帽子层）。 */
-async function renderSkinHead(b64: string): Promise<string> {
-  const img = await loadImage(`data:image/png;base64,${b64}`);
+export async function renderSkinHead(b64: string): Promise<string> {  const img = await loadImage(`data:image/png;base64,${b64}`);
   const grid = Math.floor(img.width / 8); // 64 → 8，128 → 16
   const canvas = document.createElement("canvas");
   canvas.width = 68;
@@ -142,24 +139,10 @@ async function renderSkinHead(b64: string): Promise<string> {
   return canvas.toDataURL("image/png");
 }
 
-/** 自定义本地皮肤：截取正面区域（64/128 布局均为 (grid, grid)）放大成 2D 大头像。 */
-async function renderCustomSkinFile(path: string, fallbackName: string) {
-  try {
-    const b64 = await invoke<string>("read_skin_file", { path });
-    avatarState.offlineAvatar = await renderSkinHead(b64);
-  } catch (e) {
-    console.error("自定义皮肤渲染失败:", e);
-    generateOfflineAvatar(fallbackName);
-  }
-}
-
-/** 按用户名生成 Minecraft 风格 8×8 像素脸（确定性，左右镜像）——离线用户名非真实账号时的回退。 */
-function generateOfflineAvatar(name: string) {
+/** 按用户名生成 Minecraft 风格 8×8 像素脸（确定性，左右镜像）——离线用户名非真实账号时的回退。
+ * 独立纯函数：离线主头像兜底与历史列表行头像共用（同用户名同脸）。返回 dataURL。 */
+export function generatePixelFace(name: string): string {
   const trimmed = name.trim();
-  if (!trimmed) {
-    avatarState.offlineAvatar = "";
-    return;
-  }
   const seed = hashName(trimmed);
   const rng = mulberry32(seed);
   const skinTones = ["#c68642", "#b5763a", "#a0662f", "#d1a579", "#e0ac69", "#8d5524", "#e8b57e"];
@@ -203,7 +186,7 @@ function generateOfflineAvatar(name: string) {
   const octx = out.getContext("2d")!;
   octx.imageSmoothingEnabled = false;
   octx.drawImage(canvas, 0, 0, 68, 68);
-  avatarState.offlineAvatar = out.toDataURL("image/png");
+  return out.toDataURL("image/png");
 }
 
 /** 用户名输入防抖 1.337s 后刷新离线头像。 */
@@ -211,4 +194,23 @@ export function scheduleOfflineRender(name: string) {
   avatarState.avatarError = false;
   if (avatarTimer) clearTimeout(avatarTimer);
   avatarTimer = window.setTimeout(() => renderOfflineAvatar(name), 1337);
+}
+
+// ── 账号列表 2D 头像（sessionserver 皮肤截取头部，按 uuid 会话内缓存）──
+
+const ACCOUNT_HEAD_CACHE = new Map<string, string>();
+
+/** 拉取正版账号皮肤并截取 2D 头部，返回 dataURL；失败（无网络/未设置皮肤）返回 ""（调用方回退图标）。 */
+export async function renderAccountHead(uuid: string): Promise<string> {
+  const cached = ACCOUNT_HEAD_CACHE.get(uuid);
+  if (cached !== undefined) return cached;
+  try {
+    const b64 = await invoke<string>("fetch_account_skin", { uuid });
+    const head = await renderSkinHead(b64);
+    ACCOUNT_HEAD_CACHE.set(uuid, head);
+    return head;
+  } catch {
+    ACCOUNT_HEAD_CACHE.set(uuid, "");
+    return "";
+  }
 }

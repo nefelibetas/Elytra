@@ -236,16 +236,52 @@ pub fn save_launch_options(config: LauncherConfig) -> Result<(), String> {
     crate::persist::save(constants::SECT_LAUNCHER, &config).map_err(|e| e.to_string())
 }
 
-/// 读取最后一次使用的离线用户名（与正版隔离）。
+/// 读取最后一次使用的离线用户名（历史列表末尾；兼容旧版单值键）。
 #[tauri::command]
 pub fn get_last_offline_username() -> String {
-    crate::persist::read::<String>("last_offline_username").unwrap_or_default()
+    let list: Vec<String> =
+        crate::persist::read(constants::SECT_OFFLINE_ACCOUNTS).unwrap_or_default();
+    list.last().cloned().unwrap_or_else(|| {
+        // 旧版单值兼容（首次输入即存后旧键闲置）
+        crate::persist::read::<String>("last_offline_username").unwrap_or_default()
+    })
 }
 
-/// 保存最后一次使用的离线用户名。
+/// 保存最后一次使用的离线用户名（历史列表 upsert，置为末尾；空名忽略）。
 #[tauri::command]
 pub fn save_last_offline_username(username: String) -> Result<(), String> {
-    crate::persist::save("last_offline_username", &username).map_err(|e| e.to_string())
+    save_offline_account(username)
+}
+
+/// 读取离线账号历史（最近使用升序，末尾为当前）。
+#[tauri::command]
+pub fn get_offline_accounts() -> Vec<String> {
+    crate::persist::read(constants::SECT_OFFLINE_ACCOUNTS).unwrap_or_default()
+}
+
+/// 保存/更新离线用户名到历史列表（输入即存；已存在则移到末尾，空名忽略）。
+#[tauri::command]
+pub fn save_offline_account(username: String) -> Result<(), String> {
+    let name = username.trim().to_string();
+    if name.is_empty() {
+        return Ok(());
+    }
+    let mut list: Vec<String> =
+        crate::persist::read(constants::SECT_OFFLINE_ACCOUNTS).unwrap_or_default();
+    list.retain(|n| n != &name);
+    list.push(name);
+    crate::persist::save(constants::SECT_OFFLINE_ACCOUNTS, &list).map_err(|e| e.to_string())?;
+    let _ = crate::persist::remove("last_offline_username"); // 旧单值键已并入列表
+    Ok(())
+}
+
+/// 移除指定离线用户名。
+#[tauri::command]
+pub fn remove_offline_account(username: String) -> Result<(), String> {
+    let mut list: Vec<String> =
+        crate::persist::read(constants::SECT_OFFLINE_ACCOUNTS).unwrap_or_default();
+    list.retain(|n| n != &username);
+    crate::persist::save(constants::SECT_OFFLINE_ACCOUNTS, &list).map_err(|e| e.to_string())
 }
 
 /// 导出启动脚本：按 PCL 风格生成平台对应脚本（Windows .bat / macOS/Linux .sh）写入指定路径。
@@ -304,27 +340,14 @@ pub async fn spawn_game(
         &xuid,
     )?;
 
-    // 离线皮肤配置：同一次启动只读一次（apply_offline_skin 与 build_user_properties 共用）
-    let skin_cfg: crate::config::offline_skin::OfflineSkinConfig =
-        crate::persist::read(constants::SECT_OFFLINE_SKIN).unwrap_or_default();
-
-    // 离线皮肤（PCL 机制）：UUID 匹配模型（Steve/Alex/Custom）或正版玩家真实 UUID（Player）；
-    // Custom 额外构建替换默认纹理的资源包
-    skin::apply_offline_skin(
-        &mut auth,
-        &version_json,
-        &mc_dir,
-        &version_dir_name,
-        &skin_cfg,
-    )
-    .await;
+    // 离线皮肤（PCL 机制）：固定随机（用户名哈希决定 Steve/Alex），UUID 匹配模型
+    skin::apply_offline_skin(&mut auth);
 
     // 启动前完整性检测 + 旧式 natives 解压准备
     verify_env(&version_json, &mc_dir, &version_dir_name)?;
 
-    // 离线皮肤：构造 --user-properties 参数（1.19.2 以下版本生效；
-    // Random/Steve/Alex 无需注入（游戏默认纹理一致），Player/Custom 注入皮肤）
-    let user_properties = skin::build_user_properties(&auth, &skin_cfg).await;
+    // 离线皮肤：构造 --user-properties 参数（1.19.2 以下版本生效；Alex 注入 slim 纹理，Steve 默认）
+    let user_properties = skin::build_user_properties(&auth);
 
     // 游戏语言：自动设置为中文（1.13+ 语言由 gameDir/options.txt 的 lang 字段控制，
     // -Duser.language 仅对旧版 Locale 机制生效）
