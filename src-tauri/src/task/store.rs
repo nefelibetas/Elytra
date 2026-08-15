@@ -66,11 +66,20 @@ fn db_path() -> std::path::PathBuf {
 }
 
 /// 同步执行异步 DB 操作（任务级低频操作，阻塞毫秒级可接受）。
-/// 优先复用当前线程的 tokio handle（测试/tauri runtime 内调用不再创建新 runtime），
-/// 无 runtime 上下文时自维护一个兜底 runtime（后台线程/独立进程可用）。
+/// 有 tokio 上下文时复用现有 runtime：
+///  - multi_thread runtime：worker 线程直接用 `Handle::block_on` 会 panic
+///    （tokio 禁止 runtime 内再启动 runtime），须先 `block_in_place` 让出 worker；
+///    外部线程（主线程/blocking 线程）下 `block_in_place` 是 no-op，行为不变。
+///  - current_thread runtime：`block_in_place` 不可用，驱动线程直接 `block_on`。
+/// 无 runtime 上下文（后台线程/独立进程/纯同步测试）时自维护兜底 runtime。
 fn block_on<F: Future>(fut: F) -> F::Output {
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        handle.block_on(fut)
+        use tokio::runtime::RuntimeFlavor;
+        if handle.runtime_flavor() == RuntimeFlavor::MultiThread {
+            tokio::task::block_in_place(move || handle.block_on(fut))
+        } else {
+            handle.block_on(fut)
+        }
     } else {
         static RT: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
             tokio::runtime::Builder::new_multi_thread()
@@ -99,7 +108,7 @@ static POOL: LazyLock<Result<SqlitePool, String>> = LazyLock::new(|| {
             .max_connections(1)
             .connect_with(opts)
             .await
-            .map_err(|e| format!("打开任务数据库失败: {e}"))?;
+            .map_err(|e| format!("打开任务数据库失败\n{e}"))?;
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS install_jobs (
                 id TEXT PRIMARY KEY,
@@ -112,7 +121,7 @@ static POOL: LazyLock<Result<SqlitePool, String>> = LazyLock::new(|| {
         )
         .execute(&pool)
         .await
-        .map_err(|e| format!("初始化任务表失败: {e}"))?;
+        .map_err(|e| format!("初始化任务表失败\n{e}"))?;
         Ok::<SqlitePool, String>(pool)
     })
 });
@@ -326,5 +335,33 @@ mod tests {
             "interrupted 快照应可列出供恢复"
         );
         cleanup(&[&id]);
+    }
+
+    /// 回归：tauri async command（runtime worker 线程）内调用同步 store 操作不得 panic。
+    /// 此前 Handle::block_on 在 worker 线程直接调用会炸
+    /// "Cannot start a runtime from within a runtime"（tokio 禁止 runtime 内再启动 runtime），
+    /// 下载任务 spawn 后写快照/收口状态即触发。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn store_ops_from_runtime_worker_no_panic() {
+        let id = format!("test_worker_{}", std::process::id());
+        let task = DownloadTask {
+            version_id: "1.20.4".into(),
+            version_url: "https://example.com/1.20.4.json".into(),
+            mc_version: "1.20.4".into(),
+            loader: None,
+            optifine_patch: None,
+            version_dir_name: None,
+            fabric_api: None,
+        };
+        // spawn 的任务在 runtime worker 线程执行（真实 async command 场景）。
+        tokio::task::spawn(async move {
+            remove_snapshot(&id);
+            save_snapshot(&id, "worker 现场", &JobSpec::Download(task), TaskStatus::Running);
+            assert!(load_spec(&id).is_some(), "worker 线程应可写入并读回快照");
+            update_status(&id, TaskStatus::Done);
+            remove_snapshot(&id);
+        })
+        .await
+        .expect("spawn 的任务应正常结束（不得 panic）");
     }
 }
