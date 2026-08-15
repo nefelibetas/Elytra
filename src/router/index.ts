@@ -34,14 +34,14 @@ const routeLevel: Record<string, number> = {
   launch: 0,
   download: 0,
   settings: 0,
-  "download-detail": 1,
+  "download-detail": 0,
   "mod-detail": 1,
   "version-select": 1,
   "version-setup": 2,
 };
 
 /** 顶级 tab 顺序（同级切换按此决定左右方向）。 */
-const tabOrder = ["launch", "download", "settings"];
+const tabOrder = ["launch", "download", "download-detail", "settings"];
 
 router.beforeEach((to, from) => {
   const toLevel = routeLevel[to.name as string] ?? 0;
