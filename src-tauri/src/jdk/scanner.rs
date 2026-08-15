@@ -13,7 +13,7 @@ pub fn scan_custom_dir(path: &str) -> Result<Vec<JdkInfo>, String> {
     let mut seen = HashSet::new();
     scan_dir_and_children(dir, &mut found, &mut seen, false);
     if found.is_empty() {
-        Err(format!("未在目录中找到 Java 环境: {}", path))
+        Err(format!("未在目录中找到 Java 环境\n{}", path))
     } else {
         Ok(found)
     }
@@ -62,15 +62,15 @@ fn probe_home(dir: &Path, found: &mut Vec<JdkInfo>, seen: &mut HashSet<String>, 
 pub(crate) fn inspect(java_home: &Path) -> Result<JdkInfo, String> {
     let java_bin = crate::jdk::java_bin_path(java_home);
     if !java_bin.exists() {
-        return Err(format!("未找到 Java 可执行文件: {}", java_bin.display()));
+        return Err(format!("未找到 Java 可执行文件\n{}", java_bin.display()));
     }
     let mut cmd = std::process::Command::new(java_bin);
     cmd.arg("-version");
     #[cfg(target_os = "windows")]
     cmd.creation_flags(0x08000000); // 避免调用指令出现命令行窗口
-    let output = cmd.output().map_err(|e| format!("Java 检测失败: {}", e))?;
+    let output = cmd.output().map_err(|e| format!("Java 检测失败\n{}", e))?;
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let version = parse_version(&stderr).ok_or_else(|| format!("Java 版本解析失败: {}", stderr))?;
+    let version = parse_version(&stderr).ok_or_else(|| format!("Java 版本解析失败\n{}", stderr))?;
     Ok(JdkInfo {
         path: java_home.to_string_lossy().to_string(),
         version,

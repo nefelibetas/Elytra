@@ -13,6 +13,7 @@ import {
   gcOptions, saveLaunchOptions,
 } from "../store/launchOptions";
 import { showToast } from "../utils/toast";
+import { errMsg } from "../utils/error";
 
 onMounted(loadConfig);
 
@@ -32,7 +33,7 @@ async function handleInstallJdk() {
     await installJdk(downloadMajor.value);
     showToast(`Java ${downloadMajor.value} 下载并配置完成`);
   } catch (e) {
-    showToast(String(e));
+    showToast(errMsg(e));
   }
 }
 </script>

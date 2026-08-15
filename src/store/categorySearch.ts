@@ -4,6 +4,7 @@
 import { reactive, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { searchAllSources, toDisplayItem, needsTranslation, type ModDisplayItem } from "./modSearch";
+import { errMsg } from "../utils/error";
 
 const PAGE_SIZE = 30;
 /** 聚合模式每源条数（页大小一半）：两源合并去重后展示 ≤15 条，每页图片请求量减半 */
@@ -52,7 +53,7 @@ export function createCategorySearch(category: string) {
         this.page = page;
         this.searched = true;
       } catch (e) {
-        this.error = String(e);
+        this.error = errMsg(e);
         this.searched = true;
         this.results = [];
         this.total = 0;

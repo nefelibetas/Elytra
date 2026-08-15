@@ -37,14 +37,14 @@ pub fn load_launch_config(
     // 读取版本 JSON（扫描目录，文件名不一定是目录名）
     let vdir = mc_dir.join("versions").join(version_dir_name);
     if !vdir.is_dir() {
-        return Err(format!("版本目录不存在: {}", vdir.display()));
+        return Err(format!("版本目录不存在\n{}", vdir.display()));
     }
     let vj_path = find_file_in_dir(&vdir, "json")
-        .ok_or_else(|| format!("版本目录下未找到 JSON 文件: {}", vdir.display()))?;
+        .ok_or_else(|| format!("版本目录下未找到 JSON 文件\n{}", vdir.display()))?;
     let vj_text =
-        std::fs::read_to_string(&vj_path).map_err(|e| format!("读取版本 JSON 失败: {}", e))?;
+        std::fs::read_to_string(&vj_path).map_err(|e| format!("读取版本 JSON 失败\n{}", e))?;
     let version_json: VersionJson =
-        serde_json::from_str(&vj_text).map_err(|e| format!("解析版本 JSON 失败: {}", e))?;
+        serde_json::from_str(&vj_text).map_err(|e| format!("解析版本 JSON 失败\n{}", e))?;
 
     let required = version_json
         .java_version
@@ -71,16 +71,16 @@ pub fn load_launch_config(
     // java_env.path 是 JAVA_HOME（目录），需要拼上 bin/java.exe
     let java_home = PathBuf::from(&java_env.path);
     if !java_home.exists() {
-        return Err(format!("JDK 路径不存在: {}", java_home.display()));
+        return Err(format!("JDK 路径不存在\n{}", java_home.display()));
     }
     let java_path = crate::jdk::java_bin_path(&java_home);
     if !java_path.exists() {
-        return Err(format!("未找到 Java 可执行文件: {}", java_path.display()));
+        return Err(format!("未找到 Java 可执行文件\n{}", java_path.display()));
     }
 
     // 解析 Java 主版本号
     let java_major = crate::jdk::parse_java_major(&java_env.version)
-        .ok_or_else(|| format!("无法解析 JDK 版本号: {}", java_env.version))?;
+        .ok_or_else(|| format!("无法解析 JDK 版本号\n{}", java_env.version))?;
 
     Ok((java_path, version_json, mc_dir, launcher_config, java_major))
 }

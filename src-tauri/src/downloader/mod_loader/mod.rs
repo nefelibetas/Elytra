@@ -33,7 +33,7 @@ pub(crate) fn merge_loader_profile(
     maven_url: &str,
 ) -> Result<serde_json::Value, String> {
     let mut merged: serde_json::Value =
-        serde_json::from_str(parent_text).map_err(|e| format!("解析原版版本 JSON 失败: {}", e))?;
+        serde_json::from_str(parent_text).map_err(|e| format!("解析原版版本 JSON 失败\n{}", e))?;
 
     for key in ["jvm", "game"] {
         let loader_args = profile["arguments"][key].as_array();
@@ -107,7 +107,7 @@ pub(crate) fn expand_inheritance(
     }
 
     let mut merged: serde_json::Value =
-        serde_json::from_str(parent_text).map_err(|e| format!("解析原版版本 JSON 失败: {}", e))?;
+        serde_json::from_str(parent_text).map_err(|e| format!("解析原版版本 JSON 失败\n{}", e))?;
 
     // libraries：父 + 子 拼接（父在前）
     let child_libs = child["libraries"].take();
@@ -199,7 +199,7 @@ pub(crate) async fn run_installer_command(
             let _ = child.kill().await;
         }
         tokio::select! {
-            st = child.wait() => break st.map_err(|e| format!("运行{label}失败: {e}"))?,
+            st = child.wait() => break st.map_err(|e| format!("运行{label}失败\n{e}"))?,
             n = stdout.read_buf(&mut out_buf) => { let _ = n; }
             n = stderr.read_buf(&mut err_buf) => { let _ = n; }
             _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {}

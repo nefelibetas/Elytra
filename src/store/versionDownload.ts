@@ -5,6 +5,7 @@ import { reactive, computed, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { dlState } from "./download";
 import { CATEGORIES } from "../utils/versionMeta";
+import { errMsg } from "../utils/error";
 
 export interface VersionMeta {
   id: string;
@@ -132,7 +133,7 @@ export const vdState = reactive({
       cachedManifest = this.manifest;
       manifestLoaded = true;
     } catch (e) {
-      this.error = String(e);
+      this.error = errMsg(e);
     } finally {
       this.loading = false;
       manifestLoading = false;

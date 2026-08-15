@@ -253,9 +253,10 @@ pub enum FetchError {
 impl std::fmt::Display for FetchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FetchError::Network(e) => write!(f, "network: {}", e),
-            FetchError::Io(e) => write!(f, "io: {}", e),
-            FetchError::InvalidUrl => write!(f, "invalid url"),
+            // 存储的字符串自带「中文首行\n技术细节」结构（见各处构造点），直接原样输出
+            FetchError::Network(e) => write!(f, "{e}"),
+            FetchError::Io(e) => write!(f, "{e}"),
+            FetchError::InvalidUrl => write!(f, "下载地址无效"),
             FetchError::Checksum => write!(
                 f,
                 "sha1 校验失败（所有下载源返回的内容均与期望不一致，可能为镜像缓存问题）"
@@ -452,7 +453,7 @@ async fn fetch_once<F: Fn(u64, u64)>(
                 .clone()
                 .acquire_owned()
                 .await
-                .map_err(|e| FetchError::Network(e.to_string()))?,
+                .map_err(|e| FetchError::Network(format!("请求失败\n{e}")))?,
         )
     } else {
         None
@@ -462,13 +463,13 @@ async fn fetch_once<F: Fn(u64, u64)>(
         .get(url)
         .send()
         .await
-        .map_err(|e| FetchError::Network(e.to_string()))?;
+        .map_err(|e| FetchError::Network(format!("请求失败\n{e}")))?;
     let ttfb_ms = request_start.elapsed().as_secs_f64() * 1000.0;
 
     // HTTP 状态检查：4xx/5xx 视为失败
     let status = response.status();
     if !status.is_success() {
-        return Err(FetchError::Network(format!("HTTP {status}")));
+        return Err(FetchError::Network(format!("请求失败\nHTTP {status}")));
     }
 
     let total = response.content_length().unwrap_or(0);
@@ -478,21 +479,21 @@ async fn fetch_once<F: Fn(u64, u64)>(
     if let Some(parent) = dest.parent() {
         tokio::fs::create_dir_all(parent)
             .await
-            .map_err(|e| FetchError::Io(e.to_string()))?;
+            .map_err(|e| FetchError::Io(format!("创建目录失败\n{e}")))?;
     }
 
     let mut file = tokio::fs::File::create(dest)
         .await
-        .map_err(|e| FetchError::Io(e.to_string()))?;
+        .map_err(|e| FetchError::Io(format!("创建文件失败\n{e}")))?;
 
     let mut stream = response.bytes_stream();
 
     use futures_util::StreamExt;
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| FetchError::Network(e.to_string()))?;
+        let chunk = chunk.map_err(|e| FetchError::Network(format!("请求失败\n{e}")))?;
         tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
             .await
-            .map_err(|e| FetchError::Io(e.to_string()))?;
+            .map_err(|e| FetchError::Io(format!("写入文件失败\n{e}")))?;
         downloaded = downloaded.saturating_add(chunk.len() as u64);
         if let Some(cb) = progress.as_ref() {
             cb(downloaded, total);
@@ -519,7 +520,7 @@ async fn fetch_once<F: Fn(u64, u64)>(
     if downloaded == 0 {
         drop(file);
         let _ = std::fs::remove_file(dest);
-        return Err(FetchError::Network("empty response body".into()));
+        return Err(FetchError::Network("响应内容为空".into()));
     }
 
     // 内容校验（逐源循环内）：镜像可能返回陈旧/错误内容，不匹配视同此源失败。

@@ -40,7 +40,7 @@ pub fn save(account: &MsAccount) -> Result<(), String> {
     let mut list = read_all();
     list.retain(|a| a.uuid != account.uuid);
     list.push(account.clone());
-    let bytes = serde_json::to_vec(&list).map_err(|e| e.to_string())?;
+    let bytes = serde_json::to_vec(&list).map_err(|e| format!("序列化数据失败\n{e}"))?;
     crate::persist::secrets::save_secret(constants::SECT_MS_ACCOUNTS, &bytes)?;
     let _ = crate::persist::remove(constants::SECT_MS_ACCOUNT);
     Ok(())
@@ -53,7 +53,7 @@ pub fn remove(uuid: &str) -> Result<(), String> {
     if list.is_empty() {
         return crate::persist::secrets::remove_secret(constants::SECT_MS_ACCOUNTS);
     }
-    let bytes = serde_json::to_vec(&list).map_err(|e| e.to_string())?;
+    let bytes = serde_json::to_vec(&list).map_err(|e| format!("序列化数据失败\n{e}"))?;
     crate::persist::secrets::save_secret(constants::SECT_MS_ACCOUNTS, &bytes)
 }
 

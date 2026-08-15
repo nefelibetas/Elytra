@@ -35,19 +35,19 @@ async fn install_loader_via_profile(
         .get(&profile_url)
         .send()
         .await
-        .map_err(|e| format!("获取 profile 失败: {}", e))?;
+        .map_err(|e| format!("获取 profile 失败\n{}", e))?;
     let profile: serde_json::Value = resp
         .json()
         .await
-        .map_err(|e| format!("解析 profile 失败: {}", e))?;
+        .map_err(|e| format!("解析 profile 失败\n{}", e))?;
 
     let merged = merge_loader_profile(parent_text, &profile, &dir_name, &source.maven_url)?;
 
-    std::fs::create_dir_all(&vdir).map_err(|e| format!("创建目录失败: {}", e))?;
+    std::fs::create_dir_all(&vdir).map_err(|e| format!("创建目录失败\n{}", e))?;
     let json_path = vdir.join(format!("{}.json", dir_name));
     let json_str =
-        serde_json::to_string_pretty(&merged).map_err(|e| format!("序列化失败: {}", e))?;
-    std::fs::write(&json_path, &json_str).map_err(|e| format!("写入 JSON 失败: {}", e))?;
+        serde_json::to_string_pretty(&merged).map_err(|e| format!("序列化失败\n{}", e))?;
+    std::fs::write(&json_path, &json_str).map_err(|e| format!("写入 JSON 失败\n{}", e))?;
     if let Some(h) = hook {
         h(LoaderEvent::ConfigDone);
     }

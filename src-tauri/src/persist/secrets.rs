@@ -68,16 +68,16 @@ fn load_map() -> std::collections::HashMap<String, String> {
 fn write_map(map: &std::collections::HashMap<String, String>) -> Result<(), String> {
     let path = secrets_path();
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败\n{e}"))?;
     }
     let content =
-        serde_json::to_string(map).map_err(|e| format!("序列化 secrets 失败: {e}"))?;
+        serde_json::to_string(map).map_err(|e| format!("序列化 secrets 失败\n{e}"))?;
     #[cfg(not(target_os = "windows"))]
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
     }
-    std::fs::write(&path, content).map_err(|e| format!("写入 secrets 失败: {e}"))
+    std::fs::write(&path, content).map_err(|e| format!("写入 secrets 失败\n{e}"))
 }
 
 /// 加密（Windows DPAPI / 非 Windows 明文）。

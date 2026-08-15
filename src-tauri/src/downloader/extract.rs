@@ -142,7 +142,7 @@ pub async fn process_natives(
         }
         if let Some(parent) = dest.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
-                errors.push(format!("{}: 创建目录失败: {}", lib.name, e));
+                errors.push(format!("创建目录失败\n{}: {}", lib.name, e));
                 continue;
             }
         }
@@ -184,8 +184,8 @@ pub async fn process_natives(
 
 /// 把单个 ZIP 条目解压到目标文件（ModLoader installer 流程共用）。
 pub fn extract_entry_to(entry: &mut zip::read::ZipFile, dest: &Path) -> Result<(), String> {
-    let mut out = std::fs::File::create(dest).map_err(|e| format!("创建文件失败: {}", e))?;
-    std::io::copy(entry, &mut out).map_err(|e| format!("解压失败: {}", e))?;
+    let mut out = std::fs::File::create(dest).map_err(|e| format!("创建文件失败\n{}", e))?;
+    std::io::copy(entry, &mut out).map_err(|e| format!("解压失败\n{}", e))?;
     Ok(())
 }
 
@@ -196,8 +196,8 @@ pub fn extract_jar(
     out_dir: &Path,
     extract: Option<&ExtractRules>,
 ) -> Result<(), String> {
-    let file = std::fs::File::open(jar_path).map_err(|e| format!("打开 JAR 失败: {}", e))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取 JAR 失败: {}", e))?;
+    let file = std::fs::File::open(jar_path).map_err(|e| format!("打开 JAR 失败\n{}", e))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取 JAR 失败\n{}", e))?;
 
     let excludes: Vec<&str> = extract
         .map(|e| e.exclude.iter().map(|s| s.as_str()).collect())
@@ -206,7 +206,7 @@ pub fn extract_jar(
     for i in 0..archive.len() {
         let mut entry = archive
             .by_index(i)
-            .map_err(|e| format!("读取 ZIP 条目失败: {}", e))?;
+            .map_err(|e| format!("读取 ZIP 条目失败\n{}", e))?;
 
         let name = entry.name().to_string();
 
@@ -223,16 +223,16 @@ pub fn extract_jar(
         let target = out_dir.join(&name);
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent)
-                .map_err(|e| format!("创建目录 {} 失败: {}", parent.display(), e))?;
+                .map_err(|e| format!("创建目录失败\n{}: {}", parent.display(), e))?;
         }
 
         let mut buf = Vec::with_capacity(entry.size() as usize);
         entry
             .read_to_end(&mut buf)
-            .map_err(|e| format!("读取 {} 失败: {}", name, e))?;
+            .map_err(|e| format!("读取失败\n{}: {}", name, e))?;
 
         std::fs::write(&target, &buf)
-            .map_err(|e| format!("写入 {} 失败: {}", target.display(), e))?;
+            .map_err(|e| format!("写入失败\n{}: {}", target.display(), e))?;
     }
 
     Ok(())

@@ -7,6 +7,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { classifyVersion } from "../utils/versionClassify";
 import { showToast } from "../utils/toast";
+import { errMsg } from "../utils/error";
 import { CATEGORY_ICONS } from "../utils/versionIcons";
 import VersionItem from "./VersionItem.vue";
 import AlertDialog from "./AlertDialog.vue";
@@ -31,7 +32,7 @@ onMounted(async () => {
     const d = await invoke<{ name: string; path: string }>("get_active_game_dir");
     gameDir.value = d.path;
   } catch (e) {
-    dirError.value = String(e);
+    dirError.value = errMsg(e);
   }
 });
 
@@ -44,7 +45,7 @@ async function openFolder(kind: "version" | "saves" | "mods") {
     });
     await invoke("open_folder", { path: target });
   } catch (e) {
-    showToast(String(e));
+    showToast(errMsg(e));
   }
 }
 
@@ -80,7 +81,7 @@ async function confirmRename() {
     // 回到版本选择页并刷新列表（进入页面 onMounted 自动刷新）
     router.push({ path: "/version-select" });
   } catch (e) {
-    renameError.value = String(e);
+    renameError.value = errMsg(e);
   }
 }
 
@@ -100,7 +101,7 @@ async function confirmDelete() {
     }
     router.push({ path: "/version-select" });
   } catch (e) {
-    showToast(String(e));
+    showToast(errMsg(e));
   }
 }
 
@@ -144,7 +145,7 @@ async function repairFiles() {
     });
     showToast(`已提交 ${total} 个缺失文件到下载管理`);
   } catch (e) {
-    showToast(String(e));
+    showToast(errMsg(e));
   }
 }
 
@@ -195,7 +196,7 @@ async function exportScript() {
     });
     showToast("启动脚本已导出");
   } catch (e) {
-    showToast(String(e));
+    showToast(errMsg(e));
   }
 }
 </script>

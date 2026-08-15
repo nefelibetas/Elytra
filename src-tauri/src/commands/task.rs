@@ -172,7 +172,7 @@ pub fn decide_waiting_task(task_id: String, action: String) -> Result<(), String
         "skip" => WaitingDecision::Skip,
         "retry" => WaitingDecision::Retry,
         "cancel" => WaitingDecision::Cancel,
-        _ => return Err(format!("未知决策: {action}")),
+        _ => return Err(format!("未知决策\n{action}")),
     };
     if task::global().decide(&task_id, decision) {
         Ok(())

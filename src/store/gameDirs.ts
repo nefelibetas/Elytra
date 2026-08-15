@@ -6,6 +6,7 @@ import { CATEGORIES } from "../utils/versionMeta";
 import { classifyVersion } from "../utils/versionClassify";
 import { CATEGORY_ICONS } from "../utils/versionIcons";
 import { showToast } from "../utils/toast";
+import { errMsg } from "../utils/error";
 import { selectedVersion, setSelected, clearSelected } from "./selectedVersion";
 
 export interface GameDir {
@@ -39,7 +40,7 @@ export async function loadDirs(keepActive = true) {
       if (desired) await invoke("set_active_game_dir", { path: desired });
     }
   } catch (e) {
-    dirsError.value = String(e);
+    dirsError.value = errMsg(e);
   }
 }
 
@@ -87,7 +88,7 @@ export async function menuOpen() {
   try {
     await invoke("open_folder", { path: d.path });
   } catch (e) {
-    dirsError.value = String(e);
+    dirsError.value = errMsg(e);
   }
 }
 
@@ -118,7 +119,7 @@ export async function menuRemove() {
     }
     await loadVersions();
   } catch (e) {
-    dirsError.value = String(e);
+    dirsError.value = errMsg(e);
   }
 }
 
@@ -153,7 +154,7 @@ export async function confirmRename() {
     });
     renameDialog.value = false;
   } catch (e) {
-    renameError.value = String(e);
+    renameError.value = errMsg(e);
   }
 }
 
@@ -194,7 +195,7 @@ export async function confirmAdd() {
       await loadVersions();
     }
   } catch (e) {
-    addError.value = String(e);
+    addError.value = errMsg(e);
   }
 }
 
@@ -220,7 +221,7 @@ export async function confirmDeleteVersion() {
     }
     await loadVersions();
   } catch (e) {
-    showToast(String(e));
+    showToast(errMsg(e));
   }
 }
 
@@ -258,7 +259,7 @@ export async function loadVersions() {
     versions.value = await invoke<string[]>("get_installed_versions");
     if (!versions.value.includes(selectedVersion.value)) selectedVersion.value = "";
   } catch (e) {
-    versionsError.value = String(e);
+    versionsError.value = errMsg(e);
   } finally {
     versionsLoading.value = false;
   }
