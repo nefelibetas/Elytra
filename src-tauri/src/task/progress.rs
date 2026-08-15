@@ -405,6 +405,15 @@ pub fn set_error(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, msg: Stri
 }
 
 pub fn set_cancelled(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>) {
+    // 取消收口：任务侧下载已停止，取走清理路径后台整删（大目录不阻塞收尾线程）
+    if let Ok(p) = progress.try_lock() {
+        let task_id = p.task_id.clone();
+        if let Some(path) = global().take_cleanup_path(&task_id) {
+            tauri::async_runtime::spawn_blocking(move || {
+                let _ = std::fs::remove_dir_all(&path);
+            });
+        }
+    }
     update_and_emit(app, progress, |p| {
         p.status = TaskStatus::Cancelled;
         p.current_phase = "已取消".into();
