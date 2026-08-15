@@ -10,7 +10,7 @@ import {
   translateDisplayOptions, translateModeLabel,
   concurrencyLocked, MIRROR_CONCURRENCY,
   saveDownloadConfig, setFileMode, setCommunityMode, setManifestMode, setTranslateMode,
-  loadDownloadConfig,
+  toggleDlOpen, loadDownloadConfig,
 } from "../store/downloaderConfig";
 
 onMounted(loadDownloadConfig);
@@ -27,7 +27,7 @@ onMounted(loadDownloadConfig);
     <div class="dl-row">
       <span class="dl-label">文件下载源</span>
       <div class="dl-sel" :class="{ open: dlFileOpen }">
-        <button class="dl-sel-btn" @click="dlFileOpen = !dlFileOpen">
+        <button class="dl-sel-btn" @click="toggleDlOpen('file')">
           <span>{{ sourceModeLabel(dlFileMode) }}</span>
           <ChevronDown :size="12" />
         </button>
@@ -50,7 +50,7 @@ onMounted(loadDownloadConfig);
     <div class="dl-row">
       <span class="dl-label">版本列表源</span>
       <div class="dl-sel" :class="{ open: dlManifestOpen }">
-        <button class="dl-sel-btn" @click="dlManifestOpen = !dlManifestOpen">
+        <button class="dl-sel-btn" @click="toggleDlOpen('manifest')">
           <span>{{ sourceModeLabel(dlManifestMode) }}</span>
           <ChevronDown :size="12" />
         </button>
@@ -73,7 +73,7 @@ onMounted(loadDownloadConfig);
     <div class="dl-row">
       <span class="dl-label">社区下载源</span>
       <div class="dl-sel" :class="{ open: dlCommunityOpen }">
-        <button class="dl-sel-btn" @click="dlCommunityOpen = !dlCommunityOpen">
+        <button class="dl-sel-btn" @click="toggleDlOpen('community')">
           <span>{{ communitySourceOptions.find(o => o.value === dlCommunityMode)?.label ?? dlCommunityMode }}</span>
           <ChevronDown :size="12" />
         </button>
@@ -96,7 +96,7 @@ onMounted(loadDownloadConfig);
     <div class="dl-row">
       <span class="dl-label">翻译显示</span>
       <div class="dl-sel" :class="{ open: dlTranslateOpen }">
-        <button class="dl-sel-btn" @click="dlTranslateOpen = !dlTranslateOpen">
+        <button class="dl-sel-btn" @click="toggleDlOpen('translate')">
           <span>{{ translateModeLabel(dlTranslateMode) }}</span>
           <ChevronDown :size="12" />
         </button>

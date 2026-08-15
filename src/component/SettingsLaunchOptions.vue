@@ -53,6 +53,7 @@ const winsizeOptions: SelOption[] = [
           id="lo-prio"
           :model-value="loPriority"
           :options="priorityOptions"
+          width="140px"
           @update:model-value="loPriority = $event as typeof loPriority; saveLaunchOptions()"
         />
       </div>
@@ -97,6 +98,7 @@ const winsizeOptions: SelOption[] = [
           id="lo-lang"
           :model-value="loGameLang"
           :options="[{ value: 'auto_zh_CN', label: '自动设置为中文' }]"
+          width="150px"
           @update:model-value="loGameLang = $event; saveLaunchOptions()"
         />
       </div>
