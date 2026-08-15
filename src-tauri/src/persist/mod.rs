@@ -3,7 +3,7 @@ pub mod secrets;
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 /// 启动器可执行文件所在目录（配置文件与默认游戏目录的基准）。
 pub fn exe_dir() -> std::path::PathBuf {
@@ -34,7 +34,7 @@ impl std::fmt::Display for PersistError {
 }
 
 pub fn read<T: DeserializeOwned>(key: &str) -> Result<T, PersistError> {
-    let _guard = PERSIST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PERSIST_LOCK.lock();
     let content = store::read_raw().map_err(PersistError::Io)?;
     if content.is_empty() {
         return Err(PersistError::NotFound);
@@ -52,7 +52,7 @@ pub fn read<T: DeserializeOwned>(key: &str) -> Result<T, PersistError> {
 
 /// 删除某个 section。
 pub fn remove(key: &str) -> Result<(), PersistError> {
-    let _guard = PERSIST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PERSIST_LOCK.lock();
     let content = store::read_raw().unwrap_or_default();
     let mut root: toml::Table = toml::from_str(&content).unwrap_or_default();
     root.remove(key);
@@ -62,7 +62,7 @@ pub fn remove(key: &str) -> Result<(), PersistError> {
 }
 
 pub fn save<T: Serialize>(key: &str, data: &T) -> Result<(), PersistError> {
-    let _guard = PERSIST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = PERSIST_LOCK.lock();
     let content = store::read_raw().unwrap_or_default();
     let mut root: toml::Table =
         toml::from_str(&content).unwrap_or_default();

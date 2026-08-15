@@ -18,7 +18,7 @@ const RUNTIME_ALL_JSON: &str =
 /// 按 Java 主版本映射 Mojang runtime 组件名（all.json 的键）。
 /// 官方启动器为 1.20.5+ 用 epsilon（25）、1.18-1.20.4 用 delta（21）、
 /// 1.16-1.17 用 gamma（17）、1.7-1.8 用 jre-legacy（8）。
-pub fn component_for_major(major: u32) -> Option<&'static str> {
+fn component_for_major(major: u32) -> Option<&'static str> {
     match major {
         8 => Some("jre-legacy"),
         17 => Some("java-runtime-gamma"),
@@ -32,23 +32,23 @@ pub fn component_for_major(major: u32) -> Option<&'static str> {
 fn platform_key() -> &'static str {
     #[cfg(target_os = "windows")]
     {
-        return "windows-x64";
+        "windows-x64"
     }
     #[cfg(target_os = "macos")]
     {
-        return if cfg!(target_arch = "aarch64") {
+        if cfg!(target_arch = "aarch64") {
             "mac-os-arm64"
         } else {
             "mac-os-x64"
-        };
+        }
     }
     #[cfg(target_os = "linux")]
     {
-        return if cfg!(target_arch = "aarch64") {
+        if cfg!(target_arch = "aarch64") {
             "linux-arm64"
         } else {
             "linux-x64"
-        };
+        }
     }
 }
 
