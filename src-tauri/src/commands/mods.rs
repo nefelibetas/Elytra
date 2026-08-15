@@ -46,3 +46,13 @@ pub async fn get_mod_versions(
     )
     .await
 }
+
+/// 批量查询项目详情（前置依赖卡片数据源；translate 默认开启中文简介翻译）。
+#[tauri::command]
+pub async fn get_mod_details(
+    source: String,
+    ids: Vec<String>,
+    translate: Option<bool>,
+) -> Result<Vec<mods_domain::ModDependencyItem>, String> {
+    mods_domain::get_mod_details(&source, &ids, translate.unwrap_or(true)).await
+}

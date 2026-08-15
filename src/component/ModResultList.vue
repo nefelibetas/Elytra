@@ -1,15 +1,10 @@
 <script setup lang="ts">
 // Mod 搜索结果列表：加载/错误/空态 + 结果行 + 分页器（底部栏计数最右）
-import { modSearch, modTotalPages, type ModDisplayItem } from "../store/modSearch";
+import { modSearch, modTotalPages } from "../store/modSearch";
 import { dlTranslateMode } from "../store/downloaderConfig";
 import { openModDetail } from "../store/modDetail";
 import { fmtCount } from "../utils/format";
 import IconImage from "./IconImage.vue";
-
-/** 结果卡片悬浮提示：zh = 中文简介；en = 英文简介 */
-function cardTitle(m: ModDisplayItem): string {
-  return dlTranslateMode.value === "zh" ? (m.translated ?? m.description) : m.description;
-}
 </script>
 
 <template>
@@ -23,7 +18,7 @@ function cardTitle(m: ModDisplayItem): string {
     <template v-else-if="modSearch.searched">
       <div class="mod-list">
         <div v-for="m in modSearch.results" :key="m.key" class="mod-card">
-          <div class="mod-card-body" v-tooltip="cardTitle(m)" @click="openModDetail(m)">
+          <div class="mod-card-body" @click="openModDetail(m)">
             <IconImage :src="m.icon_url" :size="32" />
             <span class="mod-info">
               <span class="mod-title-row">
