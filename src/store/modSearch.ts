@@ -3,6 +3,7 @@
 import { reactive, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { dlTranslateMode } from "./downloaderConfig";
+import { errMsg } from "../utils/error";
 
 export interface ModSearchResult {
   id: string;
@@ -47,11 +48,35 @@ export interface ModVersion {
   sha1: string | null;
   date_published: string;
   downloads: number;
+  /** 该版本文件的依赖列表（两源归一：project_id + relation） */
+  dependencies: ModDependency[];
+}
+
+/** 版本文件依赖（镜像 Rust downloader::mods::ModDependency）。 */
+export interface ModDependency {
+  project_id: string;
+  /** required | optional | incompatible | embedded */
+  relation: string;
+}
+
+/** 依赖项目详情（镜像 Rust downloader::mods::ModDependencyItem；命令 get_mod_details）。 */
+export interface ModDependencyItem {
+  id: string;
+  title: string;
+  description: string;
+  icon_url: string | null;
+  /** MCIM 中文简介翻译（翻译关闭/未命中为 null，UI 降级显示原文） */
+  translated: string | null;
 }
 
 /** 查询项目版本文件列表（Modrinth/CurseForge 均支持；分类项目同样适用）。 */
 export function fetchVersions(source: string, projectId: string): Promise<ModVersion[]> {
   return invoke<ModVersion[]>("get_mod_versions", { source, projectId });
+}
+
+/** 批量查询项目详情（前置依赖卡片数据源；同源查询；按翻译模式决定是否查中文简介）。 */
+export function fetchModDetails(source: string, ids: string[]): Promise<ModDependencyItem[]> {
+  return invoke<ModDependencyItem[]>("get_mod_details", { source, ids, translate: needsTranslation() });
 }
 
 const MOD_PAGE_SIZE = 30;
@@ -180,7 +205,7 @@ export const modSearch = reactive({
       this.page = page;
       this.searched = true;
     } catch (e) {
-      this.error = String(e);
+      this.error = errMsg(e);
       this.searched = true;
       this.results = [];
       this.total = 0;

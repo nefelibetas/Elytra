@@ -53,6 +53,7 @@ pub fn run() {
             commands::loader::get_fabric_api_versions,
             commands::mods::search_mods,
             commands::mods::get_mod_versions,
+            commands::mods::get_mod_details,
             commands::task::start_download,
             commands::task::download_files,
             commands::task::download_single_file,

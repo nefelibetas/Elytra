@@ -1,16 +1,10 @@
 <script setup lang="ts">
 // 数据包搜索结果列表：加载/错误/空态 + 结果行 + 分页器（底部栏计数最右）
 import { datapackSearch, datapackTotalPages } from "../store/categorySearch";
-import type { ModDisplayItem } from "../store/modSearch";
 import { dlTranslateMode } from "../store/downloaderConfig";
 import { openModDetail } from "../store/modDetail";
 import { fmtCount } from "../utils/format";
 import IconImage from "./IconImage.vue";
-
-/** 结果卡片悬浮提示：zh = 中文简介；en = 英文简介 */
-function cardTitle(m: ModDisplayItem): string {
-  return dlTranslateMode.value === "zh" ? (m.translated ?? m.description) : m.description;
-}
 </script>
 
 <template>
@@ -24,7 +18,7 @@ function cardTitle(m: ModDisplayItem): string {
     <template v-else-if="datapackSearch.searched">
       <div class="da-list">
         <div v-for="m in datapackSearch.results" :key="m.key" class="da-card">
-          <div class="da-card-body" v-tooltip="cardTitle(m)" @click="openModDetail(m)">
+          <div class="da-card-body" @click="openModDetail(m)">
             <IconImage :src="m.icon_url" :size="32" />
             <span class="da-info">
               <span class="da-title-row">

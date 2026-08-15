@@ -1,4 +1,4 @@
-﻿//! Mod 搜索 / 版本查询（Modrinth 官方 API + CurseForge 官方 API）。
+//! Mod 搜索 / 版本查询（Modrinth 官方 API + CurseForge 官方 API）。
 //! 两个平台 API 完全不同（ID 体系、鉴权、返回结构），分开实现、统一出参。
 //! CurseForge 需要 x-api-key（constants.rs 经 .env 注入）；Modrinth 无需 key。
 //! 搜索结果的简介翻译由 MCIM 镜像提供（英文原文 → 中文简介），失败静默降级为英文。
@@ -22,8 +22,8 @@ const TRANSLATION_CACHE_TTL_SECS: u64 = 600;
 
 /// 翻译缓存：id → (查询时间, 中文简介)。模块级 Mutex 串行化；防翻页/重复搜索反复请求。
 static TRANSLATION_CACHE: std::sync::LazyLock<
-    std::sync::Mutex<HashMap<String, (std::time::Instant, String)>>,
-> = std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+    parking_lot::Mutex<HashMap<String, (std::time::Instant, String)>>,
+> = std::sync::LazyLock::new(|| parking_lot::Mutex::new(HashMap::new()));
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ModSearchResult {
@@ -162,6 +162,14 @@ pub struct ModSearchPage {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ModDependency {
+    /// 依赖项目 ID（Modrinth project_id / CurseForge modId，统一转字符串）
+    pub project_id: String,
+    /// 关系类型（两源归一）：required | optional | incompatible | embedded
+    pub relation: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct ModVersion {
     pub version_id: String,
     pub version_number: String,
@@ -173,6 +181,8 @@ pub struct ModVersion {
     pub sha1: Option<String>,
     pub date_published: String,
     pub downloads: u64,
+    /// 该版本文件的依赖列表（Modrinth dependencies / CurseForge dependencies 归一）
+    pub dependencies: Vec<ModDependency>,
 }
 
 /// CurseForge modLoaderType 枚举（部分）：forge=1、fabric=4、quilt=5、neoforge=6。
@@ -219,13 +229,13 @@ async fn get_json(url: &str) -> Result<serde_json::Value, String> {
         .timeout(std::time::Duration::from_secs(QUERY_TIMEOUT_SECS))
         .send()
         .await
-        .map_err(|e| format!("请求失败: {}", e))?;
+        .map_err(|e| format!("请求失败\n{}", e))?;
     if !resp.status().is_success() {
-        return Err(format!("HTTP {}", resp.status()));
+        return Err(format!("请求失败\nHTTP {}", resp.status()));
     }
     resp.json::<serde_json::Value>()
         .await
-        .map_err(|e| format!("解析 JSON 失败: {}", e))
+        .map_err(|e| format!("解析 JSON 失败\n{}", e))
 }
 
 /// 解析 MCIM 翻译响应（两源字段名不同：modrinth 用 project_id 字符串、curseforge 用 modid 数字），
@@ -277,7 +287,7 @@ async fn fetch_translations(source: &str, ids: &[String]) -> HashMap<String, Str
     let now = std::time::Instant::now();
     let mut result: HashMap<String, String> = HashMap::new();
     let missed: Vec<String> = {
-        let cache = TRANSLATION_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        let cache = TRANSLATION_CACHE.lock();
         ids.iter()
             .filter(|id| match cache.get(*id) {
                 Some((at, text))
@@ -311,7 +321,7 @@ async fn fetch_translations(source: &str, ids: &[String]) -> HashMap<String, Str
         _ => return result,
     };
 
-    let mut cache = TRANSLATION_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut cache = TRANSLATION_CACHE.lock();
     for (id, text) in parse_translations(source, &data) {
         cache.insert(id.clone(), (now, text.clone()));
         result.insert(id, text);
@@ -346,7 +356,7 @@ async fn search_modrinth(
         ("offset", offset.to_string()),
     ];
     if !facets.is_empty() {
-        let facets_json = serde_json::to_string(&facets).map_err(|e| e.to_string())?;
+        let facets_json = serde_json::to_string(&facets).map_err(|e| format!("序列化数据失败\n{e}"))?;
         params.push(("facets", facets_json));
     }
     // 空关键字时按下载量排（对齐 PCL2：不输入名称直接显示热门 Mod）
@@ -357,7 +367,7 @@ async fn search_modrinth(
         &format!("{}/v2/search", MODRINTH_API),
         &params,
     )
-    .map_err(|e| format!("URL 构造失败: {}", e))?;
+    .map_err(|e| format!("URL 构造失败\n{}", e))?;
     let data = get_json(url.as_str()).await?;
 
     let hits = data["hits"]
@@ -402,18 +412,18 @@ async fn modrinth_versions(
 ) -> Result<Vec<ModVersion>, String> {
     let mut params: Vec<(&str, String)> = Vec::new();
     if let Some(gv) = game_version {
-        let arr = serde_json::to_string(&vec![gv]).map_err(|e| e.to_string())?;
+        let arr = serde_json::to_string(&vec![gv]).map_err(|e| format!("序列化数据失败\n{e}"))?;
         params.push(("game_versions", arr));
     }
     if let Some(ld) = loader {
-        let arr = serde_json::to_string(&vec![ld]).map_err(|e| e.to_string())?;
+        let arr = serde_json::to_string(&vec![ld]).map_err(|e| format!("序列化数据失败\n{e}"))?;
         params.push(("loaders", arr));
     }
     let url = reqwest::Url::parse_with_params(
         &format!("{}/v2/project/{}/version", MODRINTH_API, project_id),
         &params,
     )
-    .map_err(|e| format!("URL 构造失败: {}", e))?;
+    .map_err(|e| format!("URL 构造失败\n{}", e))?;
     let data = get_json(url.as_str()).await?;
 
     let arr = data.as_array().ok_or_else(|| "版本响应格式错误".to_string())?;
@@ -442,6 +452,23 @@ async fn modrinth_versions(
                 sha1: hashes.and_then(|h| h.get("sha1")).and_then(|s| s.as_str()).map(str::to_string),
                 date_published: v["date_published"].as_str().unwrap_or("").to_string(),
                 downloads: v["downloads"].as_u64().unwrap_or(0),
+                dependencies: v["dependencies"]
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|d| {
+                                // 仅保留带项目 ID 的依赖（部分依赖只有 version_id，无法定位项目）
+                                Some(ModDependency {
+                                    project_id: d["project_id"].as_str()?.to_string(),
+                                    relation: d["dependency_type"]
+                                        .as_str()
+                                        .unwrap_or("unknown")
+                                        .to_string(),
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
             })
         })
         .collect())
@@ -456,20 +483,20 @@ async fn curseforge_get(path: &str, params: &[(&str, String)]) -> Result<serde_j
     let mut all: Vec<(&str, String)> = vec![("gameId", CURSEFORGE_GAME_ID.to_string())];
     all.extend_from_slice(params);
     let url = reqwest::Url::parse_with_params(&format!("{}{}", CURSEFORGE_API, path), &all)
-        .map_err(|e| format!("URL 构造失败: {}", e))?;
+        .map_err(|e| format!("URL 构造失败\n{}", e))?;
     let resp = fetcher::http()
         .get(url)
         .header("x-api-key", key)
         .timeout(std::time::Duration::from_secs(QUERY_TIMEOUT_SECS))
         .send()
         .await
-        .map_err(|e| format!("请求失败: {}", e))?;
+        .map_err(|e| format!("请求失败\n{}", e))?;
     if !resp.status().is_success() {
-        return Err(format!("HTTP {}", resp.status()));
+        return Err(format!("请求失败\nHTTP {}", resp.status()));
     }
     resp.json::<serde_json::Value>()
         .await
-        .map_err(|e| format!("解析 JSON 失败: {}", e))
+        .map_err(|e| format!("解析 JSON 失败\n{}", e))
 }
 
 async fn search_curseforge(
@@ -582,6 +609,26 @@ async fn curseforge_versions(
                 sha1: sha1.get("value").and_then(|s| s.as_str()).map(str::to_string),
                 date_published: f["fileDate"].as_str().unwrap_or("").to_string(),
                 downloads: f["downloadCount"].as_u64().unwrap_or(0),
+                dependencies: f["dependencies"]
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|d| {
+                                // CurseForge relationType：1=embedded、2=optional、3=required（归一化）
+                                let relation = match d["relationType"].as_u64() {
+                                    Some(1) => "embedded",
+                                    Some(2) => "optional",
+                                    Some(3) => "required",
+                                    _ => "unknown",
+                                };
+                                Some(ModDependency {
+                                    project_id: d["modId"].as_u64()?.to_string(),
+                                    relation: relation.to_string(),
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
             })
         })
         .collect())
@@ -608,7 +655,7 @@ pub async fn search_mods(
         "curseforge" => {
             search_curseforge(query, game_version, loader, category, offset, page_size).await?
         }
-        other => return Err(format!("未知 Mod 来源: {}", other)),
+        other => return Err(format!("未知 Mod 来源\n{other}")),
     };
     if translate {
         // 标题译名/mcmod_id：搜索构造时已由内置百科表填充（无网络开销）；
@@ -634,8 +681,85 @@ pub async fn get_mod_versions(
     match source {
         "modrinth" => modrinth_versions(project_id, game_version, loader).await,
         "curseforge" => curseforge_versions(project_id, game_version, loader).await,
-        other => Err(format!("未知 Mod 来源: {}", other)),
+        other => Err(format!("未知 Mod 来源\n{other}")),
     }
+}
+
+/// 依赖项目详情（图标/标题/简介），供详情页前置依赖卡片展示。
+/// 与所属项目同源查询（Modrinth 依赖 project_id / CurseForge 依赖 modId）。
+#[derive(Debug, Clone, Serialize)]
+pub struct ModDependencyItem {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    pub icon_url: Option<String>,
+    /// MCIM 中文简介翻译（translate=false 或未命中时为 None，UI 降级显示原文）
+    pub translated: Option<String>,
+}
+
+/// 批量查询项目详情（按来源分派）。空 ids 直接返回空列表；单条失败跳过。
+/// `translate` 为 true 时对结果批量查 MCIM 中文简介（失败静默降级为英文）。
+pub async fn get_mod_details(
+    source: &str,
+    ids: &[String],
+    translate: bool,
+) -> Result<Vec<ModDependencyItem>, String> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut items = match source {
+        "modrinth" => modrinth_details(ids).await?,
+        "curseforge" => curseforge_details(ids).await?,
+        other => return Err(format!("未知 Mod 来源\n{other}")),
+    };
+    if translate {
+        let tr = fetch_translations(source, ids).await;
+        for it in &mut items {
+            it.translated = tr.get(&it.id).cloned();
+        }
+    }
+    Ok(items)
+}
+
+async fn modrinth_details(ids: &[String]) -> Result<Vec<ModDependencyItem>, String> {
+    let ids_json = serde_json::to_string(ids).map_err(|e| format!("序列化数据失败\n{e}"))?;
+    let url = reqwest::Url::parse_with_params(
+        &format!("{}/v2/projects", MODRINTH_API),
+        &[("ids", ids_json.as_str())],
+    )
+    .map_err(|e| format!("URL 构造失败\n{}", e))?;
+    let data = get_json(url.as_str()).await?;
+    let arr = data.as_array().ok_or_else(|| "项目详情响应格式错误".to_string())?;
+    Ok(arr
+        .iter()
+        .filter_map(|p| {
+            Some(ModDependencyItem {
+                id: p["id"].as_str()?.to_string(),
+                title: p["title"].as_str()?.to_string(),
+                description: p["description"].as_str().unwrap_or("").to_string(),
+                icon_url: p["icon_url"].as_str().map(str::to_string),
+                translated: None,
+            })
+        })
+        .collect())
+}
+
+async fn curseforge_details(ids: &[String]) -> Result<Vec<ModDependencyItem>, String> {
+    let joined = ids.join(",");
+    let data = curseforge_get("/mods", &[("modIds", joined)]).await?;
+    let arr = data["data"].as_array().ok_or_else(|| "项目详情响应缺少 data".to_string())?;
+    Ok(arr
+        .iter()
+        .filter_map(|m| {
+            Some(ModDependencyItem {
+                id: m["id"].as_u64()?.to_string(),
+                title: m["name"].as_str()?.to_string(),
+                description: m["summary"].as_str().unwrap_or("").to_string(),
+                icon_url: m["logo"]["url"].as_str().map(str::to_string),
+                translated: None,
+            })
+        })
+        .collect())
 }
 
 #[cfg(test)]
