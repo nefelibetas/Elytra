@@ -6,7 +6,6 @@ use crate::auth::account;
 use crate::auth::microsoft::{self, CALLBACK_PORT};
 use crate::auth::model::MsAccount;
 use crate::auth::mojang;
-use crate::constants;
 
 /// 当前进行中的登录回调等待任务（取消登录时 abort 以释放回调端口；完成后残留无害，下次启动覆盖）。
 static LOGIN_TASK: std::sync::LazyLock<parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>>> =
@@ -60,6 +59,33 @@ pub fn get_ms_account() -> Option<MsAccount> {
     crate::auth::model::read()
 }
 
+/// 读取全部已保存的正版账号（登录时间升序，末尾为当前账号）。
+#[tauri::command]
+pub fn get_ms_accounts() -> Vec<MsAccount> {
+    crate::auth::model::read_all()
+}
+
+/// 移除指定 uuid 的正版账号（连同其长期 refresh_token）。删除当前账号后自动回退到上一账号。
+#[tauri::command]
+pub fn remove_ms_account(uuid: String) -> Result<(), String> {
+    crate::auth::model::remove(&uuid)
+}
+
+/// 切换当前正版账号：按 uuid 找到账号，refresh_token 静默刷新后置为当前。
+/// refresh_token 失效时返回错误（该账号需重新走 OAuth 登录）。
+#[tauri::command]
+pub async fn switch_ms_account(uuid: String) -> Result<MsAccount, String> {
+    let account = crate::auth::model::read_all()
+        .into_iter()
+        .find(|a| a.uuid == uuid)
+        .ok_or("该账号不在列表中，请重新登录")?;
+    let refreshed = microsoft::refresh_login(&account)
+        .await
+        .map_err(|e| e.to_string())?;
+    crate::auth::model::save(&refreshed)?;
+    Ok(refreshed)
+}
+
 /// 通过 visage 3D 渲染服务获取头部头像（正面视角、光照），返回 base64 PNG。
 /// subject 支持 uuid、用户名或 Mojang texture ID（刷新皮肤后传新 texture ID 可绕过服务端缓存）。
 #[tauri::command]
@@ -82,69 +108,17 @@ pub async fn fetch_texture_id(uuid: String) -> Result<String, String> {
 }
 
 /// 提取游戏内置默认皮肤（经典蓝衬衫 Steve / Alex），返回 base64。
-/// 从任一已下载版本 jar 的 assets/minecraft/textures/entity/ 提取（各版本相同）。
+/// 纹理编译期内置（resources/*.png，源自客户端 jar 的 player/wide/steve.png 与 player/slim/alex.png）——
+/// 不依赖已下载版本：新版 jar 纹理路径已改为 player/wide|slim 子目录，旧扫描逻辑必然失败。
 #[tauri::command]
 pub fn fetch_default_skin(skin: String) -> Result<String, String> {
     use base64::Engine;
-    use std::io::Read;
-
-    let cfg: crate::config::downloader::model::DownloaderConfig =
-        crate::persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
-    let mc = cfg.minecraft_dir_abs();
-    let name = format!("assets/minecraft/textures/entity/{}.png", skin);
-    let versions_dir = mc.join("versions");
-    let rd = std::fs::read_dir(&versions_dir).map_err(|e| e.to_string())?;
-    // jar 位于 versions/<ver>/<ver>.jar（子目录），递归一层扫描
-    for entry in rd.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if let Ok(sub) = std::fs::read_dir(&path) {
-                for f in sub.flatten() {
-                    let p = f.path();
-                    if p.extension().map(|e| e == "jar").unwrap_or(false) {
-                        if let Ok(file) = std::fs::File::open(&p) {
-                            if let Ok(mut archive) = zip::ZipArchive::new(file) {
-                                if let Ok(mut f) = archive.by_name(&name) {
-                                    let mut buf = Vec::new();
-                                    if f.read_to_end(&mut buf).is_ok() && !buf.is_empty() {
-                                        return Ok(
-                                            base64::engine::general_purpose::STANDARD.encode(&buf)
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    Err("未找到游戏内置皮肤文件".into())
-}
-
-/// 获取正版玩家的皮肤纹理（原始 PNG），返回 base64。
-/// api.mojang.com 查 UUID → sessionserver 取 textures property → 解码 payload → 下载纹理。
-#[tauri::command]
-pub async fn fetch_player_skin_texture(player_name: String) -> Result<String, String> {
-    use base64::Engine;
-
-    // 1. 用户名 → UUID
-    let uuid = mojang::name_to_uuid(player_name.trim()).await?;
-
-    // 2. sessionserver → textures property（base64 payload）
-    let value_b64 = mojang::texture_value(&uuid).await?;
-
-    // 3. 解码 payload → SKIN.url → 下载纹理
-    let payload_bytes = base64::engine::general_purpose::STANDARD
-        .decode(value_b64)
-        .map_err(|e| e.to_string())?;
-    let payload: serde_json::Value =
-        serde_json::from_slice(&payload_bytes).map_err(|e| e.to_string())?;
-    let skin_url = payload
-        .pointer("/textures/SKIN/url")
-        .and_then(|v| v.as_str())
-        .ok_or("皮肤地址缺失")?;
-    account::fetch_b64(skin_url, "下载皮肤").await
+    let data: &[u8] = match skin.as_str() {
+        "steve" => include_bytes!("../../resources/steve.png"),
+        "alex" => include_bytes!("../../resources/alex.png"),
+        _ => return Err("未知皮肤类型".into()),
+    };
+    Ok(base64::engine::general_purpose::STANDARD.encode(data))
 }
 
 /// 通过官方 API 拉取指定 uuid 的皮肤 PNG，返回 base64（供 save_skin 保存用）。
@@ -154,6 +128,12 @@ async fn fetch_skin(uuid: String) -> Result<String, String> {
         .as_str()
         .ok_or("该账号未设置皮肤")?;
     account::fetch_b64(skin_url, "下载皮肤").await
+}
+
+/// 拉取指定 uuid 正版玩家的皮肤 PNG（base64，供账号列表 2D 头像，前端截取头部）。
+#[tauri::command]
+pub async fn fetch_account_skin(uuid: String) -> Result<String, String> {
+    fetch_skin(uuid).await
 }
 
 /// 把当前皮肤保存到用户指定路径。
@@ -191,55 +171,6 @@ pub async fn set_active_cape(access_token: String, cape_id: String) -> Result<()
 #[tauri::command]
 pub async fn disable_cape(access_token: String) -> Result<(), String> {
     account::disable_cape(&access_token).await
-}
-
-/// 读取离线皮肤配置（PCL2 同款：随机/Steve/Alex/正版玩家/自定义）。
-#[tauri::command]
-pub fn get_offline_skin() -> crate::config::offline_skin::OfflineSkinConfig {
-    crate::persist::read(constants::SECT_OFFLINE_SKIN).unwrap_or_default()
-}
-
-/// 保存离线皮肤配置。
-#[tauri::command]
-pub fn set_offline_skin(
-    config: crate::config::offline_skin::OfflineSkinConfig,
-) -> Result<(), String> {
-    crate::persist::save(constants::SECT_OFFLINE_SKIN, &config).map_err(|e| e.to_string())
-}
-
-/// 校验正版玩家皮肤信息（刷新用）：返回 uuid + 当前 texture id。
-#[tauri::command]
-pub async fn fetch_player_skin(player_name: String) -> Result<serde_json::Value, String> {
-    let uuid = mojang::name_to_uuid(&player_name).await?;
-    let textures = mojang::profile_textures(&uuid).await?;
-    let texture_id = textures["textures"]["SKIN"]["url"]
-        .as_str()
-        .and_then(crate::util::url_file_name)
-        .unwrap_or("");
-    Ok(serde_json::json!({ "uuid": uuid, "texture_id": texture_id }))
-}
-
-/// 保存正版玩家的皮肤到用户指定位置（玩家名 → UUID → 皮肤文件）。
-#[tauri::command]
-pub async fn save_player_skin(player_name: String, path: String) -> Result<(), String> {
-    let uuid = mojang::name_to_uuid(&player_name).await?;
-    save_skin(uuid, path).await
-}
-
-/// 读取本地皮肤 PNG 文件，返回 base64（供离线自定义皮肤 2D 正面渲染）。
-#[tauri::command]
-pub async fn read_skin_file(path: String) -> Result<String, String> {
-    use base64::Engine;
-    let bytes = tokio::fs::read(&path)
-        .await
-        .map_err(|e| format!("读取皮肤文件失败：{e}"))?;
-    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
-}
-
-/// 退出登录：清除保存的账号。
-#[tauri::command]
-pub fn clear_ms_account() -> Result<(), String> {
-    crate::auth::model::clear()
 }
 
 /// 刷新正版账号（静默，refresh_token 失效时返回错误）。

@@ -38,10 +38,12 @@ pub const SECT_DOWNLOADER: &str = "downloader";
 pub const SECT_LAUNCHER: &str = "launcher";
 /// persist section: JDK 配置
 pub const SECT_JDK: &str = "jdk";
-/// persist section: 离线皮肤配置
-pub const SECT_OFFLINE_SKIN: &str = "offline_skin";
-/// persist section: 微软账号
+/// persist section: 微软账号（旧单键，迁移读用；新格式见 SECT_MS_ACCOUNTS）
 pub const SECT_MS_ACCOUNT: &str = "ms_account";
+/// persist section: 微软账号列表（secrets.bin 加密存储，按登录时间排序，末尾为当前）
+pub const SECT_MS_ACCOUNTS: &str = "ms_accounts";
+/// persist section: 离线账号历史列表（最近使用排序，末尾为当前）
+pub const SECT_OFFLINE_ACCOUNTS: &str = "offline_accounts";
 /// persist section: 游戏目录
 pub const SECT_GAME_DIRS: &str = "game_dirs";
 
