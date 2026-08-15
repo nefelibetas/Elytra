@@ -2,10 +2,11 @@
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 use crate::config::downloader::model::DownloaderConfig;
 use crate::constants;
@@ -19,7 +20,7 @@ use super::progress::{
 };
 
 /// 单文件目标路径（纯函数，供单测）：versions/{version_dir}/{kind_dir}/{filename}。
-pub fn file_dest(
+fn file_dest(
     mc: &Path,
     version_dir: &str,
     kind: DownloadFileKind,
@@ -33,7 +34,7 @@ pub fn file_dest(
 
 /// task-waiting-user 事件 payload（前端 mirror）。
 #[derive(serde::Serialize, Clone)]
-pub struct WaitingUserPayload {
+struct WaitingUserPayload {
     pub task_id: String,
     pub file_name: String,
     pub error: String,
@@ -50,7 +51,7 @@ pub async fn run_files_task(
 ) {
     let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
     let mc = config.minecraft_dir_abs();
-    let task_id = progress.lock().unwrap().task_id.clone();
+    let task_id = progress.lock().task_id.clone();
 
     let items: Vec<(std::path::PathBuf, std::path::PathBuf)> = task
         .files
@@ -183,7 +184,8 @@ pub async fn run_files_task(
                     let _ = std::fs::remove_file(tmp);
                     // 暂停：发事件给前端弹窗，轮询用户决策（200ms，cancel 视为取消）
                     let slot = task::global().begin_wait(&task_id);
-                    let _ = app.emit(
+                    task::emit_event(
+                        &app,
                         crate::events::TASK_WAITING_USER,
                         WaitingUserPayload {
                             task_id: task_id.clone(),
@@ -238,7 +240,7 @@ pub async fn run_files_task(
         p.total_files = total_files;
         p.current_phase = "完成".into();
     });
-    if let Ok(p) = progress.try_lock() {
+    if let Some(p) = progress.try_lock() {
         task::global().remove(&p.task_id);
     }
 }

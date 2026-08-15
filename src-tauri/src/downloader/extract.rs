@@ -127,6 +127,7 @@ pub async fn process_natives(
     counter: Arc<AtomicU32>,
     bytes_counter: Arc<AtomicU64>,
     step_bytes: Arc<AtomicU64>,
+    cancel: Option<&Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(), Vec<String>> {
     let mut errors: Vec<String> = Vec::new();
 
@@ -167,7 +168,15 @@ pub async fn process_natives(
             }
         };
         // 逐源 sha1 校验下载：某源返回内容不匹配自动换下一源重试（镜像缓存陈旧场景）。
-        match fetcher::fetch_verified(&urls, &dest, Some(progress), &artifact.sha1).await {
+        match fetcher::fetch_verified_c(
+            &urls,
+            &dest,
+            Some(progress),
+            &artifact.sha1,
+            cancel.map(|c| c.as_ref()),
+        )
+        .await
+        {
             Ok(_dl) => {
                 counter.fetch_add(1, Ordering::Relaxed);
             }

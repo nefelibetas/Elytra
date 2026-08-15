@@ -75,6 +75,7 @@ async fn install_loader_via_profile(
         counter,
         bytes.clone(),
         lib_bytes.clone(),
+        None, // fabric 安装无取消检查（下载循环由 read_timeout 兜底）
     )
     .await
     .map_err(|e| format!("下载库失败:\n{}", e.join("\n")))?;

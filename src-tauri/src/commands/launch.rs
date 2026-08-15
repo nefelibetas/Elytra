@@ -3,7 +3,7 @@
 //! 平台调节（GPU/内存/优先级）在 config/launcher/platform.rs。
 
 use std::path::PathBuf;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 use crate::config::launcher::args::build_launch_command;
 use crate::config::launcher::env;
@@ -460,7 +460,9 @@ pub async fn spawn_game(
                     } else {
                         None
                     };
-                    let _ = app_handle.emit(
+                    // 队列线程派发（与 task-progress 同机制）：游戏监听线程不因 webview 未消费而阻塞
+                    crate::task::emit_event(
+                        &app_handle,
                         crate::events::GAME_EXITED,
                         (pid, version_label, exit_code, crash_report),
                     );
@@ -469,7 +471,8 @@ pub async fn spawn_game(
                 Ok(None) => {}
                 Err(_) => {
                     // try_wait 失败（状态查询异常）：按未知退出处理，避免线程永久挂起
-                    let _ = app_handle.emit(
+                    crate::task::emit_event(
+                        &app_handle,
                         crate::events::GAME_EXITED,
                         (pid, version_label, None::<i32>, None::<String>),
                     );
@@ -479,7 +482,8 @@ pub async fn spawn_game(
             // 主窗口尚未可见：轮询一次（Windows EnumWindows 按 pid 匹配可见顶层窗口）
             if !window_notified && process_has_visible_window(pid) {
                 window_notified = true;
-                let _ = app_handle.emit(
+                crate::task::emit_event(
+                    &app_handle,
                     crate::events::GAME_WINDOW_VISIBLE,
                     (pid, version_label.clone()),
                 );
