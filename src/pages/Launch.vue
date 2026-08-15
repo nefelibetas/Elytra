@@ -11,14 +11,15 @@ import CapeDialog from "../component/CapeDialog.vue";
 import { alertState } from "../store/alert";
 import { renderOfflineAvatar, renderPremiumAvatar } from "../store/avatar";
 import {
-  msAccount, username, loadMsAccount, loadLastUsername, ensureLoginListener,
+  msAccount, username, loadMsAccounts, loadOfflineAccounts, loadLastUsername, ensureLoginListener,
 } from "../store/auth";
 import { launchState, loadVersions, ensureGameExitListener } from "../store/launch";
 import { selectedVersion } from "../store/selectedVersion";
 
 onMounted(async () => {
   await loadLastUsername();
-  await loadMsAccount();
+  await loadMsAccounts();
+  await loadOfflineAccounts();
   renderOfflineAvatar(username.value);
   // 账号变化（登录/退出）时渲染正版头像；初始已保存的账号也立即渲染
   // （watch(msAccount) 已移入 auth store 模块级，路由往返不累积注册）
