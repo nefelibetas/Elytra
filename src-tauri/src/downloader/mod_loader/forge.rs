@@ -217,6 +217,7 @@ pub(super) async fn download_and_extract(
             counter,
             bytes.clone(),
             lib_bytes.clone(),
+            None, // 安装器内库下载小且少，取消由外层步骤检查兜底
         )
         .await
         .map_err(|e| format!("下载 {} 支持库失败:\n{}", dir_name, e.join("\n")))?;
@@ -237,6 +238,7 @@ pub(super) async fn download_and_extract(
         counter,
         bytes.clone(),
         lib_bytes.clone(),
+        None, // 同上
     )
     .await
     .map_err(|e| format!("下载 {} 支持库失败:\n{}", dir_name, e.join("\n")))?;

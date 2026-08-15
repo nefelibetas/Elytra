@@ -2,10 +2,11 @@
 // 三个任务（run_task / run_files_task / run_repair_task）共用，唯一依赖方向：任务主体 → 本模块。
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 use super::{emit, global, update_and_emit, StepStatus, TaskProgress, TaskStatus};
 
@@ -96,8 +97,8 @@ impl EmitLoop {
                 // 字节维度：initial（已存在）+ jar 当前字节 + libs/assets 下载增量
                 let completed_bytes = self.initial_bytes + jb + self.bytes.load(Ordering::Relaxed);
 
-                let done = {
-                    let mut p = self.progress.lock().unwrap();
+                let (done, progress_snapshot) = {
+                    let mut p = self.progress.lock();
                     // 终态（error/cancelled/收尾 done）事件由 set_error/set_cancelled/任务收尾
                     // 独占发出；此处不再重复 emit（否则前端会收到第二次终态事件）。
                     if p.status != TaskStatus::Running {
@@ -246,10 +247,17 @@ impl EmitLoop {
                         0.0
                     };
 
-                    let _ = self.app.emit(crate::events::TASK_PROGRESS, &*p);
-                    // 自然退出：计数到顶，或取消（终态事件仍由 set_cancelled/收尾发出）
-                    completed >= self.total_files || self.cancel.load(Ordering::SeqCst)
+                    // 快照克隆后锁外 emit：emit（tauri IPC 分发到 webview）若因前端
+                    // 未及时消费而阻塞，不持有 progress 锁——否则取消（cancel 的
+                    // try_lock）与任务收尾全被卡住，表现为"取消失效/任务卡死"。
+                    (
+                        // 自然退出：计数到顶，或取消（终态事件仍由 set_cancelled/收尾发出）
+                        completed >= self.total_files || self.cancel.load(Ordering::SeqCst),
+                        p.clone(),
+                    )
                 };
+                // 队列线程派发（emit 阻塞不占本任务/心跳线程）
+                emit(&self.app, &progress_snapshot);
                 if done {
                     break;
                 }
@@ -297,28 +305,34 @@ pub fn spawn_tail_loop(
                     last_bytes = cur;
                     last_sample = now;
                 }
-                let mut p = progress.lock().unwrap();
-                if p.status != TaskStatus::Running {
-                    return;
-                }
-                if !initialized {
-                    base_done = p.completed_bytes;
-                    base_cnt = cur;
-                    initialized = true;
-                }
-                p.speed_bps = speed_ema;
-                p.completed_bytes = base_done + cur.saturating_sub(base_cnt);
-                // ETA：剩余字节 / 速度；停滞（>4s 无推进）或速度过低时 None
-                let remaining = p.total_bytes.saturating_sub(p.completed_bytes);
-                p.eta_seconds = if speed_ema >= 1024.0
-                    && remaining > 0
-                    && now.duration_since(last_progress_at) <= Duration::from_secs(4)
-                {
-                    Some((remaining as f64 / speed_ema).ceil() as u64)
-                } else {
-                    None
+                let snapshot = {
+                    let mut p = progress.lock();
+                    if p.status != TaskStatus::Running {
+                        return;
+                    }
+                    if !initialized {
+                        base_done = p.completed_bytes;
+                        base_cnt = cur;
+                        initialized = true;
+                    }
+                    p.speed_bps = speed_ema;
+                    p.completed_bytes = base_done + cur.saturating_sub(base_cnt);
+                    // ETA：剩余字节 / 速度；停滞（>4s 无推进）或速度过低时 None
+                    let remaining = p.total_bytes.saturating_sub(p.completed_bytes);
+                    p.eta_seconds = if speed_ema >= 1024.0
+                        && remaining > 0
+                        && now.duration_since(last_progress_at) <= Duration::from_secs(4)
+                    {
+                        Some((remaining as f64 / speed_ema).ceil() as u64)
+                    } else {
+                        None
+                    };
+                    // 快照克隆后锁外 emit（同 EmitLoop：emit 阻塞不占 progress 锁）
+                    Some(p.clone())
                 };
-                emit(&app, &p);
+                if let Some(p) = snapshot {
+                    emit(&app, &p);
+                }
             }
         }
     })
@@ -383,10 +397,9 @@ pub fn set_completed(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, files
         p.completed_bytes = bytes;
         update_progress(p);
     });
-    // 终态统一移除后端任务注册（与 set_error 一致），task_exists 语义：存在=运行中
-    if let Ok(p) = progress.try_lock() {
-        global().fail(&p.task_id);
-    }
+    // 注意：此处不 fail——set_completed 是进度更新（阶段 B 检测中/on_total 都多次调用），
+    // 移除注册会让阶段 C 的取消失效（cancel 查不到任务）。任务注册由终态
+    // （Done/Error/Cancelled 的 update_and_emit 后）统一 fail 收口。
 }
 
 /// 收尾步骤的文件计数已由 EmitLoop 的 completed 公式（natives 计数 + 完成标志）承担，
@@ -399,27 +412,53 @@ pub fn set_error(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, msg: Stri
     // 移除任务注册（前端收到 error 事件后清理卡片）。
     // 不整删下载产物：半截/0B 文件由 sha1 校验与空响应防护在重试时自愈，
     // 已下载内容保留可复用（含 loader 依赖的原版版本 JSON）。
-    if let Ok(p) = progress.try_lock() {
-        global().fail(&p.task_id);
+    if let Some(p) = progress.try_lock() {
+        let task_id = p.task_id.clone();
+        drop(p); // 先释放 progress 锁再 fail（fail 内部读 progress，防重入死锁）
+        global().fail(&task_id);
     }
 }
 
 pub fn set_cancelled(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>) {
-    // 取消收口：任务侧下载已停止，取走清理路径后台整删（大目录不阻塞收尾线程）
-    if let Ok(p) = progress.try_lock() {
-        let task_id = p.task_id.clone();
-        if let Some(path) = global().take_cleanup_path(&task_id) {
-            tauri::async_runtime::spawn_blocking(move || {
-                let _ = std::fs::remove_dir_all(&path);
-            });
+    // 取消收口：任务侧下载已停止，取走清理路径后台整删（大目录不阻塞收尾线程）。
+    // 先取 task_id 释放 progress 锁再 take_cleanup_path（后者持 inner 锁），
+    // 保持全模块 inner→progress 统一锁序，杜绝死锁环。
+    let cleanup = {
+        if let Some(p) = progress.try_lock() {
+            let task_id = p.task_id.clone();
+            drop(p);
+            global().take_cleanup_path(&task_id)
+        } else {
+            None
         }
+    };
+    if let Some(path) = cleanup {
+        tauri::async_runtime::spawn_blocking(move || {
+            // 整删带重试：Windows 文件占用（杀软扫描/刚关闭的句柄）常为瞬时状态，
+            // 300ms 间隔重试至多 10 次（≈3s），保证取消后版本目录真正清空；
+            // 删除成功后（目录已不存在）提前退出。
+            for attempt in 0..10u32 {
+                match std::fs::remove_dir_all(&path) {
+                    Ok(_) => return,
+                    Err(e) => {
+                        if attempt >= 9 {
+                            eprintln!("[task] 取消清理失败（重试 10 次后仍被占用）: {} → {e}", path.display());
+                        } else {
+                            std::thread::sleep(std::time::Duration::from_millis(300));
+                        }
+                    }
+                }
+            }
+        });
     }
     update_and_emit(app, progress, |p| {
         p.status = TaskStatus::Cancelled;
         p.current_phase = "已取消".into();
     });
     // 终态统一移除后端任务注册
-    if let Ok(p) = progress.try_lock() {
-        global().fail(&p.task_id);
+    if let Some(p) = progress.try_lock() {
+        let task_id = p.task_id.clone();
+        drop(p); // 先释放 progress 锁再 fail（fail 内部读 progress，防重入死锁）
+        global().fail(&task_id);
     }
 }

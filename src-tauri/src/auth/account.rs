@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use base64::Engine;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 use crate::auth::microsoft::{self, Pkce};
 use crate::auth::model::MsAccount;
@@ -127,10 +127,13 @@ fn emit_result(
     account: Option<MsAccount>,
     error: Option<String>,
 ) -> Result<(), tauri::Error> {
-    app.emit(
+    // 队列线程派发：回调服务线程不因 webview 未消费而阻塞（与 task-progress 同机制）
+    crate::task::emit_event(
+        app,
         crate::events::MS_LOGIN_COMPLETE,
         serde_json::json!({ "ok": ok, "account": account, "error": error }),
-    )
+    );
+    Ok(())
 }
 
 /// 返回一个简单的浏览器可见页面。

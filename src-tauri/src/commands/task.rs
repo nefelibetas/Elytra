@@ -34,7 +34,7 @@ fn spawn_task(
     name: String,
     steps: Vec<crate::task::StepSpec>,
     spec: crate::task::store::JobSpec,
-    run: impl FnOnce(AppHandle, std::sync::Arc<std::sync::atomic::AtomicBool>, std::sync::Arc<std::sync::Mutex<crate::task::TaskProgress>>) + Send + 'static,
+    run: impl FnOnce(AppHandle, std::sync::Arc<std::sync::atomic::AtomicBool>, std::sync::Arc<parking_lot::Mutex<crate::task::TaskProgress>>) + Send + 'static,
 ) -> Result<String, String> {
     let step_names: Vec<&str> = steps.iter().map(|s| s.name.as_str()).collect();
     let tm = task::global();

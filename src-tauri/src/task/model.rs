@@ -25,7 +25,6 @@ pub enum StepStatus {
 }
 
 /// 任务进度快照（task-progress 事件推送体）。
-/// 注意：task/mod.rs 有同名字段的镜像定义（模块门面实际生效），此处同步维护。
 #[derive(Debug, Clone, Serialize)]
 pub struct TaskProgress {
     pub task_id: String,

@@ -41,13 +41,22 @@ pub async fn fetch_asset_index(
             .join(format!("{}.json", id))
     });
     if let (Some(path), Some(sha1)) = (&index_path, index_sha1) {
-        if path.exists() && file_sha1_matches(path, sha1) {
-            return std::fs::read_to_string(path)
-                .map_err(|e| format!("读取缓存资源索引失败\n{}", e));
+        // 单次读取 + 校验：命中直接用读到的内容返回（file_sha1_matches 已读一次，
+        // 避免二次读取；内容不匹配或读取失败走网络）
+        if path.exists() {
+            if let Ok(data) = std::fs::read(path) {
+                if crate::downloader::hash::sha1_hex(&data) == sha1 {
+                    eprintln!("[assets] 缓存命中: {}", path.display());
+                    return String::from_utf8(data)
+                        .map_err(|e| format!("读取缓存资源索引失败\n{e}"));
+                }
+            }
         }
+        eprintln!("[assets] 缓存无效或无缓存: {}", path.display());
     }
 
     // 资源索引：主源过慢（5s）自动降级到备用源
+    eprintln!("[assets] 无有效缓存，走网络 fetch_with_fallback");
     let text = config
         .fetch_with_fallback(
             config.file_source_mode,
@@ -56,6 +65,7 @@ pub async fn fetch_asset_index(
         )
         .await
         .map_err(|e| format!("获取资源索引失败\n{e}"))?;
+    eprintln!("[assets] 索引文本获取完成: {}B", text.len());
 
     if let Some(path) = &index_path {
         if let Some(parent) = path.parent() {
@@ -80,6 +90,7 @@ pub async fn download_assets(
     counter: Arc<AtomicU32>,
     bytes_counter: Arc<AtomicU64>,
     step_bytes: Arc<AtomicU64>,
+    cancel: Option<&Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(), Vec<String>> {
     let sources: Vec<&crate::config::downloader::model::DownloadSource> =
         config.file_sources_list();
@@ -123,6 +134,7 @@ pub async fn download_assets(
         let bc = bytes_counter.clone();
         let sb = step_bytes.clone();
         let permit = sem.clone();
+        let cancel = cancel.cloned();
         handles.push(tokio::spawn(async move {
             let _permit = permit.acquire_owned().await.unwrap();
             // 跨任务互斥：多任务共用 assets 目录，防并发写同一资源互相踩踏
@@ -145,10 +157,18 @@ pub async fn download_assets(
                 match copy_verified_local(&src, &dest, obj_size, Some(progress.clone())).await {
                     Ok(_) => {
                         ctr.fetch_add(1, Ordering::Relaxed);
-                        return Ok(());
+                        Ok(())
                     }
                     Err(e) => {
-                        match fetcher::fetch_verified(&urls, &dest, Some(progress), &hash).await {
+                        match fetcher::fetch_verified_c(
+                            &urls,
+                            &dest,
+                            Some(progress),
+                            &hash,
+                            cancel.as_deref(),
+                        )
+                        .await
+                        {
                             Ok(_) => {
                                 ctr.fetch_add(1, Ordering::Relaxed);
                                 Ok(())
@@ -159,7 +179,15 @@ pub async fn download_assets(
                 }
             } else {
                 // 逐源 sha1 校验下载：内容不匹配自动换下一源/下一轮重试（镜像缓存陈旧场景）
-                match fetcher::fetch_verified(&urls, &dest, Some(progress), &hash).await {
+                match fetcher::fetch_verified_c(
+                    &urls,
+                    &dest,
+                    Some(progress),
+                    &hash,
+                    cancel.as_deref(),
+                )
+                .await
+                {
                     Ok(_) => {
                         ctr.fetch_add(1, Ordering::Relaxed);
                         Ok(())
@@ -180,5 +208,35 @@ pub async fn download_assets(
         Ok(())
     } else {
         Err(errors)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::downloader::model::DownloaderConfig;
+
+    /// 端到端（B2 路径）：fetch_asset_index 经系统代理/直连拉取官方资源索引应成功。
+    /// 网络测试（与 fetch_manifest_works 同惯例）：开发环境可达；离线/黑洞环境超时报错。
+    #[tokio::test]
+    async fn fetch_asset_index_end_to_end() {
+        let cfg = DownloaderConfig::default();
+        let mc = std::env::temp_dir().join(format!("elytra_assets_e2e_{}", std::process::id()));
+        let url =
+            "https://piston-meta.mojang.com/v1/packages/cf75b185cb35b32e299b0c8e674fa202d7911a3c/32.json";
+        let sha1 = "cf75b185cb35b32e299b0c8e674fa202d7911a3c";
+        let res = tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            fetch_asset_index(&cfg, &mc, url, Some("32"), Some(sha1)),
+        )
+        .await;
+        let text = match res {
+            Ok(Ok(t)) => t,
+            Ok(Err(e)) => panic!("asset index 获取失败: {e}"),
+            Err(_) => panic!("asset index 20s 超时（网络或代理不可达）"),
+        };
+        assert!(text.len() > 400_000, "asset index 应完整（约 586KB）: {}B", text.len());
+        // 清理测试目录（避免留缓存）
+        let _ = std::fs::remove_dir_all(&mc);
     }
 }

@@ -4,7 +4,9 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use parking_lot::Mutex;
+use std::sync::mpsc::{channel, Sender};
+use std::sync::{Arc, LazyLock, OnceLock};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
@@ -17,10 +19,31 @@ pub mod runner;
 pub mod steps;
 pub mod store;
 
-pub use model::*;
-pub use steps::*;
+pub use model::{
+    DownloadFileItem, DownloadFileKind, DownloadFileTask, DownloadFilesTask, DownloadTask,
+    FabricApi, LoaderChoice, LoaderKind, StepInfo, StepStatus, TaskProgress, TaskStatus,
+};
+pub use steps::{StepKind, StepSpec, TaskSpec};
 
 static TM: OnceLock<Arc<TaskManager>> = OnceLock::new();
+
+/// 事件派发队列（独立线程顺序发送）：`app.emit` 是同步调用，若前端主线程
+/// （webview JS）未及时消费 IPC 消息会阻塞调用方——任务线程卡在 emit 上
+/// 表现为"任务卡死 + 取消失效"（取消的 try_lock 已释放但任务不前进）。
+/// 统一走队列线程后，任务线程/进度锁永远不碰 IPC，emit 阻塞只占本线程。
+static EMIT_TX: LazyLock<Sender<(AppHandle, &'static str, serde_json::Value)>> =
+    LazyLock::new(|| {
+        let (tx, rx) = channel::<(AppHandle, &'static str, serde_json::Value)>();
+        std::thread::Builder::new()
+            .name("task-progress-emit".into())
+            .spawn(move || {
+                while let Ok((app, event, payload)) = rx.recv() {
+                    let _ = app.emit(event, &payload);
+                }
+            })
+            .expect("spawn task-progress-emit thread");
+        tx
+    });
 
 pub fn init() {
     TM.set(Arc::new(TaskManager::default())).ok();
@@ -29,33 +52,21 @@ pub fn init() {
     store::mark_crashed_as_interrupted();
 }
 
+/// 顺序派发一条事件（队列线程发送，不阻塞调用方）。payload 先序列化，
+/// 发送端只做 channel 投递（O(1)），webview 消费慢只积压在队列线程侧。
+pub(crate) fn emit_event<E: Serialize + Clone + Send + 'static>(
+    app: &AppHandle,
+    event: &'static str,
+    payload: E,
+) {
+    let Ok(v) = serde_json::to_value(payload) else {
+        return;
+    };
+    let _ = EMIT_TX.send((app.clone(), event, v));
+}
+
 pub fn global() -> &'static Arc<TaskManager> {
     TM.get().expect("TaskManager not initialized")
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct TaskProgress {
-    pub task_id: String,
-    pub name: String,
-    pub status: TaskStatus, // pending | running | done | error | cancelled（serde lowercase）
-    pub progress: f64,      // 0.0 – 100.0
-    pub speed_bps: f64,
-    /// 预计剩余秒数（剩余字节 / 当前速度）；停滞（>4s 无字节推进）或速度过低时 None。
-    pub eta_seconds: Option<u64>,
-    pub completed_files: u32,
-    pub total_files: u32,
-    pub completed_bytes: u64,
-    pub total_bytes: u64,
-    pub current_phase: String,
-    pub steps: Vec<StepInfo>,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct StepInfo {
-    pub name: String,
-    pub status: StepStatus, // pending | running | done
-    pub progress: f64,      // 0–100, meaningful only when status=running
 }
 
 pub struct TaskManager {
@@ -108,7 +119,7 @@ impl TaskManager {
         name: &str,
         steps: &[&str],
     ) -> (String, Arc<AtomicBool>, Arc<Mutex<TaskProgress>>) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock();
         let id = format!("t{}", inner.counter);
         inner.counter += 1;
         let cancel = Arc::new(AtomicBool::new(false));
@@ -146,8 +157,8 @@ impl TaskManager {
     }
 
     /// 独占占用一个路径（版本目录/目标文件）；同路径已被占用返回 false。
-    pub fn acquire(&self, path: &std::path::Path) -> bool {
-        let mut inner = self.inner.lock().unwrap();
+    pub(crate) fn acquire(&self, path: &std::path::Path) -> bool {
+        let mut inner = self.inner.lock();
         if inner.active_paths.contains_key(path) {
             return false;
         }
@@ -155,74 +166,88 @@ impl TaskManager {
         true
     }
 
-    pub fn release(&self, path: &std::path::Path) {
-        self.inner.lock().unwrap().active_paths.remove(path);
+    pub(crate) fn release(&self, path: &std::path::Path) {
+        self.inner.lock().active_paths.remove(path);
     }
 
     pub fn set_cleanup_path(&self, id: &str, path: std::path::PathBuf) {
-        if let Some(h) = self.inner.lock().unwrap().tasks.get_mut(id) {
+        if let Some(h) = self.inner.lock().tasks.get_mut(id) {
             h.cleanup_path = Some(path);
         }
     }
 
     pub fn cancel(&self, id: &str) -> bool {
-        let inner = self.inner.lock().unwrap();
-        if let Some(h) = inner.tasks.get(id) {
-            h.cancel.store(true, Ordering::SeqCst);
-            // 目录清理移交任务侧 set_cancelled 收口：此处同步 remove_dir_all
-            // 会阻塞 worker 线程（大版本目录删除数十秒）致前端"取消卡住"，
-            // 且删除与仍在跑的下载竞争写文件。
-            if let Ok(mut p) = h.progress.try_lock() {
-                p.status = TaskStatus::Cancelled;
-                // 终态快照持久化（与 fail 收口一致）
-                store::update_status(id, TaskStatus::Cancelled);
+        let cancelled = {
+            let inner = self.inner.lock();
+            if let Some(h) = inner.tasks.get(id) {
+                h.cancel.store(true, Ordering::SeqCst);
+                // 目录清理移交任务侧 set_cancelled 收口：此处同步 remove_dir_all
+                // 会阻塞 worker 线程（大版本目录删除数十秒）致前端"取消卡住"，
+                // 且删除与仍在跑的下载竞争写文件。
+                // progress 锁内只改内存状态；DB 写移到锁外——DB（sqlite）若因
+                // 文件锁/连接池卡住，不会持有 progress/inner 锁阻塞任务与取消。
+                if let Some(mut p) = h.progress.try_lock() {
+                    p.status = TaskStatus::Cancelled;
+                }
+                true
+            } else {
+                false
             }
-            true
-        } else {
-            false
+        };
+        if cancelled {
+            // 终态快照持久化（与 fail 收口一致）；不持任何锁
+            store::update_status(id, TaskStatus::Cancelled);
         }
+        cancelled
     }
 
     /// 取走任务清理路径（取消收口用）：任务侧退出、下载停止后异步整删，
     /// 避免取消时与仍在写的下载竞争。
     pub fn take_cleanup_path(&self, id: &str) -> Option<std::path::PathBuf> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock();
         inner.tasks.get_mut(id).and_then(|h| h.cleanup_path.take())
     }
 
     pub fn fail(&self, id: &str) {
         // 终态快照持久化：移除内存注册前记录 status（崩溃/重启后恢复依据）。
         // 所有终态（done/error/cancelled）统一收口此处——DB 故障静默，不影响任务。
-        if let Some(h) = self.inner.lock().unwrap().tasks.get(id) {
-            let status = h.progress.lock().unwrap().status;
+        // 锁序统一 inner→progress（与 cancel/list 一致）；DB 写在 progress 锁
+        // 释放后进行——DB（sqlite）卡住不持有任何锁阻塞任务/取消。
+        let status = self
+            .inner
+            .lock()
+            .tasks
+            .get(id)
+            .map(|h| h.progress.lock().status);
+        if let Some(status) = status {
             store::update_status(id, status);
         }
-        self.inner.lock().unwrap().tasks.remove(id);
+        self.inner.lock().tasks.remove(id);
     }
 
     pub fn list(&self) -> Vec<TaskProgress> {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock();
         inner
             .tasks
             .values()
-            .map(|h| h.progress.lock().unwrap().clone())
+            .map(|h| h.progress.lock().clone())
             .collect()
     }
 
     /// 任务是否仍注册（存在 = 运行中；终态已由 fail/remove 移除）。
     /// 前端用于校正"预注册与终态事件竞态"：查不到即任务已结束。
     pub fn exists(&self, id: &str) -> bool {
-        self.inner.lock().unwrap().tasks.contains_key(id)
+        self.inner.lock().tasks.contains_key(id)
     }
 
     pub fn remove(&self, id: &str) {
-        self.inner.lock().unwrap().tasks.remove(id);
-        self.inner.lock().unwrap().waiting.remove(id);
+        self.inner.lock().tasks.remove(id);
+        self.inner.lock().waiting.remove(id);
     }
 
     /// 登记挂起等待用户决策：返回决策槽（任务侧轮询）。重复登记返回同一槽。
     pub fn begin_wait(&self, id: &str) -> Arc<Mutex<Option<WaitingDecision>>> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock();
         inner
             .waiting
             .entry(id.to_string())
@@ -232,10 +257,10 @@ impl TaskManager {
 
     /// 用户写入决策（命令侧）。任务未在挂起状态时返回 false。
     pub fn decide(&self, id: &str, decision: WaitingDecision) -> bool {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock();
         match inner.waiting.get(id) {
             Some(slot) => {
-                *slot.lock().unwrap() = Some(decision);
+                *slot.lock() = Some(decision);
                 true
             }
             None => false,
@@ -244,13 +269,13 @@ impl TaskManager {
 
     /// 任务侧轮询当前决策（挂起期间每 200ms 调用）；未决策返回 None。
     pub fn waiting_decision(&self, id: &str) -> Option<WaitingDecision> {
-        let inner = self.inner.lock().unwrap();
-        inner.waiting.get(id).and_then(|s| *s.lock().unwrap())
+        let inner = self.inner.lock();
+        inner.waiting.get(id).and_then(|s| *s.lock())
     }
 
     /// 清理挂起登记（决策已收到 / 任务终态）。
     pub fn end_wait(&self, id: &str) {
-        self.inner.lock().unwrap().waiting.remove(id);
+        self.inner.lock().waiting.remove(id);
     }
 }
 
@@ -291,17 +316,35 @@ pub async fn wait_path_lock(path: &std::path::Path) -> PathLock {
     }
 }
 
-pub fn emit(app: &AppHandle, p: &TaskProgress) {
-    let _ = app.emit(crate::events::TASK_PROGRESS, p);
+pub(crate) fn emit(app: &AppHandle, p: &TaskProgress) {
+    emit_event(app, crate::events::TASK_PROGRESS, p.clone());
 }
 
-pub fn update_and_emit(
+pub(crate) fn update_and_emit(
     app: &AppHandle,
     guard: &Arc<Mutex<TaskProgress>>,
     f: impl FnOnce(&mut TaskProgress),
 ) {
-    if let Ok(mut p) = guard.lock() {
+    // 锁内更新 + clone 快照，锁外 emit：emit（tauri IPC 分发）若因 webview
+    // 未及时消费而阻塞，不会持有 progress 锁——否则取消（cancel 的 try_lock）
+    // 和进度读取都会卡死，表现为"取消失效"。
+    // try_lock 循环：正常短临界区立即成功；异常（锁被长期持有/死锁）打印
+    // 告警后继续等待——不 panic 不放弃，且日志能定位持锁方。
+    let mut waited_ms = 0u32;
+    let snapshot = loop {
+        if let Some(p) = guard.try_lock() {
+            break p;
+        }
+        waited_ms += 5;
+        if waited_ms == 5 || waited_ms.is_multiple_of(500) {
+            eprintln!("[emit] 进度锁被持有 {}ms（等待中，正常短临界区不应出现）", waited_ms);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    {
+        let mut p = snapshot;
         f(&mut p);
+        let p = p.clone();
         emit(app, &p);
     }
 }

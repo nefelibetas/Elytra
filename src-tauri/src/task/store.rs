@@ -39,7 +39,7 @@ impl JobSpec {
 }
 
 /// 任务快照状态（与 TaskStatus serde 一致的小写字符串）。
-pub fn status_str(status: TaskStatus) -> &'static str {
+fn status_str(status: TaskStatus) -> &'static str {
     match status {
         TaskStatus::Pending => "pending",
         TaskStatus::Running => "running",
@@ -67,10 +67,11 @@ fn db_path() -> std::path::PathBuf {
 
 /// 同步执行异步 DB 操作（任务级低频操作，阻塞毫秒级可接受）。
 /// 有 tokio 上下文时复用现有 runtime：
-///  - multi_thread runtime：worker 线程直接用 `Handle::block_on` 会 panic
-///    （tokio 禁止 runtime 内再启动 runtime），须先 `block_in_place` 让出 worker；
-///    外部线程（主线程/blocking 线程）下 `block_in_place` 是 no-op，行为不变。
-///  - current_thread runtime：`block_in_place` 不可用，驱动线程直接 `block_on`。
+/// - multi_thread runtime：worker 线程直接用 `Handle::block_on` 会 panic
+///   （tokio 禁止 runtime 内再启动 runtime），须先 `block_in_place` 让出 worker；
+///   外部线程（主线程/blocking 线程）下 `block_in_place` 是 no-op，行为不变。
+/// - current_thread runtime：`block_in_place` 不可用，驱动线程直接 `block_on`。
+///
 /// 无 runtime 上下文（后台线程/独立进程/纯同步测试）时自维护兜底 runtime。
 fn block_on<F: Future>(fut: F) -> F::Output {
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
@@ -148,23 +149,28 @@ pub fn save_snapshot(id: &str, name: &str, spec: &JobSpec, status: TaskStatus) {
     let ts = now();
     let id_owned = id.to_string();
     let name_owned = name.to_string();
-    let _ = block_on(async move {
-        sqlx::query(
-            "INSERT OR REPLACE INTO install_jobs (id, name, spec_json, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?)",
+    block_on(async move {
+        // DB 写带 2s 超时（同 update_status）：sqlite 锁异常时静默放弃
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            sqlx::query(
+                "INSERT OR REPLACE INTO install_jobs (id, name, spec_json, status, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(id_owned)
+            .bind(name_owned)
+            .bind(spec_json)
+            .bind(st)
+            .bind(ts)
+            .bind(ts)
+            .execute(pool),
         )
-        .bind(id_owned)
-        .bind(name_owned)
-        .bind(spec_json)
-        .bind(st)
-        .bind(ts)
-        .bind(ts)
-        .execute(pool)
-        .await
+        .await;
     });
 }
 
 /// 更新快照状态（终态收口：TaskManager::fail / cancel 调用）。
+/// DB 写带 2s 超时：sqlite 文件锁/连接池异常时静默放弃，不阻塞 cancel/fail。
 pub fn update_status(id: &str, status: TaskStatus) {
     let Ok(pool) = pool() else {
         return;
@@ -172,13 +178,16 @@ pub fn update_status(id: &str, status: TaskStatus) {
     let st = status_str(status);
     let ts = now();
     let id_owned = id.to_string();
-    let _ = block_on(async move {
-        sqlx::query("UPDATE install_jobs SET status = ?, updated_at = ? WHERE id = ?")
-            .bind(st)
-            .bind(ts)
-            .bind(id_owned)
-            .execute(pool)
-            .await
+    block_on(async move {
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            sqlx::query("UPDATE install_jobs SET status = ?, updated_at = ? WHERE id = ?")
+                .bind(st)
+                .bind(ts)
+                .bind(id_owned)
+                .execute(pool),
+        )
+        .await;
     });
 }
 
@@ -189,13 +198,17 @@ pub fn mark_crashed_as_interrupted() {
         return;
     };
     let ts = now();
-    let _ = block_on(async move {
-        sqlx::query(
-            "UPDATE install_jobs SET status = 'interrupted', updated_at = ? WHERE status = 'running'",
+    block_on(async move {
+        // DB 写带 2s 超时（同 update_status）：启动路径不被 sqlite 锁卡住
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            sqlx::query(
+                "UPDATE install_jobs SET status = 'interrupted', updated_at = ? WHERE status = 'running'",
+            )
+            .bind(ts)
+            .execute(pool),
         )
-        .bind(ts)
-        .execute(pool)
-        .await
+        .await;
     });
 }
 
@@ -269,7 +282,7 @@ pub fn remove_snapshot(id: &str) {
 }
 
 /// 任务类型标签（供 list 展示；按 spec 反序列化）。
-pub fn kind_of(id: &str) -> Option<String> {
+fn kind_of(id: &str) -> Option<String> {
     load_spec(id).map(|(_, spec)| spec.kind_label().to_string())
 }
 

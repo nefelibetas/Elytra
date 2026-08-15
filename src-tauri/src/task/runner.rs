@@ -1,7 +1,8 @@
 // ── 完整下载任务主体（原版 / ModLoader / OptiFine / Fabric API）──
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 use tauri::AppHandle;
 
@@ -28,6 +29,11 @@ pub async fn run_task(
     progress: &Arc<Mutex<TaskProgress>>,
     task: &DownloadTask,
 ) {
+    eprintln!(
+        "[task] 开始: id={} mc={} loader={:?} url={}",
+        task.version_id, task.mc_version, task.loader, task.version_url
+    );
+    let t0 = std::time::Instant::now();
     let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
     let sources: Vec<DownloadSource> = config.file_sources_list().into_iter().cloned().collect();
     let src_refs: Vec<&DownloadSource> = sources.iter().collect();
@@ -73,10 +79,15 @@ pub async fn run_task(
     }
 
     // ── 阶段 A：fetch version.json in-memory（唯一硬前置，client/libs/assets/natives/ModLoader 均依赖）──
+    eprintln!("[task] 阶段A: fetch version json");
     let (vj, parent_text) = match fetch_version_json(version_url, &config).await {
         Ok(v) => v,
-        Err(e) => return set_error(&app, progress, e),
+        Err(e) => {
+            eprintln!("[task] 阶段A 失败: {e}");
+            return set_error(&app, progress, e);
+        }
     };
+    eprintln!("[task] 阶段A 完成 ({:.1}s): id={} libs={}", t0.elapsed().as_secs_f64(), vj.id, vj.libraries.len());
     step_done(&app, progress, 0);
     if cancelled(cancel) {
         return set_cancelled(&app, progress);
@@ -90,15 +101,38 @@ pub async fn run_task(
             std::fs::write(&jp, &json).ok();
         }
     }
-    task::global().set_cleanup_path(&progress.try_lock().unwrap().task_id, vdir.clone());
+    // 取消时整删本次安装的版本目录：仅新建目录（vdir_existed_before=false）
+    // 才登记清理——补全已有版本时取消不删，避免误删用户已有文件
+    // （与下方失败路径 `if !vdir_existed_before { remove_dir_all }` 语义一致）。
+    if !vdir_existed_before {
+        task::global().set_cleanup_path(&progress.try_lock().unwrap().task_id, vdir.clone());
+    }
 
     // ── 阶段 B：本地缺失检测 + 步骤布局 + 总进度基线（含资产清单 fetch 与多线程 sha1 检测）──
+    eprintln!("[task] 阶段B: 本地扫描开始");
     let lib_dir = mc.join("libraries");
-    let scan = match init_local_scan(&app, progress, &vj, &config, &mc, &lib_dir, &mut specs).await
+    let scan = match init_local_scan(&app, progress, &vj, &config, &mc, &lib_dir, &mut specs, cancel)
+        .await
     {
         Ok(s) => s,
-        Err(e) => return set_error(&app, progress, e),
+        Err(e) => {
+            // 扫描阶段被取消（count_assets_all 轮询返回）走取消收口，而非报错
+            if cancelled(cancel) {
+                eprintln!("[task] 阶段B 取消");
+                return set_cancelled(&app, progress);
+            }
+            eprintln!("[task] 阶段B 失败: {e}");
+            return set_error(&app, progress, e);
+        }
     };
+    eprintln!(
+        "[task] 阶段B 完成 ({:.1}s): jar={} libs_pending={} asst_pending={} natives={}",
+        t0.elapsed().as_secs_f64(),
+        scan.jar_total,
+        scan.lib_pending,
+        scan.asst_pending,
+        scan.natives_pending,
+    );
     // 安装步骤数：version json + jar + 全量库 + 全量资源 + natives 缺失数 + 安装步骤数
     let mut total_files = 1 + scan.jar_total + scan.lib_total_all + scan.asst_total_all + scan.natives_pending;
     if loader.is_some() {
@@ -231,7 +265,7 @@ pub async fn run_task(
                 {
                     let urls: Vec<String> =
                         sources.iter().map(|src| src.mirror_url(&c.url)).collect();
-                    fetcher::fetch_verified(&urls, &jar_path, Some(cb), &c.sha1)
+                    fetcher::fetch_verified_c(&urls, &jar_path, Some(cb), &c.sha1, Some(cancel))
                         .await
                         .map_err(|e2| vec![format!("{e2}（本地复用失败: {e}）")])?;
                 }
@@ -239,7 +273,7 @@ pub async fn run_task(
             } else {
                 // 逐源 sha1 校验下载：镜像 CDN 返回不完整/错误内容自动换源重试
                 let urls: Vec<String> = sources.iter().map(|src| src.mirror_url(&c.url)).collect();
-                fetcher::fetch_verified(&urls, &jar_path, Some(cb), &c.sha1)
+                fetcher::fetch_verified_c(&urls, &jar_path, Some(cb), &c.sha1, Some(cancel))
                     .await
                     .map_err(|e| vec![e.to_string()])?;
                 jar_counter.store(1, Ordering::Relaxed);
@@ -261,6 +295,7 @@ pub async fn run_task(
             Arc::clone(&lib_counter),
             Arc::clone(&bytes_counter),
             Arc::clone(&lib_step_bytes),
+            Some(cancel),
         )
         .await?;
         if let Some(i) = i_libs {
@@ -280,6 +315,7 @@ pub async fn run_task(
             Arc::clone(&asst_counter),
             Arc::clone(&bytes_counter),
             Arc::clone(&asst_step_bytes),
+            Some(cancel),
         )
         .await?;
         if let Some(i) = i_asst {
@@ -296,6 +332,7 @@ pub async fn run_task(
             Arc::clone(&natives_counter),
             Arc::clone(&bytes_counter),
             Arc::clone(&natives_step_bytes),
+            Some(cancel),
         )
         .await?;
         if let Some(i) = i_nat {
@@ -433,10 +470,8 @@ pub async fn run_task(
                 match config.community_source_mode {
                     DownloadSourceMode::OfficialOnly => vec![official],
                     DownloadSourceMode::ChinaOnly => vec![mcim],
-                    DownloadSourceMode::PreferChina => vec![mcim, official],
-                    DownloadSourceMode::PreferOfficial | DownloadSourceMode::Auto => {
-                        vec![official, mcim]
-                    }
+                    // Auto：官方优先，失败/过慢降级镜像（fetch_bounded 多源循环处理）
+                    DownloadSourceMode::Auto => vec![official, mcim],
                 }
             };
             // 字节级进度：增量累加进 bytes_counter（EmitLoop 显示速度）与 Fabric API 步骤计数
@@ -456,7 +491,7 @@ pub async fn run_task(
                     }
                 }
             };
-            match fetcher::fetch_bounded(&urls, &dest, Some(progress_cb)).await {
+            match fetcher::fetch_bounded_c(&urls, &dest, Some(progress_cb), Some(cancel)).await {
                 Ok(_) => {
                     if let Some(i) = i_fab {
                         step_done(&app, progress, i);
@@ -469,10 +504,13 @@ pub async fn run_task(
         Ok::<_, Vec<String>>(())
     };
 
+    eprintln!("[task] 阶段C: 并行下载开始 ({:.1}s)", t0.elapsed().as_secs_f64());
     let parallel = tokio::try_join!(jar, libs, asst, natives, loader_dl, optifine_dl, fabric_dl);
+    eprintln!("[task] 阶段C 并行结束 ({:.1}s)", t0.elapsed().as_secs_f64());
 
     // 失败/取消优先上报，避免先发 100% 完成误导前端
     if cancelled(cancel) {
+        eprintln!("[task] 取消收口");
         return set_cancelled(&app, progress);
     }
     if let Err(errors) = parallel {
@@ -481,13 +519,17 @@ pub async fn run_task(
         if !vdir_existed_before {
             let _ = std::fs::remove_dir_all(&vdir);
         }
+        eprintln!("[task] 失败: {}", errors.join("; "));
         return set_error(&app, progress, errors.join("; "));
     }
     if cancelled(cancel) {
+        eprintln!("[task] 取消收口(下载后)");
         return set_cancelled(&app, progress);
     }
 
-    // 收尾（EmitLoop 已完成全部计数自然退出；此处显式设 100%）
+    // 收尾（EmitLoop 已完成全部计数自然退出；此处显式设 100% 并发 done 终态事件，
+    // 前端据此移除卡片并触发完成通知——缺失则卡片停在 EmitLoop 封顶的 99.9%）
+    eprintln!("[task] 完成 ({:.1}s)", t0.elapsed().as_secs_f64());
     task::update_and_emit(&app, progress, |p| {
         p.status = TaskStatus::Done;
         p.completed_files = p.total_files;
@@ -495,8 +537,10 @@ pub async fn run_task(
         p.current_phase = "完成".into();
     });
     // 终态统一移除后端任务注册（与 set_error/set_cancelled 一致）
-    if let Ok(p) = progress.try_lock() {
-        task::global().fail(&p.task_id);
+    if let Some(p) = progress.try_lock() {
+        let task_id = p.task_id.clone();
+        drop(p); // 先释放 progress 锁再 fail（fail 内部读 progress，防重入死锁）
+        task::global().fail(&task_id);
     }
 }
 
@@ -575,6 +619,10 @@ struct LocalScan {
 /// 阶段 B：检测本地已有文件（库/jar/natives 快查 + 资产清单 fetch + 多线程 sha1），
 /// 重建步骤列表（零缺失维度过滤），并给出总进度基线（先全量总数后覆盖，避免 UI 死等）。
 /// 期间实时上报检测进度；资产清单 fetch 失败返回 Err（调用方 set_error）。
+/// `cancel`：扫描轮询取消（count_assets_all 内部检查），任务被取消时返回
+/// Err("任务已取消")，调用方转 set_cancelled。
+/// 8 个参数均为语义必要（阶段 B 的完整输入输出契约），不合并。
+#[allow(clippy::too_many_arguments)]
 async fn init_local_scan(
     app: &AppHandle,
     progress: &Arc<Mutex<TaskProgress>>,
@@ -583,7 +631,9 @@ async fn init_local_scan(
     mc: &std::path::Path,
     lib_dir: &std::path::Path,
     specs: &mut Vec<StepSpec>,
+    cancel: &Arc<AtomicBool>,
 ) -> Result<LocalScan, String> {
+    eprintln!("[task]   B1: 库/natives 统计");
     let lib_total_all = crate::downloader::library::count_total(&vj.libraries) as u32;
     let lib_pending = crate::downloader::library::count_pending(&vj.libraries, lib_dir) as u32;
     let lib_existing = lib_total_all - lib_pending;
@@ -601,15 +651,18 @@ async fn init_local_scan(
     let mut asst_total_all = 0u32;
     let mut asst_total_bytes = 0u64;
     task::update_and_emit(app, progress, |p| p.current_phase = "获取资源清单".into());
+    eprintln!("[task]   B2: fetch asset index ({})", vj.asset_index.url);
     let (asst_pending, asst_pending_bytes) = count_assets_all(
         &vj.asset_index.url,
         Some(&vj.asset_index.id),
         Some(&vj.asset_index.sha1),
         config,
         mc,
+        Some(cancel),
         |total, total_bytes| {
             asst_total_all = total;
             asst_total_bytes = total_bytes;
+            eprintln!("[assets] on_total: 清单 {} 文件 / {}B，emit 已入队", total, total_bytes);
             // 清单齐了：剩余=全量总数，已完成仅 version json（近似值，检测后覆盖为最终总数）
             set_total(
                 app,
@@ -617,10 +670,13 @@ async fn init_local_scan(
                 1 + jar_total + lib_total_all + total,
                 1 + jar_total_bytes + lib_total_bytes + total_bytes,
             );
+            eprintln!("[assets] on_total: set_total 完成");
             set_completed(app, progress, 1, 1);
+            eprintln!("[assets] on_total: set_completed 完成");
             task::update_and_emit(app, progress, |p| {
                 p.current_phase = "检测本地资源文件".into()
             });
+            eprintln!("[assets] on_total: phase 更新完成");
         },
         |checked_files, checked_bytes| {
             // 检测中：已完成 = version json + 已存在库 + 已检测资产（文件与字节）
@@ -633,6 +689,10 @@ async fn init_local_scan(
         },
     )
     .await?;
+    eprintln!(
+        "[task]   B3: asset 扫描完成: total={} pending={} bytes={}",
+        asst_total_all, asst_pending, asst_pending_bytes
+    );
     let asst_existing = asst_total_all.saturating_sub(asst_pending);
     let asst_existing_bytes = asst_total_bytes.saturating_sub(asst_pending_bytes);
     set_completed(

@@ -4,7 +4,8 @@
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 use tauri::AppHandle;
 
@@ -128,6 +129,7 @@ pub async fn scan_missing(version_dir_name: &str) -> Result<MissingReport, Strin
         Some(&vj.asset_index.sha1),
         &config,
         &mc,
+        None,
         |_, _| {},
         |_, _| {},
     )
@@ -195,8 +197,10 @@ pub async fn run_repair_task(
             p.current_phase = "文件完整，无需修复".into();
         });
         // 终态统一移除后端任务注册
-        if let Ok(p) = progress.try_lock() {
-            task::global().fail(&p.task_id);
+        if let Some(p) = progress.try_lock() {
+            let task_id = p.task_id.clone();
+            drop(p); // 先释放 progress 锁再 fail（fail 内部读 progress，防重入死锁）
+            task::global().fail(&task_id);
         }
         return;
     }
@@ -286,6 +290,7 @@ pub async fn run_repair_task(
         Arc::clone(&lib_counter),
         Arc::clone(&bytes_counter),
         Arc::new(AtomicU64::new(0)), // 占位：repair 分步进度走文件数回退
+        Some(cancel),
     );
 
     let asst = crate::downloader::assets::download_assets(
@@ -298,6 +303,7 @@ pub async fn run_repair_task(
         Arc::clone(&asst_counter),
         Arc::clone(&bytes_counter),
         Arc::new(AtomicU64::new(0)), // 占位
+        Some(cancel),
     );
 
     let parallel = tokio::try_join!(jar, libs, asst);
@@ -339,6 +345,7 @@ pub async fn run_repair_task(
             Arc::clone(&lib_counter),
             Arc::clone(&bytes_counter),
             Arc::new(AtomicU64::new(0)), // 占位：repair 分步进度走文件数回退
+            Some(cancel),
         )
         .await
         {
@@ -359,7 +366,7 @@ pub async fn run_repair_task(
         p.current_phase = "修复完成".into();
     });
     // 终态统一移除后端任务注册
-    if let Ok(p) = progress.try_lock() {
+    if let Some(p) = progress.try_lock() {
         task::global().fail(&p.task_id);
     }
 }
@@ -447,12 +454,18 @@ async fn repair_jar(
 /// Count total and pending assets (sha1-matched against local cache, multi-threaded).
 /// 拉取/解析失败返回 Err（调用方显式报错，不再静默视为"完整"）。
 /// `index_id`/`index_sha1` 非空时走 fetch_asset_index 的本地缓存（读缓存命中则免网络，否则拉取并写缓存）。
+/// `cancel` 非空时扫描期间轮询：任务被取消立即退出（返回 Err("任务已取消")，
+/// 调用方转 set_cancelled）——否则 sha1 扫描阶段无取消检查，取消 flag 无人处理。
+/// B2 资产清单检测：拉取/缓存资源索引 → 解析 → 多线程 sha1 扫描本地 objects。
+/// 8 个参数均为语义必要（URL/校验/配置/目录/取消/两个进度回调），不合并。
+#[allow(clippy::too_many_arguments)]
 pub async fn count_assets_all(
     asset_index_url: &str,
     index_id: Option<&str>,
     index_sha1: Option<&str>,
     config: &DownloaderConfig,
     mc_dir: &Path,
+    cancel: Option<&AtomicBool>,
     mut on_total: impl FnMut(u32, u64),
     mut on_checked: impl FnMut(u32, u64),
 ) -> Result<(u32, u64), String> {
@@ -465,8 +478,10 @@ pub async fn count_assets_all(
         index_sha1,
     )
     .await?;
+    eprintln!("[assets] 索引文本: {}B", text.len());
     let idx: serde_json::Value =
         serde_json::from_str(&text).map_err(|e| format!("解析资源索引失败\n{e}"))?;
+    eprintln!("[assets] JSON 解析完成");
     let objects_dir = mc_dir.join("assets").join("objects");
 
     // 先收集全部 (hash, 目标路径, size)，再分块多线程 sha1 校验（数千个文件，单线程过慢）
@@ -487,6 +502,7 @@ pub async fn count_assets_all(
         }
     }
     let total = items.len() as u32;
+    eprintln!("[assets] objects 清单: {} 个, 总 {}B", total, total_bytes);
     if total == 0 {
         return Ok((0, 0));
     }
@@ -502,8 +518,12 @@ pub async fn count_assets_all(
     let pending_bytes = std::sync::atomic::AtomicU64::new(0);
     let checked = std::sync::atomic::AtomicU32::new(0);
     let existing_bytes = std::sync::atomic::AtomicU64::new(0);
-    // 检测进度经 mpsc 汇总到主线程逐批回调（多线程直接调 emit 会造成锁竞争）
+    // 检测进度经 mpsc 汇总到主线程逐批回调（多线程直接调 emit 会造成锁竞争）。
+    // 主循环用 recv_timeout 轮询，期间检查取消——否则卡在扫描阶段的任务无法取消。
+    let n_slices = items.chunks(chunk).len();
+    let finished = std::sync::atomic::AtomicUsize::new(0);
     let (tx, rx) = std::sync::mpsc::channel::<u32>();
+    eprintln!("[assets] 开始 sha1 扫描: {} items / {} 线程", items.len(), n_threads);
     std::thread::scope(|s| {
         for slice in items.chunks(chunk) {
             let tx = tx.clone();
@@ -511,11 +531,15 @@ pub async fn count_assets_all(
             let pb = &pending_bytes;
             let checked = &checked;
             let existing = &existing_bytes;
+            let finished = &finished;
             s.spawn(move || {
                 let mut p = 0u32;
                 let mut pb_local = 0u64;
                 let mut done = 0u32;
                 for (hash, dest, size) in slice {
+                    if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+                        break; // 任务已取消：尽早退出，避免整目录扫描拖住取消
+                    }
                     if dest.exists() && file_sha1_matches(dest, hash) {
                         existing.fetch_add(*size, std::sync::atomic::Ordering::Relaxed);
                     } else {
@@ -533,16 +557,33 @@ pub async fn count_assets_all(
                 let _ = tx.send(done);
                 counter.fetch_add(p, std::sync::atomic::Ordering::Relaxed);
                 pb.fetch_add(pb_local, std::sync::atomic::Ordering::Relaxed);
+                finished.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             });
         }
         drop(tx);
-        while rx.recv().is_ok() {
-            on_checked(
-                checked.load(std::sync::atomic::Ordering::Relaxed),
-                existing_bytes.load(std::sync::atomic::Ordering::Relaxed),
-            );
+        loop {
+            match rx.recv_timeout(std::time::Duration::from_millis(500)) {
+                Ok(_) => {
+                    on_checked(
+                        checked.load(std::sync::atomic::Ordering::Relaxed),
+                        existing_bytes.load(std::sync::atomic::Ordering::Relaxed),
+                    );
+                }
+                Err(_) => {
+                    // 500ms 无消息：可能仍在扫描大文件，或所有线程已退出（finished 全）。
+                    // 线程全退或任务取消时结束；取消后 scope 等待线程收尾（秒级）。
+                    if cancel.is_some_and(|c| c.load(Ordering::Relaxed))
+                        || finished.load(std::sync::atomic::Ordering::Relaxed) >= n_slices
+                    {
+                        break;
+                    }
+                }
+            }
         }
     });
+    if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+        return Err("任务已取消".into());
+    }
     Ok((
         pending.load(std::sync::atomic::Ordering::Relaxed),
         pending_bytes.load(std::sync::atomic::Ordering::Relaxed),
@@ -666,5 +707,47 @@ mod tests {
         ];
         assert_eq!(count_natives_missing(&libs, &lib_dir), 2);
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// 端到端（完整 B2 路径）：拉真实资源索引 → 解析 → objects 清单 → 多线程 sha1 扫描。
+    /// 网络测试（同 fetch_manifest_works 惯例）；开发环境（含系统代理）可达。
+    #[tokio::test]
+    async fn count_assets_all_end_to_end() {
+        use crate::config::downloader::model::DownloaderConfig;
+        let cfg = DownloaderConfig::default();
+        let mc =
+            std::env::temp_dir().join(format!("elytra_caa_e2e_{}", std::process::id()));
+        let url =
+            "https://piston-meta.mojang.com/v1/packages/cf75b185cb35b32e299b0c8e674fa202d7911a3c/32.json";
+        let sha1 = "cf75b185cb35b32e299b0c8e674fa202d7911a3c";
+        let mut total = 0u32;
+        let mut total_bytes = 0u64;
+        let mut checked = 0u32;
+        let res = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            count_assets_all(
+                url,
+                Some("32"),
+                Some(sha1),
+                &cfg,
+                &mc,
+                None,
+                |t, b| {
+                    total = t;
+                    total_bytes = b;
+                },
+                |c, _b| checked = c,
+            ),
+        )
+        .await;
+        let (pending, pending_bytes) =
+            res.expect("B2 完整流程应在 30s 内完成（网络/代理问题会超时）")
+                .expect("count_assets_all 应成功");
+        assert!(total > 1000, "objects 清单应完整: {total}");
+        assert_eq!(checked, total, "扫描进度应到全量");
+        assert_eq!(pending, total, "空目录下应全部缺失");
+        assert_eq!(pending_bytes, total_bytes, "空目录全缺失字节应等于清单总字节");
+        assert!(pending_bytes > 0);
+        let _ = std::fs::remove_dir_all(&mc);
     }
 }
