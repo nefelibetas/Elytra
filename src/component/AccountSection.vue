@@ -1,13 +1,16 @@
 <script setup lang="ts">
 // 账号区：正版/离线切换 + 用户区（头像/用户名/登录/操作菜单）。
 // 菜单跟随鼠标 Teleport 到 body；window click 关闭菜单（组件挂载周期内注册）。
-import { computed, onMounted, onUnmounted, watch } from "vue";
-import { ShieldCheck, User, UserRound, Shirt, Pencil, LogOut } from "@lucide/vue";
+import { computed, onMounted, onUnmounted, reactive, watch } from "vue";
+import { ShieldCheck, User, UserRound, Shirt, Pencil, LogOut, Users, ChevronDown } from "@lucide/vue";
 import {
-  authMode, msAccount, username, setAuthMode, msLoginState, startMsLogin, logoutMs, cancelMsLogin,
+  authMode, msAccount, msAccounts, offlineAccounts, username, setAuthMode, msLoginState,
+  startMsLogin, cancelMsLogin, switchMsAccount, removeMsAccount,
+  saveOfflineAccount, removeOfflineAccount,
 } from "../store/auth";
-import { avatarState, scheduleOfflineRender } from "../store/avatar";
+import { avatarState, scheduleOfflineRender, renderAccountHead, renderOfflineHead } from "../store/avatar";
 import { accountUi } from "../store/accountUi";
+import { showError } from "../store/alert";
 
 const avatarUrl = computed(() =>
   authMode.value === "premium" ? avatarState.premiumAvatar : avatarState.offlineAvatar,
@@ -16,8 +19,86 @@ const avatarUrl = computed(() =>
 /** 用户名输入防抖 1.337s 后刷新离线头像 */
 watch(username, (v) => scheduleOfflineRender(v));
 
-onMounted(() => window.addEventListener("click", accountUi.closeMenus));
-onUnmounted(() => window.removeEventListener("click", accountUi.closeMenus));
+// 离线用户名输入即存历史：防抖 1s（与头像刷新防抖并存；直接点启动时 launch.ts 兜底保存）
+let offlineSaveTimer: number | undefined;
+watch(username, (v) => {
+  window.clearTimeout(offlineSaveTimer);
+  if (v.trim()) {
+    offlineSaveTimer = window.setTimeout(() => saveOfflineAccount(v.trim()), 1000);
+  }
+});
+
+// window click 统一关闭菜单（组件挂载周期内注册；箭头函数保持 this 绑定）
+const closeHandler = () => accountUi.closeMenus();
+
+onMounted(() => window.addEventListener("click", closeHandler));
+onUnmounted(() => {
+  window.clearTimeout(offlineSaveTimer);
+  window.removeEventListener("click", closeHandler);
+});
+
+// ── 账号列表 2D 头像（打开菜单时并发预加载，会话内缓存）──
+
+const accountHeads = reactive<Record<string, string>>({});
+let headLoadSeq = 0;
+
+async function ensureAccountHeads() {
+  const seq = ++headLoadSeq; // 组件重建/重复打开时丢弃过期结果
+  for (const acc of msAccounts.value) {
+    renderAccountHead(acc.uuid).then((h) => {
+      if (seq === headLoadSeq && h) accountHeads[acc.uuid] = h;
+    });
+  }
+}
+
+// ── 离线历史头像（Steve/Alex 默认皮肤 2D 头部，哈希决定模型，与主头像/游戏内一致）──
+
+const offlineHeads = reactive<Record<string, string>>({});
+
+async function ensureOfflineHeads() {
+  for (const name of offlineAccounts.value) {
+    if (offlineHeads[name]) continue;
+    renderOfflineHead(name).then((h) => {
+      if (h) offlineHeads[name] = h;
+    });
+  }
+}
+
+/** 切换正版账号（防止连点；失败 = refresh_token 失效需重登）。 */
+async function switchAccount(uuid: string) {
+  if (accountUi.accountsBusy) return;
+  accountUi.accountsBusy = true;
+  try {
+    await switchMsAccount(uuid);
+  } catch (e) {
+    showError(`切换账号失败：${String(e)}`, true);
+  } finally {
+    accountUi.accountsBusy = false;
+    accountUi.closeAccountsMenu();
+  }
+}
+
+/** 移除正版账号（当前被移除时回退到上一账号）。 */
+async function removeAccount(uuid: string) {
+  try {
+    await removeMsAccount(uuid);
+  } catch (e) {
+    showError(`移除账号失败：${String(e)}`, true);
+  }
+  accountUi.closeAccountsMenu();
+}
+
+/** 移除当前账号（登出按钮：从列表移除，而非清空全部）。 */
+function removeCurrentMsAccount() {
+  const acc = msAccount.value;
+  if (acc) removeAccount(acc.uuid);
+}
+
+/** 从历史选择离线用户名。 */
+function useOfflineName(name: string) {
+  username.value = name;
+  accountUi.closeOfflineMenu();
+}
 </script>
 
 <template>
@@ -44,7 +125,7 @@ onUnmounted(() => window.removeEventListener("click", accountUi.closeMenus));
     </div>
 
     <div class="section s-user">
-      <div class="user-area" :class="{ 'menu-open': accountUi.skinMenu.visible || accountUi.editMenu.visible }">
+      <div class="user-area" :class="{ 'menu-open': accountUi.skinMenu.visible || accountUi.editMenu.visible || accountUi.accountsMenu.visible }">
         <div class="user-main">
           <div class="avatar">
             <img
@@ -60,14 +141,51 @@ onUnmounted(() => window.removeEventListener("click", accountUi.closeMenus));
           <div v-if="authMode === 'premium'" class="uname" :class="{ 'uname-empty': !msAccount }">
             {{ msAccount?.name || '未登录' }}
           </div>
-          <input
-            v-else
-            v-model="username"
-            class="name-input"
-            type="text"
-            placeholder="输入用户名"
-            maxlength="16"
-          />
+          <div v-else class="offline-name">
+            <input
+              v-model="username"
+              class="name-input"
+              type="text"
+              placeholder="输入用户名"
+              maxlength="16"
+            />
+            <button
+              class="icon-btn hist-btn"
+              :class="{ open: accountUi.offlineMenu.visible }"
+              v-tooltip="'历史用户名'"
+              @click.stop="accountUi.openOfflineMenu(); ensureOfflineHeads()"
+            >
+              <ChevronDown :size="14" />
+            </button>
+            <Transition name="expand">
+              <div v-if="accountUi.offlineMenu.visible" class="offline-pop" @click.stop>
+                <template v-if="offlineAccounts.length">
+                  <div
+                    v-for="name in offlineAccounts"
+                    :key="name"
+                    class="acct-row"
+                    @click="useOfflineName(name)"
+                  >
+                    <img
+                      v-if="offlineHeads[name]"
+                      :src="offlineHeads[name]"
+                      class="acct-head"
+                      alt=""
+                      draggable="false"
+                    />
+                    <UserRound v-else :size="16" class="acct-icon" />
+                    <span class="acct-name">{{ name }}</span>
+                    <button
+                      class="acct-del"
+                      title="移除该用户名"
+                      @click.stop="removeOfflineAccount(name)"
+                    >×</button>
+                  </div>
+                </template>
+                <div v-else class="menu-item acct-empty">暂无历史用户名</div>
+              </div>
+            </Transition>
+          </div>
         </div>
 
         <div v-if="authMode === 'premium'" class="user-actions">
@@ -77,6 +195,14 @@ onUnmounted(() => window.removeEventListener("click", accountUi.closeMenus));
             <button class="ms-cancel" @click="cancelMsLogin">取消</button>
           </div>
           <template v-else-if="msAccount">
+            <!-- 账号：历史账号列表（切换/移除/登录新账号） -->
+            <button
+              class="icon-btn"
+              v-tooltip="'账号列表'"
+              @click.stop="accountUi.openAccountsMenu($event); ensureAccountHeads()"
+            >
+              <Users :size="14" />
+            </button>
             <!-- 衣服：皮肤/披风菜单 -->
             <button class="icon-btn" v-tooltip="'皮肤与披风'" @click.stop="accountUi.openSkinMenu($event)">
               <Shirt :size="14" />
@@ -85,8 +211,8 @@ onUnmounted(() => window.removeEventListener("click", accountUi.closeMenus));
             <button class="icon-btn" v-tooltip="'编辑信息'" @click.stop="accountUi.openEditMenu($event)">
               <Pencil :size="14" />
             </button>
-            <!-- 登出 -->
-            <button class="icon-btn" v-tooltip="'退出登录'" @click="logoutMs">
+            <!-- 登出：从列表移除当前账号（其余历史账号保留） -->
+            <button class="icon-btn" v-tooltip="'移除当前账号'" @click="removeCurrentMsAccount">
               <LogOut :size="14" />
             </button>
           </template>
@@ -123,6 +249,45 @@ onUnmounted(() => window.removeEventListener("click", accountUi.closeMenus));
           >
             <div class="menu-item" @click="accountUi.openPasswordPage">修改密码</div>
             <div class="menu-item" @click="accountUi.openNameChangePage">修改玩家名</div>
+          </div>
+        </Teleport>
+
+        <!-- 账号列表菜单（历史正版账号切换/移除/登录新账号） -->
+        <Teleport to="body">
+          <div
+            v-if="accountUi.accountsMenu.visible"
+            class="skin-menu acct-menu accounts"
+            :style="{ left: accountUi.accountsMenu.x + 'px', top: accountUi.accountsMenu.y + 'px' }"
+            @click.stop
+          >
+            <template v-if="msAccounts.length">
+              <div
+                v-for="acc in msAccounts"
+                :key="acc.uuid"
+                class="acct-row"
+                :class="{ current: acc.uuid === msAccount?.uuid }"
+                @click="switchAccount(acc.uuid)"
+              >
+                <img
+                  v-if="accountHeads[acc.uuid]"
+                  :src="accountHeads[acc.uuid]"
+                  class="acct-head"
+                  alt=""
+                  draggable="false"
+                />
+                <UserRound v-else :size="16" class="acct-icon" />
+                <span class="acct-name">{{ acc.name }}</span>
+                <span v-if="acc.uuid === msAccount?.uuid" class="acct-check">✓</span>
+                <button
+                  class="acct-del"
+                  title="移除该账号"
+                  @click.stop="removeAccount(acc.uuid)"
+                >×</button>
+              </div>
+            </template>
+            <div v-else class="menu-item acct-empty">暂无历史账号</div>
+            <div class="menu-sep"></div>
+            <div class="menu-item" @click="accountUi.closeAccountsMenu(); startMsLogin()">登录新账号</div>
           </div>
         </Teleport>
       </div>
@@ -260,6 +425,69 @@ onUnmounted(() => window.removeEventListener("click", accountUi.closeMenus));
   font-weight: 400;
 }
 
+/* 离线用户名 + 历史按钮同行 */
+.offline-name {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 箭头按钮（无边框：icon-btn 的边框在样式表更后被覆盖，用双类提特异性） */
+.icon-btn.hist-btn {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  transition: transform 0.15s ease, color 0.15s;
+}
+
+.icon-btn.hist-btn:hover {
+  color: var(--color-brand);
+  background: transparent;
+}
+
+.icon-btn.hist-btn.open {
+  transform: rotate(180deg);
+  color: var(--color-brand);
+}
+
+/* 历史用户名展开面板：锚定输入框下方，固定高度（超出滚动） */
+.offline-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+/* expand 动画目标值 = 固定高度（写在 enter-to/leave-from，写在 active 会覆盖 from 态导致无动画） */
+.expand-enter-active,
+.expand-leave-active {
+  transition: max-height 0.2s ease, opacity 0.15s ease;
+  overflow: hidden;
+}
+
+.expand-enter-from,
+.expand-leave-to {
+  max-height: 0;
+  opacity: 0;
+}
+
+.expand-enter-to,
+.expand-leave-from {
+  max-height: 180px;
+  opacity: 1;
+}
+
 /* premium hover actions：始终占位（不影响头像/用户名位置），仅切换透明度。
    显示条件 hover / 键盘焦点（:focus-within）/ 菜单展开——三者任一即显示。 */
 .user-actions {
@@ -324,6 +552,98 @@ onUnmounted(() => window.removeEventListener("click", accountUi.closeMenus));
 .menu-item:hover {
   background: var(--color-brand);
   color: #fff;
+}
+
+/* 账号列表菜单：行 + 删除按钮 */
+.acct-menu {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.acct-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  font-size: 13px;
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s;
+}
+
+.acct-row:hover {
+  background: var(--surface-hover);
+}
+
+.acct-row.current {
+  color: var(--color-brand);
+  font-weight: 600;
+}
+
+.acct-icon {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+
+/* 账号列表 2D 皮肤头像（8×8 头部放大，MC 像素风） */
+.acct-head {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  object-fit: cover;
+  image-rendering: pixelated;
+  display: block;
+}
+
+.acct-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
+}
+
+.acct-check {
+  color: var(--color-brand);
+  font-size: 12px;
+}
+
+.acct-del {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: all 0.12s;
+}
+
+.acct-row:hover .acct-del {
+  opacity: 1;
+}
+
+.acct-del:hover {
+  color: #e5484d;
+  background: rgba(229, 72, 77, 0.12);
+}
+
+.acct-empty {
+  color: var(--text-tertiary);
+  cursor: default;
+}
+
+.acct-empty:hover {
+  background: transparent;
+  color: var(--text-tertiary);
 }
 
 .menu-sep {

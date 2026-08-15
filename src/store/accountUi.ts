@@ -1,6 +1,6 @@
 // 账号管理 UI store：编辑信息菜单 / 皮肤披风菜单 / 皮肤操作 / 披风选择 dialog。
 // 依赖 auth（账号）+ avatar（头像刷新）+ alert（错误弹窗）+ tauri dialog/opener 插件。
-import { reactive } from "vue";
+import { nextTick, reactive } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -28,6 +28,12 @@ export const accountUi = reactive({
   editMenu: { visible: false, x: 0, y: 0 },
   // 皮肤/披风菜单
   skinMenu: { visible: false, x: 0, y: 0 },
+  // 账号列表菜单（正版历史切换）
+  accountsMenu: { visible: false, x: 0, y: 0 },
+  // 离线历史用户名展开面板（锚定输入框下方，非跟随鼠标）
+  offlineMenu: { visible: false },
+  /** 账号切换进行中（防止连点） */
+  accountsBusy: false,
 
   // 披风选择 dialog
   capes: [] as CapeInfo[],
@@ -37,6 +43,11 @@ export const accountUi = reactive({
   selectedCapeId: "",
 
   openEditMenu(e: MouseEvent) {
+    if (this.editMenu.visible) {
+      this.closeEditMenu();
+      return;
+    }
+    this.closeOtherMenus("editMenu");
     this.editMenu = {
       visible: true,
       x: Math.min(e.clientX + 6, window.innerWidth - MENU_W - 6),
@@ -60,9 +71,14 @@ export const accountUi = reactive({
     openUrl("https://www.minecraft.net/msa");
   },
 
-  /** 点击衣服图标：菜单出现在鼠标右下方（靠近窗口边缘时内收）。
+  /** 点击衣服图标：菜单出现在鼠标右下方（toggle；靠近窗口边缘时内收）。
    * 同时后台预取披风列表，保证打开「修改披风」时数据已就绪。 */
   openSkinMenu(e: MouseEvent) {
+    if (this.skinMenu.visible) {
+      this.closeSkinMenu();
+      return;
+    }
+    this.closeOtherMenus("skinMenu");
     this.skinMenu = {
       visible: true,
       x: Math.min(e.clientX + 6, window.innerWidth - MENU_W - 6),
@@ -75,10 +91,66 @@ export const accountUi = reactive({
     this.skinMenu.visible = false;
   },
 
+  /** 账号列表菜单（toggle；跟随鼠标，渲染后按实际尺寸校准不超视口）。 */
+  openAccountsMenu(e: MouseEvent) {
+    if (this.accountsMenu.visible) {
+      this.closeAccountsMenu();
+      return;
+    }
+    this.closeOtherMenus("accountsMenu");
+    this.accountsMenu = {
+      visible: true,
+      x: e.clientX + 6,
+      y: e.clientY + 6,
+    };
+    void this.clampAfterTick();
+  },
+
+  closeAccountsMenu() {
+    this.accountsMenu.visible = false;
+  },
+
+  /** 离线历史用户名面板（toggle；锚定输入框下方展开，无需鼠标定位）。 */
+  openOfflineMenu() {
+    if (this.offlineMenu.visible) {
+      this.closeOfflineMenu();
+      return;
+    }
+    this.closeOtherMenus("offlineMenu");
+    this.offlineMenu.visible = true;
+  },
+
+  closeOfflineMenu() {
+    this.offlineMenu.visible = false;
+  },
+
+  /** 渲染后按实际尺寸校准菜单位置（内容量可变，估算会溢出/偏差；
+   * nextTick 后 Teleport 菜单已挂载，用 getBoundingClientRect 内收）。 */
+  async clampAfterTick() {
+    await nextTick();
+    if (!this.accountsMenu.visible) return;
+    const el = document.querySelector(".acct-menu.accounts");
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    if (r.right > window.innerWidth - 6) this.accountsMenu.x = Math.max(0, window.innerWidth - r.width - 6);
+    if (r.bottom > window.innerHeight - 6) this.accountsMenu.y = Math.max(0, window.innerHeight - r.height - 6);
+  },
+
+  /** 互斥：关闭除 self 外的全部菜单（按钮 @click.stop 阻止冒泡，window 收不到，
+   * 开新菜单时必须显式关旧菜单，否则叠加出现两个菜单）。 */
+  closeOtherMenus(self: "skinMenu" | "editMenu" | "accountsMenu" | "offlineMenu") {
+    if (self !== "skinMenu") this.closeSkinMenu();
+    if (self !== "editMenu") this.closeEditMenu();
+    if (self !== "accountsMenu") this.closeAccountsMenu();
+    if (self !== "offlineMenu") this.closeOfflineMenu();
+  },
+
   /** window click 统一关闭菜单（组件 onMounted 注册监听）。 */
   closeMenus() {
     if (this.skinMenu.visible) this.closeSkinMenu();
     if (this.editMenu.visible) this.closeEditMenu();
+    if (this.accountsMenu.visible) this.closeAccountsMenu();
+    if (this.offlineMenu.visible) this.closeOfflineMenu();
   },
 
   /** 1. 修改皮肤：本地选择 PNG → 上传官方账号 → 刷新头像。 */
