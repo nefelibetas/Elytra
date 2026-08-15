@@ -376,7 +376,12 @@ async fn fetch_from_sources<F: Fn(u64, u64)>(
     let mut errors: Vec<FetchError> = Vec::new();
     for attempt in 0..MAX_ATTEMPTS {
         for route in &routes {
-            let mut builder = reqwest::Client::builder().connect_timeout(Duration::from_secs(2));
+            let mut builder = reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(2))
+                // 读黑洞防挂死：连接建立后 30s 无数据（镜像假死/TCP 黑洞）即掐断换源；
+                // 持续有数据（慢速但稳定）的源不受影响。此前大文件路径无任何超时，
+                // 挂起会永久卡死下载且取消无效。
+                .read_timeout(Duration::from_secs(30));
             if let Some(t) = total_timeout {
                 builder = builder.timeout(t);
             }

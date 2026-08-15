@@ -169,9 +169,9 @@ impl TaskManager {
         let inner = self.inner.lock().unwrap();
         if let Some(h) = inner.tasks.get(id) {
             h.cancel.store(true, Ordering::SeqCst);
-            if let Some(ref p) = h.cleanup_path {
-                let _ = std::fs::remove_dir_all(p);
-            }
+            // 目录清理移交任务侧 set_cancelled 收口：此处同步 remove_dir_all
+            // 会阻塞 worker 线程（大版本目录删除数十秒）致前端"取消卡住"，
+            // 且删除与仍在跑的下载竞争写文件。
             if let Ok(mut p) = h.progress.try_lock() {
                 p.status = TaskStatus::Cancelled;
                 // 终态快照持久化（与 fail 收口一致）
@@ -181,6 +181,13 @@ impl TaskManager {
         } else {
             false
         }
+    }
+
+    /// 取走任务清理路径（取消收口用）：任务侧退出、下载停止后异步整删，
+    /// 避免取消时与仍在写的下载竞争。
+    pub fn take_cleanup_path(&self, id: &str) -> Option<std::path::PathBuf> {
+        let mut inner = self.inner.lock().unwrap();
+        inner.tasks.get_mut(id).and_then(|h| h.cleanup_path.take())
     }
 
     pub fn fail(&self, id: &str) {
