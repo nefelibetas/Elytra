@@ -9,7 +9,7 @@
 //! 同构（key = 原 section 名），调用方透明替换。
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use base64::Engine;
 
@@ -27,7 +27,7 @@ pub fn save_secret(key: &str, value: &[u8]) -> Result<(), String> {
     if value.is_empty() {
         return remove_secret(key);
     }
-    let _guard = SECRETS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = SECRETS_LOCK.lock();
     let encrypted = encrypt_bytes(value)?;
     let b64 = base64::engine::general_purpose::STANDARD.encode(&encrypted);
     let mut map = load_map();
@@ -37,7 +37,7 @@ pub fn save_secret(key: &str, value: &[u8]) -> Result<(), String> {
 
 /// 读取一条敏感数据（解密）。
 pub fn read_secret(key: &str) -> Option<Vec<u8>> {
-    let _guard = SECRETS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = SECRETS_LOCK.lock();
     let map = load_map();
     let b64 = map.get(key)?;
     let encrypted = base64::engine::general_purpose::STANDARD
@@ -48,7 +48,7 @@ pub fn read_secret(key: &str) -> Option<Vec<u8>> {
 
 /// 删除一条敏感数据。
 pub fn remove_secret(key: &str) -> Result<(), String> {
-    let _guard = SECRETS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = SECRETS_LOCK.lock();
     let mut map = load_map();
     if map.remove(key).is_some() {
         write_map(&map)

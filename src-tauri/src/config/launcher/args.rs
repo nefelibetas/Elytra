@@ -379,7 +379,7 @@ pub fn has_old_style_natives(version_json: &VersionJson) -> bool {
 
 /// 从版本目录名提取 MC 版本（natives 目录按 MC 版本共享——同一 MC 的 vanilla/ModLoader
 /// 版本 native 库一致，避免每个版本在 natives/<版本id>/ 各解压一份（LWJGL 运行时解压产物约 16MB/份）。
-pub use crate::util::mc_version_from_dir as mc_version_of;
+pub(crate) use crate::util::mc_version_from_dir as mc_version_of;
 
 /// 确保 natives 目录就绪：所有版本都创建 `.minecraft/natives/<mc>/` 根目录
 /// （官方 arguments.jvm 的 SharedLibraryExtractPath 等参数指向它，LWJGL 需要目录存在）。
