@@ -1,7 +1,8 @@
 // v-tooltip="'文本'" 自定义指令：替换 UA title 原生 tooltip（主题化气泡）。
 // 用途：操作按钮说明 + 截断文本 hover 看全（卡片标题/路径/文件名）。
-// 行为：hover 150ms 延迟显示、移出 100ms 隐藏、上方居中（视口不足翻转下方）、
-// 视口防溢出、scroll/resize 时跟随重定位、空值不显示、自动移除原生 title。
+// 行为：hover 400ms 延迟显示、移出 100ms 隐藏、**跟随鼠标**（右下 12px，
+// 视口右/下空间不足时翻转到鼠标左/上）、scroll/resize 时跟随重定位、
+// 空值不显示、自动移除原生 title。
 import type { Directive } from "vue";
 
 interface TooltipTarget extends HTMLElement {
@@ -9,12 +10,18 @@ interface TooltipTarget extends HTMLElement {
 }
 
 const TIP_CLASS = "elytra-tooltip";
+const SHOW_DELAY = 400;
+const HIDE_DELAY = 100;
+const OFFSET_X = 12;
+const OFFSET_Y = 14;
 
 let tipEl: HTMLElement | null = null;
 let showTimer: number | undefined;
 let hideTimer: number | undefined;
 let currentTarget: TooltipTarget | null = null;
 let currentText = "";
+let mouseX = 0;
+let mouseY = 0;
 
 function ensureTip(): HTMLElement {
   if (!tipEl || !tipEl.isConnected) {
@@ -33,16 +40,17 @@ function reposition() {
     currentTarget = null;
     return;
   }
-  const r = currentTarget.getBoundingClientRect();
   const tw = tipEl.offsetWidth;
   const th = tipEl.offsetHeight;
-  let top = r.top - th - 8;
-  const below = top < 4;
-  if (below) top = r.bottom + 8;
-  const left = Math.max(4, Math.min(r.left + r.width / 2 - tw / 2, window.innerWidth - tw - 4));
-  tipEl.classList.toggle("below", below);
-  tipEl.style.top = `${top}px`;
+  // 默认鼠标右下；空间不足翻转到左/上；再兜底视口内
+  let left = mouseX + OFFSET_X;
+  let top = mouseY + OFFSET_Y;
+  if (left + tw > window.innerWidth - 4) left = mouseX - tw - OFFSET_X;
+  if (top + th > window.innerHeight - 4) top = mouseY - th - OFFSET_Y;
+  left = Math.max(4, left);
+  top = Math.max(4, top);
   tipEl.style.left = `${left}px`;
+  tipEl.style.top = `${top}px`;
 }
 
 function show(target: TooltipTarget, text: string) {
@@ -55,7 +63,7 @@ function show(target: TooltipTarget, text: string) {
     tip.textContent = text;
     tip.classList.add("visible");
     reposition();
-  }, 150);
+  }, SHOW_DELAY);
 }
 
 function hide() {
@@ -63,8 +71,19 @@ function hide() {
   hideTimer = setTimeout(() => {
     tipEl?.classList.remove("visible");
     currentTarget = null;
-  }, 100);
+  }, HIDE_DELAY);
 }
+
+/** 全局记录鼠标位置（capture 捕获所有目标）；tooltip 可见时跟随移动。 */
+window.addEventListener(
+  "mousemove",
+  (e) => {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+    if (tipEl?.classList.contains("visible")) reposition();
+  },
+  true,
+);
 
 /** scroll/resize 全局跟随（capture 捕获所有滚动容器）。 */
 window.addEventListener(
