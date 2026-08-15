@@ -3,7 +3,7 @@
 //! 网络请求逻辑归此文件——impl 跨文件不改变调用方写法。
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use std::time::{Duration, Instant};
 
 use crate::config::downloader::model::{DownloadSource, DownloadSourceMode, DownloaderConfig};
@@ -21,19 +21,72 @@ pub enum CacheBehaviour {
     MustRevalidate,
 }
 
+impl DownloadSource {
+    /// 镜像 URL 重写：仅中国镜像源（manifest_url 含 bmclapi）生效，
+    /// 把官方域 URL 按 REWRITE_RULES 重写到 BMCLAPI 镜像前缀。
+    pub fn mirror_url(&self, original: &str) -> String {
+        if !self.manifest_url.contains("bmclapi") {
+            return original.to_string();
+        }
+        for (domain, replacement) in REWRITE_RULES {
+            if original.contains(domain) {
+                let path = original.split(domain).nth(1).unwrap_or("");
+                return format!("{}{}", replacement, path);
+            }
+        }
+        original.to_string()
+    }
+}
+
+const REWRITE_RULES: &[(&str, &str)] = &[
+    ("piston-meta.mojang.com", "https://bmclapi2.bangbang93.com"),
+    ("piston-data.mojang.com", "https://bmclapi2.bangbang93.com"),
+    ("launcher.mojang.com", "https://bmclapi2.bangbang93.com"),
+    ("launchermeta.mojang.com", "https://bmclapi2.bangbang93.com"),
+    (
+        "libraries.minecraft.net",
+        "https://bmclapi2.bangbang93.com/libraries",
+    ),
+    (
+        "resources.download.minecraft.net",
+        "https://bmclapi2.bangbang93.com/assets",
+    ),
+    // ModLoader 官方 maven 对高并发不友好（实测 20 并发即有连接失败），
+    // BMCLAPI 完整镜像 maven.neoforged.net / maven.minecraftforge.net（302 实测可用）。
+    // 仅做备用：官方源仍优先，镜像源兜底，避免整批库下载失败。
+    (
+        "maven.neoforged.net",
+        "https://bmclapi2.bangbang93.com/maven",
+    ),
+    (
+        "maven.minecraftforge.net",
+        "https://bmclapi2.bangbang93.com/maven",
+    ),
+];
+
 impl DownloaderConfig {
     /// 按模式返回依次尝试的源列表。
     /// Auto（自适应路由）：源顺序仅作 URL 模板构造兜底，实际路由由 fetcher 层
-    /// 按资源类 + 健康度决定（官方 → 镜像候选即时生成），此处按官方优先。
+    /// 按资源类 + 健康度决定（官方 → 镜像候选即时生成），此处官方优先（4s 降级）。
     pub(crate) fn sources_in_order(&self, mode: DownloadSourceMode) -> Vec<&DownloadSource> {
         match mode {
             DownloadSourceMode::OfficialOnly => vec![&self.sources[0]],
             DownloadSourceMode::ChinaOnly => vec![&self.sources[1]],
-            DownloadSourceMode::PreferOfficial | DownloadSourceMode::Auto => {
-                vec![&self.sources[0], &self.sources[1]]
-            }
-            DownloadSourceMode::PreferChina => vec![&self.sources[1], &self.sources[0]],
+            DownloadSourceMode::Auto => vec![&self.sources[0], &self.sources[1]],
         }
+    }
+
+    /// 文件下载主源（按 file_source_mode 选择），文件下载失败不会跨源回退。
+    pub fn file_primary_source(&self) -> Option<&DownloadSource> {
+        match self.file_source_mode {
+            DownloadSourceMode::OfficialOnly | DownloadSourceMode::Auto => self.sources.first(),
+            DownloadSourceMode::ChinaOnly => self.sources.last(),
+        }
+    }
+
+    /// 文件下载按 file_source_mode 的完整源顺序（含备用源，用于过慢降级）。
+    pub fn file_sources_list(&self) -> Vec<&DownloadSource> {
+        self.sources_in_order(self.file_source_mode)
     }
 
     /// 优先模式下主源判慢时限（秒）：超时即降级到备用源。
@@ -80,24 +133,45 @@ impl DownloaderConfig {
     ) -> Result<String, String> {
         let order = self.sources_in_order(mode);
         let mut last_err = String::new();
+        // 无镜像源的备用 URL 与主源相同（如 quilt 无 BMCLAPI 镜像）：
+        // 跳过重复请求，避免"主源 4s 超时 → 备用源同 URL 再等 15s"的白等。
+        let mut tried: Vec<String> = Vec::new();
         for (i, source) in order.iter().enumerate() {
             let url = make_url(source);
-            let mut req = http().get(&url);
-            if i == 0 && order.len() > 1 {
-                req = req.timeout(Duration::from_secs(Self::SLOW_SOURCE_TIMEOUT_SECS));
+            if tried.iter().any(|u| u == &url) {
+                eprintln!("[meta] 源{}({i}) 跳过: {url}（与已尝试源同 URL）", source.name);
+                continue;
             }
-            match req.send().await {
-                Ok(resp) => {
-                    if !resp.status().is_success() {
-                        last_err = format!("HTTP {}", resp.status());
-                        continue;
-                    }
-                    match resp.text().await {
-                        Ok(text) => return Ok(text),
-                        Err(e) => last_err = format!("读取响应失败\n{}", e),
-                    }
+            tried.push(url.clone());
+            // 每个源显式限时（双保险）：
+            //  ① reqwest RequestBuilder::timeout——请求级超时（连接+TLS+body）
+            //  ② tokio::time::timeout 包整个请求——独立计时器，reqwest 超时在
+            //     TLS 黑洞/代理接管场景若失效仍能掐断。
+            // 主源 4s 过慢降级；备用源 15s（元数据都是小文件，黑洞/假死立即掐断换下一源）。
+            let limit = if i == 0 && order.len() > 1 {
+                Duration::from_secs(Self::SLOW_SOURCE_TIMEOUT_SECS)
+            } else {
+                Duration::from_secs(15)
+            };
+            let req = http().get(&url).timeout(limit);
+            eprintln!("[meta] 请求开始: {url}（limit={limit:?}）");
+            let fut = async {
+                let resp = req.send().await.map_err(|e| format!("请求失败\n{e}"))?;
+                if !resp.status().is_success() {
+                    return Err(format!("HTTP {}", resp.status()));
                 }
-                Err(e) => last_err = format!("请求失败\n{}", e),
+                resp.text().await.map_err(|e| format!("读取响应失败\n{e}"))
+            };
+            match tokio::time::timeout(limit, fut).await {
+                Ok(Ok(text)) => return Ok(text),
+                Ok(Err(e)) => {
+                    last_err = e.clone();
+                    eprintln!("[meta] 源{}({i}) 失败: {url} → {e}", source.name);
+                }
+                Err(_) => {
+                    last_err = format!("请求超时（{limit:?}）");
+                    eprintln!("[meta] 源{}({i}) 超时: {url}（{limit:?}）", source.name);
+                }
             }
         }
         Err(last_err)
@@ -128,7 +202,7 @@ fn list_cache() -> &'static Mutex<HashMap<String, (Instant, String)>> {
 }
 
 fn list_cache_get(url: &str) -> Option<String> {
-    let m = list_cache().lock().unwrap();
+    let m = list_cache().lock();
     let (t, v) = m.get(url)?;
     if t.elapsed() > Duration::from_secs(LIST_CACHE_TTL_SECS) {
         return None;
@@ -137,7 +211,7 @@ fn list_cache_get(url: &str) -> Option<String> {
 }
 
 fn list_cache_set(url: String, val: String) {
-    let mut m = list_cache().lock().unwrap();
+    let mut m = list_cache().lock();
     if m.len() >= LIST_CACHE_MAX {
         m.clear();
     }
@@ -162,11 +236,11 @@ mod tests {
     async fn cache_only_reads_cache_and_rejects_miss() {
         let cfg = DownloaderConfig::default();
         let make = |s: &DownloadSource| format!("{}/cacheonly-key.json", s.manifest_url);
-        let key = make(cfg.sources_in_order(DownloadSourceMode::PreferOfficial)[0]);
+        let key = make(cfg.sources_in_order(DownloadSourceMode::Auto)[0]);
         // 未命中：CacheOnly 直接报错（绝不发网络请求——即使 URL 不可达也只报缓存缺失）
         let err = cfg
             .fetch_with_fallback(
-                DownloadSourceMode::PreferOfficial,
+                DownloadSourceMode::Auto,
                 CacheBehaviour::CacheOnly,
                 make,
             )
@@ -177,7 +251,7 @@ mod tests {
         list_cache_set(key, "cached-v1".into());
         let ok = cfg
             .fetch_with_fallback(
-                DownloadSourceMode::PreferOfficial,
+                DownloadSourceMode::Auto,
                 CacheBehaviour::CacheOnly,
                 make,
             )
@@ -190,18 +264,72 @@ mod tests {
     async fn must_revalidate_ignores_cache() {
         let cfg = DownloaderConfig::default();
         let make = |s: &DownloadSource| format!("{}/mustrevalidate-key.json", s.manifest_url);
-        let key = make(cfg.sources_in_order(DownloadSourceMode::PreferOfficial)[0]);
+        let key = make(cfg.sources_in_order(DownloadSourceMode::Auto)[0]);
         list_cache_set(key, "stale".into());
         // MustRevalidate 忽略缓存读，强制发网络（该路径不存在 → HTTP 404 / 网络错误），
         // 不会返回缓存中的 stale 内容；离线环境同样报网络错误，测试不依赖网络可用性。
         let err = cfg
             .fetch_with_fallback(
-                DownloadSourceMode::PreferOfficial,
+                DownloadSourceMode::Auto,
                 CacheBehaviour::MustRevalidate,
                 make,
             )
             .await
             .unwrap_err();
         assert!(!err.is_empty());
+    }
+
+    /// 黑洞源（accept 连接但不响应）必须被主源 4s 超时掐断并降级——
+    /// 国内网络实测卡死场景（asset index 经 TUN 黑洞），若此测试挂起
+    /// 说明 reqwest 的 per-request timeout 在该场景失效（需换请求层方案）。
+    #[tokio::test]
+    async fn fallback_primary_blackhole_times_out() {
+        use crate::config::downloader::model::DownloadSource;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                // 黑洞：accept 后保持连接但不读写任何数据（模拟 TUN 假死源）
+                let Ok((sock, _)) = listener.accept().await else { break };
+                std::mem::forget(sock); // 泄漏 fd 保持连接挂起
+            }
+        });
+        let blackhole = |port: u16| DownloadSource {
+            name: "blackhole".into(),
+            manifest_url: format!("http://127.0.0.1:{port}"),
+            resource_url: format!("http://127.0.0.1:{port}/assets"),
+            maven_url: format!("http://127.0.0.1:{port}/maven"),
+            libraries_url: format!("http://127.0.0.1:{port}/libraries"),
+            forge_list_url: "".into(),
+            fabric_list_url: "".into(),
+            neoforge_list_url: "".into(),
+            quilt_list_url: "".into(),
+            optifine_list_url: "".into(),
+            forge_installer_url: "".into(),
+            neoforge_installer_url: "".into(),
+            fabric_loader_url: "".into(),
+            fabric_profile_url: "".into(),
+            quilt_profile_url: "".into(),
+            optifine_download_url: "".into(),
+        };
+        let mut cfg = DownloaderConfig::default();
+        // 主源 = 黑洞（4s 超时），备用源 = 不可达端口（快速失败）
+        cfg.sources = vec![blackhole(port), blackhole(1)];
+
+        let t0 = std::time::Instant::now();
+        let res = cfg
+            .fetch_with_fallback(
+                DownloadSourceMode::Auto,
+                CacheBehaviour::MustRevalidate,
+                |s| format!("{}/test.json", s.manifest_url),
+            )
+            .await;
+        let elapsed = t0.elapsed();
+        assert!(res.is_err(), "全黑洞应失败: {:?}", res);
+        assert!(
+            elapsed.as_secs() < 8,
+            "主源 4s 超时应触发并降级，实际 {}s（超时机制失效）",
+            elapsed.as_secs_f64()
+        );
     }
 }
