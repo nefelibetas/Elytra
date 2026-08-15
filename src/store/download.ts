@@ -92,13 +92,6 @@ export interface DownloadFilesTask {
 export const dlState = reactive({
   tasks: [] as TaskItem[],
 
-  /** FAB 显示条件：有进行中/等待中任务，或任务失败（点击查看错误详情）。 */
-  get anyActive(): boolean {
-    return this.tasks.some(t =>
-      t.status === "running" || t.status === "pending" || t.status === "error",
-    )
-  },
-
   get totalProgress(): number {
     const running = this.tasks.filter(t => t.status === "running")
     if (running.length === 0) return 0
