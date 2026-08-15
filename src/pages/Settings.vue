@@ -2,7 +2,6 @@
 // 设置页容器：导航 + 各 tab 内容编排（业务在 store/组件，本文件不做配置逻辑）
 import { ref } from "vue";
 import { SlidersHorizontal, Download, Palette } from "@lucide/vue";
-import SettingsOfflineSkin from "../component/SettingsOfflineSkin.vue";
 import SettingsLaunchOptions from "../component/SettingsLaunchOptions.vue";
 import SettingsJdk from "../component/SettingsJdk.vue";
 import SettingsDownload from "../component/SettingsDownload.vue";
@@ -46,9 +45,8 @@ const currentTab = ref<Tab>("launch");
 
     <div class="stg-body">
       <Transition name="page" mode="out-in">
-        <!-- 启动设置：离线皮肤 / 启动选项 / 内存 / Java -->
+        <!-- 启动设置：启动选项 / 内存 / Java -->
         <div v-if="currentTab === 'launch'" key="launch" class="stg-page">
-          <SettingsOfflineSkin />
           <SettingsLaunchOptions />
           <SettingsJdk />
         </div>
