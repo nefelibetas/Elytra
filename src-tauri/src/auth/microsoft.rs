@@ -131,10 +131,13 @@ fn urlencode(s: &str) -> String {
 }
 
 /// 构建授权 URL。
+/// `prompt=select_account`：总是显示微软账号选择器（允许切换账号），
+/// 否则浏览器已有登录会话时会自动沿用当前账号直接授权，用户无法选择。
+/// 对齐 PrismLauncher/PCL2 行为（Prism MSAStep.cpp 同样注入 select_account）。
 pub fn build_auth_url(state: &str, pkce: &Pkce) -> Result<String, MsError> {
     let client_id = ms_client_id()?;
     Ok(format!(
-        "{AUTH_URL}?client_id={}&response_type=code&redirect_uri={}&response_mode=query&scope={}&state={}&code_challenge={}&code_challenge_method=S256",
+        "{AUTH_URL}?client_id={}&response_type=code&redirect_uri={}&response_mode=query&scope={}&state={}&code_challenge={}&code_challenge_method=S256&prompt=select_account",
         urlencode(client_id),
         urlencode(REDIRECT_URI),
         urlencode(SCOPE),
@@ -499,6 +502,8 @@ mod tests {
         assert!(url.contains("state=st8"));
         assert!(url.contains("code_challenge="));
         assert!(url.contains("code_challenge_method=S256"));
+        // 必须强制显示账号选择器（对齐 Prism/PCL2），否则已有会话时无法切换账号
+        assert!(url.contains("prompt=select_account"));
     }
 
     #[test]
