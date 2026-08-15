@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 长列表滚动回顶 FAB：自动绑定最近的滚动祖先（overflow-y: auto/scroll 且内容可滚动），
 // 滚动超过阈值出现、回到顶部附近隐藏，带出现/隐藏动画。
-// 位置固定右下 88px，避开全局 DownloadFAB（右下 24px，52px 高）。
+// 位置固定右下 24px（下载管理已为顶级路由，无全局 DownloadFAB 需避让）。
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { ArrowUp } from "@lucide/vue";
 
@@ -57,7 +57,7 @@ onBeforeUnmount(() => {
 .scroll-top-fab-wrap { display: contents; }
 .scroll-top-fab {
   position: fixed; z-index: 998;
-  bottom: 88px; right: 24px;
+  bottom: 24px; right: 24px;
   width: 40px; height: 40px;
   border: 1px solid var(--border-default); border-radius: 50%;
   background: var(--surface-card);

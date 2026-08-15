@@ -262,13 +262,14 @@ async function handleCancel(task: TaskItem) {
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-gutter: stable;
+  display: flex;
+  flex-direction: column;
 }
 
 .mono { font-variant-numeric: tabular-nums; }
 
 .empty {
-  height: 100%;
-  min-height: 220px;
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;

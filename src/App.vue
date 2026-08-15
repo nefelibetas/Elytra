@@ -2,7 +2,6 @@
 import { onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import TitleBar from "./component/TitleBar.vue";
-import DownloadFAB from "./component/DownloadFAB.vue";
 import AlertDialog from "./component/AlertDialog.vue";
 import { dlState, ensureListen, checkInterrupted, waitingUser, decideWaitingTask } from "./store/download";
 import { startMemoryMonitor } from "./store/memory";
@@ -115,7 +114,6 @@ onUnmounted(() => {
 <template>
   <div class="app-layout">
     <TitleBar />
-    <DownloadFAB />
     <main class="main-content">
       <router-view v-slot="{ Component, route }">
         <Transition :name="route.meta.transition ?? 'route'" mode="out-in">
@@ -234,6 +232,12 @@ input, textarea {
   --color-success: #10B981;
   --color-warning: #D97706;
 
+  /* ModLoader 标签色（fabric/forge/neoforge/quilt 区分，随主题覆盖切换） */
+  --ld-fabric: #D97706;
+  --ld-forge: #DC2626;
+  --ld-neoforge: #16A34A;
+  --ld-quilt: #7C3AED;
+
   /* 弹窗遮罩 */
   --overlay: rgba(15, 23, 42, 0.5);
   --toast-bg: #1F2937;
@@ -271,6 +275,11 @@ input, textarea {
   --shadow-lg: 0 4px 16px rgba(36, 27, 69, 0.10);
 
   --scrollbar-thumb: #D2CBEA;
+
+  --ld-fabric: #B45309;
+  --ld-forge: #E11D48;
+  --ld-neoforge: #059669;
+  --ld-quilt: #A855F7;
 }
 
 /* ===== 主题 Nether（下界橙/烈焰）：取自 Minecraft 下界 ===== */
@@ -297,6 +306,11 @@ input, textarea {
   --shadow-lg: 0 4px 16px rgba(41, 37, 36, 0.10);
 
   --scrollbar-thumb: #DED2C8;
+
+  --ld-fabric: #EA580C;
+  --ld-forge: #DC2626;
+  --ld-neoforge: #65A30D;
+  --ld-quilt: #C026D3;
 }
 
 /* ===== 主题 Ice（冰霜青）：取自 Minecraft 冰霜/钻石 ===== */
@@ -323,6 +337,11 @@ input, textarea {
   --shadow-lg: 0 4px 16px rgba(15, 23, 42, 0.10);
 
   --scrollbar-thumb: #C6D6E0;
+
+  --ld-fabric: #F59E0B;
+  --ld-forge: #F43F5E;
+  --ld-neoforge: #10B981;
+  --ld-quilt: #8B5CF6;
 }
 
 * {
