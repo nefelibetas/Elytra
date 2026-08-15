@@ -62,6 +62,24 @@ export const dlFileOpen = ref(false);
 export const dlManifestOpen = ref(false);
 export const dlCommunityOpen = ref(false);
 export const dlTranslateOpen = ref(false);
+
+/** 下载设置四个下拉互斥展开：打开指定下拉时关闭其他（点同一项 = toggle 关闭）。 */
+export function toggleDlOpen(target: "file" | "manifest" | "community" | "translate") {
+  const map = {
+    file: dlFileOpen,
+    manifest: dlManifestOpen,
+    community: dlCommunityOpen,
+    translate: dlTranslateOpen,
+  } as const;
+  const self = map[target];
+  const willOpen = !self.value;
+  self.value = willOpen;
+  if (willOpen) {
+    for (const [key, v] of Object.entries(map)) {
+      if (key !== target) v.value = false;
+    }
+  }
+}
 export const dlMinecraftDir = ref(".minecraft");
 export const dlTranslateMode = ref<"zh" | "en">("zh");
 /** 社区资源版本列表仅显示正式版（默认开启，过滤快照/预发布/候选版本） */

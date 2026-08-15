@@ -100,16 +100,18 @@ async function handleInstallJdk() {
       <!-- 下载行：安装缺失 Java（Mojang 官方/备用源自动安装） -->
       <div class="jdk-dl-group">
         <span class="jdk-dl-label">下载缺失 JDK</span>
-        <DropSelect
-          :model-value="String(downloadMajor)"
-          :options="jdkDownloadOptions"
-          width="96px"
-          @update:model-value="downloadMajor = Number($event)"
-        />
-        <button class="tool-btn jdk-dl-btn" :disabled="loading" @click="handleInstallJdk">
-          <Download :size="14" />
-          {{ loading ? "下载中..." : "下载" }}
-        </button>
+        <div class="jdk-dl-controls">
+          <DropSelect
+            :model-value="String(downloadMajor)"
+            :options="jdkDownloadOptions"
+            width="88px"
+            @update:model-value="downloadMajor = Number($event)"
+          />
+          <button class="tool-btn jdk-dl-btn" :disabled="loading" @click="handleInstallJdk">
+            <Download :size="14" />
+            {{ loading ? "下载中..." : "下载" }}
+          </button>
+        </div>
       </div>
     </div>
 
@@ -166,6 +168,7 @@ async function handleInstallJdk() {
           id="lo-gc"
           :model-value="loGc"
           :options="gcOptions.map(g => ({ value: g.value, label: g.label }))"
+          width="180px"
           @update:model-value="loGc = $event; saveLaunchOptions()"
         />
       </div>
@@ -207,19 +210,27 @@ async function handleInstallJdk() {
   gap: 8px;
 }
 
-/* 第二行：下载安装容器（与扫描操作分组隔离） */
+/* 第二行：下载安装容器（label 左侧，select+下载按钮右侧） */
 .jdk-dl-group {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 12px;
   padding: 8px 10px;
   background: var(--surface-page);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
 }
 
-.jdk-dl-label {
+.jdk-dl-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex: none;
+}
+
+.jdk-dl-label {
+  flex: 1;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);

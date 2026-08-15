@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 版本选择页左侧：游戏目录列表 + 右键菜单 + 添加文件夹 + 重命名 dialog
+// 版本选择页左侧：游戏目录列表 + 右键菜单 + 添加游戏目录 + 重命名 dialog
 import { onMounted, onUnmounted } from "vue";
 import { Ellipsis, FolderPlus } from "@lucide/vue";
 import AlertDialog from "./AlertDialog.vue";
@@ -17,8 +17,8 @@ onUnmounted(() => window.removeEventListener("click", onWindowClick));
 
 <template>
   <div class="vs-left">
-    <!-- 文件夹列表 -->
-    <div class="vs-group-label">文件夹列表</div>
+    <!-- 游戏列表 -->
+    <div class="vs-group-label">游戏列表</div>
     <div class="vs-dir-list">
       <div
         v-for="d in dirs"
@@ -47,7 +47,7 @@ onUnmounted(() => window.removeEventListener("click", onWindowClick));
     <div class="vs-add-list">
       <div class="vs-add-item" @click="addFolder">
         <FolderPlus :size="14" />
-        <span>添加已有文件夹</span>
+        <span>添加已有游戏目录</span>
       </div>
     </div>
     <div v-if="dirsError" class="vs-err">{{ dirsError }}</div>
@@ -68,9 +68,9 @@ onUnmounted(() => window.removeEventListener("click", onWindowClick));
     </Teleport>
 
     <!-- 重命名 dialog -->
-    <AlertDialog v-model="renameDialog" title="重命名文件夹" :divider="false">
+    <AlertDialog v-model="renameDialog" title="重命名游戏" :divider="false">
       <div class="vs-dialog-body">
-        <div class="vs-dialog-label">输入该文件夹在左侧列表中显示的名称</div>
+        <div class="vs-dialog-label">输入该游戏在左侧列表中显示的名称</div>
         <input
           v-model="renameInput"
           class="vs-input"
@@ -89,7 +89,7 @@ onUnmounted(() => window.removeEventListener("click", onWindowClick));
     <!-- 添加已有文件夹 dialog -->
     <AlertDialog v-model="addDialog" title="输入显示名称" :divider="false">
       <div class="vs-dialog-body">
-        <div class="vs-dialog-label">输入该文件夹在左侧列表中显示的名称</div>
+        <div class="vs-dialog-label">输入该游戏在左侧列表中显示的名称</div>
         <input
           v-model="addInput"
           class="vs-input"

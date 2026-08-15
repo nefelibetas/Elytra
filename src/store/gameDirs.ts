@@ -21,7 +21,7 @@ export const dirsError = ref("");
 export async function loadDirs(keepActive = true) {
   try {
     dirs.value = await invoke<GameDir[]>("get_game_dirs");
-    // 记住文件夹选择状态：优先恢复后端持久化的激活目录（跨重启保留）
+    // 记住游戏目录选择状态：优先恢复后端持久化的激活目录（跨重启保留）
     let desired = "";
     if (keepActive) {
       try {
@@ -57,6 +57,11 @@ export const itemMenu = ref<{ visible: boolean; x: number; y: number; dir: GameD
 
 export function openItemMenu(e: MouseEvent, d: GameDir) {
   e.stopPropagation();
+  // toggle：同一目录菜单已展开则关闭
+  if (itemMenu.value.visible && itemMenu.value.dir?.path === d.path) {
+    closeItemMenu();
+    return;
+  }
   itemMenu.value = {
     visible: true,
     x: Math.min(e.clientX + 4, window.innerWidth - 140),
@@ -162,7 +167,7 @@ export async function addFolder() {
   const path = await open({ directory: true, multiple: false });
   if (!path) return;
   addPath.value = path;
-  // 默认名称 = 文件夹名
+  // 默认名称 = 目录名
   const segs = path.replace(/\\/g, "/").split("/").filter(Boolean);
   addInput.value = segs[segs.length - 1] || "";
   addError.value = "";
