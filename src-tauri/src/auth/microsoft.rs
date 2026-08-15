@@ -251,7 +251,7 @@ async fn authenticate_xbl(
     }
     if !status.is_success() {
         return Err(MsError::Http(format!(
-            "Xbox Live 鉴权失败({status}): {}",
+            "Xbox Live 鉴权失败({status})\n{}",
             extract_api_error(&json)
         )));
     }
@@ -295,7 +295,7 @@ async fn authenticate_xsts(
     }
     if !status.is_success() {
         return Err(MsError::Http(format!(
-            "Xbox 鉴权失败({status}): {}",
+            "Xbox 鉴权失败({status})\n{}",
             extract_api_error(&json)
         )));
     }
@@ -344,7 +344,7 @@ async fn minecraft_login(
     }
     if !status.is_success() {
         return Err(MsError::Http(format!(
-            "Minecraft 登录失败({status}): {}",
+            "Minecraft 登录失败({status})\n{}",
             extract_api_error(&json)
         )));
     }

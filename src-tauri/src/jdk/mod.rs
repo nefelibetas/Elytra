@@ -12,7 +12,7 @@ pub fn read() -> model::JdkConfig {
 }
 
 pub fn save(config: &model::JdkConfig) -> Result<(), String> {
-    persist::save(SECT_JDK, config).map_err(|e| e.to_string())
+    persist::save(SECT_JDK, config).map_err(|e| format!("保存配置失败\n{e}"))
 }
 
 /// 启动时后台扫描：已有缓存则复用；扫描为空则不动配置。

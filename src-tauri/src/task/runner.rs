@@ -507,7 +507,7 @@ async fn fetch_version_json(
 ) -> Result<(VersionJson, String), String> {
     let text = crate::downloader::version::fetch_version_json_text(version_url, config).await?;
     let vj: VersionJson =
-        serde_json::from_str(&text).map_err(|e| format!("解析 version json 失败: {}", e))?;
+        serde_json::from_str(&text).map_err(|e| format!("解析 version json 失败\n{}", e))?;
     Ok((vj, text))
 }
 

@@ -88,11 +88,11 @@ pub async fn copy_verified_local<F: Fn(u64, u64)>(
     progress: Option<F>,
 ) -> Result<u64, String> {
     if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败\n{e}"))?;
     }
     use std::io::{Read, Write};
-    let mut src_f = std::fs::File::open(src).map_err(|e| format!("打开本地复用源失败: {e}"))?;
-    let mut dst_f = std::fs::File::create(dest).map_err(|e| format!("创建目标文件失败: {e}"))?;
+    let mut src_f = std::fs::File::open(src).map_err(|e| format!("打开本地复用源失败\n{e}"))?;
+    let mut dst_f = std::fs::File::create(dest).map_err(|e| format!("创建目标文件失败\n{e}"))?;
     let mut copied: u64 = 0;
     let mut buf = vec![0u8; 1024 * 1024];
     loop {
@@ -101,12 +101,12 @@ pub async fn copy_verified_local<F: Fn(u64, u64)>(
             Ok(n) => n,
             Err(e) => {
                 let _ = std::fs::remove_file(dest);
-                return Err(format!("读取本地复用源失败: {e}"));
+                return Err(format!("读取本地复用源失败\n{e}"));
             }
         };
         if let Err(e) = dst_f.write_all(&buf[..n]) {
             let _ = std::fs::remove_file(dest);
-            return Err(format!("写入目标文件失败: {e}"));
+            return Err(format!("写入目标文件失败\n{e}"));
         }
         copied += n as u64;
         if let Some(cb) = &progress {

@@ -42,7 +42,7 @@ fn read_version_json(vdir: &Path) -> Result<VersionJson, String> {
                 vdir.display()
             )
         })?;
-    let text = std::fs::read_to_string(&vj_path).map_err(|e| format!("读取版本文件失败：{e}"))?;
+    let text = std::fs::read_to_string(&vj_path).map_err(|e| format!("读取版本文件失败\n{e}"))?;
     serde_json::from_str(&text).map_err(|e| {
         format!(
             "版本 JSON 损坏\n{} 解析失败: {e}，请删除该版本后重新下载安装",
@@ -466,7 +466,7 @@ pub async fn count_assets_all(
     )
     .await?;
     let idx: serde_json::Value =
-        serde_json::from_str(&text).map_err(|e| format!("解析资源索引失败: {e}"))?;
+        serde_json::from_str(&text).map_err(|e| format!("解析资源索引失败\n{e}"))?;
     let objects_dir = mc_dir.join("assets").join("objects");
 
     // 先收集全部 (hash, 目标路径, size)，再分块多线程 sha1 校验（数千个文件，单线程过慢）

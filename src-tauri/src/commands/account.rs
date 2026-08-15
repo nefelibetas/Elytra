@@ -25,7 +25,7 @@ pub async fn start_ms_login(app: AppHandle) -> Result<String, String> {
 
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", CALLBACK_PORT))
         .await
-        .map_err(|e| format!("回调端口 {CALLBACK_PORT} 被占用：{e}"))?;
+        .map_err(|e| format!("回调端口 {CALLBACK_PORT} 被占用\n{e}"))?;
 
     let auth_url = microsoft::build_auth_url(&state, &pkce).map_err(|e| e.to_string())?;
 
@@ -40,7 +40,7 @@ pub async fn start_ms_login(app: AppHandle) -> Result<String, String> {
     use tauri_plugin_opener::OpenerExt;
     app.opener()
         .open_url(auth_url.clone(), None::<&str>)
-        .map_err(|e| format!("打开浏览器失败：{e}"))?;
+        .map_err(|e| format!("打开浏览器失败\n{e}"))?;
 
     Ok(auth_url)
 }
@@ -143,10 +143,10 @@ pub async fn save_skin(uuid: String, path: String) -> Result<(), String> {
     let b64 = fetch_skin(uuid).await?;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(&b64)
-        .map_err(|e| format!("皮肤数据解码失败：{e}"))?;
+        .map_err(|e| format!("皮肤数据解码失败\n{e}"))?;
     tokio::fs::write(&path, bytes)
         .await
-        .map_err(|e| format!("写入文件失败：{e}"))
+        .map_err(|e| format!("写入文件失败\n{e}"))
 }
 
 /// 上传本地皮肤到官方账号（POST multipart: variant=CLASSIC + file）。

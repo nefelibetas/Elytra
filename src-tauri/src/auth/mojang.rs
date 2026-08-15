@@ -13,11 +13,14 @@ pub async fn texture_value(uuid: &str) -> Result<String, String> {
         ))
         .send()
         .await
-        .map_err(|e| format!("获取档案失败：{e}"))?;
+        .map_err(|e| format!("获取档案失败\n{e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("获取档案失败：HTTP {}", resp.status()));
+        return Err(format!("获取档案失败\nHTTP {}", resp.status()));
     }
-    let profile: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let profile: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("解析响应失败\n{e}"))?;
     let props = profile
         .get("properties")
         .and_then(|v| v.as_array())
@@ -39,6 +42,6 @@ pub async fn profile_textures(uuid: &str) -> Result<serde_json::Value, String> {
     let value_b64 = texture_value(uuid).await?;
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(value_b64)
-        .map_err(|e| format!("皮肤数据解码失败：{e}"))?;
-    serde_json::from_slice(&decoded).map_err(|e| format!("皮肤数据解析失败：{e}"))
+        .map_err(|e| format!("皮肤数据解码失败\n{e}"))?;
+    serde_json::from_slice(&decoded).map_err(|e| format!("皮肤数据解析失败\n{e}"))
 }

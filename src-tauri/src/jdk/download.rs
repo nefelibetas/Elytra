@@ -89,13 +89,13 @@ fn runtime_dir(config: &DownloaderConfig, major: u32) -> PathBuf {
 fn safe_runtime_path(root: &Path, entry: &str) -> Result<PathBuf, String> {
     let entry = entry.trim();
     if entry.is_empty() || entry.starts_with('/') || entry.starts_with('\\') {
-        return Err(format!("非法 runtime 文件路径: {entry:?}"));
+        return Err(format!("非法 runtime 文件路径\n{entry:?}"));
     }
     if entry
         .split(['/', '\\'])
         .any(|seg| seg == ".." || seg.is_empty())
     {
-        return Err(format!("runtime 文件路径含非法段: {entry:?}"));
+        return Err(format!("runtime 文件路径含非法段\n{entry:?}"));
     }
     Ok(root.join(entry))
 }
@@ -117,9 +117,9 @@ async fn install_mojang_runtime(
             |s| s.mirror_url(RUNTIME_ALL_JSON),
         )
         .await
-        .map_err(|e| format!("获取 Java runtime 索引失败: {e}"))?;
+        .map_err(|e| format!("获取 Java runtime 索引失败\n{e}"))?;
     let all: serde_json::Value =
-        serde_json::from_str(&all_text).map_err(|e| format!("解析 runtime 索引失败: {e}"))?;
+        serde_json::from_str(&all_text).map_err(|e| format!("解析 runtime 索引失败\n{e}"))?;
 
     // 2. 平台 → 组件 → 版本列表（取最新一条的 manifest）。
     // 注意实际结构：顶层键是平台（windows-x64/mac-os-arm64/...），
@@ -152,12 +152,12 @@ async fn install_mojang_runtime(
     let manifest_path = temp_file("runtime-manifest.json");
     fetcher::fetch_verified(&manifest_urls, &manifest_path, None::<fn(u64, u64)>, &manifest_sha1)
         .await
-        .map_err(|e| format!("下载 runtime manifest 失败: {e}"))?;
+        .map_err(|e| format!("下载 runtime manifest 失败\n{e}"))?;
     let manifest_text =
-        std::fs::read_to_string(&manifest_path).map_err(|e| format!("读取 manifest 失败: {e}"))?;
+        std::fs::read_to_string(&manifest_path).map_err(|e| format!("读取 manifest 失败\n{e}"))?;
     let _ = std::fs::remove_file(&manifest_path);
     let manifest: serde_json::Value =
-        serde_json::from_str(&manifest_text).map_err(|e| format!("解析 manifest 失败: {e}"))?;
+        serde_json::from_str(&manifest_text).map_err(|e| format!("解析 manifest 失败\n{e}"))?;
 
     // 4. 逐文件下载到 runtime 目录（目录条目建目录，文件条目 sha1 校验下载，link 条目跳过）
     let dest_root = runtime_dir(config, major);
@@ -169,7 +169,7 @@ async fn install_mojang_runtime(
         let dest = safe_runtime_path(&dest_root, path)?;
         match ftype {
             "directory" => {
-                std::fs::create_dir_all(&dest).map_err(|e| format!("创建目录失败: {e}"))?;
+                std::fs::create_dir_all(&dest).map_err(|e| format!("创建目录失败\n{e}"))?;
             }
             "file" => {
                 let raw = meta["downloads"]["raw"]
@@ -187,20 +187,20 @@ async fn install_mojang_runtime(
                     .collect();
                 fetcher::fetch_verified(&urls, &dest, None::<fn(u64, u64)>, sha1)
                     .await
-                    .map_err(|e| format!("下载 {path} 失败: {e}"))?;
+                    .map_err(|e| format!("下载 {path} 失败\n{e}"))?;
             }
             "link" => {
                 // 官方 manifest 的 symlink 条目主要在 unix 平台；Windows runtime 无此条目。
                 // 此处跳过（Java 运行所需实体文件均已逐一下载）。
             }
             other => {
-                return Err(format!("未知 runtime 文件类型: {other:?}（{path}）"));
+                return Err(format!("未知 runtime 文件类型\n{other:?}（{path}）"));
             }
         }
     }
 
     // 5. 校验：inspect 版本 + major 匹配
-    let info = scanner::inspect(&dest_root).map_err(|e| format!("安装后校验失败: {e}"))?;
+    let info = scanner::inspect(&dest_root).map_err(|e| format!("安装后校验失败\n{e}"))?;
     if crate::jdk::parse_java_major(&info.version) != Some(major) {
         return Err(format!(
             "安装的 Java 版本异常（需要 {}，实际 {}）",
@@ -231,11 +231,14 @@ async fn install_azul_runtime(major: u32, config: &DownloaderConfig) -> Result<J
         .get(&api_url)
         .send()
         .await
-        .map_err(|e| format!("查询 Azul 包失败: {e}"))?;
+        .map_err(|e| format!("查询 Azul 包失败\n{e}"))?;
     if !resp.status().is_success() {
         return Err(format!("Azul API 返回 {}", resp.status()));
     }
-    let packages: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let packages: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("解析 Azul 响应失败\n{e}"))?;
     let pkg = packages
         .as_array()
         .and_then(|a| a.first())
@@ -256,7 +259,7 @@ async fn install_azul_runtime(major: u32, config: &DownloaderConfig) -> Result<J
     let urls: Vec<String> = vec![download_url.clone()];
     fetcher::fetch_verified(&urls, &zip_path, None::<fn(u64, u64)>, "")
         .await
-        .map_err(|e| format!("下载 Azul 包失败: {e}"))?;
+        .map_err(|e| format!("下载 Azul 包失败\n{e}"))?;
     if !sha256.is_empty() {
         let actual = file_sha256(&zip_path);
         if actual != sha256 {
@@ -267,11 +270,11 @@ async fn install_azul_runtime(major: u32, config: &DownloaderConfig) -> Result<J
 
     // 解压到 runtime 目录（zip 内顶层目录保留，如 zulu17.x-ca-jdk17.x-win_x64/）
     let dest_root = runtime_dir(config, major);
-    std::fs::create_dir_all(&dest_root).map_err(|e| format!("创建目录失败: {e}"))?;
-    let file = std::fs::File::open(&zip_path).map_err(|e| format!("打开 Azul 包失败: {e}"))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取 Azul 包失败: {e}"))?;
+    std::fs::create_dir_all(&dest_root).map_err(|e| format!("创建目录失败\n{e}"))?;
+    let file = std::fs::File::open(&zip_path).map_err(|e| format!("打开 Azul 包失败\n{e}"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取 Azul 包失败\n{e}"))?;
     for i in 0..archive.len() {
-        let mut entry = archive.by_index(i).map_err(|e| format!("读取条目失败: {e}"))?;
+        let mut entry = archive.by_index(i).map_err(|e| format!("读取条目失败\n{e}"))?;
         let name = entry.name().to_string();
         // 路径穿越防护：拒绝 .. 与绝对路径
         let out = safe_runtime_path(&dest_root, &name)?;
@@ -283,15 +286,15 @@ async fn install_azul_runtime(major: u32, config: &DownloaderConfig) -> Result<J
             std::fs::create_dir_all(parent).ok();
         }
         let mut file_out = std::fs::File::create(&out)
-            .map_err(|e| format!("创建 {} 失败: {e}", out.display()))?;
+            .map_err(|e| format!("创建 {} 失败\n{e}", out.display()))?;
         std::io::copy(&mut entry, &mut file_out)
-            .map_err(|e| format!("解压 {} 失败: {e}", out.display()))?;
+            .map_err(|e| format!("解压 {} 失败\n{e}", out.display()))?;
     }
     let _ = std::fs::remove_file(&zip_path);
 
     // 找到含 bin/java(.exe) 的 JDK 根目录（zip 顶层目录名不定）
     let home = find_java_home(&dest_root).ok_or("解压后未找到 JDK 根目录")?;
-    let info = scanner::inspect(&home).map_err(|e| format!("校验 Azul JDK 失败: {e}"))?;
+    let info = scanner::inspect(&home).map_err(|e| format!("校验 Azul JDK 失败\n{e}"))?;
     if crate::jdk::parse_java_major(&info.version) != Some(major) {
         return Err(format!(
             "Azul 安装版本异常（需要 {}，实际 {}）",

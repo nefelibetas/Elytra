@@ -94,10 +94,10 @@ impl DownloaderConfig {
                     }
                     match resp.text().await {
                         Ok(text) => return Ok(text),
-                        Err(e) => last_err = format!("读取响应失败: {}", e),
+                        Err(e) => last_err = format!("读取响应失败\n{}", e),
                     }
                 }
-                Err(e) => last_err = format!("请求失败: {}", e),
+                Err(e) => last_err = format!("请求失败\n{}", e),
             }
         }
         Err(last_err)
@@ -112,7 +112,7 @@ impl DownloaderConfig {
         make_url: impl Fn(&DownloadSource) -> String,
     ) -> Result<T, String> {
         let text = self.fetch_with_fallback(mode, cache, make_url).await?;
-        serde_json::from_str(&text).map_err(|e| format!("解析 JSON 失败: {}", e))
+        serde_json::from_str(&text).map_err(|e| format!("解析 JSON 失败\n{}", e))
     }
 }
 

@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event"
 import { EVT_TASK_PROGRESS, EVT_TASK_WAITING_USER } from "./events"
 import { invoke } from "@tauri-apps/api/core"
 import { showToast } from "../utils/toast"
+import { errMsg } from "../utils/error"
 
 export type StepStatus = "pending" | "running" | "done";
 
@@ -313,7 +314,7 @@ export async function decideWaitingTask(action: "skip" | "retry" | "cancel") {
   try {
     await invoke("decide_waiting_task", { taskId: w.task_id, action });
   } catch (e) {
-    showToast(String(e));
+    showToast(errMsg(e));
   }
 }
 

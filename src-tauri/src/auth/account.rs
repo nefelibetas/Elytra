@@ -19,7 +19,7 @@ fn http_client(timeout_secs: u64) -> Result<reqwest::Client, String> {
         .user_agent(UA_MOJANG_API)
         .timeout(Duration::from_secs(timeout_secs))
         .build()
-        .map_err(|e| format!("初始化客户端失败：{e}"))
+        .map_err(|e| format!("初始化客户端失败\n{e}"))
 }
 
 /// 下载远程资源并返回 base64（头像/纹理/皮肤/披风共用）。
@@ -28,11 +28,14 @@ pub async fn fetch_b64(url: &str, err_prefix: &str) -> Result<String, String> {
         .get(url)
         .send()
         .await
-        .map_err(|e| format!("{err_prefix}失败：{e}"))?;
+        .map_err(|e| format!("{err_prefix}失败\n{e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("{err_prefix}失败({})", resp.status()));
+        return Err(format!("{err_prefix}失败\nHTTP {}", resp.status()));
     }
-    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("下载数据失败\n{e}"))?;
     Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
 
@@ -49,7 +52,7 @@ pub async fn wait_callback(
             handle_callback(stream, state, pkce, &app).await;
         }
         Ok(Err(e)) => {
-            let _ = emit_result(&app, false, None, Some(format!("回调服务错误：{e}")));
+            let _ = emit_result(&app, false, None, Some(format!("回调服务错误\n{e}")));
         }
         Err(_) => {
             let _ = emit_result(&app, false, None, Some("登录超时，请重新尝试".into()));
@@ -70,7 +73,7 @@ async fn handle_callback(
     let read = match stream.read(&mut buf).await {
         Ok(n) => n,
         Err(e) => {
-            let _ = emit_result(app, false, None, Some(format!("读取回调失败：{e}")));
+            let _ = emit_result(app, false, None, Some(format!("读取回调失败\n{e}")));
             return;
         }
     };
@@ -95,7 +98,7 @@ async fn handle_callback(
         .collect();
 
     let (ok, account, error, http_status) = if let Some(err) = params.get("error") {
-        (false, None, Some(format!("授权被拒绝：{err}")), 400)
+        (false, None, Some(format!("授权被拒绝\n{err}")), 400)
     } else {
         let code = params.get("code").cloned();
         let cb_state = params.get("state").cloned().unwrap_or_default();
@@ -199,11 +202,14 @@ pub async fn fetch_capes(access_token: &str) -> Result<Vec<CapeInfo>, String> {
         .bearer_auth(access_token)
         .send()
         .await
-        .map_err(|e| format!("获取披风列表失败：{e}"))?;
+        .map_err(|e| format!("获取披风列表失败\n{e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("获取披风列表失败({})", resp.status()));
+        return Err(format!("获取披风列表失败\nHTTP {}", resp.status()));
     }
-    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("解析响应失败\n{e}"))?;
     let capes = json["capes"].as_array().cloned().unwrap_or_default();
     Ok(capes
         .iter()
@@ -224,9 +230,9 @@ pub async fn set_active_cape(access_token: &str, cape_id: &str) -> Result<(), St
         .json(&serde_json::json!({ "capeId": cape_id }))
         .send()
         .await
-        .map_err(|e| format!("切换披风失败：{e}"))?;
+        .map_err(|e| format!("切换披风失败\n{e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("切换披风失败({})", resp.status()));
+        return Err(format!("切换披风失败\nHTTP {}", resp.status()));
     }
     Ok(())
 }
@@ -238,9 +244,9 @@ pub async fn disable_cape(access_token: &str) -> Result<(), String> {
         .bearer_auth(access_token)
         .send()
         .await
-        .map_err(|e| format!("移除披风失败：{e}"))?;
+        .map_err(|e| format!("移除披风失败\n{e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("移除披风失败({})", resp.status()));
+        return Err(format!("移除披风失败\nHTTP {}", resp.status()));
     }
     Ok(())
 }
@@ -250,7 +256,7 @@ pub async fn disable_cape(access_token: &str) -> Result<(), String> {
 pub async fn upload_skin(access_token: &str, file_path: &str) -> Result<(), String> {
     let bytes = tokio::fs::read(file_path)
         .await
-        .map_err(|e| format!("读取文件失败：{e}"))?;
+        .map_err(|e| format!("读取文件失败\n{e}"))?;
     let form = reqwest::multipart::Form::new()
         .text("variant", "CLASSIC".to_string())
         .part(
@@ -258,7 +264,7 @@ pub async fn upload_skin(access_token: &str, file_path: &str) -> Result<(), Stri
             reqwest::multipart::Part::bytes(bytes)
                 .file_name("image.png")
                 .mime_str("image/png")
-                .map_err(|e| format!("构造上传失败：{e}"))?,
+                .map_err(|e| format!("构造上传失败\n{e}"))?,
         );
     // 官方文档实测为 POST（PUT 在认证通过后返回 405 Method Not Allowed）
     let resp = http_client(30)?
@@ -267,7 +273,7 @@ pub async fn upload_skin(access_token: &str, file_path: &str) -> Result<(), Stri
         .multipart(form)
         .send()
         .await
-        .map_err(|e| format!("上传皮肤失败：{e}"))?;
+        .map_err(|e| format!("上传皮肤失败\n{e}"))?;
     if !resp.status().is_success() {
         // 官方 API 错误体是 {"path":…,"errorMessage":…}
         let status = resp.status();
@@ -276,7 +282,7 @@ pub async fn upload_skin(access_token: &str, file_path: &str) -> Result<(), Stri
             .as_str()
             .map(str::to_string)
             .unwrap_or_else(|| format!("HTTP {status}"));
-        return Err(format!("上传皮肤失败：{msg}"));
+        return Err(format!("上传皮肤失败\n{msg}"));
     }
     Ok(())
 }

@@ -43,7 +43,7 @@ pub async fn fetch_asset_index(
     if let (Some(path), Some(sha1)) = (&index_path, index_sha1) {
         if path.exists() && file_sha1_matches(path, sha1) {
             return std::fs::read_to_string(path)
-                .map_err(|e| format!("读取缓存资源索引失败: {}", e));
+                .map_err(|e| format!("读取缓存资源索引失败\n{}", e));
         }
     }
 
@@ -55,13 +55,13 @@ pub async fn fetch_asset_index(
             |s| s.mirror_url(index_url),
         )
         .await
-        .map_err(|e| format!("获取资源索引失败: {e}"))?;
+        .map_err(|e| format!("获取资源索引失败\n{e}"))?;
 
     if let Some(path) = &index_path {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("创建索引目录失败: {}", e))?;
+            std::fs::create_dir_all(parent).map_err(|e| format!("创建索引目录失败\n{}", e))?;
         }
-        std::fs::write(path, &text).map_err(|e| format!("写入资源索引失败: {}", e))?;
+        std::fs::write(path, &text).map_err(|e| format!("写入资源索引失败\n{}", e))?;
     }
     Ok(text)
 }
@@ -90,7 +90,7 @@ pub async fn download_assets(
         .map_err(|e| vec![e])?;
 
     let index: AssetsIndex = serde_json::from_str(&index_text)
-        .map_err(|e| vec![format!("failed to parse asset index: {}", e)])?;
+        .map_err(|e| vec![format!("解析资源索引失败\n{}", e)])?;
 
     let objects_dir = mc_dir.join("assets").join("objects");
     let sem = Arc::new(Semaphore::new(concurrency));

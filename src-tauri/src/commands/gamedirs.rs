@@ -33,7 +33,7 @@ fn read_dirs() -> Vec<GameDir> {
 
 fn save_dirs(dirs: Vec<GameDir>) -> Result<Vec<GameDir>, String> {
     crate::persist::save(constants::SECT_GAME_DIRS, &GameDirsConfig { dirs: dirs.clone() })
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("保存配置失败\n{e}"))?;
     Ok(dirs)
 }
 
@@ -98,7 +98,7 @@ pub fn set_active_game_dir(path: String) -> Result<(), String> {
     let mut cfg: crate::config::downloader::model::DownloaderConfig =
         crate::persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
     cfg.minecraft_dir = path;
-    crate::persist::save(constants::SECT_DOWNLOADER, &cfg).map_err(|e| e.to_string())
+    crate::persist::save(constants::SECT_DOWNLOADER, &cfg).map_err(|e| format!("保存配置失败\n{e}"))
 }
 
 /// 当前激活的游戏目录（同步于 downloader 配置的 minecraft_dir）。
@@ -132,7 +132,7 @@ pub fn rename_version_dir(version_name: String, new_name: String) -> Result<(), 
     if to.exists() {
         return Err(format!("版本「{new_name}」已存在"));
     }
-    std::fs::rename(&from, &to).map_err(|e| format!("重命名失败：{e}"))
+    std::fs::rename(&from, &to).map_err(|e| format!("重命名失败\n{e}"))
 }
 
 /// 用系统文件管理器打开指定目录（tauri-plugin-opener Rust 侧 API，不受 JS scope 限制；
@@ -140,12 +140,12 @@ pub fn rename_version_dir(version_name: String, new_name: String) -> Result<(), 
 #[tauri::command]
 pub fn open_folder(app: tauri::AppHandle, path: String) -> Result<(), String> {
     if !std::path::Path::new(&path).exists() {
-        return Err(format!("目录不存在：{path}"));
+        return Err(format!("目录不存在\n{path}"));
     }
     use tauri_plugin_opener::OpenerExt;
     app.opener()
         .open_path(path, None::<&str>)
-        .map_err(|e| format!("打开文件夹失败：{e}"))
+        .map_err(|e| format!("打开文件夹失败\n{e}"))
 }
 
 /// 自动激活结果：激活的目录路径 + 该目录下第一个版本名。
@@ -166,7 +166,7 @@ pub fn auto_activate_version() -> Result<AutoActivate, String> {
             continue;
         }
         let mut names: Vec<String> = std::fs::read_dir(&vdir)
-            .map_err(|e| format!("读取目录失败：{e}"))?
+            .map_err(|e| format!("读取目录失败\n{e}"))?
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
             .map(|e| e.file_name().to_string_lossy().to_string())
@@ -198,7 +198,7 @@ pub fn ensure_game_folder(kind: String, version_name: String) -> Result<String, 
         _ => return Err("未知文件夹类型".to_string()),
     };
     let dir = base.join(sub);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("创建目录失败：{e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建目录失败\n{e}"))?;
     Ok(dir.to_string_lossy().to_string())
 }
 
@@ -215,5 +215,5 @@ pub async fn delete_version_dir(version_name: String) -> Result<(), String> {
     }
     tokio::fs::remove_dir_all(&dir)
         .await
-        .map_err(|e| format!("删除失败：{e}"))
+        .map_err(|e| format!("删除失败\n{e}"))
 }

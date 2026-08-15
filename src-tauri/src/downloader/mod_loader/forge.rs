@@ -74,7 +74,7 @@ pub(super) async fn download_and_extract(
 ) -> Result<(), String> {
     let mc_dir = config.minecraft_dir_abs();
     let tmp = mc_dir.join(".elytra").join("tmp");
-    std::fs::create_dir_all(&tmp).map_err(|e| format!("创建临时目录失败: {}", e))?;
+    std::fs::create_dir_all(&tmp).map_err(|e| format!("创建临时目录失败\n{}", e))?;
     let installer_name = installer_urls
         .first()
         .and_then(|u| u.rsplit('/').next())
@@ -99,13 +99,13 @@ pub(super) async fn download_and_extract(
     };
     fetcher::fetch_fallback(installer_urls, &installer_path, Some(progress))
         .await
-        .map_err(|e| format!("下载安装程序失败: {}", e))?;
+        .map_err(|e| format!("下载安装程序失败\n{}", e))?;
 
     let file =
-        std::fs::File::open(&installer_path).map_err(|e| format!("打开安装程序失败: {}", e))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取安装程序失败: {}", e))?;
+        std::fs::File::open(&installer_path).map_err(|e| format!("打开安装程序失败\n{}", e))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取安装程序失败\n{}", e))?;
 
-    std::fs::create_dir_all(version_dir).map_err(|e| format!("创建目录失败: {}", e))?;
+    std::fs::create_dir_all(version_dir).map_err(|e| format!("创建目录失败\n{}", e))?;
     let jar_path = version_dir.join(format!("{}.jar", dir_name));
     let json_path = version_dir.join(format!("{}.json", dir_name));
 
@@ -151,9 +151,9 @@ pub(super) async fn download_and_extract(
     // 安装阶段必须一并下载，否则启动时缺库。
     let lib_dir = mc_dir.join("libraries");
     let json_text =
-        std::fs::read_to_string(&json_path).map_err(|e| format!("读取 version.json 失败: {e}"))?;
+        std::fs::read_to_string(&json_path).map_err(|e| format!("读取 version.json 失败\n{e}"))?;
     let merged: serde_json::Value =
-        serde_json::from_str(&json_text).map_err(|e| format!("解析 version.json 失败: {e}"))?;
+        serde_json::from_str(&json_text).map_err(|e| format!("解析 version.json 失败\n{e}"))?;
     let libraries: Vec<crate::downloader::model::Library> =
         serde_json::from_value(merged["libraries"].clone()).unwrap_or_default();
     // Forge 的 client 合并 jar（79MB）在 installer 的 data/client.lzma（LZMA 压缩）里，
@@ -281,21 +281,21 @@ async fn extract_forge_client_lzma(
 
     // 1. 从 installer 提取 data/client.lzma
     let tmp = mc_dir.join(".elytra").join("tmp");
-    std::fs::create_dir_all(&tmp).map_err(|e| format!("创建临时目录失败: {e}"))?;
+    std::fs::create_dir_all(&tmp).map_err(|e| format!("创建临时目录失败\n{e}"))?;
     let client_lzma = tmp.join("client.lzma");
     {
         let mut found = false;
         for i in 0..archive.len() {
             let mut entry = archive
                 .by_index(i)
-                .map_err(|e| format!("读取安装程序条目失败: {e}"))?;
+                .map_err(|e| format!("读取安装程序条目失败\n{e}"))?;
             if !entry.name().ends_with("client.lzma") {
                 continue;
             }
             let mut out =
-                std::fs::File::create(&client_lzma).map_err(|e| format!("创建文件失败: {e}"))?;
+                std::fs::File::create(&client_lzma).map_err(|e| format!("创建文件失败\n{e}"))?;
             std::io::copy(&mut entry, &mut out)
-                .map_err(|e| format!("提取 client.lzma 失败: {e}"))?;
+                .map_err(|e| format!("提取 client.lzma 失败\n{e}"))?;
             found = true;
             break;
         }
@@ -311,7 +311,7 @@ async fn extract_forge_client_lzma(
 
     // 3. 下载官方工具（binarypatcher + classpath 依赖，来自 maven.minecraftforge.net）
     let tools = tmp.join("forge-tools");
-    std::fs::create_dir_all(&tools).map_err(|e| format!("创建目录失败: {e}"))?;
+    std::fs::create_dir_all(&tools).map_err(|e| format!("创建目录失败\n{e}"))?;
     const TOOL_JARS: &[(&str, &str)] = &[
         (
             "binarypatcher",
@@ -352,7 +352,7 @@ async fn extract_forge_client_lzma(
             .collect();
         crate::downloader::fetcher::fetch_fallback(&urls, &tool_dest, None::<fn(u64, u64)>)
             .await
-            .map_err(|e| format!("下载 {name} 工具失败: {e}"))?;
+            .map_err(|e| format!("下载 {name} 工具失败\n{e}"))?;
     }
 
     // 4. 运行 binarypatcher（与 install_profile 的 client 侧 processor 参数一致）。
@@ -384,7 +384,7 @@ async fn extract_forge_client_lzma(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .map_err(|e| format!("启动 Forge 补丁工具失败: {e}"))?;
+        .map_err(|e| format!("启动 Forge 补丁工具失败\n{e}"))?;
     let output = crate::downloader::mod_loader::run_installer_command(
         child,
         cancel,
@@ -475,8 +475,8 @@ async fn resolve_version_json(
     let write_extracted = |v: serde_json::Value| -> Result<(), String> {
         let merged = expand_inheritance(parent_text, v, dir_name)?;
         let out =
-            serde_json::to_string_pretty(&merged).map_err(|e| format!("序列化失败: {}", e))?;
-        std::fs::write(json_path, &out).map_err(|e| format!("写入 version.json 失败: {}", e))
+            serde_json::to_string_pretty(&merged).map_err(|e| format!("序列化失败\n{}", e))?;
+        std::fs::write(json_path, &out).map_err(|e| format!("写入 version.json 失败\n{}", e))
     };
 
     // Strategy 1: install_profile has "json" field → extract from ZIP
@@ -485,12 +485,12 @@ async fn resolve_version_json(
             for i in 0..archive.len() {
                 let mut entry = archive
                     .by_index(i)
-                    .map_err(|e| format!("读取安装程序条目失败: {}", e))?;
+                    .map_err(|e| format!("读取安装程序条目失败\n{}", e))?;
                 if entry.name() == json_path_in_zip.trim_start_matches('/') {
                     let mut buf = String::new();
                     entry
                         .read_to_string(&mut buf)
-                        .map_err(|e| format!("读取 JSON 失败: {}", e))?;
+                        .map_err(|e| format!("读取 JSON 失败\n{}", e))?;
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&buf) {
                         write_extracted(v)?;
                         return Ok(true);
@@ -511,13 +511,13 @@ async fn resolve_version_json(
     for i in 0..archive.len() {
         let mut entry = archive
             .by_index(i)
-            .map_err(|e| format!("读取安装程序条目失败: {}", e))?;
+            .map_err(|e| format!("读取安装程序条目失败\n{}", e))?;
         let name = entry.name().to_string();
         if name.ends_with("version.json") {
             let mut buf = String::new();
             entry
                 .read_to_string(&mut buf)
-                .map_err(|e| format!("读取 JSON 失败: {}", e))?;
+                .map_err(|e| format!("读取 JSON 失败\n{}", e))?;
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&buf) {
                 write_extracted(v)?;
                 return Ok(true);
@@ -558,7 +558,7 @@ async fn resolve_jar(
             for i in 0..archive.len() {
                 let mut entry = archive
                     .by_index(i)
-                    .map_err(|e| format!("读取安装程序条目失败: {}", e))?;
+                    .map_err(|e| format!("读取安装程序条目失败\n{}", e))?;
                 if entry.name() == fp {
                     crate::downloader::extract::extract_entry_to(&mut entry, jar_path)?;
                     return Ok(true);
@@ -605,7 +605,7 @@ async fn resolve_jar(
     for i in 0..archive.len() {
         let mut entry = archive
             .by_index(i)
-            .map_err(|e| format!("读取安装程序条目失败: {}", e))?;
+            .map_err(|e| format!("读取安装程序条目失败\n{}", e))?;
         let name = entry.name().to_string();
         if name.ends_with(".jar")
             && !name.contains("installer")

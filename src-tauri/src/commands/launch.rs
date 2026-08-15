@@ -131,13 +131,13 @@ fn run_pre_launch_command(command: &str) -> Result<(), String> {
         let mut cmd = std::process::Command::new("cmd");
         cmd.args(["/C", command]);
         cmd.creation_flags(0x08000000);
-        cmd.status().map_err(|e| e.to_string())?
+        cmd.status().map_err(|e| format!("启动进程失败\n{e}"))?
     };
     #[cfg(not(target_os = "windows"))]
     let status = std::process::Command::new("sh")
         .args(["-c", command])
         .status()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("启动进程失败\n{e}"))?;
 
     if status.success() {
         Ok(())
@@ -233,7 +233,8 @@ pub fn get_launch_options() -> LauncherConfig {
 /// 保存启动选项配置（launcher section）。
 #[tauri::command]
 pub fn save_launch_options(config: LauncherConfig) -> Result<(), String> {
-    crate::persist::save(constants::SECT_LAUNCHER, &config).map_err(|e| e.to_string())
+    crate::persist::save(constants::SECT_LAUNCHER, &config)
+        .map_err(|e| format!("保存配置失败\n{e}"))
 }
 
 /// 读取最后一次使用的离线用户名（历史列表末尾；兼容旧版单值键）。
@@ -270,7 +271,8 @@ pub fn save_offline_account(username: String) -> Result<(), String> {
         crate::persist::read(constants::SECT_OFFLINE_ACCOUNTS).unwrap_or_default();
     list.retain(|n| n != &name);
     list.push(name);
-    crate::persist::save(constants::SECT_OFFLINE_ACCOUNTS, &list).map_err(|e| e.to_string())?;
+    crate::persist::save(constants::SECT_OFFLINE_ACCOUNTS, &list)
+        .map_err(|e| format!("保存配置失败\n{e}"))?;
     let _ = crate::persist::remove("last_offline_username"); // 旧单值键已并入列表
     Ok(())
 }
@@ -281,7 +283,8 @@ pub fn remove_offline_account(username: String) -> Result<(), String> {
     let mut list: Vec<String> =
         crate::persist::read(constants::SECT_OFFLINE_ACCOUNTS).unwrap_or_default();
     list.retain(|n| n != &username);
-    crate::persist::save(constants::SECT_OFFLINE_ACCOUNTS, &list).map_err(|e| e.to_string())
+    crate::persist::save(constants::SECT_OFFLINE_ACCOUNTS, &list)
+        .map_err(|e| format!("保存配置失败\n{e}"))
 }
 
 /// 导出启动脚本：按 PCL 风格生成平台对应脚本（Windows .bat / macOS/Linux .sh）写入指定路径。
@@ -316,7 +319,7 @@ pub async fn export_launch_script(
     );
 
     let script = render_launch_script(&cmd.args, &mc_dir, &version_dir_name);
-    std::fs::write(&save_path, script).map_err(|e| format!("写入脚本失败：{e}"))?;
+    std::fs::write(&save_path, script).map_err(|e| format!("写入脚本失败\n{e}"))?;
     Ok(save_path)
 }
 
@@ -369,7 +372,7 @@ pub async fn spawn_game(
     // 启动前执行命令（非空时运行；失败则中止启动）
     if !launcher_config.pre_launch_cmd.trim().is_empty() {
         run_pre_launch_command(&launcher_config.pre_launch_cmd)
-            .map_err(|e| format!("启动前命令执行失败：{e}"))?;
+            .map_err(|e| format!("启动前命令执行失败\n{e}"))?;
     }
 
     // 启动前内存优化：清理启动器自身工作集，为游戏腾出内存（仅 Windows）
@@ -413,14 +416,14 @@ pub async fn spawn_game(
                 {
                     flags &= !CREATE_BREAKAWAY_FROM_JOB; // 最多重试一次
                 }
-                Err(e) => return Err(format!("启动游戏失败: {e}")),
+                Err(e) => return Err(format!("启动游戏失败\n{e}")),
             }
         }
     };
     #[cfg(not(target_os = "windows"))]
     let mut child = command
         .spawn()
-        .map_err(|e| format!("启动游戏失败: {}", e))?;
+        .map_err(|e| format!("启动游戏失败\n{}", e))?;
 
     let pid = child.id();
 

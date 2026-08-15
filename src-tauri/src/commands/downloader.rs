@@ -18,7 +18,7 @@ pub fn get_downloader_config() -> DownloaderConfig {
 
 #[tauri::command]
 pub fn save_downloader_config(config: DownloaderConfig) -> Result<(), String> {
-    persist::save(constants::SECT_DOWNLOADER, &config).map_err(|e| e.to_string())
+    persist::save(constants::SECT_DOWNLOADER, &config).map_err(|e| format!("保存配置失败\n{e}"))
 }
 
 #[tauri::command]
@@ -29,7 +29,7 @@ pub fn get_installed_versions() -> Result<Vec<String>, String> {
         return Ok(vec![]);
     }
     let mut items: Vec<String> = std::fs::read_dir(&versions_dir)
-        .map_err(|e| format!("读取版本目录失败: {}", e))?
+        .map_err(|e| format!("读取版本目录失败\n{}", e))?
         .filter_map(|entry| {
             let entry = entry.ok()?;
             if entry.file_type().ok()?.is_dir() {
