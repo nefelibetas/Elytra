@@ -1,16 +1,17 @@
 <script setup lang="ts">
-// 下载设置卡片（管理游戏下载源）：文件/版本列表/社区源 + 线程数 + 速度限制
+// 下载设置卡片（管理游戏下载源）：文件/版本列表/社区源 + 网络代理 + 线程数 + 速度限制
 import { onMounted } from "vue";
 import { ChevronDown } from "@lucide/vue";
 import {
   dlFileMode, dlManifestMode, dlCommunityMode, dlConcurrency, dlMaxSpeed,
-  dlFileOpen, dlManifestOpen, dlCommunityOpen, dlTranslateOpen, dlTranslateMode, dlError,
-  dlShowReleaseOnly,
+  dlFileOpen, dlManifestOpen, dlCommunityOpen, dlNetworkOpen, dlTranslateOpen, dlTranslateMode,
+  dlError, dlShowReleaseOnly, dlNetworkMode,
   sourceModeOptions, communitySourceOptions, sourceModeLabel,
+  networkModeOptions, networkModeLabel,
   translateDisplayOptions, translateModeLabel,
   concurrencyLocked, MIRROR_CONCURRENCY,
-  saveDownloadConfig, setFileMode, setCommunityMode, setManifestMode, setTranslateMode,
-  toggleDlOpen, loadDownloadConfig,
+  saveDownloadConfig, setFileMode, setCommunityMode, setManifestMode, setNetworkMode,
+  setTranslateMode, toggleDlOpen, loadDownloadConfig,
 } from "../store/downloaderConfig";
 
 onMounted(loadDownloadConfig);
@@ -84,6 +85,29 @@ onMounted(loadDownloadConfig);
             class="dl-sel-item"
             :class="{ active: dlCommunityMode === opt.value }"
             @click="setCommunityMode(opt.value)"
+          >
+            <span class="dl-sel-item-label">{{ opt.label }}</span>
+            <span class="dl-sel-item-desc">{{ opt.desc }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 网络代理：自动检测系统代理 / 强制系统代理 / 直连（TUN 由网络层接管） -->
+    <div class="dl-row">
+      <span class="dl-label">网络代理</span>
+      <div class="dl-sel" :class="{ open: dlNetworkOpen }">
+        <button class="dl-sel-btn" @click="toggleDlOpen('network')">
+          <span>{{ networkModeLabel(dlNetworkMode) }}</span>
+          <ChevronDown :size="12" />
+        </button>
+        <div v-if="dlNetworkOpen" class="dl-sel-menu">
+          <button
+            v-for="opt in networkModeOptions"
+            :key="opt.value"
+            class="dl-sel-item"
+            :class="{ active: dlNetworkMode === opt.value }"
+            @click="setNetworkMode(opt.value)"
           >
             <span class="dl-sel-item-label">{{ opt.label }}</span>
             <span class="dl-sel-item-desc">{{ opt.desc }}</span>

@@ -39,6 +39,10 @@ zip = "2"
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
 # 锁：立即 unwrap 的场景用 parking_lot（无 poisoning 路径，guard 更小更快）
 parking_lot = "0.12"
+# 读 Windows 系统代理（注册表 Internet Settings）：reqwest 默认不读系统代理，
+# 用户开着系统代理（Clash 等）时官方源直连被劫持/黑洞，需显式走代理
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

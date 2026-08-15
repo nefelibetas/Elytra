@@ -215,8 +215,8 @@ pub async fn fabric_api_versions(mc_version: &str) -> Result<Vec<FabricApiVersio
     let urls = match cfg.community_source_mode {
         DownloadSourceMode::OfficialOnly => vec![official],
         DownloadSourceMode::ChinaOnly => vec![china],
-        DownloadSourceMode::PreferChina => vec![china, official],
-        DownloadSourceMode::PreferOfficial | DownloadSourceMode::Auto => vec![official, china],
+        // Auto：官方优先，过慢（5s）降级镜像（自适应语义同元数据请求）
+        DownloadSourceMode::Auto => vec![official, china],
     };
     let mut last_err = String::new();
     for (i, url) in urls.iter().enumerate() {

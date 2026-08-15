@@ -1,5 +1,7 @@
 use std::path::Path;
-use std::sync::{Arc, LazyLock, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use parking_lot::Mutex;
+use std::sync::{Arc, LazyLock, OnceLock};
 use std::time::{Duration, Instant};
 
 use reqwest::Client;
@@ -120,12 +122,12 @@ fn route_health_map() -> &'static Mutex<std::collections::HashMap<String, RouteH
 }
 
 fn route_health(url: &str) -> RouteHealth {
-    route_health_map().lock().unwrap().get(url).cloned().unwrap_or_default()
+    route_health_map().lock().get(url).cloned().unwrap_or_default()
 }
 
 /// 记录成功：清零连续失败与冷却，TTFB EWMA 更新（α=0.25）。
 fn record_route_success(url: &str, ttfb_ms: f64) {
-    let mut m = route_health_map().lock().unwrap();
+    let mut m = route_health_map().lock();
     let h = m.entry(url.to_string()).or_default();
     h.failures = 0;
     h.cooldown_until = None;
@@ -141,7 +143,7 @@ fn record_route_success(url: &str, ttfb_ms: f64) {
 fn record_route_failure(url: &str) {
     const COOLDOWN_SECS: u64 = 30;
     const FAILURE_THRESHOLD: u32 = 3;
-    let mut m = route_health_map().lock().unwrap();
+    let mut m = route_health_map().lock();
     let h = m.entry(url.to_string()).or_default();
     h.failures = h.failures.saturating_add(1);
     if h.failures >= FAILURE_THRESHOLD {
@@ -204,29 +206,214 @@ fn resolve_download_routes(urls: &[String], mode: DownloadSourceMode) -> Vec<Dow
                 )
             });
         }
-        DownloadSourceMode::PreferChina
-        | DownloadSourceMode::PreferOfficial
-        | DownloadSourceMode::OfficialOnly
-        | DownloadSourceMode::ChinaOnly => {
-            // 非 Auto：仅 mirror_first_loader 规则生效（其余保持调用方顺序）
-            if class == ResourceClass::Loader && mode == DownloadSourceMode::PreferChina {
-                routes.sort_by_key(|r| !r.is_mirror); // 镜像 key=false → 排前，官方保底排后
-            }
+        DownloadSourceMode::OfficialOnly | DownloadSourceMode::ChinaOnly => {
+            // 单选：保持调用方源顺序（镜像候选由调用方按模式生成，无健康度竞争）
         }
     }
     routes
 }
 
+/// 重定向策略：跟随重定向，但拒绝跳转到实测黑洞节点域（749333.xyz——
+/// BMCLAPI 对象存储节点，国内部分网络 TCP 黑洞，连上不传数据）。
+fn mirror_safe_redirect() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        let host = attempt.url().host_str().unwrap_or("").to_string();
+        if host.contains("749333") {
+            eprintln!("[fetch] 拒绝重定向到黑洞节点: {host}");
+            attempt.error("重定向到不可达镜像节点（749333.xyz）")
+        } else {
+            attempt.follow()
+        }
+    })
+}
+
+/// 解析 Windows 注册表 ProxyServer 值 → (http 代理, https 代理)。
+/// 支持两种格式：
+///   `127.0.0.1:7890`（全协议统一）
+///   `http=127.0.0.1:7890;https=127.0.0.1:7891;ftp=...`（分协议，缺项为 None）
+/// 代理连接 URL 统一用 http scheme（Clash 等 mixed 端口为明文 HTTP 代理；
+/// 注册表不表达"到代理的连接是否加密"，默认明文）。
+fn parse_proxy_server(raw: &str) -> (Option<String>, Option<String>) {
+    let raw = raw.trim();
+    let mut http = None;
+    let mut https = None;
+    if raw.contains('=') {
+        for seg in raw.split(';') {
+            let seg = seg.trim();
+            if seg.is_empty() {
+                continue;
+            }
+            let Some((scheme, addr)) = seg.split_once('=') else {
+                continue;
+            };
+            let addr = addr.trim();
+            if addr.is_empty() {
+                continue;
+            }
+            match scheme.trim() {
+                "http" => http = Some(format!("http://{addr}")),
+                "https" => https = Some(format!("http://{addr}")),
+                _ => {}
+            }
+        }
+    } else if !raw.is_empty() {
+        let full = format!("http://{raw}");
+        http = Some(full.clone());
+        https = Some(full);
+    }
+    (http, https)
+}
+
+/// 返回 (http 代理 URL, https 代理 URL)——按平台检测系统代理：
+/// - Windows：注册表 Internet Settings（Clash 等系统代理模式）优先，环境变量兜底
+/// - Linux：环境变量（https_proxy/http_proxy/all_proxy）优先，GNOME gsettings 兜底
+/// - 其他平台：环境变量
+fn system_proxy_urls() -> (Option<String>, Option<String>) {
+    #[cfg(target_os = "windows")]
+    {
+        // 1. 注册表（开启"使用代理服务器"时 Clash 等系统代理写这里）
+        use winreg::enums::HKEY_CURRENT_USER;
+        use winreg::RegKey;
+        if let Ok(settings) = RegKey::predef(HKEY_CURRENT_USER).open_subkey(
+            "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
+        ) {
+            let enabled: u32 = settings.get_value("ProxyEnable").unwrap_or(0);
+            let server: Result<String, _> = settings.get_value("ProxyServer");
+            if enabled == 1 {
+                if let Ok(server) = server {
+                    let (h, s) = parse_proxy_server(&server);
+                    if h.is_some() || s.is_some() {
+                        return (h, s);
+                    }
+                }
+            }
+        }
+        // 2. 环境变量兜底
+        env_proxy_urls()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // 1. 环境变量（终端/CI/容器场景；桌面端导出的常见方式）
+        let env = env_proxy_urls();
+        if env.0.is_some() || env.1.is_some() {
+            return env;
+        }
+        // 2. GNOME 桌面系统代理（gsettings org.gnome.system.proxy）
+        linux_gsettings_proxy_urls()
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        env_proxy_urls()
+    }
+}
+
+/// 环境变量代理（http_proxy / https_proxy / all_proxy；no_proxy 由 NoProxy 处理）。
+fn env_proxy_urls() -> (Option<String>, Option<String>) {
+    let https = std::env::var("https_proxy")
+        .or_else(|_| std::env::var("HTTPS_PROXY"))
+        .ok();
+    let http = std::env::var("http_proxy")
+        .or_else(|_| std::env::var("HTTP_PROXY"))
+        .ok()
+        .or_else(|| std::env::var("all_proxy").ok())
+        .or_else(|| std::env::var("ALL_PROXY").ok());
+    (http, https)
+}
+
+/// GNOME 桌面系统代理（gsettings 命令；无 gsettings/非 manual 模式 → None）。
+/// 平台无关实现（std::process::Command 跨平台），仅 Linux 分支调用；
+/// 不加 cfg 包裹以便 Windows 构建做语法检查。
+#[allow(dead_code)] // Windows 构建不调用
+fn linux_gsettings_proxy_urls() -> (Option<String>, Option<String>) {
+    fn gs(schema: &str, key: &str) -> Option<String> {
+        let out = std::process::Command::new("gsettings")
+            .args(["get", schema, key])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if s.is_empty() || s == "''" {
+            None
+        } else {
+            Some(s.trim_matches('\'').to_string())
+        }
+    }
+    let Some(mode) = gs("org.gnome.system.proxy", "mode") else {
+        return (None, None);
+    };
+    if mode != "manual" {
+        return (None, None); // none / auto(PAC，不支持)
+    }
+    let http = gs("org.gnome.system.proxy.http", "host").map(|h| {
+        let port = gs("org.gnome.system.proxy.http", "port").unwrap_or_else(|| "8080".into());
+        format!("http://{h}:{port}")
+    });
+    let https = gs("org.gnome.system.proxy.https", "host").map(|h| {
+        let port = gs("org.gnome.system.proxy.https", "port").unwrap_or_else(|| "8080".into());
+        format!("http://{h}:{port}")
+    });
+    if http.is_none() && https.is_none() {
+        return (None, None);
+    }
+    (http, https)
+}
+
+/// 当前网络代理模式（persist 配置；缺省 Auto）。
+fn current_network_mode() -> crate::config::downloader::model::NetworkMode {
+    crate::persist::read::<crate::config::downloader::model::DownloaderConfig>(
+        crate::constants::SECT_DOWNLOADER,
+    )
+    .map(|c| c.network_mode)
+    .unwrap_or_default()
+}
+
+/// 按网络模式给 ClientBuilder 应用代理：
+/// - Direct：不应用（强制直连；TUN 模式由网络层接管，无需应用层配置）
+/// - Auto / System：检测系统代理并应用（无代理时保持直连）
+fn apply_system_proxy(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+    use crate::config::downloader::model::NetworkMode;
+    match current_network_mode() {
+        NetworkMode::Direct => builder,
+        NetworkMode::Auto | NetworkMode::System => {
+            let (http_proxy, https_proxy) = system_proxy_urls();
+            let mut b = builder;
+            let no_proxy = reqwest::NoProxy::from_string("localhost,127.0.0.1,[::1]");
+            if let Some(u) = http_proxy {
+                if let Ok(p) = reqwest::Proxy::http(&u) {
+                    eprintln!("[fetch] 应用系统代理 http: {u}");
+                    b = b.proxy(p.no_proxy(no_proxy.clone()));
+                }
+            }
+            if let Some(u) = https_proxy {
+                if let Ok(p) = reqwest::Proxy::https(&u) {
+                    eprintln!("[fetch] 应用系统代理 https: {u}");
+                    b = b.proxy(p.no_proxy(no_proxy));
+                }
+            }
+            b
+        }
+    }
+}
+
 fn build_client() -> Client {
-    Client::builder()
+    let mut builder = Client::builder()
         .user_agent(UA_DOWNLOAD)
         // connect 黑洞防挂死：部分镜像 302 到不可达对象存储节点（749333.xyz 实测 TCP 黑洞），
         // 全局 client 无连接超时会挂满 300s；2s 连接超时只在新建连接时生效，不影响连接池复用
         .connect_timeout(std::time::Duration::from_secs(2))
+        // 读黑洞防挂死：连接建立后 30s 无数据（镜像假死）即掐断。此 client 服务
+        // 版本清单/资源索引/元数据等小请求（fetch_with_fallback 降级源只靠总超时，
+        // 无 read_timeout 时降级源黑洞会挂满 300s×源数，前端表现为进度永远 0%）
+        .read_timeout(std::time::Duration::from_secs(30))
         .timeout(std::time::Duration::from_secs(300))
-        .pool_max_idle_per_host(16)
-        .build()
-        .expect("reqwest::Client")
+        // 302 到黑洞节点时直接拒绝（reqwest 跟随重定向时无 per-hop 超时控制，
+        // 黑名单是唯一在超时前拦住的方式）
+        .redirect(mirror_safe_redirect())
+        .pool_max_idle_per_host(16);
+    builder = apply_system_proxy(builder);
+    builder.build().expect("reqwest::Client")
 }
 
 pub fn http() -> &'static Client {
@@ -248,6 +435,8 @@ pub enum FetchError {
     /// 下载成功但内容与期望 sha1 不匹配（镜像缓存陈旧/回源错误内容）。
     /// 校验发生在逐源循环内：返回该错误即"此源内容不可信"，换下一源重试。
     Checksum,
+    /// 任务被取消（下载循环每块检查 cancel flag，立即停止并清理残留）。
+    Cancelled,
 }
 
 impl std::fmt::Display for FetchError {
@@ -261,6 +450,7 @@ impl std::fmt::Display for FetchError {
                 f,
                 "sha1 校验失败（所有下载源返回的内容均与期望不一致，可能为镜像缓存问题）"
             ),
+            FetchError::Cancelled => write!(f, "任务已取消"),
         }
     }
 }
@@ -280,11 +470,21 @@ pub async fn fetch_fallback(
     dest: &Path,
     progress: Option<impl Fn(u64, u64)>,
 ) -> Result<DownloadResult, FetchError> {
-    if urls.len() <= 1 {
+    fetch_fallback_c(urls, dest, progress, None).await
+}
+
+/// `fetch_fallback` 的可取消变体（供下载任务使用）。
+pub async fn fetch_fallback_c(
+    urls: &[String],
+    dest: &Path,
+    progress: Option<impl Fn(u64, u64)>,
+    cancel: Option<&AtomicBool>,
+) -> Result<DownloadResult, FetchError> {
+    if urls.len() == 1 {
         let url = urls.first().map(String::as_str).unwrap_or("");
-        return fetch_with(http(), url, dest, progress, None).await;
+        return fetch_with_c(http(), url, dest, progress, None, cancel).await;
     }
-    fetch_from_sources(urls, dest, &progress, None, None).await
+    fetch_from_sources(urls, dest, &progress, None, None, cancel).await
 }
 
 /// 多源下载并在每次成功后校验 sha1：内容不匹配视同该源失败，立即换下一源/下一轮重试，
@@ -298,11 +498,24 @@ pub async fn fetch_verified(
     progress: Option<impl Fn(u64, u64)>,
     expected_sha1: &str,
 ) -> Result<DownloadResult, FetchError> {
-    if urls.len() <= 1 {
+    fetch_verified_c(urls, dest, progress, expected_sha1, None).await
+}
+
+/// `fetch_verified` 的可取消变体：`cancel` 非空时下载循环每块检查，
+/// 任务被取消立即停止（当前块读完即停，不等 read_timeout）。
+/// 供下载任务（runner/repair）使用；无取消语义的调用方走 `fetch_verified`。
+pub async fn fetch_verified_c(
+    urls: &[String],
+    dest: &Path,
+    progress: Option<impl Fn(u64, u64)>,
+    expected_sha1: &str,
+    cancel: Option<&AtomicBool>,
+) -> Result<DownloadResult, FetchError> {
+    if urls.len() == 1 {
         let url = urls.first().map(String::as_str).unwrap_or("");
-        return fetch_with(http(), url, dest, progress, Some(expected_sha1)).await;
+        return fetch_with_c(http(), url, dest, progress, Some(expected_sha1), cancel).await;
     }
-    fetch_from_sources(urls, dest, &progress, None, Some(expected_sha1)).await
+    fetch_from_sources(urls, dest, &progress, None, Some(expected_sha1), cancel).await
 }
 
 /// Like `fetch` but uses a specific client (for dedicated connection pools per category).
@@ -316,13 +529,29 @@ pub async fn fetch_with(
     progress: Option<impl Fn(u64, u64)>,
     expected_sha1: Option<&str>,
 ) -> Result<DownloadResult, FetchError> {
+    fetch_with_c(client, url, dest, progress, expected_sha1, None).await
+}
+
+/// `fetch_with` 的可取消变体（供下载任务使用）。
+pub async fn fetch_with_c(
+    client: &Client,
+    url: &str,
+    dest: &Path,
+    progress: Option<impl Fn(u64, u64)>,
+    expected_sha1: Option<&str>,
+    cancel: Option<&AtomicBool>,
+) -> Result<DownloadResult, FetchError> {
     let max_speed = max_speed_bps();
     const MAX_ATTEMPTS: u32 = 3;
     let mut last_err = None;
     for attempt in 0..MAX_ATTEMPTS {
-        match fetch_once(client, url, dest, &progress, max_speed, expected_sha1).await {
+        match fetch_once(client, url, dest, &progress, max_speed, expected_sha1, cancel).await {
             Ok(out) => return Ok(out.dl),
             Err(e) => {
+                // 取消立即传播（不重试、不换源）
+                if matches!(e, FetchError::Cancelled) {
+                    return Err(e);
+                }
                 // 失败清理残留（下一次尝试或后续下载会重新创建）
                 let _ = std::fs::remove_file(dest);
                 if attempt + 1 < MAX_ATTEMPTS {
@@ -344,7 +573,17 @@ pub async fn fetch_bounded(
     dest: &Path,
     progress: Option<impl Fn(u64, u64)>,
 ) -> Result<DownloadResult, FetchError> {
-    fetch_from_sources(urls, dest, &progress, Some(Duration::from_secs(60)), None).await
+    fetch_bounded_c(urls, dest, progress, None).await
+}
+
+/// `fetch_bounded` 的可取消变体（供下载任务使用）。
+pub async fn fetch_bounded_c(
+    urls: &[String],
+    dest: &Path,
+    progress: Option<impl Fn(u64, u64)>,
+    cancel: Option<&AtomicBool>,
+) -> Result<DownloadResult, FetchError> {
+    fetch_from_sources(urls, dest, &progress, Some(Duration::from_secs(60)), None, cancel).await
 }
 
 /// 多源循环：每源独立 client（连接 2s：连接缓慢即判"过慢"即换源），失败清理残留。
@@ -366,6 +605,7 @@ async fn fetch_from_sources<F: Fn(u64, u64)>(
     progress: &Option<F>,
     total_timeout: Option<Duration>,
     expected_sha1: Option<&str>,
+    cancel: Option<&AtomicBool>,
 ) -> Result<DownloadResult, FetchError> {
     let max_speed = max_speed_bps();
     const MAX_ATTEMPTS: u32 = 3;
@@ -375,16 +615,23 @@ async fn fetch_from_sources<F: Fn(u64, u64)>(
     // 收集每源/每轮全部错误（展示时去重），避免最后一个源覆盖前面的失败原因
     let mut errors: Vec<FetchError> = Vec::new();
     for attempt in 0..MAX_ATTEMPTS {
+        if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+            return Err(FetchError::Cancelled);
+        }
         for route in &routes {
             let mut builder = reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(2))
                 // 读黑洞防挂死：连接建立后 30s 无数据（镜像假死/TCP 黑洞）即掐断换源；
                 // 持续有数据（慢速但稳定）的源不受影响。此前大文件路径无任何超时，
                 // 挂起会永久卡死下载且取消无效。
-                .read_timeout(Duration::from_secs(30));
+                .read_timeout(Duration::from_secs(30))
+                // 302 到黑洞节点（749333.xyz）直接拒绝，不等超时
+                .redirect(mirror_safe_redirect());
             if let Some(t) = total_timeout {
                 builder = builder.timeout(t);
             }
+            // 系统代理（网络模式 auto/system；direct 直连）——本机开启 Clash 等时官方经代理可达
+            builder = apply_system_proxy(builder);
             let client = match builder.build() {
                 Ok(c) => c,
                 Err(e) => {
@@ -392,16 +639,22 @@ async fn fetch_from_sources<F: Fn(u64, u64)>(
                     continue;
                 }
             };
-            match fetch_once(&client, &route.url, dest, progress, max_speed, expected_sha1).await
+            match fetch_once(&client, &route.url, dest, progress, max_speed, expected_sha1, cancel)
+                .await
             {
                 Ok(out) => {
                     record_route_success(&route.url, out.ttfb_ms);
                     return Ok(out.dl);
                 }
                 Err(e) => {
+                    // 取消立即传播（不换源、不重试）
+                    if matches!(e, FetchError::Cancelled) {
+                        return Err(e);
+                    }
                     // 失败清理残留（下一源/下一轮会重新创建）
                     let _ = std::fs::remove_file(dest);
                     record_route_failure(&route.url);
+                    eprintln!("[fetch] 源失败 轮{attempt}: {} → {e}", route.url);
                     // 非校验类错误附带源 URL，便于用户定位哪个源失败
                     errors.push(match e {
                         FetchError::Checksum => FetchError::Checksum,
@@ -449,6 +702,7 @@ async fn fetch_once<F: Fn(u64, u64)>(
     progress: &Option<F>,
     max_speed: u64,
     expected_sha1: Option<&str>,
+    cancel: Option<&AtomicBool>,
 ) -> Result<FetchOnceOutput, FetchError> {
     // 镜像源并发限制：镜像请求独立于任务信号量（官方源不限流、镜像源 30 并发即 429）。
     // permit 持有到本次传输结束，队列自然摊薄对镜像源的瞬时请求速率。
@@ -473,6 +727,7 @@ async fn fetch_once<F: Fn(u64, u64)>(
 
     // HTTP 状态检查：4xx/5xx 视为失败
     let status = response.status();
+    eprintln!("[fetch] {url} → HTTP {status}");
     if !status.is_success() {
         return Err(FetchError::Network(format!("请求失败\nHTTP {status}")));
     }
@@ -495,6 +750,13 @@ async fn fetch_once<F: Fn(u64, u64)>(
 
     use futures_util::StreamExt;
     while let Some(chunk) = stream.next().await {
+        // 取消立即生效：当前块读完即停（不等 read_timeout/重试），清理残留由调用方负责
+        if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+            drop(stream);
+            drop(file);
+            let _ = std::fs::remove_file(dest);
+            return Err(FetchError::Cancelled);
+        }
         let chunk = chunk.map_err(|e| FetchError::Network(format!("请求失败\n{e}")))?;
         tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
             .await
@@ -586,6 +848,164 @@ mod tests {
         let p = std::env::temp_dir().join(format!("{}_{}.jar", name, std::process::id()));
         let _ = std::fs::remove_file(&p);
         p
+    }
+
+    /// 取消 flag 预置时下载应立即返回 Cancelled 且不留文件
+    /// （此前下载循环不检查取消，任务取消要等 read_timeout/换源才生效）。
+    #[tokio::test]
+    async fn fetch_cancelled_returns_immediately() {
+        let body = vec![b'x'; 256 * 1024];
+        let url = serve(body).await;
+        let dest = temp_dest("fetch_cancelled");
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(true)); // 预置已取消
+
+        let t0 = std::time::Instant::now();
+        let res =
+            fetch_verified_c(&[url], &dest, None::<fn(u64, u64)>, "", Some(&cancel)).await;
+        let elapsed = t0.elapsed();
+
+        assert!(
+            matches!(res, Err(FetchError::Cancelled)),
+            "取消应返回 Cancelled，实际: {:?}",
+            res
+        );
+        assert!(
+            elapsed.as_secs() < 5,
+            "取消应立即返回（{}s）",
+            elapsed.as_secs_f64()
+        );
+        assert!(!dest.exists(), "取消后不应残留文件");
+        let _ = std::fs::remove_file(&dest);
+    }
+
+    /// 302 到黑洞节点域（749333.xyz）应被重定向策略立即拒绝（快速失败，
+    /// 而不是跟随到 TCP 黑洞挂满超时——国内网络实测卡在 asset index 的根因）。
+    #[tokio::test]
+    async fn redirect_to_blackhole_domain_rejected() {
+        // 服务器 accept 3 次（fetch_with 有 3 轮重试），每轮都返回 302 → 黑洞域
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            for _ in 0..3 {
+                let Ok((mut sock, _)) = listener.accept().await else { break };
+                let mut buf = [0u8; 4096];
+                let _ = sock.read(&mut buf).await;
+                let head = "HTTP/1.1 302 Found\r\nLocation: https://17.749333.xyz:443/download/x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                let _ = sock.write_all(head.as_bytes()).await;
+            }
+        });
+        let url = format!("http://{addr}/f");
+        let dest = temp_dest("redirect_blackhole");
+        let t0 = std::time::Instant::now();
+        let res = fetch_verified(&[url], &dest, None::<fn(u64, u64)>, "").await;
+        let elapsed = t0.elapsed();
+        eprintln!("黑洞重定向总耗时: {:.2}s res={res:?}", elapsed.as_secs_f64());
+        assert!(res.is_err(), "黑洞重定向应失败，实际: {:?}", res);
+        assert!(
+            elapsed.as_secs() < 5,
+            "应在超时前快速失败（{}s）",
+            elapsed.as_secs_f64()
+        );
+        let _ = std::fs::remove_file(&dest);
+    }
+
+    /// 302 到正常域应正常跟随（重定向策略只拒绝黑洞域，不破坏 BMCLAPI 常规 302）。
+    #[tokio::test]
+    async fn redirect_to_normal_domain_followed() {
+        let good = b"followed-content".to_vec();
+        let final_url = serve(good.clone()).await;
+        let target = final_url.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let mut buf = [0u8; 4096];
+            let _ = sock.read(&mut buf).await;
+            let head = format!(
+                "HTTP/1.1 302 Found\r\nLocation: {target}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            let _ = sock.write_all(head.as_bytes()).await;
+        });
+        let url = format!("http://{addr}/redirect");
+        let dest = temp_dest("redirect_normal");
+        let res = fetch_verified(&[url], &dest, None::<fn(u64, u64)>, &sha1_hex(&good)).await;
+        assert!(res.is_ok(), "正常 302 应跟随成功: {:?}", res);
+        assert!(
+            crate::downloader::hash::file_sha1_matches(&dest, &sha1_hex(&good)),
+            "落地内容应正确"
+        );
+        let _ = std::fs::remove_file(&dest);
+    }
+
+    /// Windows 注册表 ProxyServer 值解析：统一格式与分协议格式。
+    #[test]
+    fn parse_proxy_server_variants() {
+        // 统一格式（全协议同一代理）
+        let (h, s) = parse_proxy_server("127.0.0.1:7897");
+        assert_eq!(h.as_deref(), Some("http://127.0.0.1:7897"));
+        assert_eq!(s.as_deref(), Some("http://127.0.0.1:7897"));
+        // 分协议格式（连接代理统一明文 http scheme）
+        let (h, s) = parse_proxy_server("http=127.0.0.1:7890;https=127.0.0.1:7891");
+        assert_eq!(h.as_deref(), Some("http://127.0.0.1:7890"));
+        assert_eq!(s.as_deref(), Some("http://127.0.0.1:7891"));
+        // 仅 http（https 缺项）
+        let (h, s) = parse_proxy_server("http=127.0.0.1:7890");
+        assert_eq!(h.as_deref(), Some("http://127.0.0.1:7890"));
+        assert_eq!(s, None);
+        // 空值/空白
+        let (h, s) = parse_proxy_server("");
+        assert_eq!(h, None);
+        assert_eq!(s, None);
+        let (h, s) = parse_proxy_server("  ");
+        assert_eq!(h, None);
+        assert_eq!(s, None);
+    }
+
+    /// 环境变量代理检测（Linux/兜底路径的核心）。
+    #[test]
+    fn env_proxy_detects_http_and_https() {
+        // 临时设置（串行测试；结束后恢复）
+        let prev_https = std::env::var("https_proxy").ok();
+        let prev_http = std::env::var("http_proxy").ok();
+        std::env::set_var("https_proxy", "http://127.0.0.1:7890");
+        std::env::set_var("http_proxy", "http://127.0.0.1:7891");
+        let (h, s) = env_proxy_urls();
+        assert_eq!(h.as_deref(), Some("http://127.0.0.1:7891"));
+        assert_eq!(s.as_deref(), Some("http://127.0.0.1:7890"));
+        // 清理
+        match prev_https {
+            Some(v) => std::env::set_var("https_proxy", v),
+            None => std::env::remove_var("https_proxy"),
+        }
+        match prev_http {
+            Some(v) => std::env::set_var("http_proxy", v),
+            None => std::env::remove_var("http_proxy"),
+        }
+    }
+
+    /// 系统代理应用：网络模式 auto/system 且本机开启系统代理时，
+    /// http()（全局 client，已应用代理）应能经代理快速访问官方源
+    /// （网络测试；direct 模式或无代理环境跳过）。
+    #[tokio::test]
+    async fn global_client_uses_system_proxy_when_enabled() {
+        use crate::config::downloader::model::NetworkMode;
+        if current_network_mode() == NetworkMode::Direct {
+            return;
+        }
+        let (h, s) = system_proxy_urls();
+        if h.is_none() && s.is_none() {
+            return; // 未检测到系统代理：不依赖代理环境
+        }
+        let res = tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            http().get("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json").send(),
+        )
+        .await
+        .expect("经系统代理访问官方应在 15s 内返回（代理不可达时检查代理配置）");
+        let resp = res.expect("请求应成功");
+        assert!(resp.status().is_success(), "官方应可达: {}", resp.status());
     }
 
     /// 主源返回坏内容时应换备用源重试并成功（镜像缓存陈旧场景的核心行为）。
@@ -721,7 +1141,7 @@ mod tests {
             "https://libraries.minecraft.net/com/x/y.jar".to_string(),
             "https://libraries.minecraft.net/com/x/y.jar".to_string(), // 重复
         ];
-        let routes = resolve_download_routes(&urls, DownloadSourceMode::PreferOfficial);
+        let routes = resolve_download_routes(&urls, DownloadSourceMode::Auto);
         assert_eq!(routes.len(), 2, "去重后原始 1 + 镜像候选 1");
         assert_eq!(routes[0].url, "https://libraries.minecraft.net/com/x/y.jar");
         assert_eq!(routes[1].url, "https://bmclapi2.bangbang93.com/libraries/com/x/y.jar");
@@ -732,29 +1152,32 @@ mod tests {
             "https://maven.fabricmc.net/a.jar".to_string(),
             "https://bmclapi2.bangbang93.com/maven/a.jar".to_string(),
         ];
-        let routes2 = resolve_download_routes(&urls2, DownloadSourceMode::PreferOfficial);
+        let routes2 = resolve_download_routes(&urls2, DownloadSourceMode::Auto);
         assert_eq!(routes2.len(), 2);
     }
 
-    /// mirror_first_loader：PreferChina 下 Loader 类镜像前置（官方保底排后）。
+    /// 单选模式（OfficialOnly/ChinaOnly）保持调用方顺序（无健康度竞争）。
     #[test]
-    fn resolve_routes_loader_mirror_first_in_china_mode() {
-        let urls = vec![
-            "https://maven.minecraftforge.net/net/minecraftforge/forge/1.21/forge-1.21-installer.jar"
-                .to_string(),
-            "https://bmclapi2.bangbang93.com/maven/net/minecraftforge/forge/1.21/forge-1.21-installer.jar"
-                .to_string(),
-        ];
-        let routes = resolve_download_routes(&urls, DownloadSourceMode::PreferChina);
+    fn resolve_routes_single_mode_keeps_order() {
+        // OfficialOnly：调用方传官方 URL → 保持（自动追加镜像候选，顺序官方在前）
+        let urls = vec!["https://libraries.minecraft.net/com/x/y.jar".to_string()];
+        let routes = resolve_download_routes(&urls, DownloadSourceMode::OfficialOnly);
         assert!(
-            routes[0].is_mirror,
-            "Loader 资源镜像应前置，实际: {}",
+            !routes[0].is_mirror,
+            "OfficialOnly 官方先行，实际: {}",
             routes[0].url
         );
-        assert!(!routes[1].is_mirror, "官方保底排后");
-        // PreferOfficial 下保持调用方顺序（官方先行）
-        let routes2 = resolve_download_routes(&urls, DownloadSourceMode::PreferOfficial);
-        assert!(!routes2[0].is_mirror);
+        // ChinaOnly：调用方只传镜像 URL → 保持单一镜像
+        let mirror = vec![
+            "https://bmclapi2.bangbang93.com/libraries/com/x/y.jar".to_string(),
+        ];
+        let routes2 = resolve_download_routes(&mirror, DownloadSourceMode::ChinaOnly);
+        assert_eq!(routes2.len(), 1, "ChinaOnly 单源不追加候选");
+        assert!(
+            routes2[0].is_mirror,
+            "ChinaOnly 保持镜像，实际: {}",
+            routes2[0].url
+        );
     }
 
     /// 健康度：连续失败 >=3 进入冷却（Auto 排序中冷却路由排最末）。

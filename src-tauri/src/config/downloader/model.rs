@@ -31,46 +31,7 @@ impl DownloadSource {
         }
         s
     }
-
-    pub fn mirror_url(&self, original: &str) -> String {
-        if !self.manifest_url.contains("bmclapi") {
-            return original.to_string();
-        }
-        for (domain, replacement) in REWRITE_RULES {
-            if original.contains(domain) {
-                let path = original.split(domain).nth(1).unwrap_or("");
-                return format!("{}{}", replacement, path);
-            }
-        }
-        original.to_string()
-    }
 }
-
-const REWRITE_RULES: &[(&str, &str)] = &[
-    ("piston-meta.mojang.com", "https://bmclapi2.bangbang93.com"),
-    ("piston-data.mojang.com", "https://bmclapi2.bangbang93.com"),
-    ("launcher.mojang.com", "https://bmclapi2.bangbang93.com"),
-    ("launchermeta.mojang.com", "https://bmclapi2.bangbang93.com"),
-    (
-        "libraries.minecraft.net",
-        "https://bmclapi2.bangbang93.com/libraries",
-    ),
-    (
-        "resources.download.minecraft.net",
-        "https://bmclapi2.bangbang93.com/assets",
-    ),
-    // ModLoader 官方 maven 对高并发不友好（实测 20 并发即有连接失败），
-    // BMCLAPI 完整镜像 maven.neoforged.net / maven.minecraftforge.net（302 实测可用）。
-    // 仅做备用：官方源仍优先，镜像源兜底，避免整批库下载失败。
-    (
-        "maven.neoforged.net",
-        "https://bmclapi2.bangbang93.com/maven",
-    ),
-    (
-        "maven.minecraftforge.net",
-        "https://bmclapi2.bangbang93.com/maven",
-    ),
-];
 
 fn official() -> DownloadSource {
     DownloadSource {
@@ -177,20 +138,51 @@ pub fn infer_resource_class(url: &str) -> ResourceClass {
     ResourceClass::Other
 }
 
-/// 下载源选择模式：
-/// - officialOnly / chinaOnly：固定单一源，失败不回退
-/// - preferOfficial / preferChina：优先主源，失败时回退到另一源
-/// - auto：按资源类 + 路由健康度自适应排序（镜像候选自动生成，Loader 资源镜像先行）
+/// - auto（默认）：自动检测系统代理（Windows 注册表 / Linux 环境变量或 gsettings），
+///   检测到即走代理；无代理时直连（TUN 模式由网络层接管，无需应用配置）
+/// - system：强制使用系统代理（检测不到时回退直连并告警）
+/// - direct：强制直连（不走应用层代理；TUN 模式仍由网络层生效）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-pub enum DownloadSourceMode {
+pub enum NetworkMode {
     #[default]
-    PreferOfficial,
-    PreferChina,
-    OfficialOnly,
-    ChinaOnly,
-    /// 自适应：文件下载按 URL 自动分类，镜像候选即时生成并按健康度排序。
     Auto,
+    System,
+    Direct,
+}
+
+/// 下载源选择模式：
+/// - auto（默认）：文件下载按 URL 自动分类，镜像候选即时生成并按健康度排序，
+///   元数据/清单请求官方优先、超时（4s）自动降级镜像——无需人工指定优先级
+/// - officialOnly / chinaOnly：单选，只用一个源，不自动回退
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum DownloadSourceMode {
+    /// 仅官方源（版本清单/文件/社区 API 全走官方）
+    OfficialOnly,
+    /// 仅国内镜像源（BMCLAPI / MCIM）
+    ChinaOnly,
+    /// 自适应：程序自动判断更快源（健康度路由 + 过慢降级）
+    #[default]
+    Auto,
+}
+
+/// 自定义反序列化（含旧配置迁移）：历史上 preferOfficial/preferChina 两态并入 Auto——
+/// preferOfficial 语义（官方优先+慢降级）与 Auto 完全一致；
+/// preferChina（镜像优先）在 Auto 下由健康度自适应（官方失败/过慢 → 镜像接管）等效实现。
+impl<'de> serde::Deserialize<'de> for DownloadSourceMode {
+    fn deserialize<D>(d: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(d)?;
+        Ok(match s.as_str() {
+            "officialOnly" => Self::OfficialOnly,
+            "chinaOnly" => Self::ChinaOnly,
+            // preferOfficial / preferChina / auto / 未知值 → 自适应
+            _ => Self::Auto,
+        })
+    }
 }
 
 fn default_sources() -> Vec<DownloadSource> {
@@ -215,6 +207,9 @@ pub struct DownloaderConfig {
     /// china = MCIM（mod.mcimirror.top，镜像 Modrinth/CurseForge API 与文件 CDN）。
     #[serde(default)]
     pub community_source_mode: DownloadSourceMode,
+    /// 网络代理模式：auto（自动检测系统代理）/ system（强制系统代理）/ direct（强制直连）。
+    #[serde(default)]
+    pub network_mode: NetworkMode,
     /// 下载速度上限（bytes/s），0 = 无限制
     #[serde(default)]
     pub max_speed: u64,
@@ -238,9 +233,10 @@ impl Default for DownloaderConfig {
             sources: vec![official(), china()],
             concurrency: 64,
             minecraft_dir: ".minecraft".into(),
-            file_source_mode: DownloadSourceMode::PreferOfficial,
-            manifest_source_mode: DownloadSourceMode::PreferOfficial,
-            community_source_mode: DownloadSourceMode::PreferOfficial,
+            file_source_mode: DownloadSourceMode::Auto,
+            manifest_source_mode: DownloadSourceMode::Auto,
+            community_source_mode: DownloadSourceMode::Auto,
+            network_mode: NetworkMode::Auto,
             max_speed: 0,
             translate_display: "zh".into(),
             show_release_only: true,
@@ -256,26 +252,33 @@ impl DownloaderConfig {
         std::path::absolute(std::path::PathBuf::from(&self.minecraft_dir))
             .unwrap_or_else(|_| std::path::PathBuf::from(&self.minecraft_dir))
     }
-
-    /// 文件下载主源（按 file_source_mode 选择），文件下载失败不会跨源回退。
-    pub fn file_primary_source(&self) -> Option<&DownloadSource> {
-        match self.file_source_mode {
-            DownloadSourceMode::OfficialOnly
-            | DownloadSourceMode::PreferOfficial
-            | DownloadSourceMode::Auto => self.sources.first(),
-            DownloadSourceMode::ChinaOnly | DownloadSourceMode::PreferChina => self.sources.last(),
-        }
-    }
-
-    /// 文件下载按 file_source_mode 的完整源顺序（含备用源，用于过慢降级）。
-    pub fn file_sources_list(&self) -> Vec<&DownloadSource> {
-        self.sources_in_order(self.file_source_mode)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 旧配置（preferOfficial/preferChina）反序列化迁移到 Auto；
+    /// 三态正常解析；未知值兜底 Auto。
+    #[test]
+    fn source_mode_legacy_values_migrate_to_auto() {
+        fn parse(s: &str) -> DownloadSourceMode {
+            serde_json::from_str(&format!("\"{s}\"")).unwrap()
+        }
+        assert_eq!(parse("preferOfficial"), DownloadSourceMode::Auto);
+        assert_eq!(parse("preferChina"), DownloadSourceMode::Auto);
+        assert_eq!(parse("officialOnly"), DownloadSourceMode::OfficialOnly);
+        assert_eq!(parse("chinaOnly"), DownloadSourceMode::ChinaOnly);
+        assert_eq!(parse("auto"), DownloadSourceMode::Auto);
+        assert_eq!(parse("whatever"), DownloadSourceMode::Auto);
+        // 默认值 = Auto（智能模式）
+        assert_eq!(DownloadSourceMode::default(), DownloadSourceMode::Auto);
+        // 序列化回 camelCase 三态
+        assert_eq!(
+            serde_json::to_string(&DownloadSourceMode::Auto).unwrap(),
+            "\"auto\""
+        );
+    }
 
     /// 镜像源必须把 ModLoader 官方 maven 重写到 BMCLAPI 镜像，
     /// 官方源保持原样；未知域名不动。
@@ -283,11 +286,15 @@ mod tests {
     fn mirror_url_rewrites_modloader_maven_on_china_source() {
         let china = china();
         assert_eq!(
-            china.mirror_url("https://maven.neoforged.net/releases/net/neoforged/bus/8.0.5/bus-8.0.5.jar"),
+            china.mirror_url(
+                "https://maven.neoforged.net/releases/net/neoforged/bus/8.0.5/bus-8.0.5.jar"
+            ),
             "https://bmclapi2.bangbang93.com/maven/releases/net/neoforged/bus/8.0.5/bus-8.0.5.jar"
         );
         assert_eq!(
-            china.mirror_url("https://maven.minecraftforge.net/net/minecraftforge/forge/1.21/forge-1.21.jar"),
+            china.mirror_url(
+                "https://maven.minecraftforge.net/net/minecraftforge/forge/1.21/forge-1.21.jar"
+            ),
             "https://bmclapi2.bangbang93.com/maven/net/minecraftforge/forge/1.21/forge-1.21.jar"
         );
         // 未知域名保持原样
@@ -298,7 +305,9 @@ mod tests {
         // 官方源不重写
         let official = official();
         assert_eq!(
-            official.mirror_url("https://maven.neoforged.net/releases/net/neoforged/bus/8.0.5/bus-8.0.5.jar"),
+            official.mirror_url(
+                "https://maven.neoforged.net/releases/net/neoforged/bus/8.0.5/bus-8.0.5.jar"
+            ),
             "https://maven.neoforged.net/releases/net/neoforged/bus/8.0.5/bus-8.0.5.jar"
         );
     }
