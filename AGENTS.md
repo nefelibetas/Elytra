@@ -2,9 +2,9 @@
 
 ## Project Overview
 
-ElytraLauncher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前端）** 的 Minecraft 启动器。功能：游戏版本下载（官方/国内镜像多源）、ModLoader 安装（Fabric/Forge/NeoForge/OptiFine；Quilt 暂复用 Fabric 流程待修，LiteLoader 仅版本查询）、微软正版登录（OAuth PKCE）、离线模式与离线皮肤（对齐 PCL2 机制）、JDK 自动扫描、下载任务管理、启动参数构建与游戏进程管理。
+ElytraLauncher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前端）** 的 Minecraft 启动器。功能：游戏版本下载（官方/国内镜像多源）、ModLoader 安装（Fabric/Forge/NeoForge/OptiFine；Quilt 暂复用 Fabric 流程待修，LiteLoader 仅版本查询）、微软正版登录（OAuth PKCE）、离线模式（固定随机默认皮肤）、JDK 自动扫描、下载任务管理、启动参数构建与游戏进程管理。
 
-后端 61 个 `#[tauri::command]`（32 async / 29 sync），前端 6 个页面，无状态管理库（模块级 `reactive()` 单例）。
+后端 72 个 `#[tauri::command]`（35 async / 37 sync），前端 6 个页面，无状态管理库（模块级 `reactive()` 单例）。
 
 ## Architecture & Data Flow
 
@@ -17,7 +17,7 @@ ElytraLauncher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前端
     └────────────── 返回 Result<T, String> 或裸值
 ```
 
-- **后端分层**：`commands/` 只做胶水（读配置 → 调领域函数 → `map_err` 展平 String）；领域逻辑按域归位——下载编排在 `task/runner.rs`，启动在 `config/launcher/`（`args.rs` 命令构建 / `env.rs` 环境准备 / `skin.rs` 离线皮肤），账号在 `auth/`（`microsoft.rs` OAuth / `mojang.rs` 官方 API / `account.rs` 回调与披风上传），下载引擎 `downloader/`，纯数据 `config/`；统一持久化 `persist/`（exe 旁 `Elytra/Settings.toml`，TOML 分 section，全局 Mutex 串行化）；任务由 `task/` TaskManager 单例（`tauri::async_runtime::spawn` + `task-progress` 事件推送）；跨域小工具 `util.rs`（纯函数）
+- **后端分层**：`commands/` 只做胶水（读配置 → 调领域函数 → `map_err` 展平 String）；领域逻辑按域归位——下载编排在 `task/runner.rs`，启动在 `config/launcher/`（`args.rs` 命令构建 / `env.rs` 环境准备 / `skin.rs` 离线皮肤），账号在 `auth/`（`microsoft.rs` OAuth / `mojang.rs` 官方 API / `account.rs` 回调与披风上传 / `model.rs` MsAccount），下载引擎 `downloader/`，纯数据 `config/`；统一持久化 `persist/`（exe 旁 `Elytra/Settings.toml`，TOML 分 section，全局 Mutex 串行化）；任务由 `task/` TaskManager 单例（`tauri::async_runtime::spawn` + `task-progress` 事件推送）；跨域小工具 `util.rs`（纯函数）
 - **前端数据流**：`invoke` 返回 taskId → 预注册任务 → 后端推 `task-progress` 事件增量更新 `dlState` → done 时触发回调并移除；`memState` 每 2s 轮询内存
 - **配置联动**：`gamedirs::set_active_game_dir` 会写 downloader section 的 `minecraft_dir`，launch/downloader 都读该字段
 - **下载源模式三个**：`file_source_mode`（client/libraries/assets/natives/ModLoader）、`manifest_source_mode`（版本清单）、`community_source_mode`（Modrinth 官方 vs MCIM 镜像，管 Fabric API 版本列表与下载；`is_mirror_url` 按 URL 判定镜像并限制并发）。natives 新旧两代：旧式（≤1.12，lwjgl 2.x）由 `process_natives` 下载 classifier JAR、启动前 `ensure_old_style_natives` 解压到 `.minecraft/natives/<ver>/`（`.elytra-ready` marker 标记完成）并设 `-Djava.library.path`；新式（1.13+）native JAR 作为普通库进 classpath，仅需创建 natives 目录，LWJGL 自行提取
@@ -27,11 +27,11 @@ ElytraLauncher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前端
 |路径|职责|
 |---|---|
 |`src-tauri/src/commands/`|8 个命令模块：jdk / downloader / loader / task / account / gamedirs / launch / mods（真薄胶水；`launch.rs` 额外含进程管理，编排均已下沉）|
-|`src-tauri/src/config/`|纯数据模型：`launcher/`（`model.rs` 配置 + `args.rs` 命令构建（`collect_jvm_args`/`build_game_args` 拆分）+ `env.rs` 环境准备 + `memory.rs`（GC 参数 + `system_memory_mb()` 系统内存统一入口，供启动显示与自动分配共用）+ `platform.rs` + `skin.rs` 离线皮肤）、`downloader/model.rs`（多源与回退，`source.rs` 为 DownloaderConfig 网络 impl 分离文件：`fetch_with_fallback`/`fetch_json_with_fallback` 主源 4s 超时降级 + **按主源 URL 的内存 TTL 缓存 10 分钟**（maven-metadata/loader 列表等低频变化数据））、`offline_skin.rs`、`game_dirs.rs`|
+|`src-tauri/src/config/`|纯数据模型：`launcher/`（`model.rs` 配置 + `args.rs` 命令构建（`collect_jvm_args`/`build_game_args` 拆分）+ `env.rs` 环境准备 + `memory.rs`（GC 参数 + `system_memory_mb()` 系统内存统一入口，供启动显示与自动分配共用）+ `platform.rs` + `skin.rs` 离线皮肤（固定随机：哈希决定 Steve/Alex，UUID 模型匹配 + user-properties 注入；配置层已砍）、`downloader/model.rs`（多源与回退，`source.rs` 为 DownloaderConfig 网络 impl 分离文件：`fetch_with_fallback`/`fetch_json_with_fallback` 主源 4s 超时降级 + **按主源 URL 的内存 TTL 缓存 10 分钟**（maven-metadata/loader 列表等低频变化数据））、`offline_skin.rs`、`game_dirs.rs`|
 |`src-tauri/src/downloader/`|下载引擎：manifest / version / library / assets / fetcher / hash / model / extract / mods / mod_loader（`TARGET_OS`、`matches_rules`/`native_classifier_matches`/`os_classifier_key` 平台判定与规则过滤的唯一实现、`extract_jar`/`extract_entry_to` ZIP 解压）|
 |`src-tauri/src/downloader/mods.rs`|Mod 双源搜索域（Modrinth/CurseForge）：`search_mods(source, query, game_version, loader, category, offset, page_size)`——`category` 为项目类型（shader=6552/resourcepack=12/datapack=6945/modpack=4471 映射 CurseForge classId + Modrinth project_type facet），`page_size` 每源条数（聚合模式前端传 15）|
 |`src-tauri/src/downloader/mod_loader/`|ModLoader 引擎：`mod.rs`（公共纯函数 `maven_path`/`merge_loader_profile`/`expand_inheritance` + 事件钩子 LoaderEvent/LoaderHook + re-export）、`fabric.rs`（profile 式 Fabric/Quilt）、`forge.rs`（installer 式共用流程 `download_and_extract` + Forge 专属 + 共享工具）、`neoforge.rs`（installer 式 NeoForge 专属）、`optifine.rs`、`version_query.rs`（版本列表查询：maven XML 解析 + 语义化排序 + Fabric API）|
-|`src-tauri/src/auth/`|微软 OAuth PKCE（`microsoft.rs`）+ 官方 API 客户端（`mojang.rs`：玩家查询/皮肤纹理）+ 账号服务（`account.rs`：登录回调/披风/上传）+ MsAccount（`model.rs`）|
+|`src-tauri/src/auth/`|微软 OAuth PKCE（`microsoft.rs`）+ 官方 API 客户端（`mojang.rs`：玩家查询/皮肤纹理）+ 账号服务（`account.rs`：登录回调/披风/上传）+ MsAccount（`model.rs`：**多账号列表存储**，secrets.bin 加密、末尾为当前、旧单键自动迁移；离线历史见 launch 命令 `offline_accounts` section）|
 |`src-tauri/src/jdk/`|JDK 扫描/版本解析/存储（`scanner.rs`/`model.rs`/`mod.rs`：`java_bin_path`/`parse_java_major`）|
 |`src-tauri/src/persist/`|TOML section 存取（`read<T>/save<T>/remove`）|
 |`src-tauri/src/task/`|`mod.rs`（TaskManager 单例 + PathLock 路径互斥 + `pub use model::*` 门面）+ `model.rs`（任务规格 + TaskProgress/StepInfo/TaskStatus 进度模型）+ `steps.rs`（StepSpec/步骤分析）+ `runner.rs`（run_task 编排，`resolve_target_dir`/`init_local_scan` 拆段）+ `repair.rs`（scan_missing/run_repair_task，`repair_step_indices`/`repair_jar` 拆段）+ `progress.rs`（EmitLoop 心跳/进度上报）+ `files.rs`（批量文件下载任务）|
@@ -124,7 +124,7 @@ cd src-tauri && cargo test --lib -- --test-threads=1   # 单元测试（77 个�
 - **Quilt 实现有错（用户自修，规划中）**：`task/runner.rs` 中 `"quilt"` 复用 `install_fabric`（Quilt 会装错）；`install_optifine` 生成的 version.json 用 `inheritsFrom` + `file://` URL，与 `mainClass: launchwrapper` 兼容性存疑
 - **已解决**：`installer.rs` 的 24 个 clippy warning 与 `.ok().expect()` 随 ModLoader 重构（`mod_loader/` 拆分）一并清理；`resolve_jar` Strategy 4 的 ponytail 残留注释已消除（改用 `util::mc_version_from_dir`）
 - **待产品决策**：`GcType::Custom` 语义为"不追加 GC 参数（用 JVM 默认）"，前端 label 已注明，行为符合设计（未来可扩展为自定义参数输入框）
-- **已解决**：`LauncherVisibility`（启动器可见性）2026-08 已删除（前后端同步移除）；`OfflineSkinModel::Auto` 已实现 PNG 高度自动识别（32px→slim）
+- **已解决**：`LauncherVisibility`（启动器可见性）2026-08 已删除（前后端同步移除）；离线皮肤配置层已砍（2026-08：`offline_skin.rs`/`SettingsOfflineSkin.vue`/`offlineSkinConfig.ts`/`utils/offlineSkin.ts` 及 `get/set_offline_skin`、`read_skin_file`/`fetch_player_skin*`/`save_player_skin` 命令全删，启动与头像固定随机哈希 Steve/Alex——后续计划接入自定义皮肤站登录替代离线皮肤）
 
 ## Gotchas
 
