@@ -457,15 +457,4 @@ input, textarea {
   opacity: 1;
   visibility: visible;
 }
-
-.elytra-tooltip.below::after {
-  content: "";
-  position: absolute;
-  top: -5px;
-  left: 50%;
-  transform: translateX(-50%);
-  border: 5px solid transparent;
-  border-bottom-color: var(--toast-bg);
-  border-top: none;
-}
 </style>
