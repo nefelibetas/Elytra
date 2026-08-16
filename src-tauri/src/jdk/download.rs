@@ -5,11 +5,24 @@
 //! `scanner::inspect` 校验版本并注册进 persist 的 jdk section（discovered_jdks）。
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::config::downloader::model::DownloaderConfig;
 use crate::downloader::fetcher::{self, http};
 use crate::jdk::model::JdkInfo;
 use crate::jdk::scanner;
+
+/// 安装进度钩子（任务侧传入；均可为空，纯函数调用方直接不传）。
+pub struct InstallProgress<'a> {
+    /// 任务取消标志（下载循环每块检查，取消立即停止当前文件）
+    pub cancel: Option<&'a AtomicBool>,
+    /// 报告总文件数/总字节（manifest 解析后；Azul 路径不报，进度回退文件数）
+    pub on_total: Option<&'a (dyn Fn(u32, u64) + Send + Sync)>,
+    /// 字节增量（当前文件下载中；调用方自行持有 prev 做差分）
+    pub on_bytes: Option<&'a (dyn Fn(u64) + Send + Sync)>,
+    /// 单文件下载完成
+    pub on_file_done: Option<&'a (dyn Fn() + Send + Sync)>,
+}
 
 /// Mojang java-runtime all.json 固定资源地址（官方启动器 product 版本）。
 const RUNTIME_ALL_JSON: &str =
@@ -54,18 +67,26 @@ fn platform_key() -> &'static str {
 
 /// 统一入口：官方 runtime → Azul 回退。
 /// 已装同 major 的 managed runtime 时直接返回（幂等）。
-pub async fn auto_install(major: u32, config: &DownloaderConfig) -> Result<JdkInfo, String> {
+pub async fn auto_install(
+    major: u32,
+    config: &DownloaderConfig,
+    hook: &InstallProgress<'_>,
+) -> Result<JdkInfo, String> {
     let dest_dir = runtime_dir(config, major);
-    // 已下载过：直接校验返回
-    if let Ok(info) = scanner::inspect(&dest_dir) {
-        if crate::jdk::parse_java_major(&info.version) == Some(major) {
-            return Ok(info);
+    // 已下载过：直接校验返回（兼容两种安装布局：Mojang 直接含 bin/；
+    // Azul 顶层为 zulu*/ 子目录——递归定位 java 根后再 inspect，
+    // 否则 Azul 装的 runtime 每次启动都会被误判未装而重下整个包）
+    if let Some(home) = find_java_home(&dest_dir) {
+        if let Ok(info) = scanner::inspect(&home) {
+            if crate::jdk::parse_java_major(&info.version) == Some(major) {
+                return Ok(info);
+            }
         }
     }
 
-    match install_mojang_runtime(major, config).await {
+    match install_mojang_runtime(major, config, hook).await {
         Ok(info) => Ok(info),
-        Err(e_mojang) => match install_azul_runtime(major, config).await {
+        Err(e_mojang) => match install_azul_runtime(major, config, hook).await {
             Ok(info) => Ok(info),
             Err(e_azul) => Err(format!(
                 "下载 Java {} 失败\n官方源: {}\nAzul 源: {}",
@@ -76,7 +97,8 @@ pub async fn auto_install(major: u32, config: &DownloaderConfig) -> Result<JdkIn
 }
 
 /// managed runtime 安装目录：`{minecraft_dir}/runtime/{platform}/java-{major}/`。
-fn runtime_dir(config: &DownloaderConfig, major: u32) -> PathBuf {
+/// pub(crate)：任务侧（task/runner.rs）用于路径互斥。
+pub(crate) fn runtime_dir(config: &DownloaderConfig, major: u32) -> PathBuf {
     config
         .minecraft_dir_abs()
         .join("runtime")
@@ -104,6 +126,7 @@ fn safe_runtime_path(root: &Path, entry: &str) -> Result<PathBuf, String> {
 async fn install_mojang_runtime(
     major: u32,
     config: &DownloaderConfig,
+    hook: &InstallProgress<'_>,
 ) -> Result<JdkInfo, String> {
     let component = component_for_major(major)
         .ok_or_else(|| format!("Java {major} 无对应 Mojang runtime 组件（仅支持 8/17/21/25）"))?;
@@ -149,7 +172,7 @@ async fn install_mojang_runtime(
         .iter()
         .map(|s| s.mirror_url(&manifest_url))
         .collect();
-    let manifest_path = temp_file("runtime-manifest.json");
+    let manifest_path = temp_file(&format!("runtime-manifest-{major}.json"));
     fetcher::fetch_verified(&manifest_urls, &manifest_path, None::<fn(u64, u64)>, &manifest_sha1)
         .await
         .map_err(|e| format!("下载 runtime manifest 失败\n{e}"))?;
@@ -159,11 +182,27 @@ async fn install_mojang_runtime(
     let manifest: serde_json::Value =
         serde_json::from_str(&manifest_text).map_err(|e| format!("解析 manifest 失败\n{e}"))?;
 
-    // 4. 逐文件下载到 runtime 目录（目录条目建目录，文件条目 sha1 校验下载，link 条目跳过）
+    // 4. 统计文件条目与总字节（进度基线），逐文件下载到 runtime 目录
+    //（目录条目建目录，文件条目 sha1 校验下载，link 条目跳过）
     let dest_root = runtime_dir(config, major);
     let files = manifest["files"]
         .as_object()
         .ok_or("runtime manifest 缺 files")?;
+    let mut total_files = 0u32;
+    let mut total_bytes = 0u64;
+    for (_, meta) in files {
+        if meta["type"].as_str() != Some("file") {
+            continue;
+        }
+        if meta["downloads"]["raw"].as_object().is_none() {
+            continue;
+        }
+        total_files += 1;
+        total_bytes += meta["downloads"]["raw"]["size"].as_u64().unwrap_or(0);
+    }
+    if let Some(f) = hook.on_total {
+        f(total_files, total_bytes);
+    }
     for (path, meta) in files {
         let ftype = meta["type"].as_str().unwrap_or("file");
         let dest = safe_runtime_path(&dest_root, path)?;
@@ -185,9 +224,24 @@ async fn install_mojang_runtime(
                     .iter()
                     .map(|s| s.mirror_url(url))
                     .collect();
-                fetcher::fetch_verified(&urls, &dest, None::<fn(u64, u64)>, sha1)
+                // 字节增量回调：闭包需 Fn（fetch 内部按块调用），用 prev swap 算差分
+                let prev = AtomicU64::new(0);
+                let cb = {
+                    let prev = &prev;
+                    let on_bytes = hook.on_bytes;
+                    move |downloaded: u64, _total: u64| {
+                        let p = prev.swap(downloaded, Ordering::Relaxed);
+                        if let Some(f) = on_bytes {
+                            f(downloaded.saturating_sub(p));
+                        }
+                    }
+                };
+                fetcher::fetch_verified_c(&urls, &dest, Some(cb), sha1, hook.cancel)
                     .await
                     .map_err(|e| format!("下载 {path} 失败\n{e}"))?;
+                if let Some(f) = hook.on_file_done {
+                    f();
+                }
             }
             "link" => {
                 // 官方 manifest 的 symlink 条目主要在 unix 平台；Windows runtime 无此条目。
@@ -211,7 +265,11 @@ async fn install_mojang_runtime(
 }
 
 /// Azul Zulu 回退：metadata API 查 zip 包 → sha256 校验 → 解压 → inspect。
-async fn install_azul_runtime(major: u32, config: &DownloaderConfig) -> Result<JdkInfo, String> {
+async fn install_azul_runtime(
+    major: u32,
+    config: &DownloaderConfig,
+    hook: &InstallProgress<'_>,
+) -> Result<JdkInfo, String> {
     let os = if cfg!(windows) {
         "windows"
     } else if cfg!(target_os = "macos") {
@@ -254,12 +312,26 @@ async fn install_azul_runtime(major: u32, config: &DownloaderConfig) -> Result<J
         .unwrap_or("")
         .to_string();
 
-    // 下载 zip → sha256 校验
+    // 下载 zip → sha256 校验（单包：字节增量回调 + 完成后文件计数）
     let zip_path = temp_file(&format!("azul-java-{major}.zip"));
     let urls: Vec<String> = vec![download_url.clone()];
-    fetcher::fetch_verified(&urls, &zip_path, None::<fn(u64, u64)>, "")
+    let prev = AtomicU64::new(0);
+    let cb = {
+        let prev = &prev;
+        let on_bytes = hook.on_bytes;
+        move |downloaded: u64, _total: u64| {
+            let p = prev.swap(downloaded, Ordering::Relaxed);
+            if let Some(f) = on_bytes {
+                f(downloaded.saturating_sub(p));
+            }
+        }
+    };
+    fetcher::fetch_verified_c(&urls, &zip_path, Some(cb), "", hook.cancel)
         .await
         .map_err(|e| format!("下载 Azul 包失败\n{e}"))?;
+    if let Some(f) = hook.on_file_done {
+        f();
+    }
     if !sha256.is_empty() {
         let actual = file_sha256(&zip_path);
         if actual != sha256 {
@@ -362,5 +434,19 @@ mod tests {
         assert!(safe_runtime_path(root, "/abs/path").is_err());
         assert!(safe_runtime_path(root, "\\abs\\path").is_err());
         assert!(safe_runtime_path(root, "").is_err());
+    }
+
+    /// Azul 布局（runtime 根下套 zulu*/ 子目录）也能定位到 java 根——
+    /// auto_install 幂等检查依赖它，否则 Azul 装的 runtime 每次启动都被误判未装重下。
+    #[test]
+    fn find_java_home_finds_nested_bin() {
+        let tmp = std::env::temp_dir().join(format!("elytra_jh_{}", std::process::id()));
+        let home = tmp.join("zulu17-ca-jdk17.0.11-win_x64");
+        std::fs::create_dir_all(home.join("bin")).unwrap();
+        let bin = crate::jdk::java_bin_path(&home);
+        std::fs::write(&bin, b"x").unwrap();
+        let found = find_java_home(&tmp);
+        assert_eq!(found.as_deref(), Some(home.as_path()), "应递归定位 zulu 子目录内的 java 根");
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }

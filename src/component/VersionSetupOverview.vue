@@ -105,7 +105,7 @@ async function confirmDelete() {
   }
 }
 
-/** 补全文件：先提示检测，扫描缺失 → 提交到下载管理。 */
+/** 补全文件：先提示检测，扫描缺失 → 提交到任务中心。 */
 async function repairFiles() {
   showToast("正在检测游戏完整性…");
   try {
@@ -143,7 +143,7 @@ async function repairFiles() {
       steps: [],
       previousRoute: router.currentRoute.value.fullPath,
     });
-    showToast(`已提交 ${total} 个缺失文件到下载管理`);
+    showToast(`已提交 ${total} 个缺失文件到任务中心`);
   } catch (e) {
     showToast(errMsg(e));
   }

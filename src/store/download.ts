@@ -7,6 +7,9 @@ import { errMsg } from "../utils/error"
 
 export type StepStatus = "pending" | "running" | "done";
 
+/** 任务种类标记（前端私有，用于终态回调分流；仅特殊任务设置）。 */
+export type TaskKind = "jdk";
+
 export interface StepInfo {
   name: string
   status: StepStatus
@@ -29,9 +32,11 @@ export interface TaskItem {
   steps: StepInfo[]
   error?: string
   previousRoute: string
+  /** 任务种类（JDK 安装等特殊任务；版本/文件下载不设置） */
+  kind?: TaskKind
 }
 
-interface ProgressPayload {
+export interface ProgressPayload {
   task_id: string
   name: string
   status: string
@@ -185,7 +190,7 @@ export const dlState = reactive({
     })
     // 竞态校正：任务可能极快终态（error/done 事件先于预注册到达被忽略，
     // 卡片以 pending 残留且不再有终态事件）。终态任务已从后端移除，
-    // 查不到即已结束——移除卡片并退出下载管理。
+    // 查不到即已结束——移除卡片并退出任务中心。
     const exists = await invoke<boolean>("task_exists", { taskId })
     if (!exists) {
       terminalTaskIds.add(taskId)
@@ -199,7 +204,7 @@ export const dlState = reactive({
     await invoke("cancel_task", { taskId })
   },
 
-  onTaskDone: null as ((taskName: string, prevRoute: string) => void) | null,
+  onTaskDone: null as ((taskName: string, prevRoute: string, kind?: TaskKind) => void) | null,
   /** 任务失败回调：弹出错误 dialog + 跳回来源页（失败资源由后端清理）。 */
   onTaskError: null as ((taskName: string, error: string, prevRoute: string) => void) | null,
 })
@@ -226,15 +231,16 @@ export function ensureListen() {
         // 任务完成：从前端清理（触发完成通知后移除）
         terminalTaskIds.add(p.task_id)
         const prev = dlState.tasks[idx]?.previousRoute;
-        dlState.onTaskDone?.(p.name || "下载任务", prev || "/");
+        const kind = dlState.tasks[idx]?.kind;
+        dlState.onTaskDone?.(p.name || "下载任务", prev ?? "/", kind);
         dlState.removeTask(p.task_id);
         return
       }
       if (p.status === "error") {
-        // 任务失败：弹错误 dialog + 清理卡片并退出下载管理（残留由后端清理）
+        // 任务失败：弹错误 dialog + 清理卡片并退出任务中心（残留由后端清理）
         terminalTaskIds.add(p.task_id)
         const prev = dlState.tasks[idx]?.previousRoute;
-        dlState.onTaskError?.(p.name || "下载任务", p.error || "未知错误", prev || "/");
+        dlState.onTaskError?.(p.name || "下载任务", p.error || "未知错误", prev ?? "/");
         dlState.removeTask(p.task_id);
         return
       }
@@ -255,7 +261,7 @@ export function ensureListen() {
       && !terminalTaskIds.has(p.task_id)
     ) {
       // 后端直接创建的任务（如补全文件）不在前端列表中：首次事件自动注册，
-      // 保证下载管理 FAB 与进度可见。
+      // 保证任务中心 FAB 与进度可见。
       // done/cancelled/error 均为终态：done 与 error 走上方移除逻辑；cancelled 由取消
       // 流程（cancelTask + removeTask）主动清理。终态事件重复到达（如 EmitLoop
       // 退出的最后一轮）时卡片已移除，不应重新注册（否则幽灵复活）。
@@ -325,7 +331,7 @@ export async function checkInterrupted() {
 
 /**
  * 恢复全部中断任务：逐个 resume_task（后端读快照重跑，已下载文件 sha1 命中自动跳过，
- * 等价断点续跑）。恢复的任务经 task-progress 事件自动注册进下载管理。
+ * 等价断点续跑）。恢复的任务经 task-progress 事件自动注册进任务中心。
  */
 export async function resumeAllInterrupted() {
   const jobs = [...interruptedJobs.value];
