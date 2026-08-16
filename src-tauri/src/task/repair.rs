@@ -368,7 +368,9 @@ pub async fn run_repair_task(
     });
     // 终态统一移除后端任务注册
     if let Some(p) = progress.try_lock() {
-        task::global().fail(&p.task_id);
+        let task_id = p.task_id.clone();
+        drop(p); // 先释放 progress 锁再 fail（fail 内部读 progress，防重入死锁）
+        task::global().fail(&task_id);
     }
 }
 
