@@ -418,7 +418,7 @@ fn append_pcl_fabric_libs(cp: &mut Vec<PathBuf>, lib_dir: &Path) {
                     continue;
                 }
                 let name = ver.file_name().to_string_lossy().to_string();
-                if best.as_ref().map_or(true, |(bn, _)| version_gt(&name, bn)) {
+                if best.as_ref().is_none_or(|(bn, _)| version_gt(&name, bn)) {
                     best = Some((name, ver.path()));
                 }
             }

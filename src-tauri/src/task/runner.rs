@@ -364,6 +364,8 @@ pub async fn run_task(
                     mod_loader::install_fabric(
                         mc_version,
                         &loader.version,
+                        &dir_name,
+                        &vdir,
                         &parent_text,
                         &config,
                         &bytes_counter,
@@ -377,6 +379,8 @@ pub async fn run_task(
                     mod_loader::install_forge(
                         mc_version,
                         &loader.version,
+                        &dir_name,
+                        &vdir,
                         &parent_text,
                         &config,
                         &bytes_counter,
@@ -389,8 +393,9 @@ pub async fn run_task(
                 }
                 crate::task::LoaderKind::NeoForge => {
                     mod_loader::install_neoforge(
-                        mc_version,
                         &loader.version,
+                        &dir_name,
+                        &vdir,
                         &parent_text,
                         &config,
                         &bytes_counter,
@@ -405,6 +410,8 @@ pub async fn run_task(
                     mod_loader::install_quilt(
                         mc_version,
                         &loader.version,
+                        &dir_name,
+                        &vdir,
                         &parent_text,
                         &config,
                         &bytes_counter,
@@ -428,6 +435,8 @@ pub async fn run_task(
                 mc_version,
                 of,
                 "HD_U",
+                &dir_name,
+                &vdir,
                 &config,
                 &bytes_counter,
                 &optifine_step_bytes,

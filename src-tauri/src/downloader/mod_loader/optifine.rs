@@ -6,10 +6,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::config::downloader::model::DownloaderConfig;
 use crate::downloader::fetcher;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn install_optifine(
     mc_version: &str,
     patch: &str,
     of_type: &str,
+    dir_name: &str,
+    vdir: &std::path::Path,
     config: &DownloaderConfig,
     bytes: &Arc<AtomicU64>,
     step_bytes: &Arc<AtomicU64>,
@@ -20,9 +23,6 @@ pub async fn install_optifine(
         .file_primary_source()
         .ok_or("no active source")?
         .clone();
-    let mc = config.minecraft_dir_abs();
-    let dir_name = format!("{}-optifine-{}", mc_version, patch);
-    let vdir = mc.join("versions").join(&dir_name);
 
     let filename = format!("OptiFine_{}_{}_{}.jar", mc_version, of_type, patch);
     let jar_url = source.url(
@@ -30,7 +30,7 @@ pub async fn install_optifine(
         &[("mc", mc_version), ("type", of_type), ("patch", patch)],
     );
 
-    std::fs::create_dir_all(&vdir).map_err(|e| format!("创建目录失败\n{}", e))?;
+    std::fs::create_dir_all(vdir).map_err(|e| format!("创建目录失败\n{}", e))?;
     let jar_path = vdir.join(&filename);
     // 字节级进度：增量累加进全局计数（收尾心跳显示速度）与 OptiFine 步骤计数；
     // total（content-length）写入步骤分母

@@ -10,8 +10,9 @@ use crate::config::downloader::model::DownloaderConfig;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn install_neoforge(
-    mc_version: &str,
     neo_version: &str,
+    dir_name: &str,
+    vdir: &Path,
     parent_text: &str,
     config: &DownloaderConfig,
     bytes: &Arc<AtomicU64>,
@@ -21,9 +22,6 @@ pub async fn install_neoforge(
     hook: Option<LoaderHook<'_>>,
 ) -> Result<(), String> {
     let source = config.file_primary_source().ok_or("no active source")?;
-    let mc = config.minecraft_dir_abs();
-    let dir_name = format!("{}-neoforge-{}", mc_version, neo_version);
-    let vdir = mc.join("versions").join(&dir_name);
     // 安装程序也走多源回退：官方 maven 对国内网络不稳（连接重置/超时），
     // 按 file_source_mode 的完整源顺序各构造一个 URL，fetch_fallback 依次尝试
     let installer_urls: Vec<String> = config
@@ -35,8 +33,8 @@ pub async fn install_neoforge(
         &installer_urls,
         source,
         config,
-        &vdir,
-        &dir_name,
+        vdir,
+        dir_name,
         parent_text,
         bytes,
         lib_bytes,
