@@ -226,6 +226,10 @@ watch(selectedDepIds, loadDeps);
 /** 点击版本文件行：选中并刷新前置依赖。 */
 function pickVersion(v: ModVersion) {
   selectedVersionId.value = v.version_id;
+  // 同步回 store：详情页随 tab 切换卸载重建时（下载完成 → 任务中心 → 返回），
+  // onItemChange 用 pendingSelectedVersion 恢复选中态——不同步则重建后版本
+  // 选中丢失，下载按钮回到未选状态
+  resourceDetail.pendingSelectedVersion = v.version_id;
 }
 
 /** 依赖详情 → 可跳转的 ModDisplayItem（详情页字段，无搜索元数据）。 */
@@ -269,9 +273,21 @@ const savedVersion = ref(selectedVersion.value);
 /** 提交选中版本文件的下载任务（download_single_file → 任务中心自动注册）。
  *  落盘版本隔离：versions/{版本目录}/{kind_dir}/{filename}（后端 resolve 兜底 _{n} 冲突）。 */
 async function submitDownload() {
-  const v = versions.value.find(x => x.version_id === selectedVersionId.value);
+  // 任何未满足条件都明确提示（不静默）：点击始终有反馈
+  if (!selectedVersionId.value) {
+    showToast("请先选择一个版本文件");
+    return;
+  }
   const kind = fileKind.value;
-  if (!v || !kind) return;
+  if (!kind) {
+    showToast("该资源类型暂不支持下载");
+    return;
+  }
+  const v = versions.value.find(x => x.version_id === selectedVersionId.value);
+  if (!v) {
+    showToast("所选版本文件不存在，请重新选择");
+    return;
+  }
   if (!savedVersion.value) {
     showToast("请先在版本选择页选择版本");
     return;
@@ -366,7 +382,7 @@ async function copyName() {
               <button
                 v-if="fileKind"
                 class="mv-dl"
-                :disabled="!selectedVersionId"
+                :class="{ 'mv-dl-disabled': !selectedVersionId }"
                 v-tooltip="selectedVersionId ? '下载所选版本' : '先选择一个版本'"
                 @click="submitDownload"
               >下载</button>
@@ -723,13 +739,13 @@ async function copyName() {
   transition: all 0.15s;
   outline: none;
 }
-.mv-dl:hover:not(:disabled) {
+.mv-dl:hover:not(.mv-dl-disabled) {
   filter: brightness(1.12);
 }
-.mv-dl:active:not(:disabled) {
+.mv-dl:active:not(.mv-dl-disabled) {
   filter: brightness(0.95);
 }
-.mv-dl:disabled {
+.mv-dl-disabled {
   background: var(--surface-hover);
   border-color: var(--border-default);
   color: var(--text-tertiary);
