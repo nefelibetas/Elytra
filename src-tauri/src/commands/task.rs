@@ -2,6 +2,9 @@
 
 use tauri::AppHandle;
 
+use crate::config::downloader::model::DownloaderConfig;
+use crate::constants;
+use crate::persist;
 use crate::task::{
     self, files, repair, runner, DownloadFileItem, DownloadFileTask, DownloadFilesTask,
     DownloadTask, TaskSpec,
@@ -47,6 +50,17 @@ fn spawn_task(
 
 /// 批量文件下载任务的注册 + spawn（单文件是批量特例，统一走这里）。
 fn spawn_files_task(app: AppHandle, task: DownloadFilesTask) -> Result<String, String> {
+    // 前端传入的 version_dir_name 是已安装版本的实际目录名（get_installed_versions
+    // 返回目录名，含冲突追加的 _{n}），直接校验目录存在即可；
+    // mod / 资源包 / 数据包 / 光影包严格落盘到版本隔离目录 versions/{目录}/{kind_dir}/{filename}。
+    let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
+    let dir = config.minecraft_dir_abs().join("versions").join(&task.version_dir_name);
+    if !dir.is_dir() {
+        return Err(format!(
+            "目标版本目录不存在（请先在版本选择页选择已安装的版本）\n版本目录: {}",
+            dir.display()
+        ));
+    }
     task.validate()?;
     spawn_task(
         app,
