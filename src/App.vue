@@ -27,6 +27,18 @@ dlState.onTaskError = (_taskName: string, error: string, prevRoute: string) => {
   if (prevRoute) router.push(prevRoute);
 };
 
+/** 复制挂起任务错误全文（中文首行 + 技术细节）到剪贴板。 */
+async function copyWaitingError() {
+  const w = waitingUser.value;
+  if (!w?.error) return;
+  try {
+    await navigator.clipboard.writeText(w.error);
+    showToast("已复制错误信息");
+  } catch {
+    showToast("复制失败");
+  }
+}
+
 function onKeyDown(e: KeyboardEvent) {
   // 禁止打开开发者工具：F12 / Ctrl+Shift+I/J/C / Ctrl+U
   if (
@@ -138,6 +150,7 @@ onUnmounted(() => {
           <p class="wd-file">{{ waitingUser.file_name }}</p>
           <p class="wd-err">{{ waitingUser.error }}</p>
           <div class="wd-actions">
+            <button class="wd-btn" @click="copyWaitingError">复制错误信息</button>
             <button class="wd-btn wd-retry" @click="decideWaitingTask('retry')">重试</button>
             <button class="wd-btn" @click="decideWaitingTask('skip')">跳过</button>
             <button class="wd-btn wd-cancel" @click="decideWaitingTask('cancel')">取消任务</button>
