@@ -376,3 +376,16 @@ export async function dismissInterrupted(jobId: string) {
   }
   interruptedJobs.value = interruptedJobs.value.filter((j) => j.id !== jobId);
 }
+
+/** 忽略全部中断任务（放弃恢复）：横幅一键清空，避免每个任务一个忽略按钮。 */
+export async function dismissAllInterrupted() {
+  const jobs = [...interruptedJobs.value];
+  interruptedJobs.value = [];
+  for (const j of jobs) {
+    try {
+      await invoke("dismiss_interrupted_task", { taskId: j.id });
+    } catch {
+      // 忽略失败不影响本地清理
+    }
+  }
+}
