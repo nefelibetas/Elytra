@@ -60,7 +60,7 @@ function goDownload() {
             :key="v.name"
             :icon-src="v.icon"
             :version-id="v.name"
-            :subtitle="v.loaderVersion || '原版'"
+            :subtitle="v.subtitle"
             @select="selectAndBack(v.name)"
           >
             <template #action>

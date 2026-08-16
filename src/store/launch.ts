@@ -4,6 +4,7 @@ import { reactive, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { StepStatus } from "./download";
+import type { InstalledVersionInfo } from "./gameDirs";
 import { EVT_GAME_EXITED, EVT_GAME_WINDOW_VISIBLE } from "./events";
 import { authMode, msAccount, username, type MsAccountInfo } from "./auth";
 import { selectedVersion, setSelected, getSavedDir } from "./selectedVersion";
@@ -30,7 +31,7 @@ function resetLaunch() {
 /** 加载已安装版本：恢复上次选择（跨目录校验）+ 无版本时自动激活第一个有版本的目录。 */
 export async function loadVersions() {
   try {
-    const list: string[] = await invoke("get_installed_versions");
+    const list: InstalledVersionInfo[] = await invoke("get_installed_versions");
     // 上次选择的版本仅在所属目录仍是当前激活目录时才恢复（版本选择页同时写入两者）
     const savedDir = getSavedDir();
     if (savedDir) {
@@ -42,21 +43,21 @@ export async function loadVersions() {
       }
     }
     // 当前目录无可用版本：检测所有目录，激活第一个有版本的目录并选中其第一个版本
-    if (!list.includes(selectedVersion.value) || list.length === 0) {
+    if (!list.some(v => v.name === selectedVersion.value) || list.length === 0) {
       try {
         const r = await invoke<{ dir_path: string; version: string }>(
           "auto_activate_version",
         );
-        const newList = await invoke<string[]>("get_installed_versions");
-        selectedVersion.value = newList.includes(r.version)
+        const newList: InstalledVersionInfo[] = await invoke("get_installed_versions");
+        selectedVersion.value = newList.some(v => v.name === r.version)
           ? r.version
-          : newList[0] ?? "";
+          : newList[0]?.name ?? "";
         setSelected(selectedVersion.value, r.dir_path);
       } catch {
         // 所有目录均无版本：保持现状
-        selectedVersion.value = list.includes(selectedVersion.value)
+        selectedVersion.value = list.some(v => v.name === selectedVersion.value)
           ? selectedVersion.value
-          : (list[0] ?? "");
+          : (list[0]?.name ?? "");
       }
     }
   } catch {

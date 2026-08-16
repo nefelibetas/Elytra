@@ -2,8 +2,8 @@
 import { ref, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { LOADER_TITLES, LOADER_ICONS } from "../utils/versionMeta";
 import { classifyVersion } from "../utils/versionClassify";
-import { CATEGORY_ICONS } from "../utils/versionIcons";
 import { showToast } from "../utils/toast";
 import { errMsg } from "../utils/error";
 import { selectedVersion, setSelected, clearSelected } from "./selectedVersion";
@@ -225,7 +225,14 @@ export async function confirmDeleteVersion() {
 }
 
 // ── 版本列表（右侧，单卡片平铺全部版本）──
-export const versions = ref<string[]>([]);
+
+/** 已安装版本信息（镜像 Rust get_installed_versions；loader 为 json 推断）。 */
+export interface InstalledVersionInfo {
+  name: string;
+  loader: string;
+}
+
+export const versions = ref<InstalledVersionInfo[]>([]);
 export const versionsLoading = ref(false);
 export const versionsError = ref("");
 
@@ -235,23 +242,36 @@ export const expanded = ref<Record<string, boolean>>({ all: true });
 /** 版本过滤关键字（右侧列表顶部搜索框；按名称模糊匹配，大小写不敏感）。 */
 export const searchQuery = ref("");
 
-/** 全部已安装版本（不再按 ModLoader 分类；loader 标记仅用于图标与副标题）。 */
+/** 全部已安装版本（单卡片平铺）：loader 优先取后端 json 推断（PCL2 实例目录名
+ *  无 loader 标记），推断失败回退目录名分类；副标题为 loader 版本号或 loader 名。 */
 export const allVersions = computed(() =>
   versions.value
-    .map(name => ({ name, ...classifyVersion(name) }))
+    .map(info => {
+      const cls = classifyVersion(info.name);
+      const category = info.loader || cls.category;
+      const title = LOADER_TITLES[category] ?? LOADER_TITLES.vanilla;
+      const loaderVersion = cls.category === category ? cls.loaderVersion : "";
+      return {
+        name: info.name,
+        category,
+        title,
+        loaderVersion,
+        subtitle: category === "vanilla" ? "原版" : loaderVersion || title,
+        icon: LOADER_ICONS[category] ?? LOADER_ICONS.vanilla,
+      };
+    })
     .filter(e => {
       const q = searchQuery.value.trim().toLowerCase();
       return !q || e.name.toLowerCase().includes(q);
-    })
-    .map(e => ({ ...e, icon: CATEGORY_ICONS[e.category] ?? CATEGORY_ICONS.vanilla })),
+    }),
 );
 
 export async function loadVersions() {
   versionsLoading.value = true;
   versionsError.value = "";
   try {
-    versions.value = await invoke<string[]>("get_installed_versions");
-    if (!versions.value.includes(selectedVersion.value)) selectedVersion.value = "";
+    versions.value = await invoke<InstalledVersionInfo[]>("get_installed_versions");
+    if (!versions.value.some(v => v.name === selectedVersion.value)) selectedVersion.value = "";
   } catch (e) {
     versionsError.value = errMsg(e);
   } finally {
