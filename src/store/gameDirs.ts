@@ -2,7 +2,6 @@
 import { ref, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { CATEGORIES } from "../utils/versionMeta";
 import { classifyVersion } from "../utils/versionClassify";
 import { CATEGORY_ICONS } from "../utils/versionIcons";
 import { showToast } from "../utils/toast";
@@ -225,31 +224,26 @@ export async function confirmDeleteVersion() {
   }
 }
 
-// ── 版本列表（右侧，按 ModLoader/原版分类卡片）──
+// ── 版本列表（右侧，单卡片平铺全部版本）──
 export const versions = ref<string[]>([]);
 export const versionsLoading = ref(false);
 export const versionsError = ref("");
 
-/** 分类卡片展开状态：默认全部展开。 */
-export const expanded = ref<Record<string, boolean>>(
-  Object.fromEntries(CATEGORIES.map(c => [c.key, true])),
-);
+/** 版本列表展开状态（单卡片：默认展开）。 */
+export const expanded = ref<Record<string, boolean>>({ all: true });
 
 /** 版本过滤关键字（右侧列表顶部搜索框；按名称模糊匹配，大小写不敏感）。 */
 export const searchQuery = ref("");
 
-export const categories = computed(() =>
-  CATEGORIES.map(c => ({
-    ...c,
-    items: versions.value
-      .map(name => ({ name, ...classifyVersion(name) }))
-      .filter(e => e.category === c.key)
-      .filter(e => {
-        const q = searchQuery.value.trim().toLowerCase();
-        return !q || e.name.toLowerCase().includes(q);
-      })
-      .map(e => ({ ...e, icon: CATEGORY_ICONS[e.category] ?? CATEGORY_ICONS.vanilla })),
-  })).filter(c => c.items.length > 0),
+/** 全部已安装版本（不再按 ModLoader 分类；loader 标记仅用于图标与副标题）。 */
+export const allVersions = computed(() =>
+  versions.value
+    .map(name => ({ name, ...classifyVersion(name) }))
+    .filter(e => {
+      const q = searchQuery.value.trim().toLowerCase();
+      return !q || e.name.toLowerCase().includes(q);
+    })
+    .map(e => ({ ...e, icon: CATEGORY_ICONS[e.category] ?? CATEGORY_ICONS.vanilla })),
 );
 
 export async function loadVersions() {

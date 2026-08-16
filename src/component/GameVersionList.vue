@@ -6,7 +6,7 @@ import AlertDialog from "./AlertDialog.vue";
 import VersionCard from "./VersionCard.vue";
 import VersionItem from "./VersionItem.vue";
 import {
-  versions, versionsLoading, versionsError, expanded, categories, searchQuery,
+  versions, versionsLoading, versionsError, expanded, allVersions, searchQuery,
   pickVersion, openDelete,
   deleteDialog, deleteTarget, confirmDeleteVersion,
 } from "../store/gameDirs";
@@ -45,20 +45,18 @@ function goDownload() {
           placeholder="搜索版本…"
         />
       </div>
-      <div v-if="categories.length === 0" class="vs-empty">
+      <div v-if="allVersions.length === 0" class="vs-empty">
         <p>没有匹配「{{ searchQuery.trim() }}」的版本</p>
       </div>
       <div v-else class="vs-cards">
         <VersionCard
-          v-for="cat in categories"
-          :key="cat.key"
-          :title="cat.title"
-          :count="cat.items.length"
-          :expanded="expanded[cat.key]"
-          @toggle="expanded[cat.key] = !expanded[cat.key]"
+          title="全部版本"
+          :count="allVersions.length"
+          :expanded="expanded['all']"
+          @toggle="expanded['all'] = !expanded['all']"
         >
           <VersionItem
-            v-for="v in cat.items"
+            v-for="v in allVersions"
             :key="v.name"
             :icon-src="v.icon"
             :version-id="v.name"
