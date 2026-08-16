@@ -4,10 +4,7 @@ import { X, Check, LoaderCircle, RotateCcw, HardDriveDownload } from "@lucide/vu
 import { dlState, TaskItem, interruptedJobs, resumeAllInterrupted, dismissAllInterrupted } from "../store/download"
 import { errMsg } from "../utils/error"
 import { showToast } from "../utils/toast"
-import { useRouter } from "vue-router"
 import ScrollTopFab from "../component/ScrollTopFab.vue"
-
-const router = useRouter()
 
 /** 批量文件任务步骤可能很多，默认折叠到前 N 个。 */
 const MAX_VISIBLE_STEPS = 8
@@ -51,12 +48,17 @@ function statusChip(task: TaskItem): { text: string; cls: string } {
 
 async function handleCancel(task: TaskItem) {
   const name = task.name || "下载任务";
-  await dlState.cancelTask(task.taskId)
-  dlState.removeTask(task.taskId)
-  ;showToast(`${name} 已取消`)
-  if (dlState.tasks.length === 0) {
-    router.push(task.previousRoute || "/")
+  try {
+    await dlState.cancelTask(task.taskId)
+  } catch {
+    // 任务已结束（后端无此任务）：不阻塞本地清理
+  } finally {
+    // 无论 cancel 成败都移除卡片：cancel 抛错（任务已终态）时卡片不得残留
+    dlState.removeTask(task.taskId)
   }
+  showToast(`${name} 已取消`)
+  // 不自动退出任务中心：与任务完成一致（顶级 tab，停留本页查看状态），
+  // 取消后列表空则显示"暂无下载任务"
 }
 </script>
 
