@@ -271,7 +271,9 @@ pub async fn run_files_task(
         p.current_phase = "完成".into();
     });
     if let Some(p) = progress.try_lock() {
-        task::global().remove(&p.task_id);
+        let task_id = p.task_id.clone();
+        drop(p); // 先释放 progress 锁再 remove（remove 内部读 progress，防重入死锁）
+        task::global().remove(&task_id);
     }
 }
 

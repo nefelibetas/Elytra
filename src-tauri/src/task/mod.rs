@@ -354,12 +354,14 @@ pub(crate) fn update_and_emit(
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
     };
+    let snapshot_clone;
     {
         let mut p = snapshot;
         f(&mut p);
-        let p = p.clone();
-        emit(app, &p);
+        snapshot_clone = p.clone();
     }
+    // 锁外 emit（emit_event 序列化/投递不占 progress 锁）
+    emit(app, &snapshot_clone);
 }
 
 #[cfg(test)]

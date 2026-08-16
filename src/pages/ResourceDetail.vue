@@ -293,14 +293,20 @@ async function submitDownload() {
     return;
   }
   try {
-    const taskId = await invoke<string>("download_single_file", {
-      task: {
-        version_dir_name: targetVersion,
-        kind,
-        url: v.download_url,
-        filename: v.filename,
-      },
-    });
+    // 诊断：invoke 超时兜底——后端命令卡住时给出明确反馈而非静默"无反应"
+    const taskId = await Promise.race([
+      invoke<string>("download_single_file", {
+        task: {
+          version_dir_name: targetVersion,
+          kind,
+          url: v.download_url,
+          filename: v.filename,
+        },
+      }),
+      new Promise<never>((_, rej) =>
+        setTimeout(() => rej(new Error("下载请求超时（后端无响应），请查看日志")), 5000),
+      ),
+    ]);
     // 注册资源名：任务完成提示显示 "下载任务[资源名]完成"（fallback 文件名）
     if (taskId) {
       registerTaskName(taskId, item.value?.title ?? v.filename);
