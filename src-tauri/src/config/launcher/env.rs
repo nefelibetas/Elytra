@@ -301,8 +301,8 @@ mod tests {
         let vj = load_version_json_with_inheritance(&tmp, "1.20.1-forge-47.1.0").unwrap();
         assert_eq!(vj.libraries.len(), 2, "父库 + 子库应合并");
         assert_eq!(
-            vj.libraries[0].name, "a:b:1",
-            "父库应在子库之前（classpath 顺序）"
+            vj.libraries[0].name, "net.minecraftforge:forge:47.1.0",
+            "子库应在父库之前（classpath 顺序：子版本的补丁/加载器库先加载，OptiFine 预补丁类覆盖依赖）"
         );
         assert_eq!(
             vj.main_class, "cpw.mods.bootstraplauncher.BootstrapLauncher",

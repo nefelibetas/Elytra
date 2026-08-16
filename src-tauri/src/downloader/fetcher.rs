@@ -213,12 +213,19 @@ fn resolve_download_routes(urls: &[String], mode: DownloadSourceMode) -> Vec<Dow
     routes
 }
 
-/// 重定向策略：跟随重定向，但拒绝跳转到实测黑洞节点域（749333.xyz——
+/// 重定向目标是否放行：跟随重定向，但拒绝实测黑洞节点域（17.749333.xyz——
 /// BMCLAPI 对象存储节点，国内部分网络 TCP 黑洞，连上不传数据）。
+/// 放行 minio.749333.xyz（bmclapi 文件下载主存储：OptiFine 下载 URL 实测
+/// 302 → minio，按域名前缀一刀切会把真实下载误杀，安装必失败；
+/// 无代理黑洞网络下 minio 不可达由全局 client 的 30s read_timeout 兜底，不永久挂死）。
+fn redirect_allowed(host: &str) -> bool {
+    !host.contains("749333") || host.starts_with("minio.")
+}
+
 fn mirror_safe_redirect() -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(|attempt| {
         let host = attempt.url().host_str().unwrap_or("").to_string();
-        if host.contains("749333") {
+        if !redirect_allowed(&host) {
             eprintln!("[fetch] 拒绝重定向到黑洞节点: {host}");
             attempt.error("重定向到不可达镜像节点（749333.xyz）")
         } else {
@@ -878,11 +885,44 @@ mod tests {
         let _ = std::fs::remove_file(&dest);
     }
 
+    /// 重定向放行决策纯函数：黑洞子域拒绝、minio（bmclapi 下载存储）放行、
+    /// 普通域放行。minio 放行是 OptiFine 安装的硬前提（下载 URL 302 → minio）。
+    #[test]
+    fn redirect_policy_minio_allowed() {
+        assert!(!redirect_allowed("17.749333.xyz"), "实测黑洞子域必须拒绝");
+        assert!(!redirect_allowed("cdn.749333.xyz"), "未知 749333 子域保持拒绝");
+        assert!(redirect_allowed("minio.749333.xyz"), "bmclapi 下载存储必须放行");
+        assert!(redirect_allowed("bmclapi2.bangbang93.com"));
+        assert!(redirect_allowed("example.com"));
+    }
+
+    /// 真实 bmclapi OptiFine 下载（302 → minio.749333.xyz）：验证重定向放行后
+    /// OptiFine 下载链路可用（黑名单按域名前缀一刀切时此测试必失败——
+    /// minio 放行是 OptiFine 安装的硬前提）。网络测试，默认忽略。
+    #[tokio::test]
+    #[ignore]
+    async fn bmclapi_optifine_real_download() {
+        let dest = temp_dest("optifine_real");
+        let res = fetch(
+            "https://bmclapi2.bangbang93.com/optifine/1.20.1/HD_U/I6",
+            &dest,
+            None::<fn(u64, u64)>,
+        )
+        .await;
+        assert!(res.is_ok(), "真实下载应成功: {:?}", res);
+        let meta = std::fs::metadata(&dest).unwrap();
+        assert!(
+            meta.len() > 1_000_000,
+            "OptiFine jar 应大于 1MB（实测 {} bytes）",
+            meta.len()
+        );
+        let _ = std::fs::remove_file(&dest);
+    }
+
     /// 302 到黑洞节点域（749333.xyz）应被重定向策略立即拒绝（快速失败，
     /// 而不是跟随到 TCP 黑洞挂满超时——国内网络实测卡在 asset index 的根因）。
     #[tokio::test]
-    async fn redirect_to_blackhole_domain_rejected() {
-        // 服务器 accept 3 次（fetch_with 有 3 轮重试），每轮都返回 302 → 黑洞域
+    async fn redirect_to_blackhole_domain_rejected() {        // 服务器 accept 3 次（fetch_with 有 3 轮重试），每轮都返回 302 → 黑洞域
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
