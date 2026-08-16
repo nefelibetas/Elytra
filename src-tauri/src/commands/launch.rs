@@ -820,4 +820,51 @@ mod tests {
         let args = build_cmd(&cfg);
         assert!(args.iter().any(|a| a.contains("lwjgl-unsafe-agent")));
     }
+
+    /// PCL2 版本隔离实例兜底：json 的 libraries 无 fabric-loader（PCL2 组件机制），
+    /// mainClass 是 KnotClient——classpath 应扫描 libraries 目录补 fabricmc 与 asm，
+    /// asm 多版本时取最高版本（9.10.1 而非 9.2）。
+    #[test]
+    fn test_pcl_isolated_fabric_appends_loader_libs() {
+        let tmp = std::env::temp_dir().join(format!("elytra_pcl_{}", std::process::id()));
+        let lib = tmp.join("libraries");
+        let mk_jar = |path: &std::path::Path| {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, b"PK").unwrap(); // 空 zip 头即可，build_classpath 不读内容
+        };
+        mk_jar(&lib.join("net/fabricmc/fabric-loader/0.19.3/fabric-loader-0.19.3.jar"));
+        mk_jar(&lib.join("net/fabricmc/sponge-mixin/0.17.3/sponge-mixin-0.17.3.jar"));
+        mk_jar(&lib.join("org/ow2/asm/asm/9.10.1/asm-9.10.1.jar"));
+        mk_jar(&lib.join("org/ow2/asm/asm/9.2/asm-9.2.jar"));
+
+        let mut vj = minimal_version_json();
+        vj.main_class = "net.fabricmc.loader.impl.launch.knot.KnotClient".into();
+        let cfg = LauncherConfig::default();
+        let args = build_launch_command(
+            std::path::Path::new("C:/java/bin/java.exe"),
+            &vj,
+            "1.18.2",
+            &tmp,
+            &cfg,
+            &AuthMode::Offline {
+                username: "t".into(),
+                uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+            },
+            17,
+            "",
+        )
+        .args;
+        let cp_idx = args.iter().position(|a| a == "-cp").expect("-cp 参数应存在");
+        let cp = &args[cp_idx + 1];
+        assert!(
+            cp.contains("fabric-loader-0.19.3.jar") && cp.contains("sponge-mixin-0.17.3.jar"),
+            "classpath 应补 fabricmc 组件: {cp}"
+        );
+        assert!(
+            cp.contains("asm-9.10.1.jar") && !cp.contains("asm-9.2.jar"),
+            "asm 多版本应取最高版本: {cp}"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }
