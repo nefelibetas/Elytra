@@ -102,6 +102,15 @@ export function registerTaskName(taskId: string, name: string) {
   taskNames.set(taskId, name);
 }
 
+/** 版本下载任务 → 安装目录名（下载完成自动选中该版本作为后续 Mod 下载目标；
+ *  done 事件消费后删除）。 */
+export const versionTargets = new Map<string, string>();
+
+/** 注册版本下载目标：startTask 提交后调用。 */
+export function registerVersionTarget(taskId: string, dirName: string) {
+  versionTargets.set(taskId, dirName);
+}
+
 export const dlState = reactive({
   tasks: [] as TaskItem[],
 
@@ -215,8 +224,9 @@ export const dlState = reactive({
     await invoke("cancel_task", { taskId })
   },
 
-  /** 任务完成回调：第一参为完成提示文案（资源名映射 → "下载任务[资源名]完成"，其余原名） */
-  onTaskDone: null as ((message: string, kind?: TaskKind) => void) | null,
+  /** 任务完成回调：第一参为完成提示文案；第三参为版本下载任务的安装目录名
+   *  （下载完成自动选中该版本，供 Mod 下载目标使用） */
+  onTaskDone: null as ((message: string, kind?: TaskKind, versionDir?: string) => void) | null,
   /** 任务失败回调：弹出错误 dialog（失败资源由后端清理）。 */
   onTaskError: null as ((taskName: string, error: string) => void) | null,
 })
@@ -249,7 +259,10 @@ export function ensureListen() {
         const message = mapped
           ? `下载任务[${mapped}]完成`
           : `${p.name || "下载任务"} 已完成`;
-        dlState.onTaskDone?.(message, kind);
+        // 版本下载完成 → 携带安装目录名（App.vue 据此自动选中该版本）
+        const vdir = versionTargets.get(p.task_id);
+        versionTargets.delete(p.task_id);
+        dlState.onTaskDone?.(message, kind, vdir);
         dlState.removeTask(p.task_id);
         return
       }

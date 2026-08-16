@@ -3,7 +3,7 @@
 // 状态跨路由保留（切到设置页再返回不丢选择进度）；manifest 缓存跨组件重建保留。
 import { reactive, computed, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { dlState } from "./download";
+import { dlState, registerVersionTarget } from "./download";
 import { CATEGORIES } from "../utils/versionMeta";
 import { errMsg } from "../utils/error";
 
@@ -311,11 +311,15 @@ export const vdState = reactive({
     }
 
     this.dlSubmitting = true;
-    await dlState.startTask(
+    const taskId = await dlState.startTask(
       sv.id, sv.url, sv.id,
       mainLd ?? undefined, mainVer, ofVer, this.resolvedDirName || undefined,
       faUrl || undefined, faVerStr || undefined,
     );
+    // 注册安装目录名：下载完成后 App.vue 自动选中该版本（Mod 下载目标）
+    if (taskId) {
+      registerVersionTarget(taskId, this.resolvedDirName || sv.id);
+    }
     this.dlSubmitting = false;
     this.selectedVersion = null;
   },
