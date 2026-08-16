@@ -5,6 +5,7 @@ import TitleBar from "./component/TitleBar.vue";
 import AlertDialog from "./component/AlertDialog.vue";
 import { dlState, ensureListen, checkInterrupted, waitingUser, decideWaitingTask, type TaskKind } from "./store/download";
 import { startMemoryMonitor } from "./store/memory";
+import { setSelected } from "./store/selectedVersion";
 import { toastState, showToast } from "./utils/toast";
 
 const router = useRouter();
@@ -13,9 +14,11 @@ const router = useRouter();
 const errorDialog = ref(false);
 const errorMessage = ref("");
 
-dlState.onTaskDone = (message: string, kind?: TaskKind) => {
+dlState.onTaskDone = (message: string, kind?: TaskKind, versionDir?: string) => {
   // JDK 安装任务：完成处理（自动选中等）由 jdkConfig 专属监听负责，此处不提示不跳转
   if (kind === "jdk") return;
+  // 版本下载完成 → 自动选中该版本（后续 Mod 下载目标即此版本）
+  if (versionDir) setSelected(versionDir);
   // 文案由 download.ts 统一格式化（资源名映射 → "下载任务[资源名]完成"，其余原名）
   showToast(message);
   // 不自动退出任务中心：任务中心已是顶级 tab（FAB 移除），完成停留本页查看状态

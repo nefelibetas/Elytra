@@ -267,9 +267,6 @@ const fileKind = computed<DownloadFileKind | null>(() => {
   }
 });
 
-/** 下载目标版本目录（启动页当前选中的版本 id；后端按此解析实际目录名，会话内读取）。 */
-const savedVersion = ref(selectedVersion.value);
-
 /** 提交选中版本文件的下载任务（download_single_file → 任务中心自动注册）。
  *  落盘版本隔离：versions/{版本目录}/{kind_dir}/{filename}（后端 resolve 兜底 _{n} 冲突）。 */
 async function submitDownload() {
@@ -288,14 +285,17 @@ async function submitDownload() {
     showToast("所选版本文件不存在，请重新选择");
     return;
   }
-  if (!savedVersion.value) {
-    showToast("请先在版本选择页选择版本");
+  // 下载目标版本：启动页当前选中的版本（下载完成后由 onTaskDone 自动选中，
+  // 实时读取而非挂载快照——下载任务完成后 selectedVersion 会更新）
+  const targetVersion = selectedVersion.value;
+  if (!targetVersion) {
+    showToast("请先在版本选择页选择版本（版本下载完成后会自动选中）");
     return;
   }
   try {
     const taskId = await invoke<string>("download_single_file", {
       task: {
-        version_dir_name: savedVersion.value,
+        version_dir_name: targetVersion,
         kind,
         url: v.download_url,
         filename: v.filename,
