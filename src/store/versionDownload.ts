@@ -290,7 +290,7 @@ export const vdState = reactive({
     } catch { this.resolvedDirName = base; }
   },
 
-  async startDownload(routePath: string) {
+  async startDownload() {
     const sv = this.selectedVersion;
     if (!sv) return;
     if (this.fabricApiUnready()) return;
@@ -312,7 +312,7 @@ export const vdState = reactive({
 
     this.dlSubmitting = true;
     await dlState.startTask(
-      sv.id, sv.url, sv.id, routePath,
+      sv.id, sv.url, sv.id,
       mainLd ?? undefined, mainVer, ofVer, this.resolvedDirName || undefined,
       faUrl || undefined, faVerStr || undefined,
     );

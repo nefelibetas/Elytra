@@ -127,7 +127,7 @@ async function repairFiles() {
     const taskId = await invoke<string>("submit_missing_download", {
       versionDirName: versionName.value,
     });
-    // 预注册任务：FAB 立即出现（首次 task-progress 事件到达前也能看到）
+    // 预注册任务：任务中心徽标立即出现（首次 task-progress 事件到达前也能看到）
     dlState.addTask({
       taskId,
       name: `${versionName.value} 版本修复`,
@@ -141,7 +141,6 @@ async function repairFiles() {
       totalBytes: 0,
       currentPhase: "等待中",
       steps: [],
-      previousRoute: router.currentRoute.value.fullPath,
     });
     showToast(`已提交 ${total} 个缺失文件到任务中心`);
   } catch (e) {

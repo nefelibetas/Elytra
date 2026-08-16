@@ -13,7 +13,7 @@ const router = useRouter();
 const errorDialog = ref(false);
 const errorMessage = ref("");
 
-dlState.onTaskDone = (message: string, _prevRoute: string, kind?: TaskKind) => {
+dlState.onTaskDone = (message: string, kind?: TaskKind) => {
   // JDK 安装任务：完成处理（自动选中等）由 jdkConfig 专属监听负责，此处不提示不跳转
   if (kind === "jdk") return;
   // 文案由 download.ts 统一格式化（资源名映射 → "下载任务[资源名]完成"，其余原名）
@@ -21,11 +21,10 @@ dlState.onTaskDone = (message: string, _prevRoute: string, kind?: TaskKind) => {
   // 不自动退出任务中心：任务中心已是顶级 tab（FAB 移除），完成停留本页查看状态
 };
 
-dlState.onTaskError = (_taskName: string, error: string, prevRoute: string) => {
+dlState.onTaskError = (_taskName: string, error: string) => {
   errorMessage.value = error;
   errorDialog.value = true;
-  // 失败任务卡片已由事件处理清理，退出任务中心页回到来源页
-  if (prevRoute) router.push(prevRoute);
+  // 失败同样停留当前页：错误 dialog 已弹出，不强制跳转（与完成/取消一致）
 };
 
 /** 复制挂起任务错误全文（中文首行 + 技术细节）到剪贴板。 */
