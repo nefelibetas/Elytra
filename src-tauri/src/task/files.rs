@@ -191,7 +191,10 @@ pub async fn run_files_task(
         };
         // 单文件下载 + 失败重试循环：用户可决策"跳过/重试/取消"（WaitingForUser 暂停），
         // 不再一文件失败整任务失败——批量 mod 下载常见单文件源失效（404/镜像未同步）。
+        // 首次失败静默自动重试（1s/2s 退避）：重启/切代理后的瞬时网络抖动（恢复任务
+        // 首次请求最典型）自动消化，不弹窗打扰；连续 3 次失败才挂起等用户决策。
         let mut decided = WaitingDecision::Retry;
+        let mut silent_retries = 0u32;
         while decided == WaitingDecision::Retry {
             let result = fetcher::fetch(&f.url, tmp, Some(&cb)).await;
             if cancelled(cancel) {
@@ -203,6 +206,12 @@ pub async fn run_files_task(
                 Ok(_) => decided = WaitingDecision::Skip, // 下载成功，跳出重试循环
                 Err(e) => {
                     let _ = std::fs::remove_file(tmp);
+                    if silent_retries < 2 {
+                        silent_retries += 1;
+                        tokio::time::sleep(Duration::from_millis(1000 * silent_retries as u64))
+                            .await;
+                        continue;
+                    }
                     // 暂停：发事件给前端弹窗，轮询用户决策（200ms，cancel 视为取消）
                     let slot = task::global().begin_wait(&task_id);
                     task::emit_event(
