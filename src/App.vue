@@ -151,10 +151,10 @@ onUnmounted(() => {
           <p class="wd-file">{{ waitingUser.file_name }}</p>
           <p class="wd-err">{{ waitingUser.error }}</p>
           <div class="wd-actions">
-            <button class="wd-btn" @click="copyWaitingError">复制错误信息</button>
             <button class="wd-btn wd-retry" @click="decideWaitingTask('retry')">重试</button>
             <button class="wd-btn" @click="decideWaitingTask('skip')">跳过</button>
             <button class="wd-btn wd-cancel" @click="decideWaitingTask('cancel')">取消任务</button>
+            <button class="wd-btn wd-copy" @click="copyWaitingError">复制错误信息</button>
           </div>
         </div>
       </div>
@@ -430,33 +430,34 @@ input, textarea {
 }
 
 .waiting-dialog {
-  width: 380px; max-width: calc(100vw - 48px);
-  padding: 20px 22px;
+  width: 480px; max-width: calc(100vw - 48px);
+  padding: 22px 24px;
   background: var(--surface-card);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg, 12px);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
 }
 
-.wd-title { margin: 0 0 10px; font-size: 15px; color: var(--text-primary); }
+.wd-title { margin: 0 0 10px; font-size: 16px; color: var(--text-primary); }
 
 .wd-file {
-  margin: 0 0 6px; font-size: 13px; font-weight: 600;
+  margin: 0 0 6px; font-size: 13.5px; font-weight: 600;
   color: var(--text-primary); word-break: break-all;
 }
 
 .wd-err {
-  margin: 0 0 16px; font-size: 12px; color: var(--text-tertiary);
-  word-break: break-all; max-height: 64px; overflow-y: auto;
+  margin: 0 0 18px; font-size: 12.5px; color: var(--text-tertiary);
+  word-break: break-all; max-height: 140px; overflow-y: auto;
+  line-height: 1.6;
 }
 
-.wd-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.wd-actions { display: flex; gap: 8px; justify-content: flex-start; }
 
 .wd-btn {
   padding: 6px 14px; font-size: 13px; cursor: pointer;
   border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
   background: var(--surface-page); color: var(--text-primary);
-  transition: all 0.15s;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
 }
 
 .wd-btn:hover { border-color: var(--color-brand); }
@@ -464,6 +465,8 @@ input, textarea {
 .wd-retry:hover { opacity: 0.9; }
 .wd-cancel { color: var(--color-danger); }
 .wd-cancel:hover { border-color: var(--color-danger); }
+/* 复制错误信息固定最右（margin-left:auto 撑开），操作按钮保持左侧 */
+.wd-copy { margin-left: auto; }
 
 .fade-enter-active, .fade-leave-active { transition: opacity 0.15s ease; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
