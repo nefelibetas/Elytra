@@ -186,11 +186,32 @@ pub async fn resume_task(app: AppHandle, task_id: String) -> Result<String, Stri
     crate::task::store::remove_snapshot(&task_id);
     match spec {
         JobSpec::Download(task) => start_download(app, task).await,
-        JobSpec::Files(task) => download_files(app, task).await,
+        JobSpec::Files(task) => {
+            // 社区资源无校验数据，恢复 = 重新开始：先清掉上次中断残留的
+            // .elytra-part 半截临时文件（陈旧残留可能被占用/校验干扰），
+            // 确保重新下载干净起步
+            cleanup_file_parts(&task);
+            download_files(app, task).await
+        }
         JobSpec::Repair { version_dir_name } => {
             submit_missing_download(app, version_dir_name).await
         }
         JobSpec::InstallJdk { major } => submit_install_jdk(app, major).await,
+    }
+}
+
+/// 删除批量文件任务的全部 .elytra-part 残留（恢复社区资源下载前调用）。
+fn cleanup_file_parts(task: &DownloadFilesTask) {
+    let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
+    let mc = config.minecraft_dir_abs();
+    for f in &task.files {
+        let dest = mc
+            .join("versions")
+            .join(&task.version_dir_name)
+            .join(f.kind.kind_dir())
+            .join(&f.filename);
+        let tmp = dest.with_file_name(format!("{}.elytra-part", f.filename));
+        let _ = std::fs::remove_file(tmp);
     }
 }
 
