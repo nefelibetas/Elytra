@@ -211,7 +211,16 @@ pub fn build_launch_command(
     let classpath_sep = ";";
 
     // ── Classpath ──
-    let classpath = build_classpath(version_json, &lib_dir, &client_jar);
+    let mut classpath = build_classpath(version_json, &lib_dir, &client_jar);
+    // PCL2 版本隔离实例兜底：PCL2 安装 Fabric 时其 json 的 libraries 不含
+    // fabric-loader 组件（PCL2 启动器自处理，json 里只有原版库），mainClass 却是
+    // KnotClient——严格按 json 构建 classpath 会缺 fabric-loader 导致
+    // ClassNotFoundException。扫描 libraries 目录补 net/fabricmc 与 org/ow2/asm。
+    if version_json.main_class.contains("net.fabricmc")
+        && !classpath.iter().any(|p| p.to_string_lossy().contains("fabric-loader"))
+    {
+        append_pcl_fabric_libs(&mut classpath, &lib_dir);
+    }
     let classpath_str = classpath
         .iter()
         .map(|p| p.to_string_lossy().to_string())
@@ -360,6 +369,67 @@ fn build_classpath(version_json: &VersionJson, lib_dir: &Path, client_jar: &Path
     }
 
     cp
+}
+
+/// 语义化版本比较（"9.10.1" > "9.6" > "9.2"）：按 '.' 分段数字比较。
+fn version_gt(a: &str, b: &str) -> bool {
+    let pa: Vec<u64> = a.split('.').filter_map(|s| s.parse().ok()).collect();
+    let pb: Vec<u64> = b.split('.').filter_map(|s| s.parse().ok()).collect();
+    for i in 0..pa.len().max(pb.len()) {
+        let va = pa.get(i).copied().unwrap_or(0);
+        let vb = pb.get(i).copied().unwrap_or(0);
+        if va != vb {
+            return va > vb;
+        }
+    }
+    false
+}
+
+/// PCL2 版本隔离实例兜底（见 build_launch_command 触发条件）：
+/// 补 net/fabricmc/（fabric-loader + sponge-mixin 全部 jar，目录结构
+/// net/fabricmc/{group}/{version}/）与 org/ow2/asm/（每个 artifact 取最高版本
+/// jar——lib 目录常有多版本并存，全加会按 classpath 顺序先命中旧版导致
+/// NoSuchMethodError）。已存在的路径跳过（防重复）。
+fn append_pcl_fabric_libs(cp: &mut Vec<PathBuf>, lib_dir: &Path) {
+    let mut push_jar = |p: PathBuf| {
+        if p.extension().is_some_and(|e| e == "jar") && !cp.contains(&p) {
+            cp.push(p);
+        }
+    };
+    let fabricmc = lib_dir.join("net").join("fabricmc");
+    if let Ok(groups) = std::fs::read_dir(&fabricmc) {
+        for group in groups.flatten() {
+            let Ok(vers) = std::fs::read_dir(group.path()) else { continue };
+            for ver in vers.flatten() {
+                let Ok(files) = std::fs::read_dir(ver.path()) else { continue };
+                for f in files.flatten() {
+                    push_jar(f.path());
+                }
+            }
+        }
+    }
+    let asm_dir = lib_dir.join("org").join("ow2").join("asm");
+    if let Ok(artifacts) = std::fs::read_dir(&asm_dir) {
+        for artifact in artifacts.flatten() {
+            let Ok(vers) = std::fs::read_dir(artifact.path()) else { continue };
+            let mut best: Option<(String, PathBuf)> = None;
+            for ver in vers.flatten() {
+                if !ver.path().is_dir() {
+                    continue;
+                }
+                let name = ver.file_name().to_string_lossy().to_string();
+                if best.as_ref().map_or(true, |(bn, _)| version_gt(&name, bn)) {
+                    best = Some((name, ver.path()));
+                }
+            }
+            if let Some((_, dir)) = best {
+                let Ok(files) = std::fs::read_dir(dir) else { continue };
+                for f in files.flatten() {
+                    push_jar(f.path());
+                }
+            }
+        }
+    }
 }
 
 /// 检查版本是否包含旧式 natives 库（lwjgl 2.x，有 `natives` 字段）。
