@@ -8,12 +8,16 @@ use crate::downloader::fetcher::http;
 
 use super::{LoaderEvent, LoaderHook, merge_loader_profile};
 
-/// 10 参数均为必需数据（版本/模板/配置/字节计数/阶段钩子），私有实现细节，不抽象。
+/// 10+ 参数均为必需数据（版本/模板/配置/字节计数/阶段钩子），私有实现细节，不抽象。
+/// `dir_name`/`vdir` 由 runner 的目标目录解析传入（含冲突重命名 `{id}_n`）——
+/// 安装器自行计算会与 runner 的目标分裂：冲突场景 json/jar 写到原始目录而
+/// 新目录缺 json（启动报"未找到版本 JSON"）。
 #[allow(clippy::too_many_arguments)]
 async fn install_loader_via_profile(
     mc_version: &str,
     loader_version: &str,
-    dir_suffix: &str,
+    dir_name: &str,
+    vdir: &std::path::Path,
     parent_text: &str,
     profile_url_tpl: &str,
     config: &DownloaderConfig,
@@ -24,8 +28,6 @@ async fn install_loader_via_profile(
 ) -> Result<(), String> {
     let source = config.file_primary_source().ok_or("no active source")?;
     let mc = config.minecraft_dir_abs();
-    let dir_name = format!("{}-{}-{}", mc_version, dir_suffix, loader_version);
-    let vdir = mc.join("versions").join(&dir_name);
 
     let profile_url = source.url(
         profile_url_tpl,
@@ -41,9 +43,9 @@ async fn install_loader_via_profile(
         .await
         .map_err(|e| format!("解析 profile 失败\n{}", e))?;
 
-    let merged = merge_loader_profile(parent_text, &profile, &dir_name, &source.maven_url)?;
+    let merged = merge_loader_profile(parent_text, &profile, dir_name, &source.maven_url)?;
 
-    std::fs::create_dir_all(&vdir).map_err(|e| format!("创建目录失败\n{}", e))?;
+    std::fs::create_dir_all(vdir).map_err(|e| format!("创建目录失败\n{}", e))?;
     let json_path = vdir.join(format!("{}.json", dir_name));
     let json_str =
         serde_json::to_string_pretty(&merged).map_err(|e| format!("序列化失败\n{}", e))?;
@@ -99,6 +101,8 @@ async fn install_loader_via_profile(
 pub async fn install_fabric(
     mc_version: &str,
     loader_version: &str,
+    dir_name: &str,
+    vdir: &std::path::Path,
     parent_text: &str,
     config: &DownloaderConfig,
     bytes: &Arc<AtomicU64>,
@@ -110,7 +114,8 @@ pub async fn install_fabric(
     install_loader_via_profile(
         mc_version,
         loader_version,
-        "fabric",
+        dir_name,
+        vdir,
         parent_text,
         &source.fabric_profile_url,
         config,
@@ -126,6 +131,8 @@ pub async fn install_fabric(
 pub async fn install_quilt(
     mc_version: &str,
     loader_version: &str,
+    dir_name: &str,
+    vdir: &std::path::Path,
     parent_text: &str,
     config: &DownloaderConfig,
     bytes: &Arc<AtomicU64>,
@@ -137,7 +144,8 @@ pub async fn install_quilt(
     install_loader_via_profile(
         mc_version,
         loader_version,
-        "quilt",
+        dir_name,
+        vdir,
         parent_text,
         &source.quilt_profile_url,
         config,
