@@ -241,6 +241,19 @@ impl TaskManager {
     }
 
     pub fn remove(&self, id: &str) {
+        // 终态快照持久化（与 fail 收口一致）：完成/取消/失败统一写回终态 status，
+        // 否则完成任务快照残留 running，下次启动被 mark_crashed_as_interrupted
+        // 误标为"未完成任务"（横幅误报 + 忽略按钮泛滥）。
+        // 锁序 inner→progress；DB 写在 progress 锁释放后进行（sqlite 2s 超时静默）。
+        let status = self
+            .inner
+            .lock()
+            .tasks
+            .get(id)
+            .map(|h| h.progress.lock().status);
+        if let Some(status) = status {
+            store::update_status(id, status);
+        }
         self.inner.lock().tasks.remove(id);
         self.inner.lock().waiting.remove(id);
     }
@@ -444,5 +457,32 @@ mod tests {
             !tm.decide("t1", WaitingDecision::Cancel),
             "已清理的挂起任务 decide 应返回 false"
         );
+    }
+
+    /// remove 收口必须写回终态快照：完成任务若残留 running 快照，
+    /// 下次启动被 mark_crashed_as_interrupted 误标为"未完成任务"（横幅误报）。
+    #[test]
+    fn remove_persists_terminal_status_to_snapshot() {
+        let tm = Arc::new(TaskManager::default());
+        let (task_id, _cancel, progress) = tm.create("测试任务", &["步骤"]);
+        super::store::save_snapshot(
+            &task_id,
+            "测试任务",
+            &super::store::JobSpec::Repair { version_dir_name: "26.2".into() },
+            TaskStatus::Running,
+        );
+        assert!(
+            super::store::list_interrupted().iter().any(|j| j.id == task_id),
+            "running 快照应出现在中断列表"
+        );
+        // 模拟任务完成：status=Done 后 remove 收口
+        progress.lock().status = TaskStatus::Done;
+        tm.remove(&task_id);
+        assert!(!tm.exists(&task_id), "remove 应移除内存注册");
+        assert!(
+            !super::store::list_interrupted().iter().any(|j| j.id == task_id),
+            "完成后快照应写回终态，不得被列为中断任务"
+        );
+        super::store::remove_snapshot(&task_id);
     }
 }
