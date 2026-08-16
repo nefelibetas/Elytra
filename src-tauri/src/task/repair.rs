@@ -36,10 +36,11 @@ pub struct MissingReport {
 /// JSON 是修复的唯一数据源（libs/assets/natives 清单都在里面），缺失时无法本地重建：
 /// 原版目录可能被重命名过、loader 目录的 json 是 installer 合成的，只能删除重装。
 fn read_version_json(vdir: &Path) -> Result<VersionJson, String> {
+    let dir_name = vdir.file_name().and_then(|s| s.to_str()).unwrap_or("");
     let vj_path =
-        crate::config::launcher::args::find_file_in_dir(vdir, "json").ok_or_else(|| {
+        crate::config::launcher::args::find_version_json(vdir, dir_name).ok_or_else(|| {
             format!(
-                "版本 JSON 缺失\n目录 {} 下未找到 JSON 文件，无法修复，请删除该版本后重新下载安装",
+                "版本 JSON 缺失\n目录 {} 下未找到版本 JSON 文件，无法修复，请删除该版本后重新下载安装",
                 vdir.display()
             )
         })?;

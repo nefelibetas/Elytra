@@ -15,12 +15,15 @@ export interface VersionClass {
 
 /**
  * 解析版本目录名。目录可能被冲突重命名（如 {id}_1），先剥掉 `_数字` 后缀再分类。
+ * loader 标记大小写不敏感（PCL2 等外部启动器目录名可能是大写，如 26.1.2-Fabric），
+ * 切片索引基于小写串（小写化不改变长度，索引与原串一致）。
  */
 export function classifyVersion(name: string): VersionClass {
   const base = name.replace(/_\d+$/, ""); // 冲突重命名 {id}_n → {id}
+  const lower = base.toLowerCase();
   for (const key of LOADER_KEYS) {
     const marker = `-${key}-`;
-    const idx = base.indexOf(marker);
+    const idx = lower.indexOf(marker);
     if (idx > 0) {
       return {
         category: key,

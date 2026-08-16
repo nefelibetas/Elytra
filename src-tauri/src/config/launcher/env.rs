@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use crate::config::downloader::model::DownloaderConfig;
-use crate::config::launcher::args::find_file_in_dir;
+use crate::config::launcher::args::{find_file_in_dir, find_version_json};
 use crate::config::launcher::model::LauncherConfig;
 use crate::constants;
 use crate::downloader::model::VersionJson;
@@ -90,8 +90,8 @@ fn load_version_json_with_inheritance(
     version_dir_name: &str,
 ) -> Result<VersionJson, String> {
     let vdir = mc_dir.join("versions").join(version_dir_name);
-    let vj_path = find_file_in_dir(&vdir, "json")
-        .ok_or_else(|| format!("版本目录下未找到 JSON 文件\n{}", vdir.display()))?;
+    let vj_path = find_version_json(&vdir, version_dir_name)
+        .ok_or_else(|| format!("版本目录下未找到版本 JSON\n{}", vdir.display()))?;
     let vj_text =
         std::fs::read_to_string(&vj_path).map_err(|e| format!("读取版本 JSON 失败\n{}", e))?;
     let mut vj_value: serde_json::Value =
@@ -313,6 +313,39 @@ mod tests {
         std::fs::remove_dir_all(&parent).unwrap();
         let err = load_version_json_with_inheritance(&tmp, "1.20.1-forge-47.1.0").unwrap_err();
         assert!(err.contains("父版本 JSON"), "应提示父版本缺失: {err}");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// find_version_json：PCL2 版本隔离实例目录混有游戏数据 json（字典序在前），
+    /// 应跳过它们取到真正的版本 json（优先同名；否则含 mainClass 的）。
+    #[test]
+    fn find_version_json_picks_real_version_json() {
+        let tmp = std::env::temp_dir().join(format!("elytra_vj_{}", std::process::id()));
+        let dir = tmp.join("versions/愚者");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("TrashSlotSaveState.json"), r#"{"save":1}"#).unwrap();
+        std::fs::write(dir.join("patchouli_data.json"), r#"{"book":1}"#).unwrap();
+        std::fs::write(
+            dir.join("愚者.json"),
+            r#"{"id":"1.20.1-forge","mainClass":"cpw.mods.bootstraplauncher.BootstrapLauncher","libraries":[]}"#,
+        )
+        .unwrap();
+        let found = crate::config::launcher::args::find_version_json(&dir, "愚者");
+        let name = found.unwrap().file_name().unwrap().to_string_lossy().to_string();
+        assert_eq!(name, "愚者.json", "应跳过游戏数据 json 取到版本 json");
+
+        // 标准布局：同名 json 优先
+        let dir2 = tmp.join("versions/1.20.1");
+        std::fs::create_dir_all(&dir2).unwrap();
+        std::fs::write(
+            dir2.join("1.20.1.json"),
+            r#"{"mainClass":"net.minecraft.client.main.Main"}"#,
+        )
+        .unwrap();
+        std::fs::write(dir2.join("extra.json"), r#"{"x":1}"#).unwrap();
+        let found2 = crate::config::launcher::args::find_version_json(&dir2, "1.20.1");
+        assert_eq!(found2.unwrap().file_name().unwrap(), "1.20.1.json");
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
