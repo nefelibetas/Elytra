@@ -1,6 +1,5 @@
 <script setup lang="ts">
 // 原版版本详情页：版本信息头 + ModLoader 选择卡片组（含 Fabric API）+ 下载
-import { useRouter } from "vue-router";
 import { ArrowLeft, X, ChevronDown } from "@lucide/vue";
 import {
   vdState, displayLoaders, loaderIcon, vanillaIcon,
@@ -8,14 +7,12 @@ import {
 import commandIcon from "../assets/command.png";
 import cobbleIcon from "../assets/cobble.png";
 
-const router = useRouter();
-
 function versionIcon(v: { type: string }): string {
   return v.type === "release" ? vanillaIcon : v.type === "snapshot" ? commandIcon : cobbleIcon;
 }
 
 function startDownload() {
-  vdState.startDownload(router.currentRoute.value.fullPath);
+  vdState.startDownload();
 }
 
 const sv = () => vdState.selectedVersion!;

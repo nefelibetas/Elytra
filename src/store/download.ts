@@ -31,7 +31,6 @@ export interface TaskItem {
   currentPhase: string
   steps: StepInfo[]
   error?: string
-  previousRoute: string
   /** 任务种类（JDK 安装等特殊任务；版本/文件下载不设置） */
   kind?: TaskKind
 }
@@ -141,8 +140,8 @@ export const dlState = reactive({
     const idx = this.tasks.findIndex(t => t.taskId === task.taskId)
     if (idx >= 0) {
       // 竞态：startTask 的 invoke 返回与首个 task-progress 事件谁先到不确定；
-      // 事件已自动注册（同 taskId）时合并，保留调用方传入的 previousRoute
-      this.tasks[idx] = { ...task, ...this.tasks[idx], previousRoute: task.previousRoute }
+      // 事件已自动注册（同 taskId）时合并
+      this.tasks[idx] = { ...task, ...this.tasks[idx] }
       return
     }
     this.tasks.push(task)
@@ -157,7 +156,6 @@ export const dlState = reactive({
     versionId: string,
     versionUrl: string,
     mcVersion: string,
-    prevRoute: string,
     mainLoader?: string,
     mainLoaderVersion?: string,
     optifinePatch?: string,
@@ -195,16 +193,20 @@ export const dlState = reactive({
       totalBytes: 0,
       currentPhase: "等待中",
       steps: [],
-      previousRoute: prevRoute,
     })
     // 竞态校正：任务可能极快终态（error/done 事件先于预注册到达被忽略，
     // 卡片以 pending 残留且不再有终态事件）。终态任务已从后端移除，
-    // 查不到即已结束——移除卡片并退出任务中心。
+    // 查不到即已结束——移除卡片。
+    // 终态事件已处理（terminalTaskIds 命中）时不重复提示；事件丢失的
+    // 场景只做中性提示（极快失败或完成都有可能，不弹错误 dialog 误报）。
     const exists = await invoke<boolean>("task_exists", { taskId })
     if (!exists) {
+      const alreadyHandled = terminalTaskIds.has(taskId)
       terminalTaskIds.add(taskId)
       this.removeTask(taskId)
-      this.onTaskError?.("下载任务", "任务已结束（可能极快失败或完成）", prevRoute)
+      if (!alreadyHandled) {
+        showToast("任务已结束（可能极快完成或失败）")
+      }
     }
     return taskId
   },
@@ -214,9 +216,9 @@ export const dlState = reactive({
   },
 
   /** 任务完成回调：第一参为完成提示文案（资源名映射 → "下载任务[资源名]完成"，其余原名） */
-  onTaskDone: null as ((message: string, prevRoute: string, kind?: TaskKind) => void) | null,
-  /** 任务失败回调：弹出错误 dialog + 跳回来源页（失败资源由后端清理）。 */
-  onTaskError: null as ((taskName: string, error: string, prevRoute: string) => void) | null,
+  onTaskDone: null as ((message: string, kind?: TaskKind) => void) | null,
+  /** 任务失败回调：弹出错误 dialog（失败资源由后端清理）。 */
+  onTaskError: null as ((taskName: string, error: string) => void) | null,
 })
 
 // ── Event listener ──────────────────────────
@@ -240,7 +242,6 @@ export function ensureListen() {
       if (p.status === "done") {
         // 任务完成：从前端清理（触发完成通知后移除）
         terminalTaskIds.add(p.task_id)
-        const prev = dlState.tasks[idx]?.previousRoute;
         const kind = dlState.tasks[idx]?.kind;
         // 社区资源单文件下载注册了资源名 → "下载任务[资源名]完成"；其余任务用原名
         const mapped = taskNames.get(p.task_id);
@@ -248,15 +249,14 @@ export function ensureListen() {
         const message = mapped
           ? `下载任务[${mapped}]完成`
           : `${p.name || "下载任务"} 已完成`;
-        dlState.onTaskDone?.(message, prev ?? "/", kind);
+        dlState.onTaskDone?.(message, kind);
         dlState.removeTask(p.task_id);
         return
       }
       if (p.status === "error") {
-        // 任务失败：弹错误 dialog + 清理卡片并退出任务中心（残留由后端清理）
+        // 任务失败：弹错误 dialog + 清理卡片（残留由后端清理）
         terminalTaskIds.add(p.task_id)
-        const prev = dlState.tasks[idx]?.previousRoute;
-        dlState.onTaskError?.(p.name || "下载任务", p.error || "未知错误", prev ?? "/");
+        dlState.onTaskError?.(p.name || "下载任务", p.error || "未知错误");
         dlState.removeTask(p.task_id);
         return
       }
@@ -277,7 +277,7 @@ export function ensureListen() {
       && !terminalTaskIds.has(p.task_id)
     ) {
       // 后端直接创建的任务（如补全文件）不在前端列表中：首次事件自动注册，
-      // 保证任务中心 FAB 与进度可见。
+      // 保证任务中心徽标与进度可见。
       // done/cancelled/error 均为终态：done 与 error 走上方移除逻辑；cancelled 由取消
       // 流程（cancelTask + removeTask）主动清理。终态事件重复到达（如 EmitLoop
       // 退出的最后一轮）时卡片已移除，不应重新注册（否则幽灵复活）。
@@ -295,7 +295,6 @@ export function ensureListen() {
         currentPhase: p.current_phase,
         steps: p.steps,
         error: p.error ?? undefined,
-        previousRoute: "/",
       })
     }
   })

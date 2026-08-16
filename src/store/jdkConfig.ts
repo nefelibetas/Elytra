@@ -84,8 +84,7 @@ export async function installJdk(major: number): Promise<void> {
   loading.value = true;
   try {
     const taskId = await invoke<string>("submit_install_jdk", { major });
-    // 预注册任务卡片：kind 标记（App.vue 的完成回调据此跳过 toast/跳转），
-    // previousRoute 空串（done 回调 prev ?? "/" 保留空串，不触发跳转）
+    // 预注册任务卡片：kind 标记（App.vue 的完成回调据此跳过 toast/跳转）
     dlState.addTask({
       taskId,
       name: `下载 Java ${major}`,
@@ -99,7 +98,6 @@ export async function installJdk(major: number): Promise<void> {
       totalBytes: 0,
       currentPhase: "等待中",
       steps: [],
-      previousRoute: "",
       kind: "jdk" as TaskKind,
     });
     pendingInstall.set(taskId, major);
