@@ -516,6 +516,7 @@ async function copyName() {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  margin-top: 12px;
 }
 
 .md-card {
