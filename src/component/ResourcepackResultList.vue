@@ -2,7 +2,7 @@
 // 资源包搜索结果列表：加载/错误/空态 + 结果行 + 分页器（底部栏计数最右）
 import { resourcepackSearch, resourcepackTotalPages } from "../store/categorySearch";
 import { dlTranslateMode } from "../store/downloaderConfig";
-import { openModDetail } from "../store/modDetail";
+import { openResourceDetail } from "../store/resourceDetail";
 import { fmtCount } from "../utils/format";
 import IconImage from "./IconImage.vue";
 </script>
@@ -18,7 +18,7 @@ import IconImage from "./IconImage.vue";
     <template v-else-if="resourcepackSearch.searched">
       <div class="rp-list">
         <div v-for="m in resourcepackSearch.results" :key="m.key" class="rp-card">
-          <div class="rp-card-body" @click="openModDetail(m)">
+          <div class="rp-card-body" @click="openResourceDetail(m)">
             <IconImage :src="m.icon_url" :size="32" />
             <span class="rp-info">
               <span class="rp-title-row">

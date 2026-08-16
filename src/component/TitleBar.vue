@@ -3,7 +3,7 @@ import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ArrowLeft, Play, Download, ListChecks, Settings, Minus, X, Feather } from "@lucide/vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { detailTitle, goBackDetail } from "../store/modDetail";
+import { detailTitle, goBackDetail } from "../store/resourceDetail";
 import { dlState } from "../store/download";
 
 const route = useRoute();
@@ -12,7 +12,7 @@ const appWindow = getCurrentWindow();
 
 const isDetail = computed(
   () =>
-    route.path === "/mod-detail" ||
+    route.path === "/resource-detail" ||
     route.path === "/version-select" ||
     route.path === "/version-setup",
 );
@@ -23,21 +23,21 @@ const barTitle = computed(() => {
   if (route.path === "/version-setup") {
     return `版本设置 - ${String(route.query.name ?? "")}`;
   }
-  if (route.path === "/mod-detail") {
-    // Mod 详情：有译名时 "翻译名（原名）"，否则原名
-    return detailTitle() || "Mod 详情";
+  if (route.path === "/resource-detail") {
+    // 资源详情：有译名时 "翻译名（原名）"，否则原名
+    return detailTitle() || "资源详情";
   }
   return "";
 });
 
 const items = [
   { path: "/", label: "启动", icon: "play" },
-  { path: "/download", label: "下载", icon: "download" },
-  { path: "/download-detail", label: "下载管理", icon: "list" },
+  { path: "/download", label: "资源中心", icon: "download" },
+  { path: "/download-detail", label: "任务中心", icon: "list" },
   { path: "/settings", label: "设置", icon: "settings" },
 ] as const;
 
-/** 下载管理导航项：有活动任务时显示进行中徽标。 */
+/** 任务中心导航项：有活动任务时显示进行中徽标。 */
 const activeTasks = computed(() => dlState.tasks.filter(t => t.status === "running" || t.status === "pending").length);
 
 function isActive(p: string) { return route.path === p; }
@@ -60,8 +60,8 @@ function goBack() {
     router.push("/version-select");
     return;
   }
-  if (p === "/mod-detail") {
-    // Mod 详情：弹详情历史栈（前置依赖链）；栈空回下载页并恢复来源 tab
+  if (p === "/resource-detail") {
+    // 资源详情：弹详情历史栈（前置依赖链）；栈空回下载页并恢复来源 tab
     goBackDetail();
     return;
   }

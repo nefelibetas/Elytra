@@ -1,20 +1,24 @@
 <script setup lang="ts">
-// 项目详情页（Mod / 光影包 / 资源包 / 数据包 / 整合包共用）：
-// 信息卡片 + 版本文件列表（过滤展示，下载走来源页）。
+// 资源详情页（Mod / 光影包 / 资源包 / 数据包 / 整合包共用）：
+// 信息卡片 + 版本文件列表（过滤展示 + 直接提交文件下载）。
+// 仅 Mod 需要 ModLoader 筛选；非 Mod 项目由 backTab 判定后隐藏相关 UI。
 import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue";
+import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { showToast } from "../utils/toast";
 import { errMsg } from "../utils/error";
-import { modDetail, openModDetail } from "../store/modDetail";
+import { resourceDetail, openResourceDetail } from "../store/resourceDetail";
+import { getSavedDir } from "../store/selectedVersion";
 import { dlTranslateMode, dlShowReleaseOnly } from "../store/downloaderConfig";
 import {
   fetchVersions, fetchModDetails,
   type ModVersion, type ModDependencyItem, type ModDisplayItem,
 } from "../store/modSearch";
+import type { DownloadFileKind } from "../store/download";
 import { fmtCount, fmtSize, fmtModDate } from "../utils/format";
 import IconImage from "../component/IconImage.vue";
 
-const item = computed(() => modDetail.item);
+const item = computed(() => resourceDetail.item);
 
 const sourceLabel = computed(() =>
   item.value?.source === "modrinth" ? "Modrinth" : "CurseForge",
@@ -33,6 +37,9 @@ const gameVersionFilter = ref("");
 
 /** 加载器选项固定优先级（其余按出现顺序兜底） */
 const LOADER_ORDER = ["fabric", "forge", "neoforge", "quilt"];
+
+/** 仅 Mod 需要 ModLoader 筛选（来源 tab 判定；非 Mod 隐藏加载器下拉）。 */
+const isMod = computed(() => resourceDetail.backTab === "mod");
 const loaderOptions = computed(() =>
   Array.from(new Set(versions.value.flatMap(v => v.loaders))).sort(
     (a, b) => (LOADER_ORDER.indexOf(a) + 1 || 99) - (LOADER_ORDER.indexOf(b) + 1 || 99),
@@ -146,9 +153,9 @@ async function loadVersions() {
 
 /** 项目切换：应用 store 同步来的版本筛选/选中版本（从上一详情进入/返回还原），再加载版本。 */
 function onItemChange() {
-  loaderFilter.value = modDetail.pendingLoader;
-  gameVersionFilter.value = modDetail.pendingGameVersion;
-  selectedVersionId.value = modDetail.pendingSelectedVersion;
+  loaderFilter.value = resourceDetail.pendingLoader;
+  gameVersionFilter.value = resourceDetail.pendingGameVersion;
+  selectedVersionId.value = resourceDetail.pendingSelectedVersion;
   loadVersions();
 }
 
@@ -222,6 +229,45 @@ function depToItem(d: ModDependencyItem): ModDisplayItem {
   };
 }
 
+// ── 提交文件下载 ──────────────────────────────
+
+/** 来源 tab → 落盘目录 kind；modpack 无对应落盘方案（开放待研究），不显示下载按钮。 */
+const fileKind = computed<DownloadFileKind | null>(() => {
+  switch (resourceDetail.backTab) {
+    case "mod": return "mod";
+    case "shader": return "shader";
+    case "resourcepack": return "resourcepack";
+    case "datapack": return "datapack";
+    case "modpack": return null;
+    default: return null;
+  }
+});
+
+/** 下载目标版本目录（启动页当前版本；挂载时读取，会话内不变）。 */
+const savedDir = ref(getSavedDir());
+
+/** 提交选中版本文件的下载任务（download_single_file → 任务中心自动注册）。 */
+async function submitDownload() {
+  const v = versions.value.find(x => x.version_id === selectedVersionId.value);
+  const kind = fileKind.value;
+  if (!v || !kind) return;
+  if (!savedDir.value) {
+    showToast("请先在版本选择页选择版本");
+    return;
+  }
+  try {
+    await invoke("download_single_file", {
+      versionDirName: savedDir.value,
+      kind,
+      url: v.download_url,
+      filename: v.filename,
+    });
+    showToast("已提交下载任务");
+  } catch (e) {
+    showToast(errMsg(e));
+  }
+}
+
 // ── 操作 ──────────────────────────────
 
 /** 来源页面链接（item.page_url）。 */
@@ -290,7 +336,15 @@ async function copyName() {
               <span class="mv-title">版本文件<span v-if="!loadingVersions" class="mv-count"> | {{ filteredVersions.length }} 个版本</span></span>
               <span class="mv-spacer"></span>
 
-              <div ref="loaderDrop" class="mv-drop" @pointerdown.stop @click.stop="toggleFilter('loader')">
+              <button
+                v-if="fileKind"
+                class="mv-dl"
+                :disabled="!selectedVersionId"
+                v-tooltip="selectedVersionId ? '下载所选版本' : '先选择一个版本'"
+                @click="submitDownload"
+              >下载</button>
+
+              <div v-if="isMod" ref="loaderDrop" class="mv-drop" @pointerdown.stop @click.stop="toggleFilter('loader')">
                 <span class="mv-drop-label">{{ loaderFilter ? loaderLabel(loaderFilter) : "全部加载器" }}</span>
                 <span class="mv-drop-arrow" :class="{ open: openFilter === 'loader' }"></span>
                 <Transition name="expand">
@@ -361,7 +415,7 @@ async function copyName() {
               <div v-else-if="depError" class="md-dep-state err">{{ depError }}</div>
               <div v-else-if="depItems.length === 0" class="md-dep-empty">未找到前置依赖信息</div>
               <div v-else class="md-dep-list">
-                <div v-for="d in depItems" :key="d.id" class="md-dep-item" @click="openModDetail(depToItem(d), { loader: loaderFilter, gameVersion: gameVersionFilter, selectedVersion: selectedVersionId })">
+                <div v-for="d in depItems" :key="d.id" class="md-dep-item" @click="openResourceDetail(depToItem(d), { loader: loaderFilter, gameVersion: gameVersionFilter, selectedVersion: selectedVersionId })">
                   <IconImage :src="d.icon_url" :size="28" />
                   <span class="md-dep-info">
                     <span class="md-dep-title">{{ d.title }}</span>
@@ -622,6 +676,34 @@ async function copyName() {
 
 .mv-spacer {
   flex: 1;
+}
+
+/* 下载按钮：主操作（品牌填充），与筛选下拉等高；未选中版本时置灰 */
+.mv-dl {
+  flex-shrink: 0;
+  height: 30px;
+  padding: 0 16px;
+  border: 1px solid var(--color-brand);
+  border-radius: var(--radius-sm);
+  background: var(--color-brand);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  outline: none;
+}
+.mv-dl:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+.mv-dl:active:not(:disabled) {
+  filter: brightness(0.95);
+}
+.mv-dl:disabled {
+  background: var(--surface-hover);
+  border-color: var(--border-default);
+  color: var(--text-tertiary);
+  cursor: not-allowed;
 }
 
 /* ── 自定义下拉 ── */

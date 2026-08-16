@@ -2,7 +2,7 @@
 // Mod 搜索结果列表：加载/错误/空态 + 结果行 + 分页器（底部栏计数最右）
 import { modSearch, modTotalPages } from "../store/modSearch";
 import { dlTranslateMode } from "../store/downloaderConfig";
-import { openModDetail } from "../store/modDetail";
+import { openResourceDetail } from "../store/resourceDetail";
 import { fmtCount } from "../utils/format";
 import IconImage from "./IconImage.vue";
 </script>
@@ -18,7 +18,7 @@ import IconImage from "./IconImage.vue";
     <template v-else-if="modSearch.searched">
       <div class="mod-list">
         <div v-for="m in modSearch.results" :key="m.key" class="mod-card">
-          <div class="mod-card-body" @click="openModDetail(m)">
+          <div class="mod-card-body" @click="openResourceDetail(m)">
             <IconImage :src="m.icon_url" :size="32" />
             <span class="mod-info">
               <span class="mod-title-row">

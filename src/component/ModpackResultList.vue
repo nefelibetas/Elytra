@@ -2,7 +2,7 @@
 // 整合包搜索结果列表：加载/错误/空态 + 结果行 + 分页器（底部栏计数最右）
 import { modpackSearch, modpackTotalPages } from "../store/categorySearch";
 import { dlTranslateMode } from "../store/downloaderConfig";
-import { openModDetail } from "../store/modDetail";
+import { openResourceDetail } from "../store/resourceDetail";
 import { fmtCount } from "../utils/format";
 import IconImage from "./IconImage.vue";
 </script>
@@ -18,7 +18,7 @@ import IconImage from "./IconImage.vue";
     <template v-else-if="modpackSearch.searched">
       <div class="mo-list">
         <div v-for="m in modpackSearch.results" :key="m.key" class="mo-card">
-          <div class="mo-card-body" @click="openModDetail(m)">
+          <div class="mo-card-body" @click="openResourceDetail(m)">
             <IconImage :src="m.icon_url" :size="32" />
             <span class="mo-info">
               <span class="mo-title-row">

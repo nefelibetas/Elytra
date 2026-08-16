@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 下载页容器：导航 + 各 tab 内容编排（具体逻辑在 store/组件中，本文件不做业务）
+// 资源中心页容器：导航 + 各 tab 内容编排（具体逻辑在 store/组件中，本文件不做业务）
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from "vue";
 import DownloadTab from "../component/DownloadTab.vue";
 import VanillaList from "../component/VanillaList.vue";
