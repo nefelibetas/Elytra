@@ -18,7 +18,7 @@ import IconImage from "./IconImage.vue";
     <template v-else-if="modpackSearch.searched">
       <div class="mo-list">
         <div v-for="m in modpackSearch.results" :key="m.key" class="mo-card">
-          <div class="mo-card-body" @click="openResourceDetail(m)">
+          <div class="mo-card-body" @click="openResourceDetail(m, { loader: '', gameVersion: modpackSearch.gameVersion, selectedVersion: '' })">
             <IconImage :src="m.icon_url" :size="32" />
             <span class="mo-info">
               <span class="mo-title-row">

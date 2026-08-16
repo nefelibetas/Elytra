@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // Mod 搜索表单卡片：名称 / 来源 / 版本 / 加载器 / [搜索] [重置条件]
-import { computed } from "vue";
+import { computed, watch } from "vue";
 import { modSearch, modLoaderOptions } from "../store/modSearch";
 import { releases } from "../store/versionDownload";
 import DropSelect, { type SelOption } from "./DropSelect.vue";
@@ -17,6 +17,13 @@ const versionOptions = computed<SelOption[]>(() => [
   { value: "", label: "全部" },
   ...releases.value.map((r) => ({ value: r.id, label: r.id })),
 ]);
+
+// 筛选切换即自动搜索（来源/版本/加载器；名称输入走回车）。
+// watch 在微任务触发，与控件事件栈解耦（不直接在 DropSelect 回调里发起搜索）
+watch(
+  () => [modSearch.source, modSearch.gameVersion, modSearch.loader],
+  () => modSearch.search(),
+);
 </script>
 
 <template>
