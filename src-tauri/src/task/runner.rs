@@ -831,7 +831,7 @@ pub async fn run_install_jdk(
                     last_progress_at = now;
                 }
                 let dt = now.duration_since(last_sample).as_secs_f64();
-                if dt >= 0.3 && cur >= last_bytes {
+                if dt >= 0.3 && cur > last_bytes {
                     let instant = (cur - last_bytes) as f64 / dt;
                     speed_ema = if speed_ema <= 0.0 {
                         instant
