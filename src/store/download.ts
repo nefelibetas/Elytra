@@ -94,6 +94,15 @@ export interface DownloadFilesTask {
   files: DownloadFileItem[]
 }
 
+/** 任务资源名映射：taskId → 资源名（社区资源单文件下载注册，完成提示用）。
+ *  模块级（非 dlState 内）避免响应式开销；done 事件消费后即删除。 */
+export const taskNames = new Map<string, string>();
+
+/** 注册任务资源名：提交下载后调用，任务完成提示显示 "下载任务[资源名]完成"。 */
+export function registerTaskName(taskId: string, name: string) {
+  taskNames.set(taskId, name);
+}
+
 export const dlState = reactive({
   tasks: [] as TaskItem[],
 
@@ -204,7 +213,8 @@ export const dlState = reactive({
     await invoke("cancel_task", { taskId })
   },
 
-  onTaskDone: null as ((taskName: string, prevRoute: string, kind?: TaskKind) => void) | null,
+  /** 任务完成回调：第一参为完成提示文案（资源名映射 → "下载任务[资源名]完成"，其余原名） */
+  onTaskDone: null as ((message: string, prevRoute: string, kind?: TaskKind) => void) | null,
   /** 任务失败回调：弹出错误 dialog + 跳回来源页（失败资源由后端清理）。 */
   onTaskError: null as ((taskName: string, error: string, prevRoute: string) => void) | null,
 })
@@ -232,7 +242,13 @@ export function ensureListen() {
         terminalTaskIds.add(p.task_id)
         const prev = dlState.tasks[idx]?.previousRoute;
         const kind = dlState.tasks[idx]?.kind;
-        dlState.onTaskDone?.(p.name || "下载任务", prev ?? "/", kind);
+        // 社区资源单文件下载注册了资源名 → "下载任务[资源名]完成"；其余任务用原名
+        const mapped = taskNames.get(p.task_id);
+        taskNames.delete(p.task_id);
+        const message = mapped
+          ? `下载任务[${mapped}]完成`
+          : `${p.name || "下载任务"} 已完成`;
+        dlState.onTaskDone?.(message, prev ?? "/", kind);
         dlState.removeTask(p.task_id);
         return
       }

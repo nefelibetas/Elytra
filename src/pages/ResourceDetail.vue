@@ -14,7 +14,7 @@ import {
   fetchVersions, fetchModDetails,
   type ModVersion, type ModDependencyItem, type ModDisplayItem,
 } from "../store/modSearch";
-import type { DownloadFileKind } from "../store/download";
+import { registerTaskName, type DownloadFileKind } from "../store/download";
 import { fmtCount, fmtSize, fmtModDate } from "../utils/format";
 import IconImage from "../component/IconImage.vue";
 
@@ -267,7 +267,7 @@ async function submitDownload() {
     return;
   }
   try {
-    await invoke("download_single_file", {
+    const taskId = await invoke<string>("download_single_file", {
       task: {
         version_dir_name: savedVersion.value,
         kind,
@@ -275,6 +275,10 @@ async function submitDownload() {
         filename: v.filename,
       },
     });
+    // 注册资源名：任务完成提示显示 "下载任务[资源名]完成"（fallback 文件名）
+    if (taskId) {
+      registerTaskName(taskId, item.value?.title ?? v.filename);
+    }
     showToast("已提交下载任务");
   } catch (e) {
     showToast(errMsg(e));

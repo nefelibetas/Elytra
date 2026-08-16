@@ -13,11 +13,12 @@ const router = useRouter();
 const errorDialog = ref(false);
 const errorMessage = ref("");
 
-dlState.onTaskDone = (taskName: string, prevRoute: string, kind?: TaskKind) => {
+dlState.onTaskDone = (message: string, _prevRoute: string, kind?: TaskKind) => {
   // JDK 安装任务：完成处理（自动选中等）由 jdkConfig 专属监听负责，此处不提示不跳转
   if (kind === "jdk") return;
-  showToast(`${taskName} 已完成`);
-  if (prevRoute) router.push(prevRoute);
+  // 文案由 download.ts 统一格式化（资源名映射 → "下载任务[资源名]完成"，其余原名）
+  showToast(message);
+  // 不自动退出任务中心：任务中心已是顶级 tab（FAB 移除），完成停留本页查看状态
 };
 
 dlState.onTaskError = (_taskName: string, error: string, prevRoute: string) => {
