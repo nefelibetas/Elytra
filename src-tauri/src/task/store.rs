@@ -107,9 +107,16 @@ static POOL: LazyLock<Result<SqlitePool, String>> = LazyLock::new(|| {
         use sqlx::sqlite::SqliteConnectOptions;
         let opts = SqliteConnectOptions::new()
             .filename(&path)
-            .create_if_missing(true);
+            .create_if_missing(true)
+            // 多连接并发写：sqlite 文件锁等待而非立即 BUSY 报错
+            .busy_timeout(std::time::Duration::from_secs(5));
         let pool = SqlitePoolOptions::new()
-            .max_connections(1)
+            // 单连接 + timeout 取消查询时连接可能不回池（sqlx 已知陷阱）→
+            // 池耗尽后所有 DB 操作 acquire 超时静默失败：快照残留（重启误报
+            // 未完成）+ 后续任务无快照。多连接稀释该风险；acquire 显式超时
+            // 防无限等待。
+            .max_connections(4)
+            .acquire_timeout(std::time::Duration::from_secs(2))
             .connect_with(opts)
             .await
             .map_err(|e| format!("打开任务数据库失败\n{e}"))?;
