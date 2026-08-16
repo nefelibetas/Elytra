@@ -537,6 +537,27 @@ pub fn find_file_in_dir(dir: &std::path::Path, ext: &str) -> Option<std::path::P
         })
 }
 
+/// 定位版本 JSON：优先 `{dir_name}.json`（标准布局），否则扫描目录内
+/// 含 `"mainClass"` 键的 json——PCL2 版本隔离实例目录混有游戏数据 json
+/// （TrashSlotSaveState/patchouli_data/usercache 等），字典序第一个
+/// 可能不是版本 json，直接解析会报 "missing field assetIndex"。
+pub fn find_version_json(dir: &std::path::Path, dir_name: &str) -> Option<std::path::PathBuf> {
+    let named = dir.join(format!("{dir_name}.json"));
+    if named.is_file() {
+        return Some(named);
+    }
+    std::fs::read_dir(dir).ok()?.filter_map(|e| e.ok()).find_map(|e| {
+        let p = e.path();
+        if p.extension()? == "json" && p.is_file() {
+            let text = std::fs::read_to_string(&p).ok()?;
+            if text.contains("\"mainClass\"") {
+                return Some(p);
+            }
+        }
+        None
+    })
+}
+
 /// 组装 JVM 参数三段：
 /// - preamble：-cp 之前（版本 JSON 参数 + JDK 22+ 兼容标志）
 /// - system_props：-D 类（natives/品牌/编码/代理/窗口标题/语言）
