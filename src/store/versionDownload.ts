@@ -311,6 +311,10 @@ export const vdState = reactive({
     }
 
     this.dlSubmitting = true;
+    // 提交前重新解析目标目录：watcher 的异步更新有竞态（选版本后立即点下载时
+    // resolve invoke 未返回，缓存旧值指向已存在的同名目录）——重名场景必须
+    // 拿到最新 _n，否则 json/jar/fabric-api 全部落盘到旧目录（覆盖已有版本）
+    await this.updateResolvedDirName();
     const taskId = await dlState.startTask(
       sv.id, sv.url, sv.id,
       mainLd ?? undefined, mainVer, ofVer, this.resolvedDirName || undefined,
