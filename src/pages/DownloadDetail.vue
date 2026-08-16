@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue"
 import { X, Check, LoaderCircle, RotateCcw, HardDriveDownload } from "@lucide/vue"
-import { dlState, TaskItem, interruptedJobs, resumeAllInterrupted, dismissInterrupted } from "../store/download"
+import { dlState, TaskItem, interruptedJobs, resumeAllInterrupted, dismissAllInterrupted } from "../store/download"
 import { errMsg } from "../utils/error"
 import { showToast } from "../utils/toast"
 import { useRouter } from "vue-router"
@@ -102,13 +102,11 @@ async function handleCancel(task: TaskItem) {
           恢复
         </button>
         <button
-          v-for="j in interruptedJobs"
-          :key="j.id"
           class="rb-btn"
-          v-tooltip="'放弃该任务，不再提示'"
-          @click="dismissInterrupted(j.id)"
+          v-tooltip="'放弃全部任务，不再提示'"
+          @click="dismissAllInterrupted"
         >
-          忽略
+          全部忽略
         </button>
       </div>
 
