@@ -99,7 +99,9 @@ pub async fn run_files_task(
     let cur_idx = Arc::new(AtomicU32::new(0));
     let total_files = task.files.len() as u32;
 
-    // 进度上报循环：150ms 心跳，速度按相邻采样差分 + EMA 平滑
+    // 进度上报循环：150ms 心跳，速度按相邻采样差分 + EMA 平滑（对齐 EmitLoop：
+    // 有实际字节推进才刷新停滞时钟；cur 相等时保持上次速度不衰减归零）；
+    // ETA 同步计算（停滞 >4s 或速度 <1KB/s 置 None，前端显示 —）。
     let emit_handle = tauri::async_runtime::spawn({
         let app = app.clone();
         let progress = progress.clone();
@@ -112,6 +114,7 @@ pub async fn run_files_task(
             let mut tick = tokio::time::interval(Duration::from_millis(150));
             let mut last_bytes = 0u64;
             let mut last_sample = Instant::now();
+            let mut last_progress_at = Instant::now();
             let mut speed_ema: f64 = 0.0;
             loop {
                 tick.tick().await;
@@ -121,8 +124,11 @@ pub async fn run_files_task(
                 let acc = acc_bytes.load(Ordering::Relaxed);
                 let cur = acc + cb;
                 let now = Instant::now();
+                if cur > last_bytes {
+                    last_progress_at = now;
+                }
                 let dt = now.duration_since(last_sample).as_secs_f64();
-                if dt >= 0.3 && cur >= last_bytes {
+                if dt >= 0.3 && cur > last_bytes {
                     let instant = (cur - last_bytes) as f64 / dt;
                     speed_ema = if speed_ema <= 0.0 {
                         instant
@@ -133,10 +139,25 @@ pub async fn run_files_task(
                     last_sample = now;
                 }
                 task::update_and_emit(&app, &progress, |p| {
+                    // 首次心跳即进入 running：create 初始为 pending，若不置位前端
+                    // 任务中心的聚合统计（速度/ETA/剩余文件）只统计 running 任务而恒为 0
+                    p.status = TaskStatus::Running;
                     p.completed_files = d;
+                    // 最终总数每 tick 写回：初始为 0，不写则前端"剩余文件"恒为 0
+                    p.total_files = total_files;
                     p.completed_bytes = cur;
                     p.total_bytes = acc + ct;
                     p.speed_bps = speed_ema;
+                    // ETA：剩余字节 / 速度；停滞（>4s 无推进）或速度过低（<1KB/s）时置 None
+                    let remaining = p.total_bytes.saturating_sub(cur);
+                    p.eta_seconds = if speed_ema >= 1024.0
+                        && remaining > 0
+                        && now.duration_since(last_progress_at) <= Duration::from_secs(4)
+                    {
+                        Some((remaining as f64 / speed_ema).ceil() as u64)
+                    } else {
+                        None
+                    };
                     if let Some(st) = p.steps.get_mut(cur_idx.load(Ordering::Relaxed) as usize) {
                         if st.status == StepStatus::Running {
                             st.progress = if ct > 0 {
