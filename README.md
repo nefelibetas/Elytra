@@ -5,9 +5,9 @@
 ## 功能
 
 - 游戏版本下载：官方源 / 国内镜像多源回退，sha1 校验，并发与限速
-- ModLoader：Fabric / Forge / NeoForge / OptiFine 安装，Quilt / LiteLoader 版本查询（Quilt 暂复用 Fabric 流程）
+- ModLoader：Fabric / Quilt / Forge / NeoForge / OptiFine 安装，LiteLoader 版本查询
 - 账号：微软正版登录（OAuth PKCE）、离线模式
-- 离线皮肤：Steve / Alex / 随机 / 自定义 / 正版玩家皮肤（对齐 PCL2 机制，仅 1.19.2 以下）
+- 离线皮肤：固定随机哈希 Steve/Alex（对齐 PCL2 机制，仅 1.19.2 以下）
 - JDK 自动扫描与自定义配置
 - 多游戏目录、下载任务管理、启动参数构建与游戏进程管理
 

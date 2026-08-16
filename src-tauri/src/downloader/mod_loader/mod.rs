@@ -11,7 +11,7 @@ pub mod version_query;
 pub use fabric::{install_fabric, install_quilt};
 pub use forge::install_forge;
 pub use neoforge::install_neoforge;
-pub use optifine::install_optifine;
+pub use optifine::{install_optifine, OptifineMode};
 
 fn maven_path(name: &str) -> String {
     let parts: Vec<&str> = name.split(':').collect();
@@ -94,7 +94,8 @@ pub(crate) fn merge_loader_profile(
 }
 
 /// 展开 inheritsFrom 继承（Forge/NeoForge 的 version.json 只有自身库 + 父指针）：
-/// 以父 JSON 为基 → 追加子库/参数 → 子关键字段覆盖（缺则保留父）→ 删 inheritsFrom。
+/// 以父 JSON 为基 → 子库拼到父库**之前** → 追加子参数 → 子关键字段覆盖（缺则保留父）
+/// → 删 inheritsFrom。
 /// 子 JSON 无 inheritsFrom 时视为完整独立 JSON，直接返回（仅改 id）。
 pub(crate) fn expand_inheritance(
     parent_text: &str,
@@ -109,11 +110,16 @@ pub(crate) fn expand_inheritance(
     let mut merged: serde_json::Value =
         serde_json::from_str(parent_text).map_err(|e| format!("解析原版版本 JSON 失败\n{}", e))?;
 
-    // libraries：父 + 子 拼接（父在前）
+    // libraries：子 + 父 拼接（子在前——继承式版本的通用惯例，官方启动器/HMCL 均子库
+    // 前置；OptiFine 纯净版依赖此顺序：预补丁客户端 jar 必须先于 vanilla 库出现在
+    // classpath，JVM 加载同名类时先命中 OptiFine 版本实现类覆盖。父在前会静默加载
+    // 原版类，OptiFine 不生效）
     let child_libs = child["libraries"].take();
     if let Some(libs) = child_libs.as_array() {
         if let Some(parent_libs) = merged["libraries"].as_array_mut() {
-            parent_libs.extend(libs.iter().cloned());
+            let mut combined = libs.clone();
+            combined.append(parent_libs);
+            merged["libraries"] = serde_json::Value::Array(combined);
         } else {
             merged["libraries"] = child_libs.clone();
         }

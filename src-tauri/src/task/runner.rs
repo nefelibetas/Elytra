@@ -431,6 +431,21 @@ pub async fn run_task(
 
     let optifine_dl = async {
         if let Some(of) = optifine_patch {
+            // OptiFine 安装场景随主 ModLoader 组合而定：
+            // - Fabric/Quilt：OptiFine + OptiFabric 桥接进 mods
+            // - Forge/NeoForge：OptiFine 直接进 mods
+            // - 无 loader（纯后端调用，前端不暴露）：纯净版独立版本 + classpath 库
+            let mode = match loader {
+                Some(l) => match l.kind {
+                    crate::task::LoaderKind::Fabric | crate::task::LoaderKind::Quilt => {
+                        mod_loader::OptifineMode::FabricLike
+                    }
+                    crate::task::LoaderKind::Forge | crate::task::LoaderKind::NeoForge => {
+                        mod_loader::OptifineMode::ForgeLike
+                    }
+                },
+                None => mod_loader::OptifineMode::Vanilla,
+            };
             if let Err(e) = mod_loader::install_optifine(
                 mc_version,
                 of,
@@ -438,6 +453,7 @@ pub async fn run_task(
                 &dir_name,
                 &vdir,
                 &config,
+                mode,
                 &bytes_counter,
                 &optifine_step_bytes,
                 &optifine_step_total,

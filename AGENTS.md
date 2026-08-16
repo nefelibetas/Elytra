@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-ElytraLauncher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前端）** 的 Minecraft 启动器。功能：游戏版本下载（官方/国内镜像多源）、ModLoader 安装（Fabric/Forge/NeoForge/OptiFine；Quilt 暂复用 Fabric 流程待修，LiteLoader 仅版本查询）、微软正版登录（OAuth PKCE）、离线模式（固定随机默认皮肤）、**JDK 扫描 + managed runtime 自动下载**（Mojang 官方 → Azul 双源回退）、Mod 双源搜索与**依赖解析**、下载任务管理、启动参数构建与游戏进程管理。
+ElytraLauncher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前端）** 的 Minecraft 启动器。功能：游戏版本下载（官方/国内镜像多源）、ModLoader 安装（Fabric/Quilt/Forge/NeoForge/OptiFine；LiteLoader 仅版本查询）、微软正版登录（OAuth PKCE）、离线模式（固定随机默认皮肤）、**JDK 扫描 + managed runtime 自动下载**（Mojang 官方 → Azul 双源回退）、Mod 双源搜索与**依赖解析**、下载任务管理、启动参数构建与游戏进程管理。
 
 后端约 60 个 `#[tauri::command]`，前端 7 个页面，无状态管理库（模块级 `reactive()` 单例）。
 
@@ -125,7 +125,7 @@ npx vue-tsc --noEmit           # 前端全量类型检查（可在项目根直�
 
 ## Known Debt（已知遗留，待处理）
 
-- **Quilt 实现有错（用户自修，规划中）**：`task/runner.rs` 中 `"quilt"` 复用 `install_fabric`（Quilt 会装错）；`install_optifine` 生成的 version.json 用 `inheritsFrom` + `file://` URL，与 `mainClass: launchwrapper` 兼容性存疑
+- **OptiFabric 覆盖范围有限**：Fabric/Quilt + OptiFine 依赖 OptiFabric 桥接（CurseForge 渠道，slug `optifabric`）；OptiFabric 维护缓慢（CF 最新 1.14.3，2024-01，仅覆盖至 ~1.20.x），1.21+ 组合会明确报错而非静默失效
 - **待产品决策**：`GcType::Custom` 语义为"不追加 GC 参数（用 JVM 默认）"，前端 label 已注明，行为符合设计
-- **已解决**：`LauncherVisibility` 已删除（前后端同步）；离线皮肤配置层已砍（启动与头像固定随机哈希 Steve/Alex，后续计划接入自定义皮肤站登录）
+- **已解决**：`LauncherVisibility` 已删除（前后端同步）；离线皮肤配置层已砍（启动与头像固定随机哈希 Steve/Alex，后续计划接入自定义皮肤站登录）；OptiFine 分场景安装（纯净版 classpath 独立版本 / Forge-like 进 mods / Fabric-like OptiFabric 进 mods，mainClass 统一官方 Main；重定向黑洞黑名单精确放行 `minio.749333.xyz`——bmclapi 下载主存储）
 - **备注**：README.md 是完整中文文档（非空）；AGENTS.md 已被 git 跟踪（修改会出现在 git status）

@@ -481,7 +481,8 @@ async fn modrinth_versions(
 // ── CurseForge（需要 x-api-key）──
 
 /// 带 x-api-key 发 GET 并解析 JSON；key 未配置时直接报错（不 panic、不暴露 key）。
-async fn curseforge_get(path: &str, params: &[(&str, String)]) -> Result<serde_json::Value, String> {
+/// pub(crate)：OptiFabric 安装（optifine.rs）复用同一查询通道。
+pub(crate) async fn curseforge_get(path: &str, params: &[(&str, String)]) -> Result<serde_json::Value, String> {
     let key = constants::CURSEFORGE_API_KEY
         .ok_or_else(|| "未配置 CurseForge API Key（项目根 .env 的 ELYTRA_CURSEFORGE_API_KEY），无法使用 CurseForge 来源".to_string())?;
     let mut all: Vec<(&str, String)> = vec![("gameId", CURSEFORGE_GAME_ID.to_string())];
