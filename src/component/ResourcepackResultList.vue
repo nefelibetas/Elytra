@@ -18,7 +18,7 @@ import IconImage from "./IconImage.vue";
     <template v-else-if="resourcepackSearch.searched">
       <div class="rp-list">
         <div v-for="m in resourcepackSearch.results" :key="m.key" class="rp-card">
-          <div class="rp-card-body" @click="openResourceDetail(m)">
+          <div class="rp-card-body" @click="openResourceDetail(m, { loader: '', gameVersion: resourcepackSearch.gameVersion, selectedVersion: '' })">
             <IconImage :src="m.icon_url" :size="32" />
             <span class="rp-info">
               <span class="rp-title-row">

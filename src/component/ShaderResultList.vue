@@ -18,7 +18,7 @@ import IconImage from "./IconImage.vue";
     <template v-else-if="shaderSearch.searched">
       <div class="sh-list">
         <div v-for="m in shaderSearch.results" :key="m.key" class="sh-card">
-          <div class="sh-card-body" @click="openResourceDetail(m)">
+          <div class="sh-card-body" @click="openResourceDetail(m, { loader: '', gameVersion: shaderSearch.gameVersion, selectedVersion: '' })">
             <IconImage :src="m.icon_url" :size="32" />
             <span class="sh-info">
               <span class="sh-title-row">

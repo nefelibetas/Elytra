@@ -8,7 +8,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { showToast } from "../utils/toast";
 import { errMsg } from "../utils/error";
 import { resourceDetail, openResourceDetail } from "../store/resourceDetail";
-import { getSavedDir } from "../store/selectedVersion";
+import { selectedVersion } from "../store/selectedVersion";
 import { dlTranslateMode, dlShowReleaseOnly } from "../store/downloaderConfig";
 import {
   fetchVersions, fetchModDetails,
@@ -66,9 +66,13 @@ const gameVersionOptions = computed(() =>
   ),
 );
 
-// 切换加载器后已选版本可能不在新选项里，自动清空
+// 切换加载器后已选版本可能不在新选项里，自动清空（继承值除外：列表搜索已按该版本过滤）
 watch(gameVersionOptions, () => {
-  if (gameVersionFilter.value && !gameVersionOptions.value.includes(gameVersionFilter.value)) {
+  if (
+    gameVersionFilter.value &&
+    gameVersionFilter.value !== inheritedVersion &&
+    !gameVersionOptions.value.includes(gameVersionFilter.value)
+  ) {
     gameVersionFilter.value = "";
   }
 });
@@ -151,10 +155,16 @@ async function loadVersions() {
   }
 }
 
-/** 项目切换：应用 store 同步来的版本筛选/选中版本（从上一详情进入/返回还原），再加载版本。 */
+/** 项目切换：应用 store 同步来的版本筛选/选中版本（从上一详情进入/返回还原），再加载版本。
+ *  列表页版本选项是完整 ID（如 "1.21.1"），详情页是主版本归类（如 "1.21"），
+ *  继承时做 major 归一化，并记录 inheritedVersion——watch(gameVersionOptions) 的清空
+ *  逻辑跳过继承值（列表搜索已按该版本过滤，进入详情的 mod 必然支持它，不应被清空）。 */
+let inheritedVersion: string | null = null;
+
 function onItemChange() {
   loaderFilter.value = resourceDetail.pendingLoader;
-  gameVersionFilter.value = resourceDetail.pendingGameVersion;
+  inheritedVersion = majorVersion(resourceDetail.pendingGameVersion);
+  gameVersionFilter.value = inheritedVersion;
   selectedVersionId.value = resourceDetail.pendingSelectedVersion;
   loadVersions();
 }
@@ -243,24 +253,27 @@ const fileKind = computed<DownloadFileKind | null>(() => {
   }
 });
 
-/** 下载目标版本目录（启动页当前版本；挂载时读取，会话内不变）。 */
-const savedDir = ref(getSavedDir());
+/** 下载目标版本目录（启动页当前选中的版本 id；后端按此解析实际目录名，会话内读取）。 */
+const savedVersion = ref(selectedVersion.value);
 
-/** 提交选中版本文件的下载任务（download_single_file → 任务中心自动注册）。 */
+/** 提交选中版本文件的下载任务（download_single_file → 任务中心自动注册）。
+ *  落盘版本隔离：versions/{版本目录}/{kind_dir}/{filename}（后端 resolve 兜底 _{n} 冲突）。 */
 async function submitDownload() {
   const v = versions.value.find(x => x.version_id === selectedVersionId.value);
   const kind = fileKind.value;
   if (!v || !kind) return;
-  if (!savedDir.value) {
+  if (!savedVersion.value) {
     showToast("请先在版本选择页选择版本");
     return;
   }
   try {
     await invoke("download_single_file", {
-      versionDirName: savedDir.value,
-      kind,
-      url: v.download_url,
-      filename: v.filename,
+      task: {
+        version_dir_name: savedVersion.value,
+        kind,
+        url: v.download_url,
+        filename: v.filename,
+      },
     });
     showToast("已提交下载任务");
   } catch (e) {

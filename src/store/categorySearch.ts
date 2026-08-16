@@ -25,8 +25,11 @@ export function createCategorySearch(category: string) {
     results: [] as ModDisplayItem[],
     total: 0,
     page: 1,
+    /** 请求序号：筛选快速连切时只应用最后一次发起的结果（防过期响应覆盖） */
+    searchSeq: 0,
 
     async search(page = 1) {
+      const seq = ++this.searchSeq;
       this.searching = true;
       this.error = "";
       try {
@@ -34,6 +37,7 @@ export function createCategorySearch(category: string) {
         const offset = (page - 1) * pageSize;
         if (this.source === "all") {
           const res = await searchAllSources(this.query.trim(), this.gameVersion, "", category, offset, pageSize);
+          if (seq !== this.searchSeq) return;
           this.results = res.items;
           this.total = res.total;
         } else {
@@ -47,18 +51,20 @@ export function createCategorySearch(category: string) {
             offset,
             translate: needsTranslation(),
           });
+          if (seq !== this.searchSeq) return;
           this.results = res.items.map(h => toDisplayItem(h, this.source as "modrinth" | "curseforge"));
           this.total = res.total;
         }
         this.page = page;
         this.searched = true;
       } catch (e) {
+        if (seq !== this.searchSeq) return;
         this.error = errMsg(e);
         this.searched = true;
         this.results = [];
         this.total = 0;
       } finally {
-        this.searching = false;
+        if (seq === this.searchSeq) this.searching = false;
       }
     },
 

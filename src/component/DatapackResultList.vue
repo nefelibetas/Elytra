@@ -18,7 +18,7 @@ import IconImage from "./IconImage.vue";
     <template v-else-if="datapackSearch.searched">
       <div class="da-list">
         <div v-for="m in datapackSearch.results" :key="m.key" class="da-card">
-          <div class="da-card-body" @click="openResourceDetail(m)">
+          <div class="da-card-body" @click="openResourceDetail(m, { loader: '', gameVersion: datapackSearch.gameVersion, selectedVersion: '' })">
             <IconImage :src="m.icon_url" :size="32" />
             <span class="da-info">
               <span class="da-title-row">

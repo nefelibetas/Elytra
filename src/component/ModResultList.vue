@@ -18,7 +18,7 @@ import IconImage from "./IconImage.vue";
     <template v-else-if="modSearch.searched">
       <div class="mod-list">
         <div v-for="m in modSearch.results" :key="m.key" class="mod-card">
-          <div class="mod-card-body" @click="openResourceDetail(m)">
+          <div class="mod-card-body" @click="openResourceDetail(m, { loader: modSearch.loader, gameVersion: modSearch.gameVersion, selectedVersion: '' })">
             <IconImage :src="m.icon_url" :size="32" />
             <span class="mod-info">
               <span class="mod-title-row">
