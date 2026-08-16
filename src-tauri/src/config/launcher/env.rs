@@ -34,17 +34,12 @@ pub fn load_launch_config(
     // 避免 classpath / natives 路径基于 java 进程 cwd 解析出错
     let mc_dir = dl_config.minecraft_dir_abs();
 
-    // 读取版本 JSON（扫描目录，文件名不一定是目录名）
+    // 读取版本 JSON（扫描目录，文件名不一定是目录名），并展开 inheritsFrom 继承
     let vdir = mc_dir.join("versions").join(version_dir_name);
     if !vdir.is_dir() {
         return Err(format!("版本目录不存在\n{}", vdir.display()));
     }
-    let vj_path = find_file_in_dir(&vdir, "json")
-        .ok_or_else(|| format!("版本目录下未找到 JSON 文件\n{}", vdir.display()))?;
-    let vj_text =
-        std::fs::read_to_string(&vj_path).map_err(|e| format!("读取版本 JSON 失败\n{}", e))?;
-    let version_json: VersionJson =
-        serde_json::from_str(&vj_text).map_err(|e| format!("解析版本 JSON 失败\n{}", e))?;
+    let version_json = load_version_json_with_inheritance(&mc_dir, version_dir_name)?;
 
     let required = version_json
         .java_version
@@ -83,6 +78,45 @@ pub fn load_launch_config(
         .ok_or_else(|| format!("无法解析 JDK 版本号\n{}", java_env.version))?;
 
     Ok((java_path, version_json, mc_dir, launcher_config, java_major))
+}
+
+/// 读取版本 JSON 并展开 inheritsFrom 继承。
+/// HMCL/官方安装器等生成的 ModLoader 版本 json 常为继承式（只含自身库 +
+/// inheritsFrom 指向原版，父库在父版本 json 里）——直接解析会缺父库导致
+/// 启动失败。Elytra 自装版本（merge_loader_profile）已是完整 json 无继承，
+/// 原样返回；父版本 json 缺失时明确报错（引导补装原版）。
+fn load_version_json_with_inheritance(
+    mc_dir: &std::path::Path,
+    version_dir_name: &str,
+) -> Result<VersionJson, String> {
+    let vdir = mc_dir.join("versions").join(version_dir_name);
+    let vj_path = find_file_in_dir(&vdir, "json")
+        .ok_or_else(|| format!("版本目录下未找到 JSON 文件\n{}", vdir.display()))?;
+    let vj_text =
+        std::fs::read_to_string(&vj_path).map_err(|e| format!("读取版本 JSON 失败\n{}", e))?;
+    let mut vj_value: serde_json::Value =
+        serde_json::from_str(&vj_text).map_err(|e| format!("解析版本 JSON 失败\n{}", e))?;
+
+    // 展开继承链：子库 + 父库合并、子关键字段覆盖、删 inheritsFrom
+    while let Some(parent_id) = vj_value.get("inheritsFrom").and_then(|v| v.as_str()) {
+        let parent_path = mc_dir
+            .join("versions")
+            .join(parent_id)
+            .join(format!("{parent_id}.json"));
+        let parent_text = std::fs::read_to_string(&parent_path).map_err(|e| {
+            format!(
+                "读取父版本 JSON（{parent_id}）失败——该版本为继承式安装，请先用 Elytra 补装原版 {parent_id}\n{}",
+                e
+            )
+        })?;
+        vj_value = crate::downloader::mod_loader::expand_inheritance(
+            &parent_text,
+            vj_value,
+            version_dir_name,
+        )?;
+    }
+
+    serde_json::from_value(vj_value).map_err(|e| format!("解析版本 JSON 失败\n{}", e))
 }
 
 /// 启动前完整性检测：校验 client JAR 和所有必需 library 是否已下载。
@@ -242,5 +276,44 @@ mod tests {
         assert_eq!(auto_pick_jdk(&list, 22).unwrap().path, "/jdk21");
         // 空列表
         assert!(auto_pick_jdk(&[], 8).is_none());
+    }
+
+    /// 继承式版本（HMCL/官方安装器风格）：子 json 只有自身库 + inheritsFrom 父指针，
+    /// 展开后应合并父库、子关键字段覆盖、父版本缺失时明确报错。
+    #[test]
+    fn version_json_expands_inheritance() {
+        let tmp = std::env::temp_dir().join(format!("elytra_inh_{}", std::process::id()));
+        let parent = tmp.join("versions/1.20.1");
+        let child = tmp.join("versions/1.20.1-forge-47.1.0");
+        std::fs::create_dir_all(&parent).unwrap();
+        std::fs::create_dir_all(&child).unwrap();
+        std::fs::write(
+            parent.join("1.20.1.json"),
+            r#"{"id":"1.20.1","mainClass":"net.minecraft.client.main.Main","assets":"1.20","assetIndex":{"id":"1.20","url":"x","sha1":"y","size":1,"totalSize":1},"downloads":{"client":{"url":"x","sha1":"y","size":1}},"arguments":{"game":[],"jvm":[]},"complianceLevel":0,"minimumLauncherVersion":21,"javaVersion":{"majorVersion":17},"releaseTime":"2021-11-30T00:00:00Z","time":"2021-11-30T00:00:00Z","type":"release","libraries":[{"name":"a:b:1","downloads":{"artifact":{"path":"a/b/1/a-1.jar","url":"x","sha1":"y","size":1}}}]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            child.join("1.20.1-forge-47.1.0.json"),
+            r#"{"id":"1.20.1-forge-47.1.0","inheritsFrom":"1.20.1","mainClass":"cpw.mods.bootstraplauncher.BootstrapLauncher","complianceLevel":0,"libraries":[{"name":"net.minecraftforge:forge:47.1.0","downloads":{"artifact":{"path":"net/minecraftforge/forge/47.1.0/forge-47.1.0.jar","url":"x","sha1":"y","size":1}}}]}"#,
+        )
+        .unwrap();
+
+        let vj = load_version_json_with_inheritance(&tmp, "1.20.1-forge-47.1.0").unwrap();
+        assert_eq!(vj.libraries.len(), 2, "父库 + 子库应合并");
+        assert_eq!(
+            vj.libraries[0].name, "a:b:1",
+            "父库应在子库之前（classpath 顺序）"
+        );
+        assert_eq!(
+            vj.main_class, "cpw.mods.bootstraplauncher.BootstrapLauncher",
+            "子 mainClass 应覆盖父"
+        );
+
+        // 父版本缺失：明确报错
+        std::fs::remove_dir_all(&parent).unwrap();
+        let err = load_version_json_with_inheritance(&tmp, "1.20.1-forge-47.1.0").unwrap_err();
+        assert!(err.contains("父版本 JSON"), "应提示父版本缺失: {err}");
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
