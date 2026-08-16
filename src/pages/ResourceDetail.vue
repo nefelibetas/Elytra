@@ -77,12 +77,22 @@ watch(gameVersionOptions, () => {
   }
 });
 
+/** 版本类型优先级：正式版置顶（用户逻辑默认下载稳定版），beta/alpha 依次靠后；
+ *  同组内按发布时间倒序（最新在前）。无正式版时 beta 组自然置顶（最新可能只有 alpha）。 */
+const TYPE_ORDER: Record<string, number> = { release: 0, beta: 1, alpha: 2, unknown: 3 };
+
 const filteredVersions = computed(() =>
-  versions.value.filter(
-    v =>
-      (!loaderFilter.value || v.loaders.includes(loaderFilter.value)) &&
-      (!gameVersionFilter.value || v.game_versions.some(gv => majorVersion(gv) === gameVersionFilter.value)),
-  ),
+  versions.value
+    .filter(
+      v =>
+        (!loaderFilter.value || v.loaders.includes(loaderFilter.value)) &&
+        (!gameVersionFilter.value || v.game_versions.some(gv => majorVersion(gv) === gameVersionFilter.value)),
+    )
+    .sort((a, b) => {
+      const t = (TYPE_ORDER[a.version_type] ?? 3) - (TYPE_ORDER[b.version_type] ?? 3);
+      if (t !== 0) return t;
+      return b.date_published.localeCompare(a.date_published);
+    }),
 );
 
 function loaderLabel(l: string): string {
@@ -406,6 +416,8 @@ async function copyName() {
                   <span class="mv-name-row">
                     <span v-for="ld in v.loaders" :key="ld" class="md-ld" :class="`md-ld-${ld}`">{{ ld }}</span>
                     <span class="mv-name" v-tooltip="v.filename">{{ v.filename }}</span>
+                    <span v-if="v.version_type === 'alpha'" class="mv-type alpha">alpha</span>
+                    <span v-else-if="v.version_type === 'beta'" class="mv-type beta">beta</span>
                   </span>
                   <span class="mv-tags">
                     <span v-for="gv in v.game_versions.slice(0, 3)" :key="gv" class="mv-tag gv">{{ gv }}</span>
@@ -883,6 +895,8 @@ async function copyName() {
 }
 
 .mv-name {
+  flex: 1;
+  min-width: 0;
   font-size: 12px;
   font-weight: 500;
   color: var(--text-primary);
@@ -890,6 +904,19 @@ async function copyName() {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* 版本类型标记（非正式版）：alpha 红 / beta 橙，随主题语义色 */
+.mv-type {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.6;
+  text-transform: uppercase;
+}
+.mv-type.alpha { background: var(--color-danger-bg); color: var(--color-danger); }
+.mv-type.beta { background: rgba(217, 119, 6, 0.12); color: var(--color-warning); }
 
 .mv-tags {
   display: flex;

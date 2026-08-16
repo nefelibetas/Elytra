@@ -181,6 +181,9 @@ pub struct ModVersion {
     pub sha1: Option<String>,
     pub date_published: String,
     pub downloads: u64,
+    /// 版本类型（Modrinth version_type / CurseForge releaseType 归一）：
+    /// release | beta | alpha | unknown
+    pub version_type: String,
     /// 该版本文件的依赖列表（Modrinth dependencies / CurseForge dependencies 归一）
     pub dependencies: Vec<ModDependency>,
 }
@@ -452,6 +455,7 @@ async fn modrinth_versions(
                 sha1: hashes.and_then(|h| h.get("sha1")).and_then(|s| s.as_str()).map(str::to_string),
                 date_published: v["date_published"].as_str().unwrap_or("").to_string(),
                 downloads: v["downloads"].as_u64().unwrap_or(0),
+                version_type: v["version_type"].as_str().unwrap_or("unknown").to_string(),
                 dependencies: v["dependencies"]
                     .as_array()
                     .map(|arr| {
@@ -598,6 +602,13 @@ async fn curseforge_versions(
                 .collect();
             let loaders = curseforge_loaders(&game_versions);
             let sha1 = f["hashes"].as_array()?.iter().find(|h| h["algo"].as_u64() == Some(1))?;
+            // CurseForge releaseType：1=Release、2=Beta、3=Alpha（归一化）
+            let version_type = match f["releaseType"].as_u64() {
+                Some(1) => "release",
+                Some(2) => "beta",
+                Some(3) => "alpha",
+                _ => "unknown",
+            };
             Some(ModVersion {
                 version_id: f["id"].as_u64()?.to_string(),
                 version_number: f["fileName"].as_str()?.to_string(),
@@ -609,6 +620,7 @@ async fn curseforge_versions(
                 sha1: sha1.get("value").and_then(|s| s.as_str()).map(str::to_string),
                 date_published: f["fileDate"].as_str().unwrap_or("").to_string(),
                 downloads: f["downloadCount"].as_u64().unwrap_or(0),
+                version_type: version_type.to_string(),
                 dependencies: f["dependencies"]
                     .as_array()
                     .map(|arr| {

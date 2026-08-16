@@ -48,6 +48,8 @@ export interface ModVersion {
   sha1: string | null;
   date_published: string;
   downloads: number;
+  /** 版本类型（两源归一）：release | beta | alpha | unknown */
+  version_type: string;
   /** 该版本文件的依赖列表（两源归一：project_id + relation） */
   dependencies: ModDependency[];
 }
