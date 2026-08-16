@@ -115,7 +115,7 @@ async function handleCancel(task: TaskItem) {
       <div v-if="dlState.tasks.length === 0" class="empty">
         <HardDriveDownload :size="44" class="empty-icon" />
         <p>暂无下载任务</p>
-        <p class="empty-sub">在下载页选择版本后，任务进度会显示在这里</p>
+        <p class="empty-sub">在资源中心选择版本后，任务进度会显示在这里</p>
       </div>
 
       <TransitionGroup name="task" class="task-list">

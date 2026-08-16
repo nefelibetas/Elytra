@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 长列表滚动回顶 FAB：自动绑定最近的滚动祖先（overflow-y: auto/scroll 且内容可滚动），
 // 滚动超过阈值出现、回到顶部附近隐藏，带出现/隐藏动画。
-// 位置固定右下 24px（下载管理已为顶级路由，无全局 DownloadFAB 需避让）。
+// 位置固定右下 24px（任务中心已为顶级路由，无全局 DownloadFAB 需避让）。
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { ArrowUp } from "@lucide/vue";
 

@@ -12,7 +12,7 @@ export type DownloadTab =
 
 export const downloadTabState = reactive({
   current: "vanilla" as DownloadTab,
-  /** 各 tab 在下载页滚动容器中的滚动位置（离开时记录，返回时恢复） */
+  /** 各 tab 在资源中心页滚动容器中的滚动位置（离开时记录，返回时恢复） */
   scrollTop: {
     vanilla: 0,
     mod: 0,

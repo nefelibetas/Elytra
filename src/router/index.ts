@@ -3,7 +3,7 @@ import Launch from "../pages/Launch.vue";
 import Download from "../pages/Download.vue";
 import Settings from "../pages/Settings.vue";
 import DownloadDetail from "../pages/DownloadDetail.vue";
-import ModDetail from "../pages/ModDetail.vue";
+import ResourceDetail from "../pages/ResourceDetail.vue";
 import VersionSelect from "../pages/VersionSelect.vue";
 import VersionSetup from "../pages/VersionSetup.vue";
 
@@ -19,7 +19,7 @@ const routes = [
   { path: "/download", name: "download", component: Download },
   { path: "/settings", name: "settings", component: Settings },
   { path: "/download-detail", name: "download-detail", component: DownloadDetail },
-  { path: "/mod-detail", name: "mod-detail", component: ModDetail },
+  { path: "/resource-detail", name: "resource-detail", component: ResourceDetail },
   { path: "/version-select", name: "version-select", component: VersionSelect },
   { path: "/version-setup", name: "version-setup", component: VersionSetup },
 ];
@@ -35,7 +35,7 @@ const routeLevel: Record<string, number> = {
   download: 0,
   settings: 0,
   "download-detail": 0,
-  "mod-detail": 1,
+  "resource-detail": 1,
   "version-select": 1,
   "version-setup": 2,
 };
