@@ -15,6 +15,20 @@ pub fn save(config: &model::JdkConfig) -> Result<(), String> {
     persist::save(SECT_JDK, config).map_err(|e| format!("保存配置失败\n{e}"))
 }
 
+/// 将扫描/安装发现的 JDK 去重注册进 discovered_jdks（启动器自动扫描与下载安装共用）。
+pub fn register_scanned(found: Vec<model::JdkInfo>) {
+    if found.is_empty() {
+        return;
+    }
+    let mut cfg = read();
+    for env in found {
+        if !cfg.discovered_jdks.iter().any(|e| e.path == env.path) {
+            cfg.discovered_jdks.push(env);
+        }
+    }
+    let _ = save(&cfg);
+}
+
 /// 启动时后台扫描：已有缓存则复用；扫描为空则不动配置。
 /// 只在 lib.rs 的 spawn 线程里调，命令里禁止调用。
 pub fn init() {

@@ -16,7 +16,7 @@ use sqlx::{Row, SqlitePool};
 use crate::task::model::{DownloadFilesTask, DownloadTask};
 use crate::task::TaskStatus;
 
-/// 任务恢复凭证：重建任务所需的最小信息（三路任务各一）。
+/// 任务恢复凭证：重建任务所需的最小信息（各任务一）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum JobSpec {
     /// 完整下载/安装（原版/ModLoader/OptiFine/Fabric API）
@@ -25,6 +25,8 @@ pub enum JobSpec {
     Files(DownloadFilesTask),
     /// 版本补全（修复）
     Repair { version_dir_name: String },
+    /// JDK 安装（下载缺失 Java 运行时）
+    InstallJdk { major: u32 },
 }
 
 impl JobSpec {
@@ -34,6 +36,7 @@ impl JobSpec {
             JobSpec::Download(_) => "版本下载/安装",
             JobSpec::Files(_) => "文件下载",
             JobSpec::Repair { .. } => "版本补全",
+            JobSpec::InstallJdk { .. } => "JDK 安装",
         }
     }
 }

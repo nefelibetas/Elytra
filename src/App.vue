@@ -3,7 +3,7 @@ import { onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import TitleBar from "./component/TitleBar.vue";
 import AlertDialog from "./component/AlertDialog.vue";
-import { dlState, ensureListen, checkInterrupted, waitingUser, decideWaitingTask } from "./store/download";
+import { dlState, ensureListen, checkInterrupted, waitingUser, decideWaitingTask, type TaskKind } from "./store/download";
 import { startMemoryMonitor } from "./store/memory";
 import { toastState, showToast } from "./utils/toast";
 
@@ -13,7 +13,9 @@ const router = useRouter();
 const errorDialog = ref(false);
 const errorMessage = ref("");
 
-dlState.onTaskDone = (taskName: string, prevRoute: string) => {
+dlState.onTaskDone = (taskName: string, prevRoute: string, kind?: TaskKind) => {
+  // JDK 安装任务：完成处理（自动选中等）由 jdkConfig 专属监听负责，此处不提示不跳转
+  if (kind === "jdk") return;
   showToast(`${taskName} 已完成`);
   if (prevRoute) router.push(prevRoute);
 };
@@ -21,7 +23,7 @@ dlState.onTaskDone = (taskName: string, prevRoute: string) => {
 dlState.onTaskError = (_taskName: string, error: string, prevRoute: string) => {
   errorMessage.value = error;
   errorDialog.value = true;
-  // 失败任务卡片已由事件处理清理，退出下载管理页回到来源页
+  // 失败任务卡片已由事件处理清理，退出任务中心页回到来源页
   if (prevRoute) router.push(prevRoute);
 };
 

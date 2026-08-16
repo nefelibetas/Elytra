@@ -30,8 +30,8 @@ const jdkDownloadOptions: SelOption[] = [
 
 async function handleInstallJdk() {
   try {
+    // 提交任务中心（成功/完成 toast 由 store 内处理）
     await installJdk(downloadMajor.value);
-    showToast(`Java ${downloadMajor.value} 下载并配置完成`);
   } catch (e) {
     showToast(errMsg(e));
   }

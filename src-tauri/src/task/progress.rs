@@ -436,8 +436,11 @@ pub fn set_cancelled(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>) {
         tauri::async_runtime::spawn_blocking(move || {
             // 整删带重试：Windows 文件占用（杀软扫描/刚关闭的句柄）常为瞬时状态，
             // 300ms 间隔重试至多 10 次（≈3s），保证取消后版本目录真正清空；
-            // 删除成功后（目录已不存在）提前退出。
+            // 目录不存在（未创建/已删）直接返回，避免无谓重试。
             for attempt in 0..10u32 {
+                if !path.exists() {
+                    return;
+                }
                 match std::fs::remove_dir_all(&path) {
                     Ok(_) => return,
                     Err(e) => {

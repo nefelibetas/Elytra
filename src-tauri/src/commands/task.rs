@@ -128,6 +128,34 @@ pub async fn submit_missing_download(
     Ok(task_id)
 }
 
+/// 提交 JDK 安装任务（下载缺失 Java 运行时）到任务中心。
+/// 单步任务；完成后自动注册进 jdk 配置，前端完成监听自动选中。
+/// 返回任务 id。
+#[tauri::command]
+pub async fn submit_install_jdk(app: AppHandle, major: u32) -> Result<String, String> {
+    if !matches!(major, 8 | 17 | 21 | 25) {
+        return Err(format!("暂不支持安装 Java {major}（仅支持 8/17/21/25）"));
+    }
+    let tm = task::global();
+    let name = format!("下载 Java {major}");
+    let steps = ["下载 Java 运行时"];
+    let (task_id, cancel, progress) = tm.create(&name, &steps);
+
+    // 持久化快照（崩溃恢复依据；DB 故障静默）
+    crate::task::store::save_snapshot(
+        &task_id,
+        &name,
+        &crate::task::store::JobSpec::InstallJdk { major },
+        crate::task::TaskStatus::Running,
+    );
+
+    tauri::async_runtime::spawn(async move {
+        runner::run_install_jdk(app, &cancel, &progress, major).await;
+    });
+
+    Ok(task_id)
+}
+
 /// 列出上次进程退出时未完成的任务（running/interrupted 快照），供前端询问恢复。
 #[tauri::command]
 pub fn list_interrupted_tasks() -> Vec<crate::task::store::InterruptedJob> {
@@ -148,6 +176,7 @@ pub async fn resume_task(app: AppHandle, task_id: String) -> Result<String, Stri
         JobSpec::Repair { version_dir_name } => {
             submit_missing_download(app, version_dir_name).await
         }
+        JobSpec::InstallJdk { major } => submit_install_jdk(app, major).await,
     }
 }
 

@@ -25,7 +25,7 @@ pub fn run() {
             commands::jdk::scan_custom_jdk,
             commands::jdk::get_jdk_config,
             commands::jdk::save_jdk_config,
-            commands::jdk::install_jdk,
+            commands::task::submit_install_jdk,
             commands::downloader::get_version_list,
             commands::gamedirs::get_game_dirs,
             commands::gamedirs::add_game_dir,
