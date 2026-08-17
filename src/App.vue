@@ -202,7 +202,7 @@ input, textarea {
 
 :root {
   --titlebar-h: 48px;
-  font-family: Inter, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  font-family: Inter, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "Noto Sans SC", sans-serif;
   font-size: 14px;
   line-height: 1.5;
   font-weight: 400;

@@ -103,6 +103,14 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
   backdrop-filter: blur(2px);
 }
 
+/* WebKitGTK 低版本无 backdrop-filter（遮罩无模糊）：提升不透明度补偿可读性
+ * （色值与 --overlay 的 rgba(15, 23, 42, …) 同源，仅提升 alpha） */
+@supports not (backdrop-filter: blur(1px)) {
+  .dialog-overlay {
+    background: rgba(15, 23, 42, 0.68);
+  }
+}
+
 .dialog-card {
   width: 380px;
   background: var(--surface-card);
