@@ -147,35 +147,55 @@ const isSnapshot = (gv: string): boolean => SNAPSHOT_RE.test(gv);
  *  必须在 loadVersions 前声明：immediate watch 会在 setup 期立即调用它。 */
 const selectedVersionId = ref("");
 
+/** 版本请求序号：每次请求自增，响应返回时与当前值不符即过期（项目已切换/返回/重试）→ 丢弃。 */
+let versionsSeq = 0;
+
 async function loadVersions() {
+  const seq = ++versionsSeq;
   const it = item.value;
   if (!it) return;
+  // 立即清空旧数据：切换项目瞬间旧版本列表仍在，selectedDepIds 会用旧列表 + 旧选中版本
+  // 算出残留的前置依赖卡片（待新列表加载完成后才消失）——先清空，让依赖卡片随项目切换立即收起
+  versions.value = [];
   loadingVersions.value = true;
   versionError.value = "";
   try {
     const all = await fetchVersions(it.source, it.id);
+    if (seq !== versionsSeq) return; // 过期响应（项目已切换/返回）丢弃
     // 仅显示正式版：剔除所有支持的版本都是快照/预发布的文件（混版文件保留）
     versions.value = dlShowReleaseOnly.value
       ? all.filter(v => v.game_versions.some(gv => !isSnapshot(gv)))
       : all;
   } catch (e) {
+    if (seq !== versionsSeq) return;
     versionError.value = errMsg(e);
   } finally {
-    loadingVersions.value = false;
+    if (seq === versionsSeq) loadingVersions.value = false;
   }
 }
 
 /** 项目切换：应用 store 同步来的版本筛选/选中版本（从上一详情进入/返回还原），再加载版本。
+ *  返回还原路径：store 存档了上一层的版本列表快照，直接恢复（不重新请求）。
  *  列表页版本选项是完整 ID（如 "1.21.1"），详情页是主版本归类（如 "1.21"），
  *  继承时做 major 归一化，并记录 inheritedVersion——watch(gameVersionOptions) 的清空
  *  逻辑跳过继承值（列表搜索已按该版本过滤，进入详情的 mod 必然支持它，不应被清空）。 */
 let inheritedVersion: string | null = null;
 
 function onItemChange() {
+  versionsSeq++; // 项目切换：使在飞的版本请求过期（返回恢复路径不调用 loadVersions）
   loaderFilter.value = resourceDetail.pendingLoader;
   inheritedVersion = majorVersion(resourceDetail.pendingGameVersion);
   gameVersionFilter.value = inheritedVersion;
   selectedVersionId.value = resourceDetail.pendingSelectedVersion;
+  if (resourceDetail.pendingVersions !== null) {
+    // 返回还原：恢复上一层快照，不重新请求
+    versions.value = resourceDetail.pendingVersions;
+    versionError.value = resourceDetail.pendingVersionError;
+    loadingVersions.value = false;
+    resourceDetail.pendingVersions = null;
+    resourceDetail.pendingVersionError = "";
+    return;
+  }
   loadVersions();
 }
 
@@ -202,7 +222,11 @@ const selectedDepIds = computed(() => {
   return order;
 });
 
+/** 依赖请求序号：每次请求自增，响应返回时与当前值不符即过期（选中版本已切换/返回）→ 丢弃。 */
+let depsSeq = 0;
+
 async function loadDeps() {
+  const seq = ++depsSeq;
   const it = item.value;
   const ids = selectedDepIds.value;
   if (!it || ids.length === 0) {
@@ -210,14 +234,26 @@ async function loadDeps() {
     depError.value = "";
     return;
   }
+  // 返回还原：恢复上一层依赖快照，不重新请求（seq 已自增，在飞请求随之过期）
+  if (resourceDetail.pendingDepItems !== null) {
+    depItems.value = resourceDetail.pendingDepItems;
+    depError.value = resourceDetail.pendingDepError;
+    loadingDeps.value = false;
+    resourceDetail.pendingDepItems = null;
+    resourceDetail.pendingDepError = "";
+    return;
+  }
   loadingDeps.value = true;
   depError.value = "";
   try {
-    depItems.value = await fetchModDetails(it.source, ids);
+    const items = await fetchModDetails(it.source, ids);
+    if (seq !== depsSeq) return; // 过期响应（选中版本已切换/返回）丢弃
+    depItems.value = items;
   } catch (e) {
+    if (seq !== depsSeq) return;
     depError.value = errMsg(e);
   } finally {
-    loadingDeps.value = false;
+    if (seq === depsSeq) loadingDeps.value = false;
   }
 }
 
@@ -466,7 +502,11 @@ async function copyName() {
               <div v-else-if="depError" class="md-dep-state err">{{ depError }}</div>
               <div v-else-if="depItems.length === 0" class="md-dep-empty">未找到前置依赖信息</div>
               <div v-else class="md-dep-list">
-                <div v-for="d in depItems" :key="d.id" class="md-dep-item" @click="openResourceDetail(depToItem(d), { loader: loaderFilter, gameVersion: gameVersionFilter, selectedVersion: selectedVersionId })">
+                <div v-for="d in depItems" :key="d.id" class="md-dep-item" @click="openResourceDetail(
+                  depToItem(d),
+                  { loader: loaderFilter, gameVersion: gameVersionFilter, selectedVersion: selectedVersionId },
+                  { versions, versionError, depItems, depError },
+                )">
                   <IconImage :src="d.icon_url" :size="28" />
                   <span class="md-dep-info">
                     <span class="md-dep-title">{{ d.title }}</span>
