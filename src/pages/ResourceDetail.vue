@@ -665,20 +665,33 @@ async function copyName() {
   color: var(--color-brand);
 }
 .md-ld-fabric {
-  background: color-mix(in srgb, var(--ld-fabric) 12%, transparent);
   color: var(--ld-fabric);
 }
 .md-ld-forge {
-  background: color-mix(in srgb, var(--ld-forge) 12%, transparent);
   color: var(--ld-forge);
 }
 .md-ld-neoforge {
-  background: color-mix(in srgb, var(--ld-neoforge) 12%, transparent);
   color: var(--ld-neoforge);
 }
 .md-ld-quilt {
-  background: color-mix(in srgb, var(--ld-quilt) 12%, transparent);
   color: var(--ld-quilt);
+}
+
+/* 徽章底色：color-mix 需要 WebKitGTK ≥ 2.42（Ubuntu 22.04 的 2.40 不支持）。
+ * 不支持的平台（低版本 Linux WebView）降级为纯文字色徽章，避免整条声明失效丢色。 */
+@supports (color-mix(in srgb, red 12%, transparent)) {
+  .md-ld-fabric {
+    background: color-mix(in srgb, var(--ld-fabric) 12%, transparent);
+  }
+  .md-ld-forge {
+    background: color-mix(in srgb, var(--ld-forge) 12%, transparent);
+  }
+  .md-ld-neoforge {
+    background: color-mix(in srgb, var(--ld-neoforge) 12%, transparent);
+  }
+  .md-ld-quilt {
+    background: color-mix(in srgb, var(--ld-quilt) 12%, transparent);
+  }
 }
 
 .md-badge {
