@@ -24,7 +24,10 @@ fn read_dirs() -> Vec<GameDir> {
                 .find(|d| d.path == default.path && d.name == old_name)
             {
                 d.name = "当前文件夹".to_string();
-                let _ = crate::persist::save(constants::SECT_GAME_DIRS, &GameDirsConfig { dirs: dirs.clone() });
+                let _ = crate::persist::save(
+                    constants::SECT_GAME_DIRS,
+                    &GameDirsConfig { dirs: dirs.clone() },
+                );
             }
         }
         dirs
@@ -32,8 +35,11 @@ fn read_dirs() -> Vec<GameDir> {
 }
 
 fn save_dirs(dirs: Vec<GameDir>) -> Result<Vec<GameDir>, String> {
-    crate::persist::save(constants::SECT_GAME_DIRS, &GameDirsConfig { dirs: dirs.clone() })
-        .map_err(|e| format!("保存配置失败\n{e}"))?;
+    crate::persist::save(
+        constants::SECT_GAME_DIRS,
+        &GameDirsConfig { dirs: dirs.clone() },
+    )
+    .map_err(|e| format!("保存配置失败\n{e}"))?;
     Ok(dirs)
 }
 
