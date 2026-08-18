@@ -57,6 +57,13 @@ function goBack() {
     return;
   }
   if (p === "/version-setup") {
+    // 按进入来源返回：主页卡片或版本选择页进入都能回到原页面；
+    // 无内部导航历史（直接打开链接）时兜底回版本选择
+    const back = (window.history.state as { back?: string } | null)?.back;
+    if (back && back.startsWith("/")) {
+      router.push(back);
+      return;
+    }
     router.push("/version-select");
     return;
   }
