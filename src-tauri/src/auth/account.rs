@@ -157,7 +157,7 @@ fn url_decode(s: &str) -> String {
     let s = s.replace('+', " ");
     percent_encoding::percent_decode(s.as_bytes())
         .decode_utf8()
-        .unwrap_or_else(|_| std::borrow::Cow::Borrowed(""))
+        .unwrap_or_default()
         .to_string()
 }
 

@@ -115,7 +115,7 @@ pub fn generate_state() -> String {
 fn form_body(params: &[(&str, &str)]) -> String {
     let mut serialize = Serializer::new(String::new());
     for (k, v) in params {
-        serialize.append_pair(&k, &v);
+        serialize.append_pair(k, v);
     }
     serialize.finish()
 }
