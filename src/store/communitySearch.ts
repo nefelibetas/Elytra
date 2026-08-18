@@ -23,6 +23,8 @@ export interface CommunitySearchResult {
   downloads: number;
   icon_url: string | null;
   page_url: string;
+  /** 搜索结果所属分类（shader/worlds 等；普通 mod 搜索为 null） */
+  category: string | null;
 }
 
 export interface CommunitySearchPage {

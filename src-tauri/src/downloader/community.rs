@@ -46,6 +46,9 @@ pub struct CommunitySearchResult {
     pub downloads: u64,
     pub icon_url: Option<String>,
     pub page_url: String,
+    /// 搜索结果所属分类（shader/worlds 等，由查询条件透传；普通 mod 搜索为 None）。
+    /// 供详情页按类别裁剪操作（如光影/地图不显示 MC百科链接）。
+    pub category: Option<String>,
 }
 
 /// 已知 ModLoader 名（用于从 Modrinth categories 中过滤 loader 标签）。
@@ -290,7 +293,8 @@ fn translation_body(source: &str, ids: &[String]) -> Option<serde_json::Value> {
 
 /// 批量查 MCIM 中文简介翻译（POST /translate/{source}）。先查内存缓存（10 分钟 TTL），
 /// 只请求未命中的 id；网络失败/无翻译静默降级（返回空 map，不阻塞搜索结果）。
-async fn fetch_translations(source: &str, ids: &[String]) -> HashMap<String, String> {
+/// pub(crate)：本地 Mod 详情（mod_updates.rs）复用同一翻译通道。
+pub(crate) async fn fetch_translations(source: &str, ids: &[String]) -> HashMap<String, String> {
     if ids.is_empty() {
         return HashMap::new();
     }
@@ -356,9 +360,27 @@ async fn search_modrinth(
     if let Some(ld) = loader {
         facets.push(vec![format!("categories:{}", ld)]);
     }
-    // 光影包等非 mod 项目类型（Modrinth 的 project_type facet）
-    if let Some(cat) = category {
-        facets.push(vec![format!("project_type:{}", cat)]);
+    // Modrinth /v2/search 不带 project_type facet 时返回全部项目类型
+    // （modpack/resourcepack 等会混入 mod 搜索结果，实测确认），必须显式过滤：
+    // 普通 mod 搜索（category None）固定 project_type:mod；
+    // 分类搜索按类型映射——注意 datapack 无 project_type 实体（数据包项目是
+    // mod 类型 + datapack 标签，需双 facet：project_type:mod AND categories:datapack）；
+    // worlds 无对应类型（前端已锁定 CurseForge 单源，此处防御性返回空）
+    match category {
+        Some("datapack") => {
+            facets.push(vec!["project_type:mod".into()]);
+            facets.push(vec!["categories:datapack".into()]);
+        }
+        Some("worlds") => {
+            return Ok(CommunitySearchPage {
+                items: Vec::new(),
+                total: 0,
+            });
+        }
+        _ => facets.push(vec![format!(
+            "project_type:{}",
+            category.unwrap_or("mod")
+        )]),
     }
     let mut params: Vec<(&str, String)> = vec![
         ("query", query.to_string()),
@@ -404,10 +426,14 @@ async fn search_modrinth(
                 author: h["author"].as_str().unwrap_or("").to_string(),
                 downloads: h["downloads"].as_u64().unwrap_or(0),
                 icon_url: h["icon_url"].as_str().map(str::to_string),
+                // 项目 URL 按 project_type 分段（mod/shader/resourcepack/datapack/modpack），
+                // 写死 /mod/ 会让光影包等详情页「转到 Modrinth」404
                 page_url: format!(
-                    "https://modrinth.com/mod/{}",
+                    "https://modrinth.com/{}/{}",
+                    h["project_type"].as_str().unwrap_or("mod"),
                     h["slug"].as_str().unwrap_or("")
                 ),
+                category: category.map(str::to_string),
             })
         })
         .collect();
@@ -535,11 +561,14 @@ async fn search_curseforge(
             params.push(("modLoaderType", id.to_string()));
         }
     }
-    if let Some(cat) = category {
-        if let Some(id) = curseforge_class_id(cat) {
-            params.push(("classId", id.to_string()));
-        }
-    }
+    // CF /mods/search 不传 classId 时返回全部项目类型（整合包/材质包/光影混入），
+    // 必须显式过滤：普通 mod 搜索（category None）默认 Minecraft Mods(classId=6)，
+    // 分类搜索按已知映射（shader=6552 等），未知类别防御性回落 mod
+    let class_id = match category {
+        None => 6,
+        Some(cat) => curseforge_class_id(cat).unwrap_or(6),
+    };
+    params.push(("classId", class_id.to_string()));
     let data = curseforge_get("/mods/search", &params).await?;
 
     let arr = data["data"].as_array().ok_or_else(|| "搜索响应缺少 data".to_string())?;
@@ -570,11 +599,20 @@ async fn search_curseforge(
                     .to_string(),
                 downloads: m["downloadCount"].as_u64().unwrap_or(0),
                 icon_url: m["logo"]["url"].as_str().map(str::to_string),
-                page_url: format!(
-                    "https://www.curseforge.com/minecraft/{}/{}",
-                    curseforge_url_segment(category),
-                    m["slug"].as_str().unwrap_or("")
-                ),
+                // 官网 URL 以 API 返回的 websiteUrl 为准（分类段随 classId 变化：
+                // mods/modpacks/worlds 等，自行拼接 mc-mods 会让整合包等 404）；
+                // 缺失时按已知分类段兜底拼接
+                page_url: m["links"]["websiteUrl"]
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| {
+                        format!(
+                            "https://www.curseforge.com/minecraft/{}/{}",
+                            curseforge_url_segment(category),
+                            m["slug"].as_str().unwrap_or("")
+                        )
+                    }),
+                category: category.map(str::to_string),
             })
         })
         .collect();
