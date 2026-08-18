@@ -270,30 +270,42 @@ pub async fn run_repair_task(
     }
     .spawn();
 
+    let pc_jar = crate::downloader::progress::ProgressCounters {
+        files: Arc::clone(&jar_counter),
+        bytes: Arc::clone(&jar_bytes),
+        step_total: Arc::clone(&jar_total),
+        ..Default::default()
+    };
     let jar = repair_jar(
         &vj,
         &vdir,
         version_dir_name,
         jar_missing,
         &sources,
-        &jar_counter,
-        &jar_bytes,
-        &jar_total,
+        &pc_jar,
     );
 
     let lib_dir = mc.join("libraries");
+    let pc_lib = crate::downloader::progress::ProgressCounters {
+        files: Arc::clone(&lib_counter),
+        bytes: Arc::clone(&bytes_counter),
+        ..Default::default() // 占位：repair 分步进度走文件数回退
+    };
     let libs = crate::downloader::library::download_libraries(
         &vj.libraries,
         &lib_dir,
         config.concurrency as usize,
         &src_refs,
         None, // 修复任务不走本地运行时复用（保持"缺失补全"语义）
-        Arc::clone(&lib_counter),
-        Arc::clone(&bytes_counter),
-        Arc::new(AtomicU64::new(0)), // 占位：repair 分步进度走文件数回退
+        &pc_lib,
         Some(cancel),
     );
 
+    let pc_asst = crate::downloader::progress::ProgressCounters {
+        files: Arc::clone(&asst_counter),
+        bytes: Arc::clone(&bytes_counter),
+        ..Default::default() // 占位：repair 分步进度走文件数回退
+    };
     let asst = crate::downloader::assets::download_assets(
         &vj.asset_index.url,
         &vj.asset_index.id,
@@ -301,9 +313,7 @@ pub async fn run_repair_task(
         &config,
         config.concurrency as usize,
         None, // 同上：修复任务不走复用
-        Arc::clone(&asst_counter),
-        Arc::clone(&bytes_counter),
-        Arc::new(AtomicU64::new(0)), // 占位
+        &pc_asst,
         Some(cancel),
     );
 
@@ -343,9 +353,11 @@ pub async fn run_repair_task(
             &vj.libraries,
             &lib_dir,
             &src_refs,
-            Arc::clone(&lib_counter),
-            Arc::clone(&bytes_counter),
-            Arc::new(AtomicU64::new(0)), // 占位：repair 分步进度走文件数回退
+            &crate::downloader::progress::ProgressCounters {
+                files: Arc::clone(&lib_counter),
+                bytes: Arc::clone(&bytes_counter),
+                ..Default::default() // 占位：repair 分步进度走文件数回退
+            },
             Some(cancel),
         )
         .await
@@ -405,16 +417,13 @@ fn repair_step_indices(report: &MissingReport) -> (Option<usize>, Option<usize>,
 }
 
 /// 修复 client.jar：清理损坏（0 字节/sha1 不匹配）旧文件后逐源 sha1 校验下载。
-#[allow(clippy::too_many_arguments)]
 async fn repair_jar(
     vj: &VersionJson,
     vdir: &Path,
     version_dir_name: &str,
     jar_missing: bool,
     sources: &[DownloadSource],
-    jar_counter: &Arc<AtomicU32>,
-    jar_bytes: &Arc<AtomicU64>,
-    jar_total: &Arc<AtomicU64>,
+    pc: &crate::downloader::progress::ProgressCounters,
 ) -> Result<(), Vec<String>> {
     if jar_missing {
         // 清理目录内损坏（0 字节或 sha1 不匹配）的 jar，避免与下载目标并存
@@ -433,8 +442,8 @@ async fn repair_jar(
         if let Some(ref c) = vj.downloads.client {
             let urls: Vec<String> = sources.iter().map(|src| src.mirror_url(&c.url)).collect();
             let jar_path = vdir.join(format!("{version_dir_name}.jar"));
-            let jbc2 = Arc::clone(jar_bytes);
-            let jt2 = Arc::clone(jar_total);
+            let jbc2 = Arc::clone(&pc.bytes);
+            let jt2 = Arc::clone(&pc.step_total);
             if c.size > 0 {
                 jt2.store(c.size, Ordering::Relaxed);
             }
@@ -449,7 +458,7 @@ async fn repair_jar(
                 .await
                 .map_err(|e| vec![e.to_string()])?;
         }
-        jar_counter.store(1, Ordering::Relaxed);
+        pc.files.store(1, Ordering::Relaxed);
     }
     Ok(())
 }

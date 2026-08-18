@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
@@ -87,9 +87,7 @@ pub async fn download_assets(
     config: &DownloaderConfig,
     concurrency: usize,
     reuse: Option<LocalRuntimeSource>,
-    counter: Arc<AtomicU32>,
-    bytes_counter: Arc<AtomicU64>,
-    step_bytes: Arc<AtomicU64>,
+    pc: &crate::downloader::progress::ProgressCounters,
     cancel: Option<&Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(), Vec<String>> {
     let sources: Vec<&crate::config::downloader::model::DownloadSource> =
@@ -130,9 +128,9 @@ pub async fn download_assets(
             .iter()
             .map(|s| format!("{}/{}/{}", s.resource_url, sub, hash))
             .collect();
-        let ctr = counter.clone();
-        let bc = bytes_counter.clone();
-        let sb = step_bytes.clone();
+        let ctr = pc.files.clone();
+        let bc = pc.bytes.clone();
+        let sb = pc.step_bytes.clone();
         let permit = sem.clone();
         let cancel = cancel.cloned();
         handles.push(tokio::spawn(async move {

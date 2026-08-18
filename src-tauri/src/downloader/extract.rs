@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::Path;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::config::downloader::model::DownloadSource;
@@ -124,9 +124,7 @@ pub async fn process_natives(
     libraries: &[Library],
     libraries_dir: &Path,
     sources: &[&DownloadSource],
-    counter: Arc<AtomicU32>,
-    bytes_counter: Arc<AtomicU64>,
-    step_bytes: Arc<AtomicU64>,
+    pc: &crate::downloader::progress::ProgressCounters,
     cancel: Option<&Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(), Vec<String>> {
     let mut errors: Vec<String> = Vec::new();
@@ -158,8 +156,8 @@ pub async fn process_natives(
         let file_done = Arc::new(AtomicU64::new(0));
         let progress = {
             let fd = file_done.clone();
-            let bc = bytes_counter.clone();
-            let sb = step_bytes.clone();
+            let bc = pc.bytes.clone();
+            let sb = pc.step_bytes.clone();
             move |downloaded: u64, _total: u64| {
                 let prev = fd.swap(downloaded, Ordering::Relaxed);
                 let delta = downloaded.saturating_sub(prev);
@@ -178,7 +176,7 @@ pub async fn process_natives(
         .await
         {
             Ok(_dl) => {
-                counter.fetch_add(1, Ordering::Relaxed);
+                pc.files.fetch_add(1, Ordering::Relaxed);
             }
             Err(e) => errors.push(format!("{}: {}", lib.name, e)),
         }

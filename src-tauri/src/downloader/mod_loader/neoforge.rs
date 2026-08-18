@@ -1,7 +1,7 @@
 // ── NeoForge 安装（installer 式，与 Forge 共用 download_and_extract 流程）──
 
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use super::forge::{download_and_extract, resolve_java, wait_for_vanilla_client};
@@ -15,9 +15,7 @@ pub async fn install_neoforge(
     vdir: &Path,
     parent_text: &str,
     config: &DownloaderConfig,
-    bytes: &Arc<AtomicU64>,
-    lib_bytes: &Arc<AtomicU64>,
-    lib_total: &Arc<AtomicU64>,
+    pc: &crate::downloader::progress::ProgressCounters,
     cancel: &Arc<AtomicBool>,
     hook: Option<LoaderHook<'_>>,
 ) -> Result<(), String> {
@@ -36,9 +34,7 @@ pub async fn install_neoforge(
         vdir,
         dir_name,
         parent_text,
-        bytes,
-        lib_bytes,
-        lib_total,
+        pc,
         cancel,
         hook,
     )

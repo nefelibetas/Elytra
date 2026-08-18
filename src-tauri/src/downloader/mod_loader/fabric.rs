@@ -1,7 +1,7 @@
 // ── Profile 式安装（Fabric / Quilt）：官方 meta profile JSON → merge_loader_profile 合并 ──
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::config::downloader::model::{DownloadSource, DownloaderConfig};
 use crate::downloader::fetcher::http;
@@ -21,9 +21,7 @@ async fn install_loader_via_profile(
     parent_text: &str,
     profile_url_tpl: &str,
     config: &DownloaderConfig,
-    bytes: &Arc<AtomicU64>,
-    lib_bytes: &Arc<AtomicU64>,
-    lib_total: &Arc<AtomicU64>,
+    pc: &crate::downloader::progress::ProgressCounters,
     hook: Option<LoaderHook<'_>>,
 ) -> Result<(), String> {
     let source = config.file_primary_source().ok_or("no active source")?;
@@ -64,19 +62,19 @@ async fn install_loader_via_profile(
             &libraries, &lib_dir,
         ));
     if pending_bytes > 0 {
-        lib_total.store(pending_bytes, Ordering::Relaxed);
+        pc.step_total.store(pending_bytes, Ordering::Relaxed);
     }
     // 文件计数保持静默（任务步骤不细分），字节计入外部计数器（收尾心跳显示速度/进度）
     let counter = Arc::new(AtomicU32::new(0));
+    let mut pc_lib = pc.clone();
+    pc_lib.files = counter;
     crate::downloader::library::download_libraries(
         &libraries,
         &lib_dir,
         config.concurrency as usize,
         &sources,
         None, // loader 安装内库下载不走本地运行时复用（run_task 主流程才探测复用根）
-        counter,
-        bytes.clone(),
-        lib_bytes.clone(),
+        &pc_lib,
         None, // fabric 安装无取消检查（下载循环由 read_timeout 兜底）
     )
     .await
@@ -105,9 +103,7 @@ pub async fn install_fabric(
     vdir: &std::path::Path,
     parent_text: &str,
     config: &DownloaderConfig,
-    bytes: &Arc<AtomicU64>,
-    lib_bytes: &Arc<AtomicU64>,
-    lib_total: &Arc<AtomicU64>,
+    pc: &crate::downloader::progress::ProgressCounters,
     hook: Option<LoaderHook<'_>>,
 ) -> Result<(), String> {
     let source = config.file_primary_source().ok_or("no active source")?;
@@ -119,9 +115,7 @@ pub async fn install_fabric(
         parent_text,
         &source.fabric_profile_url,
         config,
-        bytes,
-        lib_bytes,
-        lib_total,
+        pc,
         hook,
     )
     .await
@@ -135,9 +129,7 @@ pub async fn install_quilt(
     vdir: &std::path::Path,
     parent_text: &str,
     config: &DownloaderConfig,
-    bytes: &Arc<AtomicU64>,
-    lib_bytes: &Arc<AtomicU64>,
-    lib_total: &Arc<AtomicU64>,
+    pc: &crate::downloader::progress::ProgressCounters,
     hook: Option<LoaderHook<'_>>,
 ) -> Result<(), String> {
     let source = config.file_primary_source().ok_or("no active source")?;
@@ -149,9 +141,7 @@ pub async fn install_quilt(
         parent_text,
         &source.quilt_profile_url,
         config,
-        bytes,
-        lib_bytes,
-        lib_total,
+        pc,
         hook,
     )
     .await

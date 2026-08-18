@@ -6,6 +6,7 @@ pub mod library;
 pub mod manifest;
 pub mod mod_loader;
 pub mod mods;
+pub mod progress;
 pub mod model;
 pub mod reuse;
 pub mod source;
