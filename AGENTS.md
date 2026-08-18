@@ -24,19 +24,19 @@ ElytraLauncher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前端
 
 ## Key Directories
 
-|路径|职责|
-|---|---|
-|`src-tauri/src/commands/`|8 个命令模块：jdk / downloader / loader / task / account / gamedirs / launch / mods（真薄胶水；`launch.rs` 额外含进程管理）|
-|`src-tauri/src/config/`|纯数据模型：`launcher/`（`args.rs` 命令构建 / `env.rs` / `memory.rs` / `platform.rs` / `skin.rs` 离线皮肤）、`downloader/model.rs`（多源/三态/NetworkMode，`source.rs` 为 DownloaderConfig 网络 impl：`fetch_with_fallback` 主源 4s 降级 + URL 去重 + 10 分钟 TTL 缓存）、`game_dirs.rs`、`offline_skin.rs`|
-|`src-tauri/src/downloader/`|下载引擎：`fetcher.rs`（文件下载核心：自适应路由/健康度/黑洞 302 拒绝/系统代理/超时双保险/多种 fetch 变体含 `_c` 可取消）、`source.rs`、`assets.rs`、`library.rs`、`extract.rs`（`TARGET_OS`/`matches_rules` 平台判定唯一实现）、`mods.rs`（Mod 双源搜索+依赖解析）、`mod_loader/`（fabric/forge/neoforge/optifine/version_query）、`reuse.rs`（本地运行时复用）|
-|`src-tauri/src/task/`|任务系统：`mod.rs`（TaskManager 单例 + `EMIT_TX` 队列线程 + PathLock + `emit_event`）、`model.rs`（serde 任务配置 + `TaskProgress`/`StepInfo` 唯一定义）、`steps.rs`（StepSpec 分析）、`progress.rs`（EmitLoop/心跳/set_*）、`runner.rs`（下载主体 + `run_install_jdk`）、`repair.rs`（缺失扫描/`count_assets_all`）、`files.rs`（批量下载 + WaitingForUser）、`store.rs`（SQLite 快照/恢复）|
-|`src-tauri/src/auth/`|微软 OAuth PKCE（`microsoft.rs`）+ 官方 API（`mojang.rs`）+ 账号服务（`account.rs`）+ MsAccount（`model.rs`，多账号列表，secrets.bin 加密）|
-|`src-tauri/src/jdk/`|JDK 扫描/解析/存储（`scanner.rs`/`model.rs`/`mod.rs`）+ **managed runtime 下载**（`download.rs`：`auto_install` Mojang 官方 → Azul 回退，双源 sha1/sha256 校验 + zip 解压，`find_java_home` 递归定位）|
-|`src-tauri/src/persist/`|TOML section 存取（`read<T>/save<T>/remove`，PERSIST_LOCK 串行）+ `secrets.rs`（DPAPI 加密 secrets.bin）+ `store.rs`（exe 旁 Settings.toml 读写）|
-|`src/pages/`|Launch / Download（资源中心）/ **DownloadDetail（下载任务中心，顶级路由）** / ResourceDetail（资源详情+依赖链）/ Settings / VersionSelect / VersionSetup（容器化，业务在 store/组件）|
-|`src/store/`|`download.ts`（dlState 任务状态机 + `ensureListen` 幂等 + terminalTaskIds 防幽灵）、`memory.ts`、`modSearch.ts`（聚合/分页）、`categorySearch.ts`（四分类工厂）、`resourceDetail.ts`、`versionDownload.ts`、`launch.ts`、`accountUi.ts`、`auth.ts`、`avatar.ts`（FNV-1a 头像）、`alert.ts`、`theme.ts`（四主题）、`selectedVersion.ts`、`jdkConfig.ts`、`launchOptions.ts`、`offlineSkinConfig.ts`、`downloaderConfig.ts`、`gameDirs.ts`、`events.ts`（事件名镜像 Rust `events.rs`）——模块级 reactive/ref 单例；`useConfigSection`（utils）可在模块顶层调用|
-|`src/component/`|TitleBar / DownloadTab / VersionCard / VersionItem / AlertDialog / DialogModal / ScrollTopFab / VanillaList / VanillaDetail / ModSearchBar / ModResultList / ShaderSearchBar / ShaderResultList / ResourcepackSearchBar / ResourcepackResultList / DatapackSearchBar / DatapackResultList / ModpackSearchBar / ModpackResultList / IconImage / LaunchProgress / AccountSection / LaunchSection / CapeDialog / SettingsOfflineSkin / SettingsLaunchOptions / SettingsJdk / SettingsDownload / GameDirList / GameVersionList / VersionSetupOverview ——页面组件直接 import store，无 props 链|
-|`src/utils/`|versionClassify（目录名 `{mc}-{loader}-{ver}` 解析）、versionIcons、format（fmtCount/fmtSize/fmtModDate/fmtDateTime）、**error.ts `errMsg()`（取错误首行：toast/内联错误显示用，dialog 场景不动）**|
+| 路径                        | 职责                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src-tauri/src/commands/`   | 8 个命令模块：jdk / downloader / loader / task / account / gamedirs / launch / community（真薄胶水；`launch.rs` 额外含进程管理）                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `src-tauri/src/config/`     | 纯数据模型：`launcher/`（`args.rs` 命令构建 / `env.rs` / `memory.rs` / `platform.rs` / `skin.rs` 离线皮肤）、`downloader/model.rs`（多源/三态/NetworkMode，`source.rs` 为 DownloaderConfig 网络 impl：`fetch_with_fallback` 主源 4s 降级 + URL 去重 + 10 分钟 TTL 缓存）、`game_dirs.rs`、`offline_skin.rs`                                                                                                                                                                                                                                                                                |
+| `src-tauri/src/downloader/` | 下载引擎：`fetcher.rs`（文件下载核心：自适应路由/健康度/黑洞 302 拒绝/系统代理/超时双保险/多种 fetch 变体含 `_c` 可取消）、`source.rs`、`assets.rs`、`library.rs`、`extract.rs`（`TARGET_OS`/`matches_rules` 平台判定唯一实现）、`community.rs`（Mod/光影/资源包等社区资源双源搜索+依赖解析）、`progress.rs`（`ProgressCounters` 下载进度计数器）、`mod_loader/`（fabric/forge/neoforge/optifine/version_query）、`reuse.rs`（本地运行时复用）                                                                                                                                                                                                                           |
+| `src-tauri/src/task/`       | 任务系统：`mod.rs`（TaskManager 单例 + `EMIT_TX` 队列线程 + PathLock + `emit_event`）、`model.rs`（serde 任务配置 + `TaskProgress`/`StepInfo` 唯一定义）、`steps.rs`（StepSpec 分析）、`progress.rs`（EmitLoop/心跳/set_*）、`runner.rs`（下载主体 + `run_install_jdk`）、`repair.rs`（缺失扫描/`count_assets_all`）、`files.rs`（批量下载 + WaitingForUser）、`store.rs`（SQLite 快照/恢复）                                                                                                                                                                                              |
+| `src-tauri/src/auth/`       | 微软 OAuth PKCE（`microsoft.rs`）+ 官方 API（`mojang.rs`）+ 账号服务（`account.rs`）+ MsAccount（`model.rs`，多账号列表，secrets.bin 加密）                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `src-tauri/src/jdk/`        | JDK 扫描/解析/存储（`scanner.rs`/`model.rs`/`mod.rs`）+ **managed runtime 下载**（`download.rs`：`auto_install` Mojang 官方 → Azul 回退，双源 sha1/sha256 校验 + zip 解压，`find_java_home` 递归定位）                                                                                                                                                                                                                                                                                                                                                                                     |
+| `src-tauri/src/persist/`    | TOML section 存取（`read<T>/save<T>/remove`，PERSIST_LOCK 串行）+ `secrets.rs`（DPAPI 加密 secrets.bin）+ `store.rs`（exe 旁 Settings.toml 读写）                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `src/pages/`                | Launch / Download（资源中心）/ **DownloadDetail（下载任务中心，顶级路由）** / ResourceDetail（资源详情+依赖链）/ Settings / VersionSelect / VersionSetup（容器化，业务在 store/组件）                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `src/store/`                | `download.ts`（dlState 任务状态机 + `ensureListen` 幂等 + terminalTaskIds 防幽灵）、`memory.ts`、`communitySearch.ts`（聚合/分页）、`categorySearch.ts`（四分类工厂）、`resourceDetail.ts`、`versionDownload.ts`、`launch.ts`、`accountUi.ts`、`auth.ts`、`avatar.ts`（FNV-1a 头像）、`alert.ts`、`theme.ts`（四主题）、`selectedVersion.ts`、`jdkConfig.ts`、`launchOptions.ts`、`offlineSkinConfig.ts`、`downloaderConfig.ts`、`gameDirs.ts`、`events.ts`（事件名镜像 Rust `events.rs`）——模块级 reactive/ref 单例；`useConfigSection`（utils）可在模块顶层调用                                |
+| `src/component/`            | TitleBar / DownloadTab / VersionCard / VersionItem / AlertDialog / DialogModal / ScrollTopFab / VanillaList / VanillaDetail / ModSearchBar / ModResultList / ShaderSearchBar / ShaderResultList / ResourcepackSearchBar / ResourcepackResultList / DatapackSearchBar / DatapackResultList / ModpackSearchBar / ModpackResultList / IconImage / LaunchProgress / AccountSection / LaunchSection / CapeDialog / SettingsOfflineSkin / SettingsLaunchOptions / SettingsJdk / SettingsDownload / GameDirList / GameVersionList / VersionSetupOverview ——页面组件直接 import store，无 props 链 |
+| `src/utils/`                | versionClassify（目录名 `{mc}-{loader}-{ver}` 解析）、versionIcons、format（fmtCount/fmtSize/fmtModDate/fmtDateTime）、**error.ts `errMsg()`（取错误首行：toast/内联错误显示用，dialog 场景不动）**                                                                                                                                                                                                                                                                                                                                                                                        |
 
 ## Development Commands
 
@@ -56,6 +56,7 @@ npx vue-tsc --noEmit           # 前端全量类型检查（可在项目根直�
 ## Code Conventions & Common Patterns
 
 ### Rust 后端
+
 - **命令命名**：snake_case、动词开头（`get_/save_/set_/fetch_/scan_/launch_/spawn_/start_/cancel_/remove_`…）
 - **返回**：可失败 → `Result<T, String>`；纯读取 → 裸 `T`/`Option<T>`；错误在模块边界 `.map_err(|e| e.to_string())`
 - **错误消息规范**：**中文短文案首行 + `\n` + 技术细节**（如 `下载资源索引失败\n{e}`、`请求失败\nHTTP {status}`）；前端 toast/内联错误经 `errMsg()` 取首行，AlertDialog（带复制）显示全文
@@ -67,6 +68,7 @@ npx vue-tsc --noEmit           # 前端全量类型检查（可在项目根直�
 - **版本目录**：`versions/{id}` 冲突时 `{id}_{n}`；目录内 jar/json 文件名可能 ≠ 目录名，一律扫描兜底
 
 ### 前端 Vue/TS
+
 - **IPC**：命令名与参数/返回值字段全 snake_case；**TS interface 手写镜像 Rust struct，无自动生成**——改 Rust 字段必须同步前端
 - **跨组件缓存必须放普通 `<script lang="ts">` 块或 store 模块级**——`<script setup>` 顶层变量每次组件重建（路由切换）重置（Launch.vue 头像缓存、Download.vue manifest 缓存为范例）
 - **状态**：模块级 `reactive()`/`ref()` 单例导出，页面直接 import；无 Pinia/Vuex
@@ -80,22 +82,22 @@ npx vue-tsc --noEmit           # 前端全量类型检查（可在项目根直�
 
 ## Important Files
 
-|文件|说明|
-|---|---|
-|`src-tauri/src/lib.rs`|入口：`task::init()`、后台预扫 JDK、**唯一** generate_handler! 注册点（约 60 命令）|
-|`src-tauri/src/main.rs`|仅 `elytra_lib::run()`|
-|`src-tauri/src/constants.rs`|APP_NAME/UA/MIRROR_CONCURRENCY、`option_env!` 注入 CURSEFORGE_API_KEY 与 MS_CLIENT_ID（.env 经 build.rs）、persist SECT_* 段名|
-|`src-tauri/src/events.rs`|事件名常量（与 `src/store/events.ts` 手写镜像同步）|
-|`src-tauri/src/task/mod.rs`|TaskManager 单例 + `EMIT_TX` 顺序队列线程 + `emit_event` 泛型派发 + PathLock + `update_and_emit`（锁外 emit）|
-|`src-tauri/src/task/store.rs`|SQLite `install_jobs` 快照 + `block_on`（RuntimeFlavor 分支防 worker panic）+ 2s DB 写超时 + crash→interrupted 恢复|
-|`src-tauri/src/downloader/fetcher.rs`|54KB 下载核心：`build_client()`（OnceLock，含 mirror_safe_redirect + apply_system_proxy）、`system_proxy_urls()`、`resolve_download_routes()`、全部 fetch 变体|
-|`src-tauri/src/config/launcher/args.rs`|`${key}` 占位符替换、rules/features 匹配、classpath、JDK22+ 标志|
-|`src-tauri/src/jdk/download.rs`|`auto_install`（Mojang all.json 逐文件 sha1 → Azul 包 sha256+解压）、`find_java_home` 递归、`safe_runtime_path` zip slip 防护、`InstallProgress` 钩子|
-|`src-tauri/src/auth/microsoft.rs`|微软 OAuth（授权码/refresh/XBL/XSTS/MC login）、回调服务 127.0.0.1:27205|
-|`src-tauri/src/persist/store.rs`|配置文件路径 = `current_exe 目录/Elytra/Settings.toml`（非标准配置目录）|
-|`src-tauri/tauri.conf.json`|窗口 **840×540**、无边框透明、`beforeDevCommand: pnpm dev`、devUrl :1420|
-|`src-tauri/capabilities/default.json`|main 窗口权限：core:default + window 控制子集 + opener + dialog|
-|`src/store/download.ts`|下载任务状态机（事件驱动核心）|
+| 文件                                    | 说明                                                                                                                                                           |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src-tauri/src/lib.rs`                  | 入口：`task::init()`、后台预扫 JDK、**唯一** generate_handler! 注册点（约 60 命令）                                                                            |
+| `src-tauri/src/main.rs`                 | 仅 `elytra_lib::run()`                                                                                                                                         |
+| `src-tauri/src/constants.rs`            | APP_NAME/UA/MIRROR_CONCURRENCY、`option_env!` 注入 CURSEFORGE_API_KEY 与 MS_CLIENT_ID（.env 经 build.rs）、persist SECT_* 段名                                 |
+| `src-tauri/src/events.rs`               | 事件名常量（与 `src/store/events.ts` 手写镜像同步）                                                                                                            |
+| `src-tauri/src/task/mod.rs`             | TaskManager 单例 + `EMIT_TX` 顺序队列线程 + `emit_event` 泛型派发 + PathLock + `update_and_emit`（锁外 emit）                                                  |
+| `src-tauri/src/task/store.rs`           | SQLite `install_jobs` 快照 + `block_on`（RuntimeFlavor 分支防 worker panic）+ 2s DB 写超时 + crash→interrupted 恢复                                            |
+| `src-tauri/src/downloader/fetcher.rs`   | 54KB 下载核心：`build_client()`（OnceLock，含 mirror_safe_redirect + apply_system_proxy）、`system_proxy_urls()`、`resolve_download_routes()`、全部 fetch 变体 |
+| `src-tauri/src/config/launcher/args.rs` | `${key}` 占位符替换、rules/features 匹配、classpath、JDK22+ 标志                                                                                               |
+| `src-tauri/src/jdk/download.rs`         | `auto_install`（Mojang all.json 逐文件 sha1 → Azul 包 sha256+解压）、`find_java_home` 递归、`safe_runtime_path` zip slip 防护、`InstallProgress` 钩子          |
+| `src-tauri/src/auth/microsoft.rs`       | 微软 OAuth（授权码/refresh/XBL/XSTS/MC login）、回调服务 127.0.0.1:27205                                                                                       |
+| `src-tauri/src/persist/store.rs`        | 配置文件路径 = `current_exe 目录/Elytra/Settings.toml`（非标准配置目录）                                                                                       |
+| `src-tauri/tauri.conf.json`             | 窗口 **840×540**、无边框透明、`beforeDevCommand: pnpm dev`、devUrl :1420                                                                                       |
+| `src-tauri/capabilities/default.json`   | main 窗口权限：core:default + window 控制子集 + opener + dialog                                                                                                |
+| `src/store/download.ts`                 | 下载任务状态机（事件驱动核心）                                                                                                                                 |
 
 ## Runtime/Tooling Preferences
 
@@ -104,7 +106,7 @@ npx vue-tsc --noEmit           # 前端全量类型检查（可在项目根直�
 - **窗口**：840×540、`decorations:false` + `transparent:true` + `resizable:false`——前端自绘 TitleBar（`startDragging`）
 - **Rust 变更需重启 `pnpm tauri dev`**（vite `watch.ignored` 忽略 src-tauri）；前端改动 HMR 即时生效
 - **reqwest 0.13 无 `.form()`**：表单需手工 urlencode（auth 里 `form_body`）
-- **MS_CLIENT_ID 固定 PrismLauncher 的**（自建 Azure 应用 2025 起 403）；回调端口 27205 写死
+- **MS_CLIENT_ID 固定，已注册完成 **；回调端口 27205 写死
 - **lib 名 `elytra_lib`**：Windows 下 bin/lib 同名会 Cargo 8519，保留 `_lib` 后缀
 - **版本号**：tauri.conf.json / Cargo.toml / package.json 三处一致（当前 1.0.0），改动需同步
 - **capabilities 是 v2 权限门**：新增 JS 侧 window/fs/dialog API 必须先在 `default.json` 加权限
