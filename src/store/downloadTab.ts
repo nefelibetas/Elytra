@@ -1,5 +1,5 @@
 // 下载页 tab 状态：模块级持久（路由切换/详情页返回不丢）。
-// 搜索条件与结果本身在 modSearch/categorySearch store 中，这里只管 tab 与滚动位置。
+// 搜索条件与结果本身在 communitySearch/categorySearch store 中，这里只管 tab 与滚动位置。
 import { reactive } from "vue";
 
 export type DownloadTab =
@@ -8,7 +8,8 @@ export type DownloadTab =
   | "modpack"
   | "datapack"
   | "resourcepack"
-  | "shader";
+  | "shader"
+  | "worlds";
 
 export const downloadTabState = reactive({
   current: "vanilla" as DownloadTab,
@@ -20,5 +21,6 @@ export const downloadTabState = reactive({
     datapack: 0,
     resourcepack: 0,
     shader: 0,
+    worlds: 0,
   } as Record<DownloadTab, number>,
 });

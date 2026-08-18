@@ -44,6 +44,10 @@ parking_lot = "0.12"
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
 
+[dev-dependencies]
+# 解压/安装流程单测用临时目录（仅测试，不进入产物）
+tempfile = "3"
+
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
 codegen-units = 1

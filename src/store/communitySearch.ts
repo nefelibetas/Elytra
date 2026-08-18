@@ -1,11 +1,11 @@
-// Mod 搜索 store（Modrinth / CurseForge 聚合）：模块级 reactive 单例，页面与组件直接 import。
+// 社区资源搜索 store（Modrinth / CurseForge 聚合，覆盖 Mod/光影/资源包等）：模块级 reactive 单例，页面与组件直接 import。
 // 来源为本地状态：Modrinth 无需 key；CurseForge 需 .env 配置的 API Key（后端校验）
 import { reactive, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { dlTranslateMode } from "./downloaderConfig";
 import { errMsg } from "../utils/error";
 
-export interface ModSearchResult {
+export interface CommunitySearchResult {
   id: string;
   title: string;
   /** 内置百科表提供的中文译名（无译名/未开启翻译为 null） */
@@ -25,19 +25,19 @@ export interface ModSearchResult {
   page_url: string;
 }
 
-export interface ModSearchPage {
-  items: ModSearchResult[];
+export interface CommunitySearchPage {
+  items: CommunitySearchResult[];
   total: number;
 }
 
-export interface ModDisplayItem extends ModSearchResult {
+export interface CommunityDisplayItem extends CommunitySearchResult {
   /** 该结果实际来自哪个源（聚合时区分；key = source:id，两源 id 体系不同防撞） */
   source: "modrinth" | "curseforge";
   key: string;
 }
 
-/** 项目版本文件（镜像 Rust downloader::mods::ModVersion；命令 get_mod_versions）。 */
-export interface ModVersion {
+/** 项目版本文件（镜像 Rust downloader::community::CommunityVersion；命令 get_community_versions）。 */
+export interface CommunityVersion {
   version_id: string;
   version_number: string;
   game_versions: string[];
@@ -51,18 +51,18 @@ export interface ModVersion {
   /** 版本类型（两源归一）：release | beta | alpha | unknown */
   version_type: string;
   /** 该版本文件的依赖列表（两源归一：project_id + relation） */
-  dependencies: ModDependency[];
+  dependencies: CommunityDependency[];
 }
 
-/** 版本文件依赖（镜像 Rust downloader::mods::ModDependency）。 */
-export interface ModDependency {
+/** 版本文件依赖（镜像 Rust downloader::community::CommunityDependency）。 */
+export interface CommunityDependency {
   project_id: string;
   /** required | optional | incompatible | embedded */
   relation: string;
 }
 
-/** 依赖项目详情（镜像 Rust downloader::mods::ModDependencyItem；命令 get_mod_details）。 */
-export interface ModDependencyItem {
+/** 依赖项目详情（镜像 Rust downloader::community::CommunityDependencyItem；命令 get_community_details）。 */
+export interface CommunityDependencyItem {
   id: string;
   title: string;
   description: string;
@@ -72,13 +72,13 @@ export interface ModDependencyItem {
 }
 
 /** 查询项目版本文件列表（Modrinth/CurseForge 均支持；分类项目同样适用）。 */
-export function fetchVersions(source: string, projectId: string): Promise<ModVersion[]> {
-  return invoke<ModVersion[]>("get_mod_versions", { source, projectId });
+export function fetchVersions(source: string, projectId: string): Promise<CommunityVersion[]> {
+  return invoke<CommunityVersion[]>("get_community_versions", { source, projectId });
 }
 
 /** 批量查询项目详情（前置依赖卡片数据源；同源查询；按翻译模式决定是否查中文简介）。 */
-export function fetchModDetails(source: string, ids: string[]): Promise<ModDependencyItem[]> {
-  return invoke<ModDependencyItem[]>("get_mod_details", { source, ids, translate: needsTranslation() });
+export function fetchCommunityDetails(source: string, ids: string[]): Promise<CommunityDependencyItem[]> {
+  return invoke<CommunityDependencyItem[]>("get_community_details", { source, ids, translate: needsTranslation() });
 }
 
 const MOD_PAGE_SIZE = 30;
@@ -106,7 +106,7 @@ export function cleanText(s: string): string {
     .trim();
 }
 
-export function toDisplayItem(h: ModSearchResult, source: "modrinth" | "curseforge"): ModDisplayItem {
+export function toDisplayItem(h: CommunitySearchResult, source: "modrinth" | "curseforge"): CommunityDisplayItem {
   // 译名与原名相同（忽略大小写，如 Fabric API）时视为无译名：只显示一个，避免 "X | X"
   const titleZh =
     h.title_zh && h.title_zh.trim().toLowerCase() !== h.title.trim().toLowerCase()
@@ -137,24 +137,23 @@ export async function searchAllSources(
   category: string | null,
   offset: number,
   pageSize: number,
-): Promise<{ items: ModDisplayItem[]; total: number }> {
-  const params = {
+): Promise<{ items: CommunityDisplayItem[]; total: number }> {
+  const queryParams = {
     query,
     gameVersion: gameVersion || null,
     loader: loader || null,
     category,
     pageSize,
     offset,
-    translate: needsTranslation(),
   };
   const [mr, cf] = await Promise.all([
-    invoke<ModSearchPage>("search_mods", { ...params, source: "modrinth" }).catch(() => null),
-    invoke<ModSearchPage>("search_mods", { ...params, source: "curseforge" }).catch(() => null),
+    invoke<CommunitySearchPage>("search_community", { source: "modrinth", query: queryParams, translate: needsTranslation() }).catch(() => null),
+    invoke<CommunitySearchPage>("search_community", { source: "curseforge", query: queryParams, translate: needsTranslation() }).catch(() => null),
   ]);
-  const merged = new Map<string, ModDisplayItem>();
-  const all: Array<[ModSearchResult, "modrinth" | "curseforge"]> = [
-    ...(cf?.items ?? []).map<[ModSearchResult, "curseforge"]>(h => [h, "curseforge"]),
-    ...(mr?.items ?? []).map<[ModSearchResult, "modrinth"]>(h => [h, "modrinth"]),
+  const merged = new Map<string, CommunityDisplayItem>();
+  const all: Array<[CommunitySearchResult, "modrinth" | "curseforge"]> = [
+    ...(cf?.items ?? []).map<[CommunitySearchResult, "curseforge"]>(h => [h, "curseforge"]),
+    ...(mr?.items ?? []).map<[CommunitySearchResult, "modrinth"]>(h => [h, "modrinth"]),
   ];
   for (const [h, src] of all) {
     const key = cleanText(h.title).toLowerCase();
@@ -169,7 +168,7 @@ export async function searchAllSources(
   };
 }
 
-export const modSearch = reactive({
+export const communitySearch = reactive({
   source: "all" as "all" | "modrinth" | "curseforge",
   query: "",
   gameVersion: "",
@@ -177,7 +176,7 @@ export const modSearch = reactive({
   searching: false,
   error: "",
   searched: false,
-  results: [] as ModDisplayItem[],
+  results: [] as CommunityDisplayItem[],
   total: 0,
   page: 1,
   /** 请求序号：筛选快速连切时只应用最后一次发起的结果（防过期响应覆盖） */
@@ -196,13 +195,15 @@ export const modSearch = reactive({
         this.results = res.items;
         this.total = res.total;
       } else {
-        const res = await invoke<ModSearchPage>("search_mods", {
+        const res = await invoke<CommunitySearchPage>("search_community", {
           source: this.source,
-          query: this.query.trim(),
-          gameVersion: this.gameVersion || null,
-          loader: this.loader || null,
-          pageSize,
-          offset,
+          query: {
+            query: this.query.trim(),
+            gameVersion: this.gameVersion || null,
+            loader: this.loader || null,
+            pageSize,
+            offset,
+          },
           translate: needsTranslation(),
         });
         if (seq !== this.searchSeq) return;
@@ -243,7 +244,7 @@ export const modSearch = reactive({
   },
 });
 
-export const modTotalPages = computed(() => {
-  const pageSize = modSearch.source === "all" ? AGG_PAGE_SIZE : MOD_PAGE_SIZE;
-  return Math.max(1, Math.ceil(modSearch.total / pageSize));
+export const communityTotalPages = computed(() => {
+  const pageSize = communitySearch.source === "all" ? AGG_PAGE_SIZE : MOD_PAGE_SIZE;
+  return Math.max(1, Math.ceil(communitySearch.total / pageSize));
 });

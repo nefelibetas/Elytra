@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Mod 搜索表单卡片：名称 / 来源 / 版本 / 加载器 / [搜索] [重置条件]
 import { computed, watch } from "vue";
-import { modSearch, modLoaderOptions } from "../store/modSearch";
+import { communitySearch, modLoaderOptions } from "../store/communitySearch";
 import { releases } from "../store/versionDownload";
 import DropSelect, { type SelOption } from "./DropSelect.vue";
 
@@ -21,8 +21,8 @@ const versionOptions = computed<SelOption[]>(() => [
 // 筛选切换即自动搜索（来源/版本/加载器；名称输入走回车）。
 // watch 在微任务触发，与控件事件栈解耦（不直接在 DropSelect 回调里发起搜索）
 watch(
-  () => [modSearch.source, modSearch.gameVersion, modSearch.loader],
-  () => modSearch.search(),
+  () => [communitySearch.source, communitySearch.gameVersion, communitySearch.loader],
+  () => communitySearch.search(),
 );
 </script>
 
@@ -32,39 +32,39 @@ watch(
     <div class="card-body mod-search-form">
       <div class="mod-form-row">
         <label class="mod-form-label" for="modQueryInput">名称</label>
-        <input id="modQueryInput" class="mod-input" v-model="modSearch.query" @keydown.enter="modSearch.search()" />
+        <input id="modQueryInput" class="mod-input" v-model="communitySearch.query" @keydown.enter="communitySearch.search()" />
         <label class="mod-form-label" for="modSourceSelect">来源</label>
         <DropSelect
           id="modSourceSelect"
-          :model-value="modSearch.source"
+          :model-value="communitySearch.source"
           :options="sourceOptions"
           width="140px"
-          @update:model-value="modSearch.source = $event as typeof modSearch.source"
+          @update:model-value="communitySearch.source = $event as typeof communitySearch.source"
         />
       </div>
       <div class="mod-form-row">
         <label class="mod-form-label" for="modVerSelect">版本</label>
         <DropSelect
           id="modVerSelect"
-          :model-value="modSearch.gameVersion"
+          :model-value="communitySearch.gameVersion"
           :options="versionOptions"
           class="mod-fill"
-          @update:model-value="modSearch.gameVersion = $event"
+          @update:model-value="communitySearch.gameVersion = $event"
         />
         <label class="mod-form-label" for="modLoaderSelect">加载器</label>
         <DropSelect
           id="modLoaderSelect"
-          :model-value="modSearch.loader"
+          :model-value="communitySearch.loader"
           :options="modLoaderOptions"
           class="mod-fill"
-          @update:model-value="modSearch.loader = $event"
+          @update:model-value="communitySearch.loader = $event"
         />
       </div>
       <div class="mod-form-actions">
-        <button class="mod-btn mod-btn-primary" :disabled="modSearch.searching" @click="modSearch.search()">
-          <span v-if="modSearch.searching" class="mod-spin"></span>{{ modSearch.searching ? "搜索中" : "搜索" }}
+        <button class="mod-btn mod-btn-primary" :disabled="communitySearch.searching" @click="communitySearch.search()">
+          <span v-if="communitySearch.searching" class="mod-spin"></span>{{ communitySearch.searching ? "搜索中" : "搜索" }}
         </button>
-        <button class="mod-btn" @click="modSearch.reset()">重置条件</button>
+        <button class="mod-btn" @click="communitySearch.reset()">重置条件</button>
       </div>
     </div>
   </div>

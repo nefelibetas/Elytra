@@ -108,7 +108,7 @@ pub(crate) fn runtime_dir(config: &DownloaderConfig, major: u32) -> PathBuf {
 
 /// 词法路径穿越防护：manifest/zip 条目路径必须为相对路径且不含 `..` 段
 /// （manifest 来自网络，防恶意/篡改条目写出 runtime 根）。
-fn safe_runtime_path(root: &Path, entry: &str) -> Result<PathBuf, String> {
+pub(crate) fn safe_runtime_path(root: &Path, entry: &str) -> Result<PathBuf, String> {
     let entry = entry.trim();
     if entry.is_empty() || entry.starts_with('/') || entry.starts_with('\\') {
         return Err(format!("非法 runtime 文件路径\n{entry:?}"));

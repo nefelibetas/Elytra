@@ -136,7 +136,7 @@ impl DownloadTask {
     }
 }
 
-/// 单文件下载种类。前端传 "mod"/"resourcepack"/"datapack"/"shader"。
+/// 单文件下载种类。前端传 "mod"/"resourcepack"/"datapack"/"shader"/"world"。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DownloadFileKind {
     #[serde(rename = "mod")]
@@ -147,6 +147,8 @@ pub enum DownloadFileKind {
     DataPack,
     #[serde(rename = "shader")]
     Shader,
+    #[serde(rename = "world")]
+    World,
 }
 
 impl DownloadFileKind {
@@ -157,6 +159,7 @@ impl DownloadFileKind {
             DownloadFileKind::ResourcePack => "resourcepacks",
             DownloadFileKind::DataPack => "datapacks",
             DownloadFileKind::Shader => "shaderpacks",
+            DownloadFileKind::World => "saves",
         }
     }
 }
@@ -268,11 +271,16 @@ mod tests {
             serde_json::from_str::<DownloadFileKind>("\"shader\"").unwrap(),
             DownloadFileKind::Shader
         );
+        assert_eq!(
+            serde_json::from_str::<DownloadFileKind>("\"world\"").unwrap(),
+            DownloadFileKind::World
+        );
         assert!(serde_json::from_str::<DownloadFileKind>("\"mods\"").is_err());
         assert_eq!(DownloadFileKind::Mod.kind_dir(), "mods");
         assert_eq!(DownloadFileKind::ResourcePack.kind_dir(), "resourcepacks");
         assert_eq!(DownloadFileKind::DataPack.kind_dir(), "datapacks");
         assert_eq!(DownloadFileKind::Shader.kind_dir(), "shaderpacks");
+        assert_eq!(DownloadFileKind::World.kind_dir(), "saves");
     }
 
     fn valid_task() -> DownloadTask {
