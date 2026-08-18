@@ -2,6 +2,7 @@ use crate::auth::model::MsAccount;
 use base64::Engine;
 use serde_json::json;
 use sha2::Digest;
+use url::form_urlencoded::Serializer;
 
 pub const CALLBACK_PORT: u16 = 27205;
 pub const REDIRECT_URI: &str = "http://localhost:27205";
@@ -20,6 +21,7 @@ const XBL_URL: &str = "https://user.auth.xboxlive.com/user/authenticate";
 const XSTS_URL: &str = "https://xsts.auth.xboxlive.com/xsts/authorize";
 const MC_LOGIN_URL: &str = "https://api.minecraftservices.com/authentication/login_with_xbox";
 const MC_PROFILE_URL: &str = "https://api.minecraftservices.com/minecraft/profile";
+/// 微软签发长期凭证关键, 避免重复登录
 const SCOPE: &str = "XboxLive.signin offline_access";
 
 /// XSTS 错误码 → 用户可读的中文说明。
@@ -108,13 +110,14 @@ pub fn generate_state() -> String {
 }
 
 /// 构建 application/x-www-form-urlencoded 请求体。
-/// （reqwest 0.13 的 `.form()` 不可用，手工编码）
+/// （reqwest 0.13 的 `.form()` 不可用；用 url crate 的 Serializer：
+/// 空格→`+`、非 ASCII UTF-8 字节→`%XX`，WHATWG 标准序列化）
 fn form_body(params: &[(&str, &str)]) -> String {
-    params
-        .iter()
-        .map(|(k, v)| format!("{}={}", urlencode(k), urlencode(v)))
-        .collect::<Vec<_>>()
-        .join("&")
+    let mut serialize = Serializer::new(String::new());
+    for (k, v) in params {
+        serialize.append_pair(&k, &v);
+    }
+    serialize.finish()
 }
 
 fn urlencode(s: &str) -> String {
@@ -132,8 +135,6 @@ fn urlencode(s: &str) -> String {
 
 /// 构建授权 URL。
 /// `prompt=select_account`：总是显示微软账号选择器（允许切换账号），
-/// 否则浏览器已有登录会话时会自动沿用当前账号直接授权，用户无法选择。
-/// 对齐 PrismLauncher/PCL2 行为（Prism MSAStep.cpp 同样注入 select_account）。
 pub fn build_auth_url(state: &str, pkce: &Pkce) -> Result<String, MsError> {
     let client_id = ms_client_id()?;
     Ok(format!(

@@ -68,7 +68,7 @@ async fn handle_callback(
     app: &AppHandle,
 ) {
     use tokio::io::AsyncReadExt;
-
+    // 从流中最多读取4096字节
     let mut buf = [0u8; 4096];
     let read = match stream.read(&mut buf).await {
         Ok(n) => n,
@@ -78,6 +78,7 @@ async fn handle_callback(
         }
     };
     let request = String::from_utf8_lossy(&buf[..read]).to_string();
+    // 提取首行: GET /xxx
     let first_line = request.lines().next().unwrap_or("").to_string();
 
     // 解析 GET 请求的 query
@@ -96,7 +97,7 @@ async fn handle_callback(
             Some((k, url_decode(&v)))
         })
         .collect();
-
+    // 解析, 获取关键数据
     let (ok, account, error, http_status) = if let Some(err) = params.get("error") {
         (false, None, Some(format!("授权被拒绝\n{err}")), 400)
     } else {
@@ -153,40 +154,11 @@ async fn respond(mut stream: tokio::net::TcpStream, status: u16, ok: bool) -> st
 }
 
 fn url_decode(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'%' if i + 2 < bytes.len() => {
-                if let (Some(h), Some(l)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
-                    out.push(h * 16 + l);
-                    i += 3;
-                    continue;
-                }
-                out.push(bytes[i]);
-                i += 1;
-            }
-            b'+' => {
-                out.push(b' ');
-                i += 1;
-            }
-            b => {
-                out.push(b);
-                i += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).to_string()
-}
-
-fn hex_val(b: u8) -> Option<u8> {
-    match b {
-        b'0'..=b'9' => Some(b - b'0'),
-        b'a'..=b'f' => Some(b - b'a' + 10),
-        b'A'..=b'F' => Some(b - b'A' + 10),
-        _ => None,
-    }
+    let s = s.replace('+', " ");
+    percent_encoding::percent_decode(s.as_bytes())
+        .decode_utf8()
+        .unwrap_or_else(|_| std::borrow::Cow::Borrowed(""))
+        .to_string()
 }
 
 /// 账号拥有的披风列表（官方 profile API），active = 当前启用。
