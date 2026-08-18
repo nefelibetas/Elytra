@@ -284,6 +284,7 @@ function depToItem(d: CommunityDependencyItem): CommunityDisplayItem {
     downloads: 0,
     icon_url: d.icon_url,
     page_url: "",
+    category: null,
     source: src,
     key: `${src}:${d.id}`,
   };
@@ -410,7 +411,12 @@ async function copyName() {
           <!-- 操作按钮（卡片内底部） -->
           <div class="md-actions">
             <button class="md-btn" @click="gotoSource">转到{{ sourceLabel }}</button>
-            <button class="md-btn" @click="gotoMcmod">转到 MC百科</button>
+            <!-- 光影包/地图存档无 MC百科条目，隐藏跳转 -->
+            <button
+              v-if="item.category !== 'shader' && item.category !== 'worlds'"
+              class="md-btn"
+              @click="gotoMcmod"
+            >转到 MC百科</button>
             <button class="md-btn" @click="copyName">复制名称</button>
           </div>
         </div>
