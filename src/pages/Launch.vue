@@ -8,6 +8,7 @@ import LaunchProgress from "../component/LaunchProgress.vue";
 import AccountSection from "../component/AccountSection.vue";
 import LaunchSection from "../component/LaunchSection.vue";
 import CapeDialog from "../component/CapeDialog.vue";
+import VersionDetailCard from "../component/VersionDetailCard.vue";
 import { alertState } from "../store/alert";
 import { renderOfflineAvatar, renderPremiumAvatar } from "../store/avatar";
 import {
@@ -48,7 +49,7 @@ onMounted(async () => {
         <FileText :size="48" opacity="0.3" />
         <p>选择一个游戏版本</p>
       </div>
-      <div v-else class="right-placeholder"></div>
+      <VersionDetailCard v-else />
     </div>
 
     <AlertDialog
@@ -107,14 +108,17 @@ onMounted(async () => {
   flex: 1;
   background-color: var(--surface-page);
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: 16px;
+  overflow: hidden;
 }
 
 .right-hint {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 12px;
   color: var(--text-tertiary);
   user-select: none;
@@ -122,10 +126,5 @@ onMounted(async () => {
 
 .right-hint p {
   font-size: 14px;
-}
-
-.right-placeholder {
-  width: 100%;
-  height: 100%;
 }
 </style>
