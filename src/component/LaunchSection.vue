@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 启动区：启动按钮（下载游戏入口）+ 版本选择 / 版本设置
 import { useRouter } from "vue-router";
-import { LayoutGrid, Settings2 } from "@lucide/vue";
+import { LayoutGrid } from "@lucide/vue";
 import { isLaunching, doLaunch } from "../store/launch";
 import { selectedVersion } from "../store/selectedVersion";
 
@@ -39,10 +39,6 @@ function goDownload() {
         <button class="secondary-btn" @click="router.push('/version-select')">
           <LayoutGrid :size="14" />
           <span>版本选择</span>
-        </button>
-        <button v-if="selectedVersion" class="secondary-btn" @click="router.push({ path: '/version-setup', query: { name: selectedVersion } })">
-          <Settings2 :size="14" />
-          <span>版本设置</span>
         </button>
       </div>
     </div>

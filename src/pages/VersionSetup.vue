@@ -1,20 +1,19 @@
 <script setup lang="ts">
-// 版本设置页容器：左侧导航 + 各 tab 编排（业务在 VersionSetupOverview 组件）
+// 版本设置页容器：左侧导航 + 各 tab 编排（业务在 Mod 管理 / 导出组件）
 import { ref } from "vue";
 import type { Component } from "vue";
-import { Info, Settings, Puzzle, Upload } from "@lucide/vue";
-import VersionSetupOverview from "../component/VersionSetupOverview.vue";
+import { Puzzle, Upload } from "@lucide/vue";
+import VersionSetupExport from "../component/VersionSetupExport.vue";
+import VersionSetupMods from "../component/VersionSetupMods.vue";
 
-type TabKey = "overview" | "settings" | "mods" | "export";
+type TabKey = "mods" | "export";
 
 const tabs: { key: TabKey; label: string; icon: Component }[] = [
-  { key: "overview", label: "概览", icon: Info },
-  { key: "settings", label: "设置", icon: Settings },
   { key: "mods", label: "Mod 管理", icon: Puzzle },
   { key: "export", label: "导出", icon: Upload },
 ];
 
-const activeTab = ref<TabKey>("overview");
+const activeTab = ref<TabKey>("mods");
 </script>
 
 <template>
@@ -37,19 +36,11 @@ const activeTab = ref<TabKey>("overview");
 
     <!-- 右侧：当前 tab 内容 -->
     <div class="vs-right">
-      <VersionSetupOverview v-if="activeTab === 'overview'" />
-
-      <div v-else-if="activeTab === 'settings'" class="vs-page">
-        <div class="vs-hint">版本设置功能开发中</div>
+      <div v-if="activeTab === 'mods'">
+        <VersionSetupMods />
       </div>
 
-      <div v-else-if="activeTab === 'mods'" class="vs-page">
-        <div class="vs-hint">Mod 管理功能开发中</div>
-      </div>
-
-      <div v-else class="vs-page">
-        <div class="vs-hint">导出功能开发中</div>
-      </div>
+      <VersionSetupExport v-else />
     </div>
   </div>
 </template>
@@ -111,12 +102,5 @@ const activeTab = ref<TabKey>("overview");
   overflow-y: auto;
   overflow-x: hidden;
   background: var(--surface-page);
-}
-
-.vs-hint {
-  padding: 24px;
-  text-align: center;
-  font-size: 13px;
-  color: var(--text-tertiary);
 }
 </style>
