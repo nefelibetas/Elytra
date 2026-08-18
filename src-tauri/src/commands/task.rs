@@ -6,8 +6,8 @@ use crate::config::downloader::model::DownloaderConfig;
 use crate::constants;
 use crate::persist;
 use crate::task::{
-    self, files, repair, runner, DownloadFileItem, DownloadFileTask, DownloadFilesTask,
-    DownloadTask, TaskSpec,
+    self, files, repair, runner, DownloadFileItem, DownloadFileKind, DownloadFileTask,
+    DownloadFilesTask, DownloadTask, TaskSpec,
 };
 
 /// 提交完整下载/安装任务：注册到 TaskManager 并后台执行，返回任务 id。
@@ -201,10 +201,20 @@ pub async fn resume_task(app: AppHandle, task_id: String) -> Result<String, Stri
 }
 
 /// 删除批量文件任务的全部 .elytra-part 残留（恢复社区资源下载前调用）。
+/// worlds 任务清理 `saves/.elytra-worlds/` 临时区（含半截 zip/unpack），替代按 kind_dir 的清理。
 fn cleanup_file_parts(task: &DownloadFilesTask) {
     let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
     let mc = config.minecraft_dir_abs();
     for f in &task.files {
+        if f.kind == DownloadFileKind::World {
+            let stage = mc
+                .join("versions")
+                .join(&task.version_dir_name)
+                .join("saves")
+                .join(".elytra-worlds");
+            let _ = std::fs::remove_dir_all(&stage);
+            continue;
+        }
         let dest = mc
             .join("versions")
             .join(&task.version_dir_name)

@@ -8,6 +8,8 @@ import ModSearchBar from "../component/ModSearchBar.vue";
 import ModResultList from "../component/ModResultList.vue";
 import ShaderSearchBar from "../component/ShaderSearchBar.vue";
 import ShaderResultList from "../component/ShaderResultList.vue";
+import WorldsSearchBar from "../component/WorldsSearchBar.vue";
+import WorldsResultList from "../component/WorldsResultList.vue";
 import ResourcepackSearchBar from "../component/ResourcepackSearchBar.vue";
 import ResourcepackResultList from "../component/ResourcepackResultList.vue";
 import DatapackSearchBar from "../component/DatapackSearchBar.vue";
@@ -16,15 +18,16 @@ import ModpackSearchBar from "../component/ModpackSearchBar.vue";
 import ModpackResultList from "../component/ModpackResultList.vue";
 import ScrollTopFab from "../component/ScrollTopFab.vue";
 import { vdState } from "../store/versionDownload";
-import { modSearch } from "../store/modSearch";
+import { communitySearch } from "../store/communitySearch";
 import { loadDownloadConfig } from "../store/downloaderConfig";
 import { downloadTabState } from "../store/downloadTab";
-import { Box, Puzzle, Archive, CodeXml, Layers, Sun } from "@lucide/vue";
+import { Box, Puzzle, Archive, CodeXml, Layers, Sun, Map } from "@lucide/vue";
 import {
   shaderSearch,
   resourcepackSearch,
   datapackSearch,
   modpackSearch,
+  worldsSearch,
 } from "../store/categorySearch";
 
 const tab = computed(() => downloadTabState.current);
@@ -37,8 +40,9 @@ onMounted(async () => {
   loadDownloadConfig();
   // 预加载社区 tab 热门（对齐 PCL2）：进入下载页即并发请求，切 tab 秒开；
   // ensureAutoSearch 幂等（模块级标志），watch 切 tab 时不会重复请求
-  modSearch.ensureAutoSearch();
+  communitySearch.ensureAutoSearch();
   shaderSearch.ensureAutoSearch();
+  worldsSearch.ensureAutoSearch();
   resourcepackSearch.ensureAutoSearch();
   datapackSearch.ensureAutoSearch();
   modpackSearch.ensureAutoSearch();
@@ -56,8 +60,9 @@ onBeforeUnmount(() => {
 // 首次进入社区 tab 自动搜索热门（预加载已触发时直接跳过）；切 tab 滚动复位到最上方
 watch(tab, (t) => {
   bodyEl.value?.scrollTo({ top: 0, behavior: "smooth" });
-  if (t === "mod") modSearch.ensureAutoSearch();
+  if (t === "mod") communitySearch.ensureAutoSearch();
   if (t === "shader") shaderSearch.ensureAutoSearch();
+  if (t === "worlds") worldsSearch.ensureAutoSearch();
   if (t === "resourcepack") resourcepackSearch.ensureAutoSearch();
   if (t === "datapack") datapackSearch.ensureAutoSearch();
   if (t === "modpack") modpackSearch.ensureAutoSearch();
@@ -74,7 +79,7 @@ watch(tab, (t) => {
         原版游戏
       </DownloadTab>
       <div class="nav-divider"><span>社区资源</span></div>
-      <DownloadTab :active="tab === 'mod'" @click="downloadTabState.current = 'mod'" @refresh="modSearch.reset()">
+      <DownloadTab :active="tab === 'mod'" @click="downloadTabState.current = 'mod'" @refresh="communitySearch.reset()">
         <template #icon>
           <Puzzle :size="16" :stroke-width="1.4" />
         </template>Mod
@@ -99,6 +104,11 @@ watch(tab, (t) => {
           <Sun :size="16" :stroke-width="1.4" />
         </template>光影包
       </DownloadTab>
+      <DownloadTab :active="tab === 'worlds'" @click="downloadTabState.current = 'worlds'" @refresh="worldsSearch.reset()">
+        <template #icon>
+          <Map :size="16" :stroke-width="1.4" />
+        </template>地图存档
+      </DownloadTab>
     </nav>
 
     <div ref="bodyEl" class="dl-body">
@@ -119,6 +129,11 @@ watch(tab, (t) => {
         <div v-else-if="tab === 'shader'" key="shader" class="dl-page mod-dl-page">
           <ShaderSearchBar />
           <ShaderResultList />
+        </div>
+
+        <div v-else-if="tab === 'worlds'" key="worlds" class="dl-page mod-dl-page">
+          <WorldsSearchBar />
+          <WorldsResultList />
         </div>
 
         <div v-else-if="tab === 'resourcepack'" key="resourcepack" class="dl-page mod-dl-page">

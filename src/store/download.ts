@@ -73,7 +73,7 @@ export interface DownloadTask {
   fabric_api: FabricApi | null
 }
 
-export type DownloadFileKind = "mod" | "resourcepack" | "datapack" | "shader";
+export type DownloadFileKind = "mod" | "resourcepack" | "datapack" | "shader" | "world";
 
 export interface DownloadFileTask {
   version_dir_name: string

@@ -196,6 +196,43 @@ pub fn extract_entry_to(entry: &mut zip::read::ZipFile, dest: &Path) -> Result<(
     Ok(())
 }
 
+/// 安全解压 zip：逐条目经 `safe_runtime_path` 校验（拒绝绝对路径/`..` 段/空段），
+/// 防 zip slip；每个文件条目检查 cancel（取消立即中止）；目录条目建目录。
+/// worlds 地图存档安装流程使用（zip 来自第三方，路径穿越防护必须）。
+pub(crate) fn extract_zip_safe(
+    zip_path: &Path,
+    dest_root: &Path,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<(), String> {
+    use crate::jdk::download::safe_runtime_path;
+
+    let file = std::fs::File::open(zip_path).map_err(|e| format!("打开存档文件失败\n{e}"))?;
+    let mut archive =
+        zip::ZipArchive::new(file).map_err(|e| format!("读取存档文件失败\n{e}"))?;
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| format!("读取存档条目失败\n{e}"))?;
+        let name = entry.name().to_string();
+        let out = safe_runtime_path(dest_root, &name)?;
+        if entry.is_dir() {
+            std::fs::create_dir_all(&out).ok();
+            continue;
+        }
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err("任务已取消\n".into());
+        }
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败\n{e}"))?;
+        }
+        let mut file_out = std::fs::File::create(&out)
+            .map_err(|e| format!("创建 {} 失败\n{e}", out.display()))?;
+        std::io::copy(&mut entry, &mut file_out)
+            .map_err(|e| format!("解压 {} 失败\n{e}", out.display()))?;
+    }
+    Ok(())
+}
+
 /// 将 JAR（ZIP）解压到 `out_dir`，跳过 `extract.exclude` 中的路径。
 /// 公开给启动命令构建使用（旧式 natives 运行时解压到临时目录）。
 pub fn extract_jar(
@@ -345,5 +382,82 @@ mod tests {
             extract: None,
         };
         assert_eq!(plain.natives_kind(), None);
+    }
+
+    /// 构造测试 zip：entries 为 (条目名, 内容) 列表，全部作为文件写入。
+    fn make_zip(zip_path: &Path, entries: &[(&str, &[u8])]) {
+        use std::io::Write;
+        let file = std::fs::File::create(zip_path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        for (name, content) in entries {
+            writer.start_file(*name, options).unwrap();
+            writer.write_all(content).unwrap();
+        }
+        writer.finish().unwrap();
+    }
+
+    /// zip slip 防护：`../` 条目必须被拒绝，且目标根之外不落任何文件。
+    #[test]
+    fn extract_zip_safe_rejects_path_traversal() {
+        use std::sync::atomic::AtomicBool;
+        let tmp = tempfile::tempdir().unwrap();
+        let zip_path = tmp.path().join("evil.zip");
+        make_zip(&zip_path, &[("../evil.txt", b"boom"), ("level.dat", b"data")]);
+        let dest = tmp.path().join("dest");
+        let cancel = AtomicBool::new(false);
+        let err = extract_zip_safe(&zip_path, &dest, &cancel).unwrap_err();
+        assert!(err.contains("非法"), "应报路径非法，实际: {err}");
+        assert!(
+            !tmp.path().join("evil.txt").exists(),
+            "zip slip 不得写出目标根之外"
+        );
+        assert!(
+            !dest.join("evil.txt").exists(),
+            "目标根内也不得出现穿越条目"
+        );
+    }
+
+    /// 正常 zip（多目录 + 文件）解压成功、目录结构正确。
+    #[test]
+    fn extract_zip_safe_unpacks_normal_world() {
+        use std::sync::atomic::AtomicBool;
+        let tmp = tempfile::tempdir().unwrap();
+        let zip_path = tmp.path().join("world.zip");
+        make_zip(
+            &zip_path,
+            &[
+                ("level.dat", b"level"),
+                ("region/r.0.0.mca", b"region"),
+                ("icon.png", b"png"),
+            ],
+        );
+        let dest = tmp.path().join("dest");
+        let cancel = AtomicBool::new(false);
+        extract_zip_safe(&zip_path, &dest, &cancel).unwrap();
+        assert_eq!(std::fs::read(dest.join("level.dat")).unwrap(), b"level");
+        assert_eq!(
+            std::fs::read(dest.join("region/r.0.0.mca")).unwrap(),
+            b"region"
+        );
+        assert_eq!(std::fs::read(dest.join("icon.png")).unwrap(), b"png");
+    }
+
+    /// 取消标记在文件条目解压前生效：立即中止且不继续写出。
+    #[test]
+    fn extract_zip_safe_honors_cancel() {
+        use std::sync::atomic::AtomicBool;
+        let tmp = tempfile::tempdir().unwrap();
+        let zip_path = tmp.path().join("world.zip");
+        make_zip(
+            &zip_path,
+            &[("a.dat", b"a"), ("b.dat", b"b"), ("c.dat", b"c")],
+        );
+        let dest = tmp.path().join("dest");
+        let cancel = AtomicBool::new(false);
+        // 取消标记由外部在解压前设置：首个文件条目前检查即中止
+        cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        let err = extract_zip_safe(&zip_path, &dest, &cancel).unwrap_err();
+        assert!(err.contains("取消"), "应返回取消错误，实际: {err}");
     }
 }

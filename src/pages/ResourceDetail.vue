@@ -11,9 +11,9 @@ import { resourceDetail, openResourceDetail } from "../store/resourceDetail";
 import { selectedVersion } from "../store/selectedVersion";
 import { dlTranslateMode, dlShowReleaseOnly } from "../store/downloaderConfig";
 import {
-  fetchVersions, fetchModDetails,
-  type ModVersion, type ModDependencyItem, type ModDisplayItem,
-} from "../store/modSearch";
+  fetchVersions, fetchCommunityDetails,
+  type CommunityVersion, type CommunityDependencyItem, type CommunityDisplayItem,
+} from "../store/communitySearch";
 import { registerTaskName, type DownloadFileKind } from "../store/download";
 import { fmtCount, fmtSize, fmtModDate } from "../utils/format";
 import IconImage from "../component/IconImage.vue";
@@ -26,7 +26,7 @@ const sourceLabel = computed(() =>
 
 // ── 版本列表 ──────────────────────────────
 
-const versions = ref<ModVersion[]>([]);
+const versions = ref<CommunityVersion[]>([]);
 const loadingVersions = ref(false);
 const versionError = ref("");
 
@@ -203,7 +203,7 @@ watch(item, onItemChange, { immediate: true });
 
 // ── 前置依赖（选中版本文件的 required 依赖；不同版本依赖可能不同）──────────
 
-const depItems = ref<ModDependencyItem[]>([]);
+const depItems = ref<CommunityDependencyItem[]>([]);
 const loadingDeps = ref(false);
 const depError = ref("");
 
@@ -246,7 +246,7 @@ async function loadDeps() {
   loadingDeps.value = true;
   depError.value = "";
   try {
-    const items = await fetchModDetails(it.source, ids);
+    const items = await fetchCommunityDetails(it.source, ids);
     if (seq !== depsSeq) return; // 过期响应（选中版本已切换/返回）丢弃
     depItems.value = items;
   } catch (e) {
@@ -260,7 +260,7 @@ async function loadDeps() {
 watch(selectedDepIds, loadDeps);
 
 /** 点击版本文件行：选中并刷新前置依赖。 */
-function pickVersion(v: ModVersion) {
+function pickVersion(v: CommunityVersion) {
   selectedVersionId.value = v.version_id;
   // 同步回 store：详情页随 tab 切换卸载重建时（下载完成 → 任务中心 → 返回），
   // onItemChange 用 pendingSelectedVersion 恢复选中态——不同步则重建后版本
@@ -268,8 +268,8 @@ function pickVersion(v: ModVersion) {
   resourceDetail.pendingSelectedVersion = v.version_id;
 }
 
-/** 依赖详情 → 可跳转的 ModDisplayItem（详情页字段，无搜索元数据）。 */
-function depToItem(d: ModDependencyItem): ModDisplayItem {
+/** 依赖详情 → 可跳转的 CommunityDisplayItem（详情页字段，无搜索元数据）。 */
+function depToItem(d: CommunityDependencyItem): CommunityDisplayItem {
   const src = item.value?.source ?? "modrinth";
   return {
     id: d.id,
@@ -299,6 +299,7 @@ const fileKind = computed<DownloadFileKind | null>(() => {
     case "resourcepack": return "resourcepack";
     case "datapack": return "datapack";
     case "modpack": return null;
+    case "worlds": return "world";
     default: return null;
   }
 });

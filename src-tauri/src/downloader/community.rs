@@ -1,4 +1,5 @@
-//! Mod 搜索 / 版本查询（Modrinth 官方 API + CurseForge 官方 API）。
+//! 社区资源搜索 / 版本查询（Modrinth 官方 API + CurseForge 官方 API），
+//! 覆盖 Mod / 光影 / 资源包 / 数据包 / 整合包 / 世界等类别（category 参数区分）。
 //! 两个平台 API 完全不同（ID 体系、鉴权、返回结构），分开实现、统一出参。
 //! CurseForge 需要 x-api-key（constants.rs 经 .env 注入）；Modrinth 无需 key。
 //! 搜索结果的简介翻译由 MCIM 镜像提供（英文原文 → 中文简介），失败静默降级为英文。
@@ -26,7 +27,7 @@ static TRANSLATION_CACHE: std::sync::LazyLock<
 > = std::sync::LazyLock::new(|| parking_lot::Mutex::new(HashMap::new()));
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ModSearchResult {
+pub struct CommunitySearchResult {
     pub id: String,
     pub title: String,
     /// MC百科内置条目表提供的中文译名（英文标题 → 中文名；未收录为 None）
@@ -156,13 +157,13 @@ fn curseforge_support_fields(data: &serde_json::Value) -> (Vec<String>, Option<S
 
 /// 搜索分页结果（两平台分页语义不同：Modrinth offset / CurseForge index，统一透传页码起点）。
 #[derive(Debug, Clone, Serialize)]
-pub struct ModSearchPage {
-    pub items: Vec<ModSearchResult>,
+pub struct CommunitySearchPage {
+    pub items: Vec<CommunitySearchResult>,
     pub total: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ModDependency {
+pub struct CommunityDependency {
     /// 依赖项目 ID（Modrinth project_id / CurseForge modId，统一转字符串）
     pub project_id: String,
     /// 关系类型（两源归一）：required | optional | incompatible | embedded
@@ -170,7 +171,7 @@ pub struct ModDependency {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ModVersion {
+pub struct CommunityVersion {
     pub version_id: String,
     pub version_number: String,
     pub game_versions: Vec<String>,
@@ -185,7 +186,7 @@ pub struct ModVersion {
     /// release | beta | alpha | unknown
     pub version_type: String,
     /// 该版本文件的依赖列表（Modrinth dependencies / CurseForge dependencies 归一）
-    pub dependencies: Vec<ModDependency>,
+    pub dependencies: Vec<CommunityDependency>,
 }
 
 /// CurseForge modLoaderType 枚举（部分）：forge=1、fabric=4、quilt=5、neoforge=6。
@@ -206,8 +207,14 @@ fn curseforge_class_id(category: &str) -> Option<i64> {
         "resourcepack" => Some(12),
         "datapack" => Some(6945),
         "modpack" => Some(4471),
+        "worlds" => Some(17),
         _ => None,
     }
+}
+
+/// CF 项目 URL 段：worlds 分类用 /worlds/，其余（mod 等）用 /mc-mods/。
+fn curseforge_url_segment(category: Option<&str>) -> &'static str {
+    if category == Some("worlds") { "worlds" } else { "mc-mods" }
 }
 
 /// 从 CurseForge gameVersions（如 ["Client","NeoForge","Server","26.2"]）提取已知 loader 名。
@@ -341,7 +348,7 @@ async fn search_modrinth(
     category: Option<&str>,
     offset: u64,
     page_size: u32,
-) -> Result<ModSearchPage, String> {
+) -> Result<CommunitySearchPage, String> {
     let mut facets: Vec<Vec<String>> = Vec::new();
     if let Some(gv) = game_version {
         facets.push(vec![format!("versions:{}", gv)]);
@@ -376,7 +383,7 @@ async fn search_modrinth(
     let hits = data["hits"]
         .as_array()
         .ok_or_else(|| "搜索响应缺少 hits".to_string())?;
-    let items: Vec<ModSearchResult> = hits
+    let items: Vec<CommunitySearchResult> = hits
         .iter()
         .filter_map(|h| {
             let title = h["title"].as_str()?.to_string();
@@ -385,7 +392,7 @@ async fn search_modrinth(
             let title_zh = entry
                 .and_then(|e| e.chinese_raw.as_deref())
                 .and_then(crate::downloader::wiki_entry::chinese_name);
-            Some(ModSearchResult {
+            Some(CommunitySearchResult {
                 id: h["project_id"].as_str()?.to_string(),
                 title,
                 title_zh,
@@ -405,14 +412,14 @@ async fn search_modrinth(
         })
         .collect();
     let total = data["total_hits"].as_u64().unwrap_or(items.len() as u64);
-    Ok(ModSearchPage { items, total })
+    Ok(CommunitySearchPage { items, total })
 }
 
 async fn modrinth_versions(
     project_id: &str,
     game_version: Option<&str>,
     loader: Option<&str>,
-) -> Result<Vec<ModVersion>, String> {
+) -> Result<Vec<CommunityVersion>, String> {
     let mut params: Vec<(&str, String)> = Vec::new();
     if let Some(gv) = game_version {
         let arr = serde_json::to_string(&vec![gv]).map_err(|e| format!("序列化数据失败\n{e}"))?;
@@ -436,7 +443,7 @@ async fn modrinth_versions(
             let files = v["files"].as_array()?;
             let file = files.iter().find(|f| f["primary"].as_bool() == Some(true)).or_else(|| files.first())?;
             let hashes = file["hashes"].as_object();
-            Some(ModVersion {
+            Some(CommunityVersion {
                 version_id: v["id"].as_str()?.to_string(),
                 version_number: v["version_number"].as_str()?.to_string(),
                 game_versions: v["game_versions"]
@@ -462,7 +469,7 @@ async fn modrinth_versions(
                         arr.iter()
                             .filter_map(|d| {
                                 // 仅保留带项目 ID 的依赖（部分依赖只有 version_id，无法定位项目）
-                                Some(ModDependency {
+                                Some(CommunityDependency {
                                     project_id: d["project_id"].as_str()?.to_string(),
                                     relation: d["dependency_type"]
                                         .as_str()
@@ -511,7 +518,7 @@ async fn search_curseforge(
     category: Option<&str>,
     offset: u64,
     page_size: u32,
-) -> Result<ModSearchPage, String> {
+) -> Result<CommunitySearchPage, String> {
     let mut params: Vec<(&str, String)> = vec![
         ("pageSize", page_size.to_string()),
         ("index", offset.to_string()),
@@ -536,7 +543,7 @@ async fn search_curseforge(
     let data = curseforge_get("/mods/search", &params).await?;
 
     let arr = data["data"].as_array().ok_or_else(|| "搜索响应缺少 data".to_string())?;
-    let items: Vec<ModSearchResult> = arr
+    let items: Vec<CommunitySearchResult> = arr
         .iter()
         .filter_map(|m| {
             let (loaders, version_range) = curseforge_support_fields(m);
@@ -546,7 +553,7 @@ async fn search_curseforge(
             let title_zh = entry
                 .and_then(|e| e.chinese_raw.as_deref())
                 .and_then(crate::downloader::wiki_entry::chinese_name);
-            Some(ModSearchResult {
+            Some(CommunitySearchResult {
                 id: m["id"].as_u64()?.to_string(),
                 title,
                 title_zh,
@@ -564,7 +571,8 @@ async fn search_curseforge(
                 downloads: m["downloadCount"].as_u64().unwrap_or(0),
                 icon_url: m["logo"]["url"].as_str().map(str::to_string),
                 page_url: format!(
-                    "https://www.curseforge.com/minecraft/mc-mods/{}",
+                    "https://www.curseforge.com/minecraft/{}/{}",
+                    curseforge_url_segment(category),
                     m["slug"].as_str().unwrap_or("")
                 ),
             })
@@ -573,14 +581,14 @@ async fn search_curseforge(
     let total = data["pagination"]["totalCount"]
         .as_u64()
         .unwrap_or(items.len() as u64);
-    Ok(ModSearchPage { items, total })
+    Ok(CommunitySearchPage { items, total })
 }
 
 async fn curseforge_versions(
     project_id: &str,
     game_version: Option<&str>,
     loader: Option<&str>,
-) -> Result<Vec<ModVersion>, String> {
+) -> Result<Vec<CommunityVersion>, String> {
     let mut params: Vec<(&str, String)> = vec![("pageSize", "30".into())];
     if let Some(gv) = game_version {
         params.push(("gameVersion", gv.to_string()));
@@ -610,7 +618,7 @@ async fn curseforge_versions(
                 Some(3) => "alpha",
                 _ => "unknown",
             };
-            Some(ModVersion {
+            Some(CommunityVersion {
                 version_id: f["id"].as_u64()?.to_string(),
                 version_number: f["fileName"].as_str()?.to_string(),
                 game_versions,
@@ -634,7 +642,7 @@ async fn curseforge_versions(
                                     Some(3) => "required",
                                     _ => "unknown",
                                 };
-                                Some(ModDependency {
+                                Some(CommunityDependency {
                                     project_id: d["modId"].as_u64()?.to_string(),
                                     relation: relation.to_string(),
                                 })
@@ -647,26 +655,50 @@ async fn curseforge_versions(
         .collect())
 }
 
+/// 社区资源搜索条件（统一入参：前端表单 + 分页）。
+/// 命令层直接收该结构体（前端 invoke 传命名对象，字段 camelCase），
+/// 领域层解包分派给两平台实现。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchQuery {
+    pub query: String,
+    pub game_version: Option<String>,
+    pub loader: Option<String>,
+    pub category: Option<String>,
+    pub offset: u64,
+    pub page_size: u32,
+}
+
 /// 搜索（按来源分派）。`category` 为项目类型（如 shader）或 None（普通 mod）；
 /// `page_size` 每源条数（聚合模式前端传减半值，单源默认 30）；
 /// `translate` 为 true 时对结果批量查 MCIM 中文简介（失败静默降级为英文）。
-#[allow(clippy::too_many_arguments)]
-pub async fn search_mods(
+pub async fn search_community(
     source: &str,
-    query: &str,
-    game_version: Option<&str>,
-    loader: Option<&str>,
-    category: Option<&str>,
-    offset: u64,
-    page_size: u32,
+    q: &SearchQuery,
     translate: bool,
-) -> Result<ModSearchPage, String> {
+) -> Result<CommunitySearchPage, String> {
     let mut page = match source {
         "modrinth" => {
-            search_modrinth(query, game_version, loader, category, offset, page_size).await?
+            search_modrinth(
+                q.query.trim(),
+                q.game_version.as_deref(),
+                q.loader.as_deref(),
+                q.category.as_deref(),
+                q.offset,
+                q.page_size,
+            )
+            .await?
         }
         "curseforge" => {
-            search_curseforge(query, game_version, loader, category, offset, page_size).await?
+            search_curseforge(
+                q.query.trim(),
+                q.game_version.as_deref(),
+                q.loader.as_deref(),
+                q.category.as_deref(),
+                q.offset,
+                q.page_size,
+            )
+            .await?
         }
         other => return Err(format!("未知 Mod 来源\n{other}")),
     };
@@ -685,12 +717,12 @@ pub async fn search_mods(
 }
 
 /// 版本列表（按来源分派）。
-pub async fn get_mod_versions(
+pub async fn get_community_versions(
     source: &str,
     project_id: &str,
     game_version: Option<&str>,
     loader: Option<&str>,
-) -> Result<Vec<ModVersion>, String> {
+) -> Result<Vec<CommunityVersion>, String> {
     match source {
         "modrinth" => modrinth_versions(project_id, game_version, loader).await,
         "curseforge" => curseforge_versions(project_id, game_version, loader).await,
@@ -701,7 +733,7 @@ pub async fn get_mod_versions(
 /// 依赖项目详情（图标/标题/简介），供详情页前置依赖卡片展示。
 /// 与所属项目同源查询（Modrinth 依赖 project_id / CurseForge 依赖 modId）。
 #[derive(Debug, Clone, Serialize)]
-pub struct ModDependencyItem {
+pub struct CommunityDependencyItem {
     pub id: String,
     pub title: String,
     pub description: String,
@@ -712,11 +744,11 @@ pub struct ModDependencyItem {
 
 /// 批量查询项目详情（按来源分派）。空 ids 直接返回空列表；单条失败跳过。
 /// `translate` 为 true 时对结果批量查 MCIM 中文简介（失败静默降级为英文）。
-pub async fn get_mod_details(
+pub async fn get_community_details(
     source: &str,
     ids: &[String],
     translate: bool,
-) -> Result<Vec<ModDependencyItem>, String> {
+) -> Result<Vec<CommunityDependencyItem>, String> {
     if ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -734,7 +766,7 @@ pub async fn get_mod_details(
     Ok(items)
 }
 
-async fn modrinth_details(ids: &[String]) -> Result<Vec<ModDependencyItem>, String> {
+async fn modrinth_details(ids: &[String]) -> Result<Vec<CommunityDependencyItem>, String> {
     let ids_json = serde_json::to_string(ids).map_err(|e| format!("序列化数据失败\n{e}"))?;
     let url = reqwest::Url::parse_with_params(
         &format!("{}/v2/projects", MODRINTH_API),
@@ -746,7 +778,7 @@ async fn modrinth_details(ids: &[String]) -> Result<Vec<ModDependencyItem>, Stri
     Ok(arr
         .iter()
         .filter_map(|p| {
-            Some(ModDependencyItem {
+            Some(CommunityDependencyItem {
                 id: p["id"].as_str()?.to_string(),
                 title: p["title"].as_str()?.to_string(),
                 description: p["description"].as_str().unwrap_or("").to_string(),
@@ -757,14 +789,14 @@ async fn modrinth_details(ids: &[String]) -> Result<Vec<ModDependencyItem>, Stri
         .collect())
 }
 
-async fn curseforge_details(ids: &[String]) -> Result<Vec<ModDependencyItem>, String> {
+async fn curseforge_details(ids: &[String]) -> Result<Vec<CommunityDependencyItem>, String> {
     let joined = ids.join(",");
     let data = curseforge_get("/mods", &[("modIds", joined)]).await?;
     let arr = data["data"].as_array().ok_or_else(|| "项目详情响应缺少 data".to_string())?;
     Ok(arr
         .iter()
         .filter_map(|m| {
-            Some(ModDependencyItem {
+            Some(CommunityDependencyItem {
                 id: m["id"].as_u64()?.to_string(),
                 title: m["name"].as_str()?.to_string(),
                 description: m["summary"].as_str().unwrap_or("").to_string(),
@@ -849,6 +881,22 @@ mod tests {
             page.items.iter().any(|h| h.id == "238222" || h.title.contains("Just Enough Items (JEI)")),
             "搜全名应命中 JEI"
         );
+    }
+
+    /// CurseForge 分类映射：worlds 地图存档 classId=17。
+    #[test]
+    fn curseforge_class_id_maps_worlds() {
+        assert_eq!(curseforge_class_id("worlds"), Some(17));
+        assert_eq!(curseforge_class_id("shader"), Some(6552), "既有分类不回归");
+        assert_eq!(curseforge_class_id("unknown"), None);
+    }
+
+    /// CF 项目 URL 段：worlds 用 /worlds/，其余用 /mc-mods/。
+    #[test]
+    fn curseforge_url_segment_selects_category() {
+        assert_eq!(curseforge_url_segment(Some("worlds")), "worlds");
+        assert_eq!(curseforge_url_segment(Some("mod")), "mc-mods");
+        assert_eq!(curseforge_url_segment(None), "mc-mods");
     }
 
     /// loader 提取：gameVersions 中已知 loader 名转小写。

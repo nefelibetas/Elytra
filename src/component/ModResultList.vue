@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // Mod 搜索结果列表：加载/错误/空态 + 结果行 + 分页器（底部栏计数最右）
-import { modSearch, modTotalPages } from "../store/modSearch";
+import { communitySearch, communityTotalPages } from "../store/communitySearch";
 import { dlTranslateMode } from "../store/downloaderConfig";
 import { openResourceDetail } from "../store/resourceDetail";
 import { fmtCount } from "../utils/format";
@@ -9,22 +9,22 @@ import IconImage from "./IconImage.vue";
 
 <template>
   <div class="mod-result-card">
-    <div v-if="modSearch.error" class="mod-state err">{{ modSearch.error }}</div>
-    <div v-else-if="modSearch.searching" class="mod-loading">
+    <div v-if="communitySearch.error" class="mod-state err">{{ communitySearch.error }}</div>
+    <div v-else-if="communitySearch.searching" class="mod-loading">
       <div class="spinner"></div>
-      <p class="mod-loading-text">{{ modSearch.query.trim() ? "正在搜索 Mod..." : "正在加载热门 Mod..." }}</p>
+      <p class="mod-loading-text">{{ communitySearch.query.trim() ? "正在搜索 Mod..." : "正在加载热门 Mod..." }}</p>
     </div>
-    <div v-else-if="modSearch.searched && modSearch.results.length === 0" class="mod-state">未找到相关 Mod，试试更换关键字或放宽筛选条件</div>
-    <template v-else-if="modSearch.searched">
+    <div v-else-if="communitySearch.searched && communitySearch.results.length === 0" class="mod-state">未找到相关 Mod，试试更换关键字或放宽筛选条件</div>
+    <template v-else-if="communitySearch.searched">
       <div class="mod-list">
-        <div v-for="m in modSearch.results" :key="m.key" class="mod-card">
-          <div class="mod-card-body" @click="openResourceDetail(m, { loader: modSearch.loader, gameVersion: modSearch.gameVersion, selectedVersion: '' })">
+        <div v-for="m in communitySearch.results" :key="m.key" class="mod-card">
+          <div class="mod-card-body" @click="openResourceDetail(m, { loader: communitySearch.loader, gameVersion: communitySearch.gameVersion, selectedVersion: '' })">
             <IconImage :src="m.icon_url" :size="32" />
             <span class="mod-info">
               <span class="mod-title-row">
                 <span class="mod-title">{{ m.title_zh ?? m.title }}</span>
                 <span v-if="dlTranslateMode === 'zh' && m.title_zh" class="mod-title-en"> | {{ m.title }}</span>
-                <span v-if="modSearch.source === 'all'" class="mod-badge" :class="m.source">{{ m.source === "modrinth" ? "Modrinth" : "CurseForge" }}</span>
+                <span v-if="communitySearch.source === 'all'" class="mod-badge" :class="m.source">{{ m.source === "modrinth" ? "Modrinth" : "CurseForge" }}</span>
                 <span class="mod-sub">{{ fmtCount(m.downloads) }} 次下载</span>
               </span>
               <span v-if="dlTranslateMode !== 'en'" class="mod-desc">{{ m.translated ?? m.description }}</span>
@@ -38,12 +38,12 @@ import IconImage from "./IconImage.vue";
       </div>
       <!-- 底部栏：分页器居中，结果计数固定最右侧 -->
       <div class="mod-footer">
-        <div v-if="modTotalPages > 1" class="mod-pager">
-          <button class="mod-pager-btn" :disabled="modSearch.page <= 1" @click="modSearch.search(modSearch.page - 1)">上一页</button>
-          <span class="mod-pager-info">{{ modSearch.page }} / {{ modTotalPages }}</span>
-          <button class="mod-pager-btn" :disabled="modSearch.page >= modTotalPages" @click="modSearch.search(modSearch.page + 1)">下一页</button>
+        <div v-if="communityTotalPages > 1" class="mod-pager">
+          <button class="mod-pager-btn" :disabled="communitySearch.page <= 1" @click="communitySearch.search(communitySearch.page - 1)">上一页</button>
+          <span class="mod-pager-info">{{ communitySearch.page }} / {{ communityTotalPages }}</span>
+          <button class="mod-pager-btn" :disabled="communitySearch.page >= communityTotalPages" @click="communitySearch.search(communitySearch.page + 1)">下一页</button>
         </div>
-        <span class="mod-result-count">共 {{ modSearch.total }} 个结果</span>
+        <span class="mod-result-count">共 {{ communitySearch.total }} 个结果</span>
       </div>
     </template>
     <div v-else class="mod-state">输入关键字搜索，或直接搜索查看热门 Mod</div>
