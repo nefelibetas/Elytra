@@ -4,6 +4,7 @@ pub mod fetcher;
 pub mod hash;
 pub mod library;
 pub mod manifest;
+pub mod mod_updates;
 pub mod community;
 pub mod mod_loader;
 pub mod model;
