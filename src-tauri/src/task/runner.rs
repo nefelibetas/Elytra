@@ -11,6 +11,7 @@ use crate::constants;
 use crate::downloader::fetcher;
 use crate::downloader::mod_loader;
 use crate::downloader::model::VersionJson;
+use crate::downloader::progress::ProgressCounters;
 use crate::persist;
 use crate::task::progress::{
     cancelled, set_cancelled, set_completed, set_error, set_phase, set_total, step_done,
@@ -293,9 +294,12 @@ pub async fn run_task(
             config.concurrency as usize,
             &src_refs,
             reuse_root.clone(),
-            Arc::clone(&lib_counter),
-            Arc::clone(&bytes_counter),
-            Arc::clone(&lib_step_bytes),
+            &ProgressCounters {
+                files: Arc::clone(&lib_counter),
+                bytes: Arc::clone(&bytes_counter),
+                step_bytes: Arc::clone(&lib_step_bytes),
+                ..Default::default()
+            },
             Some(cancel),
         )
         .await?;
@@ -313,9 +317,12 @@ pub async fn run_task(
             &config,
             config.concurrency as usize,
             reuse_root.clone(),
-            Arc::clone(&asst_counter),
-            Arc::clone(&bytes_counter),
-            Arc::clone(&asst_step_bytes),
+            &ProgressCounters {
+                files: Arc::clone(&asst_counter),
+                bytes: Arc::clone(&bytes_counter),
+                step_bytes: Arc::clone(&asst_step_bytes),
+                ..Default::default()
+            },
             Some(cancel),
         )
         .await?;
@@ -330,9 +337,12 @@ pub async fn run_task(
             &vj.libraries,
             &lib_dir,
             &src_refs,
-            Arc::clone(&natives_counter),
-            Arc::clone(&bytes_counter),
-            Arc::clone(&natives_step_bytes),
+            &ProgressCounters {
+                files: Arc::clone(&natives_counter),
+                bytes: Arc::clone(&bytes_counter),
+                step_bytes: Arc::clone(&natives_step_bytes),
+                ..Default::default()
+            },
             Some(cancel),
         )
         .await?;
@@ -368,9 +378,12 @@ pub async fn run_task(
                         &vdir,
                         &parent_text,
                         &config,
-                        &bytes_counter,
-                        &loader_libs_step_bytes,
-                        &loader_libs_step_total,
+                        &ProgressCounters {
+                            bytes: Arc::clone(&bytes_counter),
+                            step_bytes: Arc::clone(&loader_libs_step_bytes),
+                            step_total: Arc::clone(&loader_libs_step_total),
+                            ..Default::default()
+                        },
                         Some(&hook),
                     )
                     .await
@@ -383,9 +396,12 @@ pub async fn run_task(
                         &vdir,
                         &parent_text,
                         &config,
-                        &bytes_counter,
-                        &loader_libs_step_bytes,
-                        &loader_libs_step_total,
+                        &ProgressCounters {
+                            bytes: Arc::clone(&bytes_counter),
+                            step_bytes: Arc::clone(&loader_libs_step_bytes),
+                            step_total: Arc::clone(&loader_libs_step_total),
+                            ..Default::default()
+                        },
                         cancel,
                         Some(&hook),
                     )
@@ -398,9 +414,12 @@ pub async fn run_task(
                         &vdir,
                         &parent_text,
                         &config,
-                        &bytes_counter,
-                        &loader_libs_step_bytes,
-                        &loader_libs_step_total,
+                        &ProgressCounters {
+                            bytes: Arc::clone(&bytes_counter),
+                            step_bytes: Arc::clone(&loader_libs_step_bytes),
+                            step_total: Arc::clone(&loader_libs_step_total),
+                            ..Default::default()
+                        },
                         cancel,
                         Some(&hook),
                     )
@@ -414,9 +433,12 @@ pub async fn run_task(
                         &vdir,
                         &parent_text,
                         &config,
-                        &bytes_counter,
-                        &loader_libs_step_bytes,
-                        &loader_libs_step_total,
+                        &ProgressCounters {
+                            bytes: Arc::clone(&bytes_counter),
+                            step_bytes: Arc::clone(&loader_libs_step_bytes),
+                            step_total: Arc::clone(&loader_libs_step_total),
+                            ..Default::default()
+                        },
                         Some(&hook),
                     )
                     .await
@@ -454,9 +476,12 @@ pub async fn run_task(
                 &vdir,
                 &config,
                 mode,
-                &bytes_counter,
-                &optifine_step_bytes,
-                &optifine_step_total,
+                &ProgressCounters {
+                    bytes: Arc::clone(&bytes_counter),
+                    step_bytes: Arc::clone(&optifine_step_bytes),
+                    step_total: Arc::clone(&optifine_step_total),
+                    ..Default::default()
+                },
             )
             .await
             {

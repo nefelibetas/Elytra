@@ -3,7 +3,7 @@
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::config::downloader::model::{DownloadSource, DownloaderConfig};
@@ -20,9 +20,7 @@ pub async fn install_forge(
     vdir: &Path,
     parent_text: &str,
     config: &DownloaderConfig,
-    bytes: &Arc<AtomicU64>,
-    lib_bytes: &Arc<AtomicU64>,
-    lib_total: &Arc<AtomicU64>,
+    pc: &crate::downloader::progress::ProgressCounters,
     cancel: &Arc<AtomicBool>,
     hook: Option<LoaderHook<'_>>,
 ) -> Result<(), String> {
@@ -46,16 +44,13 @@ pub async fn install_forge(
         vdir,
         dir_name,
         parent_text,
-        bytes,
-        lib_bytes,
-        lib_total,
+        pc,
         cancel,
         hook,
     )
     .await
 }
 
-/// 10 参数均为必需数据（URL/源/配置/目标/字节计数/阶段钩子），私有实现细节，不抽象。
 /// Forge 与 NeoForge 共用：version.json/jar 解析后按分支处理各自专属构件。
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn download_and_extract(
@@ -65,9 +60,7 @@ pub(super) async fn download_and_extract(
     version_dir: &Path,
     dir_name: &str,
     parent_text: &str,
-    bytes: &Arc<AtomicU64>,
-    lib_bytes: &Arc<AtomicU64>,
-    lib_total: &Arc<AtomicU64>,
+    pc: &crate::downloader::progress::ProgressCounters,
     cancel: &Arc<AtomicBool>,
     hook: Option<LoaderHook<'_>>,
 ) -> Result<(), String> {
@@ -83,9 +76,9 @@ pub(super) async fn download_and_extract(
     let file_done = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let progress = {
         let fd = file_done.clone();
-        let b = bytes.clone();
-        let lb = lib_bytes.clone();
-        let lt = lib_total.clone();
+        let b = pc.bytes.clone();
+        let lb = pc.step_bytes.clone();
+        let lt = pc.step_total.clone();
         move |downloaded: u64, total: u64| {
             let prev = fd.swap(downloaded, std::sync::atomic::Ordering::Relaxed);
             let delta = downloaded.saturating_sub(prev);
@@ -206,16 +199,13 @@ pub(super) async fn download_and_extract(
         .await?;
         // 其余库走统一下载（universal 已单独下载，JSON 无其条目 → 不进 classpath）
         let sources: Vec<&DownloadSource> = config.file_sources_list();
-        let counter = Arc::new(std::sync::atomic::AtomicU32::new(0));
         crate::downloader::library::download_libraries(
             &libraries,
             &lib_dir,
             config.concurrency as usize,
             &sources,
             None, // loader 安装内库下载不走复用（run_task 主流程才探测复用根）
-            counter,
-            bytes.clone(),
-            lib_bytes.clone(),
+            pc,
             None, // 安装器内库下载小且少，取消由外层步骤检查兜底
         )
         .await
@@ -227,16 +217,13 @@ pub(super) async fn download_and_extract(
     }
     // 其余库走统一下载（多源回退 + sha1 校验；URL 为空的库在此被跳过）
     let sources: Vec<&DownloadSource> = config.file_sources_list();
-    let counter = Arc::new(std::sync::atomic::AtomicU32::new(0));
     crate::downloader::library::download_libraries(
         &libraries,
         &lib_dir,
         config.concurrency as usize,
         &sources,
         None, // 同上：loader 安装内库下载不走复用
-        counter,
-        bytes.clone(),
-        lib_bytes.clone(),
+        pc,
         None, // 同上
     )
     .await

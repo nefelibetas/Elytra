@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
@@ -88,16 +88,13 @@ pub fn existing_lib_bytes(libraries: &[Library], lib_dir: &Path) -> u64 {
 /// 批量下载支持库（多源回退 + sha1 校验）。
 /// `reuse`：可选本地运行时复用根——dest 缺失且复用根有 size+sha1 匹配的同相对路径文件时，
 /// 本地复制（计入进度）而非网络下载；未命中照常走网络（迁移用户省数百 MB）。
-#[allow(clippy::too_many_arguments)]
 pub async fn download_libraries(
     libraries: &[Library],
     libraries_dir: &Path,
     concurrency: usize,
     sources: &[&DownloadSource],
     reuse: Option<LocalRuntimeSource>,
-    counter: Arc<AtomicU32>,
-    bytes_counter: Arc<AtomicU64>,
-    step_bytes: Arc<AtomicU64>,
+    pc: &crate::downloader::progress::ProgressCounters,
     cancel: Option<&Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(), Vec<String>> {
     // (多源 URL, 目标, sha1, 本地复用源路径)
@@ -161,9 +158,9 @@ pub async fn download_libraries(
 
     for (urls, dest, sha1, local_src) in tasks {
         let permit = sem.clone();
-        let ctr = counter.clone();
-        let bc = bytes_counter.clone();
-        let sb = step_bytes.clone();
+        let ctr = pc.files.clone();
+        let bc = pc.bytes.clone();
+        let sb = pc.step_bytes.clone();
         // spawn 闭包需 'static：取消标志 clone 进闭包（None 时无取消语义）
         let cancel = cancel.cloned();
         handles.push(tokio::spawn(async move {

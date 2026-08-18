@@ -55,12 +55,10 @@ fn pick_curseforge_file(data: &serde_json::Value) -> Option<(String, String, Opt
 async fn download_optifabric(
     mc_version: &str,
     mods_dir: &std::path::Path,
-    bytes: &Arc<AtomicU64>,
-    step_bytes: &Arc<AtomicU64>,
-    step_total: &Arc<AtomicU64>,
+    pc: &crate::downloader::progress::ProgressCounters,
 ) -> Result<(), String> {
     // 1. 项目 ID（slug 查，避免硬编码 ID 随项目迁移失效）
-    let search = crate::downloader::mods::curseforge_get(
+    let search = crate::downloader::community::curseforge_get(
         "/mods/search",
         &[("slug", OPTIFABRIC_CF_SLUG.into()), ("pageSize", "1".into())],
     )
@@ -73,7 +71,7 @@ async fn download_optifabric(
         .ok_or("查询 OptiFabric 项目失败\nCurseForge 未找到 OptiFabric 项目")?;
 
     // 2. 该 MC 版本 + Fabric 的最新文件
-    let files = crate::downloader::mods::curseforge_get(
+    let files = crate::downloader::community::curseforge_get(
         &format!("/mods/{mod_id}/files"),
         &[
             ("gameVersion", mc_version.to_string()),
@@ -95,7 +93,7 @@ async fn download_optifabric(
     fetcher::fetch_bounded(
         &[download_url],
         &dest,
-        Some(step_progress(bytes, step_bytes, step_total)),
+        Some(step_progress(pc)),
     )
     .await
     .map_err(|e| format!("下载 OptiFabric 失败\n{e}"))?;
@@ -137,14 +135,12 @@ fn build_vanilla_version_json(
 /// 每文件字节进度：增量累加进全局计数（收尾心跳显示速度）与 OptiFine 步骤计数；
 /// total（content-length）写入步骤分母。OptiFine jar 与 OptiFabric 共用同一步骤计数。
 fn step_progress(
-    bytes: &Arc<AtomicU64>,
-    step_bytes: &Arc<AtomicU64>,
-    step_total: &Arc<AtomicU64>,
+    pc: &crate::downloader::progress::ProgressCounters,
 ) -> impl Fn(u64, u64) {
     let file_done = Arc::new(AtomicU64::new(0));
-    let b = bytes.clone();
-    let sb = step_bytes.clone();
-    let st = step_total.clone();
+    let b = pc.bytes.clone();
+    let sb = pc.step_bytes.clone();
+    let st = pc.step_total.clone();
     move |downloaded: u64, total: u64| {
         let prev = file_done.swap(downloaded, Ordering::Relaxed);
         let delta = downloaded.saturating_sub(prev);
@@ -165,9 +161,7 @@ pub async fn install_optifine(
     vdir: &std::path::Path,
     config: &DownloaderConfig,
     mode: OptifineMode,
-    bytes: &Arc<AtomicU64>,
-    step_bytes: &Arc<AtomicU64>,
-    step_total: &Arc<AtomicU64>,
+    pc: &crate::downloader::progress::ProgressCounters,
 ) -> Result<(), String> {
     let config = config.clone();
     let source = config
@@ -204,9 +198,9 @@ pub async fn install_optifine(
     let file_done = Arc::new(AtomicU64::new(0));
     let progress = {
         let fd = file_done.clone();
-        let b = bytes.clone();
-        let sb = step_bytes.clone();
-        let st = step_total.clone();
+        let b = pc.bytes.clone();
+        let sb = pc.step_bytes.clone();
+        let st = pc.step_total.clone();
         move |downloaded: u64, total: u64| {
             let prev = fd.swap(downloaded, Ordering::Relaxed);
             let delta = downloaded.saturating_sub(prev);
@@ -246,7 +240,7 @@ pub async fn install_optifine(
             // 旧实现无条件覆盖 minimal json，会把 forge 生成的 json 顶掉。
         }
         OptifineMode::FabricLike => {
-            download_optifabric(mc_version, &vdir.join("mods"), bytes, step_bytes, step_total)
+            download_optifabric(mc_version, &vdir.join("mods"), pc)
                 .await?;
         }
     }
