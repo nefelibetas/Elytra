@@ -32,6 +32,13 @@ pub const CONFIG_DIR: &str = "Elytra";
 /// 配置文件名
 pub const SETTINGS_FILE: &str = "Settings.toml";
 
+/// 系统钥匙串条目标识（macOS Keychain / Linux Secret Service 共用）
+pub const KEYCHAIN_SERVICE: &str = "ElytraLauncher";
+/// 主密钥条目 account（macOS）/ attribute（Linux）
+pub const KEYCHAIN_MASTER_KEY_ACCOUNT: &str = "master-key";
+/// 主密钥条目 label（用户可见）
+pub const KEYCHAIN_MASTER_KEY_LABEL: &str = "Elytra Launcher master key";
+
 /// persist section: 下载器配置
 pub const SECT_DOWNLOADER: &str = "downloader";
 /// persist section: 启动器配置
