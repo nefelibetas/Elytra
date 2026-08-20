@@ -43,6 +43,17 @@ parking_lot = "0.12"
 # 用户开着系统代理（Clash 等）时官方源直连被劫持/黑洞，需显式走代理
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
+# 非 Windows 钥匙串主密钥加密：secrets.bin 每条 value 用主密钥 ChaCha20-Poly1305 加密
+# （主密钥存系统钥匙串；无钥匙串环境降级明文 + 0o600）
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+chacha20poly1305 = "0.11"
+# macOS 系统钥匙串（Keychain Services）；security-framework 不重导出 core-foundation，需显式声明
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3.7"
+core-foundation = "0.10"
+# Linux Secret Service（org.freedesktop.secrets：GNOME Keyring / KWallet kwalletd5）
+[target.'cfg(target_os = "linux")'.dependencies]
+secret-service = "5.1"
 
 [dev-dependencies]
 # 解压/安装流程单测用临时目录（仅测试，不进入产物）
