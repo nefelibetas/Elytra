@@ -2,12 +2,99 @@ use std::path::{Path, PathBuf};
 
 use crate::config::launcher::memory;
 use crate::config::launcher::model::{AuthMode, LauncherConfig, MemoryMode};
+use crate::constants;
 use crate::downloader::extract::{
     legacy_classifier_artifact, matches_rules, modern_native_matches, modern_natives_key,
     NativesKind,
 };
-use crate::constants;
 use crate::downloader::model::VersionJson;
+
+// ── 启动协议常量（集中维护，防拼写错误导致静默失败）──
+
+// 游戏启动参数名（1.13+ camelCase，旧版 JSON token 模板用连字符版）
+const ARG_USERNAME: &str = "--username";
+const ARG_VERSION: &str = "--version";
+const ARG_GAME_DIR: &str = "--gameDir";
+const ARG_ASSETS_DIR: &str = "--assetsDir";
+const ARG_ASSET_INDEX: &str = "--assetIndex";
+const ARG_UUID: &str = "--uuid";
+const ARG_ACCESS_TOKEN: &str = "--accessToken";
+const ARG_USER_TYPE: &str = "--userType";
+const ARG_VERSION_TYPE: &str = "--versionType";
+const ARG_WIDTH: &str = "--width";
+const ARG_HEIGHT: &str = "--height";
+const ARG_USER_PROPERTIES: &str = "--userProperties";
+const ARG_USER_PROPERTIES_LEGACY: &str = "--user-properties";
+const ARG_PROFILE_PROPERTIES: &str = "--profileProperties";
+
+// JVM 系统属性键（-D 前缀 + 值；拼接场景用带 = 前缀常量）
+const SYS_LAUNCHER_BRAND: &str = "-Dminecraft.launcher.brand=";
+const SYS_LAUNCHER_VERSION: &str = "-Dminecraft.launcher.version=";
+const SYS_JAVA_LIBRARY_PATH: &str = "-Djava.library.path=";
+const SYS_WINDOW_TITLE: &str = "-Dminecraft.window.title=";
+const SYS_STDOUT_ENCODING: &str = "-Dstdout.encoding=UTF-8";
+const SYS_STDERR_ENCODING: &str = "-Dstderr.encoding=UTF-8";
+const SYS_USE_SYSTEM_PROXIES: &str = "-Djava.net.useSystemProxies=true";
+const SYS_USER_LANGUAGE_ZH: &str = "-Duser.language=zh_CN";
+const SYS_USER_COUNTRY_ZH: &str = "-Duser.country=CN";
+
+// JVM 标志与跳过前缀
+const JVM_FLAG_SUN_MISC_UNSAFE: &str = "--sun-misc-unsafe-memory-access=allow";
+const JVM_FLAG_NATIVE_ACCESS: &str = "--enable-native-access=ALL-UNNAMED";
+const ARG_CP: &str = "-cp";
+const ARG_CP_LONG: &str = "-classpath";
+const PREFIX_XMX: &str = "-Xmx";
+const PREFIX_XMS: &str = "-Xms";
+const PREFIX_JAVA_AGENT: &str = "-javaagent:";
+const SUBSTR_LWJGL_UNSAFE_AGENT: &str = "lwjgl-unsafe-agent";
+
+// 类名 / Maven 坐标前缀
+const CLASS_LAUNCHWRAPPER: &str = "net.minecraft.launchwrapper.Launch";
+const CLASS_CLIENT_MAIN: &str = "net.minecraft.client.main.Main";
+const CLASS_PREFIX_FABRIC: &str = "net.fabricmc";
+const SUBSTR_FABRIC_LOADER: &str = "fabric-loader";
+const MAVEN_NEOFORGE: &str = "net.neoforged:neoforge:";
+const MAVEN_NEOFORGE_UNIVERSAL: &str = ":universal";
+
+// 模板占位符（与官方 arguments 模板一致；${quickPlayPath} 启动器不支持 → 替换为空串）
+const PLACEHOLDER_AUTH_PLAYER_NAME: &str = "${auth_player_name}";
+const PLACEHOLDER_VERSION_NAME: &str = "${version_name}";
+const PLACEHOLDER_GAME_DIRECTORY: &str = "${game_directory}";
+const PLACEHOLDER_ASSETS_ROOT: &str = "${assets_root}";
+const PLACEHOLDER_ASSETS_INDEX_NAME: &str = "${assets_index_name}";
+const PLACEHOLDER_AUTH_UUID: &str = "${auth_uuid}";
+const PLACEHOLDER_AUTH_ACCESS_TOKEN: &str = "${auth_access_token}";
+const PLACEHOLDER_AUTH_XUID: &str = "${auth_xuid}";
+const PLACEHOLDER_USER_TYPE: &str = "${user_type}";
+const PLACEHOLDER_USER_PROPERTIES: &str = "${user_properties}";
+const PLACEHOLDER_VERSION_TYPE: &str = "${version_type}";
+const PLACEHOLDER_RESOLUTION_WIDTH: &str = "${resolution_width}";
+const PLACEHOLDER_RESOLUTION_HEIGHT: &str = "${resolution_height}";
+const PLACEHOLDER_LAUNCHER_NAME: &str = "${launcher_name}";
+const PLACEHOLDER_LAUNCHER_VERSION: &str = "${launcher_version}";
+const PLACEHOLDER_CLIENT_ID: &str = "${clientid}";
+const PLACEHOLDER_QUICK_PLAY_PATH: &str = "${quickPlayPath}";
+const PLACEHOLDER_NATIVES_DIRECTORY: &str = "${natives_directory}";
+const PLACEHOLDER_LIBRARY_DIRECTORY: &str = "${library_directory}";
+const PLACEHOLDER_CLASSPATH: &str = "${classpath}";
+const PLACEHOLDER_CLASSPATH_SEPARATOR: &str = "${classpath_separator}";
+
+// 文件标记 / 扩展名
+const NATIVES_READY_MARKER: &str = ".elytra-ready";
+const EXT_JAR: &str = "jar";
+const EXT_JSON: &str = "json";
+const JSON_MAIN_CLASS_KEY: &str = "\"mainClass\"";
+
+// 离线模式固定值（token 为占位，游戏仅校验非空；用户类型协议枚举）
+const OFFLINE_TOKEN_PLACEHOLDER: &str = "00000000FFFFFFFFFFFFFFFFFFFFFF96436";
+const USER_TYPE_LEGACY: &str = "legacy";
+const USER_TYPE_MSA: &str = "msa";
+const EMPTY_JSON_OBJECT: &str = "{}";
+const DEFAULT_RESOLUTION_WIDTH: u32 = 854;
+const DEFAULT_RESOLUTION_HEIGHT: u32 = 480;
+
+/// 游戏语言：自动中文（与前端 Settings 联动）
+const LANG_AUTO_ZH_CN: &str = "auto_zh_CN";
 
 /// 完整的启动命令，按执行顺序排列。
 pub struct LaunchCommand {
@@ -46,28 +133,33 @@ struct TemplateContext<'a> {
 /// 替换游戏参数模板中的 `${key}` 占位符。
 fn substitute<'a>(template: &str, ctx: &TemplateContext<'a>) -> String {
     let mut s = template.to_string();
-    s = s.replace("${auth_player_name}", ctx.auth_player_name);
-    s = s.replace("${version_name}", ctx.version_name);
-    s = s.replace("${game_directory}", ctx.game_directory);
-    s = s.replace("${assets_root}", ctx.assets_root);
-    s = s.replace("${assets_index_name}", ctx.assets_index_name);
-    s = s.replace("${auth_uuid}", ctx.auth_uuid);
-    s = s.replace("${auth_access_token}", ctx.auth_access_token);
-    s = s.replace("${auth_xuid}", ctx.auth_xuid);
-    s = s.replace("${user_type}", ctx.user_type);
-    s = s.replace("${user_properties}", ctx.user_properties);
-    s = s.replace("${version_type}", ctx.version_type);
-    s = s.replace("${resolution_width}", &ctx.resolution_width.to_string());
-    s = s.replace("${resolution_height}", &ctx.resolution_height.to_string());
-    s = s.replace("${launcher_name}", ctx.launcher_name);
-    s = s.replace("${launcher_version}", ctx.launcher_version);
-    s = s.replace("${clientid}", constants::CLIENT_ID);
-    s = s.replace("${quickPlayPath}", "");
+    s = s.replace(PLACEHOLDER_AUTH_PLAYER_NAME, ctx.auth_player_name);
+    s = s.replace(PLACEHOLDER_VERSION_NAME, ctx.version_name);
+    s = s.replace(PLACEHOLDER_GAME_DIRECTORY, ctx.game_directory);
+    s = s.replace(PLACEHOLDER_ASSETS_ROOT, ctx.assets_root);
+    s = s.replace(PLACEHOLDER_ASSETS_INDEX_NAME, ctx.assets_index_name);
+    s = s.replace(PLACEHOLDER_AUTH_UUID, ctx.auth_uuid);
+    s = s.replace(PLACEHOLDER_AUTH_ACCESS_TOKEN, ctx.auth_access_token);
+    s = s.replace(PLACEHOLDER_AUTH_XUID, ctx.auth_xuid);
+    s = s.replace(PLACEHOLDER_USER_TYPE, ctx.user_type);
+    s = s.replace(PLACEHOLDER_USER_PROPERTIES, ctx.user_properties);
+    s = s.replace(PLACEHOLDER_VERSION_TYPE, ctx.version_type);
+    s = s.replace(
+        PLACEHOLDER_RESOLUTION_WIDTH,
+        &ctx.resolution_width.to_string(),
+    );
+    s = s.replace(
+        PLACEHOLDER_RESOLUTION_HEIGHT,
+        &ctx.resolution_height.to_string(),
+    );
+    s = s.replace(PLACEHOLDER_LAUNCHER_NAME, ctx.launcher_name);
+    s = s.replace(PLACEHOLDER_LAUNCHER_VERSION, ctx.launcher_version);
+    s = s.replace(PLACEHOLDER_CLIENT_ID, constants::CLIENT_ID);
+    s = s.replace(PLACEHOLDER_QUICK_PLAY_PATH, "");
     s
 }
 
 #[allow(clippy::too_many_arguments)]
-/// 替换 JVM 参数模板中的 `${key}` 占位符。
 fn substitute_jvm(
     template: &str,
     natives_dir: &str,
@@ -79,13 +171,13 @@ fn substitute_jvm(
     launcher_version: &str,
 ) -> String {
     let mut s = template.to_string();
-    s = s.replace("${natives_directory}", natives_dir);
-    s = s.replace("${library_directory}", lib_dir);
-    s = s.replace("${classpath}", classpath);
-    s = s.replace("${classpath_separator}", classpath_sep);
-    s = s.replace("${version_name}", version_name);
-    s = s.replace("${launcher_name}", launcher_name);
-    s = s.replace("${launcher_version}", launcher_version);
+    s = s.replace(PLACEHOLDER_NATIVES_DIRECTORY, natives_dir);
+    s = s.replace(PLACEHOLDER_LIBRARY_DIRECTORY, lib_dir);
+    s = s.replace(PLACEHOLDER_CLASSPATH, classpath);
+    s = s.replace(PLACEHOLDER_CLASSPATH_SEPARATOR, classpath_sep);
+    s = s.replace(PLACEHOLDER_VERSION_NAME, version_name);
+    s = s.replace(PLACEHOLDER_LAUNCHER_NAME, launcher_name);
+    s = s.replace(PLACEHOLDER_LAUNCHER_VERSION, launcher_version);
     s
 }
 
@@ -203,21 +295,21 @@ pub fn build_launch_command(
     let (resolution_width, resolution_height, has_custom_resolution) = match config.window_size {
         crate::config::launcher::model::WindowSize::Custom(w, h) => (w, h, true),
         // 占位值仅供模板替换兜底（带 feature 的参数组已被过滤）
-        crate::config::launcher::model::WindowSize::Default => (854, 480, false),
+        crate::config::launcher::model::WindowSize::Default => {
+            (DEFAULT_RESOLUTION_WIDTH, DEFAULT_RESOLUTION_HEIGHT, false)
+        }
     };
     // JAR 文件名不一定等于目录名（目录可能因冲突被重命名）
-    let client_jar = find_file_in_dir(&version_dir, "jar")
-        .unwrap_or_else(|| version_dir.join(format!("{}.jar", version_dir_name)));
+    let client_jar = find_file_in_dir(&version_dir, EXT_JAR)
+        .unwrap_or_else(|| version_dir.join(format!("{}.{}", version_dir_name, EXT_JAR)));
     let classpath_sep = ";";
 
     // ── Classpath ──
     let mut classpath = build_classpath(version_json, &lib_dir, &client_jar);
-    // PCL2 版本隔离实例兜底：PCL2 安装 Fabric 时其 json 的 libraries 不含
-    // fabric-loader 组件（PCL2 启动器自处理，json 里只有原版库），mainClass 却是
-    // KnotClient——严格按 json 构建 classpath 会缺 fabric-loader 导致
-    // ClassNotFoundException。扫描 libraries 目录补 net/fabricmc 与 org/ow2/asm。
-    if version_json.main_class.contains("net.fabricmc")
-        && !classpath.iter().any(|p| p.to_string_lossy().contains("fabric-loader"))
+    if version_json.main_class.contains(CLASS_PREFIX_FABRIC)
+        && !classpath
+            .iter()
+            .any(|p| p.to_string_lossy().contains(SUBSTR_FABRIC_LOADER))
     {
         append_pcl_fabric_libs(&mut classpath, &lib_dir);
     }
@@ -242,8 +334,8 @@ pub fn build_launch_command(
     // ── 主类 ──
     let mut main_class = version_json.main_class.clone();
     // 禁用 Java Launch Wrapper：老版本（1.6-1.12）主类为 launchwrapper，直接改用客户端主类绕过
-    if config.disable_launch_wrapper && main_class == "net.minecraft.launchwrapper.Launch" {
-        main_class = "net.minecraft.client.main.Main".to_string();
+    if config.disable_launch_wrapper && main_class == CLASS_LAUNCHWRAPPER {
+        main_class = CLASS_CLIENT_MAIN.to_string();
     }
 
     // ── 游戏参数 ──
@@ -253,9 +345,9 @@ pub fn build_launch_command(
         AuthMode::Offline { username, uuid } => (
             username.as_str(),
             uuid.as_str(),
-            "00000000FFFFFFFFFFFFFFFFFFFFFF96436",
+            OFFLINE_TOKEN_PLACEHOLDER,
             "",
-            "legacy",
+            USER_TYPE_LEGACY,
         ),
         AuthMode::Online {
             username,
@@ -267,7 +359,7 @@ pub fn build_launch_command(
             uuid.as_str(),
             access_token.as_str(),
             xuid.as_str(),
-            "msa",
+            USER_TYPE_MSA,
         ),
     };
 
@@ -283,7 +375,7 @@ pub fn build_launch_command(
         user_type,
         // 空值用空 JSON（老版本 json 的 token 不能被替换为空串，Main 解析会崩）
         user_properties: if user_properties.is_empty() {
-            "{}"
+            EMPTY_JSON_OBJECT
         } else {
             user_properties
         },
@@ -306,7 +398,7 @@ pub fn build_launch_command(
     args.push(java_path.to_string_lossy().to_string());
     args.extend(jvm_preamble);
     args.extend(system_props);
-    args.push("-cp".to_string());
+    args.push(ARG_CP.to_string());
     args.push(classpath_str);
     args.extend(jvm_tuning);
     args.push(main_class);
@@ -359,11 +451,10 @@ fn build_classpath(version_json: &VersionJson, lib_dir: &Path, client_jar: &Path
     // GameLocator 生产分支经 -DlibraryDirectory 直接从 libraries 目录加载 minecraft-client-patched；
     // 若把版本目录的混淆 vanilla 放进 classpath，RequiredSystemFiles 会在其上找到全部系统文件，
     // 误判为 dev 环境报 "Minecraft-Dists attribute" 缺失。
-    let is_neoforge = version_json.libraries.iter().any(|l| {
-        l.name
-            .starts_with("net.neoforged:neoforge:")
-            && l.name.ends_with(":universal")
-    });
+    let is_neoforge = version_json
+        .libraries
+        .iter()
+        .any(|l| l.name.starts_with(MAVEN_NEOFORGE) && l.name.ends_with(MAVEN_NEOFORGE_UNIVERSAL));
     if !is_neoforge {
         cp.push(client_jar.to_path_buf());
     }
@@ -392,16 +483,20 @@ fn version_gt(a: &str, b: &str) -> bool {
 /// NoSuchMethodError）。已存在的路径跳过（防重复）。
 fn append_pcl_fabric_libs(cp: &mut Vec<PathBuf>, lib_dir: &Path) {
     let mut push_jar = |p: PathBuf| {
-        if p.extension().is_some_and(|e| e == "jar") && !cp.contains(&p) {
+        if p.extension().is_some_and(|e| e == EXT_JAR) && !cp.contains(&p) {
             cp.push(p);
         }
     };
     let fabricmc = lib_dir.join("net").join("fabricmc");
     if let Ok(groups) = std::fs::read_dir(&fabricmc) {
         for group in groups.flatten() {
-            let Ok(vers) = std::fs::read_dir(group.path()) else { continue };
+            let Ok(vers) = std::fs::read_dir(group.path()) else {
+                continue;
+            };
             for ver in vers.flatten() {
-                let Ok(files) = std::fs::read_dir(ver.path()) else { continue };
+                let Ok(files) = std::fs::read_dir(ver.path()) else {
+                    continue;
+                };
                 for f in files.flatten() {
                     push_jar(f.path());
                 }
@@ -411,7 +506,9 @@ fn append_pcl_fabric_libs(cp: &mut Vec<PathBuf>, lib_dir: &Path) {
     let asm_dir = lib_dir.join("org").join("ow2").join("asm");
     if let Ok(artifacts) = std::fs::read_dir(&asm_dir) {
         for artifact in artifacts.flatten() {
-            let Ok(vers) = std::fs::read_dir(artifact.path()) else { continue };
+            let Ok(vers) = std::fs::read_dir(artifact.path()) else {
+                continue;
+            };
             let mut best: Option<(String, PathBuf)> = None;
             for ver in vers.flatten() {
                 if !ver.path().is_dir() {
@@ -423,7 +520,9 @@ fn append_pcl_fabric_libs(cp: &mut Vec<PathBuf>, lib_dir: &Path) {
                 }
             }
             if let Some((_, dir)) = best {
-                let Ok(files) = std::fs::read_dir(dir) else { continue };
+                let Ok(files) = std::fs::read_dir(dir) else {
+                    continue;
+                };
                 for f in files.flatten() {
                     push_jar(f.path());
                 }
@@ -469,7 +568,7 @@ pub fn ensure_old_style_natives(
     // 旧式：解压完成标记（.elytra-ready）存在 → 直接复用。
     // 只查“目录非空”不可靠：上次解压中断会留下部分文件，误判为已就绪，
     // 启动后缺原生库才暴露。marker 在全部解压成功后写入。
-    let ready_marker = natives_dir.join(".elytra-ready");
+    let ready_marker = natives_dir.join(NATIVES_READY_MARKER);
     if ready_marker.exists() {
         return Ok(());
     }
@@ -517,7 +616,8 @@ fn add_native_props(props: &mut Vec<String>, natives_dir: &Path, version_json: &
         return;
     }
     props.push(format!(
-        r#"-Djava.library.path={}"#,
+        "{}{}",
+        SYS_JAVA_LIBRARY_PATH,
         natives_dir.to_string_lossy()
     ));
 }
@@ -542,20 +642,23 @@ pub fn find_file_in_dir(dir: &std::path::Path, ext: &str) -> Option<std::path::P
 /// （TrashSlotSaveState/patchouli_data/usercache 等），字典序第一个
 /// 可能不是版本 json，直接解析会报 "missing field assetIndex"。
 pub fn find_version_json(dir: &std::path::Path, dir_name: &str) -> Option<std::path::PathBuf> {
-    let named = dir.join(format!("{dir_name}.json"));
+    let named = dir.join(format!("{dir_name}.{EXT_JSON}"));
     if named.is_file() {
         return Some(named);
     }
-    std::fs::read_dir(dir).ok()?.filter_map(|e| e.ok()).find_map(|e| {
-        let p = e.path();
-        if p.extension()? == "json" && p.is_file() {
-            let text = std::fs::read_to_string(&p).ok()?;
-            if text.contains("\"mainClass\"") {
-                return Some(p);
+    std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .find_map(|e| {
+            let p = e.path();
+            if p.extension()? == EXT_JSON && p.is_file() {
+                let text = std::fs::read_to_string(&p).ok()?;
+                if text.contains(JSON_MAIN_CLASS_KEY) {
+                    return Some(p);
+                }
             }
-        }
-        None
-    })
+            None
+        })
 }
 
 /// 组装 JVM 参数三段：
@@ -584,7 +687,7 @@ fn collect_jvm_args(
         for arg in raw {
             // 跳过 -cp / -classpath / ${classpath}（classpath 由我们自行构建，
             // 若 ${classpath} 被替换后不跳过，会变成 -cp 之前的裸 classpath 被 java 当主类）
-            if arg == "-cp" || arg == "-classpath" || arg == "${classpath}" {
+            if arg == ARG_CP || arg == ARG_CP_LONG || arg == PLACEHOLDER_CLASSPATH {
                 continue;
             }
             let substituted = substitute_jvm(
@@ -598,7 +701,7 @@ fn collect_jvm_args(
                 constants::APP_VERSION,
             );
             // 跳过 -Xmx / -Xms（内存由我们统一设置）
-            if substituted.starts_with("-Xmx") || substituted.starts_with("-Xms") {
+            if substituted.starts_with(PREFIX_XMX) || substituted.starts_with(PREFIX_XMS) {
                 continue;
             }
             if substituted.starts_with("-D") {
@@ -611,14 +714,8 @@ fn collect_jvm_args(
 
     // JDK 22+ 前置兼容标志（官方 arguments.jvm 可能已包含，去重）
     if java_major_version >= 22 {
-        push_unique(
-            &mut jvm_preamble,
-            "--sun-misc-unsafe-memory-access=allow".into(),
-        );
-        push_unique(
-            &mut jvm_preamble,
-            "--enable-native-access=ALL-UNNAMED".into(),
-        );
+        push_unique(&mut jvm_preamble, JVM_FLAG_SUN_MISC_UNSAFE.into());
+        push_unique(&mut jvm_preamble, JVM_FLAG_NATIVE_ACCESS.into());
     }
 
     // Native 库系统属性：旧式版本设置 -Djava.library.path（目录由启动前 ensure 保证就绪）
@@ -627,29 +724,29 @@ fn collect_jvm_args(
     // 启动器品牌标识（官方 arguments.jvm 可能已包含，去重）
     push_unique(
         &mut system_props,
-        format!("-Dminecraft.launcher.brand={}", constants::LAUNCHER_BRAND),
+        format!("{}{}", SYS_LAUNCHER_BRAND, constants::LAUNCHER_BRAND),
     );
     push_unique(
         &mut system_props,
-        format!("-Dminecraft.launcher.version={}", constants::APP_VERSION),
+        format!("{}{}", SYS_LAUNCHER_VERSION, constants::APP_VERSION),
     );
 
     // 编码
-    system_props.push("-Dstdout.encoding=UTF-8".into());
-    system_props.push("-Dstderr.encoding=UTF-8".into());
+    system_props.push(SYS_STDOUT_ENCODING.into());
+    system_props.push(SYS_STDERR_ENCODING.into());
 
     // 游戏进程读取 Windows 系统代理（梯子/PAC 场景下 sessionserver/textures 才能拉取皮肤）
-    system_props.push("-Djava.net.useSystemProxies=true".into());
+    system_props.push(SYS_USE_SYSTEM_PROXIES.into());
 
     // 游戏窗口标题（1.13+ 读取 minecraft.window.title 系统属性；空 = 不改）
     if !config.window_title.is_empty() {
-        system_props.push(format!("-Dminecraft.window.title={}", config.window_title));
+        system_props.push(format!("{}{}", SYS_WINDOW_TITLE, config.window_title));
     }
 
     // 游戏语言：自动设置为中文（-Duser.language 影响游戏/资源本地化）
-    if config.game_language == "auto_zh_CN" {
-        system_props.push("-Duser.language=zh_CN".into());
-        system_props.push("-Duser.country=CN".into());
+    if config.game_language == LANG_AUTO_ZH_CN {
+        system_props.push(SYS_USER_LANGUAGE_ZH.into());
+        system_props.push(SYS_USER_COUNTRY_ZH.into());
     }
 
     // 内存
@@ -657,7 +754,7 @@ fn collect_jvm_args(
         MemoryMode::Auto => memory::guess_auto_memory(version_dir),
         MemoryMode::Custom(mb) => mb,
     };
-    jvm_tuning.push(format!("-Xmx{}m", mem_mb));
+    jvm_tuning.push(format!("{}{}m", PREFIX_XMX, mem_mb));
 
     // GC 参数
     jvm_tuning.extend(memory::gc_args(&config.gc_type));
@@ -667,8 +764,8 @@ fn collect_jvm_args(
     for arg in &config.jvm_args {
         // 禁用 LWJGL Unsafe Agent：剔除 -javaagent:lwjgl-unsafe-agent 类参数
         if config.disable_lwjgl_unsafe_agent
-            && arg.starts_with("-javaagent:")
-            && arg.to_lowercase().contains("lwjgl-unsafe-agent")
+            && arg.starts_with(PREFIX_JAVA_AGENT)
+            && arg.to_lowercase().contains(SUBSTR_LWJGL_UNSAFE_AGENT)
         {
             continue;
         }
@@ -709,30 +806,30 @@ fn build_game_args(
             } else {
                 // 最低保底
                 let mut base = vec![
-                    "--username".into(),
+                    ARG_USERNAME.into(),
                     game_ctx.auth_player_name.to_string(),
-                    "--version".into(),
+                    ARG_VERSION.into(),
                     game_ctx.version_name.to_string(),
-                    "--gameDir".into(),
+                    ARG_GAME_DIR.into(),
                     game_ctx.game_directory.to_string(),
-                    "--assetsDir".into(),
+                    ARG_ASSETS_DIR.into(),
                     game_ctx.assets_root.to_string(),
-                    "--assetIndex".into(),
+                    ARG_ASSET_INDEX.into(),
                     game_ctx.assets_index_name.to_string(),
-                    "--uuid".into(),
+                    ARG_UUID.into(),
                     game_ctx.auth_uuid.to_string(),
-                    "--accessToken".into(),
+                    ARG_ACCESS_TOKEN.into(),
                     game_ctx.auth_access_token.to_string(),
-                    "--userType".into(),
+                    ARG_USER_TYPE.into(),
                     game_ctx.user_type.to_string(),
-                    "--versionType".into(),
+                    ARG_VERSION_TYPE.into(),
                     game_ctx.version_type.to_string(),
                 ];
                 if has_custom_resolution {
                     base.extend([
-                        "--width".into(),
+                        ARG_WIDTH.into(),
                         game_ctx.resolution_width.to_string(),
-                        "--height".into(),
+                        ARG_HEIGHT.into(),
                         game_ctx.resolution_height.to_string(),
                     ]);
                 }
@@ -745,11 +842,11 @@ fn build_game_args(
     if !user_properties.is_empty()
         && !game_args
             .iter()
-            .any(|a| a == "--user-properties" || a == "--userProperties")
+            .any(|a| a == ARG_USER_PROPERTIES_LEGACY || a == ARG_USER_PROPERTIES)
     {
-        game_args.push("--userProperties".into());
+        game_args.push(ARG_USER_PROPERTIES.into());
         game_args.push(user_properties.to_string());
-        game_args.push("--profileProperties".into());
+        game_args.push(ARG_PROFILE_PROPERTIES.into());
         game_args.push(user_properties.to_string());
     }
     game_args
