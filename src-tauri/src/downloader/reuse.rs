@@ -122,10 +122,7 @@ mod tests {
 
     fn fixture() -> (tempdir_shim::TempDir, PathBuf) {
         // 临时目录：reuse 根（含 assets/libraries 空目录）+ 一个待复制文件
-        let root = std::env::temp_dir().join(format!(
-            "elytra_test_reuse_{}",
-            std::process::id()
-        ));
+        let root = std::env::temp_dir().join(format!("elytra_test_reuse_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("assets/objects/ab")).unwrap();
         std::fs::create_dir_all(root.join("libraries/net/test")).unwrap();
@@ -158,9 +155,7 @@ mod tests {
     #[test]
     fn classify_requires_sha1_and_verifies_content() {
         let (_guard, root) = fixture();
-        let src = LocalRuntimeSource {
-            root: root.clone(),
-        };
+        let src = LocalRuntimeSource { root: root.clone() };
         // 写一个已知内容的本地文件
         let rel = "libraries/net/test/a.jar";
         let content = b"hello reuse";
@@ -177,14 +172,16 @@ mod tests {
         );
         // sha1 不符 → 拒绝
         assert!(
-            classify_local_artifact(&src, rel, Some(content.len() as u64), Some("deadbeef")).is_none(),
+            classify_local_artifact(&src, rel, Some(content.len() as u64), Some("deadbeef"))
+                .is_none(),
             "sha1 不匹配不应复用"
         );
         // 无期望 sha1 → 绝不盲复制
         assert!(classify_local_artifact(&src, rel, None, None).is_none());
         // 文件缺失 → None
         assert!(
-            classify_local_artifact(&src, "libraries/net/test/missing.jar", None, Some(&sha)).is_none()
+            classify_local_artifact(&src, "libraries/net/test/missing.jar", None, Some(&sha))
+                .is_none()
         );
     }
 
