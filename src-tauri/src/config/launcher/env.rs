@@ -10,6 +10,7 @@ use crate::constants;
 use crate::downloader::model::VersionJson;
 use crate::jdk::model::{JdkConfig, JdkInfo, JdkSelection};
 use crate::persist;
+use crate::util::{java_bin_path, parse_java_major};
 
 /// 加载全部持久化配置 + 解析版本 JSON，供 launch/spawn 共用。
 #[allow(clippy::type_complexity)]
@@ -68,13 +69,13 @@ pub fn load_launch_config(
     if !java_home.exists() {
         return Err(format!("JDK 路径不存在\n{}", java_home.display()));
     }
-    let java_path = crate::jdk::java_bin_path(&java_home);
+    let java_path = java_bin_path(&java_home);
     if !java_path.exists() {
         return Err(format!("未找到 Java 可执行文件\n{}", java_path.display()));
     }
 
     // 解析 Java 主版本号
-    let java_major = crate::jdk::parse_java_major(&java_env.version)
+    let java_major = parse_java_major(&java_env.version)
         .ok_or_else(|| format!("无法解析 JDK 版本号\n{}", java_env.version))?;
 
     Ok((java_path, version_json, mc_dir, launcher_config, java_major))
@@ -221,7 +222,7 @@ pub fn apply_game_language(game_dir: &std::path::Path) {
 fn auto_pick_jdk(discovered: &[JdkInfo], required: u32) -> Option<JdkInfo> {
     let mut candidates: Vec<(u32, &JdkInfo)> = discovered
         .iter()
-        .filter_map(|env| crate::jdk::parse_java_major(&env.version).map(|m| (m, env)))
+        .filter_map(|env| parse_java_major(&env.version).map(|m| (m, env)))
         .collect();
     if candidates.is_empty() {
         return None;
@@ -332,7 +333,12 @@ mod tests {
         )
         .unwrap();
         let found = crate::config::launcher::args::find_version_json(&dir, "愚者");
-        let name = found.unwrap().file_name().unwrap().to_string_lossy().to_string();
+        let name = found
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
         assert_eq!(name, "愚者.json", "应跳过游戏数据 json 取到版本 json");
 
         // 标准布局：同名 json 优先

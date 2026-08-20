@@ -11,6 +11,7 @@ use crate::config::downloader::model::DownloaderConfig;
 use crate::downloader::fetcher::{self, http};
 use crate::jdk::model::JdkInfo;
 use crate::jdk::scanner;
+use crate::util::{java_bin_path, parse_java_major};
 
 /// 安装进度钩子（任务侧传入；均可为空，纯函数调用方直接不传）。
 pub struct InstallProgress<'a> {
@@ -78,7 +79,7 @@ pub async fn auto_install(
     // 否则 Azul 装的 runtime 每次启动都会被误判未装而重下整个包）
     if let Some(home) = find_java_home(&dest_dir) {
         if let Ok(info) = scanner::inspect(&home) {
-            if crate::jdk::parse_java_major(&info.version) == Some(major) {
+            if parse_java_major(&info.version) == Some(major) {
                 return Ok(info);
             }
         }
@@ -173,9 +174,14 @@ async fn install_mojang_runtime(
         .map(|s| s.mirror_url(&manifest_url))
         .collect();
     let manifest_path = temp_file(&format!("runtime-manifest-{major}.json"));
-    fetcher::fetch_verified(&manifest_urls, &manifest_path, None::<fn(u64, u64)>, &manifest_sha1)
-        .await
-        .map_err(|e| format!("下载 runtime manifest 失败\n{e}"))?;
+    fetcher::fetch_verified(
+        &manifest_urls,
+        &manifest_path,
+        None::<fn(u64, u64)>,
+        &manifest_sha1,
+    )
+    .await
+    .map_err(|e| format!("下载 runtime manifest 失败\n{e}"))?;
     let manifest_text =
         std::fs::read_to_string(&manifest_path).map_err(|e| format!("读取 manifest 失败\n{e}"))?;
     let _ = std::fs::remove_file(&manifest_path);
@@ -255,7 +261,7 @@ async fn install_mojang_runtime(
 
     // 5. 校验：inspect 版本 + major 匹配
     let info = scanner::inspect(&dest_root).map_err(|e| format!("安装后校验失败\n{e}"))?;
-    if crate::jdk::parse_java_major(&info.version) != Some(major) {
+    if parse_java_major(&info.version) != Some(major) {
         return Err(format!(
             "安装的 Java 版本异常（需要 {}，实际 {}）",
             major, info.version
@@ -346,7 +352,9 @@ async fn install_azul_runtime(
     let file = std::fs::File::open(&zip_path).map_err(|e| format!("打开 Azul 包失败\n{e}"))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取 Azul 包失败\n{e}"))?;
     for i in 0..archive.len() {
-        let mut entry = archive.by_index(i).map_err(|e| format!("读取条目失败\n{e}"))?;
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| format!("读取条目失败\n{e}"))?;
         let name = entry.name().to_string();
         // 路径穿越防护：拒绝 .. 与绝对路径
         let out = safe_runtime_path(&dest_root, &name)?;
@@ -357,8 +365,8 @@ async fn install_azul_runtime(
         if let Some(parent) = out.parent() {
             std::fs::create_dir_all(parent).ok();
         }
-        let mut file_out = std::fs::File::create(&out)
-            .map_err(|e| format!("创建 {} 失败\n{e}", out.display()))?;
+        let mut file_out =
+            std::fs::File::create(&out).map_err(|e| format!("创建 {} 失败\n{e}", out.display()))?;
         std::io::copy(&mut entry, &mut file_out)
             .map_err(|e| format!("解压 {} 失败\n{e}", out.display()))?;
     }
@@ -367,7 +375,7 @@ async fn install_azul_runtime(
     // 找到含 bin/java(.exe) 的 JDK 根目录（zip 顶层目录名不定）
     let home = find_java_home(&dest_root).ok_or("解压后未找到 JDK 根目录")?;
     let info = scanner::inspect(&home).map_err(|e| format!("校验 Azul JDK 失败\n{e}"))?;
-    if crate::jdk::parse_java_major(&info.version) != Some(major) {
+    if parse_java_major(&info.version) != Some(major) {
         return Err(format!(
             "Azul 安装版本异常（需要 {}，实际 {}）",
             major, info.version
@@ -378,7 +386,7 @@ async fn install_azul_runtime(
 
 /// 递归查找含 `bin/java(.exe)` 的 JDK 根目录（Azul zip 顶层目录名不确定）。
 fn find_java_home(dir: &Path) -> Option<PathBuf> {
-    let bin = crate::jdk::java_bin_path(dir);
+    let bin = java_bin_path(dir);
     if bin.is_file() {
         return Some(dir.to_path_buf());
     }
@@ -443,10 +451,14 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("elytra_jh_{}", std::process::id()));
         let home = tmp.join("zulu17-ca-jdk17.0.11-win_x64");
         std::fs::create_dir_all(home.join("bin")).unwrap();
-        let bin = crate::jdk::java_bin_path(&home);
+        let bin = java_bin_path(&home);
         std::fs::write(&bin, b"x").unwrap();
         let found = find_java_home(&tmp);
-        assert_eq!(found.as_deref(), Some(home.as_path()), "应递归定位 zulu 子目录内的 java 根");
+        assert_eq!(
+            found.as_deref(),
+            Some(home.as_path()),
+            "应递归定位 zulu 子目录内的 java 根"
+        );
         std::fs::remove_dir_all(&tmp).ok();
     }
 }

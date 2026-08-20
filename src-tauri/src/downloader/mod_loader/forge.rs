@@ -6,11 +6,11 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use crate::config::downloader::model::{DownloadSource, DownloaderConfig};
-use crate::downloader::fetcher::{self, http};
-
 use super::neoforge::{download_neoforge_universal, extract_neoforge_client};
 use super::{expand_inheritance, LoaderEvent, LoaderHook};
+use crate::config::downloader::model::{DownloadSource, DownloaderConfig};
+use crate::downloader::fetcher::{self, http};
+use crate::util::java_bin_path;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn install_forge(
@@ -373,12 +373,9 @@ async fn extract_forge_client_lzma(
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| format!("启动 Forge 补丁工具失败\n{e}"))?;
-    let output = crate::downloader::mod_loader::run_installer_command(
-        child,
-        cancel,
-        "Forge 补丁工具",
-    )
-    .await?;
+    let output =
+        crate::downloader::mod_loader::run_installer_command(child, cancel, "Forge 补丁工具")
+            .await?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let tail: Vec<&str> = stderr.lines().rev().take(15).collect();
@@ -440,12 +437,12 @@ pub(super) fn resolve_java() -> Result<std::path::PathBuf, String> {
     use crate::jdk::model::JdkSelection;
     let cfg = crate::jdk::read();
     match cfg.jdk_selection {
-        JdkSelection::Manual { path } => Ok(crate::jdk::java_bin_path(std::path::Path::new(&path))),
+        JdkSelection::Manual { path } => Ok(java_bin_path(std::path::Path::new(&path))),
         JdkSelection::Auto => {
             let jdk = cfg.discovered_jdks.first().ok_or(
                 "未检测到 Java 环境，无法生成 Forge client（需要 JDK 运行官方补丁工具，请先在设置中配置 Java）",
             )?;
-            Ok(crate::jdk::java_bin_path(std::path::Path::new(&jdk.path)))
+            Ok(java_bin_path(std::path::Path::new(&jdk.path)))
         }
     }
 }

@@ -1,3 +1,4 @@
+use crate::util::exe_dir;
 use serde::{Deserialize, Serialize};
 
 /// 一个游戏目录（.minecraft 文件夹）
@@ -16,7 +17,7 @@ pub struct GameDirsConfig {
 
 /// 启动器 exe 所在文件夹名（旧版默认项命名，用于迁移）。
 pub fn exe_dir_name() -> String {
-    crate::persist::exe_dir()
+    exe_dir()
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default()
@@ -24,10 +25,7 @@ pub fn exe_dir_name() -> String {
 
 /// 默认目录：title 固定「当前文件夹」，指向启动器 exe 同级 .minecraft
 pub fn default_dir() -> GameDir {
-    let path = crate::persist::exe_dir()
-        .join(".minecraft")
-        .to_string_lossy()
-        .to_string();
+    let path = exe_dir().join(".minecraft").to_string_lossy().to_string();
     GameDir {
         name: "当前文件夹".to_string(),
         path,

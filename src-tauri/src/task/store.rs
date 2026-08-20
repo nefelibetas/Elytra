@@ -6,7 +6,6 @@
 //! 收口更新 → 进程崩溃残留 running → 下次启动 task::init() 标记 interrupted → 前端询问恢复。
 //! 库文件：exe 旁 `Elytra/tasks.db`（与 Settings.toml 同目录约定，AGENTS.md 红线：TOML 路径不动）。
 
-use std::future::Future;
 use std::sync::LazyLock;
 
 use serde::{Deserialize, Serialize};
@@ -15,6 +14,8 @@ use sqlx::{Row, SqlitePool};
 
 use crate::task::model::{DownloadFilesTask, DownloadTask};
 use crate::task::TaskStatus;
+use crate::util::block_on;
+use crate::util::exe_dir;
 
 /// 任务恢复凭证：重建任务所需的最小信息（各任务一）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,39 +64,13 @@ pub struct InterruptedJob {
 }
 
 fn db_path() -> std::path::PathBuf {
-    crate::persist::exe_dir()
+    exe_dir()
         .join(crate::constants::CONFIG_DIR)
         .join("tasks.db")
 }
 
-/// 同步执行异步 DB 操作（任务级低频操作，阻塞毫秒级可接受）。
-/// 有 tokio 上下文时复用现有 runtime：
-/// - multi_thread runtime：worker 线程直接用 `Handle::block_on` 会 panic
-///   （tokio 禁止 runtime 内再启动 runtime），须先 `block_in_place` 让出 worker；
-///   外部线程（主线程/blocking 线程）下 `block_in_place` 是 no-op，行为不变。
-/// - current_thread runtime：`block_in_place` 不可用，驱动线程直接 `block_on`。
-///
-/// 无 runtime 上下文（后台线程/独立进程/纯同步测试）时自维护兜底 runtime。
-fn block_on<F: Future>(fut: F) -> F::Output {
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        use tokio::runtime::RuntimeFlavor;
-        if handle.runtime_flavor() == RuntimeFlavor::MultiThread {
-            tokio::task::block_in_place(move || handle.block_on(fut))
-        } else {
-            handle.block_on(fut)
-        }
-    } else {
-        static RT: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
-            tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .worker_threads(2)
-                .build()
-                .expect("tokio runtime")
-        });
-        RT.block_on(fut)
-    }
-}
-
+/// 同步执行异步 DB 操作（复用 util::block_on；任务级低频操作，阻塞毫秒级可接受）。
+/// 注意：block_on 内不得再嵌套 block_on——tokio 禁止"runtime 内启动 runtime"。
 fn pool() -> Result<&'static SqlitePool, String> {
     POOL.as_ref().map_err(|e| e.clone())
 }
@@ -322,7 +297,12 @@ mod tests {
             version_dir_name: None,
             fabric_api: None,
         };
-        save_snapshot(&id, "测试任务", &JobSpec::Download(task), TaskStatus::Running);
+        save_snapshot(
+            &id,
+            "测试任务",
+            &JobSpec::Download(task),
+            TaskStatus::Running,
+        );
 
         // running 可被列出
         let listed = list_interrupted();
@@ -335,7 +315,10 @@ mod tests {
         assert_eq!(name, "测试任务");
         match spec {
             JobSpec::Download(t) => assert_eq!(t.version_id, "1.20.4"),
-            other => panic!("应还原为 Download 类型，实际 {:?}", std::mem::discriminant(&other)),
+            other => panic!(
+                "应还原为 Download 类型，实际 {:?}",
+                std::mem::discriminant(&other)
+            ),
         }
         // 终态后不再出现在中断列表
         update_status(&id, TaskStatus::Done);
@@ -350,7 +333,14 @@ mod tests {
     fn mark_crashed_marks_running_as_interrupted() {
         let id = format!("test_crash_{}", std::process::id());
         cleanup(&[&id]);
-        save_snapshot(&id, "崩溃现场", &JobSpec::Repair { version_dir_name: "26.2".into() }, TaskStatus::Running);
+        save_snapshot(
+            &id,
+            "崩溃现场",
+            &JobSpec::Repair {
+                version_dir_name: "26.2".into(),
+            },
+            TaskStatus::Running,
+        );
         mark_crashed_as_interrupted();
         // interrupted 仍可列出（恢复询问依据）
         assert!(
@@ -379,7 +369,12 @@ mod tests {
         // spawn 的任务在 runtime worker 线程执行（真实 async command 场景）。
         tokio::task::spawn(async move {
             remove_snapshot(&id);
-            save_snapshot(&id, "worker 现场", &JobSpec::Download(task), TaskStatus::Running);
+            save_snapshot(
+                &id,
+                "worker 现场",
+                &JobSpec::Download(task),
+                TaskStatus::Running,
+            );
             assert!(load_spec(&id).is_some(), "worker 线程应可写入并读回快照");
             update_status(&id, TaskStatus::Done);
             remove_snapshot(&id);

@@ -1,10 +1,11 @@
-use std::path::PathBuf;
 use std::fs;
+use std::path::PathBuf;
 
 use crate::constants::{CONFIG_DIR, SETTINGS_FILE};
+use crate::util::exe_dir;
 
 fn config_dir() -> PathBuf {
-    crate::persist::exe_dir().join(CONFIG_DIR)
+    exe_dir().join(CONFIG_DIR)
 }
 
 fn config_file() -> PathBuf {
