@@ -1,17 +1,9 @@
-mod store;
 pub mod secrets;
+mod store;
 
+use parking_lot::Mutex;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use parking_lot::Mutex;
-
-/// 启动器可执行文件所在目录（配置文件与默认游戏目录的基准）。
-pub fn exe_dir() -> std::path::PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-}
 
 /// 串行化所有读改写，避免后台线程与命令写入互相覆盖（read-modify-write 竞态）。
 static PERSIST_LOCK: Mutex<()> = Mutex::new(());
@@ -56,23 +48,19 @@ pub fn remove(key: &str) -> Result<(), PersistError> {
     let content = store::read_raw().unwrap_or_default();
     let mut root: toml::Table = toml::from_str(&content).unwrap_or_default();
     root.remove(key);
-    let output =
-        toml::to_string_pretty(&root).map_err(|e| PersistError::Serde(e.to_string()))?;
+    let output = toml::to_string_pretty(&root).map_err(|e| PersistError::Serde(e.to_string()))?;
     store::write_raw(&output).map_err(PersistError::Io)
 }
 
 pub fn save<T: Serialize>(key: &str, data: &T) -> Result<(), PersistError> {
     let _guard = PERSIST_LOCK.lock();
     let content = store::read_raw().unwrap_or_default();
-    let mut root: toml::Table =
-        toml::from_str(&content).unwrap_or_default();
+    let mut root: toml::Table = toml::from_str(&content).unwrap_or_default();
 
-    let value =
-        toml::Value::try_from(data).map_err(|e| PersistError::Serde(e.to_string()))?;
+    let value = toml::Value::try_from(data).map_err(|e| PersistError::Serde(e.to_string()))?;
     root.insert(key.to_string(), value);
 
-    let output =
-        toml::to_string_pretty(&root).map_err(|e| PersistError::Serde(e.to_string()))?;
+    let output = toml::to_string_pretty(&root).map_err(|e| PersistError::Serde(e.to_string()))?;
     store::write_raw(&output).map_err(PersistError::Io)
 }
 
@@ -119,7 +107,10 @@ mod tests {
     #[test]
     fn test_read_write_struct() {
         let _ = std::fs::remove_file(test_file());
-        let cfg = FakeConfig { name: "x".into(), count: 3 };
+        let cfg = FakeConfig {
+            name: "x".into(),
+            count: 3,
+        };
         save("fake", &cfg).unwrap();
         let v: FakeConfig = read("fake").unwrap();
         assert_eq!(v, cfg);
