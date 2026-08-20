@@ -1,9 +1,11 @@
 use crate::jdk::model::JdkInfo;
+use crate::util::java_bin_path;
 use std::collections::HashSet;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::path::Path;
 
+// 自定义目录扫描
 pub fn scan_custom_dir(path: &str) -> Result<Vec<JdkInfo>, String> {
     let dir = Path::new(path);
     if !dir.exists() {
@@ -11,6 +13,7 @@ pub fn scan_custom_dir(path: &str) -> Result<Vec<JdkInfo>, String> {
     }
     let mut found = Vec::new();
     let mut seen = HashSet::new();
+    // 指定目录以及往下一层目录内扫描
     scan_dir_and_children(dir, &mut found, &mut seen, false);
     if found.is_empty() {
         Err(format!("未在目录中找到 Java 环境\n{}", path))
@@ -19,6 +22,7 @@ pub fn scan_custom_dir(path: &str) -> Result<Vec<JdkInfo>, String> {
     }
 }
 
+// 自动扫描：从常用目录扫描jdk
 pub fn auto_scan() -> Vec<JdkInfo> {
     let mut found = Vec::new();
     let mut seen = HashSet::new();
@@ -31,6 +35,7 @@ pub fn auto_scan() -> Vec<JdkInfo> {
     found
 }
 
+// 扫描指定目录以及此目录下的二级目录
 fn scan_dir_and_children(
     dir: &Path,
     found: &mut Vec<JdkInfo>,
@@ -49,6 +54,7 @@ fn scan_dir_and_children(
     }
 }
 
+// 探测目录
 fn probe_home(dir: &Path, found: &mut Vec<JdkInfo>, seen: &mut HashSet<String>, only_64bit: bool) {
     let Ok(env) = inspect(dir) else {
         return;
@@ -60,7 +66,7 @@ fn probe_home(dir: &Path, found: &mut Vec<JdkInfo>, seen: &mut HashSet<String>, 
 
 /// 探测单个 JAVA_HOME 目录的版本信息（jdk/download.rs 的 managed runtime 注册复用）。
 pub(crate) fn inspect(java_home: &Path) -> Result<JdkInfo, String> {
-    let java_bin = crate::jdk::java_bin_path(java_home);
+    let java_bin = java_bin_path(java_home);
     if !java_bin.exists() {
         return Err(format!("未找到 Java 可执行文件\n{}", java_bin.display()));
     }
@@ -79,12 +85,14 @@ pub(crate) fn inspect(java_home: &Path) -> Result<JdkInfo, String> {
     })
 }
 
+// 解析版本号, 从java --version输出解析
 fn parse_version(output: &str) -> Option<String> {
     let start = output.find('"')?;
     let end = output[start + 1..].find('"')?;
     Some(output[start + 1..start + 1 + end].to_string())
 }
 
+// jdk出品商解析
 fn detect_vendor(output: &str) -> String {
     if output.contains("GraalVM") {
         "GraalVM".into()
@@ -175,6 +183,7 @@ fn candidate_dirs() -> Vec<String> {
         .collect()
 }
 
+// 从环境变量种获取
 fn env(key: &str) -> Option<String> {
     std::env::var(key).ok()
 }
