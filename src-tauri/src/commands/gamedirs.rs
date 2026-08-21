@@ -201,6 +201,9 @@ pub fn ensure_game_folder(kind: String, version_name: String) -> Result<String, 
         "version" => format!("versions/{version_name}"),
         "saves" => format!("versions/{version_name}/saves"),
         "mods" => format!("versions/{version_name}/mods"),
+        "resourcepacks" => format!("versions/{version_name}/resourcepacks"),
+        "datapacks" => format!("versions/{version_name}/datapacks"),
+        "shaderpacks" => format!("versions/{version_name}/shaderpacks"),
         _ => return Err("未知文件夹类型".to_string()),
     };
     let dir = base.join(sub);
