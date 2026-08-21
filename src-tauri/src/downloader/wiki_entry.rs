@@ -106,7 +106,9 @@ pub fn chinese_name(raw: &str) -> Option<String> {
         }
         _ => cleaned.clone(),
     };
-    let has_cjk = stripped.chars().any(|c| ('\u{4E00}'..='\u{9FFF}').contains(&c));
+    let has_cjk = stripped
+        .chars()
+        .any(|c| ('\u{4E00}'..='\u{9FFF}').contains(&c));
     if has_cjk {
         Some(stripped)
     } else {
@@ -137,8 +139,15 @@ mod tests {
         let cf = WIKI.lookup("curseforge", "industrial-craft");
         assert!(cf.is_some(), "industrial-craft 应命中 CF 索引");
         let cf = cf.unwrap();
-        assert_eq!(cf.mcmod_id, 2, "文件首行为空行也占行号：第 2 行 → 百科 id 2");
-        assert!(cf.chinese_raw.as_deref().unwrap_or("").contains("工业时代2"));
+        assert_eq!(
+            cf.mcmod_id, 2,
+            "文件首行为空行也占行号：第 2 行 → 百科 id 2"
+        );
+        assert!(cf
+            .chinese_raw
+            .as_deref()
+            .unwrap_or("")
+            .contains("工业时代2"));
 
         // 同 slug 应同时命中 Modrinth（`@` 结尾 = 双平台）
         assert!(
@@ -150,12 +159,18 @@ mod tests {
     /// 中文名处理：剥离开头星号/英文后缀；全英文视为无翻译。
     #[test]
     fn chinese_name_cleanup_rules() {
-        assert_eq!(chinese_name("工业时代2 (Industrial Craft 2)").as_deref(), Some("工业时代2"));
+        assert_eq!(
+            chinese_name("工业时代2 (Industrial Craft 2)").as_deref(),
+            Some("工业时代2")
+        );
         assert_eq!(chinese_name("林业*").as_deref(), Some("林业"), "* 标记丢弃");
         assert_eq!(chinese_name("Fabric API"), None, "全英文视为无翻译");
         assert_eq!(chinese_name(""), None, "空译名返回 None");
         // 括号内是中文不剥离
-        assert_eq!(chinese_name("苹果（红色）").as_deref(), Some("苹果（红色）"));
+        assert_eq!(
+            chinese_name("苹果（红色）").as_deref(),
+            Some("苹果（红色）")
+        );
     }
 
     /// 真实热门 mod 抽样：sodium（Modrinth slug）应命中并给出中文名。

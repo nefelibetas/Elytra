@@ -1,5 +1,5 @@
 use crate::jdk::model::JdkInfo;
-use crate::util::java_bin_path;
+use crate::util::{exe_dir, java_bin_path};
 use std::collections::HashSet;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -110,7 +110,11 @@ fn detect_vendor(output: &str) -> String {
 #[cfg(windows)]
 fn candidate_dirs() -> Vec<String> {
     let mut dirs = Vec::new();
-
+    // Elytra启动器自己下载的地方
+    dirs.push(format!(
+        r"{}\.minecraft\runtime",
+        exe_dir().to_string_lossy()
+    ));
     let pf = env("ProgramFiles");
     let pf86 = env("ProgramFiles(x86)");
     let appdata = env("APPDATA");

@@ -157,7 +157,6 @@ fn curseforge_support_fields(data: &serde_json::Value) -> (Vec<String>, Option<S
     (loaders, version_range(&versions))
 }
 
-
 /// 搜索分页结果（两平台分页语义不同：Modrinth offset / CurseForge index，统一透传页码起点）。
 #[derive(Debug, Clone, Serialize)]
 pub struct CommunitySearchPage {
@@ -217,7 +216,11 @@ fn curseforge_class_id(category: &str) -> Option<i64> {
 
 /// CF 项目 URL 段：worlds 分类用 /worlds/，其余（mod 等）用 /mc-mods/。
 fn curseforge_url_segment(category: Option<&str>) -> &'static str {
-    if category == Some("worlds") { "worlds" } else { "mc-mods" }
+    if category == Some("worlds") {
+        "worlds"
+    } else {
+        "mc-mods"
+    }
 }
 
 /// 从 CurseForge gameVersions（如 ["Client","NeoForge","Server","26.2"]）提取已知 loader 名。
@@ -257,7 +260,11 @@ fn parse_translations(source: &str, data: &serde_json::Value) -> HashMap<String,
     let Some(arr) = data.as_array() else {
         return HashMap::new();
     };
-    let key = if source == "modrinth" { "project_id" } else { "modid" };
+    let key = if source == "modrinth" {
+        "project_id"
+    } else {
+        "modid"
+    };
     arr.iter()
         .filter_map(|v| {
             let id = v[key]
@@ -377,10 +384,7 @@ async fn search_modrinth(
                 total: 0,
             });
         }
-        _ => facets.push(vec![format!(
-            "project_type:{}",
-            category.unwrap_or("mod")
-        )]),
+        _ => facets.push(vec![format!("project_type:{}", category.unwrap_or("mod"))]),
     }
     let mut params: Vec<(&str, String)> = vec![
         ("query", query.to_string()),
@@ -388,18 +392,16 @@ async fn search_modrinth(
         ("offset", offset.to_string()),
     ];
     if !facets.is_empty() {
-        let facets_json = serde_json::to_string(&facets).map_err(|e| format!("序列化数据失败\n{e}"))?;
+        let facets_json =
+            serde_json::to_string(&facets).map_err(|e| format!("序列化数据失败\n{e}"))?;
         params.push(("facets", facets_json));
     }
     // 空关键字时按下载量排（对齐 PCL2：不输入名称直接显示热门 Mod）
     if query.is_empty() {
         params.push(("index", "downloads".into()));
     }
-    let url = reqwest::Url::parse_with_params(
-        &format!("{}/v2/search", MODRINTH_API),
-        &params,
-    )
-    .map_err(|e| format!("URL 构造失败\n{}", e))?;
+    let url = reqwest::Url::parse_with_params(&format!("{}/v2/search", MODRINTH_API), &params)
+        .map_err(|e| format!("URL 构造失败\n{}", e))?;
     let data = get_json(url.as_str()).await?;
 
     let hits = data["hits"]
@@ -462,12 +464,17 @@ async fn modrinth_versions(
     .map_err(|e| format!("URL 构造失败\n{}", e))?;
     let data = get_json(url.as_str()).await?;
 
-    let arr = data.as_array().ok_or_else(|| "版本响应格式错误".to_string())?;
+    let arr = data
+        .as_array()
+        .ok_or_else(|| "版本响应格式错误".to_string())?;
     Ok(arr
         .iter()
         .filter_map(|v| {
             let files = v["files"].as_array()?;
-            let file = files.iter().find(|f| f["primary"].as_bool() == Some(true)).or_else(|| files.first())?;
+            let file = files
+                .iter()
+                .find(|f| f["primary"].as_bool() == Some(true))
+                .or_else(|| files.first())?;
             let hashes = file["hashes"].as_object();
             Some(CommunityVersion {
                 version_id: v["id"].as_str()?.to_string(),
@@ -485,7 +492,10 @@ async fn modrinth_versions(
                 filename: file["filename"].as_str()?.to_string(),
                 download_url: file["url"].as_str()?.to_string(),
                 file_size: file["size"].as_u64().unwrap_or(0),
-                sha1: hashes.and_then(|h| h.get("sha1")).and_then(|s| s.as_str()).map(str::to_string),
+                sha1: hashes
+                    .and_then(|h| h.get("sha1"))
+                    .and_then(|s| s.as_str())
+                    .map(str::to_string),
                 date_published: v["date_published"].as_str().unwrap_or("").to_string(),
                 downloads: v["downloads"].as_u64().unwrap_or(0),
                 version_type: v["version_type"].as_str().unwrap_or("unknown").to_string(),
@@ -515,7 +525,10 @@ async fn modrinth_versions(
 
 /// 带 x-api-key 发 GET 并解析 JSON；key 未配置时直接报错（不 panic、不暴露 key）。
 /// pub(crate)：OptiFabric 安装（optifine.rs）复用同一查询通道。
-pub(crate) async fn curseforge_get(path: &str, params: &[(&str, String)]) -> Result<serde_json::Value, String> {
+pub(crate) async fn curseforge_get(
+    path: &str,
+    params: &[(&str, String)],
+) -> Result<serde_json::Value, String> {
     let key = constants::CURSEFORGE_API_KEY
         .ok_or_else(|| "未配置 CurseForge API Key（项目根 .env 的 ELYTRA_CURSEFORGE_API_KEY），无法使用 CurseForge 来源".to_string())?;
     let mut all: Vec<(&str, String)> = vec![("gameId", CURSEFORGE_GAME_ID.to_string())];
@@ -571,7 +584,9 @@ async fn search_curseforge(
     params.push(("classId", class_id.to_string()));
     let data = curseforge_get("/mods/search", &params).await?;
 
-    let arr = data["data"].as_array().ok_or_else(|| "搜索响应缺少 data".to_string())?;
+    let arr = data["data"]
+        .as_array()
+        .ok_or_else(|| "搜索响应缺少 data".to_string())?;
     let items: Vec<CommunitySearchResult> = arr
         .iter()
         .filter_map(|m| {
@@ -638,7 +653,9 @@ async fn curseforge_versions(
     }
     let data = curseforge_get(&format!("/mods/{}/files", project_id), &params).await?;
 
-    let arr = data["data"].as_array().ok_or_else(|| "文件响应缺少 data".to_string())?;
+    let arr = data["data"]
+        .as_array()
+        .ok_or_else(|| "文件响应缺少 data".to_string())?;
     Ok(arr
         .iter()
         .filter_map(|f| {
@@ -648,7 +665,10 @@ async fn curseforge_versions(
                 .filter_map(|g| g.as_str().map(str::to_string))
                 .collect();
             let loaders = curseforge_loaders(&game_versions);
-            let sha1 = f["hashes"].as_array()?.iter().find(|h| h["algo"].as_u64() == Some(1))?;
+            let sha1 = f["hashes"]
+                .as_array()?
+                .iter()
+                .find(|h| h["algo"].as_u64() == Some(1))?;
             // CurseForge releaseType：1=Release、2=Beta、3=Alpha（归一化）
             let version_type = match f["releaseType"].as_u64() {
                 Some(1) => "release",
@@ -664,7 +684,10 @@ async fn curseforge_versions(
                 filename: f["fileName"].as_str()?.to_string(),
                 download_url: f["downloadUrl"].as_str().unwrap_or("").to_string(),
                 file_size: f["fileLength"].as_u64().unwrap_or(0),
-                sha1: sha1.get("value").and_then(|s| s.as_str()).map(str::to_string),
+                sha1: sha1
+                    .get("value")
+                    .and_then(|s| s.as_str())
+                    .map(str::to_string),
                 date_published: f["fileDate"].as_str().unwrap_or("").to_string(),
                 downloads: f["downloadCount"].as_u64().unwrap_or(0),
                 version_type: version_type.to_string(),
@@ -812,7 +835,9 @@ async fn modrinth_details(ids: &[String]) -> Result<Vec<CommunityDependencyItem>
     )
     .map_err(|e| format!("URL 构造失败\n{}", e))?;
     let data = get_json(url.as_str()).await?;
-    let arr = data.as_array().ok_or_else(|| "项目详情响应格式错误".to_string())?;
+    let arr = data
+        .as_array()
+        .ok_or_else(|| "项目详情响应格式错误".to_string())?;
     Ok(arr
         .iter()
         .filter_map(|p| {
@@ -830,7 +855,9 @@ async fn modrinth_details(ids: &[String]) -> Result<Vec<CommunityDependencyItem>
 async fn curseforge_details(ids: &[String]) -> Result<Vec<CommunityDependencyItem>, String> {
     let joined = ids.join(",");
     let data = curseforge_get("/mods", &[("modIds", joined)]).await?;
-    let arr = data["data"].as_array().ok_or_else(|| "项目详情响应缺少 data".to_string())?;
+    let arr = data["data"]
+        .as_array()
+        .ok_or_else(|| "项目详情响应缺少 data".to_string())?;
     Ok(arr
         .iter()
         .filter_map(|m| {
@@ -916,7 +943,9 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            page.items.iter().any(|h| h.id == "238222" || h.title.contains("Just Enough Items (JEI)")),
+            page.items
+                .iter()
+                .any(|h| h.id == "238222" || h.title.contains("Just Enough Items (JEI)")),
             "搜全名应命中 JEI"
         );
     }
@@ -958,26 +987,42 @@ mod tests {
         ]);
         let m = parse_translations("modrinth", &mr);
         assert_eq!(m.len(), 2, "应解析出 2 条翻译");
-        assert_eq!(m.get("AANobbMI").map(String::as_str), Some("高性能渲染引擎替代品"));
+        assert_eq!(
+            m.get("AANobbMI").map(String::as_str),
+            Some("高性能渲染引擎替代品")
+        );
 
         let cf = serde_json::json!([
             { "modid": 238222, "translated": "查看物品和配方", "original": "View Items and Recipes" }
         ]);
         let c = parse_translations("curseforge", &cf);
-        assert_eq!(c.get("238222").map(String::as_str), Some("查看物品和配方"), "modid 数字应转字符串");
+        assert_eq!(
+            c.get("238222").map(String::as_str),
+            Some("查看物品和配方"),
+            "modid 数字应转字符串"
+        );
     }
 
     /// 翻译响应解析容错：非数组 / 空简介 / 缺字段都跳过，不 panic。
     #[test]
     fn parse_translations_tolerates_bad_input() {
-        assert!(parse_translations("modrinth", &serde_json::json!({})).is_empty(), "非数组返回空");
+        assert!(
+            parse_translations("modrinth", &serde_json::json!({})).is_empty(),
+            "非数组返回空"
+        );
         let with_empty = serde_json::json!([
             { "project_id": "a", "translated": "" },
             { "project_id": "b" }
         ]);
-        assert!(parse_translations("modrinth", &with_empty).is_empty(), "空简介/缺字段跳过");
+        assert!(
+            parse_translations("modrinth", &with_empty).is_empty(),
+            "空简介/缺字段跳过"
+        );
         let other_source = serde_json::json!([{ "project_id": "x", "translated": "中文" }]);
-        assert!(parse_translations("curseforge", &other_source).is_empty(), "字段名不匹配返回空");
+        assert!(
+            parse_translations("curseforge", &other_source).is_empty(),
+            "字段名不匹配返回空"
+        );
     }
 
     /// 翻译请求体：Modrinth 用字符串数组；CurseForge 必须整数数组（字符串数组会被 MCIM 400）。
@@ -994,8 +1039,8 @@ mod tests {
             "Modrinth 用字符串数组"
         );
 
-        let cf = translation_body("curseforge", &["238222".to_string(), "394468".to_string()])
-            .unwrap();
+        let cf =
+            translation_body("curseforge", &["238222".to_string(), "394468".to_string()]).unwrap();
         assert_eq!(
             cf,
             serde_json::json!({ "modids": [238222, 394468] }),
@@ -1011,16 +1056,16 @@ mod tests {
     #[test]
     fn translation_body_tolerates_bad_ids() {
         assert!(translation_body("modrinth", &[]).is_none(), "空 ids 不请求");
-        assert!(translation_body("curseforge", &[]).is_none(), "空 ids 不请求");
+        assert!(
+            translation_body("curseforge", &[]).is_none(),
+            "空 ids 不请求"
+        );
         assert!(
             translation_body("curseforge", &["abc".to_string()]).is_none(),
             "全非数字 id 不请求"
         );
-        let mixed = translation_body(
-            "curseforge",
-            &["abc".to_string(), "238222".to_string()],
-        )
-        .unwrap();
+        let mixed =
+            translation_body("curseforge", &["abc".to_string(), "238222".to_string()]).unwrap();
         assert_eq!(
             mixed,
             serde_json::json!({ "modids": [238222] }),
@@ -1059,19 +1104,43 @@ mod tests {
             vec!["fabric", "forge"],
             "大小写不敏感且去重保序"
         );
-        assert!(modrinth_loaders(&serde_json::json!(["Adventure"])).is_empty(), "无 loader 返回空");
-        assert!(modrinth_loaders(&serde_json::json!(null)).is_empty(), "非数组返回空");
+        assert!(
+            modrinth_loaders(&serde_json::json!(["Adventure"])).is_empty(),
+            "无 loader 返回空"
+        );
+        assert!(
+            modrinth_loaders(&serde_json::json!(null)).is_empty(),
+            "非数组返回空"
+        );
     }
 
     /// 版本比较：数值段逐段比较，段数不足补 0，非法版本（snapshot）返回 None。
     #[test]
     fn compare_game_versions_numeric_semantics() {
         use std::cmp::Ordering;
-        assert_eq!(compare_game_versions("1.21.1", "1.20.1"), Some(Ordering::Greater));
-        assert_eq!(compare_game_versions("1.9.4", "1.21.1"), Some(Ordering::Less), "按数值而非字符串比较");
-        assert_eq!(compare_game_versions("1.20", "1.20.0"), Some(Ordering::Equal), "段数不足补 0");
-        assert_eq!(compare_game_versions("24w14a", "1.21.1"), None, "snapshot 无法解析");
-        assert_eq!(compare_game_versions("1.21.1", "1.21.1"), Some(Ordering::Equal));
+        assert_eq!(
+            compare_game_versions("1.21.1", "1.20.1"),
+            Some(Ordering::Greater)
+        );
+        assert_eq!(
+            compare_game_versions("1.9.4", "1.21.1"),
+            Some(Ordering::Less),
+            "按数值而非字符串比较"
+        );
+        assert_eq!(
+            compare_game_versions("1.20", "1.20.0"),
+            Some(Ordering::Equal),
+            "段数不足补 0"
+        );
+        assert_eq!(
+            compare_game_versions("24w14a", "1.21.1"),
+            None,
+            "snapshot 无法解析"
+        );
+        assert_eq!(
+            compare_game_versions("1.21.1", "1.21.1"),
+            Some(Ordering::Equal)
+        );
     }
 
     /// Modrinth 版本范围：latest_version 与 versions 合并，过滤 snapshot，取 min ~ max。
@@ -1092,7 +1161,11 @@ mod tests {
             Some("1.20.1".to_string()),
             "仅一个有效版本显示单个"
         );
-        assert_eq!(modrinth_version_range(&serde_json::json!({})), None, "无版本返回 None");
+        assert_eq!(
+            modrinth_version_range(&serde_json::json!({})),
+            None,
+            "无版本返回 None"
+        );
         assert_eq!(
             modrinth_version_range(&serde_json::json!({ "latest_version": "24w14a" })),
             None,
@@ -1114,12 +1187,19 @@ mod tests {
             ]
         });
         let (loaders, range) = curseforge_support_fields(&data);
-        assert_eq!(loaders, vec!["fabric", "forge", "neoforge", "quilt"], "数字映射去重");
-        assert_eq!(range, Some("1.17.1 ~ 1.21.1".to_string()), "版本取 min ~ max");
+        assert_eq!(
+            loaders,
+            vec!["fabric", "forge", "neoforge", "quilt"],
+            "数字映射去重"
+        );
+        assert_eq!(
+            range,
+            Some("1.17.1 ~ 1.21.1".to_string()),
+            "版本取 min ~ max"
+        );
         assert_eq!(
             curseforge_support_fields(&serde_json::json!({})),
             (Vec::<String>::new(), None)
         );
     }
-
 }
