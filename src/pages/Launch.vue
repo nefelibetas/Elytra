@@ -45,11 +45,13 @@ onMounted(async () => {
     </div>
 
     <div class="right">
-      <div v-if="!selectedVersion" class="right-hint">
-        <FileText :size="48" opacity="0.3" />
-        <p>选择一个游戏版本</p>
-      </div>
-      <VersionDetailCard v-else />
+      <Transition name="right-switch" mode="out-in">
+        <div v-if="!selectedVersion" key="hint" class="right-hint">
+          <FileText :size="48" opacity="0.3" />
+          <p>选择一个游戏版本</p>
+        </div>
+        <VersionDetailCard v-else key="card" />
+      </Transition>
     </div>
 
     <AlertDialog
@@ -126,5 +128,16 @@ onMounted(async () => {
 
 .right-hint p {
   font-size: 14px;
+}
+
+/* 右侧 hint ↔ 版本卡片切换动画 */
+.right-switch-enter-active,
+.right-switch-leave-active {
+  transition: opacity 0.18s ease;
+}
+
+.right-switch-enter-from,
+.right-switch-leave-to {
+  opacity: 0;
 }
 </style>
