@@ -1,6 +1,6 @@
 // 主页版本卡片 store：存档/Mod 列表加载、Mod 更新检查与更新执行。
 // 卡片组件 import 本模块单例；版本切换时 reset 后重新加载。
-import { ref, computed } from "vue";
+import { ref, computed, reactive } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { showToast } from "../utils/toast";
 import { errMsg } from "../utils/error";
@@ -13,6 +13,16 @@ export interface WorldInfo {
   name: string;
   last_modified: number;
 }
+
+/** 版本下资源目录中的单个文件（镜像 Rust ResourceFile：resourcepacks/datapacks/shaderpacks）。 */
+export interface ResourceFile {
+  name: string;
+  size: number;
+  last_modified: number;
+}
+
+/** 资源目录类型（后端 list_resource_files 白名单）。 */
+export type ResourceKind = "resourcepacks" | "datapacks" | "shaderpacks";
 
 /** 本地 mod 详细项（镜像 Rust ModFileDetail：Modrinth 命中时带项目元数据）。 */
 export interface ModFileDetail {
@@ -84,6 +94,42 @@ export async function loadWorlds(versionName: string) {
   }
 }
 
+// ── 世界缩略图（saves/<world>/icon.png 懒加载缓存）──
+
+/** world name → data URL（版本切换时清空）。 */
+export const worldIcons = reactive<Record<string, string>>({});
+/** 加载中标记（幂等，防并发重复请求）。 */
+const worldIconsLoading = reactive<Record<string, boolean>>({});
+
+/** number[] → base64 data URL（分块防大数组展开栈溢出）。 */
+function bytesToDataUrl(bytes: number[]): string {
+  let bin = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode(...bytes.slice(i, i + CHUNK));
+  }
+  return `data:image/png;base64,${btoa(bin)}`;
+}
+
+/** 懒加载单个世界缩略图（本地读取，缺失/失败保持 Map 占位）。 */
+export async function loadWorldIcon(versionName: string, worldName: string) {
+  if (worldIcons[worldName] || worldIconsLoading[worldName]) return;
+  worldIconsLoading[worldName] = true;
+  try {
+    const bytes = await invoke<number[] | null>("get_world_icon", {
+      versionName,
+      worldName,
+    });
+    if (bytes && bytes.length > 0) {
+      worldIcons[worldName] = bytesToDataUrl(bytes);
+    }
+  } catch {
+    // 缺失/读取失败：保持 Map 占位
+  } finally {
+    worldIconsLoading[worldName] = false;
+  }
+}
+
 // ── Mod 列表 ──
 
 export const mods = ref<ModFileDetail[]>([]);
@@ -91,6 +137,24 @@ export const modsLoading = ref(false);
 export const modsError = ref("");
 /** 元数据网络查询降级标记（网络失败时列表仍显示本地信息）。 */
 export const modsNetworkError = ref(false);
+/**
+ * mods 目录本地快速扫描（.jar 文件，纯 read_dir 无网络）——侧边 Mod 图标显示判定用，
+ * 避免等待 list_mods_detailed 的 Modrinth 元数据网络查询（1s+）导致图标延迟。
+ */
+export const modsQuick = ref<ResourceFile[]>([]);
+
+/** 本地快速扫描 mods 目录 .jar 文件（与后端 scan_mod_files 过滤语义一致）。 */
+export async function loadModsQuick(versionName: string) {
+  try {
+    const files = await invoke<ResourceFile[]>("list_resource_files", {
+      versionName,
+      kind: "mods",
+    });
+    modsQuick.value = files.filter(f => f.name.toLowerCase().endsWith(".jar"));
+  } catch {
+    modsQuick.value = [];
+  }
+}
 
 export async function loadMods(versionName: string) {
   modsLoading.value = true;
@@ -99,11 +163,113 @@ export async function loadMods(versionName: string) {
     const r = await invoke<ModListResult>("list_mods_detailed", { versionName });
     mods.value = r.mods;
     modsNetworkError.value = r.network_error;
+    // 与详细列表保持一致（删除/更新后图标即时正确）
+    modsQuick.value = r.mods.map(m => ({ name: m.file_name, size: m.size, last_modified: 0 }));
   } catch (e) {
     modsError.value = errMsg(e);
   } finally {
     modsLoading.value = false;
   }
+}
+
+// ── 资源目录（材质包 / 数据包 / 光影包）──
+// 双轨：quick（本地 read_dir，图标显示判定）+ detailed（Modrinth 识别，列表渲染）。
+
+/** 详细列表结果（镜像 Rust ResourceListResult）。 */
+export interface ResourceListResult {
+  files: ModFileDetail[];
+  network_error: boolean;
+}
+
+export const resourcepacks = ref<ModFileDetail[]>([]);
+export const resourcepacksLoading = ref(false);
+export const resourcepacksError = ref("");
+export const resourcepacksNetworkError = ref(false);
+export const datapacks = ref<ModFileDetail[]>([]);
+export const datapacksLoading = ref(false);
+export const datapacksError = ref("");
+export const datapacksNetworkError = ref(false);
+export const shaderpacks = ref<ModFileDetail[]>([]);
+export const shaderpacksLoading = ref(false);
+export const shaderpacksError = ref("");
+export const shaderpacksNetworkError = ref(false);
+
+/** 本地快速扫描（.zip 文件，纯 read_dir 无网络）——侧边图标显示判定用。 */
+export const resourcepacksQuick = ref<ResourceFile[]>([]);
+export const datapacksQuick = ref<ResourceFile[]>([]);
+export const shaderpacksQuick = ref<ResourceFile[]>([]);
+
+function resourceQuickRef(kind: ResourceKind) {
+  if (kind === "resourcepacks") return resourcepacksQuick;
+  if (kind === "datapacks") return datapacksQuick;
+  return shaderpacksQuick;
+}
+
+function resourceDetailRefs(kind: ResourceKind) {
+  if (kind === "resourcepacks") {
+    return {
+      list: resourcepacks,
+      loading: resourcepacksLoading,
+      error: resourcepacksError,
+      networkError: resourcepacksNetworkError,
+    };
+  }
+  if (kind === "datapacks") {
+    return {
+      list: datapacks,
+      loading: datapacksLoading,
+      error: datapacksError,
+      networkError: datapacksNetworkError,
+    };
+  }
+  return {
+    list: shaderpacks,
+    loading: shaderpacksLoading,
+    error: shaderpacksError,
+    networkError: shaderpacksNetworkError,
+  };
+}
+
+/** 本地快速扫描资源目录 .zip 文件（图标判定用，无网络；失败置空）。 */
+export async function loadResourceQuick(versionName: string, kind: ResourceKind) {
+  try {
+    resourceQuickRef(kind).value = await invoke<ResourceFile[]>("list_resource_files", {
+      versionName,
+      kind,
+    });
+  } catch {
+    resourceQuickRef(kind).value = [];
+  }
+}
+
+/** 加载资源目录详细列表（Modrinth 识别；网络失败时 files 仍含本地信息并置 network_error）。 */
+export async function loadResourceDetailed(versionName: string, kind: ResourceKind) {
+  const { list, loading, error, networkError } = resourceDetailRefs(kind);
+  loading.value = true;
+  error.value = "";
+  networkError.value = false;
+  try {
+    const r = await invoke<ResourceListResult>("list_resource_detailed", {
+      versionName,
+      kind,
+    });
+    list.value = r.files;
+    networkError.value = r.network_error;
+  } catch (e) {
+    error.value = errMsg(e);
+  } finally {
+    loading.value = false;
+  }
+}
+
+/** 并行加载三类资源目录（快速扫描 + 详细列表）。 */
+export function loadResourceLists(versionName: string) {
+  void loadResourceQuick(versionName, "resourcepacks");
+  void loadResourceQuick(versionName, "datapacks");
+  void loadResourceQuick(versionName, "shaderpacks");
+  void loadResourceDetailed(versionName, "resourcepacks");
+  void loadResourceDetailed(versionName, "datapacks");
+  void loadResourceDetailed(versionName, "shaderpacks");
 }
 
 // ── Mod 更新检查 ──
@@ -170,9 +336,24 @@ export async function deleteMod(versionName: string, fileName: string) {
 export function resetVersionDetail() {
   worlds.value = [];
   worldsError.value = "";
+  Object.keys(worldIcons).forEach(k => delete worldIcons[k]);
+  Object.keys(worldIconsLoading).forEach(k => delete worldIconsLoading[k]);
   mods.value = [];
   modsError.value = "";
   modsNetworkError.value = false;
+  modsQuick.value = [];
+  resourcepacks.value = [];
+  resourcepacksError.value = "";
+  resourcepacksNetworkError.value = false;
+  resourcepacksQuick.value = [];
+  datapacks.value = [];
+  datapacksError.value = "";
+  datapacksNetworkError.value = false;
+  datapacksQuick.value = [];
+  shaderpacks.value = [];
+  shaderpacksError.value = "";
+  shaderpacksNetworkError.value = false;
+  shaderpacksQuick.value = [];
   updates.value = [];
   updatesError.value = "";
   updatesChecked.value = false;
