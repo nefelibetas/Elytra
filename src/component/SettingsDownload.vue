@@ -1,15 +1,15 @@
 <script setup lang="ts">
-// 下载设置卡片（管理游戏下载源）：文件/版本列表/社区源 + 网络代理 + 线程数 + 速度限制
+// 下载设置卡片（管理游戏下载源）：文件/版本列表/社区源 + 网络代理 + 线程数
 import { onMounted } from "vue";
 import { ChevronDown } from "@lucide/vue";
 import {
-  dlFileMode, dlManifestMode, dlCommunityMode, dlConcurrency, dlMaxSpeed,
+  dlFileMode, dlManifestMode, dlCommunityMode, dlConcurrency,
   dlFileOpen, dlManifestOpen, dlCommunityOpen, dlNetworkOpen, dlTranslateOpen, dlTranslateMode,
   dlError, dlShowReleaseOnly, dlNetworkMode,
   sourceModeOptions, communitySourceOptions, sourceModeLabel,
   networkModeOptions, networkModeLabel,
   translateDisplayOptions, translateModeLabel,
-  concurrencyLocked, MIRROR_CONCURRENCY,
+  concurrencyLocked,
   saveDownloadConfig, setFileMode, setCommunityMode, setManifestMode, setNetworkMode,
   setTranslateMode, toggleDlOpen, loadDownloadConfig,
 } from "../store/downloaderConfig";
@@ -147,38 +147,25 @@ onMounted(loadDownloadConfig);
       </label>
     </div>
 
-    <!-- 最大线程数（官方源并发；仅镜像模式由镜像源规定并锁定） -->
-    <div class="dl-row">
+    <!-- 最大线程数：官方源并发（仅镜像模式由镜像源固定 8，隐藏该行——无操作意义） -->
+    <div v-if="!concurrencyLocked" class="dl-row">
       <span class="dl-label">最大线程数</span>
       <input
         class="dl-range"
         type="range"
         min="1"
-        :max="concurrencyLocked ? MIRROR_CONCURRENCY : 256"
+        max="256"
         step="1"
         v-model.number="dlConcurrency"
-        :style="{ '--range-pct': ((concurrencyLocked ? MIRROR_CONCURRENCY : dlConcurrency) / 256 * 100) + '%' }"
-        @input="saveDownloadConfig"
-        :disabled="concurrencyLocked"
-      />
-      <span class="dl-val">{{ concurrencyLocked ? MIRROR_CONCURRENCY : dlConcurrency }} / 256</span>
-    </div>
-
-    <!-- 速度限制：0 = 无上限 -->
-    <div class="dl-row">
-      <span class="dl-label">速度限制</span>
-      <input
-        class="dl-range"
-        type="range"
-        min="0"
-        max="100"
-        step="1"
-        v-model.number="dlMaxSpeed"
-        :style="{ '--range-pct': dlMaxSpeed + '%' }"
+        :style="{ '--range-pct': (dlConcurrency / 256 * 100) + '%' }"
         @input="saveDownloadConfig"
       />
-      <span class="dl-val">{{ dlMaxSpeed === 0 ? "无上限" : dlMaxSpeed + " MB/s" }} / 100 MB/s</span>
+      <span class="dl-val">{{ dlConcurrency }} / 256</span>
     </div>
+    <!-- Auto（智能）模式：官方源优先 + 镜像降级，并发仅作用于官方源，镜像源固定 8 -->
+    <p v-if="dlFileMode === 'auto' && !concurrencyLocked" class="dl-note">
+      该并发仅对官方源生效，镜像源固定 8 线程
+    </p>
 
     <div v-if="dlError" class="dl-error">{{ dlError }}</div>
   </div>
@@ -314,5 +301,13 @@ onMounted(loadDownloadConfig);
   margin-top: 8px;
   font-size: 12px;
   color: var(--color-danger);
+}
+
+/* 线程数备注：Auto 模式说明并发作用域 */
+.dl-note {
+  margin: -4px 0 4px 102px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
 }
 </style>
