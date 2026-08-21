@@ -8,6 +8,7 @@ import { showToast } from "../utils/toast";
 import { errMsg } from "../utils/error";
 import IconImage from "./IconImage.vue";
 import AlertDialog from "./AlertDialog.vue";
+import LoadingSpinner from "./LoadingSpinner.vue";
 import {
   worlds, worldsLoading, worldsError, worldIcons, worldsLoadedFor,
   loadWorlds, loadWorldIcon,
@@ -90,7 +91,7 @@ async function confirmDelete() {
     <div class="vss-card vss-list-card">
       <div class="vss-content">
         <Transition name="fade" mode="out-in">
-          <div v-if="worldsLoading" key="loading" class="vss-state">加载存档…</div>
+          <LoadingSpinner v-if="worldsLoading" key="loading" text="加载存档…" />
           <div v-else-if="worldsError" key="err" class="vss-state err">{{ worldsError }}</div>
           <div v-else-if="worlds.length === 0" key="empty" class="vss-state">还没有存档，启动游戏后会自动创建</div>
           <div v-else key="list" class="vss-list">
@@ -135,6 +136,8 @@ async function confirmDelete() {
 
 <style scoped>
 .vss {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -149,6 +152,7 @@ async function confirmDelete() {
 
 /* 标题卡 */
 .vss-head-card {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -187,14 +191,20 @@ async function confirmDelete() {
   color: var(--color-brand);
 }
 
-/* 列表卡 */
+/* 列表卡（占满剩余高度，内容区内滚动） */
 .vss-list-card {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
 .vss-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 10px 12px 14px;
 }
 

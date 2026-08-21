@@ -196,9 +196,12 @@ const REFRESHERS: Record<TabKey, () => void> = {
 /* ===== 右侧 ===== */
 .vs-right {
   flex: 1;
+  min-width: 0;
   padding: 20px 24px;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden;
+  /* 子组件根 flex:1 占满剩余空间，列表滚动在卡片内部 */
+  display: flex;
+  flex-direction: column;
   background: var(--surface-page);
 }
 

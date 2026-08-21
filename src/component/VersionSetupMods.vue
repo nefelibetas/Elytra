@@ -13,6 +13,7 @@ import { classifyVersion } from "../utils/versionClassify";
 import { dlTranslateMode } from "../store/downloaderConfig";
 import IconImage from "./IconImage.vue";
 import AlertDialog from "./AlertDialog.vue";
+import LoadingSpinner from "./LoadingSpinner.vue";
 import {
   mods, modsLoading, modsError, modsNetworkError, modsLoadedFor,
   updates, updatesChecked, checkingUpdates, updatesError, updatingFiles,
@@ -155,7 +156,7 @@ async function confirmDelete() {
       <!-- 内容：Mod items（状态切换淡入淡出） -->
       <div class="vsm-content">
         <Transition name="fade" mode="out-in">
-          <div v-if="modsLoading" key="loading" class="vsm-state">加载 Mod 信息…</div>
+          <LoadingSpinner v-if="modsLoading" key="loading" text="加载 Mod 信息…" />
           <div v-else-if="modsError" key="err" class="vsm-state err">{{ modsError }}</div>
           <div v-else-if="mods.length === 0" key="empty" class="vsm-state">mods 目录为空，可从资源中心下载 Mod</div>
           <div v-else-if="items.length === 0" key="filtered" class="vsm-state">
@@ -232,6 +233,8 @@ async function confirmDelete() {
 
 <style scoped>
 .vsm {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -247,6 +250,7 @@ async function confirmDelete() {
 
 /* 上层：搜索卡片 */
 .vsm-search-card {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -272,8 +276,10 @@ async function confirmDelete() {
   color: var(--text-tertiary);
 }
 
-/* 下层：列表卡片 */
+/* 下层：列表卡片（占满剩余高度，内容区内滚动） */
 .vsm-list-card {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -366,8 +372,12 @@ async function confirmDelete() {
   }
 }
 
-/* 内容区 */
+/* 内容区（卡片内滚动） */
 .vsm-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 10px 12px 14px;
 }
 
