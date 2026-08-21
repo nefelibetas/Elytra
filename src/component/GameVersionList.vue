@@ -6,6 +6,8 @@ import AlertDialog from "./AlertDialog.vue";
 import VersionCard from "./VersionCard.vue";
 import VersionItem from "./VersionItem.vue";
 import LoadingSpinner from "./LoadingSpinner.vue";
+import EmptyState from "./EmptyState.vue";
+import ErrorState from "./ErrorState.vue";
 import {
   versions, versionsLoading, versionsError, expanded, allVersions, searchQuery,
   pickVersion, openDelete,
@@ -32,11 +34,11 @@ function goDownload() {
 <template>
   <div class="vs-right">
     <LoadingSpinner v-if="versionsLoading" text="加载中…" />
-    <div v-else-if="versionsError" class="vs-err">{{ versionsError }}</div>
-    <div v-else-if="versions.length === 0" class="vs-empty">
+    <ErrorState v-else-if="versionsError" :text="versionsError" />
+    <EmptyState v-else-if="versions.length === 0">
       <p>该目录下没有已安装的游戏版本</p>
       <button class="vs-empty-btn" @click="goDownload">下载游戏</button>
-    </div>
+    </EmptyState>
     <template v-else>
       <div class="vs-search">
         <input
@@ -224,11 +226,7 @@ function goDownload() {
   transform: scale(0.97);
 }
 
-.vs-err {
-  font-size: 12px;
-  color: var(--color-danger);
-  padding: 6px 8px;
-}
+
 
 /* dialog 内容 */
 .vs-dialog-body {

@@ -6,16 +6,16 @@ import {
   vdState, latestRelease, latestSnapshot, releases, snapshots, oldVersions, aprilFools, vanillaIcon,
 } from "../store/versionDownload";
 import { fmtDateTime } from "../utils/format";
+import LoadingSpinner from "./LoadingSpinner.vue";
+import ErrorState from "./ErrorState.vue";
 import commandIcon from "../assets/command.png";
 import emeraldIcon from "../assets/emerald.png";
 import cobbleIcon from "../assets/cobble.png";
 </script>
 
 <template>
-  <div v-if="vdState.loading" class="loading-card" style="margin: auto;">
-    <div class="spinner"></div><p>正在获取版本列表</p>
-  </div>
-  <div v-else-if="vdState.error" class="state err">{{ vdState.error }}</div>
+  <LoadingSpinner v-if="vdState.loading" text="正在获取版本列表" />
+  <ErrorState v-else-if="vdState.error" :text="vdState.error" />
   <template v-else-if="vdState.manifest">
     <div class="card">
       <div class="card-title">最新版本</div>
@@ -40,19 +40,7 @@ import cobbleIcon from "../assets/cobble.png";
 </template>
 
 <style scoped>
-.state.err { color: var(--color-danger); font-size: 14px; text-align: center; padding: 40px; }
-.loading-card {
-  display: flex; flex-direction: column; align-items: center; gap: 16px;
-  padding: 40px 56px; background-color: var(--surface-card);
-  border-radius: var(--radius-lg); box-shadow: var(--shadow-md);
-}
-.loading-card p { font-size: 14px; color: var(--text-secondary); }
-.spinner {
-  width: 36px; height: 36px;
-  border: 3px solid var(--border-default); border-top-color: var(--color-brand);
-  border-radius: 50%; animation: spin 0.7s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
+
 
 .card { background-color: var(--surface-card); border: 1px solid var(--border-default); border-radius: var(--radius-md); }
 .card-body {

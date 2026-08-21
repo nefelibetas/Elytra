@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// 通用加载态：环形加载器 + 可选说明文字。
-// 统一各列表/页面分散的纯文字 loading 提示；环形样式与搜索结果组件一致（36px 品牌色）。
+// 通用加载态：环形加载器 + 可选说明文字，占满父容器完全居中。
+// 环形样式与搜索结果组件一致（36px 品牌色）。
 defineProps<{ text?: string }>();
 </script>
 
@@ -13,12 +13,16 @@ defineProps<{ text?: string }>();
 
 <style scoped>
 .ls-box {
+  flex: 1;
+  height: 100%;
+  min-height: 120px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 14px;
-  padding: 36px 20px;
+  padding: 20px;
+  box-sizing: border-box;
 }
 
 .ls-spinner {

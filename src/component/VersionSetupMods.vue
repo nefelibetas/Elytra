@@ -14,6 +14,8 @@ import { dlTranslateMode } from "../store/downloaderConfig";
 import IconImage from "./IconImage.vue";
 import AlertDialog from "./AlertDialog.vue";
 import LoadingSpinner from "./LoadingSpinner.vue";
+import EmptyState from "./EmptyState.vue";
+import ErrorState from "./ErrorState.vue";
 import {
   mods, modsLoading, modsError, modsNetworkError, modsLoadedFor,
   updates, updatesChecked, checkingUpdates, updatesError, updatingFiles,
@@ -157,13 +159,19 @@ async function confirmDelete() {
       <div class="vsm-content">
         <Transition name="fade" mode="out-in">
           <LoadingSpinner v-if="modsLoading" key="loading" text="加载 Mod 信息…" />
-          <div v-else-if="modsError" key="err" class="vsm-state err">{{ modsError }}</div>
-          <div v-else-if="mods.length === 0" key="empty" class="vsm-state">mods 目录为空，可从资源中心下载 Mod</div>
-          <div v-else-if="items.length === 0" key="filtered" class="vsm-state">
-            {{ tab === "updatable"
-              ? (updatesChecked ? "没有可更新的 Mod" : "点击检查更新查看可更新的 Mod")
-              : `没有匹配「${searchQuery.trim()}」的 Mod` }}
-          </div>
+          <ErrorState v-else-if="modsError" key="err" :text="modsError" />
+          <EmptyState v-else-if="mods.length === 0" key="empty">
+            <Puzzle :size="40" :stroke-width="1.5" opacity="0.5" />
+            <p>mods 目录为空，可从资源中心下载 Mod</p>
+          </EmptyState>
+          <EmptyState v-else-if="items.length === 0" key="filtered">
+            <Puzzle :size="40" :stroke-width="1.5" opacity="0.5" />
+            <p>
+              {{ tab === "updatable"
+                ? (updatesChecked ? "没有可更新的 Mod" : "点击检查更新查看可更新的 Mod")
+                : `没有匹配「${searchQuery.trim()}」的 Mod` }}
+            </p>
+          </EmptyState>
           <div v-else key="list">
             <div v-if="modsNetworkError" class="vsm-net-warn">部分 Mod 信息获取失败，已显示本地信息</div>
             <div class="vsm-list">
@@ -379,17 +387,6 @@ async function confirmDelete() {
   overflow-y: auto;
   overflow-x: hidden;
   padding: 10px 12px 14px;
-}
-
-.vsm-state {
-  text-align: center;
-  color: var(--text-tertiary);
-  font-size: 13px;
-  padding: 36px 0;
-}
-
-.vsm-state.err {
-  color: var(--color-danger);
 }
 
 .vsm-net-warn {
