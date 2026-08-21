@@ -11,6 +11,7 @@ import { errMsg } from "../utils/error";
 import { dlTranslateMode } from "../store/downloaderConfig";
 import IconImage from "./IconImage.vue";
 import AlertDialog from "./AlertDialog.vue";
+import LoadingSpinner from "./LoadingSpinner.vue";
 import {
   resourcepacks, resourcepacksLoading, resourcepacksError, resourcepacksNetworkError, resourcepacksLoadedFor,
   datapacks, datapacksLoading, datapacksError, datapacksNetworkError, datapacksLoadedFor,
@@ -132,7 +133,7 @@ async function confirmDelete() {
     <div class="vsr-card vsr-list-card">
       <div class="vsr-content">
         <Transition name="fade" mode="out-in">
-          <div v-if="res.loading" key="loading" class="vsr-state">加载{{ meta.label }}信息…</div>
+          <LoadingSpinner v-if="res.loading" key="loading" :text="`加载${meta.label}信息…`" />
           <div v-else-if="res.error" key="err" class="vsr-state err">{{ res.error }}</div>
           <div v-else-if="res.list.length === 0" key="empty" class="vsr-state">{{ meta.label }}目录为空</div>
           <div v-else key="list">
@@ -195,6 +196,8 @@ async function confirmDelete() {
 
 <style scoped>
 .vsr {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -209,6 +212,7 @@ async function confirmDelete() {
 
 /* 标题卡 */
 .vsr-head-card {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -247,14 +251,20 @@ async function confirmDelete() {
   color: var(--color-brand);
 }
 
-/* 列表卡 */
+/* 列表卡（占满剩余高度，内容区内滚动） */
 .vsr-list-card {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
 .vsr-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 10px 12px 14px;
 }
 

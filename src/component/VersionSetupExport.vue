@@ -124,6 +124,14 @@ async function exportModpack() {
 </template>
 
 <style scoped>
+/* 导出页：占满右侧剩余空间，内容超出自身滚动 */
+.vs-page {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
 /* 卡片 */
 .setup-card {
   background: var(--surface-card);
