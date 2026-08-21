@@ -5,6 +5,7 @@ import { Settings2, Trash2 } from "@lucide/vue";
 import AlertDialog from "./AlertDialog.vue";
 import VersionCard from "./VersionCard.vue";
 import VersionItem from "./VersionItem.vue";
+import LoadingSpinner from "./LoadingSpinner.vue";
 import {
   versions, versionsLoading, versionsError, expanded, allVersions, searchQuery,
   pickVersion, openDelete,
@@ -30,7 +31,7 @@ function goDownload() {
 
 <template>
   <div class="vs-right">
-    <div v-if="versionsLoading" class="vs-hint">加载中…</div>
+    <LoadingSpinner v-if="versionsLoading" text="加载中…" />
     <div v-else-if="versionsError" class="vs-err">{{ versionsError }}</div>
     <div v-else-if="versions.length === 0" class="vs-empty">
       <p>该目录下没有已安装的游戏版本</p>
@@ -182,13 +183,6 @@ function goDownload() {
 .vs-item-del:hover {
   background-color: var(--color-danger-bg);
   color: var(--color-danger);
-}
-
-.vs-hint {
-  padding: 24px;
-  text-align: center;
-  font-size: 13px;
-  color: var(--text-tertiary);
 }
 
 /* 空状态：右侧容器正中提示 + 下载入口 */

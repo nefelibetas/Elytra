@@ -14,6 +14,7 @@ import {
 } from "../store/launchOptions";
 import { showToast } from "../utils/toast";
 import { errMsg } from "../utils/error";
+import LoadingSpinner from "./LoadingSpinner.vue";
 
 onMounted(loadConfig);
 
@@ -116,7 +117,7 @@ async function handleInstallJdk() {
       </div>
     </div>
 
-    <div v-if="loading" class="loading-hint">正在处理...</div>
+    <LoadingSpinner v-if="loading" text="正在处理…" />
     <div v-else-if="jdkError" class="err">{{ jdkError }}</div>
 
     <div class="jdk-divider"></div>

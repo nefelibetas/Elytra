@@ -61,13 +61,6 @@
   cursor: not-allowed;
 }
 
-/* 状态提示 */
-.loading-hint {
-  color: var(--text-secondary);
-  font-size: 13px;
-  padding: 10px 0 0;
-}
-
 .err {
   color: var(--color-danger);
   font-size: 13px;
