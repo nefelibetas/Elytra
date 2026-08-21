@@ -12,9 +12,9 @@ import { dlTranslateMode } from "../store/downloaderConfig";
 import IconImage from "./IconImage.vue";
 import AlertDialog from "./AlertDialog.vue";
 import {
-  resourcepacks, resourcepacksLoading, resourcepacksError, resourcepacksNetworkError,
-  datapacks, datapacksLoading, datapacksError, datapacksNetworkError,
-  shaderpacks, shaderpacksLoading, shaderpacksError, shaderpacksNetworkError,
+  resourcepacks, resourcepacksLoading, resourcepacksError, resourcepacksNetworkError, resourcepacksLoadedFor,
+  datapacks, datapacksLoading, datapacksError, datapacksNetworkError, datapacksLoadedFor,
+  shaderpacks, shaderpacksLoading, shaderpacksError, shaderpacksNetworkError, shaderpacksLoadedFor,
   loadResourceDetailed, loadResourceQuick,
   type ResourceKind,
 } from "../store/versionDetail";
@@ -60,9 +60,19 @@ const res = computed(() => {
   };
 });
 
+/** 当前类型已加载缓存的版本名。 */
+const loadedFor = computed(() => {
+  if (props.kind === "resourcepacks") return resourcepacksLoadedFor.value;
+  if (props.kind === "datapacks") return datapacksLoadedFor.value;
+  return shaderpacksLoadedFor.value;
+});
+
 onMounted(async () => {
   if (!versionName.value) return;
-  await loadResourceDetailed(versionName.value, props.kind);
+  // 缓存命中（切 Tab 回来/刚从主页进入）不重新加载，避免 loading 闪烁
+  if (loadedFor.value !== versionName.value) {
+    await loadResourceDetailed(versionName.value, props.kind);
+  }
 });
 
 /** 打开资源目录（目录不存在先创建）。 */

@@ -9,7 +9,7 @@ import { errMsg } from "../utils/error";
 import IconImage from "./IconImage.vue";
 import AlertDialog from "./AlertDialog.vue";
 import {
-  worlds, worldsLoading, worldsError, worldIcons,
+  worlds, worldsLoading, worldsError, worldIcons, worldsLoadedFor,
   loadWorlds, loadWorldIcon,
 } from "../store/versionDetail";
 
@@ -20,8 +20,11 @@ const versionName = computed(() => String(route.query.name ?? ""));
 
 onMounted(async () => {
   if (!versionName.value) return;
-  await loadWorlds(versionName.value);
-  for (const w of worlds.value) void loadWorldIcon(versionName.value, w.name);
+  // 缓存命中（切 Tab 回来/刚从主页进入）不重新加载，避免 loading 闪烁
+  if (worldsLoadedFor.value !== versionName.value) {
+    await loadWorlds(versionName.value);
+    for (const w of worlds.value) void loadWorldIcon(versionName.value, w.name);
+  }
 });
 
 /** unix 秒 → "yyyy-MM-dd HH:mm" */

@@ -14,7 +14,7 @@ import { dlTranslateMode } from "../store/downloaderConfig";
 import IconImage from "./IconImage.vue";
 import AlertDialog from "./AlertDialog.vue";
 import {
-  mods, modsLoading, modsError, modsNetworkError,
+  mods, modsLoading, modsError, modsNetworkError, modsLoadedFor,
   updates, updatesChecked, checkingUpdates, updatesError, updatingFiles,
   versionLoader, loadVersionLoader, loadMods, checkModUpdates, updateMod, deleteMod,
 } from "../store/versionDetail";
@@ -53,7 +53,10 @@ const items = computed(() =>
 onMounted(async () => {
   if (!versionName.value) return;
   await loadVersionLoader(versionName.value);
-  await loadMods(versionName.value);
+  // 缓存命中（切 Tab 回来/刚从主页进入）不重新加载，避免 loading 闪烁
+  if (modsLoadedFor.value !== versionName.value) {
+    await loadMods(versionName.value);
+  }
 });
 
 async function doCheckUpdates() {
