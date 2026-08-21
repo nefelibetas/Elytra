@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::commands::gamedirs::get_active_game_dir;
-use crate::downloader::mod_updates::{self, ModListResult, ModUpdate};
+use crate::downloader::mod_updates::{self, ModListResult, ModUpdate, ResourceListResult};
 
 /// 本地存档信息（saves 目录子目录扫描结果）。
 #[derive(Debug, Clone, Serialize)]
@@ -17,6 +17,26 @@ pub struct WorldInfo {
     pub name: String,
     /// 最后修改时间（unix 秒）
     pub last_modified: u64,
+}
+
+/// 版本下资源目录中的单个文件（resourcepacks/datapacks/shaderpacks 扫描结果）。
+#[derive(Debug, Clone, Serialize)]
+pub struct ResourceFile {
+    /// 文件名
+    pub name: String,
+    /// 文件大小（字节）
+    pub size: u64,
+    /// 最后修改时间（unix 秒）
+    pub last_modified: u64,
+}
+
+/// 文件最后修改时间（unix 秒），读取失败回退 0。
+fn dir_modified_secs(meta: &std::fs::Metadata) -> u64 {
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// 版本目录绝对路径（versions/{name}）。目录不存在时返回错误（与 ensure_game_folder 语义区分：
@@ -53,17 +73,127 @@ pub fn list_worlds(version_name: String) -> Vec<WorldInfo> {
             let meta = e.metadata().ok()?;
             Some(WorldInfo {
                 name,
-                last_modified: meta
-                    .modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0),
+                last_modified: dir_modified_secs(&meta),
             })
         })
         .collect();
     worlds.sort_by(|a, b| b.last_modified.cmp(&a.last_modified));
     worlds
+}
+
+/// 世界 icon 文件大小上限（128×128 PNG 正常 <100KB；超限视为异常，前端回退占位）。
+const MAX_WORLD_ICON_BYTES: u64 = 512 * 1024;
+
+/// 读取世界缩略图（saves/<world>/icon.png，即游戏世界选择界面的缩略图来源）。
+/// 缺失/超限/损坏返回 None（不报错，前端回退 Map 占位）。
+/// `world_name` 仅接受简单目录名，防路径穿越。
+#[tauri::command]
+pub fn get_world_icon(version_name: String, world_name: String) -> Option<Vec<u8>> {
+    if world_name.contains('/') || world_name.contains('\\') || world_name.contains("..") {
+        return None;
+    }
+    let vdir = version_dir(&version_name).ok()?;
+    let path = vdir.join("saves").join(&world_name).join("icon.png");
+    let meta = std::fs::metadata(&path).ok()?;
+    if !meta.is_file() || meta.len() == 0 || meta.len() > MAX_WORLD_ICON_BYTES {
+        return None;
+    }
+    std::fs::read(&path).ok()
+}
+
+/// 列出版本下资源目录（材质包/数据包/光影包/mod）中的文件，按名称排序；目录不存在返回空列表。
+/// `kind` 白名单：resourcepacks / datapacks / shaderpacks / mods（防路径穿越）。
+#[tauri::command]
+pub fn list_resource_files(version_name: String, kind: String) -> Vec<ResourceFile> {
+    if !matches!(
+        kind.as_str(),
+        "resourcepacks" | "datapacks" | "shaderpacks" | "mods"
+    ) {
+        return Vec::new();
+    }
+    let Ok(vdir) = version_dir(&version_name) else {
+        return Vec::new();
+    };
+    let dir = vdir.join(&kind);
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut files: Vec<ResourceFile> = entries
+        .flatten()
+        .filter(|e| e.path().is_file())
+        .filter_map(|e| {
+            let meta = e.metadata().ok()?;
+            Some(ResourceFile {
+                name: e.file_name().to_string_lossy().to_string(),
+                size: meta.len(),
+                last_modified: dir_modified_secs(&meta),
+            })
+        })
+        .collect();
+    files.sort_by(|a, b| a.name.cmp(&b.name));
+    files
+}
+
+/// 列出资源目录（材质包/数据包/光影包）下的 .zip 详细列表：
+/// sha1 → Modrinth 识别（resourcepack/shaderpack/datapack 项目），命中带社区元数据，
+/// 未命中/文件夹形式仅本地信息（网络失败时 files 仍含本地信息，network_error 置位）。
+/// `kind` 白名单：resourcepacks / datapacks / shaderpacks（防路径穿越）。
+#[tauri::command]
+pub async fn list_resource_detailed(
+    version_name: String,
+    kind: String,
+) -> Result<ResourceListResult, String> {
+    if !matches!(kind.as_str(), "resourcepacks" | "datapacks" | "shaderpacks") {
+        return Ok(ResourceListResult {
+            files: Vec::new(),
+            network_error: false,
+        });
+    }
+    let vdir = version_dir(&version_name)?;
+    Ok(mod_updates::list_dir_detailed(
+        &vdir.join(&kind),
+        mod_updates::ScanFilter::Zip,
+    )
+    .await)
+}
+
+/// 删除资源目录（材质包/数据包/光影包）下的单个文件。
+/// `kind` 白名单 + 纯文件名（防路径穿越），文件不存在报错。
+#[tauri::command]
+pub fn delete_resource_file(
+    version_name: String,
+    kind: String,
+    file_name: String,
+) -> Result<(), String> {
+    if !matches!(kind.as_str(), "resourcepacks" | "datapacks" | "shaderpacks") {
+        return Err("未知资源类型".to_string());
+    }
+    if file_name.contains('/') || file_name.contains('\\') || file_name.contains("..") {
+        return Err("非法文件名".to_string());
+    }
+    let vdir = version_dir(&version_name)?;
+    let path = vdir.join(&kind).join(&file_name);
+    if !path.is_file() {
+        return Err(format!("文件不存在\n{}", file_name));
+    }
+    std::fs::remove_file(&path).map_err(|e| format!("删除失败\n{e}"))
+}
+
+/// 删除整个存档（saves/<world> 目录，递归）。
+/// `world_name` 仅接受简单目录名（防路径穿越）；大目录删除走 tokio（内部 spawn_blocking）。
+#[tauri::command]
+pub async fn delete_world(version_name: String, world_name: String) -> Result<(), String> {
+    if world_name.contains('/') || world_name.contains('\\') || world_name.contains("..") {
+        return Err("非法目录名".to_string());
+    }
+    let vdir = version_dir(&version_name)?;
+    let path = vdir.join("saves").join(&world_name);
+    if !path.is_dir() {
+        return Err(format!("存档不存在\n{}", world_name));
+    }
+    tokio::fs::remove_dir_all(&path)
+        .await
+        .map_err(|e| format!("删除失败\n{e}"))
 }
 
 /// 列出 mods 目录下的 mod 详情（.jar 扫描 + Modrinth 元数据识别；网络失败降级本地信息）。
