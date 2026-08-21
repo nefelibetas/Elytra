@@ -1,15 +1,21 @@
 <script setup lang="ts">
-// 版本设置页容器：左侧导航 + 各 tab 编排（业务在 Mod 管理 / 导出组件）
+// 版本设置页容器：左侧导航 + 各 tab 编排（业务在管理组件内）
 import { ref } from "vue";
 import type { Component } from "vue";
-import { Puzzle, Upload } from "@lucide/vue";
+import { Puzzle, Map, Palette, Sun, Database, Upload } from "@lucide/vue";
 import VersionSetupExport from "../component/VersionSetupExport.vue";
 import VersionSetupMods from "../component/VersionSetupMods.vue";
+import VersionSetupSaves from "../component/VersionSetupSaves.vue";
+import VersionSetupResource from "../component/VersionSetupResource.vue";
 
-type TabKey = "mods" | "export";
+type TabKey = "mods" | "saves" | "resourcepacks" | "shaderpacks" | "datapacks" | "export";
 
 const tabs: { key: TabKey; label: string; icon: Component }[] = [
   { key: "mods", label: "Mod 管理", icon: Puzzle },
+  { key: "saves", label: "存档管理", icon: Map },
+  { key: "resourcepacks", label: "资源包管理", icon: Palette },
+  { key: "shaderpacks", label: "光影包管理", icon: Sun },
+  { key: "datapacks", label: "数据包管理", icon: Database },
   { key: "export", label: "导出", icon: Upload },
 ];
 
@@ -34,13 +40,33 @@ const activeTab = ref<TabKey>("mods");
       </div>
     </div>
 
-    <!-- 右侧：当前 tab 内容 -->
+    <!-- 右侧：当前 tab 内容（切换淡入淡出） -->
     <div class="vs-right">
-      <div v-if="activeTab === 'mods'">
-        <VersionSetupMods />
-      </div>
+      <Transition name="vs-switch" mode="out-in">
+        <VersionSetupMods v-if="activeTab === 'mods'" key="mods" />
 
-      <VersionSetupExport v-else />
+        <VersionSetupSaves v-else-if="activeTab === 'saves'" key="saves" />
+
+        <VersionSetupResource
+          v-else-if="activeTab === 'resourcepacks'"
+          key="resourcepacks"
+          kind="resourcepacks"
+        />
+
+        <VersionSetupResource
+          v-else-if="activeTab === 'shaderpacks'"
+          key="shaderpacks"
+          kind="shaderpacks"
+        />
+
+        <VersionSetupResource
+          v-else-if="activeTab === 'datapacks'"
+          key="datapacks"
+          kind="datapacks"
+        />
+
+        <VersionSetupExport v-else key="export" />
+      </Transition>
     </div>
   </div>
 </template>
@@ -102,5 +128,21 @@ const activeTab = ref<TabKey>("mods");
   overflow-y: auto;
   overflow-x: hidden;
   background: var(--surface-page);
+}
+
+/* tab 内容切换动画 */
+.vs-switch-enter-active,
+.vs-switch-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.vs-switch-enter-from {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+.vs-switch-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
 }
 </style>

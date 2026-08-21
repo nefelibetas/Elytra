@@ -149,64 +149,66 @@ async function confirmDelete() {
         </div>
       </div>
 
-      <!-- 内容：Mod items -->
+      <!-- 内容：Mod items（状态切换淡入淡出） -->
       <div class="vsm-content">
-        <div v-if="modsLoading" class="vsm-state">加载 Mod 信息…</div>
-        <div v-else-if="modsError" class="vsm-state err">{{ modsError }}</div>
-        <div v-else-if="mods.length === 0" class="vsm-state">mods 目录为空，可从资源中心下载 Mod</div>
-        <div v-else-if="items.length === 0" class="vsm-state">
-          {{ tab === "updatable"
-            ? (updatesChecked ? "没有可更新的 Mod" : "点击检查更新查看可更新的 Mod")
-            : `没有匹配「${searchQuery.trim()}」的 Mod` }}
-        </div>
-        <template v-else>
-          <div v-if="modsNetworkError" class="vsm-net-warn">部分 Mod 信息获取失败，已显示本地信息</div>
-          <div class="vsm-list">
-            <div v-for="m in items" :key="m.file_name" class="vsm-item">
-              <!-- 识别得到：Modrinth 元数据详情 -->
-              <template v-if="m.project_id">
-                <IconImage :src="m.icon_url" :size="32" />
-                <span class="vsm-info">
-                  <span class="vsm-title-row">
-                    <span class="vsm-title">{{ m.title_zh ?? m.title }}</span>
-                    <span v-if="m.title_zh" class="vsm-file">{{ m.file_name }}</span>
-                    <span v-if="m.downloads" class="vsm-sub">{{ fmtCount(m.downloads) }} 次下载</span>
+        <Transition name="fade" mode="out-in">
+          <div v-if="modsLoading" key="loading" class="vsm-state">加载 Mod 信息…</div>
+          <div v-else-if="modsError" key="err" class="vsm-state err">{{ modsError }}</div>
+          <div v-else-if="mods.length === 0" key="empty" class="vsm-state">mods 目录为空，可从资源中心下载 Mod</div>
+          <div v-else-if="items.length === 0" key="filtered" class="vsm-state">
+            {{ tab === "updatable"
+              ? (updatesChecked ? "没有可更新的 Mod" : "点击检查更新查看可更新的 Mod")
+              : `没有匹配「${searchQuery.trim()}」的 Mod` }}
+          </div>
+          <div v-else key="list">
+            <div v-if="modsNetworkError" class="vsm-net-warn">部分 Mod 信息获取失败，已显示本地信息</div>
+            <div class="vsm-list">
+              <div v-for="m in items" :key="m.file_name" class="vsm-item">
+                <!-- 识别得到：Modrinth 元数据详情 -->
+                <template v-if="m.project_id">
+                  <IconImage :src="m.icon_url" :size="32" />
+                  <span class="vsm-info">
+                    <span class="vsm-title-row">
+                      <span class="vsm-title">{{ m.title_zh ?? m.title }}</span>
+                      <span v-if="m.title_zh" class="vsm-file">{{ m.file_name }}</span>
+                      <span v-if="m.downloads" class="vsm-sub">{{ fmtCount(m.downloads) }} 次下载</span>
+                    </span>
+                    <span v-if="m.description" class="vsm-desc">
+                      {{ dlTranslateMode === "en" ? m.description : (m.description_zh ?? m.description) }}
+                    </span>
+                    <span class="vsm-support">
+                      <span v-if="m.current_version" class="vsm-ver">v{{ m.current_version }}</span>
+                      <span v-if="updMap[m.file_name]" class="vsm-new">→ v{{ updMap[m.file_name].latest_version }}</span>
+                    </span>
                   </span>
-                  <span v-if="m.description" class="vsm-desc">
-                    {{ dlTranslateMode === "en" ? m.description : (m.description_zh ?? m.description) }}
+                </template>
+                <!-- 识别不到：本地文件样式 -->
+                <template v-else>
+                  <Puzzle :size="20" class="vsm-local-icon" />
+                  <span class="vsm-info">
+                    <span class="vsm-local-name">{{ m.file_name }}</span>
+                    <span class="vsm-local-meta">{{ fmtSize(m.size) }}</span>
                   </span>
-                  <span class="vsm-support">
-                    <span v-if="m.current_version" class="vsm-ver">v{{ m.current_version }}</span>
-                    <span v-if="updMap[m.file_name]" class="vsm-new">→ v{{ updMap[m.file_name].latest_version }}</span>
-                  </span>
-                </span>
-              </template>
-              <!-- 识别不到：本地文件样式 -->
-              <template v-else>
-                <Puzzle :size="20" class="vsm-local-icon" />
-                <span class="vsm-info">
-                  <span class="vsm-local-name">{{ m.file_name }}</span>
-                  <span class="vsm-local-meta">{{ fmtSize(m.size) }}</span>
-                </span>
-              </template>
-              <!-- 最右侧：hover 显示的更新 / 删除（更新按可更新状态禁用） -->
-              <div class="vsm-item-actions">
-                <button
-                  class="vsm-item-btn update"
-                  :disabled="!updMap[m.file_name] || updatingFiles.has(m.file_name)"
-                  @click="updMap[m.file_name] && updateMod(versionName, updMap[m.file_name])"
-                >
-                  <Upload :size="13" />
-                  <span>{{ updatingFiles.has(m.file_name) ? "更新中…" : "更新" }}</span>
-                </button>
-                <button class="vsm-item-btn danger" @click="openDelete(m.file_name)">
-                  <Trash2 :size="13" />
-                  <span>删除</span>
-                </button>
+                </template>
+                <!-- 最右侧：hover 显示的更新 / 删除（更新按可更新状态禁用） -->
+                <div class="vsm-item-actions">
+                  <button
+                    class="vsm-item-btn update"
+                    :disabled="!updMap[m.file_name] || updatingFiles.has(m.file_name)"
+                    @click="updMap[m.file_name] && updateMod(versionName, updMap[m.file_name])"
+                  >
+                    <Upload :size="13" />
+                    <span>{{ updatingFiles.has(m.file_name) ? "更新中…" : "更新" }}</span>
+                  </button>
+                  <button class="vsm-item-btn danger" @click="openDelete(m.file_name)">
+                    <Trash2 :size="13" />
+                    <span>删除</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        </template>
+        </Transition>
       </div>
     </div>
 
