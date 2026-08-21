@@ -81,12 +81,15 @@ export async function loadVersionLoader(versionName: string) {
 export const worlds = ref<WorldInfo[]>([]);
 export const worldsLoading = ref(false);
 export const worldsError = ref("");
+/** 已加载缓存的版本名（设置页切 Tab 缓存命中跳过重载；空串 = 未加载）。 */
+export const worldsLoadedFor = ref("");
 
 export async function loadWorlds(versionName: string) {
   worldsLoading.value = true;
   worldsError.value = "";
   try {
     worlds.value = await invoke<WorldInfo[]>("list_worlds", { versionName });
+    worldsLoadedFor.value = versionName;
   } catch (e) {
     worldsError.value = errMsg(e);
   } finally {
@@ -137,6 +140,8 @@ export const modsLoading = ref(false);
 export const modsError = ref("");
 /** 元数据网络查询降级标记（网络失败时列表仍显示本地信息）。 */
 export const modsNetworkError = ref(false);
+/** 已加载缓存的版本名（设置页切 Tab 缓存命中跳过重载）。 */
+export const modsLoadedFor = ref("");
 /**
  * mods 目录本地快速扫描（.jar 文件，纯 read_dir 无网络）——侧边 Mod 图标显示判定用，
  * 避免等待 list_mods_detailed 的 Modrinth 元数据网络查询（1s+）导致图标延迟。
@@ -163,6 +168,7 @@ export async function loadMods(versionName: string) {
     const r = await invoke<ModListResult>("list_mods_detailed", { versionName });
     mods.value = r.mods;
     modsNetworkError.value = r.network_error;
+    modsLoadedFor.value = versionName;
     // 与详细列表保持一致（删除/更新后图标即时正确）
     modsQuick.value = r.mods.map(m => ({ name: m.file_name, size: m.size, last_modified: 0 }));
   } catch (e) {
@@ -185,14 +191,18 @@ export const resourcepacks = ref<ModFileDetail[]>([]);
 export const resourcepacksLoading = ref(false);
 export const resourcepacksError = ref("");
 export const resourcepacksNetworkError = ref(false);
+/** 已加载缓存的版本名（设置页切 Tab 缓存命中跳过重载）。 */
+export const resourcepacksLoadedFor = ref("");
 export const datapacks = ref<ModFileDetail[]>([]);
 export const datapacksLoading = ref(false);
 export const datapacksError = ref("");
 export const datapacksNetworkError = ref(false);
+export const datapacksLoadedFor = ref("");
 export const shaderpacks = ref<ModFileDetail[]>([]);
 export const shaderpacksLoading = ref(false);
 export const shaderpacksError = ref("");
 export const shaderpacksNetworkError = ref(false);
+export const shaderpacksLoadedFor = ref("");
 
 /** 本地快速扫描（.zip 文件，纯 read_dir 无网络）——侧边图标显示判定用。 */
 export const resourcepacksQuick = ref<ResourceFile[]>([]);
@@ -255,6 +265,9 @@ export async function loadResourceDetailed(versionName: string, kind: ResourceKi
     });
     list.value = r.files;
     networkError.value = r.network_error;
+    if (kind === "resourcepacks") resourcepacksLoadedFor.value = versionName;
+    else if (kind === "datapacks") datapacksLoadedFor.value = versionName;
+    else shaderpacksLoadedFor.value = versionName;
   } catch (e) {
     error.value = errMsg(e);
   } finally {
@@ -336,23 +349,28 @@ export async function deleteMod(versionName: string, fileName: string) {
 export function resetVersionDetail() {
   worlds.value = [];
   worldsError.value = "";
+  worldsLoadedFor.value = "";
   Object.keys(worldIcons).forEach(k => delete worldIcons[k]);
   Object.keys(worldIconsLoading).forEach(k => delete worldIconsLoading[k]);
   mods.value = [];
   modsError.value = "";
   modsNetworkError.value = false;
+  modsLoadedFor.value = "";
   modsQuick.value = [];
   resourcepacks.value = [];
   resourcepacksError.value = "";
   resourcepacksNetworkError.value = false;
+  resourcepacksLoadedFor.value = "";
   resourcepacksQuick.value = [];
   datapacks.value = [];
   datapacksError.value = "";
   datapacksNetworkError.value = false;
+  datapacksLoadedFor.value = "";
   datapacksQuick.value = [];
   shaderpacks.value = [];
   shaderpacksError.value = "";
   shaderpacksNetworkError.value = false;
+  shaderpacksLoadedFor.value = "";
   shaderpacksQuick.value = [];
   updates.value = [];
   updatesError.value = "";

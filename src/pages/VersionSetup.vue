@@ -1,12 +1,17 @@
 <script setup lang="ts">
 // 版本设置页容器：左侧导航 + 各 tab 编排（业务在管理组件内）
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import type { Component } from "vue";
-import { Puzzle, Map, Palette, Sun, Database, Upload } from "@lucide/vue";
+import { useRoute } from "vue-router";
+import { Puzzle, Map, Palette, Sun, Database, Upload, RefreshCw } from "@lucide/vue";
 import VersionSetupExport from "../component/VersionSetupExport.vue";
 import VersionSetupMods from "../component/VersionSetupMods.vue";
 import VersionSetupSaves from "../component/VersionSetupSaves.vue";
 import VersionSetupResource from "../component/VersionSetupResource.vue";
+import {
+  loadMods, loadModsQuick,
+  loadWorlds, loadResourceDetailed, loadResourceQuick,
+} from "../store/versionDetail";
 
 type TabKey = "mods" | "saves" | "resourcepacks" | "shaderpacks" | "datapacks" | "export";
 
@@ -20,6 +25,35 @@ const tabs: { key: TabKey; label: string; icon: Component }[] = [
 ];
 
 const activeTab = ref<TabKey>("mods");
+
+const route = useRoute();
+
+/** 游戏 id（版本目录名），由路由 query 传入。 */
+const versionName = computed(() => String(route.query.name ?? ""));
+
+/** 各管理 tab 的刷新动作（侧边 hover 刷新按钮，强制重载并更新缓存标记）。 */
+const REFRESHERS: Record<TabKey, () => void> = {
+  mods: () => {
+    void loadMods(versionName.value);
+    void loadModsQuick(versionName.value);
+  },
+  saves: () => {
+    void loadWorlds(versionName.value);
+  },
+  resourcepacks: () => {
+    void loadResourceDetailed(versionName.value, "resourcepacks");
+    void loadResourceQuick(versionName.value, "resourcepacks");
+  },
+  shaderpacks: () => {
+    void loadResourceDetailed(versionName.value, "shaderpacks");
+    void loadResourceQuick(versionName.value, "shaderpacks");
+  },
+  datapacks: () => {
+    void loadResourceDetailed(versionName.value, "datapacks");
+    void loadResourceQuick(versionName.value, "datapacks");
+  },
+  export: () => {},
+};
 </script>
 
 <template>
@@ -36,6 +70,15 @@ const activeTab = ref<TabKey>("mods");
         >
           <component :is="t.icon" :size="15" />
           <span>{{ t.label }}</span>
+          <button
+            v-if="t.key !== 'export'"
+            type="button"
+            class="vs-nav-refresh"
+            v-tooltip="'刷新'"
+            @click.stop="REFRESHERS[t.key]()"
+          >
+            <RefreshCw :size="12" />
+          </button>
         </div>
       </div>
     </div>
@@ -97,6 +140,7 @@ const activeTab = ref<TabKey>("mods");
 }
 
 .vs-nav-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -108,6 +152,34 @@ const activeTab = ref<TabKey>("mods");
   cursor: pointer;
   transition: all 0.12s;
   user-select: none;
+}
+
+/* hover 显示的刷新按钮（切 Tab 缓存命中后手动刷新入口） */
+.vs-nav-refresh {
+  flex: none;
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
+}
+
+.vs-nav-item:hover .vs-nav-refresh,
+.vs-nav-refresh:focus-visible {
+  opacity: 1;
+}
+
+.vs-nav-refresh:hover {
+  color: var(--color-brand);
+  background: var(--color-brand-bg);
 }
 
 .vs-nav-item:hover {
