@@ -28,3 +28,4 @@ src-tauri/.minecraft
 
 # 本地敏感配置(构建时经 build.rs 注入,绝不提交)
 .env
+target
