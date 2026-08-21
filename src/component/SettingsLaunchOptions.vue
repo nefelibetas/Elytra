@@ -68,27 +68,29 @@ const winsizeOptions: SelOption[] = [
             width="140px"
             @update:model-value="loWinMode = $event as typeof loWinMode; saveLaunchOptions()"
           />
-          <template v-if="loWinMode === 'Custom'">
-            <input
-              v-model.number="loWinW"
-              class="lo-input lo-num"
-              type="number"
-              min="320"
-              max="7680"
-              placeholder="宽"
-              @change="saveLaunchOptions"
-            />
-            <span class="lo-times">×</span>
-            <input
-              v-model.number="loWinH"
-              class="lo-input lo-num"
-              type="number"
-              min="240"
-              max="4320"
-              placeholder="高"
-              @change="saveLaunchOptions"
-            />
-          </template>
+          <Transition name="fade">
+            <div v-if="loWinMode === 'Custom'" class="lo-win-custom">
+              <input
+                v-model.number="loWinW"
+                class="lo-input lo-num"
+                type="number"
+                min="320"
+                max="7680"
+                placeholder="宽"
+                @change="saveLaunchOptions"
+              />
+              <span class="lo-times">×</span>
+              <input
+                v-model.number="loWinH"
+                class="lo-input lo-num"
+                type="number"
+                min="240"
+                max="4320"
+                placeholder="高"
+                @change="saveLaunchOptions"
+              />
+            </div>
+          </Transition>
         </div>
       </div>
 
@@ -240,5 +242,12 @@ const winsizeOptions: SelOption[] = [
   margin-top: 6px;
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+/* 窗口大小 Custom 输入组（保持行内横排，切换淡入淡出） */
+.lo-win-custom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 </style>

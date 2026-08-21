@@ -32,18 +32,20 @@ onMounted(loadDownloadConfig);
           <span>{{ sourceModeLabel(dlFileMode) }}</span>
           <ChevronDown :size="12" />
         </button>
-        <div v-if="dlFileOpen" class="dl-sel-menu">
-          <button
-            v-for="opt in sourceModeOptions"
-            :key="opt.value"
-            class="dl-sel-item"
-            :class="{ active: dlFileMode === opt.value }"
-            @click="setFileMode(opt.value)"
-          >
-            <span class="dl-sel-item-label">{{ opt.label }}</span>
-            <span class="dl-sel-item-desc">{{ opt.desc }}</span>
-          </button>
-        </div>
+        <Transition name="dl-drop">
+          <div v-if="dlFileOpen" class="dl-sel-menu">
+            <button
+              v-for="opt in sourceModeOptions"
+              :key="opt.value"
+              class="dl-sel-item"
+              :class="{ active: dlFileMode === opt.value }"
+              @click="setFileMode(opt.value)"
+            >
+              <span class="dl-sel-item-label">{{ opt.label }}</span>
+              <span class="dl-sel-item-desc">{{ opt.desc }}</span>
+            </button>
+          </div>
+        </Transition>
       </div>
     </div>
 
@@ -55,18 +57,20 @@ onMounted(loadDownloadConfig);
           <span>{{ sourceModeLabel(dlManifestMode) }}</span>
           <ChevronDown :size="12" />
         </button>
-        <div v-if="dlManifestOpen" class="dl-sel-menu">
-          <button
-            v-for="opt in sourceModeOptions"
-            :key="opt.value"
-            class="dl-sel-item"
-            :class="{ active: dlManifestMode === opt.value }"
-            @click="setManifestMode(opt.value)"
-          >
-            <span class="dl-sel-item-label">{{ opt.label }}</span>
-            <span class="dl-sel-item-desc">{{ opt.desc }}</span>
-          </button>
-        </div>
+        <Transition name="dl-drop">
+          <div v-if="dlManifestOpen" class="dl-sel-menu">
+            <button
+              v-for="opt in sourceModeOptions"
+              :key="opt.value"
+              class="dl-sel-item"
+              :class="{ active: dlManifestMode === opt.value }"
+              @click="setManifestMode(opt.value)"
+            >
+              <span class="dl-sel-item-label">{{ opt.label }}</span>
+              <span class="dl-sel-item-desc">{{ opt.desc }}</span>
+            </button>
+          </div>
+        </Transition>
       </div>
     </div>
 
@@ -78,18 +82,20 @@ onMounted(loadDownloadConfig);
           <span>{{ communitySourceOptions.find(o => o.value === dlCommunityMode)?.label ?? dlCommunityMode }}</span>
           <ChevronDown :size="12" />
         </button>
-        <div v-if="dlCommunityOpen" class="dl-sel-menu">
-          <button
-            v-for="opt in communitySourceOptions"
-            :key="opt.value"
-            class="dl-sel-item"
-            :class="{ active: dlCommunityMode === opt.value }"
-            @click="setCommunityMode(opt.value)"
-          >
-            <span class="dl-sel-item-label">{{ opt.label }}</span>
-            <span class="dl-sel-item-desc">{{ opt.desc }}</span>
-          </button>
-        </div>
+        <Transition name="dl-drop">
+          <div v-if="dlCommunityOpen" class="dl-sel-menu">
+            <button
+              v-for="opt in communitySourceOptions"
+              :key="opt.value"
+              class="dl-sel-item"
+              :class="{ active: dlCommunityMode === opt.value }"
+              @click="setCommunityMode(opt.value)"
+            >
+              <span class="dl-sel-item-label">{{ opt.label }}</span>
+              <span class="dl-sel-item-desc">{{ opt.desc }}</span>
+            </button>
+          </div>
+        </Transition>
       </div>
     </div>
 
@@ -101,18 +107,20 @@ onMounted(loadDownloadConfig);
           <span>{{ networkModeLabel(dlNetworkMode) }}</span>
           <ChevronDown :size="12" />
         </button>
-        <div v-if="dlNetworkOpen" class="dl-sel-menu">
-          <button
-            v-for="opt in networkModeOptions"
-            :key="opt.value"
-            class="dl-sel-item"
-            :class="{ active: dlNetworkMode === opt.value }"
-            @click="setNetworkMode(opt.value)"
-          >
-            <span class="dl-sel-item-label">{{ opt.label }}</span>
-            <span class="dl-sel-item-desc">{{ opt.desc }}</span>
-          </button>
-        </div>
+        <Transition name="dl-drop">
+          <div v-if="dlNetworkOpen" class="dl-sel-menu">
+            <button
+              v-for="opt in networkModeOptions"
+              :key="opt.value"
+              class="dl-sel-item"
+              :class="{ active: dlNetworkMode === opt.value }"
+              @click="setNetworkMode(opt.value)"
+            >
+              <span class="dl-sel-item-label">{{ opt.label }}</span>
+              <span class="dl-sel-item-desc">{{ opt.desc }}</span>
+            </button>
+          </div>
+        </Transition>
       </div>
     </div>
 
@@ -124,18 +132,20 @@ onMounted(loadDownloadConfig);
           <span>{{ translateModeLabel(dlTranslateMode) }}</span>
           <ChevronDown :size="12" />
         </button>
-        <div v-if="dlTranslateOpen" class="dl-sel-menu">
-          <button
-            v-for="opt in translateDisplayOptions"
-            :key="opt.value"
-            class="dl-sel-item"
-            :class="{ active: dlTranslateMode === opt.value }"
-            @click="setTranslateMode(opt.value)"
-          >
-            <span class="dl-sel-item-label">{{ opt.label }}</span>
-            <span class="dl-sel-item-desc">{{ opt.desc }}</span>
-          </button>
-        </div>
+        <Transition name="dl-drop">
+          <div v-if="dlTranslateOpen" class="dl-sel-menu">
+            <button
+              v-for="opt in translateDisplayOptions"
+              :key="opt.value"
+              class="dl-sel-item"
+              :class="{ active: dlTranslateMode === opt.value }"
+              @click="setTranslateMode(opt.value)"
+            >
+              <span class="dl-sel-item-label">{{ opt.label }}</span>
+              <span class="dl-sel-item-desc">{{ opt.desc }}</span>
+            </button>
+          </div>
+        </Transition>
       </div>
     </div>
 
@@ -309,5 +319,17 @@ onMounted(loadDownloadConfig);
   font-size: 11px;
   color: var(--text-tertiary);
   line-height: 1.5;
+}
+
+/* 下拉面板展开/收起动画 */
+.dl-drop-enter-active,
+.dl-drop-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.dl-drop-enter-from,
+.dl-drop-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
 }
 </style>
