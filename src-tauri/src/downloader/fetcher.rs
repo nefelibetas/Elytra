@@ -9,13 +9,6 @@ use tokio::sync::Semaphore;
 
 use crate::config::downloader::model::{DownloadSourceMode, DownloaderConfig, ResourceClass};
 
-/// 当前全局下载限速（bytes/s，0 = 无限制）。每次下载开始读取一次。
-pub fn max_speed_bps() -> u64 {
-    crate::persist::read::<crate::config::downloader::model::DownloaderConfig>(SECT_DOWNLOADER)
-        .map(|c| c.max_speed)
-        .unwrap_or(0)
-}
-
 use crate::constants::{SECT_DOWNLOADER, UA_DOWNLOAD};
 
 /// 镜像源并发信号量（全进程共享）：限制同一时刻对镜像源（BMCLAPI/MCIM）的请求数。
@@ -527,7 +520,6 @@ pub async fn fetch_verified_c(
 
 /// Like `fetch` but uses a specific client (for dedicated connection pools per category).
 /// 带重试（网络错误/5xx 重试最多 3 次）与 HTTP 状态检查；失败时清理残留文件。
-/// 下载时按全局配置限速（max_speed，0 = 不限）。
 /// `expected_sha1` 非空时逐次校验内容，不匹配按失败重试。
 pub async fn fetch_with(
     client: &Client,
@@ -548,11 +540,10 @@ pub async fn fetch_with_c(
     expected_sha1: Option<&str>,
     cancel: Option<&AtomicBool>,
 ) -> Result<DownloadResult, FetchError> {
-    let max_speed = max_speed_bps();
     const MAX_ATTEMPTS: u32 = 3;
     let mut last_err = None;
     for attempt in 0..MAX_ATTEMPTS {
-        match fetch_once(client, url, dest, &progress, max_speed, expected_sha1, cancel).await {
+        match fetch_once(client, url, dest, &progress, expected_sha1, cancel).await {
             Ok(out) => return Ok(out.dl),
             Err(e) => {
                 // 取消立即传播（不重试、不换源）
@@ -614,7 +605,6 @@ async fn fetch_from_sources<F: Fn(u64, u64)>(
     expected_sha1: Option<&str>,
     cancel: Option<&AtomicBool>,
 ) -> Result<DownloadResult, FetchError> {
-    let max_speed = max_speed_bps();
     const MAX_ATTEMPTS: u32 = 3;
     // 自适应路由：去重 + 自动镜像候选（官方保底）+ mirror_first_loader/健康度排序。
     // 调用方传入的源顺序在非 Auto 模式下保持不变（向后兼容）。
@@ -646,9 +636,7 @@ async fn fetch_from_sources<F: Fn(u64, u64)>(
                     continue;
                 }
             };
-            match fetch_once(&client, &route.url, dest, progress, max_speed, expected_sha1, cancel)
-                .await
-            {
+            match fetch_once(&client, &route.url, dest, progress, expected_sha1, cancel).await {
                 Ok(out) => {
                     record_route_success(&route.url, out.ttfb_ms);
                     return Ok(out.dl);
@@ -707,7 +695,6 @@ async fn fetch_once<F: Fn(u64, u64)>(
     url: &str,
     dest: &Path,
     progress: &Option<F>,
-    max_speed: u64,
     expected_sha1: Option<&str>,
     cancel: Option<&AtomicBool>,
 ) -> Result<FetchOnceOutput, FetchError> {
@@ -771,14 +758,6 @@ async fn fetch_once<F: Fn(u64, u64)>(
         downloaded = downloaded.saturating_add(chunk.len() as u64);
         if let Some(cb) = progress.as_ref() {
             cb(downloaded, total);
-        }
-        // 限速：按已下载字节数控制期望耗时，超出则等待
-        if max_speed > 0 {
-            let expect = downloaded as f64 / max_speed as f64;
-            let actual = start.elapsed().as_secs_f64();
-            if expect > actual {
-                tokio::time::sleep(Duration::from_secs_f64(expect - actual)).await;
-            }
         }
     }
 

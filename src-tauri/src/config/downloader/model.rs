@@ -210,9 +210,6 @@ pub struct DownloaderConfig {
     /// 网络代理模式：auto（自动检测系统代理）/ system（强制系统代理）/ direct（强制直连）。
     #[serde(default)]
     pub network_mode: NetworkMode,
-    /// 下载速度上限（bytes/s），0 = 无限制
-    #[serde(default)]
-    pub max_speed: u64,
     /// 社区搜索结果翻译显示模式：zh = 仅中文、both = 中英对照、en = 仅英文。
     /// 仅前端展示使用（后端仅存储透传；en 模式下搜索命令跳过翻译请求）。
     #[serde(default)]
@@ -237,7 +234,6 @@ impl Default for DownloaderConfig {
             manifest_source_mode: DownloadSourceMode::Auto,
             community_source_mode: DownloadSourceMode::Auto,
             network_mode: NetworkMode::Auto,
-            max_speed: 0,
             translate_display: "zh".into(),
             show_release_only: true,
         }

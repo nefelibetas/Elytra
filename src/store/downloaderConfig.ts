@@ -67,7 +67,6 @@ export const dlConcurrency = ref(64);
 export const MIRROR_CONCURRENCY = 8;
 // 仅镜像模式下并发数由镜像源规定，输入锁定（智能/官方模式并发给官方源配置）
 export const concurrencyLocked = computed(() => dlFileMode.value === "chinaOnly");
-export const dlMaxSpeed = ref(0); // MB/s，0 = 无上限
 export const dlFileOpen = ref(false);
 export const dlManifestOpen = ref(false);
 export const dlCommunityOpen = ref(false);
@@ -113,8 +112,6 @@ export async function loadDownloadConfig() {
     // 旧配置默认线程数为 8，统一迁移到 64
     dlConcurrency.value = (cfg.concurrency === 8 ? 64 : (cfg.concurrency ?? 64));
     dlConcurrency.value = Math.min(256, Math.max(1, dlConcurrency.value));
-    const mb = Math.round((cfg.max_speed ?? 0) / (1024 * 1024));
-    dlMaxSpeed.value = Math.min(100, Math.max(0, mb));
     dlMinecraftDir.value = cfg.minecraft_dir || ".minecraft";
     const mode = cfg.translate_display;
     if (mode === "zh" || mode === "both" || mode === "en") {
@@ -136,7 +133,6 @@ export async function saveDownloadConfig() {
         community_source_mode: dlCommunityMode.value,
         network_mode: dlNetworkMode.value,
         concurrency: dlConcurrency.value,
-        max_speed: dlMaxSpeed.value * 1024 * 1024,
         minecraft_dir: dlMinecraftDir.value,
         translate_display: dlTranslateMode.value,
         show_release_only: dlShowReleaseOnly.value,
