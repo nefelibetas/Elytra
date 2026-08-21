@@ -4,17 +4,24 @@ import { communitySearch, communityTotalPages } from "../store/communitySearch";
 import { dlTranslateMode } from "../store/downloaderConfig";
 import { openResourceDetail } from "../store/resourceDetail";
 import { fmtCount } from "../utils/format";
+import { Puzzle } from "@lucide/vue";
 import IconImage from "./IconImage.vue";
+import LoadingSpinner from "./LoadingSpinner.vue";
+import EmptyState from "./EmptyState.vue";
+import ErrorState from "./ErrorState.vue";
 </script>
 
 <template>
   <div class="mod-result-card">
-    <div v-if="communitySearch.error" class="mod-state err">{{ communitySearch.error }}</div>
-    <div v-else-if="communitySearch.searching" class="mod-loading">
-      <div class="spinner"></div>
-      <p class="mod-loading-text">{{ communitySearch.query.trim() ? "正在搜索 Mod..." : "正在加载热门 Mod..." }}</p>
-    </div>
-    <div v-else-if="communitySearch.searched && communitySearch.results.length === 0" class="mod-state">未找到相关 Mod，试试更换关键字或放宽筛选条件</div>
+    <ErrorState v-if="communitySearch.error" :text="communitySearch.error" />
+    <LoadingSpinner
+      v-else-if="communitySearch.searching"
+      :text="communitySearch.query.trim() ? '正在搜索 Mod...' : '正在加载热门 Mod...'"
+    />
+    <EmptyState v-else-if="communitySearch.searched && communitySearch.results.length === 0">
+      <Puzzle :size="40" :stroke-width="1.5" opacity="0.5" />
+      <p>未找到相关 Mod，试试更换关键字或放宽筛选条件</p>
+    </EmptyState>
     <template v-else-if="communitySearch.searched">
       <div class="mod-list">
         <div v-for="m in communitySearch.results" :key="m.key" class="mod-card">
@@ -46,7 +53,10 @@ import IconImage from "./IconImage.vue";
         <span class="mod-result-count">共 {{ communitySearch.total }} 个结果</span>
       </div>
     </template>
-    <div v-else class="mod-state">输入关键字搜索，或直接搜索查看热门 Mod</div>
+    <EmptyState v-else>
+      <Puzzle :size="40" :stroke-width="1.5" opacity="0.5" />
+      <p>输入关键字搜索，或直接搜索查看热门 Mod</p>
+    </EmptyState>
   </div>
 </template>
 
@@ -58,16 +68,7 @@ import IconImage from "./IconImage.vue";
   border-radius: var(--radius-md);
   overflow: hidden;
 }
-.mod-state { text-align: center; color: var(--text-tertiary); font-size: 13px; padding: 40px 0; }
-.mod-state.err { color: var(--color-danger); }
-.mod-loading { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 40px 0; }
-.mod-loading-text { font-size: 13px; color: var(--text-tertiary); }
-.spinner {
-  width: 36px; height: 36px;
-  border: 3px solid var(--border-default); border-top-color: var(--color-brand);
-  border-radius: 50%; animation: spin 0.7s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
+
 
 .mod-list { display: flex; flex-direction: column; padding: 6px 8px; }
 .mod-card { overflow: hidden; }

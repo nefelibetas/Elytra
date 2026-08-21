@@ -4,17 +4,24 @@ import { worldsSearch, worldsTotalPages } from "../store/categorySearch";
 import { dlTranslateMode } from "../store/downloaderConfig";
 import { openResourceDetail } from "../store/resourceDetail";
 import { fmtCount } from "../utils/format";
+import { Map } from "@lucide/vue";
 import IconImage from "./IconImage.vue";
+import LoadingSpinner from "./LoadingSpinner.vue";
+import EmptyState from "./EmptyState.vue";
+import ErrorState from "./ErrorState.vue";
 </script>
 
 <template>
   <div class="w-result-card">
-    <div v-if="worldsSearch.error" class="w-state err">{{ worldsSearch.error }}</div>
-    <div v-else-if="worldsSearch.searching" class="w-loading">
-      <div class="spinner"></div>
-      <p class="w-loading-text">{{ worldsSearch.query.trim() ? "正在搜索地图存档..." : "正在加载热门地图存档..." }}</p>
-    </div>
-    <div v-else-if="worldsSearch.searched && worldsSearch.results.length === 0" class="w-state">未找到相关地图存档，试试更换关键字或放宽筛选条件</div>
+    <ErrorState v-if="worldsSearch.error" :text="worldsSearch.error" />
+    <LoadingSpinner
+      v-else-if="worldsSearch.searching"
+      :text="worldsSearch.query.trim() ? '正在搜索地图存档...' : '正在加载热门地图存档...'"
+    />
+    <EmptyState v-else-if="worldsSearch.searched && worldsSearch.results.length === 0">
+      <Map :size="40" :stroke-width="1.5" opacity="0.5" />
+      <p>未找到相关地图存档，试试更换关键字或放宽筛选条件</p>
+    </EmptyState>
     <template v-else-if="worldsSearch.searched">
       <div class="w-list">
         <div v-for="m in worldsSearch.results" :key="m.key" class="w-card">
@@ -46,7 +53,10 @@ import IconImage from "./IconImage.vue";
         <span class="w-result-count">共 {{ worldsSearch.total }} 个结果</span>
       </div>
     </template>
-    <div v-else class="w-state">输入关键字搜索，或直接搜索查看热门地图存档</div>
+    <EmptyState v-else>
+      <Map :size="40" :stroke-width="1.5" opacity="0.5" />
+      <p>输入关键字搜索，或直接搜索查看热门地图存档</p>
+    </EmptyState>
   </div>
 </template>
 
@@ -58,16 +68,6 @@ import IconImage from "./IconImage.vue";
   border-radius: var(--radius-md);
   overflow: hidden;
 }
-.w-state { text-align: center; color: var(--text-tertiary); font-size: 13px; padding: 40px 0; }
-.w-state.err { color: var(--color-danger); }
-.w-loading { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 40px 0; }
-.w-loading-text { font-size: 13px; color: var(--text-tertiary); }
-.spinner {
-  width: 36px; height: 36px;
-  border: 3px solid var(--border-default); border-top-color: var(--color-brand);
-  border-radius: 50%; animation: spin 0.7s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
 
 .w-list { display: flex; flex-direction: column; padding: 6px 8px; }
 .w-card { overflow: hidden; }

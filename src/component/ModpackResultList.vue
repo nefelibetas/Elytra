@@ -4,17 +4,24 @@ import { modpackSearch, modpackTotalPages } from "../store/categorySearch";
 import { dlTranslateMode } from "../store/downloaderConfig";
 import { openResourceDetail } from "../store/resourceDetail";
 import { fmtCount } from "../utils/format";
+import { Archive } from "@lucide/vue";
 import IconImage from "./IconImage.vue";
+import LoadingSpinner from "./LoadingSpinner.vue";
+import EmptyState from "./EmptyState.vue";
+import ErrorState from "./ErrorState.vue";
 </script>
 
 <template>
   <div class="mo-result-card">
-    <div v-if="modpackSearch.error" class="mo-state err">{{ modpackSearch.error }}</div>
-    <div v-else-if="modpackSearch.searching" class="mo-loading">
-      <div class="spinner"></div>
-      <p class="mo-loading-text">{{ modpackSearch.query.trim() ? "正在搜索整合包..." : "正在加载热门整合包..." }}</p>
-    </div>
-    <div v-else-if="modpackSearch.searched && modpackSearch.results.length === 0" class="mo-state">未找到相关整合包，试试更换关键字或放宽筛选条件</div>
+    <ErrorState v-if="modpackSearch.error" :text="modpackSearch.error" />
+    <LoadingSpinner
+      v-else-if="modpackSearch.searching"
+      :text="modpackSearch.query.trim() ? '正在搜索整合包...' : '正在加载热门整合包...'"
+    />
+    <EmptyState v-else-if="modpackSearch.searched && modpackSearch.results.length === 0">
+      <Archive :size="40" :stroke-width="1.5" opacity="0.5" />
+      <p>未找到相关整合包，试试更换关键字或放宽筛选条件</p>
+    </EmptyState>
     <template v-else-if="modpackSearch.searched">
       <div class="mo-list">
         <div v-for="m in modpackSearch.results" :key="m.key" class="mo-card">
@@ -46,7 +53,10 @@ import IconImage from "./IconImage.vue";
         <span class="mo-result-count">共 {{ modpackSearch.total }} 个结果</span>
       </div>
     </template>
-    <div v-else class="mo-state">输入关键字搜索，或直接搜索查看热门整合包</div>
+    <EmptyState v-else>
+      <Archive :size="40" :stroke-width="1.5" opacity="0.5" />
+      <p>输入关键字搜索，或直接搜索查看热门整合包</p>
+    </EmptyState>
   </div>
 </template>
 
@@ -58,16 +68,7 @@ import IconImage from "./IconImage.vue";
   border-radius: var(--radius-md);
   overflow: hidden;
 }
-.mo-state { text-align: center; color: var(--text-tertiary); font-size: 13px; padding: 40px 0; }
-.mo-state.err { color: var(--color-danger); }
-.mo-loading { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 40px 0; }
-.mo-loading-text { font-size: 13px; color: var(--text-tertiary); }
-.spinner {
-  width: 36px; height: 36px;
-  border: 3px solid var(--border-default); border-top-color: var(--color-brand);
-  border-radius: 50%; animation: spin 0.7s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
+
 
 .mo-list { display: flex; flex-direction: column; padding: 6px 8px; }
 .mo-card { overflow: hidden; }

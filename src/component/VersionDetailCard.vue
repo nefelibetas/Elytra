@@ -14,6 +14,8 @@ import VersionItem from "./VersionItem.vue";
 import AlertDialog from "./AlertDialog.vue";
 import IconImage from "./IconImage.vue";
 import LoadingSpinner from "./LoadingSpinner.vue";
+import EmptyState from "./EmptyState.vue";
+import ErrorState from "./ErrorState.vue";
 import { dlState } from "../store/download";
 import { dlTranslateMode } from "../store/downloaderConfig";
 import { selectedVersion, setSelected } from "../store/selectedVersion";
@@ -313,11 +315,11 @@ function fmtUnix(sec: number): string {
       <!-- ── 存档 tab ── -->
       <div v-if="tab === 'worlds'" key="worlds" class="vdc-pane">
         <LoadingSpinner v-if="worldsLoading" text="加载存档…" />
-        <div v-else-if="worldsError" class="vdc-err">{{ worldsError }}</div>
-        <div v-else-if="worlds.length === 0" class="vdc-empty">
-          <Map :size="40" opacity="0.3" />
+        <ErrorState v-else-if="worldsError" :text="worldsError" />
+        <EmptyState v-else-if="worlds.length === 0">
+          <Map :size="40" :stroke-width="1.5" opacity="0.5" />
           <p>还没有存档<br />启动游戏后会自动创建</p>
-        </div>
+        </EmptyState>
         <div v-else class="vdc-list">
           <div v-for="w in worlds" :key="w.name" class="vdc-row vdc-world-row">
             <IconImage
@@ -337,16 +339,13 @@ function fmtUnix(sec: number): string {
 
       <!-- ── Mod tab ── -->
       <div v-else-if="tab === 'mods'" key="mods" class="vdc-pane">
-        <div v-if="modsLoading" class="vdc-loading">
-          <div class="spinner"></div>
-          <p class="vdc-loading-text">正在加载 Mod 信息…</p>
-        </div>
-        <div v-else-if="modsError" class="vdc-err">{{ modsError }}</div>
-        <div v-else-if="mods.length === 0" class="vdc-empty">
-          <Puzzle :size="40" opacity="0.3" />
+        <LoadingSpinner v-if="modsLoading" text="正在加载 Mod 信息…" />
+        <ErrorState v-else-if="modsError" :text="modsError" />
+        <EmptyState v-else-if="mods.length === 0">
+          <Puzzle :size="40" :stroke-width="1.5" opacity="0.5" />
           <p v-if="isModLoaderVersion">mods 目录为空<br />可从资源中心下载 Mod</p>
           <p v-else>mods 目录为空</p>
-        </div>
+        </EmptyState>
         <template v-else>
           <div v-if="modsNetworkError" class="vdc-net-warn">
             部分 Mod 信息获取失败，已显示本地信息
@@ -386,11 +385,11 @@ function fmtUnix(sec: number): string {
       <!-- ── 材质包 / 数据包 / 光影包 tab（Modrinth 识别双态列表）── -->
       <div v-else key="resources" class="vdc-pane">
         <LoadingSpinner v-if="resLoading" text="加载中…" />
-        <div v-else-if="resError" class="vdc-err">{{ resError }}</div>
-        <div v-else-if="resList.length === 0" class="vdc-empty">
-          <component :is="resIcon" :size="40" opacity="0.3" />
+        <ErrorState v-else-if="resError" :text="resError" />
+        <EmptyState v-else-if="resList.length === 0">
+          <component :is="resIcon" :size="40" :stroke-width="1.5" opacity="0.5" />
           <p>{{ resEmptyText }}</p>
-        </div>
+        </EmptyState>
         <template v-else>
           <div v-if="resNetworkError" class="vdc-net-warn">
             部分资源信息获取失败，已显示本地信息
@@ -610,24 +609,6 @@ function fmtUnix(sec: number): string {
 }
 
 /* 空态：图标 + 换行文本，内容区完全居中 */
-.vdc-empty {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  padding: 20px;
-  color: var(--text-tertiary);
-  text-align: center;
-  user-select: none;
-}
-
-.vdc-empty p {
-  font-size: 13px;
-  line-height: 1.7;
-}
-
 .vdc-err {
   padding: 20px;
   font-size: 12px;
@@ -691,30 +672,6 @@ function fmtUnix(sec: number): string {
 }
 
 /* ===== Mod 列表（社区资源风格：图标 + 标题/文件名 + 描述 + 版本支持）===== */
-.vdc-loading {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  padding: 40px 0;
-}
-
-.vdc-loading-text {
-  font-size: 13px;
-  color: var(--text-tertiary);
-}
-
-.spinner {
-  width: 36px;
-  height: 36px;
-  border: 3px solid var(--border-default);
-  border-top-color: var(--color-brand);
-  border-radius: 50%;
-  animation: vdc-spin 0.7s linear infinite;
-}
-
 .vdc-net-warn {
   font-size: 11px;
   color: var(--color-danger);

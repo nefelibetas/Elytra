@@ -4,17 +4,24 @@ import { shaderSearch, shaderTotalPages } from "../store/categorySearch";
 import { dlTranslateMode } from "../store/downloaderConfig";
 import { openResourceDetail } from "../store/resourceDetail";
 import { fmtCount } from "../utils/format";
+import { Sun } from "@lucide/vue";
 import IconImage from "./IconImage.vue";
+import LoadingSpinner from "./LoadingSpinner.vue";
+import EmptyState from "./EmptyState.vue";
+import ErrorState from "./ErrorState.vue";
 </script>
 
 <template>
   <div class="sh-result-card">
-    <div v-if="shaderSearch.error" class="sh-state err">{{ shaderSearch.error }}</div>
-    <div v-else-if="shaderSearch.searching" class="sh-loading">
-      <div class="spinner"></div>
-      <p class="sh-loading-text">{{ shaderSearch.query.trim() ? "正在搜索光影包..." : "正在加载热门光影包..." }}</p>
-    </div>
-    <div v-else-if="shaderSearch.searched && shaderSearch.results.length === 0" class="sh-state">未找到相关光影包，试试更换关键字或放宽筛选条件</div>
+    <ErrorState v-if="shaderSearch.error" :text="shaderSearch.error" />
+    <LoadingSpinner
+      v-else-if="shaderSearch.searching"
+      :text="shaderSearch.query.trim() ? '正在搜索光影包...' : '正在加载热门光影包...'"
+    />
+    <EmptyState v-else-if="shaderSearch.searched && shaderSearch.results.length === 0">
+      <Sun :size="40" :stroke-width="1.5" opacity="0.5" />
+      <p>未找到相关光影包，试试更换关键字或放宽筛选条件</p>
+    </EmptyState>
     <template v-else-if="shaderSearch.searched">
       <div class="sh-list">
         <div v-for="m in shaderSearch.results" :key="m.key" class="sh-card">
@@ -46,7 +53,10 @@ import IconImage from "./IconImage.vue";
         <span class="sh-result-count">共 {{ shaderSearch.total }} 个结果</span>
       </div>
     </template>
-    <div v-else class="sh-state">输入关键字搜索，或直接搜索查看热门光影包</div>
+    <EmptyState v-else>
+      <Sun :size="40" :stroke-width="1.5" opacity="0.5" />
+      <p>输入关键字搜索，或直接搜索查看热门光影包</p>
+    </EmptyState>
   </div>
 </template>
 
@@ -58,16 +68,7 @@ import IconImage from "./IconImage.vue";
   border-radius: var(--radius-md);
   overflow: hidden;
 }
-.sh-state { text-align: center; color: var(--text-tertiary); font-size: 13px; padding: 40px 0; }
-.sh-state.err { color: var(--color-danger); }
-.sh-loading { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 40px 0; }
-.sh-loading-text { font-size: 13px; color: var(--text-tertiary); }
-.spinner {
-  width: 36px; height: 36px;
-  border: 3px solid var(--border-default); border-top-color: var(--color-brand);
-  border-radius: 50%; animation: spin 0.7s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
+
 
 .sh-list { display: flex; flex-direction: column; padding: 6px 8px; }
 .sh-card { overflow: hidden; }

@@ -4,17 +4,24 @@ import { datapackSearch, datapackTotalPages } from "../store/categorySearch";
 import { dlTranslateMode } from "../store/downloaderConfig";
 import { openResourceDetail } from "../store/resourceDetail";
 import { fmtCount } from "../utils/format";
+import { Database } from "@lucide/vue";
 import IconImage from "./IconImage.vue";
+import LoadingSpinner from "./LoadingSpinner.vue";
+import EmptyState from "./EmptyState.vue";
+import ErrorState from "./ErrorState.vue";
 </script>
 
 <template>
   <div class="da-result-card">
-    <div v-if="datapackSearch.error" class="da-state err">{{ datapackSearch.error }}</div>
-    <div v-else-if="datapackSearch.searching" class="da-loading">
-      <div class="spinner"></div>
-      <p class="da-loading-text">{{ datapackSearch.query.trim() ? "正在搜索数据包..." : "正在加载热门数据包..." }}</p>
-    </div>
-    <div v-else-if="datapackSearch.searched && datapackSearch.results.length === 0" class="da-state">未找到相关数据包，试试更换关键字或放宽筛选条件</div>
+    <ErrorState v-if="datapackSearch.error" :text="datapackSearch.error" />
+    <LoadingSpinner
+      v-else-if="datapackSearch.searching"
+      :text="datapackSearch.query.trim() ? '正在搜索数据包...' : '正在加载热门数据包...'"
+    />
+    <EmptyState v-else-if="datapackSearch.searched && datapackSearch.results.length === 0">
+      <Database :size="40" :stroke-width="1.5" opacity="0.5" />
+      <p>未找到相关数据包，试试更换关键字或放宽筛选条件</p>
+    </EmptyState>
     <template v-else-if="datapackSearch.searched">
       <div class="da-list">
         <div v-for="m in datapackSearch.results" :key="m.key" class="da-card">
@@ -46,7 +53,10 @@ import IconImage from "./IconImage.vue";
         <span class="da-result-count">共 {{ datapackSearch.total }} 个结果</span>
       </div>
     </template>
-    <div v-else class="da-state">输入关键字搜索，或直接搜索查看热门数据包</div>
+    <EmptyState v-else>
+      <Database :size="40" :stroke-width="1.5" opacity="0.5" />
+      <p>输入关键字搜索，或直接搜索查看热门数据包</p>
+    </EmptyState>
   </div>
 </template>
 
@@ -58,16 +68,7 @@ import IconImage from "./IconImage.vue";
   border-radius: var(--radius-md);
   overflow: hidden;
 }
-.da-state { text-align: center; color: var(--text-tertiary); font-size: 13px; padding: 40px 0; }
-.da-state.err { color: var(--color-danger); }
-.da-loading { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 40px 0; }
-.da-loading-text { font-size: 13px; color: var(--text-tertiary); }
-.spinner {
-  width: 36px; height: 36px;
-  border: 3px solid var(--border-default); border-top-color: var(--color-brand);
-  border-radius: 50%; animation: spin 0.7s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
+
 
 .da-list { display: flex; flex-direction: column; padding: 6px 8px; }
 .da-card { overflow: hidden; }

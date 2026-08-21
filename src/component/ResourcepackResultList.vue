@@ -4,17 +4,24 @@ import { resourcepackSearch, resourcepackTotalPages } from "../store/categorySea
 import { dlTranslateMode } from "../store/downloaderConfig";
 import { openResourceDetail } from "../store/resourceDetail";
 import { fmtCount } from "../utils/format";
+import { Palette } from "@lucide/vue";
 import IconImage from "./IconImage.vue";
+import LoadingSpinner from "./LoadingSpinner.vue";
+import EmptyState from "./EmptyState.vue";
+import ErrorState from "./ErrorState.vue";
 </script>
 
 <template>
   <div class="rp-result-card">
-    <div v-if="resourcepackSearch.error" class="rp-state err">{{ resourcepackSearch.error }}</div>
-    <div v-else-if="resourcepackSearch.searching" class="rp-loading">
-      <div class="spinner"></div>
-      <p class="rp-loading-text">{{ resourcepackSearch.query.trim() ? "正在搜索资源包..." : "正在加载热门资源包..." }}</p>
-    </div>
-    <div v-else-if="resourcepackSearch.searched && resourcepackSearch.results.length === 0" class="rp-state">未找到相关资源包，试试更换关键字或放宽筛选条件</div>
+    <ErrorState v-if="resourcepackSearch.error" :text="resourcepackSearch.error" />
+    <LoadingSpinner
+      v-else-if="resourcepackSearch.searching"
+      :text="resourcepackSearch.query.trim() ? '正在搜索资源包...' : '正在加载热门资源包...'"
+    />
+    <EmptyState v-else-if="resourcepackSearch.searched && resourcepackSearch.results.length === 0">
+      <Palette :size="40" :stroke-width="1.5" opacity="0.5" />
+      <p>未找到相关资源包，试试更换关键字或放宽筛选条件</p>
+    </EmptyState>
     <template v-else-if="resourcepackSearch.searched">
       <div class="rp-list">
         <div v-for="m in resourcepackSearch.results" :key="m.key" class="rp-card">
@@ -46,7 +53,10 @@ import IconImage from "./IconImage.vue";
         <span class="rp-result-count">共 {{ resourcepackSearch.total }} 个结果</span>
       </div>
     </template>
-    <div v-else class="rp-state">输入关键字搜索，或直接搜索查看热门资源包</div>
+    <EmptyState v-else>
+      <Palette :size="40" :stroke-width="1.5" opacity="0.5" />
+      <p>输入关键字搜索，或直接搜索查看热门资源包</p>
+    </EmptyState>
   </div>
 </template>
 
@@ -58,16 +68,7 @@ import IconImage from "./IconImage.vue";
   border-radius: var(--radius-md);
   overflow: hidden;
 }
-.rp-state { text-align: center; color: var(--text-tertiary); font-size: 13px; padding: 40px 0; }
-.rp-state.err { color: var(--color-danger); }
-.rp-loading { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 40px 0; }
-.rp-loading-text { font-size: 13px; color: var(--text-tertiary); }
-.spinner {
-  width: 36px; height: 36px;
-  border: 3px solid var(--border-default); border-top-color: var(--color-brand);
-  border-radius: 50%; animation: spin 0.7s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
+
 
 .rp-list { display: flex; flex-direction: column; padding: 6px 8px; }
 .rp-card { overflow: hidden; }

@@ -9,6 +9,8 @@ import { errMsg } from "../utils/error";
 import IconImage from "./IconImage.vue";
 import AlertDialog from "./AlertDialog.vue";
 import LoadingSpinner from "./LoadingSpinner.vue";
+import EmptyState from "./EmptyState.vue";
+import ErrorState from "./ErrorState.vue";
 import {
   worlds, worldsLoading, worldsError, worldIcons, worldsLoadedFor,
   loadWorlds, loadWorldIcon,
@@ -92,8 +94,11 @@ async function confirmDelete() {
       <div class="vss-content">
         <Transition name="fade" mode="out-in">
           <LoadingSpinner v-if="worldsLoading" key="loading" text="加载存档…" />
-          <div v-else-if="worldsError" key="err" class="vss-state err">{{ worldsError }}</div>
-          <div v-else-if="worlds.length === 0" key="empty" class="vss-state">还没有存档，启动游戏后会自动创建</div>
+          <ErrorState v-else-if="worldsError" key="err" :text="worldsError" />
+          <EmptyState v-else-if="worlds.length === 0" key="empty">
+            <Map :size="40" :stroke-width="1.5" opacity="0.5" />
+            <p>还没有存档，启动游戏后会自动创建</p>
+          </EmptyState>
           <div v-else key="list" class="vss-list">
             <div v-for="w in worlds" :key="w.name" class="vss-item">
               <IconImage
@@ -206,17 +211,6 @@ async function confirmDelete() {
   overflow-y: auto;
   overflow-x: hidden;
   padding: 10px 12px 14px;
-}
-
-.vss-state {
-  text-align: center;
-  color: var(--text-tertiary);
-  font-size: 13px;
-  padding: 36px 0;
-}
-
-.vss-state.err {
-  color: var(--color-danger);
 }
 
 .vss-list {

@@ -12,6 +12,8 @@ import { dlTranslateMode } from "../store/downloaderConfig";
 import IconImage from "./IconImage.vue";
 import AlertDialog from "./AlertDialog.vue";
 import LoadingSpinner from "./LoadingSpinner.vue";
+import EmptyState from "./EmptyState.vue";
+import ErrorState from "./ErrorState.vue";
 import {
   resourcepacks, resourcepacksLoading, resourcepacksError, resourcepacksNetworkError, resourcepacksLoadedFor,
   datapacks, datapacksLoading, datapacksError, datapacksNetworkError, datapacksLoadedFor,
@@ -134,8 +136,11 @@ async function confirmDelete() {
       <div class="vsr-content">
         <Transition name="fade" mode="out-in">
           <LoadingSpinner v-if="res.loading" key="loading" :text="`加载${meta.label}信息…`" />
-          <div v-else-if="res.error" key="err" class="vsr-state err">{{ res.error }}</div>
-          <div v-else-if="res.list.length === 0" key="empty" class="vsr-state">{{ meta.label }}目录为空</div>
+          <ErrorState v-else-if="res.error" key="err" :text="res.error" />
+          <EmptyState v-else-if="res.list.length === 0" key="empty">
+            <component :is="meta.icon" :size="40" :stroke-width="1.5" opacity="0.5" />
+            <p>{{ meta.label }}目录为空</p>
+          </EmptyState>
           <div v-else key="list">
             <div v-if="res.networkError" class="vsr-net-warn">部分资源信息获取失败，已显示本地信息</div>
             <div class="vsr-list">
@@ -266,17 +271,6 @@ async function confirmDelete() {
   overflow-y: auto;
   overflow-x: hidden;
   padding: 10px 12px 14px;
-}
-
-.vsr-state {
-  text-align: center;
-  color: var(--text-tertiary);
-  font-size: 13px;
-  padding: 36px 0;
-}
-
-.vsr-state.err {
-  color: var(--color-danger);
 }
 
 .vsr-net-warn {
