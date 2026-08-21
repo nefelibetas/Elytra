@@ -13,6 +13,7 @@ import { errMsg } from "../utils/error";
 import VersionItem from "./VersionItem.vue";
 import AlertDialog from "./AlertDialog.vue";
 import IconImage from "./IconImage.vue";
+import LoadingSpinner from "./LoadingSpinner.vue";
 import { dlState } from "../store/download";
 import { dlTranslateMode } from "../store/downloaderConfig";
 import { selectedVersion, setSelected } from "../store/selectedVersion";
@@ -311,7 +312,7 @@ function fmtUnix(sec: number): string {
         <Transition name="vdc-fade" mode="out-in">
       <!-- ── 存档 tab ── -->
       <div v-if="tab === 'worlds'" key="worlds" class="vdc-pane">
-        <div v-if="worldsLoading" class="vdc-hint">加载存档…</div>
+        <LoadingSpinner v-if="worldsLoading" text="加载存档…" />
         <div v-else-if="worldsError" class="vdc-err">{{ worldsError }}</div>
         <div v-else-if="worlds.length === 0" class="vdc-empty">
           <Map :size="40" opacity="0.3" />
@@ -384,7 +385,7 @@ function fmtUnix(sec: number): string {
 
       <!-- ── 材质包 / 数据包 / 光影包 tab（Modrinth 识别双态列表）── -->
       <div v-else key="resources" class="vdc-pane">
-        <div v-if="resLoading" class="vdc-hint">加载中…</div>
+        <LoadingSpinner v-if="resLoading" text="加载中…" />
         <div v-else-if="resError" class="vdc-err">{{ resError }}</div>
         <div v-else-if="resList.length === 0" class="vdc-empty">
           <component :is="resIcon" :size="40" opacity="0.3" />
@@ -606,14 +607,6 @@ function fmtUnix(sec: number): string {
 .vdc-fade-enter-from,
 .vdc-fade-leave-to {
   opacity: 0;
-}
-
-.vdc-hint {
-  padding: 36px 20px;
-  text-align: center;
-  font-size: 12.5px;
-  color: var(--text-tertiary);
-  user-select: none;
 }
 
 /* 空态：图标 + 换行文本，内容区完全居中 */
