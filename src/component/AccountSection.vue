@@ -530,7 +530,7 @@ function useOfflineName(name: string) {
 /* 皮肤/披风菜单 */
 .skin-menu {
   position: fixed;
-  z-index: 1000;
+  z-index: var(--z-menu, 1000);
   min-width: 164px;
   padding: 6px;
   background: var(--surface-elevated);

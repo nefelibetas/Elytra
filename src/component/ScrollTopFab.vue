@@ -56,7 +56,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .scroll-top-fab-wrap { display: contents; }
 .scroll-top-fab {
-  position: fixed; z-index: 998;
+  position: fixed; z-index: var(--z-fab, 900);
   bottom: 24px; right: 24px;
   width: 40px; height: 40px;
   border: 1px solid var(--border-default); border-radius: 50%;

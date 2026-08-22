@@ -185,7 +185,7 @@ async function confirmDelete() {
     </div>
 
     <!-- 删除确认 dialog -->
-    <AlertDialog v-model="deleteDialog" title="删除资源" :divider="false">
+    <AlertDialog v-model="deleteDialog" title="删除资源">
       <div class="vsr-dialog-body">
         <div class="vsr-dialog-text">
           确定要删除「{{ deleteTarget }}」吗？该操作会删除文件且无法恢复。

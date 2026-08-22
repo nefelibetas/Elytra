@@ -444,7 +444,7 @@ function fmtUnix(sec: number): string {
     </div>
 
     <!-- 重命名版本 dialog -->
-    <AlertDialog v-model="renameDialog" title="重命名版本" :divider="false">
+    <AlertDialog v-model="renameDialog" title="重命名版本">
       <div class="vdc-dialog-body">
         <input
           v-model="renameInput"
@@ -864,29 +864,4 @@ function fmtUnix(sec: number): string {
   border-color: var(--color-brand);
 }
 
-.dialog-btn {
-  padding: 5px 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.dialog-btn:hover {
-  border-color: var(--color-brand);
-  color: var(--color-brand);
-}
-
-.dialog-btn.primary {
-  background: var(--color-brand);
-  border-color: var(--color-brand);
-  color: #fff;
-}
-
-.dialog-btn.primary:hover {
-  opacity: 0.88;
-}
 </style>

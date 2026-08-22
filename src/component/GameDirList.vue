@@ -68,7 +68,7 @@ onUnmounted(() => window.removeEventListener("click", onWindowClick));
     </Teleport>
 
     <!-- 重命名 dialog -->
-    <AlertDialog v-model="renameDialog" title="重命名游戏" :divider="false">
+    <AlertDialog v-model="renameDialog" title="重命名游戏">
       <div class="vs-dialog-body">
         <div class="vs-dialog-label">输入该游戏在左侧列表中显示的名称</div>
         <input
@@ -87,7 +87,7 @@ onUnmounted(() => window.removeEventListener("click", onWindowClick));
     </AlertDialog>
 
     <!-- 添加已有文件夹 dialog -->
-    <AlertDialog v-model="addDialog" title="输入显示名称" :divider="false">
+    <AlertDialog v-model="addDialog" title="输入显示名称">
       <div class="vs-dialog-body">
         <div class="vs-dialog-label">输入该游戏在左侧列表中显示的名称</div>
         <input
@@ -236,7 +236,7 @@ onUnmounted(() => window.removeEventListener("click", onWindowClick));
 /* 目录项菜单 */
 .vs-item-menu {
   position: fixed;
-  z-index: 1000;
+  z-index: var(--z-menu, 1000);
   min-width: 120px;
   padding: 6px;
   background: var(--surface-elevated);
@@ -288,29 +288,5 @@ onUnmounted(() => window.removeEventListener("click", onWindowClick));
   border-color: var(--color-brand);
 }
 
-.dialog-btn {
-  padding: 5px 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
 
-.dialog-btn:hover {
-  border-color: var(--color-brand);
-  color: var(--color-brand);
-}
-
-.dialog-btn.primary {
-  background: var(--color-brand);
-  border-color: var(--color-brand);
-  color: #fff;
-}
-
-.dialog-btn.primary:hover {
-  opacity: 0.88;
-}
 </style>

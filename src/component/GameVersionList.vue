@@ -88,7 +88,7 @@ function goDownload() {
     </template>
 
     <!-- 删除版本确认 dialog -->
-    <AlertDialog v-model="deleteDialog" title="删除版本" :divider="false">
+    <AlertDialog v-model="deleteDialog" title="删除版本">
       <div class="vs-dialog-body">
         <div class="vs-dialog-text">
           确定要删除版本「{{ deleteTarget }}」吗？该操作会删除版本文件夹及其全部文件，且无法恢复。
@@ -241,39 +241,5 @@ function goDownload() {
   line-height: 1.6;
 }
 
-.dialog-btn {
-  padding: 5px 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
 
-.dialog-btn:hover {
-  border-color: var(--color-brand);
-  color: var(--color-brand);
-}
-
-.dialog-btn.primary {
-  background: var(--color-brand);
-  border-color: var(--color-brand);
-  color: #fff;
-}
-
-.dialog-btn.primary:hover {
-  opacity: 0.88;
-}
-
-.dialog-btn.danger {
-  background: var(--color-danger);
-  border-color: var(--color-danger);
-  color: #fff;
-}
-
-.dialog-btn.danger:hover {
-  opacity: 0.88;
-}
 </style>
