@@ -203,10 +203,11 @@ mod key_utils {
             .get_secret()
             .await
             .map_err(|e| format!("读取钥匙串失败\n{e}"))?;
-        secret
+        let key: [u8; 32] = secret
             .as_slice()
             .try_into()
-            .map_err(|_| "主密钥长度异常".to_string())
+            .map_err(|_| "主密钥长度异常".to_string())?;
+        Ok(Some(key))
     }
 
     async fn store_key(key: &[u8; 32]) -> Result<(), String> {

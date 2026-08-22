@@ -302,7 +302,10 @@ pub fn build_launch_command(
     // JAR 文件名不一定等于目录名（目录可能因冲突被重命名）
     let client_jar = find_file_in_dir(&version_dir, EXT_JAR)
         .unwrap_or_else(|| version_dir.join(format!("{}.{}", version_dir_name, EXT_JAR)));
-    let classpath_sep = ";";
+    // classpath 分隔符按平台区分：Windows 用 ';'，Unix（Linux/macOS）用 ':'。
+    // 硬编码 ';' 会让 Java 把整串 jar 当成单个路径，导致 ClassNotFoundException
+    // （与 mod_loader/forge.rs 的处理保持一致）
+    let classpath_sep = if cfg!(windows) { ";" } else { ":" };
 
     // ── Classpath ──
     let mut classpath = build_classpath(version_json, &lib_dir, &client_jar);
@@ -679,7 +682,8 @@ fn collect_jvm_args(
     let mut jvm_preamble: Vec<String> = Vec::new(); // -cp 之前
     let mut system_props: Vec<String> = Vec::new(); // -D 类
     let mut jvm_tuning: Vec<String> = Vec::new(); // -cp 之后、mainClass 之前
-    let classpath_sep = ";";
+    // 与上方 classpath 构建保持一致：按平台选择分隔符（Windows ';' / Unix ':'）
+    let classpath_sep = if cfg!(windows) { ";" } else { ":" };
 
     // 从版本 JSON 的 arguments.jvm 提取
     if let Some(jvm_args) = &version_json.arguments.jvm {

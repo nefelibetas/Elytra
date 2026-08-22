@@ -1,0 +1,34 @@
+[tools]
+# Tauri 2 项目工具链：前端 (Node + pnpm) + 后端 (Rust)
+node = "22"
+# 使用 npm 后端安装 pnpm，避免 aqua 后端在部分版本上的 asset 命名问题
+"npm:pnpm" = "11"
+rust = "1.95"
+
+[env]
+# 确保使用 pnpm 作为唯一包管理器
+COREPACK_ENABLE_STRICT = "0"
+# linuxbrew 的 pkg-config 默认不搜索系统路径，需显式指向 GTK/WebKit 的 .pc 文件目录
+# 否则 gdk-sys / atk-sys / webkit2gtk 等 Tauri 依赖会报 "package not found"
+PKG_CONFIG_PATH = "/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
+
+[tasks.install]
+description = "安装前端依赖（必须用 pnpm）"
+run = "pnpm install"
+
+[tasks.dev]
+description = "开发模式：vite :1420 + Rust dev 窗口"
+run = "pnpm tauri dev"
+
+[tasks.test]
+description = "Rust 单元测试"
+dir = "src-tauri"
+run = "cargo test --lib"
+
+[tasks.build]
+description = "前端类型检查 + 构建"
+run = "pnpm build"
+
+[tasks."build:release"]
+description = "Tauri 发布构建"
+run = "pnpm tauri build"
