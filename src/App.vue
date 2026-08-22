@@ -202,6 +202,13 @@ input, textarea {
 
 :root {
   --titlebar-h: 48px;
+  /* 浮层层级常量：FAB < 右键菜单 < 模态弹窗 < toast < tooltip。
+     组件内一律引用变量，禁止裸写数值（曾经 waiting 弹窗 z=200 被菜单盖住的根因）。 */
+  --z-fab: 900;
+  --z-menu: 1000;
+  --z-modal: 1100;
+  --z-toast: 3000;
+  --z-tooltip: 3100;
   font-family: Inter, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "Noto Sans SC", sans-serif;
   font-size: 14px;
   line-height: 1.5;
@@ -412,7 +419,7 @@ input, textarea {
 
 .toast {
   position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
-  z-index: 9999;
+  z-index: var(--z-toast, 3000);
   padding: 10px 24px; border-radius: var(--radius-md);
   background: var(--toast-bg); color: #fff;
   font-size: 13px; font-weight: 500;
@@ -426,7 +433,7 @@ input, textarea {
 
 /* 文件下载失败等待决策弹窗（WaitingForUser） */
 .dialog-overlay {
-  position: fixed; inset: 0; z-index: 200;
+  position: fixed; inset: 0; z-index: var(--z-modal, 1100);
   display: flex; align-items: center; justify-content: center;
   background: var(--overlay);
 }
@@ -467,8 +474,44 @@ input, textarea {
 .wd-retry:hover { opacity: 0.9; }
 .wd-cancel { color: var(--color-danger); }
 .wd-cancel:hover { border-color: var(--color-danger); }
-/* 复制错误信息固定最右（margin-left:auto 撑开），操作按钮保持左侧 */
-.wd-copy { margin-left: auto; }
+/* 弹窗操作按钮（AlertDialog #actions slot 全局共享）：
+   scoped CSS 无法穿透 slot 内容，此前在 5 个组件里复制粘贴且变体漂移，
+   统一收敛到全局；vsr/vss 删除弹窗曾因此按钮裸奔（浏览器默认样式） */
+.dialog-btn {
+  padding: 6px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.dialog-btn:hover {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
+}
+
+.dialog-btn.primary {
+  background: var(--color-brand);
+  border-color: var(--color-brand);
+  color: #fff;
+}
+
+.dialog-btn.primary:hover {
+  opacity: 0.88;
+}
+
+.dialog-btn.danger {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: #fff;
+}
+
+.dialog-btn.danger:hover {
+  opacity: 0.88;
+}
 
 .fade-enter-active, .fade-leave-active { transition: opacity 0.15s ease; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
@@ -476,7 +519,7 @@ input, textarea {
 /* v-tooltip 气泡（替换 UA 原生 title tooltip） */
 .elytra-tooltip {
   position: fixed;
-  z-index: 99999;
+  z-index: var(--z-tooltip, 3100);
   max-width: 320px;
   padding: 6px 10px;
   background: var(--toast-bg);

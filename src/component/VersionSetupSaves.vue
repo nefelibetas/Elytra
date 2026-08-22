@@ -125,7 +125,7 @@ async function confirmDelete() {
     </div>
 
     <!-- 删除确认 dialog -->
-    <AlertDialog v-model="deleteDialog" title="删除存档" :divider="false">
+    <AlertDialog v-model="deleteDialog" title="删除存档">
       <div class="vss-dialog-body">
         <div class="vss-dialog-text">
           确定要删除存档「{{ deleteTarget }}」吗？该操作会删除整个世界文件夹且无法恢复。

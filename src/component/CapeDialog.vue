@@ -5,7 +5,7 @@ import { accountUi } from "../store/accountUi";
 </script>
 
 <template>
-  <AlertDialog v-model="accountUi.capeDialogVisible" title="选择披风" :divider="false">
+  <AlertDialog v-model="accountUi.capeDialogVisible" title="选择披风">
     <div class="cape-dialog-list">
       <div
         class="cape-opt"
@@ -101,30 +101,4 @@ import { accountUi } from "../store/accountUi";
   user-select: none;
 }
 
-/* dialog 操作按钮 */
-.dialog-btn {
-  padding: 5px 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.dialog-btn:hover {
-  border-color: var(--color-brand);
-  color: var(--color-brand);
-}
-
-.dialog-btn.primary {
-  background: var(--color-brand);
-  border-color: var(--color-brand);
-  color: #fff;
-}
-
-.dialog-btn.primary:hover {
-  opacity: 0.88;
-}
 </style>

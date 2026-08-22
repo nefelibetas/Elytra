@@ -6,19 +6,15 @@ const props = withDefaults(defineProps<{
   message?: string;
   /** 是否显示「复制错误信息」按钮（仅复杂错误需要） */
   copyable?: boolean;
-  /** body 与 actions 之间是否显示分割线 */
-  divider?: boolean;
   modelValue: boolean;
 }>(), {
   title: "提示",
   message: "",
   copyable: false,
-  divider: true,
 });
 
 const emit = defineEmits<{
   "update:modelValue": [value: boolean];
-  confirm: [];
 }>();
 
 const copied = ref(false);
@@ -34,7 +30,6 @@ const hasFooter = computed(
 
 function close() {
   emit("update:modelValue", false);
-  emit("confirm");
 }
 
 /** 复制错误信息到剪贴板（WebView2 下 clipboard API 可用，失败时降级 execCommand）。 */
@@ -73,14 +68,13 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
       <div class="dialog-card">
         <div class="dialog-header">
           <span class="dialog-title">{{ title }}</span>
-        </div>
-        <div class="dialog-divider"></div>
+        </div>        
         <div class="dialog-body">
           <slot>
             <p class="dialog-message">{{ shortMessage }}</p>
           </slot>
         </div>
-        <div v-if="hasFooter" class="dialog-footer" :class="{ 'no-divider': !divider }">
+        <div v-if="hasFooter" class="dialog-footer">
           <button v-if="message && copyable" class="dialog-copy" @click="copyMessage">
             {{ copied ? "已复制" : "复制错误信息" }}
           </button>
@@ -95,7 +89,7 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
 .dialog-overlay {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: var(--z-modal, 1100);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -112,7 +106,11 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
 }
 
 .dialog-card {
-  width: 380px;
+  width: 440px;
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
   background: var(--surface-card);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
@@ -121,24 +119,35 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
 }
 
 .dialog-header {
-  padding: 18px 24px 12px;
+  position: relative;
+  flex: none;
+  padding: 14px 20px 12px;
+  /* 标题与正文、正文与操作区使用同一条分隔线：1px、text-tertiary（比 border-* 深一档），
+     左右留 20px 与内容对齐（border-* 过浅，视觉上无法承托分区） */
+}
+
+.dialog-header::after {
+  content: "";
+  position: absolute;
+  left: 20px;
+  right: 20px;
+  bottom: 0;
+  height: 1px;
+  background: var(--text-tertiary);
 }
 
 .dialog-title {
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 700;
   color: var(--color-brand);
 }
 
-/* 标题与正文之间的分隔线：左右留间距、颜色加深，与标题左对齐 */
-.dialog-divider {
-  height: 1px;
-  margin: 0 24px;
-  background: var(--border-strong);
-}
 
 .dialog-body {
-  padding: 16px 24px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 20px;
 }
 
 .dialog-body p {
@@ -151,16 +160,23 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
 }
 
 .dialog-footer {
+  position: relative;
+  flex: none;
   display: flex;
   justify-content: flex-end;
   align-items: center;
   gap: 8px;
-  padding: 12px 24px;
-  border-top: 1px solid var(--border-default);
+  padding: 12px 20px;
 }
 
-.dialog-footer.no-divider {
-  border-top: none;
+.dialog-footer::before {
+  content: "";
+  position: absolute;
+  left: 20px;
+  right: 20px;
+  top: 0;
+  height: 1px;
+  background: var(--text-tertiary);
 }
 
 .dialog-copy {
