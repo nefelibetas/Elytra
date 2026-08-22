@@ -155,13 +155,72 @@ pub fn pre_launch_check(
         missing.push(msg);
     }
 
-    // 3. assets index
-    let index_path = mc_dir
-        .join("assets")
+    // 3. assets index（存在 + sha1 校验）+ 资源对象扫描。
+    // 此前仅检查索引文件是否存在——索引损坏（镜像返回错误页/半截文件）或资源对象
+    // 缺失/被截断（BMCLAPI minio 存储异常时返回 567/429 错误页覆盖对象）都会"通过"
+    // 完整性检查，游戏启动后表现为无声音/无语言文件/贴图缺失。此处补齐两层校验。
+    let assets_dir = mc_dir.join("assets");
+    let index_path = assets_dir
         .join("indexes")
         .join(format!("{}.json", version_json.asset_index.id));
-    if !index_path.exists() {
-        missing.push(format!("资源索引: {}", index_path.display()));
+    let index_sha1 = version_json.asset_index.sha1.as_str();
+    match std::fs::read(&index_path) {
+        Err(_) => {
+            missing.push(format!("资源索引: {}", index_path.display()));
+        }
+        Ok(index_bytes) => {
+            // 索引 sha1 校验（version_json 提供期望值时；空则跳过校验，仅确认可解析）
+            if !index_sha1.is_empty()
+                && crate::downloader::hash::sha1_hex(&index_bytes) != index_sha1
+            {
+                missing.push(format!(
+                    "资源索引校验失败（sha1 不匹配，文件已损坏）: {}",
+                    index_path.display()
+                ));
+            } else {
+                // 索引可信 → 扫描资源对象（objects/{sub}/{hash}）。
+                // 对象数可达数千，逐个 sha1 会让每次启动多花数秒；改为存在 + 文件大小校验
+                // （metadata 极廉价）：缺失/被截断/错误页覆盖（大小不符）都能可靠捕获，
+                // 正好覆盖镜像存储异常这一实际故障场景。
+                match serde_json::from_slice::<crate::downloader::assets::AssetsIndex>(&index_bytes)
+                {
+                    Err(e) => {
+                        missing.push(format!("资源索引解析失败（文件已损坏）: {e}"));
+                    }
+                    Ok(index) => {
+                        let objects_dir = assets_dir.join("objects");
+                        let mut bad_objects: Vec<String> = Vec::new();
+                        for (name, obj) in &index.objects {
+                            if obj.hash.len() < 2 {
+                                continue;
+                            }
+                            let sub = &obj.hash[..2];
+                            let path = objects_dir.join(sub).join(&obj.hash);
+                            let ok = std::fs::metadata(&path)
+                                .map(|m| m.len() == obj.size)
+                                .unwrap_or(false);
+                            if !ok {
+                                bad_objects.push(format!("{} ({}/{})", name, sub, obj.hash));
+                            }
+                        }
+                        if !bad_objects.is_empty() {
+                            let mut msg =
+                                format!("缺失/损坏资源文件 {} 个（大小校验）", bad_objects.len());
+                            for b in bad_objects.iter().take(20) {
+                                msg.push_str(&format!("\n  {}", b));
+                            }
+                            if bad_objects.len() > 20 {
+                                msg.push_str(&format!(
+                                    "\n  … 其余 {} 个",
+                                    bad_objects.len() - 20
+                                ));
+                            }
+                            missing.push(msg);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     if missing.is_empty() {
@@ -352,6 +411,79 @@ mod tests {
         std::fs::write(dir2.join("extra.json"), r#"{"x":1}"#).unwrap();
         let found2 = crate::config::launcher::args::find_version_json(&dir2, "1.20.1");
         assert_eq!(found2.unwrap().file_name().unwrap(), "1.20.1.json");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// pre_launch_check 资源完整性：
+    ///  ① 索引 + 对象齐全（大小匹配）→ 通过；
+    ///  ② 对象被截断（大小不符）→ 报"缺失/损坏资源文件"；
+    ///  ③ 索引本身 sha1 不匹配（损坏）→ 报"资源索引校验失败"。
+    /// 覆盖此前"仅检查索引文件存在"导致镜像坏内容/缺失对象漏检的场景。
+    #[test]
+    fn pre_launch_check_detects_asset_corruption() {
+        use crate::downloader::hash::sha1_hex;
+
+        let tmp = std::env::temp_dir().join(format!("elytra_assetchk_{}", std::process::id()));
+        let mc = &tmp;
+        let vdir = mc.join("versions/1.20.1");
+        std::fs::create_dir_all(&vdir).unwrap();
+        // 客户端 JAR（非 0 字节）
+        std::fs::write(vdir.join("1.20.1.jar"), b"CLIENTJAR").unwrap();
+
+        // 资源对象：一个 "hello world" 内容，hash 即其 sha1
+        let obj_body = b"hello world";
+        let obj_hash = sha1_hex(obj_body);
+        let obj_size = obj_body.len() as u64;
+        let objects_dir = mc.join("assets/objects").join(&obj_hash[..2]);
+        std::fs::create_dir_all(&objects_dir).unwrap();
+        std::fs::write(objects_dir.join(&obj_hash), obj_body).unwrap();
+
+        // 资源索引 JSON（引用上面的对象），并计算其 sha1
+        let index_json =
+            format!(r#"{{"objects":{{"minecraft/x":{{"hash":"{obj_hash}","size":{obj_size}}}}}}}"#);
+        let index_sha1 = sha1_hex(index_json.as_bytes());
+        let index_dir = mc.join("assets/indexes");
+        std::fs::create_dir_all(&index_dir).unwrap();
+        std::fs::write(index_dir.join("5.json"), &index_json).unwrap();
+
+        // 版本 JSON：assetIndex 指向 id=5、上面算出的 sha1；无 libraries、client 走目录扫描兜底
+        let vj: VersionJson = serde_json::from_str(&format!(
+            r#"{{
+                "id":"1.20.1","mainClass":"net.minecraft.client.main.Main","assets":"5",
+                "assetIndex":{{"id":"5","url":"x","sha1":"{index_sha1}","size":{},"totalSize":{obj_size}}},
+                "downloads":{{"client":{{"url":"x","sha1":"y","size":1}}}},
+                "arguments":{{"game":[],"jvm":[]}},"libraries":[],
+                "complianceLevel":0,"minimumLauncherVersion":21,"javaVersion":{{"majorVersion":17}},
+                "releaseTime":"2023-01-01T00:00:00Z","time":"2023-01-01T00:00:00Z","type":"release"
+            }}"#,
+            index_json.len()
+        ))
+        .unwrap();
+
+        // ① 全齐 → 通过
+        assert!(
+            pre_launch_check(&vj, mc, "1.20.1").is_ok(),
+            "索引 + 对象齐全应通过完整性检查"
+        );
+
+        // ② 对象被截断（大小不符）→ 应报缺失/损坏
+        std::fs::write(objects_dir.join(&obj_hash), b"short").unwrap();
+        let err = pre_launch_check(&vj, mc, "1.20.1").unwrap_err();
+        assert!(
+            err.contains("缺失/损坏资源文件"),
+            "对象大小不符应被捕获: {err}"
+        );
+        // 恢复对象
+        std::fs::write(objects_dir.join(&obj_hash), obj_body).unwrap();
+
+        // ③ 索引损坏（内容改动 → sha1 不匹配）→ 应报索引校验失败
+        std::fs::write(index_dir.join("5.json"), format!("{index_json} ")).unwrap();
+        let err = pre_launch_check(&vj, mc, "1.20.1").unwrap_err();
+        assert!(
+            err.contains("资源索引校验失败"),
+            "索引 sha1 不匹配应被捕获: {err}"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
