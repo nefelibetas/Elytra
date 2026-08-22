@@ -10,6 +10,7 @@ import { LOADER_ICONS, LOADER_TITLES } from "../utils/versionMeta";
 import { fmtCount, fmtSize } from "../utils/format";
 import { showToast } from "../utils/toast";
 import { errMsg } from "../utils/error";
+import { isLaunching } from "../store/launch";
 import VersionItem from "./VersionItem.vue";
 import AlertDialog from "./AlertDialog.vue";
 import IconImage from "./IconImage.vue";
@@ -185,7 +186,7 @@ async function openFolder(kind: "saves" | "version" | "mods" | "resourcepacks" |
 const checking = ref(false);
 
 async function repairFiles() {
-  if (checking.value) return;
+  if (checking.value || isLaunching.value) return;
   checking.value = true;
   try {
     const report = await invoke<{
@@ -435,7 +436,7 @@ function fmtUnix(sec: number): string {
         <Folder :size="14" />
         <span>游戏文件夹</span>
       </button>
-      <button class="vdc-foot-btn" :disabled="checking" @click="repairFiles">
+      <button class="vdc-foot-btn" :disabled="checking || isLaunching" :title="isLaunching ? '游戏启动中' : ''" @click="repairFiles">
         <span v-if="checking" class="vdc-repair-spinner"></span>
         <CloudDownload v-else :size="14" />
         <span>{{ checking ? "检测中…" : "修复" }}</span>
