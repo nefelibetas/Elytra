@@ -5,11 +5,11 @@
 use std::path::PathBuf;
 use tauri::AppHandle;
 
-use crate::config::launcher::args::build_launch_command;
-use crate::config::launcher::env;
-use crate::config::launcher::model::{AuthMode, LauncherConfig};
-use crate::config::launcher::platform;
-use crate::config::launcher::skin;
+use crate::launcher::args::build_launch_command;
+use crate::launcher::env;
+use crate::launcher::model::{AuthMode, LauncherConfig};
+use crate::launcher::platform;
+use crate::launcher::skin;
 use crate::constants;
 use crate::downloader::model::VersionJson;
 use crate::jdk::model::{JdkConfig, JdkSelection};
@@ -84,8 +84,8 @@ fn verify_env(
     env::pre_launch_check(version_json, mc_dir, version_dir_name)?;
     let natives_dir = mc_dir
         .join("natives")
-        .join(crate::config::launcher::args::mc_version_of(version_dir_name));
-    crate::config::launcher::args::ensure_old_style_natives(
+        .join(crate::launcher::args::mc_version_of(version_dir_name));
+    crate::launcher::args::ensure_old_style_natives(
         version_json,
         &mc_dir.join("libraries"),
         &natives_dir,
@@ -221,7 +221,7 @@ pub async fn check_launch_env(version_dir_name: String) -> Result<String, String
 /// 系统内存信息（MB）：总内存 + 当前可用内存。
 #[tauri::command]
 pub fn get_memory_info() -> (u64, u64) {
-    crate::config::launcher::memory::system_memory_mb()
+    crate::launcher::memory::system_memory_mb()
 }
 
 /// 读取启动选项配置（launcher section）。
@@ -647,7 +647,7 @@ mod tests {
     #[test]
     fn test_window_size_custom_passes_width_height() {
         let mut cfg = LauncherConfig::default();
-        cfg.window_size = crate::config::launcher::model::WindowSize::Custom(1920, 1080);
+        cfg.window_size = crate::launcher::model::WindowSize::Custom(1920, 1080);
         let args = build_cmd(&cfg);
         assert!(args.contains(&"--width".into()));
         assert!(args.contains(&"1920".into()));

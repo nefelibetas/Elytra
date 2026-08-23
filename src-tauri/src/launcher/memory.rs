@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use crate::config::launcher::model::GcType;
+use crate::launcher::model::GcType;
 
 /// 根据 GC 类型返回对应的 JVM 参数
 pub fn gc_args(gc: &GcType) -> Vec<String> {

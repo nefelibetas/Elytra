@@ -63,7 +63,7 @@ pub fn get_installed_versions() -> Result<Vec<InstalledVersionInfo>, String> {
             }
             let name = entry.file_name().to_string_lossy().to_string();
             // 从版本 json 推断 loader（PCL2 实例目录名可能无 loader 标记）
-            let loader = crate::config::launcher::args::find_version_json(&entry.path(), &name)
+            let loader = crate::launcher::args::find_version_json(&entry.path(), &name)
                 .and_then(|p| std::fs::read_to_string(p).ok())
                 .map(|t| infer_loader_from_json(&t))
                 .unwrap_or_default();

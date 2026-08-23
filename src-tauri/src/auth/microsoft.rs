@@ -438,7 +438,7 @@ pub fn extract_xuid_from_jwt(token: &str) -> String {
 
 /// 构建正版登录专用 HTTP client；按「启动选项-正版登录时验证 SSL 证书」配置决定是否校验证书。
 fn build_auth_client() -> reqwest::Client {
-    let verify = crate::persist::read::<crate::config::launcher::model::LauncherConfig>(
+    let verify = crate::persist::read::<crate::launcher::model::LauncherConfig>(
         crate::constants::SECT_LAUNCHER,
     )
     .map(|c| c.verify_ssl)

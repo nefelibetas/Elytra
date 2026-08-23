@@ -38,7 +38,7 @@ pub struct MissingReport {
 fn read_version_json(vdir: &Path) -> Result<VersionJson, String> {
     let dir_name = vdir.file_name().and_then(|s| s.to_str()).unwrap_or("");
     let vj_path =
-        crate::config::launcher::args::find_version_json(vdir, dir_name).ok_or_else(|| {
+        crate::launcher::args::find_version_json(vdir, dir_name).ok_or_else(|| {
             format!(
                 "版本 JSON 缺失\n目录 {} 下未找到版本 JSON 文件，无法修复，请删除该版本后重新下载安装",
                 vdir.display()
@@ -99,7 +99,7 @@ pub async fn scan_missing(version_dir_name: &str) -> Result<MissingReport, Strin
     let vj = read_version_json(&vdir)?;
 
     // 1. client.jar（扫描目录内实际 jar；0 字节或 sha1 不匹配视为缺失/损坏）
-    let jar_missing = match crate::config::launcher::args::find_file_in_dir(&vdir, "jar") {
+    let jar_missing = match crate::launcher::args::find_file_in_dir(&vdir, "jar") {
         Some(p) => {
             let len_zero = p.metadata().map(|m| m.len() == 0).unwrap_or(true);
             if len_zero {
@@ -427,7 +427,7 @@ async fn repair_jar(
 ) -> Result<(), Vec<String>> {
     if jar_missing {
         // 清理目录内损坏（0 字节或 sha1 不匹配）的 jar，避免与下载目标并存
-        if let Some(bad) = crate::config::launcher::args::find_file_in_dir(vdir, "jar") {
+        if let Some(bad) = crate::launcher::args::find_file_in_dir(vdir, "jar") {
             let bad_jar = bad.metadata().map(|m| m.len() == 0).unwrap_or(true)
                 || vj
                     .downloads

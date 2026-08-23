@@ -4,8 +4,8 @@
 use std::path::PathBuf;
 
 use crate::config::downloader::model::DownloaderConfig;
-use crate::config::launcher::args::{find_file_in_dir, find_version_json};
-use crate::config::launcher::model::LauncherConfig;
+use crate::launcher::args::{find_file_in_dir, find_version_json};
+use crate::launcher::model::LauncherConfig;
 use crate::constants;
 use crate::downloader::model::VersionJson;
 use crate::jdk::model::{JdkConfig, JdkInfo, JdkSelection};
@@ -391,7 +391,7 @@ mod tests {
             r#"{"id":"1.20.1-forge","mainClass":"cpw.mods.bootstraplauncher.BootstrapLauncher","libraries":[]}"#,
         )
         .unwrap();
-        let found = crate::config::launcher::args::find_version_json(&dir, "愚者");
+        let found = crate::launcher::args::find_version_json(&dir, "愚者");
         let name = found
             .unwrap()
             .file_name()
@@ -409,7 +409,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write(dir2.join("extra.json"), r#"{"x":1}"#).unwrap();
-        let found2 = crate::config::launcher::args::find_version_json(&dir2, "1.20.1");
+        let found2 = crate::launcher::args::find_version_json(&dir2, "1.20.1");
         assert_eq!(found2.unwrap().file_name().unwrap(), "1.20.1.json");
 
         let _ = std::fs::remove_dir_all(&tmp);

@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use crate::config::launcher::memory;
-use crate::config::launcher::model::{AuthMode, LauncherConfig, MemoryMode};
+use crate::launcher::memory;
+use crate::launcher::model::{AuthMode, LauncherConfig, MemoryMode};
 use crate::constants;
 use crate::downloader::extract::{
     legacy_classifier_artifact, matches_rules, modern_native_matches, modern_natives_key,
@@ -293,9 +293,9 @@ pub fn build_launch_command(
     let game_directory = version_dir.clone();
     // 窗口大小：默认不传 --width/--height（has_custom_resolution feature 为 false）
     let (resolution_width, resolution_height, has_custom_resolution) = match config.window_size {
-        crate::config::launcher::model::WindowSize::Custom(w, h) => (w, h, true),
+        crate::launcher::model::WindowSize::Custom(w, h) => (w, h, true),
         // 占位值仅供模板替换兜底（带 feature 的参数组已被过滤）
-        crate::config::launcher::model::WindowSize::Default => {
+        crate::launcher::model::WindowSize::Default => {
             (DEFAULT_RESOLUTION_WIDTH, DEFAULT_RESOLUTION_HEIGHT, false)
         }
     };
