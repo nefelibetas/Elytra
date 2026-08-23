@@ -28,6 +28,8 @@ pub enum JobSpec {
     Repair { version_dir_name: String },
     /// JDK 安装（下载缺失 Java 运行时）
     InstallJdk { major: u32 },
+    /// 整合包安装（单卡片全流程；恢复 = 重跑整卡，各环节幂等）
+    ModpackInstall(crate::task::model::ModpackInstallSpec),
 }
 
 impl JobSpec {
@@ -38,6 +40,7 @@ impl JobSpec {
             JobSpec::Files(_) => "文件下载",
             JobSpec::Repair { .. } => "版本补全",
             JobSpec::InstallJdk { .. } => "JDK 安装",
+            JobSpec::ModpackInstall(_) => "整合包安装",
         }
     }
 }

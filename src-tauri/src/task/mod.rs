@@ -12,6 +12,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 pub mod files;
+pub mod modpack;
 pub mod model;
 pub mod progress;
 pub mod repair;
@@ -21,7 +22,8 @@ pub mod store;
 
 pub use model::{
     DownloadFileItem, DownloadFileKind, DownloadFileTask, DownloadFilesTask, DownloadTask,
-    FabricApi, LoaderChoice, LoaderKind, StepInfo, StepStatus, TaskProgress, TaskStatus,
+    FabricApi, LoaderChoice, LoaderKind, ModpackInstallSpec, StepInfo,
+    StepStatus, TaskProgress, TaskStatus,
 };
 pub use steps::{StepKind, StepSpec, TaskSpec};
 

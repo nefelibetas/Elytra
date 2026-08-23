@@ -1,9 +1,39 @@
 <script setup lang="ts">
 // 整合包搜索表单卡片：名称（独立一行）/ 来源 / 版本 / [搜索] [重置条件]（无加载器）
-import { computed, watch } from "vue";
+import { computed, ref, watch } from "vue";
+import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { modpackSearch } from "../store/categorySearch";
 import { releases } from "../store/versionDownload";
+import { showToast } from "../utils/toast";
+import { errMsg } from "../utils/error";
+import { registerTaskName } from "../store/download";
 import DropSelect, { type SelOption } from "./DropSelect.vue";
+
+/** 本地导入：选 .mrpack/.zip → install_modpack（后端自动嗅探 Modrinth/CurseForge 清单）。 */
+const importing = ref(false);
+async function importLocal() {
+  const path = await open({
+    multiple: false,
+    filters: [{ name: "整合包", extensions: ["mrpack", "zip"] }],
+  });
+  if (!path) return;
+  importing.value = true;
+  try {
+    // 展示名取文件名去扩展名（后端计划/任务卡均用该名称）
+    const fileName = String(path).split(/[\\/]/).pop() ?? "整合包";
+    const name = fileName.replace(/\.(mrpack|zip)$/i, "") || "整合包";
+    const taskId = await invoke<string>("install_modpack", {
+      request: { name, source: { type: "local", path } },
+    });
+    registerTaskName(taskId, name);
+    showToast("已提交整合包安装（准备 → 游戏本体 → 内容）");
+  } catch (e) {
+    showToast(errMsg(e));
+  } finally {
+    importing.value = false;
+  }
+}
 
 /** 来源选项（DropSelect 用）。 */
 const sourceOptions: SelOption[] = [
@@ -53,6 +83,7 @@ watch(
         />
       </div>
       <div class="mo-form-actions">
+        <button class="mo-btn" :disabled="importing" @click="importLocal">导入本地</button>
         <button class="mo-btn mo-btn-primary" :disabled="modpackSearch.searching" @click="modpackSearch.search()">
           <span v-if="modpackSearch.searching" class="mo-spin"></span>{{ modpackSearch.searching ? "搜索中" : "搜索" }}
         </button>

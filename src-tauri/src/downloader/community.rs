@@ -550,6 +550,36 @@ pub(crate) async fn curseforge_get(
         .map_err(|e| format!("解析 JSON 失败\n{}", e))
 }
 
+/// 批量换链超时：数百个 fileID 一次请求，服务端聚合查询略慢于单查。
+const CF_BATCH_TIMEOUT_SECS: u64 = 30;
+
+/// CurseForge 批量文件换链：`POST /v1/mods/files`（body `{"fileIds":[...]}`）
+/// → data 数组（id/fileName/downloadUrl/hashes/fileLength）。
+/// 整合包清单只有 (projectID, fileID) 数字引用，必须经此换取直链与 sha1。
+pub(crate) async fn curseforge_files(
+    file_ids: &[i64],
+) -> Result<Vec<serde_json::Value>, String> {
+    let key = constants::CURSEFORGE_API_KEY
+        .ok_or_else(|| "未配置 CurseForge API Key（项目根 .env 的 ELYTRA_CURSEFORGE_API_KEY），无法使用 CurseForge 来源".to_string())?;
+    let url = format!("{CURSEFORGE_API}/mods/files");
+    let resp = fetcher::http()
+        .post(url)
+        .header("x-api-key", key)
+        .json(&serde_json::json!({ "fileIds": file_ids }))
+        .timeout(std::time::Duration::from_secs(CF_BATCH_TIMEOUT_SECS))
+        .send()
+        .await
+        .map_err(|e| format!("请求失败\n{}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("请求失败\nHTTP {}", resp.status()));
+    }
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("解析 JSON 失败\n{}", e))?;
+    Ok(body["data"].as_array().cloned().unwrap_or_default())
+}
+
 async fn search_curseforge(
     query: &str,
     game_version: Option<&str>,
