@@ -3,6 +3,7 @@ mod commands;
 pub mod config;
 pub mod constants;
 pub mod downloader;
+pub mod launcher;
 mod events;
 mod jdk;
 mod persist;

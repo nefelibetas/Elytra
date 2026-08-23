@@ -2,7 +2,7 @@
 //! 固定随机行为（用户名哈希决定 Steve/Alex，与游戏内默认皮肤一致）；
 //! 配置层已砍（2026-08），后续由自定义皮肤站登录（外置认证）接管皮肤注入。
 
-use crate::config::launcher::model::AuthMode;
+use crate::launcher::model::AuthMode;
 
 /// 离线默认 UUID（固定占位）。
 const OFFLINE_BASE_UUID: &str = "00000000FFFFFFFFFFFFFFFFFFFFFFFF";
