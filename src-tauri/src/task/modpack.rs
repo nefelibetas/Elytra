@@ -23,6 +23,7 @@ use crate::config::downloader::model::{DownloaderConfig, DownloadSource};
 use crate::constants;
 use crate::downloader::fetcher;
 use crate::downloader::modpack::{
+    cache_key,
     build_plan, safe_rel_path, ModpackRequest, OverridesRef, PackPlan, PackSource,
 };
 use crate::downloader::model::VersionJson;
@@ -32,7 +33,7 @@ use crate::task::progress::{
     cancelled, set_cancelled, set_error, set_phase, set_total, spawn_heartbeat, step_done,
     HeartbeatStats,
 };
-use crate::util::{fnv1a64, mcim_mirror_urls, sanitize_fs_name};
+use crate::util::mcim_mirror_urls;
 use crate::task::{global, update_and_emit, StepInfo, StepStatus, TaskProgress, TaskStatus};
 
 /// 包体缓存目录（exe 旁 Elytra/modpacks/，与 Settings.toml 同根约定）。
@@ -42,15 +43,6 @@ fn cache_dir() -> PathBuf {
         .join("modpacks")
 }
 
-
-/// 缓存键：`{净化包名}-{来源哈希8}`。
-pub fn cache_key(request: &ModpackRequest) -> String {
-    let seed = match &request.source {
-        PackSource::Local { path } => path.clone(),
-        PackSource::Online { url, .. } => url.clone(),
-    };
-    format!("{}-{:08x}", sanitize_fs_name(&request.name, "modpack"), fnv1a64(&seed))
-}
 
 /// 包体缓存路径（.mrpack/.zip 按来源扩展名）。
 pub fn zip_cache_path(request: &ModpackRequest) -> PathBuf {
@@ -328,6 +320,11 @@ pub async fn run_install(
     let vdir = config.minecraft_dir_abs().join("versions").join(&plan.version_dir_name);
     let vdir_existed_before = vdir.exists();
     std::fs::create_dir_all(&vdir).ok();
+    // 版本身份标记：重装/更新同名整合包时据此复用目录（内容 sha1 幂等跳过生效）
+    let _ = std::fs::write(
+        vdir.join("elytra-pack.json"),
+        serde_json::json!({ "cache_key": cache_key(request) }).to_string(),
+    );
     if !vdir_existed_before {
         // 取消时整删本次新建的版本目录（对齐 run_task）
         let tid = progress.lock().task_id.clone();
