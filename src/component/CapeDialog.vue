@@ -79,8 +79,8 @@ import { accountUi } from "../store/accountUi";
   content: "";
   width: 8px;
   height: 4.5px;
-  border-left: 2px solid #fff;
-  border-bottom: 2px solid #fff;
+  border-left: 2px solid var(--text-inverse);
+  border-bottom: 2px solid var(--text-inverse);
   transform: rotate(-45deg) translate(0.5px, -0.5px) scale(0);
   transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
 }

@@ -499,7 +499,7 @@ async function confirmDelete() {
   font-weight: 600;
   padding: 0 5px;
   border-radius: 6px;
-  background: rgba(231, 76, 60, 0.1);
+  background: var(--color-danger-bg);
   color: var(--color-danger);
 }
 
@@ -561,7 +561,7 @@ async function confirmDelete() {
 
 .vsm-item-btn.update:hover:not(:disabled) {
   background: var(--color-brand);
-  color: #fff;
+  color: var(--text-inverse);
 }
 
 .vsm-item-btn.update:disabled {
@@ -570,13 +570,13 @@ async function confirmDelete() {
 }
 
 .vsm-item-btn.danger {
-  border: 1px solid rgba(231, 76, 60, 0.4);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 40%, transparent);
   background: transparent;
   color: var(--color-danger);
 }
 
 .vsm-item-btn.danger:hover {
-  background: rgba(231, 76, 60, 0.08);
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
   border-color: var(--color-danger);
 }
 

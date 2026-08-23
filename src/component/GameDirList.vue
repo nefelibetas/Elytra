@@ -242,7 +242,7 @@ onUnmounted(() => window.removeEventListener("click", onWindowClick));
   background: var(--surface-elevated);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-lg);
 }
 
 .menu-item {
@@ -257,7 +257,7 @@ onUnmounted(() => window.removeEventListener("click", onWindowClick));
 
 .menu-item:hover {
   background: var(--color-brand);
-  color: #fff;
+  color: var(--text-inverse);
 }
 
 /* dialog 内容 */

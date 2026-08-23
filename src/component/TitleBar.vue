@@ -166,19 +166,19 @@ function goBack() {
   display: flex; align-items: center; gap: 6px;
   padding: 4px 10px;
   border: none; background: transparent;
-  color: rgba(255,255,255,0.85);
+  color: color-mix(in srgb, var(--titlebar-fg) 85%, transparent);
   cursor: pointer; border-radius: var(--radius-sm);
   font-size: 14px; font-weight: 500;
   transition: all 0.15s;
   outline: none;
 }
 .back-btn svg { flex-shrink: 0; }
-.back-btn:hover { background-color: rgba(255,255,255,0.15); color: #fff; }
+.back-btn:hover { background-color: color-mix(in srgb, var(--titlebar-fg) 15%, transparent); color: var(--titlebar-fg); }
 .back-btn { white-space: nowrap; }
 
 .dt-title {
   font-size: 14px; font-weight: 600;
-  color: rgba(255,255,255,0.9);
+  color: color-mix(in srgb, var(--titlebar-fg) 90%, transparent);
 }
 
 .tc {
@@ -196,7 +196,7 @@ function goBack() {
   gap: 6px;
   padding: 6px 14px;
   border-radius: var(--radius-sm);
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--titlebar-fg-dim);
   text-decoration: none;
   font-size: 13px;
   font-weight: 500;
@@ -205,13 +205,13 @@ function goBack() {
 }
 
 .nav:hover {
-  color: #fff;
-  background-color: rgba(255, 255, 255, 0.14);
+  color: var(--titlebar-fg);
+  background-color: color-mix(in srgb, var(--titlebar-fg) 14%, transparent);
 }
 
 .nav.active {
-  color: #fff;
-  background-color: rgba(255, 255, 255, 0.22);
+  color: var(--titlebar-fg);
+  background-color: color-mix(in srgb, var(--titlebar-fg) 22%, transparent);
 }
 
 .label { font-size: 13px; }
@@ -244,7 +244,7 @@ function goBack() {
   width: 30px; height: 30px;
   display: flex; align-items: center; justify-content: center;
   border: none; background: transparent;
-  color: rgba(255, 255, 255, 0.65);
+  color: color-mix(in srgb, var(--titlebar-fg) 65%, transparent);
   cursor: pointer;
   border-radius: var(--radius-sm);
   transition: all 0.15s;
@@ -252,13 +252,13 @@ function goBack() {
 }
 
 .win:hover {
-  background-color: rgba(255, 255, 255, 0.16);
-  color: #fff;
+  background-color: color-mix(in srgb, var(--titlebar-fg) 16%, transparent);
+  color: var(--titlebar-fg);
 }
 
 .close:hover {
-  background-color: rgba(255, 255, 255, 0.24);
-  color: #fff;
+  background-color: color-mix(in srgb, var(--titlebar-fg) 24%, transparent);
+  color: var(--titlebar-fg);
 }
 
 .bar-inner {

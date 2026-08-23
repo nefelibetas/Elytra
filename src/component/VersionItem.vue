@@ -66,7 +66,7 @@ const emit = defineEmits<{ select: [] }>();
   white-space: nowrap;
 }
 
-.ver-badge[class*="old"] { color: #7c3aed; background-color: rgba(124, 58, 237, 0.1); }
+.ver-badge[class*="old"] { color: var(--color-badge-alt); background-color: var(--color-badge-alt-bg); }
 
 .ver-actions {
   flex-shrink: 0;

@@ -426,14 +426,14 @@ async function confirmDelete() {
 }
 
 .vsr-item-btn.danger {
-  border: 1px solid rgba(231, 76, 60, 0.4);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 40%, transparent);
   background: transparent;
   color: var(--color-danger);
 }
 
 .vsr-item-btn.danger:hover {
   background: var(--color-danger);
-  color: #fff;
+  color: var(--text-inverse);
 }
 
 .vsr-dialog-body {

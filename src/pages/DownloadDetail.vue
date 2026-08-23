@@ -315,7 +315,7 @@ async function handleCancel(task: TaskItem) {
 }
 
 .rb-btn:hover { border-color: var(--color-brand); }
-.rb-primary { background: var(--color-brand); border-color: var(--color-brand); color: #fff; }
+.rb-primary { background: var(--color-brand); border-color: var(--color-brand); color: var(--text-inverse); }
 .rb-primary:hover { opacity: 0.9; }
 
 /* ── 任务卡片 ── */

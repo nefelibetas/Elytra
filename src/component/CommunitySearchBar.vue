@@ -155,12 +155,12 @@ watch(
   cursor: pointer; transition: all 0.15s; display: inline-flex; align-items: center; gap: 6px;
 }
 .cs-btn:hover { border-color: var(--color-brand); }
-.cs-btn-primary { background: var(--color-brand); border-color: var(--color-brand); color: #fff; }
+.cs-btn-primary { background: var(--color-brand); border-color: var(--color-brand); color: var(--text-inverse); }
 .cs-btn-primary:hover { background-color: var(--color-brand-hover); }
 .cs-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .cs-spin {
-  width: 12px; height: 12px; border: 2px solid rgba(255, 255, 255, 0.4);
-  border-top-color: #fff; border-radius: 50%; animation: cs-spin 0.6s linear infinite;
+  width: 12px; height: 12px; border: 2px solid color-mix(in srgb, var(--text-inverse) 40%, transparent);
+  border-top-color: var(--text-inverse); border-radius: 50%; animation: cs-spin 0.6s linear infinite;
 }
 @keyframes cs-spin { to { transform: rotate(360deg); } }
 

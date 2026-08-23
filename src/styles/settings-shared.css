@@ -250,7 +250,7 @@ input[type="number"] {
   top: 1px;
   width: 4px;
   height: 8px;
-  border: solid #fff;
+  border: solid var(--text-inverse);
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
 }
@@ -288,7 +288,7 @@ input[type="range"]::-webkit-slider-thumb {
   margin-top: -4px; /* (thumb 14 - track 6) / 2 */
   border-radius: 50%;
   background: var(--color-brand);
-  border: 2px solid #fff;
+  border: 2px solid var(--text-inverse);
   box-shadow: var(--shadow-sm);
   transition: transform 0.12s;
 }
@@ -312,7 +312,7 @@ input[type="range"]::-moz-range-thumb {
   height: 10px;
   border-radius: 50%;
   background: var(--color-brand);
-  border: 2px solid #fff;
+  border: 2px solid var(--text-inverse);
   box-shadow: var(--shadow-sm);
 }
 

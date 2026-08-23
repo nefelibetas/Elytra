@@ -202,6 +202,9 @@ input, textarea {
 
 :root {
   --titlebar-h: 48px;
+  /* 标题栏前景：标题栏铺品牌渐变，白字与半透明白叠层独立于正文语义色 */
+  --titlebar-fg: #FFFFFF;
+  --titlebar-fg-dim: rgba(255, 255, 255, 0.7);
   /* 浮层层级常量：FAB < 右键菜单 < 模态弹窗 < toast < tooltip。
      组件内一律引用变量，禁止裸写数值（曾经 waiting 弹窗 z=200 被菜单盖住的根因）。 */
   --z-fab: 900;
@@ -245,6 +248,7 @@ input, textarea {
   /* border */
   --border-default: #DFE5E1;
   --border-strong: #CBD5D1;
+  --border-subtle: rgba(0, 0, 0, 0.08);
 
   /* shadow */
   --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
@@ -256,12 +260,21 @@ input, textarea {
   --color-danger-bg: rgba(229, 72, 77, 0.1);
   --color-success: #10B981;
   --color-warning: #D97706;
+  --color-warning-bg: rgba(217, 119, 6, 0.12);
 
   /* ModLoader 标签色（fabric/forge/neoforge/quilt 区分，随主题覆盖切换） */
   --ld-fabric: #D97706;
   --ld-forge: #DC2626;
   --ld-neoforge: #16A34A;
   --ld-quilt: #7C3AED;
+
+  /* 平台品牌徽章色（Modrinth / CurseForge，平台官方色，不随主题变化） */
+  --color-modrinth: #1bd96a;
+  --color-curseforge: #f16436;
+
+  /* 备用徽章色（远古版本等非平台徽章；语义独立于 ModLoader 标签色） */
+  --color-badge-alt: #7C3AED;
+  --color-badge-alt-bg: rgba(124, 58, 237, 0.1);
 
   /* 弹窗遮罩 */
   --overlay: rgba(15, 23, 42, 0.5);
@@ -420,8 +433,7 @@ input, textarea {
 .toast {
   position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
   z-index: var(--z-toast, 3000);
-  padding: 10px 24px; border-radius: var(--radius-md);
-  background: var(--toast-bg); color: #fff;
+  background: var(--toast-bg); color: var(--text-inverse);
   font-size: 13px; font-weight: 500;
   white-space: nowrap; box-shadow: var(--shadow-lg);
   pointer-events: none;
@@ -469,8 +481,7 @@ input, textarea {
   transition: border-color 0.15s, color 0.15s, background 0.15s;
 }
 
-.wd-btn:hover { border-color: var(--color-brand); }
-.wd-retry { background: var(--color-brand); border-color: var(--color-brand); color: #fff; }
+.wd-retry { background: var(--color-brand); border-color: var(--color-brand); color: var(--text-inverse); }
 .wd-retry:hover { opacity: 0.9; }
 .wd-cancel { color: var(--color-danger); }
 .wd-cancel:hover { border-color: var(--color-danger); }
@@ -495,8 +506,7 @@ input, textarea {
 
 .dialog-btn.primary {
   background: var(--color-brand);
-  border-color: var(--color-brand);
-  color: #fff;
+  color: var(--text-inverse);
 }
 
 .dialog-btn.primary:hover {
@@ -505,8 +515,7 @@ input, textarea {
 
 .dialog-btn.danger {
   background: var(--color-danger);
-  border-color: var(--color-danger);
-  color: #fff;
+  color: var(--text-inverse);
 }
 
 .dialog-btn.danger:hover {
@@ -522,8 +531,7 @@ input, textarea {
   z-index: var(--z-tooltip, 3100);
   max-width: 320px;
   padding: 6px 10px;
-  background: var(--toast-bg);
-  color: #fff;
+  color: var(--text-inverse);
   font-size: 12px;
   line-height: 1.5;
   border-radius: var(--radius-sm);

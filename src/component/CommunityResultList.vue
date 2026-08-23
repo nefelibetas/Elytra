@@ -125,9 +125,9 @@ const props = withDefaults(
   font-size: 11px; font-weight: 400; color: var(--text-tertiary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.cs-badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; color: #fff; flex-shrink: 0; font-weight: 600; }
-.cs-badge.modrinth { background: #1bd96a; }
-.cs-badge.curseforge { background: #f16436; }
+.cs-badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; color: var(--text-inverse); flex-shrink: 0; font-weight: 600; }
+.cs-badge.modrinth { background: var(--color-modrinth); }
+.cs-badge.curseforge { background: var(--color-curseforge); }
 .cs-sub { flex-shrink: 0; margin-left: auto; font-size: 11px; color: var(--text-tertiary); white-space: nowrap; }
 .cs-desc {
   font-size: 11px; color: var(--text-tertiary); line-height: 1.4;
