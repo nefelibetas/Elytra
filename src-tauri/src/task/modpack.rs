@@ -545,11 +545,29 @@ pub async fn run_install(
             + vj.asset_index.total_size,
         Ordering::Relaxed,
     );
-    // 无 loader 时写原版 JSON（loader 模式由 installer 写合并 JSON）
+    // 无 loader 时写原版 JSON（loader 模式由 installer 写合并 JSON）。
+    // 写盘失败必须报错：假成功会让版本缺 json、启动时报"未找到版本 JSON"。
     if plan.loader.is_none() {
-        if let Ok(json) = serde_json::to_string_pretty(&vj) {
-            let jp = vdir.join(format!("{}.json", plan.version_dir_name));
-            std::fs::write(&jp, &json).ok();
+        let json = serde_json::to_string_pretty(&vj)
+            .map_err(|e| format!("序列化版本 JSON 失败\n{e}"));
+        match json {
+            Ok(json) => {
+                let jp = vdir.join(format!("{}.json", plan.version_dir_name));
+                if let Err(e) = std::fs::write(&jp, &json) {
+                    emit_handle.abort();
+                    return fail_or_cancel(
+                        app,
+                        progress,
+                        cancel,
+                        format!("写入版本 JSON 失败\n{e}"),
+                        Some(cleanup),
+                    );
+                }
+            }
+            Err(e) => {
+                emit_handle.abort();
+                return fail_or_cancel(app, progress, cancel, e, Some(cleanup));
+            }
         }
     }
     finish_step(app, progress, i_json, &c);
