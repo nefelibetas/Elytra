@@ -745,11 +745,11 @@ async function copyName() {
   font-size: 10px;
   padding: 1px 6px;
   border-radius: 8px;
-  color: #fff;
+  color: var(--text-inverse);
   font-weight: 600;
 }
-.md-badge.modrinth { background: #1bd96a; }
-.md-badge.curseforge { background: #f16436; }
+.md-badge.modrinth { background: var(--color-modrinth); }
+.md-badge.curseforge { background: var(--color-curseforge); }
 
 .md-sub {
   flex-shrink: 0;
@@ -837,7 +837,7 @@ async function copyName() {
   border: 1px solid var(--color-brand);
   border-radius: var(--radius-sm);
   background: var(--color-brand);
-  color: #fff;
+  color: var(--text-inverse);
   font-size: 12.5px;
   font-weight: 600;
   cursor: pointer;
@@ -913,7 +913,7 @@ async function copyName() {
   background: var(--surface-card);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.25));
+  box-shadow: var(--shadow-md);
   padding: 4px;
 }
 
@@ -1037,7 +1037,7 @@ async function copyName() {
   text-transform: uppercase;
 }
 .mv-type.alpha { background: var(--color-danger-bg); color: var(--color-danger); }
-.mv-type.beta { background: rgba(217, 119, 6, 0.12); color: var(--color-warning); }
+.mv-type.beta { background: var(--color-warning-bg); color: var(--color-warning); }
 
 .mv-tags {
   display: flex;
@@ -1088,7 +1088,7 @@ async function copyName() {
   gap: 8px;
 }
 .md-dep-state.err {
-  color: var(--color-danger, #e5484d);
+  color: var(--color-danger);
   font-size: 12px;
 }
 .md-dep-state-text {

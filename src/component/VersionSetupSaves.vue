@@ -298,14 +298,14 @@ async function confirmDelete() {
 }
 
 .vss-item-btn.danger {
-  border: 1px solid rgba(231, 76, 60, 0.4);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 40%, transparent);
   background: transparent;
   color: var(--color-danger);
 }
 
 .vss-item-btn.danger:hover {
   background: var(--color-danger);
-  color: #fff;
+  color: var(--text-inverse);
 }
 
 .vss-dialog-body {

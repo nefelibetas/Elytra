@@ -463,7 +463,7 @@ function useOfflineName(name: string) {
   background: var(--surface-elevated);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-lg);
 }
 
 /* expand 动画目标值 = 固定高度（写在 enter-to/leave-from，写在 active 会覆盖 from 态导致无动画） */
@@ -533,7 +533,7 @@ function useOfflineName(name: string) {
   background: var(--surface-elevated);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-lg);
 }
 
 .menu-item {
@@ -548,7 +548,7 @@ function useOfflineName(name: string) {
 
 .menu-item:hover {
   background: var(--color-brand);
-  color: #fff;
+  color: var(--text-inverse);
 }
 
 /* 账号列表菜单：行 + 删除按钮 */
@@ -629,7 +629,7 @@ function useOfflineName(name: string) {
 }
 
 .acct-del:hover {
-  color: #e5484d;
+  color: var(--color-danger);
   background: rgba(229, 72, 77, 0.12);
 }
 

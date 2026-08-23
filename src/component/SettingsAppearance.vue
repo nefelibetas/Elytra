@@ -80,7 +80,7 @@ import { THEMES, themeId } from "../store/theme";
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--border-subtle);
 }
 
 .appearance-name {

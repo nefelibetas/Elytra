@@ -180,7 +180,7 @@ const sv = () => vdState.selectedVersion!;
   padding: 10px 40px;
   border: none; border-radius: var(--radius-lg);
   background-color: var(--color-brand);
-  color: #fff; font-size: 14px; font-weight: 600;
+  color: var(--text-inverse); font-size: 14px; font-weight: 600;
   cursor: pointer; transition: all 0.15s;
   align-self: center; display: inline-flex; align-items: center; gap: 8px;
 }
