@@ -187,7 +187,7 @@ pub async fn run_repair_task(
     let natives_pending = report.natives;
     let total_files =
         if jar_missing { 1u32 } else { 0u32 } + lib_pending + asst_pending + natives_pending;
-    println!(
+    eprintln!(
         "[repair] {} missing: jar={} libs={} assets={} natives={} total={}",
         version_dir_name, jar_missing, lib_pending, asst_pending, natives_pending, total_files
     );
@@ -324,7 +324,7 @@ pub async fn run_repair_task(
         return set_cancelled(&app, progress);
     }
     if let Err(errors) = parallel {
-        println!(
+        eprintln!(
             "[repair] {} download failed: {}",
             version_dir_name,
             errors.join("; ")
@@ -362,7 +362,7 @@ pub async fn run_repair_task(
         )
         .await
         {
-            println!(
+            eprintln!(
                 "[repair] {} natives failed: {}",
                 version_dir_name,
                 errors.join("; ")
@@ -442,6 +442,9 @@ async fn repair_jar(
         if let Some(ref c) = vj.downloads.client {
             let urls: Vec<String> = sources.iter().map(|src| src.mirror_url(&c.url)).collect();
             let jar_path = vdir.join(format!("{version_dir_name}.jar"));
+            // 不换 ProgressCounters::byte_callback：此处是覆盖式写入（EmitLoop 把
+            // jar_bytes/jar_total 当作"当前下载绝对值"消费并做 jar_total 回退），
+            // 而工厂是增量累加且写 step_bytes——语义不吻合，保留手写闭包。
             let jbc2 = Arc::clone(&pc.bytes);
             let jt2 = Arc::clone(&pc.step_total);
             if c.size > 0 {
