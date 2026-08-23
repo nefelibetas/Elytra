@@ -13,6 +13,15 @@ import {
   pickVersion, openDelete,
   deleteDialog, deleteTarget, confirmDeleteVersion,
 } from "../store/gameDirs";
+import { loadVersionIcon, versionIcons } from "../store/versionIcon";
+import { watch } from "vue";
+
+// 整合包安装的版本带平台项目图标（懒加载；缺失回退 loader 图标）
+watch(
+  () => versions.value.map(v => v.name),
+  names => names.forEach(loadVersionIcon),
+  { immediate: true },
+);
 
 const router = useRouter();
 
@@ -61,7 +70,7 @@ function goDownload() {
           <VersionItem
             v-for="v in allVersions"
             :key="v.name"
-            :icon-src="v.icon"
+            :icon-src="versionIcons[v.name] ?? v.icon"
             :version-id="v.name"
             :subtitle="v.subtitle"
             @select="selectAndBack(v.name)"
