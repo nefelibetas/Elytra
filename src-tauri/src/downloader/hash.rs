@@ -44,6 +44,21 @@ pub fn file_sha1_matches_streaming(path: &Path, expected: &str) -> bool {
     hash.iter().map(|b| format!("{:02x}", b)).collect::<String>() == expected
 }
 
+/// 任意读取器的流式 sha1（zip 成员等非文件来源用）；读失败返回 None。
+pub fn reader_sha1_hex<R: std::io::Read>(mut reader: R) -> Option<String> {
+    use sha1::Digest;
+    let mut hasher = sha1::Sha1::new();
+    let mut buf = vec![0u8; 1024 * 1024];
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => hasher.update(&buf[..n]),
+            Err(_) => return None,
+        }
+    }
+    Some(hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

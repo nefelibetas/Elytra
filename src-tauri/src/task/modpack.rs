@@ -23,8 +23,8 @@ use crate::config::downloader::model::{DownloaderConfig, DownloadSource};
 use crate::constants;
 use crate::downloader::fetcher;
 use crate::downloader::modpack::{
-    cache_key,
-    build_plan, safe_rel_path, ModpackRequest, OverridesRef, PackPlan, PackSource,
+    cache_key, build_plan, safe_rel_path, ModpackRequest, OverridesRef, PackFile, PackPlan,
+    PackSource,
 };
 use crate::downloader::model::VersionJson;
 use crate::downloader::progress::ProgressCounters;
@@ -563,16 +563,109 @@ pub async fn run_install(
         }
     }
 
+    // ── C0：包内资源复用 ──
+    // 部分整合包会把 mod 物理捆绑在 overrides/ 内（常见于作者关闭 CurseForge
+    // 第三方分发的场景）。清单内文件先与包内同名条目做 sha1 对比：一致则直接
+    // 解包免下载；受限文件若已捆绑 → 就地落盘并从提示清单移除。
+    let mut restricted = plan.restricted.clone();
+    let mut pending: Vec<(usize, &PackFile)> = Vec::new();
+    // C0 内部错误统一走此收口（run_install 返回 bool，不能用 ?）
+    macro_rules! bail {
+        ($e:expr) => {{
+            emit_handle.abort();
+            return fail_or_cancel(app, progress, cancel, $e, Some(cleanup));
+        }};
+    }
+    {
+        let mut pack_zip = plan.overrides.as_ref().and_then(|ov| {
+            std::fs::File::open(&ov.zip_path)
+                .ok()
+                .and_then(|f| zip::ZipArchive::new(f).ok())
+        });
+        let index: std::collections::HashMap<String, String> = match pack_zip.as_mut() {
+            Some(ar) => (0..ar.len())
+                .filter_map(|i| ar.by_index(i).ok().map(|e| e.name().to_string()))
+                .filter_map(|n| {
+                    override_rel(&n, "overrides/")?;
+                    Some((n["overrides/".len()..].to_string(), n))
+                })
+                .collect(),
+            None => std::collections::HashMap::new(),
+        };
+
+        for (i, f) in plan.files.iter().enumerate() {
+            let step_idx = content_start + i;
+            let bundled = index.get(&f.path).and_then(|member| {
+                let ar = pack_zip.as_mut()?;
+                match (&f.sha1, member_sha1(ar, member)) {
+                    // 有期望哈希：一致才采信包内副本；不一致以清单 URL 为权威源
+                    (expected, Some(actual)) if expected.is_empty() || expected == &actual => {
+                        Some(member.clone())
+                    }
+                    _ => None,
+                }
+            });
+            match bundled {
+                Some(member) => {
+                    set_phase(
+                        app,
+                        progress,
+                        None,
+                        &format!("取自整合包 {}", f.path),
+                        step_idx,
+                        StepStatus::Running,
+                    );
+                    let rel_path = match safe_rel_path(&f.path) {
+                        Ok(rel) => rel,
+                        Err(e) => bail!(e),
+                    };
+                    let dest = vdir.join(&rel_path);
+                    let res = match pack_zip.as_mut() {
+                        Some(ar) => extract_member(ar, &member, &dest),
+                        None => Ok(()),
+                    };
+                    if let Err(e) = res {
+                        bail!(format!("释放包内资源失败\n{e}"));
+                    }
+                    c.est_bytes.fetch_sub(f.size, Ordering::Relaxed);
+                    finish_step(app, progress, step_idx, &c);
+                }
+                None => pending.push((step_idx, f)),
+            }
+        }
+
+        // 受限文件就地解决：捆绑副本按声明路径落盘（内容来自包作者本人）
+        if !restricted.is_empty() && !index.is_empty() {
+            for name in restricted.clone() {
+                let candidate = format!("mods/{name}");
+                let Some(member) = index.get(&candidate) else {
+                    continue;
+                };
+                let Ok(rel) = safe_rel_path(&name) else {
+                    continue;
+                };
+                let dest = vdir.join("mods").join(rel);
+                if let Some(ar) = pack_zip.as_mut() {
+                    if let Err(e) = extract_member(ar, member, &dest) {
+                        bail!(e);
+                    }
+                    restricted.retain(|r| *r != name);
+                }
+            }
+        }
+    }
+
     // ── C1：内容文件并发下载 ──
     let concurrency = (config.concurrency as usize).clamp(1, 8);
-    for (chunk_no, chunk) in plan.files.chunks(concurrency).enumerate() {
+    for chunk in pending.chunks(concurrency) {
         if cancelled(cancel) {
             emit_handle.abort();
             return fail_or_cancel(app, progress, cancel, String::new(), Some(cleanup));
         }
         let mut set = tokio::task::JoinSet::new();
-        for (offset, f) in chunk.iter().enumerate() {
-            let idx = content_start + chunk_no * concurrency + offset;
+        for entry in chunk.iter() {
+            let idx = entry.0;
+            let f: &PackFile = entry.1;
             let rel_path = match safe_rel_path(&f.path) {
                 Ok(rel) => rel,
                 Err(e) => {
@@ -677,22 +770,45 @@ pub async fn run_install(
     emit_handle.abort();
 
     // ── 受限文件收口：其余内容已全部就位，明确列出需手动下载的文件 ──
-    if !plan.restricted.is_empty() {
+    if !restricted.is_empty() {
         let mut msg = format!(
             "已安装完成，但 {} 个文件因 CurseForge 作者关闭第三方分发无法自动下载（需手动从官网下载后放入 mods 目录）：",
-            plan.restricted.len()
+            restricted.len()
         );
-        for name in plan.restricted.iter().take(20) {
+        for name in restricted.iter().take(20) {
             msg.push_str(&format!("\n· {name}"));
         }
-        if plan.restricted.len() > 20 {
-            msg.push_str(&format!("\n…等共 {} 个", plan.restricted.len()));
+        if restricted.len() > 20 {
+            msg.push_str(&format!("\n…等共 {} 个", restricted.len()));
         }
         return fail_or_cancel(app, progress, cancel, msg, Some(cleanup));
     }
 
     finish_ok(app, progress, "完成");
     true
+}
+
+/// zip 成员流式 sha1（None=读取失败）。用于包内捆绑资源与清单声明的比对。
+fn member_sha1(archive: &mut zip::ZipArchive<std::fs::File>, name: &str) -> Option<String> {
+    let mut entry = archive.by_name(name).ok()?;
+    crate::downloader::hash::reader_sha1_hex(&mut entry)
+}
+
+/// 解压单个 zip 成员到目标路径（词法穿越防护；父目录自动创建）。
+fn extract_member(
+    archive: &mut zip::ZipArchive<std::fs::File>,
+    name: &str,
+    out: &Path,
+) -> Result<(), String> {
+    let mut entry = archive.by_name(name).map_err(|e| format!("读取包内资源失败\n{e}"))?;
+    if let Some(parent) = out.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败\n{e}"))?;
+    }
+    let mut writer =
+        std::fs::File::create(out).map_err(|e| format!("写出失败\n{e}\n{}", out.display()))?;
+    std::io::copy(&mut entry, &mut writer)
+        .map_err(|e| format!("解压失败\n{e}\n{}", out.display()))?;
+    Ok(())
 }
 
 /// 解压 overrides/ 到版本目录根（词法穿越防护对齐 jdk safe_runtime_path）。
@@ -825,4 +941,23 @@ mod tests {
         assert_eq!(initial_steps(&online), vec!["下载整合包", "解析整合包"]);
         assert_eq!(initial_steps(&local), vec!["解析整合包"]);
     }
+    #[test]
+    fn member_sha1_and_extract_member_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let zip_path = dir.path().join("a.mrpack");
+        write_test_zip(&zip_path, "modrinth.index.json"); // overrides/mods/a.jar
+        let mut ar =
+            zip::ZipArchive::new(std::fs::File::open(&zip_path).unwrap()).unwrap();
+
+        let expected = crate::downloader::hash::sha1_hex(b"jar-bytes");
+        assert_eq!(member_sha1(&mut ar, "overrides/mods/a.jar").as_deref(), Some(expected.as_str()));
+        assert_eq!(member_sha1(&mut ar, "overrides/missing.jar"), None);
+
+        // 单成员解压：内容逐字节还原到目标路径
+        let out = dir.path().join("out").join("dup.jar");
+        extract_member(&mut ar, "overrides/mods/a.jar", &out).unwrap();
+        assert_eq!(std::fs::read(&out).unwrap(), b"jar-bytes");
+    }
+
+
 }
