@@ -234,6 +234,46 @@ pub enum LoaderEvent {
 /// Send + Sync：钩子闭包会穿过 async task 边界（跨线程）。
 pub type LoaderHook<'a> = &'a (dyn Fn(LoaderEvent) + Send + Sync);
 
+
+/// 统一 ModLoader 安装入口：按种类分派四个安装器。
+/// runner（完整下载）与 task/modpack（整合包）共用，消除两份四路 match 重复。
+/// `cancel` 仅 Forge/NeoForge 使用（installer 式需 kill 子进程），Fabric/Quilt 忽略。
+#[allow(clippy::too_many_arguments)]
+pub async fn install_loader(
+    kind: crate::task::LoaderKind,
+    mc_version: &str,
+    loader_version: &str,
+    dir_name: &str,
+    vdir: &std::path::Path,
+    parent_text: &str,
+    config: &crate::config::downloader::model::DownloaderConfig,
+    counters: &crate::downloader::progress::ProgressCounters,
+    cancel: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    hook: Option<LoaderHook<'_>>,
+) -> Result<(), String> {
+    use crate::task::LoaderKind;
+    // Fabric/Quilt 不接受 cancel——传 None 时借一个永不置位的静态令牌兜底
+        static NO_CANCEL_ARC: std::sync::LazyLock<std::sync::Arc<std::sync::atomic::AtomicBool>> =
+        std::sync::LazyLock::new(|| std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
+    let default_cancel = || -> &std::sync::Arc<std::sync::atomic::AtomicBool> { &NO_CANCEL_ARC };
+
+    match kind {
+        LoaderKind::Fabric => {
+            install_fabric(mc_version, loader_version, dir_name, vdir, parent_text, config, counters, hook).await
+        }
+        LoaderKind::Quilt => {
+            install_quilt(mc_version, loader_version, dir_name, vdir, parent_text, config, counters, hook).await
+        }
+        LoaderKind::Forge => {
+            install_forge(mc_version, loader_version, dir_name, vdir, parent_text, config, counters, cancel.unwrap_or_else(default_cancel), hook).await
+        }
+        LoaderKind::NeoForge => {
+            install_neoforge(loader_version, dir_name, vdir, parent_text, config, counters, cancel.unwrap_or_else(default_cancel), hook).await
+        }
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
