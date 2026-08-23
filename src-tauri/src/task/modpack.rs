@@ -199,6 +199,25 @@ fn replace_steps(
     });
 }
 
+/// 取消感知包装：底层操作不支持取消参数（纯网络 JSON/同步 IO）时，
+/// 与轮询取消令牌赛跑——先到者胜；落败方 future 被 drop（连接随之中断）。
+async fn race_cancel<F, T>(cancel: &Arc<AtomicBool>, fut: F) -> Result<T, String>
+where
+    F: std::future::Future<Output = Result<T, String>>,
+{
+    tokio::select! {
+        r = fut => r,
+        _ = async {
+            loop {
+                if cancelled(cancel) {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(120)).await;
+            }
+        } => Err("任务已取消".into()),
+    }
+}
+
 /// 安装主体（单卡片）。返回是否成功。
 pub async fn run_install(
     app: &AppHandle,
@@ -251,7 +270,7 @@ pub async fn run_install(
         parse_idx,
         StepStatus::Running,
     );
-    let plan = match build_plan(&zip_path, request, &config).await {
+    let plan = match race_cancel(cancel, build_plan(&zip_path, request, &config)).await {
         Ok(p) => p,
         Err(e) => return fail_or_cancel(app, progress, cancel, e, None),
     };
@@ -348,7 +367,11 @@ pub async fn run_install(
 
     // ── B1：版本清单（唯一硬前置）──
     set_phase(app, progress, None, "版本清单", i_json, StepStatus::Running);
-    let parent_text = match crate::downloader::version::fetch_version_json_text(&plan.version_url, &config).await {
+    let parent_text = match race_cancel(
+        cancel,
+        crate::downloader::version::fetch_version_json_text(&plan.version_url, &config),
+    )
+    .await {
         Ok(t) => t,
         Err(e) => {
             emit_handle.abort();
@@ -534,10 +557,9 @@ pub async fn run_install(
                     break;
                 }
             }
-            if cancelled(cancel) {
-                emit_handle.abort();
-                return fail_or_cancel(app, progress, cancel, String::new(), Some(cleanup));
-            }
+            // 取消不在此处提前 return：install_fut 内部轮询同一 cancel 令牌，
+            // 会杀掉 installer 子进程并自行返回 Err，随后由上方 Err 分支
+            // 经 fail_or_cancel 走取消收口——中途 drop future 会遗留孤儿 JVM 进程
         }
     }
 
@@ -637,7 +659,16 @@ pub async fn run_install(
     // ── C2：overrides 解压 ──
     if let (Some(ov), Some(idx)) = (&plan.overrides, i_overrides) {
         set_phase(app, progress, None, "解压覆盖文件", idx, StepStatus::Running);
-        if let Err(e) = extract_overrides(ov, &vdir) {
+        let ov = ov.clone();
+        let vd = vdir.clone();
+        if let Err(e) =
+            race_cancel(cancel, async move {
+                tokio::task::spawn_blocking(move || extract_overrides(&ov, &vd))
+                    .await
+                    .map_err(|e| format!("解压工作线程异常\n{e}"))?
+            })
+            .await
+        {
             emit_handle.abort();
             return fail_or_cancel(app, progress, cancel, e, Some(cleanup));
         }

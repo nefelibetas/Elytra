@@ -10,7 +10,7 @@ use crate::persist;
 use crate::downloader::modpack::{ModpackRequest, PackSource};
 use crate::task::{
     self, files, modpack, repair, runner, DownloadFileItem, DownloadFileKind, DownloadFileTask,
-    DownloadFilesTask, DownloadTask, TaskSpec,
+    DownloadFilesTask, DownloadTask, TaskSpec, TaskStatus,
 };
 
 /// 提交完整下载/安装任务：注册到 TaskManager 并后台执行，返回任务 id。
@@ -236,8 +236,17 @@ pub fn dismiss_interrupted_task(task_id: String) {
 }
 
 #[tauri::command]
-pub async fn cancel_task(task_id: String) -> Result<(), String> {
+pub async fn cancel_task(app: AppHandle, task_id: String) -> Result<(), String> {
     task::global().cancel(&task_id);
+    // 立即广播取消态：cancel() 只改内存不发事件，此前要等任务侧下个检查点
+    // 才反映，期间心跳事件会把刚取消的卡片重置回运行中（"复活"观感）
+    if let Some(p) = task::global()
+        .list()
+        .into_iter()
+        .find(|p| p.task_id == task_id && p.status == TaskStatus::Cancelled)
+    {
+        task::emit(&app, &p);
+    }
     Ok(())
 }
 

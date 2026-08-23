@@ -503,6 +503,17 @@ pub fn spawn_heartbeat(
             let mut speed_ema: f64 = 0.0;
             loop {
                 tick.tick().await;
+                // 终态（done/error/cancelled）由任务侧收口发出——心跳不得覆写，
+                // 否则 cancel 置位后心跳会把卡片重置回运行中（"取消后复活"根因）
+                match progress.lock().status {
+                    TaskStatus::Pending => {
+                        if let Some(mut p) = progress.try_lock() {
+                            p.status = TaskStatus::Running;
+                        }
+                    }
+                    TaskStatus::Running => {}
+                    _ => return,
+                }
                 let cur = bytes.load(Ordering::Relaxed);
                 let total_bytes = est.load(Ordering::Relaxed);
                 let now = Instant::now();
