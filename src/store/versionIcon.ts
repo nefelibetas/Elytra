@@ -3,32 +3,12 @@
 // 缺失/失败保持 Map 占位（UI 回退 loader 图标）。模式对齐 versionDetail.ts 的世界缩略图。
 import { reactive } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { bytesToDataUrl } from "../utils/imageData";
 
 /** 版本目录名 → 图标 data URL（懒加载缓存）。 */
 export const versionIcons = reactive<Record<string, string>>({});
 /** 加载中标记（幂等，防并发重复请求）。 */
 const loading = reactive<Record<string, boolean>>({});
-
-/** 魔数嗅探图片 mime（平台图标可能是 png/webp/jpeg/gif，data URL mime 必须正确）。 */
-function mimeOf(bytes: Uint8Array): string {
-  if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50) return "image/png";
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8) return "image/jpeg";
-  if (bytes.length >= 12 && bytes[0] === 0x52 && bytes[8] === 0x57 && bytes[9] === 0x45) return "image/webp";
-  if (bytes.length >= 3 && bytes[0] === 0x47 && bytes[1] === 0x49) return "image/gif";
-  return "image/png";
-}
-
-/** number[] → data URL（分块防大数组展开栈溢出，对齐 versionDetail.ts）。 */
-function toDataUrl(bytes: number[]): string {
-  const u8 = new Uint8Array(bytes);
-  let bin = "";
-  const CHUNK = 0x8000;
-  for (let i = 0; i < u8.length; i += CHUNK) {
-    bin += String.fromCharCode(...u8.subarray(i, i + CHUNK));
-  }
-  return `data:${mimeOf(u8)};base64,${btoa(bin)}`;
-}
-
 /** 懒加载单个版本图标（缺失/读取失败静默保持占位）。 */
 export async function loadVersionIcon(versionDirName: string) {
   if (versionIcons[versionDirName] || loading[versionDirName]) return;
@@ -36,7 +16,7 @@ export async function loadVersionIcon(versionDirName: string) {
   try {
     const bytes = await invoke<number[] | null>("get_version_icon", { versionDirName });
     if (bytes && bytes.length > 0) {
-      versionIcons[versionDirName] = toDataUrl(bytes);
+      versionIcons[versionDirName] = bytesToDataUrl(bytes);
     }
   } catch {
     // 缺失/读取失败：保持 Map 占位

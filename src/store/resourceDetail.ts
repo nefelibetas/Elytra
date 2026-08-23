@@ -5,7 +5,7 @@
 // 版本筛选（ModLoader/游戏版本）随依赖链同步到下一个详情，返回时还原各层自身筛选。
 // 各层已加载的版本列表/前置依赖随压栈存档，返回时直接恢复快照（不重新请求）。
 import { reactive } from "vue";
-import router from "../router";
+import router, { ROUTE_DOWNLOAD, ROUTE_RESOURCE_DETAIL } from "../router";
 import type { CommunityDisplayItem, CommunityVersion, CommunityDependencyItem } from "./communitySearch";
 import { downloadTabState, type DownloadTab } from "./downloadTab";
 
@@ -66,7 +66,7 @@ export function openResourceDetail(
   // 每次新进入：清掉返回恢复标记（返回恢复只由 goBackDetail 设置、一次性消费）
   resourceDetail.pendingVersions = null;
   resourceDetail.pendingDepItems = null;
-  if (router.currentRoute.value.path === "/resource-detail") {
+  if (router.currentRoute.value.path === ROUTE_RESOURCE_DETAIL) {
     // 详情内跳转（前置依赖链）：压栈当前详情与筛选/选中
     if (resourceDetail.item) {
       resourceDetail.history.push({
@@ -90,7 +90,7 @@ export function openResourceDetail(
   resourceDetail.item = item;
   resourceDetail.backTab = downloadTabState.current;
   router.push({
-    path: "/resource-detail",
+    path: ROUTE_RESOURCE_DETAIL,
     query: { source: item.source, id: item.id },
   });
 }
@@ -109,13 +109,13 @@ export function goBackDetail() {
     resourceDetail.pendingDepItems = prev.depItems;
     resourceDetail.pendingDepError = prev.depError;
     router.replace({
-      path: "/resource-detail",
+      path: ROUTE_RESOURCE_DETAIL,
       query: { source: prev.item.source, id: prev.item.id },
     });
     return;
   }
   downloadTabState.current = resourceDetail.backTab;
-  router.push("/download");
+  router.push(ROUTE_DOWNLOAD);
 }
 
 /** 详情页标题：有中文译名时显示 "翻译名（原名）"，否则原名。 */

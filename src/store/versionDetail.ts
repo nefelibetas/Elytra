@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { showToast } from "../utils/toast";
 import { errMsg } from "../utils/error";
 import { classifyVersion } from "../utils/versionClassify";
+import { bytesToDataUrl } from "../utils/imageData";
 import type { InstalledVersionInfo } from "./gameDirs";
 
 // ── 类型镜像 Rust（commands/version.rs + downloader/mod_updates.rs）──
@@ -103,16 +104,6 @@ export async function loadWorlds(versionName: string) {
 export const worldIcons = reactive<Record<string, string>>({});
 /** 加载中标记（幂等，防并发重复请求）。 */
 const worldIconsLoading = reactive<Record<string, boolean>>({});
-
-/** number[] → base64 data URL（分块防大数组展开栈溢出）。 */
-function bytesToDataUrl(bytes: number[]): string {
-  let bin = "";
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    bin += String.fromCharCode(...bytes.slice(i, i + CHUNK));
-  }
-  return `data:image/png;base64,${btoa(bin)}`;
-}
 
 /** 懒加载单个世界缩略图（本地读取，缺失/失败保持 Map 占位）。 */
 export async function loadWorldIcon(versionName: string, worldName: string) {

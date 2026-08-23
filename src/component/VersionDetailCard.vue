@@ -5,6 +5,7 @@ import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { Pencil, Folder, FolderOpen, CloudDownload, Puzzle, Map, Settings2, Palette, Database, Sun, ImagePlus } from "@lucide/vue";
 import { open } from "@tauri-apps/plugin-dialog";
+import { fmtUnix } from "../utils/format";
 import { invoke } from "@tauri-apps/api/core";
 import { classifyVersion } from "../utils/versionClassify";
 import { LOADER_ICONS, LOADER_TITLES } from "../utils/versionMeta";
@@ -285,13 +286,6 @@ async function confirmRename() {
   }
 }
 
-/** unix 秒 → "yyyy-MM-dd HH:mm" */
-function fmtUnix(sec: number): string {
-  if (!sec) return "";
-  const d = new Date(sec * 1000);
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-}
 </script>
 
 <template>

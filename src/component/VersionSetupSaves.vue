@@ -6,6 +6,7 @@ import { Folder, Trash2, Map } from "@lucide/vue";
 import { invoke } from "@tauri-apps/api/core";
 import { showToast } from "../utils/toast";
 import { errMsg } from "../utils/error";
+import { fmtUnix } from "../utils/format";
 import IconImage from "./IconImage.vue";
 import AlertDialog from "./AlertDialog.vue";
 import LoadingSpinner from "./LoadingSpinner.vue";
@@ -29,14 +30,6 @@ onMounted(async () => {
     for (const w of worlds.value) void loadWorldIcon(versionName.value, w.name);
   }
 });
-
-/** unix 秒 → "yyyy-MM-dd HH:mm" */
-function fmtUnix(sec: number): string {
-  if (!sec) return "";
-  const d = new Date(sec * 1000);
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-}
 
 /** 打开存档文件夹（目录不存在先创建）。 */
 async function openFolder() {

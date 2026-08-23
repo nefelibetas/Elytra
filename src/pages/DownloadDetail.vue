@@ -3,27 +3,13 @@ import { ref } from "vue"
 import { X, Check, LoaderCircle, RotateCcw, HardDriveDownload } from "@lucide/vue"
 import { dlState, TaskItem, interruptedJobs, resumeAllInterrupted, dismissAllInterrupted } from "../store/download"
 import { errMsg } from "../utils/error"
+import { fmtSpeed, fmtEta } from "../utils/format"
 import { showToast } from "../utils/toast"
 import ScrollTopFab from "../component/ScrollTopFab.vue"
 
 /** 批量文件任务步骤可能很多，默认折叠到前 N 个。 */
 const MAX_VISIBLE_STEPS = 8
 const expandedSteps = ref<Set<string>>(new Set())
-
-function fmtSpeed(bps: number): string {
-  if (bps >= 1_000_000) return (bps / 1_000_000).toFixed(2) + " MB/s"
-  if (bps >= 1_000) return (bps / 1_000).toFixed(2) + " KB/s"
-  return bps.toFixed(2) + " B/s"
-}
-
-/** 预计剩余时间格式化；null（停滞/速度过低）显示 —。 */
-function fmtEta(secs: number | null): string {
-  if (secs == null) return "—"
-  if (secs < 60) return `${secs} 秒`
-  const m = Math.floor(secs / 60)
-  if (m < 60) return `${m} 分 ${secs % 60} 秒`
-  return `${Math.floor(m / 60)} 时 ${m % 60} 分`
-}
 
 function visibleSteps(task: TaskItem) {
   if (expandedSteps.value.has(task.taskId) || task.steps.length <= MAX_VISIBLE_STEPS) {
