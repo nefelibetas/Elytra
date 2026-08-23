@@ -25,23 +25,6 @@ pub struct ProgressCounters {
 }
 
 impl ProgressCounters {
-    /// 全量构造（任务层组装时逐字段 clone；未用字段可 `..Default::default()` 补零）。
-    pub fn new(
-        files: Arc<AtomicU32>,
-        bytes: Arc<AtomicU64>,
-        step_bytes: Arc<AtomicU64>,
-        step_total: Arc<AtomicU64>,
-    ) -> Self {
-        Self {
-            files,
-            bytes,
-            step_bytes,
-            step_total,
-        }
-    }
-}
-
-impl ProgressCounters {
     /// 字节增量回调工厂：维护 worker 本地水位，把每次回调的增量累加进
     /// `bytes` / `step_bytes`。替代各任务层手写的 "swap-prev + saturating_sub" 闭包。
     /// 返回值 `(closure)` 可直接传给 `fetcher::fetch_verified_c` 的进度参数。
