@@ -5,7 +5,7 @@
 //! 四个原子必须同源创建与更新——整合为结构体后，"文件数/字节/步骤分母"
 //! 不再可能被漏传或换源导致计数错乱（此前靠参数顺序隐式绑定）。
 
-use std::sync::atomic::{AtomicU32, AtomicU64};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 /// 下载进度计数器：完成文件数 / 累计字节 / 本步骤字节 / 本步骤总字节。
@@ -37,6 +37,23 @@ impl ProgressCounters {
             bytes,
             step_bytes,
             step_total,
+        }
+    }
+}
+
+impl ProgressCounters {
+    /// 字节增量回调工厂：维护 worker 本地水位，把每次回调的增量累加进
+    /// `bytes` / `step_bytes`。替代各任务层手写的 "swap-prev + saturating_sub" 闭包。
+    /// 返回值 `(closure)` 可直接传给 `fetcher::fetch_verified_c` 的进度参数。
+    pub fn byte_callback(&self) -> impl Fn(u64, u64) + Send + Sync {
+        let last = Arc::new(AtomicU64::new(0));
+        let bytes = Arc::clone(&self.bytes);
+        let step_bytes = Arc::clone(&self.step_bytes);
+        move |done: u64, _total: u64| {
+            let prev = last.swap(done, Ordering::Relaxed);
+            let delta = done.saturating_sub(prev);
+            bytes.fetch_add(delta, Ordering::Relaxed);
+            step_bytes.fetch_add(delta, Ordering::Relaxed);
         }
     }
 }

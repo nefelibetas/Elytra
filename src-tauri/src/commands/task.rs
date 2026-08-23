@@ -150,7 +150,7 @@ pub async fn submit_missing_download(
 /// 返回任务 id。
 #[tauri::command]
 pub async fn submit_install_jdk(app: AppHandle, major: u32) -> Result<String, String> {
-    if !matches!(major, 8 | 17 | 21 | 25) {
+    if !crate::jdk::SUPPORTED_JAVA_MAJORS.contains(&major) {
         return Err(format!("暂不支持安装 Java {major}（仅支持 8/17/21/25）"));
     }
     let tm = task::global();

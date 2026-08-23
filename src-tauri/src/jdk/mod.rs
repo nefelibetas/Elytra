@@ -2,6 +2,9 @@ pub mod download;
 pub mod model;
 pub mod scanner;
 
+/// 支持自动安装的 Java 主版本（须与 download::component_for_major 的映射键一致）。
+pub const SUPPORTED_JAVA_MAJORS: [u32; 4] = [8, 17, 21, 25];
+
 use crate::constants::SECT_JDK;
 use crate::persist;
 

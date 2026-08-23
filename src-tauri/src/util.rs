@@ -85,6 +85,87 @@ pub fn exe_dir() -> std::path::PathBuf {
         .unwrap_or_else(|| std::path::PathBuf::from("."))
 }
 
+/// FNV-1a 64 位散列（跨进程稳定，非加密）：离线皮肤哈希 / 缓存键派生共用。
+pub fn fnv1a64(data: &str) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in data.as_bytes() {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+/// 文件/目录名净化：Windows 非法字符（`<>:"/\|?*`）与控制字符替换 `_`，
+/// 去首尾空白与尾点；结果为空或命中 Windows 保留名（CON/NUL/COM1…）时回退 `fallback`。
+pub fn sanitize_fs_name(name: &str, fallback: &str) -> String {
+    const RESERVED: [&str; 22] = [
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
+        "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    let cleaned: String = name
+        .chars()
+        .map(|c| {
+            if matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+                || c.is_control()
+            {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let trimmed = cleaned.trim();
+    let no_tail_dot = trimmed.strip_suffix('.').unwrap_or(trimmed);
+    if no_tail_dot.is_empty() || no_tail_dot.chars().all(|c| c == '_') {
+        return fallback.to_string();
+    }
+    if RESERVED.iter().any(|r| r.eq_ignore_ascii_case(no_tail_dot)) {
+        return fallback.to_string();
+    }
+    no_tail_dot.to_string()
+}
+
+/// 子目录名冲突消解：`parent/{base}` 已存在则追加 `_{n}`。
+pub fn unique_child_dir(parent: &Path, base: &str) -> String {
+    if !parent.join(base).exists() {
+        return base.to_string();
+    }
+    for n in 1.. {
+        let candidate = format!("{base}_{n}");
+        if !parent.join(&candidate).exists() {
+            return candidate;
+        }
+    }
+    unreachable!()
+}
+
+/// Modrinth CDN 的 MCIM 国内镜像候选列表（官方优先）；
+/// 非 cdn.modrinth.com URL 仅返回官方一源。社区资源下载统一经此构造多源。
+pub fn mcim_mirror_urls(url: &str) -> Vec<String> {
+    let official = url.to_string();
+    let mirrored = official.replace("https://cdn.modrinth.com", "https://mod.mcimirror.top");
+    if mirrored == official {
+        vec![official]
+    } else {
+        vec![official, mirrored]
+    }
+}
+
+/// 魔数嗅探受支持的图片格式（png/jpeg/webp/gif）——前端 data URL 渲染与
+/// 自定义图标落盘共用同一判定，两侧语义必须一致。
+pub fn is_supported_image(bytes: &[u8]) -> bool {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return true; // png
+    }
+    if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        return true; // jpeg
+    }
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return true; // webp
+    }
+    bytes.starts_with(b"GIF8") // gif
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
