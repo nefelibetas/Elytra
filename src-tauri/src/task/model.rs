@@ -225,6 +225,13 @@ fn validate_file_item(url: &str, filename: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// 整合包安装任务（单卡片全流程：解析 → 本体 → 内容）。
+/// 恢复语义 = 重跑整卡，各环节幂等。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModpackInstallSpec {
+    pub request: crate::downloader::modpack::ModpackRequest,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

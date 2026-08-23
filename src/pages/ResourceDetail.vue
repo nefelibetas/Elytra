@@ -292,22 +292,61 @@ function depToItem(d: CommunityDependencyItem): CommunityDisplayItem {
 
 // ── 提交文件下载 ──────────────────────────────
 
-/** 来源 tab → 落盘目录 kind；modpack 无对应落盘方案（开放待研究），不显示下载按钮。 */
+/** 来源 tab → 落盘目录 kind；modpack 走独立链式安装（isModpack 分流），无单文件下载。 */
 const fileKind = computed<DownloadFileKind | null>(() => {
   switch (resourceDetail.backTab) {
     case "mod": return "mod";
     case "shader": return "shader";
     case "resourcepack": return "resourcepack";
     case "datapack": return "datapack";
-    case "modpack": return null;
     case "worlds": return "world";
     default: return null;
   }
 });
 
+/** modpack 走 install_modpack 链式安装（准备 → 游戏本体 → 内容），与单文件下载分流。 */
+const isModpack = computed(() => resourceDetail.backTab === "modpack");
+
+/** 整合包安装：选中版本文件 → install_modpack（后端解析清单自动识别 Modrinth/CurseForge）。 */
+async function submitModpackInstall() {
+  if (!selectedVersionId.value) {
+    showToast("请先选择一个版本文件");
+    return;
+  }
+  const v = versions.value.find(x => x.version_id === selectedVersionId.value);
+  if (!v) {
+    showToast("所选版本文件不存在，请重新选择");
+    return;
+  }
+  try {
+    const taskId = await invoke<string>("install_modpack", {
+      request: {
+        name: item.value?.title ?? v.filename,
+        source: {
+          type: "online",
+          url: v.download_url,
+          sha1: v.sha1 ?? "",
+          size: v.file_size,
+        },
+        // 平台项目图标：随请求透传，安装期持久化到版本目录供列表展示
+        icon_url: item.value?.icon_url ?? null,
+      },
+    });
+    if (taskId) registerTaskName(taskId, item.value?.title ?? v.filename);
+    showToast("已提交整合包安装（准备 → 游戏本体 → 内容）");
+  } catch (e) {
+    showToast(errMsg(e));
+  }
+}
+
 /** 提交选中版本文件的下载任务（download_single_file → 任务中心自动注册）。
  *  落盘版本隔离：versions/{版本目录}/{kind_dir}/{filename}（后端 resolve 兜底 _{n} 冲突）。 */
 async function submitDownload() {
+  // modpack 分流：不要求已选启动版本（安装器自建版本目录）
+  if (isModpack.value) {
+    await submitModpackInstall();
+    return;
+  }
   // 任何未满足条件都明确提示（不静默）：点击始终有反馈
   if (!selectedVersionId.value) {
     showToast("请先选择一个版本文件");
@@ -429,12 +468,12 @@ async function copyName() {
               <span class="mv-spacer"></span>
 
               <button
-                v-if="fileKind"
+                v-if="fileKind || isModpack"
                 class="mv-dl"
                 :class="{ 'mv-dl-disabled': !selectedVersionId }"
-                v-tooltip="selectedVersionId ? '下载所选版本' : '先选择一个版本'"
+                v-tooltip="selectedVersionId ? (isModpack ? '安装所选版本整合包' : '下载所选版本') : '先选择一个版本'"
                 @click="submitDownload"
-              >下载</button>
+              >{{ isModpack ? "安装" : "下载" }}</button>
 
               <div v-if="isMod" ref="loaderDrop" class="mv-drop" @pointerdown.stop @click.stop="toggleFilter('loader')">
                 <span class="mv-drop-label">{{ loaderFilter ? loaderLabel(loaderFilter) : "全部加载器" }}</span>

@@ -1,12 +1,15 @@
 //! 下载任务命令（薄胶水层）：注册任务并 spawn 执行，编排逻辑在 task/runner.rs。
 
 use tauri::AppHandle;
+use std::path::Path;
+
 
 use crate::config::downloader::model::DownloaderConfig;
 use crate::constants;
 use crate::persist;
+use crate::downloader::modpack::{ModpackRequest, PackSource};
 use crate::task::{
-    self, files, repair, runner, DownloadFileItem, DownloadFileKind, DownloadFileTask,
+    self, files, modpack, repair, runner, DownloadFileItem, DownloadFileKind, DownloadFileTask,
     DownloadFilesTask, DownloadTask, TaskSpec,
 };
 
@@ -197,6 +200,7 @@ pub async fn resume_task(app: AppHandle, task_id: String) -> Result<String, Stri
             submit_missing_download(app, version_dir_name).await
         }
         JobSpec::InstallJdk { major } => submit_install_jdk(app, major).await,
+        JobSpec::ModpackInstall(spec) => install_modpack(app, spec.request).await,
     }
 }
 
@@ -260,4 +264,47 @@ pub fn decide_waiting_task(task_id: String, action: String) -> Result<(), String
 #[tauri::command]
 pub fn task_exists(task_id: String) -> bool {
     task::global().exists(&task_id)
+}
+
+// ── 整合包安装（单任务卡片：解析 → 本体 → 内容，步骤表动态增长）──
+
+/// 安装整合包（Modrinth .mrpack / CurseForge zip）。
+/// 单一任务全程承载：包体下载/解析 → 游戏本体+ModLoader → 内容文件+覆盖解压。
+/// 恢复 = 重跑整卡（各环节 sha1/扫描幂等，已就位内容零重下）。返回任务 id。
+#[tauri::command]
+pub async fn install_modpack(app: AppHandle, request: ModpackRequest) -> Result<String, String> {
+    if request.name.trim().is_empty() {
+        return Err("整合包名称不能为空".into());
+    }
+    match &request.source {
+        PackSource::Local { path } if path.trim().is_empty() => {
+            return Err("整合包文件路径不能为空".into());
+        }
+        PackSource::Online { url, .. } if url.trim().is_empty() => {
+            return Err("整合包下载地址不能为空".into());
+        }
+        _ => {}
+    }
+    if let PackSource::Local { path } = &request.source {
+        if !Path::new(path).is_file() {
+            return Err(format!("整合包文件不存在\n{path}"));
+        }
+    }
+
+    let tm = task::global();
+    let name = format!("整合包：{}", request.name);
+    let steps = modpack::initial_steps(&request);
+    let (task_id, cancel, progress) = tm.create(&name, &steps);
+    crate::task::store::save_snapshot(
+        &task_id,
+        &name,
+        &crate::task::store::JobSpec::ModpackInstall(crate::task::model::ModpackInstallSpec {
+            request: request.clone(),
+        }),
+        crate::task::TaskStatus::Running,
+    );
+    tauri::async_runtime::spawn(async move {
+        modpack::run_install(&app, &cancel, &progress, &request).await;
+    });
+    Ok(task_id)
 }

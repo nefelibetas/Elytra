@@ -5,6 +5,7 @@ pub mod hash;
 pub mod library;
 pub mod manifest;
 pub mod mod_updates;
+pub mod modpack;
 pub mod community;
 pub mod mod_loader;
 pub mod model;

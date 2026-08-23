@@ -68,6 +68,7 @@ pub fn run() {
             commands::task::start_download,
             commands::task::download_files,
             commands::task::download_single_file,
+            commands::task::install_modpack,
             commands::task::cancel_task,
             commands::task::decide_waiting_task,
             commands::task::task_exists,
