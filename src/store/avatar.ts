@@ -106,21 +106,21 @@ export async function renderOfflineAvatar(name: string) {
 }
 
 // ── 离线头像缓存（用户名 → Steve/Alex 2D 头部 dataURL；切换回已有用户名秒出，不重复 IO）──
-
-const OFFLINE_HEAD_CACHE = new Map<string, string>();
+// 模块级 reactive：组件重建（路由切换等）不丢缓存，列表与主头像共用同一份。
+export const offlineHeads = reactive<Record<string, string>>({});
 
 /** 渲染离线用户名的 Steve/Alex 默认皮肤 2D 头部（哈希决定模型，与主头像/游戏内一致）。
  * 缓存按用户名复用（仅缓存成功结果，失败不缓存以便之后重试）；失败返回 ""（调用方回退）。 */
 export async function renderOfflineHead(name: string): Promise<string> {
   const trimmed = name.trim();
   if (!trimmed) return "";
-  const cached = OFFLINE_HEAD_CACHE.get(trimmed);
+  const cached = offlineHeads[trimmed];
   if (cached !== undefined) return cached;
   try {
     const skinKind = randomIsAlex(trimmed) ? "alex" : "steve";
     const b64 = await invoke<string>("fetch_default_skin", { skin: skinKind });
     const head = await renderSkinHead(b64);
-    OFFLINE_HEAD_CACHE.set(trimmed, head);
+    offlineHeads[trimmed] = head;
     return head;
   } catch {
     return "";
@@ -196,21 +196,22 @@ export function scheduleOfflineRender(name: string) {
   avatarTimer = window.setTimeout(() => renderOfflineAvatar(name), 1337);
 }
 
-// ── 账号列表 2D 头像（sessionserver 皮肤截取头部，按 uuid 会话内缓存）──
+// ── 账号列表 2D 头像（sessionserver 皮肤截取头部，按 uuid 模块级缓存）──
 
-const ACCOUNT_HEAD_CACHE = new Map<string, string>();
+/** 正版账号 2D 头部缓存（uuid → dataURL；失败也占位空串防重复请求）。 */
+export const accountHeads = reactive<Record<string, string>>({});
 
 /** 拉取正版账号皮肤并截取 2D 头部，返回 dataURL；失败（无网络/未设置皮肤）返回 ""（调用方回退图标）。 */
 export async function renderAccountHead(uuid: string): Promise<string> {
-  const cached = ACCOUNT_HEAD_CACHE.get(uuid);
+  const cached = accountHeads[uuid];
   if (cached !== undefined) return cached;
   try {
     const b64 = await invoke<string>("fetch_account_skin", { uuid });
     const head = await renderSkinHead(b64);
-    ACCOUNT_HEAD_CACHE.set(uuid, head);
+    accountHeads[uuid] = head;
     return head;
   } catch {
-    ACCOUNT_HEAD_CACHE.set(uuid, "");
+    accountHeads[uuid] = "";
     return "";
   }
 }

@@ -51,8 +51,6 @@ export const memGamePct = computed(() => {
   const g = Math.min(memGameMb.value, remain);
   return memState.totalMb ? (g / memState.totalMb) * 100 : 0;
 });
-export const memLabelLeft = (pct: number) => Math.min(Math.max(pct, 4), 96) + "%";
-export const fmtGb = (mb: number) => (mb / 1024).toFixed(1) + "GB";
 
 // 自定义值超出最新剩余内存 → 动态收紧到可用范围内
 watch(

@@ -1,20 +1,15 @@
 import { reactive, ref } from "vue"
 import { listen } from "@tauri-apps/api/event"
-import { EVT_TASK_PROGRESS, EVT_TASK_WAITING_USER } from "./events"
+import { EVT_TASK_PROGRESS, EVT_TASK_WAITING_USER } from "./events";
+import type { StepStatus, StepInfo, ProgressPayload, WaitingUserPayload } from "./events";
+// 事件 payload 类型集中定义在 events.ts，这里 re-export 保持既有 import 路径兼容。
+export type { StepStatus, StepInfo, ProgressPayload, WaitingUserPayload };
 import { invoke } from "@tauri-apps/api/core"
 import { showToast } from "../utils/toast"
 import { errMsg } from "../utils/error"
 
-export type StepStatus = "pending" | "running" | "done";
-
 /** 任务种类标记（前端私有，用于终态回调分流；仅特殊任务设置）。 */
 export type TaskKind = "jdk";
-
-export interface StepInfo {
-  name: string
-  status: StepStatus
-  progress: number
-}
 
 export interface TaskItem {
   taskId: string
@@ -33,22 +28,6 @@ export interface TaskItem {
   error?: string
   /** 任务种类（JDK 安装等特殊任务；版本/文件下载不设置） */
   kind?: TaskKind
-}
-
-export interface ProgressPayload {
-  task_id: string
-  name: string
-  status: string
-  progress: number
-  speed_bps: number
-  eta_seconds: number | null
-  completed_files: number
-  total_files: number
-  completed_bytes: number
-  total_bytes: number
-  current_phase: string
-  steps: StepInfo[]
-  error?: string | null
 }
 
 // ── 任务入参（镜像 Rust task 模块；字段名必须 snake_case，tauri 键名严格匹配）──
@@ -109,6 +88,15 @@ export const versionTargets = new Map<string, string>();
 /** 注册版本下载目标：startTask 提交后调用。 */
 export function registerVersionTarget(taskId: string, dirName: string) {
   versionTargets.set(taskId, dirName);
+}
+
+/** 任务完成钩子（taskId → 回调，消费后即删）：特殊任务（JDK 安装等）经统一监听
+ *  感知终态并接续自身流程，替代各 store 自建 EVT_TASK_PROGRESS 监听。 */
+export const taskDoneHooks = new Map<string, () => void>();
+
+/** 注册任务完成钩子：任务 done 时回调一次（error/cancel 不触发且清除）。 */
+export function registerTaskDoneHook(taskId: string, onDone: () => void) {
+  taskDoneHooks.set(taskId, onDone);
 }
 
 export const dlState = reactive({
@@ -189,9 +177,26 @@ export const dlState = reactive({
           : null,
     }
     const taskId = await invoke<string>("start_download", { task })
+    await this.adoptTask(taskId, { name: "" })
+    return taskId
+  },
+
+  /**
+   * 统一任务接管：后端提交类命令（start_download / submit_install_jdk 等）共用的
+   * 收尾路径——预注册任务卡片 + 极快终态竞态校正。
+   * 竞态：invoke 返回与首个 task-progress 事件谁先到不确定；事件已自动注册时合并。
+   * 任务可能极快终态（error/done 事件先于预注册到达被忽略，卡片以 pending 残留且
+   * 不再有终态事件）。终态任务已从后端移除，查不到即已结束——移除卡片；
+   * 终态事件已处理（terminalTaskIds 命中）时不重复提示；事件丢失场景只做中性提示。
+   * `silentFastExit`：跳过极快终态的中性提示（调用方自带反馈时使用）。
+   */
+  async adoptTask(
+    taskId: string,
+    init: Partial<TaskItem> & { name: string },
+    silentFastExit = false,
+  ) {
     this.addTask({
       taskId,
-      name: "",
       status: "pending",
       progress: 0,
       speedBps: 0,
@@ -202,26 +207,23 @@ export const dlState = reactive({
       totalBytes: 0,
       currentPhase: "等待中",
       steps: [],
+      ...init,
     })
-    // 竞态校正：任务可能极快终态（error/done 事件先于预注册到达被忽略，
-    // 卡片以 pending 残留且不再有终态事件）。终态任务已从后端移除，
-    // 查不到即已结束——移除卡片。
-    // 终态事件已处理（terminalTaskIds 命中）时不重复提示；事件丢失的
-    // 场景只做中性提示（极快失败或完成都有可能，不弹错误 dialog 误报）。
     const exists = await invoke<boolean>("task_exists", { taskId })
     if (!exists) {
       const alreadyHandled = terminalTaskIds.has(taskId)
       terminalTaskIds.add(taskId)
       this.removeTask(taskId)
-      if (!alreadyHandled) {
+      if (!alreadyHandled && !silentFastExit) {
         showToast("任务已结束（可能极快完成或失败）")
       }
     }
-    return taskId
   },
 
   async cancelTask(taskId: string) {
     await invoke("cancel_task", { taskId })
+    // 用户主动取消：终态不走 done 分发，钩子就地清除防泄漏
+    taskDoneHooks.delete(taskId)
   },
 
   /** 任务完成回调：第一参为完成提示文案；第三参为版本下载任务的安装目录名
@@ -264,13 +266,21 @@ export function ensureListen() {
         versionTargets.delete(p.task_id);
         dlState.onTaskDone?.(message, kind, vdir);
         dlState.removeTask(p.task_id);
+        // 特殊任务（JDK 安装等）的完成接续：统一监听内分发，消费后即删
+        const doneHook = taskDoneHooks.get(p.task_id);
+        taskDoneHooks.delete(p.task_id);
+        doneHook?.();
         return
       }
       if (p.status === "error") {
         // 任务失败：弹错误 dialog + 清理卡片（残留由后端清理）
         terminalTaskIds.add(p.task_id)
+        // 与 done 分支对齐：终态即清理资源名/版本目标映射，防条目泄漏
+        taskNames.delete(p.task_id)
+        versionTargets.delete(p.task_id)
         dlState.onTaskError?.(p.name || "下载任务", p.error || "未知错误");
         dlState.removeTask(p.task_id);
+        taskDoneHooks.delete(p.task_id);
         return
       }
       dlState.tasks[idx].name = p.name
@@ -289,11 +299,6 @@ export function ensureListen() {
       p.status !== "done" && p.status !== "cancelled" && p.status !== "error"
       && !terminalTaskIds.has(p.task_id)
     ) {
-      // 后端直接创建的任务（如补全文件）不在前端列表中：首次事件自动注册，
-      // 保证任务中心徽标与进度可见。
-      // done/cancelled/error 均为终态：done 与 error 走上方移除逻辑；cancelled 由取消
-      // 流程（cancelTask + removeTask）主动清理。终态事件重复到达（如 EmitLoop
-      // 退出的最后一轮）时卡片已移除，不应重新注册（否则幽灵复活）。
       dlState.addTask({
         taskId: p.task_id,
         name: p.name,
@@ -321,13 +326,6 @@ export interface InterruptedJob {
   name: string;
   kind: string;
   updated_at: number;
-}
-
-/** task-waiting-user 事件 payload（镜像 Rust task::files::WaitingUserPayload）。 */
-export interface WaitingUserPayload {
-  task_id: string;
-  file_name: string;
-  error: string;
 }
 
 /** 挂起等待用户决策的文件下载任务（非 null 时前端弹窗）。 */

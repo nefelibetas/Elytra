@@ -6,9 +6,10 @@ import DropSelect, { type SelOption } from "./DropSelect.vue";
 import {
   loWindowTitle, loPriority, loWinMode, loWinW, loWinH, loGameLang,
   loMemMode, loMemMb, loMemOptimize, loVerifySsl, launchError,
-  memUsedMb, memGameMb, memUsedPct, memGamePct, memLabelLeft, fmtGb,
+  memUsedMb, memGameMb, memUsedPct, memGamePct,
   saveLaunchOptions, loadLaunchOptions,
 } from "../store/launchOptions";
+import { memLabelLeft, fmtGb } from "../utils/format";
 
 onMounted(loadLaunchOptions);
 

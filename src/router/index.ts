@@ -14,12 +14,16 @@ declare module "vue-router" {
   }
 }
 
+/** 路由路径常量（store/组件跳转共用，避免散落重复字符串）。 */
+export const ROUTE_DOWNLOAD = "/download";
+export const ROUTE_RESOURCE_DETAIL = "/resource-detail";
+
 const routes = [
   { path: "/", name: "launch", component: Launch },
-  { path: "/download", name: "download", component: Download },
+  { path: ROUTE_DOWNLOAD, name: "download", component: Download },
   { path: "/settings", name: "settings", component: Settings },
   { path: "/download-detail", name: "download-detail", component: DownloadDetail },
-  { path: "/resource-detail", name: "resource-detail", component: ResourceDetail },
+  { path: ROUTE_RESOURCE_DETAIL, name: "resource-detail", component: ResourceDetail },
   { path: "/version-select", name: "version-select", component: VersionSelect },
   { path: "/version-setup", name: "version-setup", component: VersionSetup },
 ];

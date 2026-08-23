@@ -138,13 +138,20 @@ export async function cancelMsLogin() {
   }
 }
 
+/** ms-login-complete 事件 payload（镜像 Rust events::MsLoginCompletePayload）。 */
+export interface MsLoginCompletePayload {
+  ok: boolean;
+  account: MsAccountInfo | null;
+  error: string | null;
+}
+
 let loginListenerReady = false;
 
 /** 幂等注册 ms-login-complete 监听（页面 onMounted 调用一次）。 */
 export async function ensureLoginListener() {
   if (loginListenerReady) return;
   loginListenerReady = true;
-  await listen<{ ok: boolean; account: MsAccountInfo | null; error: string | null }>(
+  await listen<MsLoginCompletePayload>(
     EVT_MS_LOGIN_COMPLETE,
     async (ev) => {
       msLoginState.value = "idle";

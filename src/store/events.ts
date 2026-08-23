@@ -1,4 +1,5 @@
-// 前后端共享的事件名常量（Rust 侧 src-tauri/src/events.rs 手写镜像，改这里必须同步）。
+// 前后端共享的事件名常量与事件 payload 类型
+// （Rust 侧 src-tauri/src/events.rs 手写镜像，改这里必须同步）。
 
 /** 下载任务进度推送（ProgressPayload） */
 export const EVT_TASK_PROGRESS = "task-progress";
@@ -10,3 +11,38 @@ export const EVT_MS_LOGIN_COMPLETE = "ms-login-complete";
 export const EVT_GAME_EXITED = "game-exited";
 /** 游戏主窗口可见（[pid, versionLabel]；后端 EnumWindows 轮询判定） */
 export const EVT_GAME_WINDOW_VISIBLE = "game-window-visible";
+
+// ── 事件 payload 类型（集中定义，store 经 re-export 保持既有 import 路径兼容）──
+
+export type StepStatus = "pending" | "running" | "done";
+
+/** 进度推送中的单步骤状态。 */
+export interface StepInfo {
+  name: string
+  status: StepStatus
+  progress: number
+}
+
+/** task-progress 事件 payload（镜像 Rust task::progress::ProgressPayload）。 */
+export interface ProgressPayload {
+  task_id: string
+  name: string
+  status: string
+  progress: number
+  speed_bps: number
+  eta_seconds: number | null
+  completed_files: number
+  total_files: number
+  completed_bytes: number
+  total_bytes: number
+  current_phase: string
+  steps: StepInfo[]
+  error?: string | null
+}
+
+/** task-waiting-user 事件 payload（镜像 Rust task::files::WaitingUserPayload）。 */
+export interface WaitingUserPayload {
+  task_id: string;
+  file_name: string;
+  error: string;
+}

@@ -1,14 +1,14 @@
 <script setup lang="ts">
 // 账号区：正版/离线切换 + 用户区（头像/用户名/登录/操作菜单）。
 // 菜单跟随鼠标 Teleport 到 body；window click 关闭菜单（组件挂载周期内注册）。
-import { computed, onMounted, onUnmounted, reactive, watch } from "vue";
+import { computed, onMounted, onUnmounted, watch } from "vue";
 import { ShieldCheck, User, UserRound, Shirt, Pencil, LogOut, Users, ChevronDown } from "@lucide/vue";
 import {
   authMode, msAccount, msAccounts, offlineAccounts, username, setAuthMode, msLoginState,
   startMsLogin, cancelMsLogin, switchMsAccount, removeMsAccount,
   saveOfflineAccount, removeOfflineAccount,
 } from "../store/auth";
-import { avatarState, scheduleOfflineRender, renderAccountHead, renderOfflineHead } from "../store/avatar";
+import { avatarState, scheduleOfflineRender, renderAccountHead, renderOfflineHead, accountHeads, offlineHeads } from "../store/avatar";
 import { accountUi } from "../store/accountUi";
 import { showError } from "../store/alert";
 
@@ -39,7 +39,6 @@ onUnmounted(() => {
 
 // ── 账号列表 2D 头像（打开菜单时并发预加载，会话内缓存）──
 
-const accountHeads = reactive<Record<string, string>>({});
 let headLoadSeq = 0;
 
 async function ensureAccountHeads() {
@@ -52,8 +51,6 @@ async function ensureAccountHeads() {
 }
 
 // ── 离线历史头像（Steve/Alex 默认皮肤 2D 头部，哈希决定模型，与主头像/游戏内一致）──
-
-const offlineHeads = reactive<Record<string, string>>({});
 
 async function ensureOfflineHeads() {
   for (const name of offlineAccounts.value) {

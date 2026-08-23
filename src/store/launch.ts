@@ -159,6 +159,9 @@ export async function doLaunch(navigateToDownload: () => void) {
   }
 }
 
+/** game-exited 事件 payload：[pid, versionLabel, exitCode, crashReport]（exitCode 非 0 = 异常退出）。 */
+type GameExitedPayload = [number, string, number | null, string | null];
+
 let gameExitListenerReady = false;
 
 /** 等待游戏主窗口：window-visible 事件到达（后端轮询命中）即成功；
@@ -181,7 +184,7 @@ function waitGameWindow(label: string): Promise<boolean> {
       windowSeen = true;
       finish(true);
     }).then(u => unlisteners.push(u));
-    listen<[number, string, number | null, string | null]>(EVT_GAME_EXITED, (ev) => {
+    listen<GameExitedPayload>(EVT_GAME_EXITED, (ev) => {
       if (ev.payload[1] !== label) return;
       // 任意退出码：窗口已见则视为"已成功等待"，否则判定失败
       finish(windowSeen);
@@ -193,7 +196,7 @@ function waitGameWindow(label: string): Promise<boolean> {
 export async function ensureGameExitListener() {
   if (gameExitListenerReady) return;
   gameExitListenerReady = true;
-  await listen<[number, string, number | null, string | null]>(EVT_GAME_EXITED, (ev) => {
+  await listen<GameExitedPayload>(EVT_GAME_EXITED, (ev) => {
     console.log("Game exited:", ev.payload);
     const [, label, exitCode, crashReport] = ev.payload;
     // 退出码非 0：游戏异常退出（崩溃/启动失败）——不再静默，弹错误级提示
