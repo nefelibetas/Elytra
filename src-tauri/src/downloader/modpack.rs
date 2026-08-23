@@ -84,6 +84,9 @@ pub struct PackPlan {
     pub version_url: String,
     /// 预定版本目录名 `{包名}-{mc}`（冲突 `_{n}`），三阶段共享保证一致
     pub version_dir_name: String,
+    /// 包身份键（重装/更新同名包时据此复用已有版本目录，sha1 幂等跳过才生效）
+    #[serde(default)]
+    pub cache_key: String,
     #[serde(default)]
     pub files: Vec<PackFile>,
     /// 作者关闭第三方分发的 CF 文件名（无法自动下载，收尾提示手动放置）
@@ -329,10 +332,46 @@ pub fn read_manifest(
 /// `version_url` 由调用方解析官方版本清单后传入；CF 换链在 `build_plan` 完成。
 /// 8 个参数均为语义必要（zip/包名/版本/loader/文件/受限/官方URL/游戏目录），
 /// 对齐 count_assets_all 先例不强行合并。
+/// 扫描 versions/ 下各整合包版本目录的身份标记，返回与 `cache_key` 匹配的目录名。
+/// 标记由安装阶段写入 versions/{dir}/elytra-pack.json。
+fn find_reusable_pack_dir(mc: &Path, cache_key: &str) -> Option<String> {
+    let entries = std::fs::read_dir(mc.join("versions")).ok()?;
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        if !dir.is_dir() {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(dir.join("elytra-pack.json")) else {
+            continue;
+        };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+            continue;
+        };
+        if v["cache_key"].as_str() == Some(cache_key) {
+            return Some(dir.file_name()?.to_string_lossy().to_string());
+        }
+    }
+    None
+}
+
+/// 包身份缓存键：`{净化包名}-{来源哈希8}`（包体缓存 / 计划文件 / 版本身份标记共用）。
+pub fn cache_key(request: &ModpackRequest) -> String {
+    let seed = match &request.source {
+        PackSource::Local { path } => path.clone(),
+        PackSource::Online { url, .. } => url.clone(),
+    };
+    format!(
+        "{}-{:08x}",
+        crate::util::sanitize_fs_name(&request.name, "modpack"),
+        crate::util::fnv1a64(&seed)
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn assemble_plan(
     zip_path: &Path,
     pack_name: &str,
+    cache_key: &str,
     mc_version: &str,
     loader: Option<LoaderChoice>,
     files: Vec<PackFile>,
@@ -368,11 +407,16 @@ pub fn assemble_plan(
         crate::util::sanitize_fs_name(pack_name, "modpack"),
         mc_version
     );
+    // 目录选择优先复用：已存在同 cache_key 的整合包版本目录 → 更新语义，
+    // 内容文件 sha1 幂等跳过才真正生效；否则新建并按 `_{n}` 消解冲突
     let version_dir_name =
-        crate::util::unique_child_dir(&minecraft_dir.join("versions"), &base_dir);
+        find_reusable_pack_dir(minecraft_dir, cache_key).unwrap_or_else(|| {
+            crate::util::unique_child_dir(&minecraft_dir.join("versions"), &base_dir)
+        });
 
     Ok(PackPlan {
         name: pack_name.to_string(),
+        cache_key: cache_key.to_string(),
         mc_version,
         loader,
         version_url,
@@ -426,6 +470,7 @@ pub async fn build_plan(
     assemble_plan(
         zip_path,
         &request.name,
+        &cache_key(request),
         &mc_version,
         loader,
         files,
@@ -594,6 +639,7 @@ mod tests {
         let plan = assemble_plan(
             &zip_path,
             r#"Demo <Pack>"#,
+            "key-a",
             " 1.21.1 ",
             parsed.loader,
             parsed.files,
@@ -626,6 +672,7 @@ mod tests {
         let plan2 = assemble_plan(
             &zip_path,
             r#"Demo <Pack>"#,
+            "key-b",
             "1.21.1",
             reparsed.loader,
             reparsed.files,
@@ -653,7 +700,7 @@ mod tests {
         )
         .unwrap();
         let err =
-            assemble_plan(&plain, "E", "1.20.1", p.loader, p.files, Vec::new(), "u".into(), mc.path())
+            assemble_plan(&plain, "E", "key-c", "1.20.1", p.loader, p.files, Vec::new(), "u".into(), mc.path())
                 .unwrap_err();
         assert!(err.contains("没有可安装的内容"), "空内容应报错: {err}");
     }
@@ -671,6 +718,7 @@ mod tests {
             assemble_plan(
                 &zip_path,
                 name,
+                "key-d",
                 "1.21.1",
                 parsed.loader,
                 parsed.files,
@@ -686,5 +734,48 @@ mod tests {
         assert_eq!(mk("CON"), "modpack-1.21.1", "Windows 保留名回退 modpack");
         assert_eq!(mk("  tail.  "), "tail-1.21.1", "去尾点");
     }
+
+    /// 同 cache_key 重装 → 复用标记目录（更新语义，sha1 跳过才生效）；
+    /// 不同包不受他人标记影响，走常规 `{净化名}-{mc}` 命名。
+    #[test]
+    fn assemble_plan_reuses_dir_marked_with_same_cache_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let mc = tempfile::tempdir().unwrap();
+        let zip_path = dir.path().join("a.mrpack");
+        write_mrpack_zip(&zip_path);
+        let mk = |key: &str| {
+            let parsed = parse_modrinth_index(MRPACK_INDEX).unwrap();
+            assemble_plan(
+                &zip_path,
+                "Demo Pack",
+                key,
+                "1.21.1",
+                parsed.loader,
+                parsed.files,
+                Vec::new(),
+                "u".into(),
+                mc.path(),
+            )
+            .unwrap()
+            .version_dir_name
+        };
+
+        // 预置上次安装留下的身分标记目录（含冲突后缀形态 _3）
+        let existing = mc.path().join("versions").join("Demo-1.21.1_3");
+        std::fs::create_dir_all(&existing).unwrap();
+        std::fs::write(
+            existing.join("elytra-pack.json"),
+            r#"{"cache_key":"key-same"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(mk("key-same"), "Demo-1.21.1_3", "同包重装应复用原目录（更新语义）");
+        assert_eq!(
+            mk("key-other"),
+            "Demo Pack-1.21.1",
+            "不同包不受标记影响，走常规命名"
+        );
+    }
+
 
 }
