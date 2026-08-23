@@ -433,6 +433,7 @@ input, textarea {
 .toast {
   position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
   z-index: var(--z-toast, 3000);
+  padding: 10px 24px; border-radius: var(--radius-md);
   background: var(--toast-bg); color: var(--text-inverse);
   font-size: 13px; font-weight: 500;
   white-space: nowrap; box-shadow: var(--shadow-lg);
@@ -483,6 +484,7 @@ input, textarea {
 
 .wd-retry { background: var(--color-brand); border-color: var(--color-brand); color: var(--text-inverse); }
 .wd-retry:hover { opacity: 0.9; }
+.wd-btn:hover { border-color: var(--color-brand); }
 .wd-cancel { color: var(--color-danger); }
 .wd-cancel:hover { border-color: var(--color-danger); }
 /* 弹窗操作按钮（AlertDialog #actions slot 全局共享）：
@@ -536,6 +538,7 @@ input, textarea {
   line-height: 1.5;
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-lg);
+  background: var(--toast-bg);
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
