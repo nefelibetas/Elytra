@@ -3,13 +3,17 @@
 // 业务在 store/versionDetail；重命名/修复/打开文件夹为本地编排。
 import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { Pencil, Folder, FolderOpen, CloudDownload, Puzzle, Map, Settings2, Palette, Database, Sun } from "@lucide/vue";
+import { Pencil, Folder, FolderOpen, CloudDownload, Puzzle, Map, Settings2, Palette, Database, Sun, ImagePlus } from "@lucide/vue";
+import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { classifyVersion } from "../utils/versionClassify";
 import { LOADER_ICONS, LOADER_TITLES } from "../utils/versionMeta";
 import { fmtCount, fmtSize } from "../utils/format";
 import { showToast } from "../utils/toast";
 import { errMsg } from "../utils/error";
+import {
+  versionIcons, loadVersionIcon, setVersionIcon,
+} from "../store/versionIcon";
 import { isLaunching } from "../store/launch";
 import VersionItem from "./VersionItem.vue";
 import AlertDialog from "./AlertDialog.vue";
@@ -35,7 +39,27 @@ const info = computed(() => classifyVersion(versionName.value));
 /** loader 判定：后端 json 特征推断优先（PCL2 等目录名无标记实例也能识别），目录名分类兜底。
  *  与版本选择页（gameDirs.ts）同规则，保证两处图标一致。 */
 const category = computed(() => versionLoader.value || info.value.category);
-const icon = computed(() => LOADER_ICONS[category.value] ?? LOADER_ICONS.vanilla);
+/** 展示图标：自定义/整合包项目图（懒加载缓存）优先，回退 loader 图标。 */
+const displayIcon = computed(() => versionIcons[versionName.value] ?? LOADER_ICONS[category.value] ?? LOADER_ICONS.vanilla);
+// 版本切换即懒加载该版本的持久化图标（整合包 logo / 用户自定义）
+watch(versionName, name => void loadVersionIcon(name), { immediate: true });
+/**
+ * 修改图标：本地选图 → 后端魔数校验后复制为版本自定义图标。
+ * 成功后 store 已刷新缓存，卡片立即显示新图。
+ */
+async function changeIcon() {
+  const path = await open({
+    multiple: false,
+    filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
+  });
+  if (!path) return;
+  try {
+    await setVersionIcon(versionName.value, String(path));
+    showToast("图标已更新");
+  } catch (e) {
+    showToast(errMsg(e));
+  }
+}
 /** loader 版本号：目录名可解析且与最终 category 一致才显示（后端推断时目录名可能无版本号）。 */
 const loaderVersion = computed(() =>
   info.value.category === category.value ? info.value.loaderVersion : "",
@@ -274,10 +298,13 @@ function fmtUnix(sec: number): string {
   <div class="vdc">
     <!-- 头部：版本信息 + 版本设置 / 重命名 -->
     <div class="vdc-head">
-      <VersionItem :icon-src="icon" :version-id="versionName" :subtitle="subtitle">
+      <VersionItem :icon-src="displayIcon" :version-id="versionName" :subtitle="subtitle">
         <template #action>
           <button class="vdc-icon-btn" v-tooltip="'版本设置'" @click="goSetup">
             <Settings2 :size="15" />
+          </button>
+          <button class="vdc-icon-btn" v-tooltip="'修改图标'" @click="changeIcon">
+            <ImagePlus :size="15" />
           </button>
           <button class="vdc-icon-btn" v-tooltip="'重命名版本'" @click="openRename">
             <Pencil :size="15" />
