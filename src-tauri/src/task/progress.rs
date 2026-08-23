@@ -465,3 +465,80 @@ pub fn set_cancelled(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>) {
         global().fail(&task_id);
     }
 }
+
+// ── 共享简易心跳（files / modpack 等顺序+块式任务复用）──
+
+/// 心跳输入计数器束：完成文件数（进度分子）/ 总文件数 /
+/// 累计字节（速度来源）/ 总量估算（可运行中增长，ETA 分母）。
+pub struct HeartbeatStats {
+    pub done_files: Arc<AtomicU32>,
+    pub total_files: u32,
+    pub bytes: Arc<AtomicU64>,
+    pub est_total_bytes: Arc<AtomicU64>,
+}
+
+/// 150ms 共享心跳：刷新状态 Running、文件/字节进度、EMA 速度（0.6/0.4，
+/// ≥300ms 采样窗）、ETA（速度 <1KB/s 或停滞 >4s 置 None）。
+/// 进度百分比交由 `update_progress` 统一公式计算；返回句柄由调用方在
+/// 任务收尾前 abort。语义对齐 files/modpack 原有内联实现。
+pub fn spawn_heartbeat(
+    app: &AppHandle,
+    progress: &Arc<Mutex<TaskProgress>>,
+    stats: HeartbeatStats,
+) -> tauri::async_runtime::JoinHandle<()> {
+    use std::time::{Duration, Instant};
+
+    let done_files = stats.done_files;
+    let bytes = stats.bytes;
+    let est = stats.est_total_bytes;
+    let total_files = stats.total_files;
+    tauri::async_runtime::spawn({
+        let app = app.clone();
+        let progress = progress.clone();
+        async move {
+            let mut tick = tokio::time::interval(Duration::from_millis(150));
+            let mut last_bytes = 0u64;
+            let mut last_sample = Instant::now();
+            let mut last_progress_at = Instant::now();
+            let mut speed_ema: f64 = 0.0;
+            loop {
+                tick.tick().await;
+                let cur = bytes.load(Ordering::Relaxed);
+                let total_bytes = est.load(Ordering::Relaxed);
+                let now = Instant::now();
+                if cur > last_bytes {
+                    last_progress_at = now;
+                }
+                let dt = now.duration_since(last_sample).as_secs_f64();
+                if dt >= 0.3 && cur > last_bytes {
+                    let instant = (cur - last_bytes) as f64 / dt;
+                    speed_ema = if speed_ema <= 0.0 {
+                        instant
+                    } else {
+                        speed_ema * 0.6 + instant * 0.4
+                    };
+                    last_bytes = cur;
+                    last_sample = now;
+                }
+                update_and_emit(&app, &progress, |p| {
+                    p.status = TaskStatus::Running;
+                    p.completed_files = done_files.load(Ordering::Relaxed);
+                    p.total_files = total_files;
+                    p.completed_bytes = cur;
+                    p.total_bytes = total_bytes;
+                    p.speed_bps = speed_ema;
+                    let remaining = total_bytes.saturating_sub(cur);
+                    p.eta_seconds = if speed_ema >= 1024.0
+                        && remaining > 0
+                        && now.duration_since(last_progress_at) <= Duration::from_secs(4)
+                    {
+                        Some((remaining as f64 / speed_ema).ceil() as u64)
+                    } else {
+                        None
+                    };
+                    update_progress(p);
+                });
+            }
+        }
+    })
+}
