@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use crate::config::downloader::model::{DownloadSource, DownloadSourceMode, DownloaderConfig};
 use crate::downloader::fetcher::http;
+use crate::downloader::model::MIRROR_ROUTES;
 
 /// 元数据请求的缓存/网络行为（离线模式 strict cache-only 的语义载体）：
 /// - `DefaultTtl`：缓存优先（TTL 内命中直接返回），未命中发网络并写缓存——默认行为；
@@ -23,12 +24,12 @@ pub enum CacheBehaviour {
 
 impl DownloadSource {
     /// 镜像 URL 重写：仅中国镜像源（manifest_url 含 bmclapi）生效，
-    /// 把官方域 URL 按 REWRITE_RULES 重写到 BMCLAPI 镜像前缀。
+    /// 把官方域 URL 按 MIRROR_ROUTES（单一表，见 downloader/model.rs）重写到 BMCLAPI 镜像前缀。
     pub fn mirror_url(&self, original: &str) -> String {
         if !self.manifest_url.contains("bmclapi") {
             return original.to_string();
         }
-        for (domain, replacement) in REWRITE_RULES {
+        for (domain, replacement) in MIRROR_ROUTES {
             if original.contains(domain) {
                 let path = original.split(domain).nth(1).unwrap_or("");
                 return format!("{}{}", replacement, path);
@@ -37,32 +38,6 @@ impl DownloadSource {
         original.to_string()
     }
 }
-
-const REWRITE_RULES: &[(&str, &str)] = &[
-    ("piston-meta.mojang.com", "https://bmclapi2.bangbang93.com"),
-    ("piston-data.mojang.com", "https://bmclapi2.bangbang93.com"),
-    ("launcher.mojang.com", "https://bmclapi2.bangbang93.com"),
-    ("launchermeta.mojang.com", "https://bmclapi2.bangbang93.com"),
-    (
-        "libraries.minecraft.net",
-        "https://bmclapi2.bangbang93.com/libraries",
-    ),
-    (
-        "resources.download.minecraft.net",
-        "https://bmclapi2.bangbang93.com/assets",
-    ),
-    // ModLoader 官方 maven 对高并发不友好（实测 20 并发即有连接失败），
-    // BMCLAPI 完整镜像 maven.neoforged.net / maven.minecraftforge.net（302 实测可用）。
-    // 仅做备用：官方源仍优先，镜像源兜底，避免整批库下载失败。
-    (
-        "maven.neoforged.net",
-        "https://bmclapi2.bangbang93.com/maven",
-    ),
-    (
-        "maven.minecraftforge.net",
-        "https://bmclapi2.bangbang93.com/maven",
-    ),
-];
 
 impl DownloaderConfig {
     /// 按模式返回依次尝试的源列表。

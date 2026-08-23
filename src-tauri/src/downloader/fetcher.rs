@@ -10,6 +10,8 @@ use tokio::sync::Semaphore;
 use crate::config::downloader::model::{DownloadSourceMode, DownloaderConfig, ResourceClass};
 
 use crate::constants::{SECT_DOWNLOADER, UA_DOWNLOAD};
+use crate::downloader::model::MIRROR_ROUTES;
+use crate::downloader::proxy::apply_system_proxy;
 
 /// 镜像源并发信号量（全进程共享）：限制同一时刻对镜像源（BMCLAPI/MCIM）的请求数。
 /// 官方源实测 128 并发稳定无限流；镜像源 30 并发即触发 429，故镜像请求独立于
@@ -44,39 +46,6 @@ pub struct DownloadRoute {
     /// 是否镜像源（并发限流判定与排序权重）。
     pub is_mirror: bool,
 }
-
-/// 显式镜像路由表：任意官方 URL 即时生成 BMCLAPI 镜像候选
-/// （官方 URL 始终保留在候选列表中保底），取代"主源是 BMCLAPI 才重写"的源模板限制。
-/// 与 model.rs 的 REWRITE_RULES 同构（镜像 URL 形态保持一致），并补充 fabric-meta。
-const MIRROR_ROUTES: &[(&str, &str)] = &[
-    (
-        "resources.download.minecraft.net",
-        "https://bmclapi2.bangbang93.com/assets",
-    ),
-    (
-        "libraries.minecraft.net",
-        "https://bmclapi2.bangbang93.com/libraries",
-    ),
-    ("piston-meta.mojang.com", "https://bmclapi2.bangbang93.com"),
-    ("piston-data.mojang.com", "https://bmclapi2.bangbang93.com"),
-    ("launcher.mojang.com", "https://bmclapi2.bangbang93.com"),
-    ("launchermeta.mojang.com", "https://bmclapi2.bangbang93.com"),
-    // ModLoader 官方 maven → BMCLAPI /maven（完整镜像，302 实测可用）
-    (
-        "maven.neoforged.net",
-        "https://bmclapi2.bangbang93.com/maven",
-    ),
-    (
-        "maven.minecraftforge.net",
-        "https://bmclapi2.bangbang93.com/maven",
-    ),
-    ("maven.fabricmc.net", "https://bmclapi2.bangbang93.com/maven"),
-    // fabric 版本清单镜像（quilt 无镜像，保持直连官方）
-    (
-        "meta.fabricmc.net",
-        "https://bmclapi2.bangbang93.com/fabric-meta",
-    ),
-];
 
 /// 为官方 URL 生成镜像候选（无命中返回空）。
 fn mirror_candidates(original: &str) -> Vec<String> {
@@ -227,176 +196,6 @@ fn mirror_safe_redirect() -> reqwest::redirect::Policy {
     })
 }
 
-/// 解析 Windows 注册表 ProxyServer 值 → (http 代理, https 代理)。
-/// 支持两种格式：
-///   `127.0.0.1:7890`（全协议统一）
-///   `http=127.0.0.1:7890;https=127.0.0.1:7891;ftp=...`（分协议，缺项为 None）
-/// 代理连接 URL 统一用 http scheme（Clash 等 mixed 端口为明文 HTTP 代理；
-/// 注册表不表达"到代理的连接是否加密"，默认明文）。
-fn parse_proxy_server(raw: &str) -> (Option<String>, Option<String>) {
-    let raw = raw.trim();
-    let mut http = None;
-    let mut https = None;
-    if raw.contains('=') {
-        for seg in raw.split(';') {
-            let seg = seg.trim();
-            if seg.is_empty() {
-                continue;
-            }
-            let Some((scheme, addr)) = seg.split_once('=') else {
-                continue;
-            };
-            let addr = addr.trim();
-            if addr.is_empty() {
-                continue;
-            }
-            match scheme.trim() {
-                "http" => http = Some(format!("http://{addr}")),
-                "https" => https = Some(format!("http://{addr}")),
-                _ => {}
-            }
-        }
-    } else if !raw.is_empty() {
-        let full = format!("http://{raw}");
-        http = Some(full.clone());
-        https = Some(full);
-    }
-    (http, https)
-}
-
-/// 返回 (http 代理 URL, https 代理 URL)——按平台检测系统代理：
-/// - Windows：注册表 Internet Settings（Clash 等系统代理模式）优先，环境变量兜底
-/// - Linux：环境变量（https_proxy/http_proxy/all_proxy）优先，GNOME gsettings 兜底
-/// - 其他平台：环境变量
-fn system_proxy_urls() -> (Option<String>, Option<String>) {
-    #[cfg(target_os = "windows")]
-    {
-        // 1. 注册表（开启"使用代理服务器"时 Clash 等系统代理写这里）
-        use winreg::enums::HKEY_CURRENT_USER;
-        use winreg::RegKey;
-        if let Ok(settings) = RegKey::predef(HKEY_CURRENT_USER).open_subkey(
-            "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
-        ) {
-            let enabled: u32 = settings.get_value("ProxyEnable").unwrap_or(0);
-            let server: Result<String, _> = settings.get_value("ProxyServer");
-            if enabled == 1 {
-                if let Ok(server) = server {
-                    let (h, s) = parse_proxy_server(&server);
-                    if h.is_some() || s.is_some() {
-                        return (h, s);
-                    }
-                }
-            }
-        }
-        // 2. 环境变量兜底
-        env_proxy_urls()
-    }
-    #[cfg(target_os = "linux")]
-    {
-        // 1. 环境变量（终端/CI/容器场景；桌面端导出的常见方式）
-        let env = env_proxy_urls();
-        if env.0.is_some() || env.1.is_some() {
-            return env;
-        }
-        // 2. GNOME 桌面系统代理（gsettings org.gnome.system.proxy）
-        linux_gsettings_proxy_urls()
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-    {
-        env_proxy_urls()
-    }
-}
-
-/// 环境变量代理（http_proxy / https_proxy / all_proxy；no_proxy 由 NoProxy 处理）。
-fn env_proxy_urls() -> (Option<String>, Option<String>) {
-    let https = std::env::var("https_proxy")
-        .or_else(|_| std::env::var("HTTPS_PROXY"))
-        .ok();
-    let http = std::env::var("http_proxy")
-        .or_else(|_| std::env::var("HTTP_PROXY"))
-        .ok()
-        .or_else(|| std::env::var("all_proxy").ok())
-        .or_else(|| std::env::var("ALL_PROXY").ok());
-    (http, https)
-}
-
-/// GNOME 桌面系统代理（gsettings 命令；无 gsettings/非 manual 模式 → None）。
-/// 平台无关实现（std::process::Command 跨平台），仅 Linux 分支调用；
-/// 不加 cfg 包裹以便 Windows 构建做语法检查。
-#[allow(dead_code)] // Windows 构建不调用
-fn linux_gsettings_proxy_urls() -> (Option<String>, Option<String>) {
-    fn gs(schema: &str, key: &str) -> Option<String> {
-        let out = std::process::Command::new("gsettings")
-            .args(["get", schema, key])
-            .output()
-            .ok()?;
-        if !out.status.success() {
-            return None;
-        }
-        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if s.is_empty() || s == "''" {
-            None
-        } else {
-            Some(s.trim_matches('\'').to_string())
-        }
-    }
-    let Some(mode) = gs("org.gnome.system.proxy", "mode") else {
-        return (None, None);
-    };
-    if mode != "manual" {
-        return (None, None); // none / auto(PAC，不支持)
-    }
-    let http = gs("org.gnome.system.proxy.http", "host").map(|h| {
-        let port = gs("org.gnome.system.proxy.http", "port").unwrap_or_else(|| "8080".into());
-        format!("http://{h}:{port}")
-    });
-    let https = gs("org.gnome.system.proxy.https", "host").map(|h| {
-        let port = gs("org.gnome.system.proxy.https", "port").unwrap_or_else(|| "8080".into());
-        format!("http://{h}:{port}")
-    });
-    if http.is_none() && https.is_none() {
-        return (None, None);
-    }
-    (http, https)
-}
-
-/// 当前网络代理模式（persist 配置；缺省 Auto）。
-fn current_network_mode() -> crate::config::downloader::model::NetworkMode {
-    crate::persist::read::<crate::config::downloader::model::DownloaderConfig>(
-        crate::constants::SECT_DOWNLOADER,
-    )
-    .map(|c| c.network_mode)
-    .unwrap_or_default()
-}
-
-/// 按网络模式给 ClientBuilder 应用代理：
-/// - Direct：不应用（强制直连；TUN 模式由网络层接管，无需应用层配置）
-/// - Auto / System：检测系统代理并应用（无代理时保持直连）
-fn apply_system_proxy(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
-    use crate::config::downloader::model::NetworkMode;
-    match current_network_mode() {
-        NetworkMode::Direct => builder,
-        NetworkMode::Auto | NetworkMode::System => {
-            let (http_proxy, https_proxy) = system_proxy_urls();
-            let mut b = builder;
-            let no_proxy = reqwest::NoProxy::from_string("localhost,127.0.0.1,[::1]");
-            if let Some(u) = http_proxy {
-                if let Ok(p) = reqwest::Proxy::http(&u) {
-                    eprintln!("[fetch] 应用系统代理 http: {u}");
-                    b = b.proxy(p.no_proxy(no_proxy.clone()));
-                }
-            }
-            if let Some(u) = https_proxy {
-                if let Ok(p) = reqwest::Proxy::https(&u) {
-                    eprintln!("[fetch] 应用系统代理 https: {u}");
-                    b = b.proxy(p.no_proxy(no_proxy));
-                }
-            }
-            b
-        }
-    }
-}
-
 fn build_client() -> Client {
     let mut builder = Client::builder()
         .user_agent(UA_DOWNLOAD)
@@ -460,7 +259,19 @@ pub async fn fetch(
     dest: &Path,
     progress: Option<impl Fn(u64, u64)>,
 ) -> Result<DownloadResult, FetchError> {
-    fetch_with(http(), url, dest, progress, None).await
+    let urls = [url.to_string()];
+    download_core(
+        FetchOptions {
+            urls: &urls,
+            dest,
+            expected_sha1: None,
+            client: None,
+            cancel: None,
+            kind: FetchKind::Retry,
+        },
+        progress,
+    )
+    .await
 }
 
 /// 依次尝试多个 URL（主源优先）：连接超时（8s）或失败即换下一个源（过慢降级）。
@@ -480,11 +291,21 @@ pub async fn fetch_fallback_c(
     progress: Option<impl Fn(u64, u64)>,
     cancel: Option<&AtomicBool>,
 ) -> Result<DownloadResult, FetchError> {
-    if urls.len() == 1 {
-        let url = urls.first().map(String::as_str).unwrap_or("");
-        return fetch_with_c(http(), url, dest, progress, None, cancel).await;
-    }
-    fetch_from_sources(urls, dest, &progress, None, None, cancel).await
+    download_core(
+        FetchOptions {
+            urls,
+            dest,
+            expected_sha1: None,
+            client: None,
+            cancel,
+            kind: FetchKind::MultiSource {
+                total_timeout: None,
+                single_url_retry: true,
+            },
+        },
+        progress,
+    )
+    .await
 }
 
 /// 多源下载并在每次成功后校验 sha1：内容不匹配视同该源失败，立即换下一源/下一轮重试，
@@ -511,11 +332,21 @@ pub async fn fetch_verified_c(
     expected_sha1: &str,
     cancel: Option<&AtomicBool>,
 ) -> Result<DownloadResult, FetchError> {
-    if urls.len() == 1 {
-        let url = urls.first().map(String::as_str).unwrap_or("");
-        return fetch_with_c(http(), url, dest, progress, Some(expected_sha1), cancel).await;
-    }
-    fetch_from_sources(urls, dest, &progress, None, Some(expected_sha1), cancel).await
+    download_core(
+        FetchOptions {
+            urls,
+            dest,
+            expected_sha1: Some(expected_sha1),
+            client: None,
+            cancel,
+            kind: FetchKind::MultiSource {
+                total_timeout: None,
+                single_url_retry: true,
+            },
+        },
+        progress,
+    )
+    .await
 }
 
 /// Like `fetch` but uses a specific client (for dedicated connection pools per category).
@@ -540,27 +371,19 @@ pub async fn fetch_with_c(
     expected_sha1: Option<&str>,
     cancel: Option<&AtomicBool>,
 ) -> Result<DownloadResult, FetchError> {
-    const MAX_ATTEMPTS: u32 = 3;
-    let mut last_err = None;
-    for attempt in 0..MAX_ATTEMPTS {
-        match fetch_once(client, url, dest, &progress, expected_sha1, cancel).await {
-            Ok(out) => return Ok(out.dl),
-            Err(e) => {
-                // 取消立即传播（不重试、不换源）
-                if matches!(e, FetchError::Cancelled) {
-                    return Err(e);
-                }
-                // 失败清理残留（下一次尝试或后续下载会重新创建）
-                let _ = std::fs::remove_file(dest);
-                if attempt + 1 < MAX_ATTEMPTS {
-                    tokio::time::sleep(std::time::Duration::from_millis(500 * (1 << attempt)))
-                        .await;
-                }
-                last_err = Some(e);
-            }
-        }
-    }
-    Err(last_err.unwrap())
+    let urls = [url.to_string()];
+    download_core(
+        FetchOptions {
+            urls: &urls,
+            dest,
+            expected_sha1,
+            client: Some(client),
+            cancel,
+            kind: FetchKind::Retry,
+        },
+        progress,
+    )
+    .await
 }
 
 /// 单文件多源下载：每源独立 client（连接 2s + 总超时 60s），
@@ -581,7 +404,121 @@ pub async fn fetch_bounded_c(
     progress: Option<impl Fn(u64, u64)>,
     cancel: Option<&AtomicBool>,
 ) -> Result<DownloadResult, FetchError> {
-    fetch_from_sources(urls, dest, &progress, Some(Duration::from_secs(60)), None, cancel).await
+    download_core(
+        FetchOptions {
+            urls,
+            dest,
+            expected_sha1: None,
+            client: None,
+            cancel,
+            kind: FetchKind::MultiSource {
+                total_timeout: Some(Duration::from_secs(60)),
+                single_url_retry: false,
+            },
+        },
+        progress,
+    )
+    .await
+}
+
+// ── 共享下载核心：9 个公开入口收敛于此，均为 FetchOptions 的薄包装 ──
+
+/// 入口形态（分流到两条既有路径）：
+/// - `Retry`：单 URL 重试路径——用 `FetchOptions::client`（缺省全局 `http()`），
+///   网络错误/5xx 重试最多 3 次（500ms×2ⁿ 退避）；`fetch` / `fetch_with` 系。
+/// - `MultiSource`：多源回退路径——每源独立短连接 client + 健康度路由
+///   （`fetch_fallback` / `fetch_verified` / `fetch_bounded` 系）；
+///   `total_timeout` 为整请求限时（None 不限时）；`single_url_retry` 表示列表仅一个
+///   URL 时快捷改走 Retry 路径（fallback/verified 既有行为：保留 3 次重试与不限时
+///   传输；bounded 关闭，维持"小文件防 body 假死"的限时语义）。
+#[derive(Debug, Clone, Copy)]
+enum FetchKind {
+    Retry,
+    MultiSource {
+        total_timeout: Option<Duration>,
+        single_url_retry: bool,
+    },
+}
+
+/// 共享下载核心参数：对外公开签名一个不变，9 个入口全部转发到此结构。
+struct FetchOptions<'a> {
+    /// 候选 URL 列表（Retry 取首个；MultiSource 全量参与去重与镜像路由）。
+    urls: &'a [String],
+    /// 落地目标文件。
+    dest: &'a Path,
+    /// 非空时逐次/逐源校验内容 sha1，不匹配视同该次失败。
+    expected_sha1: Option<&'a str>,
+    /// Retry 路径专用 client；None 用全局 `http()`。MultiSource 每源自建，忽略此字段。
+    client: Option<&'a Client>,
+    /// 取消令牌：非空时每次读块检查，任务取消立即停止。
+    cancel: Option<&'a AtomicBool>,
+    /// 入口形态。
+    kind: FetchKind,
+}
+
+/// 共享核心：按形态分流到单 URL 重试路径或多源回退路径。
+async fn download_core<F: Fn(u64, u64)>(
+    FetchOptions {
+        urls,
+        dest,
+        expected_sha1,
+        client,
+        cancel,
+        kind,
+    }: FetchOptions<'_>,
+    progress: Option<F>,
+) -> Result<DownloadResult, FetchError> {
+    match kind {
+        FetchKind::Retry => {
+            let c = client.unwrap_or_else(|| http());
+            let url = urls.first().map(String::as_str).unwrap_or("");
+            fetch_with_retries(c, url, dest, &progress, expected_sha1, cancel).await
+        }
+        FetchKind::MultiSource {
+            total_timeout,
+            single_url_retry,
+        } => {
+            if single_url_retry && urls.len() == 1 {
+                let url = urls.first().map(String::as_str).unwrap_or("");
+                return fetch_with_retries(http(), url, dest, &progress, expected_sha1, cancel)
+                    .await;
+            }
+            fetch_from_sources(urls, dest, &progress, total_timeout, expected_sha1, cancel).await
+        }
+    }
+}
+
+/// 单 URL 重试路径共享实现：网络错误/5xx 重试最多 3 次（500ms×2ⁿ 退避），
+/// 取消立即传播（不重试、不换源）；失败清理残留文件（下次尝试或后续下载重新创建）。
+async fn fetch_with_retries<F: Fn(u64, u64)>(
+    client: &Client,
+    url: &str,
+    dest: &Path,
+    progress: &Option<F>,
+    expected_sha1: Option<&str>,
+    cancel: Option<&AtomicBool>,
+) -> Result<DownloadResult, FetchError> {
+    const MAX_ATTEMPTS: u32 = 3;
+    let mut last_err = None;
+    for attempt in 0..MAX_ATTEMPTS {
+        match fetch_once(client, url, dest, progress, expected_sha1, cancel).await {
+            Ok(out) => return Ok(out.dl),
+            Err(e) => {
+                // 取消立即传播（不重试、不换源）
+                if matches!(e, FetchError::Cancelled) {
+                    return Err(e);
+                }
+                // 失败清理残留（下一次尝试或后续下载会重新创建）
+                let _ = std::fs::remove_file(dest);
+                if attempt + 1 < MAX_ATTEMPTS {
+                    tokio::time::sleep(std::time::Duration::from_millis(500 * (1 << attempt)))
+                        .await;
+                }
+                last_err = Some(e);
+            }
+        }
+    }
+    Err(last_err.unwrap())
 }
 
 /// 多源循环：每源独立 client（连接 2s：连接缓慢即判"过慢"即换源），失败清理残留。
@@ -958,75 +895,6 @@ mod tests {
         let _ = std::fs::remove_file(&dest);
     }
 
-    /// Windows 注册表 ProxyServer 值解析：统一格式与分协议格式。
-    #[test]
-    fn parse_proxy_server_variants() {
-        // 统一格式（全协议同一代理）
-        let (h, s) = parse_proxy_server("127.0.0.1:7897");
-        assert_eq!(h.as_deref(), Some("http://127.0.0.1:7897"));
-        assert_eq!(s.as_deref(), Some("http://127.0.0.1:7897"));
-        // 分协议格式（连接代理统一明文 http scheme）
-        let (h, s) = parse_proxy_server("http=127.0.0.1:7890;https=127.0.0.1:7891");
-        assert_eq!(h.as_deref(), Some("http://127.0.0.1:7890"));
-        assert_eq!(s.as_deref(), Some("http://127.0.0.1:7891"));
-        // 仅 http（https 缺项）
-        let (h, s) = parse_proxy_server("http=127.0.0.1:7890");
-        assert_eq!(h.as_deref(), Some("http://127.0.0.1:7890"));
-        assert_eq!(s, None);
-        // 空值/空白
-        let (h, s) = parse_proxy_server("");
-        assert_eq!(h, None);
-        assert_eq!(s, None);
-        let (h, s) = parse_proxy_server("  ");
-        assert_eq!(h, None);
-        assert_eq!(s, None);
-    }
-
-    /// 环境变量代理检测（Linux/兜底路径的核心）。
-    #[test]
-    fn env_proxy_detects_http_and_https() {
-        // 临时设置（串行测试；结束后恢复）
-        let prev_https = std::env::var("https_proxy").ok();
-        let prev_http = std::env::var("http_proxy").ok();
-        std::env::set_var("https_proxy", "http://127.0.0.1:7890");
-        std::env::set_var("http_proxy", "http://127.0.0.1:7891");
-        let (h, s) = env_proxy_urls();
-        assert_eq!(h.as_deref(), Some("http://127.0.0.1:7891"));
-        assert_eq!(s.as_deref(), Some("http://127.0.0.1:7890"));
-        // 清理
-        match prev_https {
-            Some(v) => std::env::set_var("https_proxy", v),
-            None => std::env::remove_var("https_proxy"),
-        }
-        match prev_http {
-            Some(v) => std::env::set_var("http_proxy", v),
-            None => std::env::remove_var("http_proxy"),
-        }
-    }
-
-    /// 系统代理应用：网络模式 auto/system 且本机开启系统代理时，
-    /// http()（全局 client，已应用代理）应能经代理快速访问官方源
-    /// （网络测试；direct 模式或无代理环境跳过）。
-    #[tokio::test]
-    async fn global_client_uses_system_proxy_when_enabled() {
-        use crate::config::downloader::model::NetworkMode;
-        if current_network_mode() == NetworkMode::Direct {
-            return;
-        }
-        let (h, s) = system_proxy_urls();
-        if h.is_none() && s.is_none() {
-            return; // 未检测到系统代理：不依赖代理环境
-        }
-        let res = tokio::time::timeout(
-            std::time::Duration::from_secs(15),
-            http().get("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json").send(),
-        )
-        .await
-        .expect("经系统代理访问官方应在 15s 内返回（代理不可达时检查代理配置）");
-        let resp = res.expect("请求应成功");
-        assert!(resp.status().is_success(), "官方应可达: {}", resp.status());
-    }
-
     /// 主源返回坏内容时应换备用源重试并成功（镜像缓存陈旧场景的核心行为）。
     #[tokio::test]
     async fn fetch_verified_falls_back_to_second_source_on_checksum_mismatch() {
@@ -1130,7 +998,7 @@ mod tests {
         assert!(is_mirror_url("https://maven.minecraftforge.net/net/minecraftforge/x.jar"));
     }
 
-    /// 镜像候选生成：mojang/library/loader 域 → BMCLAPI 镜像（与 model.rs REWRITE_RULES 同构）。
+    /// 镜像候选生成：mojang/library/loader 域 → BMCLAPI 镜像（单一表在 downloader/model.rs）。
     #[test]
     fn mirror_candidates_generate_bmclapi_urls() {
         assert_eq!(
