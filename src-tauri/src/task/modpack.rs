@@ -11,29 +11,28 @@
 // 进度公式走"完成步骤数/总步骤数"（每个内容文件一步，粒度足够细）；
 // 字节计数仅供速度/ETA 展示。
 
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use parking_lot::Mutex;
 use tauri::AppHandle;
 
 use crate::config::downloader::model::{DownloaderConfig, DownloadSource};
 use crate::constants;
-use crate::downloader::community;
 use crate::downloader::fetcher;
 use crate::downloader::modpack::{
-    parse_curseforge_manifest, parse_modrinth_index, resolve_cf_files, sanitize_pack_name,
-    safe_rel_path, ModpackRequest, OverridesRef, PackPlan, PackSource,
+    build_plan, safe_rel_path, ModpackRequest, OverridesRef, PackPlan, PackSource,
 };
 use crate::downloader::model::VersionJson;
 use crate::downloader::progress::ProgressCounters;
 use crate::downloader::reuse::LocalRuntimeSource;
 use crate::task::progress::{
-    cancelled, set_cancelled, set_error, set_phase, set_total, step_done, update_progress,
+    cancelled, set_cancelled, set_error, set_phase, set_total, spawn_heartbeat, step_done,
+    HeartbeatStats,
 };
+use crate::util::{fnv1a64, mcim_mirror_urls, sanitize_fs_name};
 use crate::task::{global, update_and_emit, StepInfo, StepStatus, TaskProgress, TaskStatus};
 
 /// 包体缓存目录（exe 旁 Elytra/modpacks/，与 Settings.toml 同根约定）。
@@ -43,15 +42,6 @@ fn cache_dir() -> PathBuf {
         .join("modpacks")
 }
 
-/// FNV-1a 64：来源标识 → 短哈希（缓存键防同名覆盖；跨进程稳定）。
-fn fnv1a64(data: &str) -> u64 {
-    let mut h: u64 = 0xcbf29ce484222325;
-    for b in data.as_bytes() {
-        h ^= u64::from(*b);
-        h = h.wrapping_mul(0x100000001b3);
-    }
-    h
-}
 
 /// 缓存键：`{净化包名}-{来源哈希8}`。
 pub fn cache_key(request: &ModpackRequest) -> String {
@@ -59,7 +49,7 @@ pub fn cache_key(request: &ModpackRequest) -> String {
         PackSource::Local { path } => path.clone(),
         PackSource::Online { url, .. } => url.clone(),
     };
-    format!("{}-{:08x}", sanitize_pack_name(&request.name), fnv1a64(&seed))
+    format!("{}-{:08x}", sanitize_fs_name(&request.name, "modpack"), fnv1a64(&seed))
 }
 
 /// 包体缓存路径（.mrpack/.zip 按来源扩展名）。
@@ -98,128 +88,8 @@ fn override_rel<'a>(member: &'a str, prefix: &str) -> Option<&'a str> {
     (!rest.is_empty() && !rest.ends_with('/')).then_some(rest)
 }
 
-/// 版本目录名冲突消解：`versions/{base}` 已存在则追加 `_{n}`
-/// （对齐 resolve_version_dir 的 `{id}_{n}` 语义）。
-fn unique_version_dir(mc: &Path, base: &str) -> String {
-    if !mc.join("versions").join(base).exists() {
-        return base.to_string();
-    }
-    for n in 1.. {
-        let candidate = format!("{base}_{n}");
-        if !mc.join("versions").join(&candidate).exists() {
-            return candidate;
-        }
-    }
-    unreachable!()
-}
-
-/// MCIM 对 Modrinth CDN 的镜像 URL（对齐 runner.rs 社区资源路由；
-/// 非 cdn.modrinth.com 仅官方一源）。
-fn mirrors_for(url: &str) -> Vec<String> {
-    let official = url.to_string();
-    let mirrored = official.replace("https://cdn.modrinth.com", "https://mod.mcimirror.top");
-    if mirrored == official {
-        vec![official]
-    } else {
-        vec![official, mirrored]
-    }
-}
-
 fn persist_config() -> DownloaderConfig {
     crate::persist::read(constants::SECT_DOWNLOADER).unwrap_or_default()
-}
-
-enum ManifestKind {
-    Modrinth,
-    CurseForge,
-}
-
-/// 从 zip 根读取清单文本（按成员名嗅探来源）。
-fn read_manifest(
-    archive: &mut zip::ZipArchive<std::fs::File>,
-) -> Result<(String, ManifestKind), String> {
-    for (name, kind) in [
-        ("modrinth.index.json", ManifestKind::Modrinth),
-        ("manifest.json", ManifestKind::CurseForge),
-    ] {
-        if let Ok(mut entry) = archive.by_name(name) {
-            let mut text = String::new();
-            entry
-                .read_to_string(&mut text)
-                .map_err(|e| format!("读取清单失败\n{e}"))?;
-            return Ok((text, kind));
-        }
-    }
-    Err("不是有效的整合包文件\n缺少 modrinth.index.json 或 manifest.json".into())
-}
-
-/// 读 zip 清单 → 构建 PackPlan（CF 走批量换链网络请求）。
-async fn build_plan(
-    zip_path: &Path,
-    request: &ModpackRequest,
-    config: &DownloaderConfig,
-) -> Result<PackPlan, String> {
-    let file = std::fs::File::open(zip_path).map_err(|e| format!("打开整合包失败\n{e}"))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取整合包失败\n{e}"))?;
-
-    let (index_text, kind) = read_manifest(&mut archive)?;
-    let (mut mc_version, loader, files, restricted) = match kind {
-        ManifestKind::Modrinth => {
-            let parsed = parse_modrinth_index(&index_text)?;
-            (parsed.mc_version, parsed.loader, parsed.files, Vec::new())
-        }
-        ManifestKind::CurseForge => {
-            let parsed = parse_curseforge_manifest(&index_text)?;
-            let ids: Vec<i64> = parsed.files.iter().map(|(_, fid)| *fid).collect();
-            // 批量换链（一次 POST 换全部直链；作者关闭第三方分发的文件进 restricted）
-            let data = community::curseforge_files(&ids).await?;
-            let (resolved, locked) = resolve_cf_files(&data, &parsed.files);
-            (parsed.mc_version, parsed.loader, resolved, locked)
-        }
-    };
-    mc_version = mc_version.trim().to_string();
-
-    // 原版 version json URL（官方清单多源回退 + TTL 缓存）
-    let manifest = crate::downloader::manifest::fetch_version_list(config).await?;
-    let version_url = manifest
-        .versions
-        .iter()
-        .find(|v| v.id == mc_version)
-        .map(|v| v.url.clone())
-        .ok_or_else(|| format!("官方源未收录该 Minecraft 版本\n{mc_version}"))?;
-
-    // overrides 目录检测
-    let has_overrides = (0..archive.len()).any(|i| {
-        archive
-            .by_index(i)
-            .map(|e| e.name().starts_with("overrides/"))
-            .unwrap_or(false)
-    });
-
-    if files.is_empty() && !has_overrides && restricted.is_empty() {
-        return Err("整合包没有可安装的内容（无文件且无覆盖）".into());
-    }
-    // 目标路径穿越防护提前到计划期：坏条目解析期即报错，不带病安装
-    for f in &files {
-        safe_rel_path(&f.path)?;
-    }
-
-    let base_dir = format!("{}-{}", sanitize_pack_name(&request.name), mc_version);
-    let version_dir_name = unique_version_dir(&config.minecraft_dir_abs(), &base_dir);
-
-    Ok(PackPlan {
-        name: request.name.clone(),
-        mc_version,
-        loader,
-        version_url,
-        version_dir_name,
-        files,
-        restricted,
-        overrides: has_overrides.then(|| OverridesRef {
-            zip_path: zip_path.display().to_string(),
-            prefix: "overrides/".into(),
-        }),
-    })
 }
 
 fn write_plan(plan_path: &Path, plan: &PackPlan) -> Result<(), String> {
@@ -356,12 +226,8 @@ pub async fn run_install(
         let cached =
             !sha1.is_empty() && zip_path.is_file() && crate::downloader::hash::file_sha1_matches(&zip_path, sha1);
         if !cached {
-            let last = Arc::new(AtomicU64::new(0));
-            let cb_last = last.clone();
-            // 字节增量直接进共享计数（此时心跳未启动，仅为 est 校准积累）
-            let _ = &cb_last;
             if let Err(e) = fetcher::fetch_verified_c(
-                &mirrors_for(url),
+                &mcim_mirror_urls(url),
                 &zip_path,
                 None::<fn(u64, u64)>,
                 sha1,
@@ -445,52 +311,19 @@ pub async fn run_install(
     );
     set_total(app, progress, c.total_steps, 0);
 
-    // 心跳：150ms 刷新计数/速度/ETA；进度百分比由 update_progress 按
-    // completed_files/total_files（即完成步骤数）计算
-    let emit_handle = tauri::async_runtime::spawn({
-        let app = app.clone();
-        let progress = progress.clone();
-        let done_steps = c.done_steps.clone();
-        let bytes = c.bytes.clone();
-        let est_bytes = c.est_bytes.clone();
-        let total_steps = c.total_steps;
-        async move {
-            let mut tick = tokio::time::interval(Duration::from_millis(150));
-            let mut last_bytes = 0u64;
-            let mut last_sample = Instant::now();
-            let mut speed_ema: f64 = 0.0;
-            loop {
-                tick.tick().await;
-                let cur = bytes.load(Ordering::Relaxed);
-                let est = est_bytes.load(Ordering::Relaxed);
-                let now = Instant::now();
-                let dt = now.duration_since(last_sample).as_secs_f64();
-                if dt >= 0.3 && cur > last_bytes {
-                    let instant = (cur - last_bytes) as f64 / dt;
-                    speed_ema = if speed_ema <= 0.0 {
-                        instant
-                    } else {
-                        speed_ema * 0.6 + instant * 0.4
-                    };
-                    last_bytes = cur;
-                    last_sample = now;
-                }
-                update_and_emit(&app, &progress, |p| {
-                    p.status = TaskStatus::Running;
-                    p.completed_files = done_steps.load(Ordering::Relaxed);
-                    p.total_files = total_steps;
-                    p.completed_bytes = cur;
-                    p.total_bytes = est;
-                    p.speed_bps = speed_ema;
-                    let remaining = est.saturating_sub(cur);
-                    p.eta_seconds = (speed_ema >= 1024.0 && remaining > 0)
-                        .then(|| (remaining as f64 / speed_ema).ceil() as u64);
-                    update_progress(p);
-                });
-            }
-        }
-    });
-
+    // 心跳：150ms 共享心跳刷新计数/速度/ETA（est_total_bytes 用 c.est_bytes，
+    // 版本清单获取后仍可运行中增长）；进度百分比由 update_progress 按
+    // completed_files/total_files（即完成步骤数）计算。收尾前 abort。
+    let emit_handle = spawn_heartbeat(
+        app,
+        progress,
+        HeartbeatStats {
+            done_files: Arc::clone(&c.done_steps),
+            total_files: c.total_steps,
+            bytes: Arc::clone(&c.bytes),
+            est_total_bytes: Arc::clone(&c.est_bytes),
+        },
+    );
     // ── 目标目录：预指定名保证解析期/安装期一致 ──
     let vdir = config.minecraft_dir_abs().join("versions").join(&plan.version_dir_name);
     let vdir_existed_before = vdir.exists();
@@ -510,7 +343,7 @@ pub async fn run_install(
         if !dest.exists() {
             // 空 sha1 跳过校验；取消感知；MCIM 双源回退对 cdn.modrinth.com 适用
             let _ =
-                fetcher::fetch_verified_c(&mirrors_for(icon), &dest, None::<fn(u64, u64)>, "", Some(cancel)).await;
+                fetcher::fetch_verified_c(&mcim_mirror_urls(icon), &dest, None::<fn(u64, u64)>, "", Some(cancel)).await;
         }
     }
     let sources: Vec<DownloadSource> = config.file_sources_list().into_iter().cloned().collect();
@@ -746,7 +579,7 @@ pub async fn run_install(
                 }
             }
             set_phase(app, progress, None, &format!("下载 {}", f.path), idx, StepStatus::Running);
-            let urls = mirrors_for(&f.url);
+            let urls = mcim_mirror_urls(&f.url);
             let sha1 = f.sha1.clone();
             let label = f.path.clone();
             let cancel = cancel.clone();
@@ -762,20 +595,23 @@ pub async fn run_install(
                 if cancelled(&cancel) {
                     return Ok((idx, 0u64));
                 }
-                let last = Arc::new(AtomicU64::new(0));
-                let cb_last = last.clone();
-                let cb_bytes = bytes.clone();
-                let cb = move |done: u64, _total: u64| {
-                    let prev = cb_last.swap(done, Ordering::Relaxed);
-                    cb_bytes.fetch_add(done.saturating_sub(prev), Ordering::Relaxed);
+                // 字节回调走共享工厂（本地水位 + 增量累加进任务总字节）。
+                // step_bytes 无消费者（本任务进度百分比由步骤数公式驱动），计数被丢弃；
+                // 无需知道落盘字节数，故无需保留 worker 本地水位。
+                let counters = ProgressCounters {
+                    files: Arc::new(AtomicU32::new(0)),
+                    bytes,
+                    step_bytes: Arc::new(AtomicU64::new(0)),
+                    step_total: Arc::new(AtomicU64::new(0)),
                 };
+                let cb = counters.byte_callback();
                 let result =
                     fetcher::fetch_verified_c(&urls, &tmp, Some(cb), &sha1, Some(&cancel)).await;
                 match result {
                     Ok(_) => {
                         std::fs::rename(&tmp, &dest)
                             .map_err(|e| (idx, format!("落盘失败\n{e}\n{}", dest.display())))?;
-                        Ok((idx, last.load(Ordering::Relaxed)))
+                        Ok((idx, 0u64))
                     }
                     Err(e) => {
                         let _ = std::fs::remove_file(&tmp);
@@ -907,28 +743,6 @@ mod tests {
     }
 
     #[test]
-    fn read_manifest_sniffs_both_formats() {
-        let dir = tempfile::tempdir().unwrap();
-        let mrpack = dir.path().join("a.mrpack");
-        write_test_zip(&mrpack, "modrinth.index.json");
-        let mut ar = zip::ZipArchive::new(std::fs::File::open(&mrpack).unwrap()).unwrap();
-        let (text, kind) = read_manifest(&mut ar).unwrap();
-        assert_eq!(text, "{}");
-        assert!(!matches!(kind, ManifestKind::CurseForge));
-
-        let cfzip = dir.path().join("b.zip");
-        write_test_zip(&cfzip, "manifest.json");
-        let mut ar2 = zip::ZipArchive::new(std::fs::File::open(&cfzip).unwrap()).unwrap();
-        assert!(matches!(read_manifest(&mut ar2).unwrap().1, ManifestKind::CurseForge));
-
-        // 无清单 → 明确报错
-        let plain = dir.path().join("c.zip");
-        write_test_zip(&plain, "other.txt");
-        let mut ar3 = zip::ZipArchive::new(std::fs::File::open(&plain).unwrap()).unwrap();
-        assert!(read_manifest(&mut ar3).is_err());
-    }
-
-    #[test]
     fn extract_overrides_writes_files_and_blocks_traversal() {
         let dir = tempfile::tempdir().unwrap();
         let zip_path = dir.path().join("evil.zip");
@@ -950,14 +764,6 @@ mod tests {
         // 前序合法条目已落盘；恶意条目未逃逸出版本目录
         assert!(vdir.path().join("mods").join("ok.jar").is_file());
         assert!(!vdir.path().join("escape.txt").exists());
-    }
-
-    #[test]
-    fn unique_version_dir_suffixes_conflicts() {
-        let mc = tempfile::tempdir().unwrap();
-        assert_eq!(unique_version_dir(mc.path(), "Pack-1.20.1"), "Pack-1.20.1");
-        std::fs::create_dir_all(mc.path().join("versions").join("Pack-1.20.1")).unwrap();
-        assert_eq!(unique_version_dir(mc.path(), "Pack-1.20.1"), "Pack-1.20.1_1");
     }
 
     #[test]

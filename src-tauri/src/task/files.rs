@@ -4,7 +4,7 @@ use parking_lot::Mutex;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tauri::AppHandle;
 
@@ -15,7 +15,9 @@ use crate::persist;
 use crate::task::model::{DownloadFileItem, DownloadFileKind, DownloadFilesTask};
 use crate::task::{self, StepStatus, TaskProgress, TaskStatus, WaitingDecision};
 
-use super::progress::{cancelled, set_cancelled, set_error, set_phase, step_done, update_progress};
+use super::progress::{
+    cancelled, set_cancelled, set_error, set_phase, spawn_heartbeat, step_done, HeartbeatStats,
+};
 
 /// 单文件目标路径（纯函数，供单测）：versions/{version_dir}/{kind_dir}/{filename}。
 fn file_dest(
@@ -216,7 +218,8 @@ async fn install_world(
         );
         return None;
     }
-    let target = resolve_save_dir(&saves, &name);
+    // 冲突消解接入 util（同名存档 `_{n}` 后缀，对齐版本目录语义）
+    let target = saves.join(crate::util::unique_child_dir(&saves, &name));
     if let Err(e) = std::fs::rename(&world_root, &target) {
         let _ = std::fs::remove_dir_all(&stage);
         emit_handle.abort();
@@ -235,14 +238,18 @@ fn locate_world_root(
     zip_filename: &str,
 ) -> Option<(std::path::PathBuf, String)> {
     if unpack_dir.join("level.dat").is_file() {
-        let name = sanitize_world_name(zip_filename.strip_suffix(".zip").unwrap_or(zip_filename));
+        let name = crate::util::sanitize_fs_name(
+            zip_filename.strip_suffix(".zip").unwrap_or(zip_filename),
+            "world",
+        );
         return Some((unpack_dir.to_path_buf(), name));
     }
     if let Ok(entries) = std::fs::read_dir(unpack_dir) {
         for entry in entries.flatten() {
             let p = entry.path();
             if p.is_dir() && p.join("level.dat").is_file() {
-                let name = sanitize_world_name(&entry.file_name().to_string_lossy());
+                let name =
+                    crate::util::sanitize_fs_name(&entry.file_name().to_string_lossy(), "world");
                 return Some((p, name));
             }
         }
@@ -250,42 +257,6 @@ fn locate_world_root(
     None
 }
 
-/// 清洗世界目录名：非法文件名字符（`<>:"/\|?*` 与控制字符）替换为 `_`；
-/// 空结果（或 Windows 上以点结尾/全空白）回退用 `world`。
-fn sanitize_world_name(name: &str) -> String {
-    let cleaned: String = name
-        .chars()
-        .map(|c| {
-            if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
-                '_'
-            } else {
-                c
-            }
-        })
-        .collect();
-    let cleaned = cleaned.trim_end_matches('.').trim().to_string();
-    if cleaned.is_empty() {
-        "world".to_string()
-    } else {
-        cleaned
-    }
-}
-
-/// 冲突解决：目标存在则 `name_{n}`（n 从 1 递增，对齐版本目录 `{id}_{n}` 语义）。
-fn resolve_save_dir(saves_dir: &Path, name: &str) -> std::path::PathBuf {
-    let candidate = saves_dir.join(name);
-    if !candidate.exists() {
-        return candidate;
-    }
-    let mut n = 1;
-    loop {
-        let next = saves_dir.join(format!("{name}_{n}"));
-        if !next.exists() {
-            return next;
-        }
-        n += 1;
-    }
-}
 
 /// 批量文件下载任务：mod / 资源包 / 数据包 / 光影包。
 /// 步骤 = 每文件一步；逐文件下载到 .elytra-part 临时文件后 rename，取消/失败清理临时文件。
@@ -340,85 +311,27 @@ pub async fn run_files_task(
     }
 
     let done_files = Arc::new(AtomicU32::new(0));
-    let acc_bytes = Arc::new(AtomicU64::new(0));
+    // 心跳字节源 = 已完成文件累计 + 当前文件已下载（回调内维护），速度平滑连续
+    let total_bytes = Arc::new(AtomicU64::new(0));
+    // 总量估算 = 已完成累计 + 当前文件声明大小（回调内随 total_size 更新）
+    let est_bytes = Arc::new(AtomicU64::new(0));
     let cur_bytes = Arc::new(AtomicU64::new(0));
     let cur_total = Arc::new(AtomicU64::new(0));
     let cur_idx = Arc::new(AtomicU32::new(0));
     let total_files = task.files.len() as u32;
-
-    // 进度上报循环：150ms 心跳，速度按相邻采样差分 + EMA 平滑（对齐 EmitLoop：
-    // 有实际字节推进才刷新停滞时钟；cur 相等时保持上次速度不衰减归零）；
-    // ETA 同步计算（停滞 >4s 或速度 <1KB/s 置 None，前端显示 —）。
-    let emit_handle = tauri::async_runtime::spawn({
-        let app = app.clone();
-        let progress = progress.clone();
-        let done_files = done_files.clone();
-        let acc_bytes = acc_bytes.clone();
-        let cur_bytes = cur_bytes.clone();
-        let cur_total = cur_total.clone();
-        let cur_idx = cur_idx.clone();
-        async move {
-            let mut tick = tokio::time::interval(Duration::from_millis(150));
-            let mut last_bytes = 0u64;
-            let mut last_sample = Instant::now();
-            let mut last_progress_at = Instant::now();
-            let mut speed_ema: f64 = 0.0;
-            loop {
-                tick.tick().await;
-                let d = done_files.load(Ordering::Relaxed);
-                let cb = cur_bytes.load(Ordering::Relaxed);
-                let ct = cur_total.load(Ordering::Relaxed);
-                let acc = acc_bytes.load(Ordering::Relaxed);
-                let cur = acc + cb;
-                let now = Instant::now();
-                if cur > last_bytes {
-                    last_progress_at = now;
-                }
-                let dt = now.duration_since(last_sample).as_secs_f64();
-                if dt >= 0.3 && cur > last_bytes {
-                    let instant = (cur - last_bytes) as f64 / dt;
-                    speed_ema = if speed_ema <= 0.0 {
-                        instant
-                    } else {
-                        speed_ema * 0.6 + instant * 0.4
-                    };
-                    last_bytes = cur;
-                    last_sample = now;
-                }
-                task::update_and_emit(&app, &progress, |p| {
-                    // 首次心跳即进入 running：create 初始为 pending，若不置位前端
-                    // 任务中心的聚合统计（速度/ETA/剩余文件）只统计 running 任务而恒为 0
-                    p.status = TaskStatus::Running;
-                    p.completed_files = d;
-                    // 最终总数每 tick 写回：初始为 0，不写则前端"剩余文件"恒为 0
-                    p.total_files = total_files;
-                    p.completed_bytes = cur;
-                    p.total_bytes = acc + ct;
-                    p.speed_bps = speed_ema;
-                    // ETA：剩余字节 / 速度；停滞（>4s 无推进）或速度过低（<1KB/s）时置 None
-                    let remaining = p.total_bytes.saturating_sub(cur);
-                    p.eta_seconds = if speed_ema >= 1024.0
-                        && remaining > 0
-                        && now.duration_since(last_progress_at) <= Duration::from_secs(4)
-                    {
-                        Some((remaining as f64 / speed_ema).ceil() as u64)
-                    } else {
-                        None
-                    };
-                    if let Some(st) = p.steps.get_mut(cur_idx.load(Ordering::Relaxed) as usize) {
-                        if st.status == StepStatus::Running {
-                            st.progress = if ct > 0 {
-                                (cb as f64 / ct as f64).min(1.0) * 100.0
-                            } else {
-                                0.0
-                            };
-                        }
-                    }
-                    update_progress(p);
-                });
-            }
-        }
-    });
+    // 进度上报：150ms 共享心跳刷新状态/文件数/字节/EMA 速度/ETA（语义对齐原内联
+    // 实现：停滞 >4s 或速度 <1KB/s 时 ETA 置 None）。当前文件的步骤级字节占比
+    // 由下载回调节流刷新（见下方 cb），心跳不再重复处理步骤进度。
+    let emit_handle = spawn_heartbeat(
+        &app,
+        progress,
+        HeartbeatStats {
+            done_files: Arc::clone(&done_files),
+            total_files,
+            bytes: Arc::clone(&total_bytes),
+            est_total_bytes: Arc::clone(&est_bytes),
+        },
+    );
 
     for (i, (dest, tmp)) in items.iter().enumerate() {
         cur_idx.store(i as u32, Ordering::Relaxed);
@@ -432,19 +345,48 @@ pub async fn run_files_task(
             StepStatus::Running,
         );
         cur_bytes.store(0, Ordering::Relaxed);
-        cur_total.store(0, Ordering::Relaxed);
+        let acc_snap = total_bytes.load(Ordering::Relaxed);
+        // 下载回调：维护当前文件字节（步骤级占比）+ 心跳字节源/总量估算；
+        // 步骤级进度节流刷新（~150ms，对齐心跳频率），避免每 chunk 都锁 progress。
         let cb = {
+            let app = app.clone();
+            let progress = progress.clone();
             let cur_bytes = cur_bytes.clone();
             let cur_total = cur_total.clone();
+            let est_bytes = est_bytes.clone();
+            let total_bytes = total_bytes.clone();
+            let cur_idx = cur_idx.clone();
+            let throttle_ms = Arc::new(AtomicU64::new(0));
+            let clock = std::time::Instant::now();
             move |downloaded: u64, total_size: u64| {
                 cur_bytes.store(downloaded, Ordering::Relaxed);
+                total_bytes.store(acc_snap + downloaded, Ordering::Relaxed);
                 if total_size > 0 {
                     cur_total.store(total_size, Ordering::Relaxed);
+                    est_bytes.store(acc_snap + total_size, Ordering::Relaxed);
+                }
+                // 步骤级字节占比节流刷新（~150ms）；整体进度/速度/ETA 由共享心跳负责
+                let now_ms = clock.elapsed().as_millis() as u64;
+                if now_ms.saturating_sub(throttle_ms.swap(now_ms, Ordering::Relaxed)) >= 150 {
+                    task::update_and_emit(&app, &progress, |p| {
+                        let cb_b = cur_bytes.load(Ordering::Relaxed);
+                        let ct = cur_total.load(Ordering::Relaxed);
+                        if let Some(st) =
+                            p.steps.get_mut(cur_idx.load(Ordering::Relaxed) as usize)
+                        {
+                            if st.status == StepStatus::Running {
+                                st.progress = if ct > 0 {
+                                    (cb_b as f64 / ct as f64).min(1.0) * 100.0
+                                } else {
+                                    0.0
+                                };
+                            }
+                        }
+                    });
                 }
             }
         };
         // 下载 + 落盘：普通 kind 下载到 .elytra-part 后 rename 到 kind 目录；
-        // world 走 install_world（临时区下载 → 解压 → 移动至 saves/）。
         // 失败重试/WaitingForUser 语义两种 kind 一致（download_with_decision 提取）。
         // None = 任务已结束（内部已 set_error/set_cancelled），直接返回。
         let placed = if f.kind == DownloadFileKind::World {
@@ -478,9 +420,9 @@ pub async fn run_files_task(
         if placed.is_none() {
             return;
         }
-        acc_bytes.fetch_add(cur_bytes.load(Ordering::Relaxed), Ordering::Relaxed);
+        total_bytes.store(acc_snap + cur_bytes.load(Ordering::Relaxed), Ordering::Relaxed);
         cur_bytes.store(0, Ordering::Relaxed);
-        done_files.fetch_add(1, Ordering::Relaxed);
+        cur_total.store(0, Ordering::Relaxed);
         step_done(&app, progress, i);
         task::update_and_emit(&app, progress, |p| {
             p.current_phase = format!("已完成 {}/{}", i + 1, total_files);
@@ -551,7 +493,7 @@ mod tests {
         assert_eq!(root, tmp.path().join("u2/My_World"), "子目录即世界根");
         assert_eq!(
             name, "My_World",
-            "子目录名作为世界名（清洗逻辑见 sanitize_world_name 单测）"
+            "子目录名作为世界名（清洗逻辑经 util::sanitize_fs_name，util 单测覆盖）"
         );
 
         // 无 level.dat → None
@@ -560,37 +502,38 @@ mod tests {
         assert!(locate_world_root(&tmp.path().join("u3"), "map.zip").is_none());
     }
 
-    /// resolve_save_dir：无冲突原名；存在则 _{n} 递增（跳过已占用后缀）。
+    /// 存档目录冲突消解（install_world 内联 util::unique_child_dir 的接线验证）：
+    /// 无冲突原名；存在则 _{n} 递增到空位。
     #[test]
-    fn resolve_save_dir_suffixes_conflicts() {
+    fn save_dir_conflict_resolution_suffixes() {
         let tmp = tempfile::tempdir().unwrap();
         let saves = tmp.path().join("saves");
         std::fs::create_dir_all(&saves).unwrap();
         assert_eq!(
-            resolve_save_dir(&saves, "bar"),
+            saves.join(crate::util::unique_child_dir(&saves, "bar")),
             saves.join("bar"),
             "无冲突原名"
         );
         std::fs::create_dir_all(saves.join("foo")).unwrap();
         std::fs::create_dir_all(saves.join("foo_1")).unwrap();
         assert_eq!(
-            resolve_save_dir(&saves, "foo"),
+            saves.join(crate::util::unique_child_dir(&saves, "foo")),
             saves.join("foo_2"),
             "冲突递增到空位"
         );
     }
 
-    /// 名清洗：非法字符替换为 _；空/点结尾回退 world。
+    /// 世界名清洗接入 util::sanitize_fs_name：非法字符替换 _；空/点结尾/
+    /// Windows 保留名回退 "world"（比旧 sanitize_world_name 多保留名回退）。
     #[test]
-    fn sanitize_world_name_cleans_illegal_chars() {
-        assert_eq!(sanitize_world_name("My:World?"), "My_World_");
-        assert_eq!(sanitize_world_name("oneblock"), "oneblock", "合法名原样");
-        assert_eq!(sanitize_world_name(""), "world", "空名回退");
-        assert_eq!(
-            sanitize_world_name("world."),
-            "world",
-            "Windows 目录名不能以点结尾"
-        );
-        assert_eq!(sanitize_world_name("  "), "world", "全空白回退");
+    fn world_name_sanitizes_via_util() {
+        let clean =
+            |s: &str| crate::util::sanitize_fs_name(s, "world");
+        assert_eq!(clean("My:World?"), "My_World_");
+        assert_eq!(clean("oneblock"), "oneblock", "合法名原样");
+        assert_eq!(clean(""), "world", "空名回退");
+        assert_eq!(clean("world."), "world", "Windows 目录名不能以点结尾");
+        assert_eq!(clean("  "), "world", "全空白回退");
+        assert_eq!(clean("CON"), "world", "Windows 保留名回退（新增语义）");
     }
 }
