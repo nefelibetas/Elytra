@@ -1,14 +1,13 @@
 <script setup lang="ts">
-// 整合包搜索表单卡片：名称（独立一行）/ 来源 / 版本 / [搜索] [重置条件]（无加载器）
-import { computed, ref, watch } from "vue";
+// 整合包搜索表单卡片：薄适配层 → CommunitySearchBar；「导入本地」为本类特例，经插槽注入。
+import { ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { modpackSearch } from "../store/categorySearch";
-import { releases } from "../store/versionDownload";
 import { showToast } from "../utils/toast";
 import { errMsg } from "../utils/error";
 import { registerTaskName } from "../store/download";
-import DropSelect, { type SelOption } from "./DropSelect.vue";
+import CommunitySearchBar from "./CommunitySearchBar.vue";
 
 /** 本地导入：选 .mrpack/.zip → install_modpack（后端自动嗅探 Modrinth/CurseForge 清单）。 */
 const importing = ref(false);
@@ -34,103 +33,24 @@ async function importLocal() {
     importing.value = false;
   }
 }
-
-/** 来源选项（DropSelect 用）。 */
-const sourceOptions: SelOption[] = [
-  { value: "all", label: "全部" },
-  { value: "curseforge", label: "CurseForge" },
-  { value: "modrinth", label: "Modrinth" },
-];
-
-/** 版本选项：全部 + 正式版列表。 */
-const versionOptions = computed<SelOption[]>(() => [
-  { value: "", label: "全部" },
-  ...releases.value.map((r) => ({ value: r.id, label: r.id })),
-]);
-
-// 筛选切换即自动搜索（来源/版本；名称输入走回车）。
-// watch 在微任务触发，与控件事件栈解耦（不直接在 DropSelect 回调里发起搜索）
-watch(
-  () => [modpackSearch.source, modpackSearch.gameVersion],
-  () => modpackSearch.search(),
-);
 </script>
 
 <template>
-  <div class="card">
-    <div class="card-title">搜索整合包</div>
-    <div class="card-body mo-search-form">
-      <div class="mo-form-row">
-        <label class="mo-form-label" for="modpackQueryInput">名称</label>
-        <input id="modpackQueryInput" class="mo-input" v-model="modpackSearch.query" @keydown.enter="modpackSearch.search()" />
-      </div>
-      <div class="mo-form-row">
-        <label class="mo-form-label" for="modpackSourceSelect">来源</label>
-        <DropSelect
-          id="modpackSourceSelect"
-          :model-value="modpackSearch.source"
-          :options="sourceOptions"
-          width="140px"
-          @update:model-value="modpackSearch.source = $event as typeof modpackSearch.source"
-        />
-        <label class="mo-form-label" for="modpackVerSelect">版本</label>
-        <DropSelect
-          id="modpackVerSelect"
-          :model-value="modpackSearch.gameVersion"
-          :options="versionOptions"
-          class="mo-fill"
-          @update:model-value="modpackSearch.gameVersion = $event"
-        />
-      </div>
-      <div class="mo-form-actions">
-        <button class="mo-btn" :disabled="importing" @click="importLocal">导入本地</button>
-        <button class="mo-btn mo-btn-primary" :disabled="modpackSearch.searching" @click="modpackSearch.search()">
-          <span v-if="modpackSearch.searching" class="mo-spin"></span>{{ modpackSearch.searching ? "搜索中" : "搜索" }}
-        </button>
-        <button class="mo-btn" @click="modpackSearch.reset()">重置条件</button>
-      </div>
-    </div>
-  </div>
+  <CommunitySearchBar :search="modpackSearch" title="搜索整合包" id-prefix="modpack">
+    <template #prepend-actions>
+      <button class="cs-btn" :disabled="importing" @click="importLocal">导入本地</button>
+    </template>
+  </CommunitySearchBar>
 </template>
 
 <style scoped>
-.mo-search-form { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
-.mo-form-row { display: flex; align-items: center; gap: 8px; }
-.mo-form-label { font-size: 12px; color: var(--text-secondary); flex-shrink: 0; width: 36px; }
-.mo-input {
-  flex: 1; height: 30px; padding: 0 10px;
-  border: 1px solid var(--border-default); border-radius: var(--radius-sm);
-  background: var(--surface-page); color: var(--text-primary); font-size: 13px; outline: none;
-  transition: border-color 0.15s;
-}
-.mo-input:focus { border-color: var(--color-brand); }
-/* DropSelect 填充 flex 行（class 落根 .ds） */
-.mo-form-row .mo-fill {
-  flex: 1;
-  min-width: 120px;
-}
-.mo-form-actions { display: flex; justify-content: flex-end; gap: 10px; }
-.mo-btn {
+/* 插槽内容编译于本组件作用域，通用组件的 scoped .cs-btn 不命中，此处复制按钮样式保持视觉一致 */
+.cs-btn {
   padding: 6px 24px;
   border: 1px solid var(--border-default); border-radius: var(--radius-md);
   background: var(--surface-card); color: var(--text-primary); font-size: 13px; font-weight: 600;
   cursor: pointer; transition: all 0.15s; display: inline-flex; align-items: center; gap: 6px;
 }
-.mo-btn:hover { border-color: var(--color-brand); }
-.mo-btn-primary { background: var(--color-brand); border-color: var(--color-brand); color: #fff; }
-.mo-btn-primary:hover { background-color: var(--color-brand-hover); }
-.mo-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.mo-spin {
-  width: 12px; height: 12px; border: 2px solid rgba(255, 255, 255, 0.4);
-  border-top-color: #fff; border-radius: 50%; animation: mo-spin 0.6s linear infinite;
-}
-@keyframes mo-spin { to { transform: rotate(360deg); } }
-
-.card { background-color: var(--surface-card); border: 1px solid var(--border-default); border-radius: var(--radius-md); }
-.card-title {
-  display: flex; align-items: center; gap: 8px;
-  padding: 12px 16px; font-size: 14px; font-weight: 600;
-  color: var(--text-primary); user-select: none; outline: none;
-}
-.card-body { overflow: hidden; }
+.cs-btn:hover { border-color: var(--color-brand); }
+.cs-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 </style>
