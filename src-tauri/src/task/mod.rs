@@ -1,6 +1,7 @@
 // ── task 模块门面：TaskManager 单例 + 事件推送 + 类型重导出 ──
 // 职责分区：model.rs（serde 任务配置）/ steps.rs（步骤分析）/ progress.rs（进度上报）/
-// repair.rs（缺失扫描与修复）/ files.rs（批量文件下载）/ runner.rs（完整下载主体）。
+// repair.rs（缺失扫描与修复）/ files.rs（批量文件下载）/ runner.rs（完整下载主体）/
+// jdk.rs（JDK 安装任务）。
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -12,6 +13,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 pub mod files;
+pub mod jdk;
 pub mod modpack;
 pub mod model;
 pub mod progress;
