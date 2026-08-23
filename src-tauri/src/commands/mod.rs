@@ -7,3 +7,4 @@ pub mod community;
 pub mod loader;
 pub mod task;
 pub mod version;
+pub mod version_icon;
