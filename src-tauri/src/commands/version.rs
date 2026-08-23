@@ -1,6 +1,6 @@
 //! 版本内容命令（薄胶水）：存档/Mod 本地扫描、Mod 更新检查与更新下载、整合包导出。
 //! 目录定位复用 gamedirs 的"当前激活游戏目录 + versions/{name}"约定；
-//! 更新检查/下载的领域逻辑在 downloader/mod_updates.rs。
+//! 更新检查/下载的领域逻辑在 downloader/mod_updates/；版本图标命令在 commands/version_icon.rs。
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -41,7 +41,8 @@ fn dir_modified_secs(meta: &std::fs::Metadata) -> u64 {
 
 /// 版本目录绝对路径（versions/{name}）。目录不存在时返回错误（与 ensure_game_folder 语义区分：
 /// 内容是"读"操作，不该静默创建）。
-fn version_dir(version_name: &str) -> Result<PathBuf, String> {
+/// pub(crate)：版本图标命令（version_icon.rs）共用同一目录定位约定。
+pub(crate) fn version_dir(version_name: &str) -> Result<PathBuf, String> {
     let active = get_active_game_dir();
     let dir = Path::new(&active.path)
         .join("versions")
@@ -99,131 +100,6 @@ pub fn get_world_icon(version_name: String, world_name: String) -> Option<Vec<u8
         return None;
     }
     std::fs::read(&path).ok()
-}
-
-/// 版本图标读取上限（平台 logo / 用户图片一般 <256KB，留余量）。
-const MAX_PACK_ICON_BYTES: u64 = 1024 * 1024;
-
-/// 魔数嗅探是否为受支持的图片格式（png/jpeg/webp/gif）。
-fn is_supported_image(bytes: &[u8]) -> bool {
-    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        return true; // png
-    }
-    if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
-        return true; // jpeg
-    }
-    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
-        return true; // webp
-    }
-    bytes.starts_with(b"GIF8") // gif
-}
-
-/// 图标优先级：用户自定义（version-icon.png）> 整合包项目图（pack-icon.png）。
-fn version_icon_path(vdir: &Path) -> Option<PathBuf> {
-    for name in ["version-icon.png", "pack-icon.png"] {
-        let p = vdir.join(name);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    None
-}
-
-/// 校验版本目录名：仅接受简单目录名，防路径穿越。
-fn ensure_simple_dir_name(name: &str) -> Result<(), String> {
-    if name.contains('/') || name.contains('\\') || name.contains("..") {
-        return Err(format!("版本目录名不合法\n{name}"));
-    }
-    Ok(())
-}
-
-/// 读取版本图标字节（自定义 > 整合包；都没有返回 None，UI 回退 loader 图标）。
-#[tauri::command]
-pub fn get_version_icon(version_dir_name: String) -> Option<Vec<u8>> {
-    ensure_simple_dir_name(&version_dir_name).ok()?;
-    let vdir = version_dir(&version_dir_name).ok()?;
-    let path = version_icon_path(&vdir)?;
-    let meta = std::fs::metadata(&path).ok()?;
-    if !meta.is_file() || meta.len() == 0 || meta.len() > MAX_PACK_ICON_BYTES {
-        return None;
-    }
-    std::fs::read(&path).ok()
-}
-
-/// 图标来源："custom"=用户自定义 / "pack"=整合包项目图 / "default"=无（loader 图标）。
-#[derive(Debug, Clone, Serialize)]
-pub struct VersionIconInfo {
-    pub source: String,
-}
-
-/// 查询当前图标来源（设置页展示状态用；目录不存在返回 default）。
-#[tauri::command]
-pub fn get_version_icon_source(version_dir_name: String) -> VersionIconInfo {
-    let source = ensure_simple_dir_name(&version_dir_name)
-        .ok()
-        .and_then(|_| version_dir(&version_dir_name).ok())
-        .and_then(|vdir| version_icon_path(&vdir))
-        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
-        .map(|n| {
-            if n == "version-icon.png" {
-                "custom"
-            } else {
-                "pack"
-            }
-        })
-        .unwrap_or("default");
-    VersionIconInfo {
-        source: source.to_string(),
-    }
-}
-
-/// 设置自定义版本图标：把选中的本地图片复制为 versions/{dir}/version-icon.png。
-/// 仅接受 png/jpeg/webp/gif（魔数校验），≤1MB；覆盖旧自定义图。
-#[tauri::command]
-pub async fn set_version_icon(
-    version_dir_name: String,
-    source_path: String,
-) -> Result<(), String> {
-    ensure_simple_dir_name(&version_dir_name)?;
-    let src = PathBuf::from(&source_path);
-    let meta = std::fs::metadata(&src).map_err(|e| format!("读取图片失败\n{e}"))?;
-    if !meta.is_file() {
-        return Err("所选路径不是文件".into());
-    }
-    if meta.len() == 0 || meta.len() > MAX_PACK_ICON_BYTES {
-        return Err(format!(
-            "图片大小需在 1MB 以内\n当前 {} 字节",
-            meta.len()
-        ));
-    }
-    let bytes = std::fs::read(&src).map_err(|e| format!("读取图片失败\n{e}"))?;
-    if !is_supported_image(&bytes) {
-        return Err("不支持的图片格式（仅支持 png / jpg / webp / gif）".into());
-    }
-    let vdir = version_dir(&version_dir_name)?;
-    // 复制为固定文件名（内容格式由魔数决定，前端按嗅探渲染）
-    tokio::task::spawn_blocking(move || {
-        std::fs::write(vdir.join("version-icon.png"), &bytes).map_err(|e| format!("写入图标失败\n{e}"))
-    })
-    .await
-    .map_err(|e| format!("写入任务失败\n{e}"))?
-}
-
-/// 还原为默认图标：删除自定义图标（versions/{dir}/version-icon.png）。
-/// 整合包项目图（pack-icon.png）不受影响——"默认"即安装时的样子。
-#[tauri::command]
-pub async fn reset_version_icon(version_dir_name: String) -> Result<(), String> {
-    ensure_simple_dir_name(&version_dir_name)?;
-    let vdir = version_dir(&version_dir_name)?;
-    let target = vdir.join("version-icon.png");
-    if !target.exists() {
-        return Ok(()); // 幂等：本就无自定义图
-    }
-    tokio::task::spawn_blocking(move || {
-        std::fs::remove_file(target).map_err(|e| format!("删除图标失败\n{e}"))
-    })
-    .await
-    .map_err(|e| format!("删除任务失败\n{e}"))?
 }
 
 /// 列出版本下资源目录（材质包/数据包/光影包/mod）中的文件，按名称排序；目录不存在返回空列表。
@@ -453,28 +329,6 @@ fn unix_now() -> String {
 mod tests {
     use super::*;
     use std::io::Read;
-
-    #[test]
-    fn is_supported_image_sniffs_magic_bytes() {
-        assert!(is_supported_image(b"\x89PNG\r\n\x1a\nrest"));
-        assert!(is_supported_image(&[0xff, 0xd8, 0xff, 0xe0]));
-        let mut webp = b"RIFF\x00\x00\x00\x00WEBPVP8 ".to_vec();
-        assert!(is_supported_image(&webp));
-        webp[8] = b'X'; // 破坏 WEBP 标记
-        assert!(!is_supported_image(&webp));
-        assert!(is_supported_image(b"GIF89a"));
-        assert!(!is_supported_image(b"<html>"));
-        assert!(!is_supported_image(b""));
-    }
-
-    #[test]
-    fn ensure_simple_dir_name_blocks_traversal() {
-        assert!(ensure_simple_dir_name("1.20.1-fabric-0.16.9").is_ok());
-        assert!(ensure_simple_dir_name("Pack_1").is_ok());
-        assert!(ensure_simple_dir_name("a..b").is_err(), "含 .. 子串一律拒绝（对齐 get_world_icon 先例）");
-        assert!(ensure_simple_dir_name("a\\b").is_err());
-        assert!(ensure_simple_dir_name("..").is_err());
-    }
 
     #[test]
     fn pack_modpack_keeps_existing_dirs_and_manifest() {

@@ -52,19 +52,12 @@ pub fn apply_offline_skin(auth: &mut AuthMode) {
     *uuid = skin_matching_uuid(uuid, random_is_alex(username));
 }
 
-/// FNV-1a 哈希（与前端 hashName 一致）。
-fn hash_name(name: &str) -> u32 {
-    let mut h: u32 = 2166136261;
-    for b in name.bytes() {
-        h ^= b as u32;
-        h = h.wrapping_mul(16777619);
-    }
-    h
-}
 
 /// Random 皮肤模型决策：哈希奇数 → Alex（slim）。apply_offline_skin 与 build_user_properties 共用。
+/// 复用 util::fnv1a64（与前端 hashName 的 FNV-1a 32 位奇偶一致：
+/// FNV-1a 每步 `(h ^ byte) * 奇素数` 不改变最低位，奇偶仅由末字节决定，64/32 位判定等价）。
 fn random_is_alex(username: &str) -> bool {
-    hash_name(username) % 2 == 1
+    crate::util::fnv1a64(username) % 2 == 1
 }
 
 /// 构造 `--user-properties` 参数值（authlib user properties）。
@@ -138,6 +131,27 @@ mod tests {
                 !props.is_empty(),
                 want_alex,
                 "user-properties 注入应与 Alex 决策一致: {name}",
+            );
+        }
+    }
+
+    #[test]
+    fn fnv1a64_parity_matches_frontend_hash_name() {
+        // 前端 hashName 是 FNV-1a 32 位；Steve/Alex 决策只取最低位。
+        // 守住「64 位与 32 位奇偶一致」这一迁移前提（乘奇素数不改最低位，奇偶仅由末字节决定）。
+        fn hash32(name: &str) -> u32 {
+            let mut h: u32 = 2166136261;
+            for b in name.bytes() {
+                h ^= b as u32;
+                h = h.wrapping_mul(16777619);
+            }
+            h
+        }
+        for name in ["", "A", "Steve", "Alex", "Notch", "BridgeFishDev", "测试用户"] {
+            assert_eq!(
+                crate::util::fnv1a64(name) % 2,
+                (hash32(name) % 2) as u64,
+                "64/32 位 FNV-1a 奇偶应一致: {name}"
             );
         }
     }

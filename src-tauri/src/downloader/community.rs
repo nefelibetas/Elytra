@@ -97,14 +97,15 @@ fn version_range(versions: &[String]) -> Option<String> {
     if valid.is_empty() {
         return None;
     }
+    // valid 已通过 parse_game_version 过滤，比较必然可解析；仍用 unwrap_or 兜底防 panic
     let min = valid
         .iter()
-        .min_by(|a, b| compare_game_versions(a, b).unwrap())
-        .copied()?;
+        .copied()
+        .min_by(|a, b| compare_game_versions(a, b).unwrap_or(std::cmp::Ordering::Equal))?;
     let max = valid
         .iter()
-        .max_by(|a, b| compare_game_versions(a, b).unwrap())
-        .copied()?;
+        .copied()
+        .max_by(|a, b| compare_game_versions(a, b).unwrap_or(std::cmp::Ordering::Equal))?;
     if min == max {
         Some(min.clone())
     } else {
@@ -237,9 +238,9 @@ fn curseforge_loaders(game_versions: &[String]) -> Vec<String> {
         .map(str::to_string)
         .collect()
 }
-
 /// JSON 交互请求（10s 超时）：直接 GET 解析，不做文件下载层的重试/换源（搜索失败即返回）。
-async fn get_json(url: &str) -> Result<serde_json::Value, String> {
+/// pub(crate)：本地 Mod 识别（mod_updates）复用同一查询通道，避免两份副本漂移。
+pub(crate) async fn get_json(url: &str) -> Result<serde_json::Value, String> {
     let resp = fetcher::http()
         .get(url)
         .timeout(std::time::Duration::from_secs(QUERY_TIMEOUT_SECS))
@@ -300,7 +301,7 @@ fn translation_body(source: &str, ids: &[String]) -> Option<serde_json::Value> {
 
 /// 批量查 MCIM 中文简介翻译（POST /translate/{source}）。先查内存缓存（10 分钟 TTL），
 /// 只请求未命中的 id；网络失败/无翻译静默降级（返回空 map，不阻塞搜索结果）。
-/// pub(crate)：本地 Mod 详情（mod_updates.rs）复用同一翻译通道。
+/// pub(crate)：本地 Mod 详情识别（downloader/mod_updates/identify.rs）复用同一翻译通道。
 pub(crate) async fn fetch_translations(source: &str, ids: &[String]) -> HashMap<String, String> {
     if ids.is_empty() {
         return HashMap::new();
@@ -857,7 +858,12 @@ pub async fn get_community_details(
     Ok(items)
 }
 
-async fn modrinth_details(ids: &[String]) -> Result<Vec<CommunityDependencyItem>, String> {
+/// 批量拉取 Modrinth 项目原始 JSON（GET /v2/projects?ids=[...]），保持响应顺序。
+/// pub(crate)：依赖卡片详情（本模块）与本地 Mod 元数据识别（mod_updates）
+/// 共用同一端点与解析入口，消除两套同端点实现。
+pub(crate) async fn modrinth_projects_raw(
+    ids: &[String],
+) -> Result<Vec<serde_json::Value>, String> {
     let ids_json = serde_json::to_string(ids).map_err(|e| format!("序列化数据失败\n{e}"))?;
     let url = reqwest::Url::parse_with_params(
         &format!("{}/v2/projects", MODRINTH_API),
@@ -868,7 +874,12 @@ async fn modrinth_details(ids: &[String]) -> Result<Vec<CommunityDependencyItem>
     let arr = data
         .as_array()
         .ok_or_else(|| "项目详情响应格式错误".to_string())?;
-    Ok(arr
+    Ok(arr.to_vec())
+}
+
+async fn modrinth_details(ids: &[String]) -> Result<Vec<CommunityDependencyItem>, String> {
+    Ok(modrinth_projects_raw(ids)
+        .await?
         .iter()
         .filter_map(|p| {
             Some(CommunityDependencyItem {
