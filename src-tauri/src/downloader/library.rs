@@ -234,8 +234,12 @@ pub async fn download_libraries(
     }
 
     for handle in handles {
-        if let Err(e) = handle.await.unwrap() {
-            errors.push(e);
+        // JoinError（worker panic）转任务错误：unwrap 会让整个下载任务 panic、
+        // 不发终态事件，前端卡片永久挂起
+        match handle.await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => errors.push(e),
+            Err(e) => errors.push(format!("下载工作线程异常\n{e}")),
         }
     }
 

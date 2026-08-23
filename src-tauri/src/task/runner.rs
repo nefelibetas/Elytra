@@ -98,16 +98,25 @@ pub async fn run_task(
     // 确保目录存在；非 loader 模式下写入原版 version JSON（loader 模式由 installer 写合并 JSON）
     std::fs::create_dir_all(&vdir).ok();
     if loader.is_none() {
-        if let Ok(json) = serde_json::to_string_pretty(&vj) {
-            let jp = vdir.join(format!("{}.json", version_id));
-            std::fs::write(&jp, &json).ok();
+        // 写盘失败必须报错：假成功会让版本缺 json、启动时报"未找到版本 JSON"
+        match serde_json::to_string_pretty(&vj) {
+            Ok(json) => {
+                let jp = vdir.join(format!("{}.json", version_id));
+                if let Err(e) = std::fs::write(&jp, &json) {
+                    return set_error(&app, progress, format!("写入版本 JSON 失败\n{e}"));
+                }
+            }
+            Err(e) => return set_error(&app, progress, format!("序列化版本 JSON 失败\n{e}")),
         }
     }
     // 取消时整删本次安装的版本目录：仅新建目录（vdir_existed_before=false）
     // 才登记清理——补全已有版本时取消不删，避免误删用户已有文件
     // （与下方失败路径 `if !vdir_existed_before { remove_dir_all }` 语义一致）。
     if !vdir_existed_before {
-        task::global().set_cleanup_path(&progress.try_lock().unwrap().task_id, vdir.clone());
+        // try_lock 失败（并发 cancel 持锁）时放弃登记，不 panic——与终态收口风格一致
+        if let Some(p) = progress.try_lock() {
+            task::global().set_cleanup_path(&p.task_id, vdir.clone());
+        }
     }
 
     // ── 阶段 B：本地缺失检测 + 步骤布局 + 总进度基线（含资产清单 fetch 与多线程 sha1 检测）──
@@ -836,7 +845,9 @@ pub async fn run_install_jdk(
 
     // 取消/失败时整删半截 runtime 目录：managed 目录程序专属（可重下），
     // 半截残留会误导 auto_install 的幂等检查（bin/java.exe 已存在即误判已装）
-    task::global().set_cleanup_path(&progress.try_lock().unwrap().task_id, dest_dir.clone());
+    if let Some(p) = progress.try_lock() {
+        task::global().set_cleanup_path(&p.task_id, dest_dir.clone());
+    }
 
     set_phase(&app, progress, Some(TaskStatus::Running), &format!("下载 Java {major}"), 0, StepStatus::Running);
     if cancelled(cancel) {
