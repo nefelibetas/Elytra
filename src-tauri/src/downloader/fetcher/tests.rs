@@ -1,14 +1,14 @@
 //! fetcher 单元/集成行为测试（随物理拆分集中迁移，断言一字未改）。
-use std::sync::Arc;
-use super::*;
 use super::core::is_mirror_url;
 use super::redirect::redirect_allowed;
 use super::routes::{
     mirror_candidates, record_route_failure, record_route_success, resolve_download_routes,
     route_health,
 };
+use super::*;
 use crate::config::downloader::model::DownloadSourceMode;
 use crate::downloader::hash::sha1_hex;
+use std::sync::Arc;
 
 /// 本地 HTTP 服务器：每次请求返回固定 body（用于确定性校验失败/成功场景）。
 async fn serve(body: Vec<u8>) -> String {
@@ -76,8 +76,14 @@ async fn fetch_cancelled_returns_immediately() {
 #[test]
 fn redirect_policy_minio_allowed() {
     assert!(!redirect_allowed("17.749333.xyz"), "实测黑洞子域必须拒绝");
-    assert!(!redirect_allowed("cdn.749333.xyz"), "未知 749333 子域保持拒绝");
-    assert!(redirect_allowed("minio.749333.xyz"), "bmclapi 下载存储必须放行");
+    assert!(
+        !redirect_allowed("cdn.749333.xyz"),
+        "未知 749333 子域保持拒绝"
+    );
+    assert!(
+        redirect_allowed("minio.749333.xyz"),
+        "bmclapi 下载存储必须放行"
+    );
     assert!(redirect_allowed("bmclapi2.bangbang93.com"));
     assert!(redirect_allowed("example.com"));
 }
@@ -115,7 +121,9 @@ async fn redirect_to_blackhole_domain_rejected() {
     tokio::spawn(async move {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         for _ in 0..3 {
-            let Ok((mut sock, _)) = listener.accept().await else { break };
+            let Ok((mut sock, _)) = listener.accept().await else {
+                break;
+            };
             let mut buf = [0u8; 4096];
             let _ = sock.read(&mut buf).await;
             let head = "HTTP/1.1 302 Found\r\nLocation: https://17.749333.xyz:443/download/x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
@@ -127,7 +135,10 @@ async fn redirect_to_blackhole_domain_rejected() {
     let t0 = std::time::Instant::now();
     let res = fetch_verified(&[url], &dest, None::<fn(u64, u64)>, "").await;
     let elapsed = t0.elapsed();
-    eprintln!("黑洞重定向总耗时: {:.2}s res={res:?}", elapsed.as_secs_f64());
+    eprintln!(
+        "黑洞重定向总耗时: {:.2}s res={res:?}",
+        elapsed.as_secs_f64()
+    );
     assert!(res.is_err(), "黑洞重定向应失败，实际: {:?}", res);
     assert!(
         elapsed.as_secs() < 5,
@@ -258,15 +269,23 @@ async fn fetch_from_sources_reports_every_source_error() {
 /// 镜像源判定：仅 BMCLAPI/MCIM 域名受限，官方源不受限。
 #[test]
 fn is_mirror_url_detects_mirror_domains() {
-    assert!(is_mirror_url("https://bmclapi2.bangbang93.com/libraries/x.jar"));
+    assert!(is_mirror_url(
+        "https://bmclapi2.bangbang93.com/libraries/x.jar"
+    ));
     assert!(is_mirror_url("https://mod.mcimirror.top/data/x.jar"));
     assert!(!is_mirror_url("https://libraries.minecraft.net/x.jar"));
     assert!(!is_mirror_url("https://piston-data.mojang.com/x.jar"));
     assert!(!is_mirror_url("https://resources.download.minecraft.net/x"));
     // 高并发不稳的官方 maven 同样限流
-    assert!(is_mirror_url("https://maven.quiltmc.org/repository/release/org/quiltmc/x.jar"));
-    assert!(is_mirror_url("https://maven.neoforged.net/releases/net/neoforged/x.jar"));
-    assert!(is_mirror_url("https://maven.minecraftforge.net/net/minecraftforge/x.jar"));
+    assert!(is_mirror_url(
+        "https://maven.quiltmc.org/repository/release/org/quiltmc/x.jar"
+    ));
+    assert!(is_mirror_url(
+        "https://maven.neoforged.net/releases/net/neoforged/x.jar"
+    ));
+    assert!(is_mirror_url(
+        "https://maven.minecraftforge.net/net/minecraftforge/x.jar"
+    ));
 }
 
 /// 镜像候选生成：mojang/library/loader 域 → BMCLAPI 镜像（单一表在 downloader/model.rs）。
@@ -302,7 +321,10 @@ fn resolve_routes_dedupes_and_appends_mirror_candidate() {
     let routes = resolve_download_routes(&urls, DownloadSourceMode::Auto);
     assert_eq!(routes.len(), 2, "去重后原始 1 + 镜像候选 1");
     assert_eq!(routes[0].url, "https://libraries.minecraft.net/com/x/y.jar");
-    assert_eq!(routes[1].url, "https://bmclapi2.bangbang93.com/libraries/com/x/y.jar");
+    assert_eq!(
+        routes[1].url,
+        "https://bmclapi2.bangbang93.com/libraries/com/x/y.jar"
+    );
     assert!(!routes[0].is_mirror);
     assert!(routes[1].is_mirror);
     // 调用方已含镜像（手工双源）→ 不再重复追加
@@ -326,9 +348,7 @@ fn resolve_routes_single_mode_keeps_order() {
         routes[0].url
     );
     // ChinaOnly：调用方只传镜像 URL → 保持单一镜像
-    let mirror = vec![
-        "https://bmclapi2.bangbang93.com/libraries/com/x/y.jar".to_string(),
-    ];
+    let mirror = vec!["https://bmclapi2.bangbang93.com/libraries/com/x/y.jar".to_string()];
     let routes2 = resolve_download_routes(&mirror, DownloadSourceMode::ChinaOnly);
     assert_eq!(routes2.len(), 1, "ChinaOnly 单源不追加候选");
     assert!(
@@ -360,7 +380,11 @@ fn route_health_cooldown_after_consecutive_failures() {
     // TTFB EWMA 更新（α=0.25）
     record_route_success(url, 200.0);
     h = route_health(url);
-    assert!((h.ttfb_ewma_ms - 140.0).abs() < 0.01, "EWMA 应收敛到 140，实际 {}", h.ttfb_ewma_ms);
+    assert!(
+        (h.ttfb_ewma_ms - 140.0).abs() < 0.01,
+        "EWMA 应收敛到 140，实际 {}",
+        h.ttfb_ewma_ms
+    );
 }
 
 /// Auto 模式：冷却中的路由排最末；Loader 镜像冷启动优先。
@@ -371,7 +395,11 @@ fn resolve_routes_auto_sorts_by_health() {
     let urls = vec![official.clone(), mirror.clone()];
     // 冷启动（无样本）：Loader 镜像优先
     let routes = resolve_download_routes(&urls, DownloadSourceMode::Auto);
-    assert!(routes[0].is_mirror, "Auto + Loader 冷启动镜像优先: {}", routes[0].url);
+    assert!(
+        routes[0].is_mirror,
+        "Auto + Loader 冷启动镜像优先: {}",
+        routes[0].url
+    );
     // 镜像连续失败进入冷却 → 官方排前
     record_route_failure(&mirror);
     record_route_failure(&mirror);

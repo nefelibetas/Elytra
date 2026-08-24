@@ -22,14 +22,14 @@ use serde::Serialize;
 /// JSON 查询通道（mod_updates 复用）。
 pub(crate) use shared::{api_routes, get_json_multi, ApiPlatform};
 
-/// MCIM 批量翻译通道（mod_updates/identify.rs 复用）。
-pub(crate) use translation::fetch_translations;
-/// CurseForge 带 key GET（mod_loader/optifine.rs 复用）。
-pub(crate) use curseforge::curseforge_get;
 /// CurseForge 批量文件换链（modpack.rs 整合包安装复用）。
 pub(crate) use curseforge::curseforge_files;
+/// CurseForge 带 key GET（mod_loader/optifine.rs 复用）。
+pub(crate) use curseforge::curseforge_get;
 /// Modrinth 项目原始 JSON 批量拉取（mod_updates/identify.rs 复用）。
 pub(crate) use modrinth::modrinth_projects_raw;
+/// MCIM 批量翻译通道（mod_updates/identify.rs 复用）。
+pub(crate) use translation::fetch_translations;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CommunitySearchResult {

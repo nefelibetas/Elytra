@@ -394,9 +394,7 @@ fn temp_file(name: &str) -> PathBuf {
 /// 不换 ProgressCounters::byte_callback：JDK 安装链路没有 ProgressCounters 步骤计数，
 /// 字节进度经 InstallProgress::on_bytes 回调上报、由任务侧自行聚合，消费端与
 /// 全局计数器原子不同构。
-fn delta_callback<'a>(
-    on_bytes: Option<&'a (dyn Fn(u64) + Send + Sync)>,
-) -> impl Fn(u64, u64) + 'a {
+fn delta_callback<'a>(on_bytes: Option<&'a (dyn Fn(u64) + Send + Sync)>) -> impl Fn(u64, u64) + 'a {
     let prev = AtomicU64::new(0);
     move |downloaded: u64, _total: u64| {
         let p = prev.swap(downloaded, Ordering::Relaxed);
@@ -425,7 +423,11 @@ fn file_sha256(path: &Path) -> String {
             Err(_) => return String::new(),
         }
     }
-    hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect()
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect()
 }
 
 #[cfg(test)]

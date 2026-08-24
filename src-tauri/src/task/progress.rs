@@ -1,8 +1,8 @@
 // ── 进度上报基础设施：EmitLoop 主循环 + 收尾心跳 + set_* 状态助手 ──
 // 三个任务（run_task / run_files_task / run_repair_task）共用，唯一依赖方向：任务主体 → 本模块。
 
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use parking_lot::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -144,95 +144,104 @@ impl EmitLoop {
                         p.current_phase = st.name.clone();
                     }
 
-                // 分步进度：client.jar 字节级（total 未知时用完成标志），其余按字节/文件数
-                if let Some(i) = self.jar_step {
-                    if let Some(st) = p.steps.get_mut(i) {
-                        if st.status == StepStatus::Running {
-                            let jar_total = if js > 0 { js } else { self.jar_total_fallback };
-                            st.progress = if jar_total > 0 {
-                                (jb as f64 / jar_total as f64 * 100.0).min(100.0)
-                            } else {
-                                (jd as f64) * 100.0
-                            };
-                        }
-                    }
-                }
-                // libs/assets/natives：字节优先（pending 字节已知时），否则回退文件数
-                let pct_of = |done: u64, total: u64| (done as f64 / total as f64 * 100.0).min(100.0);
-                if let Some(i) = self.lib_step {
-                    if let Some(st) = p.steps.get_mut(i) {
-                        if st.status == StepStatus::Running {
-                            st.progress = if self.lib_pending_bytes > 0 {
-                                pct_of(self.lib_bytes.load(Ordering::Relaxed), self.lib_pending_bytes)
-                            } else if self.lib_pending > 0 {
-                                (ld as f64 / self.lib_pending as f64 * 100.0).min(100.0)
-                            } else {
-                                100.0
-                            };
-                        }
-                    }
-                }
-                if let Some(i) = self.asst_step {
-                    if let Some(st) = p.steps.get_mut(i) {
-                        if st.status == StepStatus::Running {
-                            st.progress = if self.asst_pending_bytes > 0 {
-                                pct_of(self.asst_bytes.load(Ordering::Relaxed), self.asst_pending_bytes)
-                            } else if self.asst_pending > 0 {
-                                (ad as f64 / self.asst_pending as f64 * 100.0).min(100.0)
-                            } else {
-                                100.0
-                            };
-                        }
-                    }
-                }
-                if let Some(i) = self.natives_step {
-                    if let Some(st) = p.steps.get_mut(i) {
-                        if st.status == StepStatus::Running {
-                            st.progress = if self.natives_pending_bytes > 0 {
-                                pct_of(
-                                    self.natives_bytes.load(Ordering::Relaxed),
-                                    self.natives_pending_bytes,
-                                )
-                            } else if self.natives_pending > 0 {
-                                (nd as f64 / self.natives_pending as f64 * 100.0).min(100.0)
-                            } else {
-                                100.0
-                            };
-                        }
-                    }
-                }
-                // 安装步骤：单文件/多文件字节（total 运行时填充，0 时保持 0 直到完成跳 100%）
-                if let Some(i) = self.loader_libs_step {
-                    if let Some(st) = p.steps.get_mut(i) {
-                        if st.status == StepStatus::Running {
-                            let t = self.loader_libs_total.load(Ordering::Relaxed);
-                            if t > 0 {
-                                st.progress =
-                                    pct_of(self.loader_libs_bytes.load(Ordering::Relaxed), t);
+                    // 分步进度：client.jar 字节级（total 未知时用完成标志），其余按字节/文件数
+                    if let Some(i) = self.jar_step {
+                        if let Some(st) = p.steps.get_mut(i) {
+                            if st.status == StepStatus::Running {
+                                let jar_total = if js > 0 { js } else { self.jar_total_fallback };
+                                st.progress = if jar_total > 0 {
+                                    (jb as f64 / jar_total as f64 * 100.0).min(100.0)
+                                } else {
+                                    (jd as f64) * 100.0
+                                };
                             }
                         }
                     }
-                }
-                if let Some(i) = self.optifine_step {
-                    if let Some(st) = p.steps.get_mut(i) {
-                        if st.status == StepStatus::Running {
-                            let t = self.optifine_total.load(Ordering::Relaxed);
-                            if t > 0 {
-                                st.progress = pct_of(self.optifine_bytes.load(Ordering::Relaxed), t);
+                    // libs/assets/natives：字节优先（pending 字节已知时），否则回退文件数
+                    let pct_of =
+                        |done: u64, total: u64| (done as f64 / total as f64 * 100.0).min(100.0);
+                    if let Some(i) = self.lib_step {
+                        if let Some(st) = p.steps.get_mut(i) {
+                            if st.status == StepStatus::Running {
+                                st.progress = if self.lib_pending_bytes > 0 {
+                                    pct_of(
+                                        self.lib_bytes.load(Ordering::Relaxed),
+                                        self.lib_pending_bytes,
+                                    )
+                                } else if self.lib_pending > 0 {
+                                    (ld as f64 / self.lib_pending as f64 * 100.0).min(100.0)
+                                } else {
+                                    100.0
+                                };
                             }
                         }
                     }
-                }
-                if let Some(i) = self.fabric_step {
-                    if let Some(st) = p.steps.get_mut(i) {
-                        if st.status == StepStatus::Running {
-                            let t = self.fabric_total.load(Ordering::Relaxed);
-                            if t > 0 {
-                                st.progress = pct_of(self.fabric_bytes.load(Ordering::Relaxed), t);
+                    if let Some(i) = self.asst_step {
+                        if let Some(st) = p.steps.get_mut(i) {
+                            if st.status == StepStatus::Running {
+                                st.progress = if self.asst_pending_bytes > 0 {
+                                    pct_of(
+                                        self.asst_bytes.load(Ordering::Relaxed),
+                                        self.asst_pending_bytes,
+                                    )
+                                } else if self.asst_pending > 0 {
+                                    (ad as f64 / self.asst_pending as f64 * 100.0).min(100.0)
+                                } else {
+                                    100.0
+                                };
                             }
                         }
                     }
-                }
+                    if let Some(i) = self.natives_step {
+                        if let Some(st) = p.steps.get_mut(i) {
+                            if st.status == StepStatus::Running {
+                                st.progress = if self.natives_pending_bytes > 0 {
+                                    pct_of(
+                                        self.natives_bytes.load(Ordering::Relaxed),
+                                        self.natives_pending_bytes,
+                                    )
+                                } else if self.natives_pending > 0 {
+                                    (nd as f64 / self.natives_pending as f64 * 100.0).min(100.0)
+                                } else {
+                                    100.0
+                                };
+                            }
+                        }
+                    }
+                    // 安装步骤：单文件/多文件字节（total 运行时填充，0 时保持 0 直到完成跳 100%）
+                    if let Some(i) = self.loader_libs_step {
+                        if let Some(st) = p.steps.get_mut(i) {
+                            if st.status == StepStatus::Running {
+                                let t = self.loader_libs_total.load(Ordering::Relaxed);
+                                if t > 0 {
+                                    st.progress =
+                                        pct_of(self.loader_libs_bytes.load(Ordering::Relaxed), t);
+                                }
+                            }
+                        }
+                    }
+                    if let Some(i) = self.optifine_step {
+                        if let Some(st) = p.steps.get_mut(i) {
+                            if st.status == StepStatus::Running {
+                                let t = self.optifine_total.load(Ordering::Relaxed);
+                                if t > 0 {
+                                    st.progress =
+                                        pct_of(self.optifine_bytes.load(Ordering::Relaxed), t);
+                                }
+                            }
+                        }
+                    }
+                    if let Some(i) = self.fabric_step {
+                        if let Some(st) = p.steps.get_mut(i) {
+                            if st.status == StepStatus::Running {
+                                let t = self.fabric_total.load(Ordering::Relaxed);
+                                if t > 0 {
+                                    st.progress =
+                                        pct_of(self.fabric_bytes.load(Ordering::Relaxed), t);
+                                }
+                            }
+                        }
+                    }
 
                     // 总进度 = 已完成字节 / 总字节（与检测阶段 set_completed 同公式，
                     // 无缝衔接：检测完即 initial/total，下载中继续单调涨；大文件按字节占比，
@@ -445,7 +454,10 @@ pub fn set_cancelled(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>) {
                     Ok(_) => return,
                     Err(e) => {
                         if attempt >= 9 {
-                            eprintln!("[task] 取消清理失败（重试 10 次后仍被占用）: {} → {e}", path.display());
+                            eprintln!(
+                                "[task] 取消清理失败（重试 10 次后仍被占用）: {} → {e}",
+                                path.display()
+                            );
                         } else {
                             std::thread::sleep(std::time::Duration::from_millis(300));
                         }

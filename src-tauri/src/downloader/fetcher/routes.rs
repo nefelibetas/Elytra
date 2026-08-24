@@ -62,7 +62,11 @@ fn route_health_map() -> &'static Mutex<std::collections::HashMap<String, RouteH
 }
 
 pub(super) fn route_health(url: &str) -> RouteHealth {
-    route_health_map().lock().get(url).cloned().unwrap_or_default()
+    route_health_map()
+        .lock()
+        .get(url)
+        .cloned()
+        .unwrap_or_default()
 }
 
 /// 记录成功：清零连续失败与冷却，TTFB EWMA 更新（α=0.25）。

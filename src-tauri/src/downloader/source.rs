@@ -2,8 +2,8 @@
 //! 纯数据（DownloaderConfig 字段）留在 `config/downloader/model.rs`，
 //! 网络请求逻辑归此文件——impl 跨文件不改变调用方写法。
 
-use std::collections::HashMap;
 use parking_lot::Mutex;
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use crate::config::downloader::model::{DownloadSource, DownloadSourceMode, DownloaderConfig};
@@ -114,7 +114,10 @@ impl DownloaderConfig {
         for (i, source) in order.iter().enumerate() {
             let url = make_url(source);
             if tried.iter().any(|u| u == &url) {
-                eprintln!("[meta] 源{}({i}) 跳过: {url}（与已尝试源同 URL）", source.name);
+                eprintln!(
+                    "[meta] 源{}({i}) 跳过: {url}（与已尝试源同 URL）",
+                    source.name
+                );
                 continue;
             }
             tried.push(url.clone());
@@ -214,22 +217,17 @@ mod tests {
         let key = make(cfg.sources_in_order(DownloadSourceMode::Auto)[0]);
         // 未命中：CacheOnly 直接报错（绝不发网络请求——即使 URL 不可达也只报缓存缺失）
         let err = cfg
-            .fetch_with_fallback(
-                DownloadSourceMode::Auto,
-                CacheBehaviour::CacheOnly,
-                make,
-            )
+            .fetch_with_fallback(DownloadSourceMode::Auto, CacheBehaviour::CacheOnly, make)
             .await
             .unwrap_err();
-        assert!(err.contains("离线模式"), "CacheOnly 未命中应报离线错误: {err}");
+        assert!(
+            err.contains("离线模式"),
+            "CacheOnly 未命中应报离线错误: {err}"
+        );
         // 命中：返回缓存内容，不发网络
         list_cache_set(key, "cached-v1".into());
         let ok = cfg
-            .fetch_with_fallback(
-                DownloadSourceMode::Auto,
-                CacheBehaviour::CacheOnly,
-                make,
-            )
+            .fetch_with_fallback(DownloadSourceMode::Auto, CacheBehaviour::CacheOnly, make)
             .await
             .unwrap();
         assert_eq!(ok, "cached-v1");
@@ -265,7 +263,9 @@ mod tests {
         tokio::spawn(async move {
             loop {
                 // 黑洞：accept 后保持连接但不读写任何数据（模拟 TUN 假死源）
-                let Ok((sock, _)) = listener.accept().await else { break };
+                let Ok((sock, _)) = listener.accept().await else {
+                    break;
+                };
                 std::mem::forget(sock); // 泄漏 fd 保持连接挂起
             }
         });

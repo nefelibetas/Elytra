@@ -70,10 +70,7 @@ pub fn get_version_icon_source(version_dir_name: String) -> VersionIconInfo {
 /// 设置自定义版本图标：把选中的本地图片复制为 versions/{dir}/version-icon.png。
 /// 仅接受 png/jpeg/webp/gif（魔数校验），≤1MB；覆盖旧自定义图。
 #[tauri::command]
-pub async fn set_version_icon(
-    version_dir_name: String,
-    source_path: String,
-) -> Result<(), String> {
+pub async fn set_version_icon(version_dir_name: String, source_path: String) -> Result<(), String> {
     ensure_simple_dir_name(&version_dir_name)?;
     let src = PathBuf::from(&source_path);
     let meta = std::fs::metadata(&src).map_err(|e| format!("读取图片失败\n{e}"))?;
@@ -81,10 +78,7 @@ pub async fn set_version_icon(
         return Err("所选路径不是文件".into());
     }
     if meta.len() == 0 || meta.len() > MAX_PACK_ICON_BYTES {
-        return Err(format!(
-            "图片大小需在 1MB 以内\n当前 {} 字节",
-            meta.len()
-        ));
+        return Err(format!("图片大小需在 1MB 以内\n当前 {} 字节", meta.len()));
     }
     let bytes = std::fs::read(&src).map_err(|e| format!("读取图片失败\n{e}"))?;
     if !util::is_supported_image(&bytes) {
@@ -93,7 +87,8 @@ pub async fn set_version_icon(
     let vdir = version_dir(&version_dir_name)?;
     // 复制为固定文件名（内容格式由魔数决定，前端按嗅探渲染）
     tokio::task::spawn_blocking(move || {
-        std::fs::write(vdir.join("version-icon.png"), &bytes).map_err(|e| format!("写入图标失败\n{e}"))
+        std::fs::write(vdir.join("version-icon.png"), &bytes)
+            .map_err(|e| format!("写入图标失败\n{e}"))
     })
     .await
     .map_err(|e| format!("写入任务失败\n{e}"))?
@@ -138,7 +133,10 @@ mod tests {
     fn ensure_simple_dir_name_blocks_traversal() {
         assert!(ensure_simple_dir_name("1.20.1-fabric-0.16.9").is_ok());
         assert!(ensure_simple_dir_name("Pack_1").is_ok());
-        assert!(ensure_simple_dir_name("a..b").is_err(), "含 .. 子串一律拒绝（对齐 get_world_icon 先例）");
+        assert!(
+            ensure_simple_dir_name("a..b").is_err(),
+            "含 .. 子串一律拒绝（对齐 get_world_icon 先例）"
+        );
         assert!(ensure_simple_dir_name("a\\b").is_err());
         assert!(ensure_simple_dir_name("..").is_err());
     }

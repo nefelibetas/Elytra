@@ -89,7 +89,9 @@ mod tests {
     #[test]
     fn infer_loader_variants() {
         assert_eq!(
-            infer_loader_from_json(r#"{"mainClass":"net.fabricmc.loader.impl.launch.knot.KnotClient"}"#),
+            infer_loader_from_json(
+                r#"{"mainClass":"net.fabricmc.loader.impl.launch.knot.KnotClient"}"#
+            ),
             "fabric"
         );
         assert_eq!(

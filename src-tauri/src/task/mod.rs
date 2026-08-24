@@ -3,9 +3,9 @@
 // repair.rs（缺失扫描与修复）/ files.rs（批量文件下载）/ runner.rs（完整下载主体）/
 // jdk.rs（JDK 安装任务）。
 
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use parking_lot::Mutex;
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, LazyLock, OnceLock};
 
@@ -14,8 +14,8 @@ use tauri::{AppHandle, Emitter};
 
 pub mod files;
 pub mod jdk;
-pub mod modpack;
 pub mod model;
+pub mod modpack;
 pub mod progress;
 pub mod repair;
 pub mod runner;
@@ -24,8 +24,8 @@ pub mod store;
 
 pub use model::{
     DownloadFileItem, DownloadFileKind, DownloadFileTask, DownloadFilesTask, DownloadTask,
-    FabricApi, LoaderChoice, LoaderKind, ModpackInstallSpec, StepInfo,
-    StepStatus, TaskProgress, TaskStatus,
+    FabricApi, LoaderChoice, LoaderKind, ModpackInstallSpec, StepInfo, StepStatus, TaskProgress,
+    TaskStatus,
 };
 pub use steps::{StepKind, StepSpec, TaskSpec};
 
@@ -354,7 +354,10 @@ pub(crate) fn update_and_emit(
         }
         waited_ms += 5;
         if waited_ms == 5 || waited_ms.is_multiple_of(500) {
-            eprintln!("[emit] 进度锁被持有 {}ms（等待中，正常短临界区不应出现）", waited_ms);
+            eprintln!(
+                "[emit] 进度锁被持有 {}ms（等待中，正常短临界区不应出现）",
+                waited_ms
+            );
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
     };
@@ -474,11 +477,15 @@ mod tests {
         super::store::save_snapshot(
             &task_id,
             "测试任务",
-            &super::store::JobSpec::Repair { version_dir_name: "26.2".into() },
+            &super::store::JobSpec::Repair {
+                version_dir_name: "26.2".into(),
+            },
             TaskStatus::Running,
         );
         assert!(
-            super::store::list_interrupted().iter().any(|j| j.id == task_id),
+            super::store::list_interrupted()
+                .iter()
+                .any(|j| j.id == task_id),
             "running 快照应出现在中断列表"
         );
         // 模拟任务完成：status=Done 后 remove 收口
@@ -486,7 +493,9 @@ mod tests {
         tm.remove(&task_id);
         assert!(!tm.exists(&task_id), "remove 应移除内存注册");
         assert!(
-            !super::store::list_interrupted().iter().any(|j| j.id == task_id),
+            !super::store::list_interrupted()
+                .iter()
+                .any(|j| j.id == task_id),
             "完成后快照应写回终态，不得被列为中断任务"
         );
         super::store::remove_snapshot(&task_id);

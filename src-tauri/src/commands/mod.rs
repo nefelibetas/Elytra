@@ -1,13 +1,13 @@
 pub mod account;
+pub mod community;
 pub mod downloader;
 pub mod gamedirs;
 pub mod jdk;
 pub mod launch;
 pub mod launch_options;
 pub mod launch_script;
-pub mod offline_account;
-pub mod community;
 pub mod loader;
+pub mod offline_account;
 pub mod task;
 pub mod version;
 pub mod version_icon;

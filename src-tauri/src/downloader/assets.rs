@@ -94,12 +94,13 @@ pub async fn download_assets(
         config.file_sources_list();
     let mc_dir = config.minecraft_dir_abs();
 
-    let index_text = fetch_asset_index(config, &mc_dir, index_url, Some(index_id), Some(index_sha1))
-        .await
-        .map_err(|e| vec![e])?;
+    let index_text =
+        fetch_asset_index(config, &mc_dir, index_url, Some(index_id), Some(index_sha1))
+            .await
+            .map_err(|e| vec![e])?;
 
-    let index: AssetsIndex = serde_json::from_str(&index_text)
-        .map_err(|e| vec![format!("解析资源索引失败\n{}", e)])?;
+    let index: AssetsIndex =
+        serde_json::from_str(&index_text).map_err(|e| vec![format!("解析资源索引失败\n{}", e)])?;
 
     let objects_dir = mc_dir.join("assets").join("objects");
     let sem = Arc::new(Semaphore::new(concurrency));
@@ -122,7 +123,12 @@ pub async fn download_assets(
         // 本地运行时复用：dest 缺失时先问复用根（hash 即 sha1，size 校验 + 流式 sha1）。
         // 命中 → 复制；未命中 → 网络下载（多源 URL 照常构造）。
         let local = reuse.as_ref().and_then(|r| {
-            classify_local_artifact(r, &format!("assets/objects/{}/{}", sub, hash), Some(obj_size), Some(&hash))
+            classify_local_artifact(
+                r,
+                &format!("assets/objects/{}/{}", sub, hash),
+                Some(obj_size),
+                Some(&hash),
+            )
         });
         let urls: Vec<String> = sources
             .iter()
@@ -237,7 +243,11 @@ mod tests {
             Ok(Err(e)) => panic!("asset index 获取失败: {e}"),
             Err(_) => panic!("asset index 20s 超时（网络或代理不可达）"),
         };
-        assert!(text.len() > 400_000, "asset index 应完整（约 586KB）: {}B", text.len());
+        assert!(
+            text.len() > 400_000,
+            "asset index 应完整（约 586KB）: {}B",
+            text.len()
+        );
         // 清理测试目录（避免留缓存）
         let _ = std::fs::remove_dir_all(&mc);
     }

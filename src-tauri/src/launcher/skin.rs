@@ -15,10 +15,7 @@ const ALEX_TEXTURE_URL: &str = "https://textures.minecraft.net/texture/46acd06e8
 /// `UUID.hashCode() & 1 == (Uuid[7] ^ Uuid[15] ^ Uuid[23] ^ Uuid[31]) & 1`
 /// （1.8+ 的 DefaultPlayerSkin.isSlimSkin 判定，奇数 → Alex/slim）
 fn uuid_matches_alex(uuid: &str) -> bool {
-    let chars: Vec<u32> = uuid
-        .chars()
-        .filter_map(|c| c.to_digit(16))
-        .collect();
+    let chars: Vec<u32> = uuid.chars().filter_map(|c| c.to_digit(16)).collect();
     if chars.len() != 32 {
         return false;
     }
@@ -51,7 +48,6 @@ pub fn apply_offline_skin(auth: &mut AuthMode) {
     }
     *uuid = skin_matching_uuid(uuid, random_is_alex(username));
 }
-
 
 /// Random 皮肤模型决策：哈希奇数 → Alex（slim）。apply_offline_skin 与 build_user_properties 共用。
 /// 复用 util::fnv1a64（与前端 hashName 的 FNV-1a 32 位奇偶一致：
@@ -147,7 +143,15 @@ mod tests {
             }
             h
         }
-        for name in ["", "A", "Steve", "Alex", "Notch", "BridgeFishDev", "测试用户"] {
+        for name in [
+            "",
+            "A",
+            "Steve",
+            "Alex",
+            "Notch",
+            "BridgeFishDev",
+            "测试用户",
+        ] {
             assert_eq!(
                 crate::util::fnv1a64(name) % 2,
                 (hash32(name) % 2) as u64,

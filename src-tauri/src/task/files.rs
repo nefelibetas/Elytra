@@ -257,7 +257,6 @@ fn locate_world_root(
     None
 }
 
-
 /// 批量文件下载任务：mod / 资源包 / 数据包 / 光影包。
 /// 步骤 = 每文件一步；逐文件下载到 .elytra-part 临时文件后 rename，取消/失败清理临时文件。
 /// 进度：文件计数 + 字节累计（当前文件增量），EMA 速度，复用 update_progress。
@@ -371,8 +370,7 @@ pub async fn run_files_task(
                     task::update_and_emit(&app, &progress, |p| {
                         let cb_b = cur_bytes.load(Ordering::Relaxed);
                         let ct = cur_total.load(Ordering::Relaxed);
-                        if let Some(st) =
-                            p.steps.get_mut(cur_idx.load(Ordering::Relaxed) as usize)
+                        if let Some(st) = p.steps.get_mut(cur_idx.load(Ordering::Relaxed) as usize)
                         {
                             if st.status == StepStatus::Running {
                                 st.progress = if ct > 0 {
@@ -420,7 +418,10 @@ pub async fn run_files_task(
         if placed.is_none() {
             return;
         }
-        total_bytes.store(acc_snap + cur_bytes.load(Ordering::Relaxed), Ordering::Relaxed);
+        total_bytes.store(
+            acc_snap + cur_bytes.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
         cur_bytes.store(0, Ordering::Relaxed);
         cur_total.store(0, Ordering::Relaxed);
         step_done(&app, progress, i);
@@ -527,8 +528,7 @@ mod tests {
     /// Windows 保留名回退 "world"（比旧 sanitize_world_name 多保留名回退）。
     #[test]
     fn world_name_sanitizes_via_util() {
-        let clean =
-            |s: &str| crate::util::sanitize_fs_name(s, "world");
+        let clean = |s: &str| crate::util::sanitize_fs_name(s, "world");
         assert_eq!(clean("My:World?"), "My_World_");
         assert_eq!(clean("oneblock"), "oneblock", "合法名原样");
         assert_eq!(clean(""), "world", "空名回退");

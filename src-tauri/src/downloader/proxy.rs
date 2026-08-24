@@ -49,9 +49,9 @@ fn system_proxy_urls() -> (Option<String>, Option<String>) {
         // 1. 注册表（开启"使用代理服务器"时 Clash 等系统代理写这里）
         use winreg::enums::HKEY_CURRENT_USER;
         use winreg::RegKey;
-        if let Ok(settings) = RegKey::predef(HKEY_CURRENT_USER).open_subkey(
-            "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
-        ) {
+        if let Ok(settings) = RegKey::predef(HKEY_CURRENT_USER)
+            .open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings")
+        {
             let enabled: u32 = settings.get_value("ProxyEnable").unwrap_or(0);
             let server: Result<String, _> = settings.get_value("ProxyServer");
             if enabled == 1 {
@@ -237,7 +237,9 @@ mod tests {
         }
         let res = tokio::time::timeout(
             std::time::Duration::from_secs(15),
-            crate::downloader::fetcher::http().get("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json").send(),
+            crate::downloader::fetcher::http()
+                .get("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json")
+                .send(),
         )
         .await
         .expect("经系统代理访问官方应在 15s 内返回（代理不可达时检查代理配置）");

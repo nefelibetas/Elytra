@@ -28,6 +28,8 @@ pub async fn get_optifine_versions(mc_version: String) -> Result<Vec<String>, St
 }
 
 #[tauri::command]
-pub async fn get_fabric_api_versions(mc_version: String) -> Result<Vec<vq::FabricApiVersion>, String> {
+pub async fn get_fabric_api_versions(
+    mc_version: String,
+) -> Result<Vec<vq::FabricApiVersion>, String> {
     vq::fabric_api_versions(&mc_version).await
 }
