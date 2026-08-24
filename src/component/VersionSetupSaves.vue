@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 版本设置-存档管理 tab：标题卡（打开存档文件夹）+ 列表卡（世界缩略图 + 名称 + 最后游玩 + 删除）。
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted } from "vue";
 import { useRoute } from "vue-router";
 import { Folder, Trash2, Map } from "@lucide/vue";
 import { invoke } from "@tauri-apps/api/core";
@@ -12,6 +12,7 @@ import AlertDialog from "./AlertDialog.vue";
 import LoadingSpinner from "./LoadingSpinner.vue";
 import EmptyState from "./EmptyState.vue";
 import ErrorState from "./ErrorState.vue";
+import { useConfirmDelete } from "../utils/useConfirmDelete";
 import {
   worlds, worldsLoading, worldsError, worldIcons, worldsLoadedFor,
   loadWorlds, loadWorldIcon,
@@ -45,29 +46,21 @@ async function openFolder() {
 }
 
 // ── 删除存档 dialog ──
-const deleteDialog = ref(false);
-const deleteTarget = ref("");
-
-function openDelete(worldName: string) {
-  deleteTarget.value = worldName;
-  deleteDialog.value = true;
-}
-
-async function confirmDelete() {
-  const worldName = deleteTarget.value;
-  deleteDialog.value = false;
-  try {
-    await invoke("delete_world", {
-      versionName: versionName.value,
-      worldName,
-    });
-    showToast(`已删除存档 ${worldName}`);
-    await loadWorlds(versionName.value);
-    for (const w of worlds.value) void loadWorldIcon(versionName.value, w.name);
-  } catch (e) {
-    showToast(errMsg(e));
-  }
-}
+const { deleteDialog, deleteTarget, openDelete, confirmDelete } = useConfirmDelete(
+  async worldName => {
+    try {
+      await invoke("delete_world", {
+        versionName: versionName.value,
+        worldName,
+      });
+      showToast(`已删除存档 ${worldName}`);
+      await loadWorlds(versionName.value);
+      for (const w of worlds.value) void loadWorldIcon(versionName.value, w.name);
+    } catch (e) {
+      showToast(errMsg(e));
+    }
+  },
+);
 </script>
 
 <template>

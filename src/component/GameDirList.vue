@@ -2,6 +2,7 @@
 // 版本选择页左侧：游戏目录列表 + 右键菜单 + 添加游戏目录 + 重命名 dialog
 import { onMounted, onUnmounted } from "vue";
 import { Ellipsis, FolderPlus } from "@lucide/vue";
+import MenuPopover from "./MenuPopover.vue";
 import AlertDialog from "./AlertDialog.vue";
 import {
   dirs, activePath, dirsError, itemMenu,
@@ -53,19 +54,17 @@ onUnmounted(() => window.removeEventListener("click", onWindowClick));
     <div v-if="dirsError" class="vs-err">{{ dirsError }}</div>
 
     <!-- 目录项菜单 -->
-    <Teleport to="body">
-      <div
-        v-if="itemMenu.visible"
-        class="vs-item-menu"
-        :style="{ left: itemMenu.x + 'px', top: itemMenu.y + 'px' }"
-        @click.stop
-      >
-        <div class="menu-item" @click="menuRename">重命名</div>
-        <div class="menu-item" @click="menuOpen">打开</div>
-        <div class="menu-item" @click="menuRemove">删除</div>
-        <div class="menu-item" @click="menuRefresh">刷新</div>
-      </div>
-    </Teleport>
+    <MenuPopover
+      :visible="itemMenu.visible"
+      :x="itemMenu.x"
+      :y="itemMenu.y"
+      min-width="120px"
+    >
+      <div class="menu-item" @click="menuRename">重命名</div>
+      <div class="menu-item" @click="menuOpen">打开</div>
+      <div class="menu-item" @click="menuRemove">删除</div>
+      <div class="menu-item" @click="menuRefresh">刷新</div>
+    </MenuPopover>
 
     <!-- 重命名 dialog -->
     <AlertDialog v-model="renameDialog" title="重命名游戏">
@@ -233,32 +232,8 @@ onUnmounted(() => window.removeEventListener("click", onWindowClick));
   padding: 6px 8px;
 }
 
-/* 目录项菜单 */
-.vs-item-menu {
-  position: fixed;
-  z-index: var(--z-menu, 1000);
-  min-width: 120px;
-  padding: 6px;
-  background: var(--surface-elevated);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg);
-}
+/* 目录项菜单：壳与 .menu-item 样式收敛在 MenuPopover */
 
-.menu-item {
-  padding: 8px 12px;
-  font-size: 13px;
-  color: var(--text-primary);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.12s;
-}
-
-.menu-item:hover {
-  background: var(--color-brand);
-  color: var(--text-inverse);
-}
 
 /* dialog 内容 */
 .vs-dialog-body {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 版本设置-资源管理 tab（材质包/数据包/光影包）：标题卡（打开文件夹）+ 列表卡。
 // 双态表现：Modrinth 识别到 → 社区详情；未识别 → 本地文件 + 通用类型图标。
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted } from "vue";
 import { useRoute } from "vue-router";
 import { Folder, Trash2, Palette, Database, Sun } from "@lucide/vue";
 import { invoke } from "@tauri-apps/api/core";
@@ -14,10 +14,9 @@ import AlertDialog from "./AlertDialog.vue";
 import LoadingSpinner from "./LoadingSpinner.vue";
 import EmptyState from "./EmptyState.vue";
 import ErrorState from "./ErrorState.vue";
+import { useConfirmDelete } from "../utils/useConfirmDelete";
 import {
-  resourcepacks, resourcepacksLoading, resourcepacksError, resourcepacksNetworkError, resourcepacksLoadedFor,
-  datapacks, datapacksLoading, datapacksError, datapacksNetworkError, datapacksLoadedFor,
-  shaderpacks, shaderpacksLoading, shaderpacksError, shaderpacksNetworkError, shaderpacksLoadedFor,
+  resourceRefs,
   loadResourceDetailed, loadResourceQuick,
   type ResourceKind,
 } from "../store/versionDetail";
@@ -37,38 +36,19 @@ const META = {
 
 const meta = computed(() => META[props.kind]);
 
-/** 当前类型对应的列表状态（解包后供模板直用，依赖追踪由 computed 建立）。 */
+/** 当前类型对应的列表状态（store 按 kind 取 ref，此处解包供模板直用）。 */
 const res = computed(() => {
-  if (props.kind === "resourcepacks") {
-    return {
-      list: resourcepacks.value,
-      loading: resourcepacksLoading.value,
-      error: resourcepacksError.value,
-      networkError: resourcepacksNetworkError.value,
-    };
-  }
-  if (props.kind === "datapacks") {
-    return {
-      list: datapacks.value,
-      loading: datapacksLoading.value,
-      error: datapacksError.value,
-      networkError: datapacksNetworkError.value,
-    };
-  }
+  const r = resourceRefs(props.kind);
   return {
-    list: shaderpacks.value,
-    loading: shaderpacksLoading.value,
-    error: shaderpacksError.value,
-    networkError: shaderpacksNetworkError.value,
+    list: r.list.value,
+    loading: r.loading.value,
+    error: r.error.value,
+    networkError: r.networkError.value,
   };
 });
 
 /** 当前类型已加载缓存的版本名。 */
-const loadedFor = computed(() => {
-  if (props.kind === "resourcepacks") return resourcepacksLoadedFor.value;
-  if (props.kind === "datapacks") return datapacksLoadedFor.value;
-  return shaderpacksLoadedFor.value;
-});
+const loadedFor = computed(() => resourceRefs(props.kind).loadedFor.value);
 
 onMounted(async () => {
   if (!versionName.value) return;
@@ -92,31 +72,23 @@ async function openFolder() {
 }
 
 // ── 删除资源 dialog ──
-const deleteDialog = ref(false);
-const deleteTarget = ref("");
-
-function openDelete(fileName: string) {
-  deleteTarget.value = fileName;
-  deleteDialog.value = true;
-}
-
-async function confirmDelete() {
-  const fileName = deleteTarget.value;
-  deleteDialog.value = false;
-  try {
-    await invoke("delete_resource_file", {
-      versionName: versionName.value,
-      kind: props.kind,
-      fileName,
-    });
-    showToast(`已删除 ${fileName}`);
-    // 刷新详细列表 + 快速扫描（主页卡片图标判定保持同步）
-    await loadResourceDetailed(versionName.value, props.kind);
-    await loadResourceQuick(versionName.value, props.kind);
-  } catch (e) {
-    showToast(errMsg(e));
-  }
-}
+const { deleteDialog, deleteTarget, openDelete, confirmDelete } = useConfirmDelete(
+  async fileName => {
+    try {
+      await invoke("delete_resource_file", {
+        versionName: versionName.value,
+        kind: props.kind,
+        fileName,
+      });
+      showToast(`已删除 ${fileName}`);
+      // 刷新详细列表 + 快速扫描（主页卡片图标判定保持同步）
+      await loadResourceDetailed(versionName.value, props.kind);
+      await loadResourceQuick(versionName.value, props.kind);
+    } catch (e) {
+      showToast(errMsg(e));
+    }
+  },
+);
 </script>
 
 <template>

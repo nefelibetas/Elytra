@@ -194,24 +194,10 @@ pub async fn install_optifine(
         std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败\n{e}"))?;
     }
 
-    // 字节级进度：增量累加进全局计数与 OptiFine 步骤计数（与旧实现一致）
-    let file_done = Arc::new(AtomicU64::new(0));
-    let progress = {
-        let fd = file_done.clone();
-        let b = pc.bytes.clone();
-        let sb = pc.step_bytes.clone();
-        let st = pc.step_total.clone();
-        move |downloaded: u64, total: u64| {
-            let prev = fd.swap(downloaded, Ordering::Relaxed);
-            let delta = downloaded.saturating_sub(prev);
-            b.fetch_add(delta, Ordering::Relaxed);
-            sb.fetch_add(delta, Ordering::Relaxed);
-            if total > 0 {
-                st.store(total, Ordering::Relaxed);
-            }
-        }
-    };
-    fetcher::fetch(&jar_url, &dest, Some(progress))
+    // 字节级进度：复用同文件私有助手 step_progress（增量累加进全局计数与
+    // OptiFine 步骤计数；total 写入步骤分母）。不换 ProgressCounters::byte_callback：
+    // 后者不写 step_total，而 OptiFine jar 下载需要步骤分母显示总字节。
+    fetcher::fetch(&jar_url, &dest, Some(step_progress(pc)))
         .await
         .map_err(|e| format!("下载 OptiFine 失败\n{e}"))?;
 

@@ -204,6 +204,11 @@ pub struct FabricApiVersion {
 
 /// Fabric API 版本列表（Modrinth 官方 vs MCIM 镜像，按 community_source_mode 选源；
 /// 主源过慢 5s 即降级备用源）。
+///
+/// 不复用 `DownloaderConfig::fetch_json_with_fallback`：该助手按 `file_source_mode`
+/// 在 sources（Mojang/BMCLAPI 文件源）上路由，URL 由 `DownloadSource` 模板派生；
+/// 而 Fabric API 走社区源——选源依据是 `community_source_mode`，URL 是固定的
+/// Modrinth/MCIM 域前缀拼接，与文件源的源集和模式字段都不同构，故保留手写双源回退。
 pub async fn fabric_api_versions(mc_version: &str) -> Result<Vec<FabricApiVersion>, String> {
     let path = format!(
         "/v2/project/fabric-api/version?loaders=[\"fabric\"]&game_versions=[\"{}\"]",

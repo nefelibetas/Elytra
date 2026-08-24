@@ -1,3 +1,4 @@
+import { useConfirmDelete } from "../utils/useConfirmDelete";
 // 版本选择页 store：游戏目录管理（增删改/激活/右键菜单）+ 目录内版本列表。
 import { ref, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
@@ -198,30 +199,28 @@ export async function confirmAdd() {
   }
 }
 
-// ── 删除版本 dialog（与版本设置页删除功能一致）──
-export const deleteDialog = ref(false);
-export const deleteTarget = ref("");
-
-export function openDelete(v: string) {
-  deleteTarget.value = v;
-  deleteDialog.value = true;
-}
-
-export async function confirmDeleteVersion() {
+// ── 删除版本 dialog（与版本设置页删除功能一致；复用共享 composable）──
+const {
+  deleteDialog, deleteTarget, openDelete, confirmDelete: runConfirmDelete,
+} = useConfirmDelete(async (versionName) => {
   // 先关 dialog 并提示删除中（delete_version_dir 递归删除可能耗时数秒）
-  deleteDialog.value = false;
   showToast("正在删除版本…");
   try {
-    await invoke("delete_version_dir", { versionName: deleteTarget.value });
-    showToast(`版本「${deleteTarget.value}」已经删除`);
+    await invoke("delete_version_dir", { versionName });
+    showToast(`版本「${versionName}」已经删除`);
     // 删除的是当前选中版本 → 清理持久化选择
-    if (selectedVersion.value === deleteTarget.value) {
+    if (selectedVersion.value === versionName) {
       clearSelected();
     }
     await loadVersions();
   } catch (e) {
     showToast(errMsg(e));
   }
+});
+export { deleteDialog, deleteTarget, openDelete };
+
+export async function confirmDeleteVersion() {
+  await runConfirmDelete();
 }
 
 // ── 版本列表（右侧，单卡片平铺全部版本）──

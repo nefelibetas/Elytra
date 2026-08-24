@@ -1,6 +1,6 @@
 // 主页版本卡片 store：存档/Mod 列表加载、Mod 更新检查与更新执行。
 // 卡片组件 import 本模块单例；版本切换时 reset 后重新加载。
-import { ref, computed, reactive } from "vue";
+import { ref, computed, reactive, type Ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { showToast } from "../utils/toast";
 import { errMsg } from "../utils/error";
@@ -200,52 +200,57 @@ export const resourcepacksQuick = ref<ResourceFile[]>([]);
 export const datapacksQuick = ref<ResourceFile[]>([]);
 export const shaderpacksQuick = ref<ResourceFile[]>([]);
 
-function resourceQuickRef(kind: ResourceKind) {
-  if (kind === "resourcepacks") return resourcepacksQuick;
-  if (kind === "datapacks") return datapacksQuick;
-  return shaderpacksQuick;
+/** 单个资源目录（材质包/数据包/光影包）的全部状态 ref。 */
+export interface ResourceRefs {
+  /** 详细列表（Modrinth 识别，列表渲染）。 */
+  list: Ref<ModFileDetail[]>;
+  loading: Ref<boolean>;
+  error: Ref<string>;
+  networkError: Ref<boolean>;
+  /** 本地快速扫描列表（.zip，图标显示判定）。 */
+  quick: Ref<ResourceFile[]>;
+  /** 已加载缓存的版本名（空串 = 未加载）。 */
+  loadedFor: Ref<string>;
 }
 
-function resourceDetailRefs(kind: ResourceKind) {
-  if (kind === "resourcepacks") {
-    return {
-      list: resourcepacks,
-      loading: resourcepacksLoading,
-      error: resourcepacksError,
-      networkError: resourcepacksNetworkError,
-    };
-  }
-  if (kind === "datapacks") {
-    return {
-      list: datapacks,
-      loading: datapacksLoading,
-      error: datapacksError,
-      networkError: datapacksNetworkError,
-    };
-  }
-  return {
-    list: shaderpacks,
-    loading: shaderpacksLoading,
-    error: shaderpacksError,
-    networkError: shaderpacksNetworkError,
+const RESOURCE_KINDS = ["resourcepacks", "datapacks", "shaderpacks"] as const;
+
+/** 按 kind 聚合对应资源目录的状态 ref：原先散在 VersionDetailCard /
+ *  VersionSetupResource 里的三叉 if 选择逻辑下沉于此，组件 computed 解包后直用。 */
+export function resourceRefs(kind: ResourceKind): ResourceRefs {
+  const map: Record<ResourceKind, ResourceRefs> = {
+    resourcepacks: {
+      list: resourcepacks, loading: resourcepacksLoading, error: resourcepacksError,
+      networkError: resourcepacksNetworkError, quick: resourcepacksQuick, loadedFor: resourcepacksLoadedFor,
+    },
+    datapacks: {
+      list: datapacks, loading: datapacksLoading, error: datapacksError,
+      networkError: datapacksNetworkError, quick: datapacksQuick, loadedFor: datapacksLoadedFor,
+    },
+    shaderpacks: {
+      list: shaderpacks, loading: shaderpacksLoading, error: shaderpacksError,
+      networkError: shaderpacksNetworkError, quick: shaderpacksQuick, loadedFor: shaderpacksLoadedFor,
+    },
   };
+  return map[kind];
 }
 
 /** 本地快速扫描资源目录 .zip 文件（图标判定用，无网络；失败置空）。 */
 export async function loadResourceQuick(versionName: string, kind: ResourceKind) {
+  const { quick } = resourceRefs(kind);
   try {
-    resourceQuickRef(kind).value = await invoke<ResourceFile[]>("list_resource_files", {
+    quick.value = await invoke<ResourceFile[]>("list_resource_files", {
       versionName,
       kind,
     });
   } catch {
-    resourceQuickRef(kind).value = [];
+    quick.value = [];
   }
 }
 
 /** 加载资源目录详细列表（Modrinth 识别；网络失败时 files 仍含本地信息并置 network_error）。 */
 export async function loadResourceDetailed(versionName: string, kind: ResourceKind) {
-  const { list, loading, error, networkError } = resourceDetailRefs(kind);
+  const { list, loading, error, networkError, loadedFor } = resourceRefs(kind);
   loading.value = true;
   error.value = "";
   networkError.value = false;
@@ -256,9 +261,7 @@ export async function loadResourceDetailed(versionName: string, kind: ResourceKi
     });
     list.value = r.files;
     networkError.value = r.network_error;
-    if (kind === "resourcepacks") resourcepacksLoadedFor.value = versionName;
-    else if (kind === "datapacks") datapacksLoadedFor.value = versionName;
-    else shaderpacksLoadedFor.value = versionName;
+    loadedFor.value = versionName;
   } catch (e) {
     error.value = errMsg(e);
   } finally {
@@ -268,12 +271,10 @@ export async function loadResourceDetailed(versionName: string, kind: ResourceKi
 
 /** 并行加载三类资源目录（快速扫描 + 详细列表）。 */
 export function loadResourceLists(versionName: string) {
-  void loadResourceQuick(versionName, "resourcepacks");
-  void loadResourceQuick(versionName, "datapacks");
-  void loadResourceQuick(versionName, "shaderpacks");
-  void loadResourceDetailed(versionName, "resourcepacks");
-  void loadResourceDetailed(versionName, "datapacks");
-  void loadResourceDetailed(versionName, "shaderpacks");
+  for (const k of RESOURCE_KINDS) {
+    void loadResourceQuick(versionName, k);
+    void loadResourceDetailed(versionName, k);
+  }
 }
 
 // ── Mod 更新检查 ──
@@ -348,21 +349,15 @@ export function resetVersionDetail() {
   modsNetworkError.value = false;
   modsLoadedFor.value = "";
   modsQuick.value = [];
-  resourcepacks.value = [];
-  resourcepacksError.value = "";
-  resourcepacksNetworkError.value = false;
-  resourcepacksLoadedFor.value = "";
-  resourcepacksQuick.value = [];
-  datapacks.value = [];
-  datapacksError.value = "";
-  datapacksNetworkError.value = false;
-  datapacksLoadedFor.value = "";
-  datapacksQuick.value = [];
-  shaderpacks.value = [];
-  shaderpacksError.value = "";
-  shaderpacksNetworkError.value = false;
-  shaderpacksLoadedFor.value = "";
-  shaderpacksQuick.value = [];
+  // 三类资源目录统一重置（loading 保持原样不清）
+  for (const k of RESOURCE_KINDS) {
+    const r = resourceRefs(k);
+    r.list.value = [];
+    r.error.value = "";
+    r.networkError.value = false;
+    r.loadedFor.value = "";
+    r.quick.value = [];
+  }
   updates.value = [];
   updatesError.value = "";
   updatesChecked.value = false;
