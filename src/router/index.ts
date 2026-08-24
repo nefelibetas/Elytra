@@ -1,11 +1,12 @@
 import { createRouter, createWebHashHistory } from "vue-router";
-import Launch from "../pages/Launch.vue";
-import Download from "../pages/Download.vue";
-import Settings from "../pages/Settings.vue";
-import DownloadDetail from "../pages/DownloadDetail.vue";
-import ResourceDetail from "../pages/ResourceDetail.vue";
-import VersionSelect from "../pages/VersionSelect.vue";
-import VersionSetup from "../pages/VersionSetup.vue";
+// 页面懒加载：按路由代码分割 + 解除 router→页面→store→router 的静态环
+const Launch = () => import("../pages/Launch.vue");
+const Download = () => import("../pages/Download.vue");
+const Settings = () => import("../pages/Settings.vue");
+const DownloadDetail = () => import("../pages/DownloadDetail.vue");
+const ResourceDetail = () => import("../pages/ResourceDetail.vue");
+const VersionSelect = () => import("../pages/VersionSelect.vue");
+const VersionSetup = () => import("../pages/VersionSetup.vue");
 
 declare module "vue-router" {
   interface RouteMeta {
