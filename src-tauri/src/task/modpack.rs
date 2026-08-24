@@ -34,7 +34,6 @@ use crate::task::progress::{
     HeartbeatStats,
 };
 use crate::task::{global, update_and_emit, StepInfo, StepStatus, TaskProgress, TaskStatus};
-use crate::util::mcim_mirror_urls;
 
 /// 包体缓存目录（exe 旁 Elytra/modpacks/，与 Settings.toml 同根约定）。
 fn cache_dir() -> PathBuf {
@@ -270,8 +269,9 @@ pub async fn run_install(
                     a_bytes.fetch_add(d.saturating_sub(prev), Ordering::Relaxed);
                 }
             };
+            let urls = crate::util::community_download_urls(url).await;
             if let Err(e) = fetcher::fetch_verified_c(
-                &mcim_mirror_urls(url),
+                &urls,
                 &zip_path,
                 Some(dl_cb),
                 sha1,
@@ -412,8 +412,9 @@ pub async fn run_install(
         let dest = vdir.join("pack-icon.png");
         if !dest.exists() {
             // 空 sha1 跳过校验；取消感知；MCIM 双源回退对 cdn.modrinth.com 适用
+            let urls = crate::util::community_download_urls(icon).await;
             let _ = fetcher::fetch_verified_c(
-                &mcim_mirror_urls(icon),
+                &urls,
                 &dest,
                 None::<fn(u64, u64)>,
                 "",
@@ -852,13 +853,14 @@ pub async fn run_install(
                 idx,
                 StepStatus::Running,
             );
-            let urls = mcim_mirror_urls(&f.url);
+            let f_url = f.url.clone();
             let sha1 = f.sha1.clone();
             let label = f.path.clone();
             let cancel = cancel.clone();
             let bytes = c.bytes.clone();
             let size = f.size;
             set.spawn(async move {
+                let urls = crate::util::community_download_urls(&f_url).await;
                 // 幂等：目标已存在且校验命中 → 跳过（恢复场景零重下）。
                 // sha1 缺失时降级为体积匹配（信任模型同上）
                 let hit = dest.is_file()
