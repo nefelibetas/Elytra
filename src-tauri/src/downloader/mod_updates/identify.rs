@@ -87,6 +87,51 @@ async fn identify_mod(dir: PathBuf, file_name: String) -> Result<Option<(String,
     }
 }
 
+/// 识别单个文件并补全元数据（增量识别：前端逐文件调用，每项完成立即刷新）。
+/// 未命中（HTTP 404）/文件缺失/网络失败均返回 None —— 与详细列表的降级语义一致
+/// （前端保持本地信息渲染）。复用 identify_mod + 单项目元数据 + 翻译通道。
+pub async fn identify_one_file(dir: &Path, file_name: &str) -> Option<ModFileDetail> {
+    let file_name = file_name.to_string();
+    let dir = dir.to_path_buf();
+    // identify_mod 内部计算 sha1；文件缺失/网络失败返回 None（与详细列表降级语义一致）
+    let (project_id, current_version) = identify_mod(dir.clone(), file_name.clone()).await.ok()??;
+
+    // 单项目元数据（projects?ids=[id] 同批量端点，仅一个 id）
+    let meta = fetch_project_meta(&[Some((project_id.clone(), current_version.clone()))]).await?;
+    let p = meta.get(&project_id)?;
+    let title_zh = p["slug"].as_str().and_then(|slug| {
+        crate::downloader::wiki_entry::WIKI
+            .lookup("modrinth", slug)
+            .and_then(|e| e.chinese_raw.as_deref())
+            .and_then(crate::downloader::wiki_entry::chinese_name)
+    });
+    // 中文简介（MCIM 翻译；失败/未收录静默 None）
+    let translated =
+        community::fetch_translations("modrinth", std::slice::from_ref(&project_id)).await;
+    let meta_file = std::fs::metadata(dir.join(&file_name)).ok();
+    let size = meta_file.as_ref().map(|m| m.len()).unwrap_or(0);
+    let last_modified = meta_file
+        .as_ref()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    Some(ModFileDetail {
+        file_name,
+        size,
+        last_modified,
+        project_id: Some(project_id.clone()),
+        title: p["title"].as_str().map(str::to_string),
+        title_zh,
+        description: p["description"].as_str().map(str::to_string),
+        description_zh: translated.get(&project_id).cloned(),
+        icon_url: p["icon_url"].as_str().map(str::to_string),
+        downloads: p["downloads"].as_u64(),
+        current_version: Some(current_version),
+    })
+}
+
 /// 扫描 + Modrinth 元数据识别（sha1 → version_file 逐文件 → /v2/projects 批量详情）。
 /// 通用目录版本：mods（jar）与资源目录（zip）共用同一识别链路。
 /// 网络环节失败不阻塞：降级为纯本地列表并置 network_error。

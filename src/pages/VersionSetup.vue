@@ -36,7 +36,7 @@ const versionName = computed(() => String(route.query.name ?? ""));
 /** 各管理 tab 的刷新动作（侧边 hover 刷新按钮，强制重载并更新缓存标记）。 */
 const REFRESHERS: Record<TabKey, () => void> = {
   mods: () => {
-    void loadMods(versionName.value);
+    void loadMods(versionName.value, true);
     void loadModsQuick(versionName.value);
   },
   saves: () => {
