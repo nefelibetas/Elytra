@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
+import { initNavHistory, sideBack, sideForward } from "./store/nav";
 import { useRouter } from "vue-router";
 import TitleBar from "./component/TitleBar.vue";
 import AlertDialog from "./component/AlertDialog.vue";
@@ -69,18 +70,26 @@ function onKeyDown(e: KeyboardEvent) {
   }
 }
 
-/** 禁用鼠标侧键（后退/前进）触发的 WebView 历史导航。
- *  侧键会绕过 Vue 路由栈直接操作浏览器历史，导致页面状态与路由不一致（UI 栈混乱）。
- *  拦截分两层：
- *  1. 捕获阶段拦截 mousedown/mouseup/pointer 事件（button 3=后退 4=前进）；
- *  2. popstate 兜底：若侧键仍在更底层触发了历史导航，立即把 hash 拉回应用当前路由，
- *     保证 UI 栈稳定。 */
+/** 鼠标侧键（后退/前进）驱动应用内导航栈（store/nav.ts）。
+ *  WebView 侧键默认直接操作浏览器历史、绕过 vue-router 自身栈导致页面
+ *  状态不一致，故必须：捕获阶段逐个拦截 mousedown/mouseup/pointerdown/
+ *  pointerup（button 3=后退 4=前进）preventDefault 挡住原生导航，再改由
+ *  自管导航栈 sideBack()/sideForward() 精确回放——栈内移动指针，根路由
+ *  （Launcher）处后退自然为空操作，永不越出应用。popstate 兜底保留：
+ *  若侧键仍在更底层触发浏览器导航，拉回应用当前路由。
+ *  同一按键会经 mousedown 与 pointerdown 重复派发，用 120ms 时间窗去重。 */
 let pinnedHash = "#/";
+let lastSideAt = 0;
 
 function onSideButton(e: MouseEvent) {
   if (e.button === 3 || e.button === 4) {
     e.preventDefault();
     e.stopPropagation();
+    const now = Date.now();
+    if (now - lastSideAt < 120) return; // mousedown/pointerdown 同键去重
+    lastSideAt = now;
+    if (e.button === 3) sideBack();
+    else sideForward();
   }
 }
 
@@ -102,6 +111,7 @@ onMounted(() => {
   router.afterEach(() => {
     pinnedHash = location.hash || "#/";
   });
+  initNavHistory();
   document.addEventListener("contextmenu", onContextMenu);
   document.addEventListener("keydown", onKeyDown);
   // 捕获阶段拦截（WebView2 可能不派发冒泡阶段的侧键事件）
