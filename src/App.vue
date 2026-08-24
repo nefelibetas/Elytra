@@ -294,8 +294,8 @@ input, textarea {
 
   /* 窗口边缘加深（.edge-shade 覆盖层；色相取各主题深色调，避免
      无边框窗口底色与外部应用背景相近时边界难辨） */
-  --edge-line: rgba(6, 78, 59, 0.40);
-  --edge-shade: rgba(6, 78, 59, 0.16);
+  --edge-line: rgba(6, 78, 59, 0.20);
+  --edge-shade: rgba(6, 78, 59, 0.08);
 }
 
 /* ===== 主题 End（末影紫）：取自 Minecraft 末地 ===== */
@@ -323,8 +323,8 @@ input, textarea {
 
   --scrollbar-thumb: #D2CBEA;
 
-  --edge-line: rgba(76, 29, 149, 0.38);
-  --edge-shade: rgba(76, 29, 149, 0.15);
+  --edge-line: rgba(76, 29, 149, 0.18);
+  --edge-shade: rgba(76, 29, 149, 0.07);
 
   --ld-fabric: #B45309;
   --ld-forge: #E11D48;
@@ -357,8 +357,8 @@ input, textarea {
 
   --scrollbar-thumb: #DED2C8;
 
-  --edge-line: rgba(124, 45, 18, 0.38);
-  --edge-shade: rgba(124, 45, 18, 0.15);
+  --edge-line: rgba(124, 45, 18, 0.18);
+  --edge-shade: rgba(124, 45, 18, 0.07);
 
   --ld-fabric: #EA580C;
   --ld-forge: #DC2626;
@@ -391,8 +391,8 @@ input, textarea {
 
   --scrollbar-thumb: #C6D6E0;
 
-  --edge-line: rgba(12, 74, 110, 0.38);
-  --edge-shade: rgba(12, 74, 110, 0.15);
+  --edge-line: rgba(12, 74, 110, 0.18);
+  --edge-shade: rgba(12, 74, 110, 0.07);
 
   --ld-fabric: #F59E0B;
   --ld-forge: #F43F5E;
@@ -441,9 +441,8 @@ input, textarea {
   pointer-events: none;
   z-index: 2000;
   box-shadow:
-    inset 0 0 0 1.5px var(--edge-line),
-    inset 0 0 8px var(--edge-shade),
-    inset 0 0 36px var(--edge-shade);
+    inset 0 0 0 1px var(--edge-line),
+    inset 0 0 24px var(--edge-shade);
 }
 
 /* Route transitions — simple opacity fade, normal flow, no scroll jitter */
