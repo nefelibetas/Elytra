@@ -16,7 +16,7 @@ import AlertDialog from "./AlertDialog.vue";
 import LoadingSpinner from "./LoadingSpinner.vue";
 import EmptyState from "./EmptyState.vue";
 import ErrorState from "./ErrorState.vue";
-import { useConfirmDelete } from "../utils/useConfirmDelete";
+import { useSelectable } from "../utils/useSelectable";
 import {
   mods, modsLoading, modsError, modsNetworkError, modsLoadedFor,
   updates, updatesChecked, checkingUpdates, updatesError, updatingFiles,
@@ -54,6 +54,57 @@ const items = computed(() =>
   tab.value === "all" ? filteredMods.value : filteredMods.value.filter(m => updMap.value[m.file_name]),
 );
 
+/** 多选状态：点击 item 切换选中，底部 action 栏批量操作。 */
+const { selected, selectedSet, selecting, allVisibleSelected, toggle, toggleAll, clear } =
+  useSelectable(computed(() => items.value.map(m => m.file_name)));
+
+/** 可更新的选中项（file_name → ModUpdate）。 */
+const updatableSelected = computed(() =>
+  selected.value.filter(name => updMap.value[name]).map(name => updMap.value[name]),
+);
+
+/** 批量更新选中项：逐个执行，跳过更新中；完成后清空选中。 */
+async function doBatchUpdate() {
+  if (updatingFiles.value.size > 0) return;
+  const targets = updatableSelected.value;
+  if (targets.length === 0) return;
+  for (const upd of targets) {
+    await updateMod(versionName.value, upd);
+  }
+  clear();
+}
+
+/** 删除确认弹窗：目标名（选中单项时）或"N 项"批量文案。 */
+const deleteDialog = ref(false);
+const deleteLabel = ref("");
+/** 待删除列表（确认后逐个消费）。 */
+const deletePending = ref<string[]>([]);
+
+/** 批量删除选中项：一次确认后逐个删除。 */
+function doBatchDelete() {
+  const names = [...selected.value];
+  if (names.length === 0) return;
+  deleteLabel.value = names.length === 1 ? `「${names[0]}」` : `${names.length} 个 Mod`;
+  deletePending.value = names;
+  deleteDialog.value = true;
+}
+
+/** 确认删除：逐个执行，完成后刷新列表并清空选中。 */
+async function confirmDelete() {
+  const names = [...deletePending.value];
+  deleteDialog.value = false;
+  deletePending.value = [];
+  for (const name of names) {
+    try {
+      await deleteMod(versionName.value, name);
+      showToast(`已删除 ${name}`);
+    } catch (e) {
+      showToast(errMsg(e));
+    }
+  }
+  if (names.length > 0) clear();
+}
+
 onMounted(async () => {
   if (!versionName.value) return;
   await loadVersionLoader(versionName.value);
@@ -89,18 +140,6 @@ async function openModsFolder() {
     showToast(errMsg(e));
   }
 }
-
-// ── 删除 Mod dialog ──
-const { deleteDialog, deleteTarget, openDelete, confirmDelete } = useConfirmDelete(
-  async fileName => {
-    try {
-      await deleteMod(versionName.value, fileName);
-      showToast(`已删除 ${fileName}`);
-    } catch (e) {
-      showToast(errMsg(e));
-    }
-  },
-);
 </script>
 
 <template>
@@ -151,7 +190,7 @@ const { deleteDialog, deleteTarget, openDelete, confirmDelete } = useConfirmDele
       <!-- 内容：Mod items（状态切换淡入淡出） -->
       <div class="vsm-content">
         <Transition name="fade" mode="out-in">
-          <LoadingSpinner v-if="modsLoading" key="loading" text="加载 Mod 信息…" />
+          <LoadingSpinner v-if="modsLoading && mods.length === 0" key="loading" text="加载 Mod 信息…" />
           <ErrorState v-else-if="modsError" key="err" :text="modsError" />
           <EmptyState v-else-if="mods.length === 0" key="empty">
             <Puzzle :size="40" :stroke-width="1.5" opacity="0.5" />
@@ -169,59 +208,73 @@ const { deleteDialog, deleteTarget, openDelete, confirmDelete } = useConfirmDele
             <div v-if="modsNetworkError" class="vsm-net-warn">部分 Mod 信息获取失败，已显示本地信息</div>
             <div class="vsm-list">
               <div v-for="m in items" :key="m.file_name" class="vsm-item">
-                <!-- 识别得到：Modrinth 元数据详情 -->
-                <template v-if="m.project_id">
-                  <IconImage :src="m.icon_url" :size="32" />
-                  <span class="vsm-info">
-                    <span class="vsm-title-row">
-                      <span class="vsm-title">{{ m.title_zh ?? m.title }}</span>
-                      <span v-if="m.title_zh" class="vsm-file">{{ m.file_name }}</span>
-                      <span v-if="m.downloads" class="vsm-sub">{{ fmtCount(m.downloads) }} 次下载</span>
+                <div
+                  class="vsm-item-body"
+                  :class="{ selected: selectedSet.has(m.file_name) }"
+                  @click="toggle(m.file_name)"
+                >
+                  <!-- 识别得到：Modrinth 元数据详情 -->
+                  <template v-if="m.project_id">
+                    <IconImage :src="m.icon_url" :size="32" />
+                    <span class="vsm-info">
+                      <span class="vsm-title-row">
+                        <span class="vsm-title">{{ m.title_zh ?? m.title }}</span>
+                        <span v-if="m.title_zh" class="vsm-file">{{ m.file_name }}</span>
+                        <span v-if="m.downloads" class="vsm-sub">{{ fmtCount(m.downloads) }} 次下载</span>
+                      </span>
+                      <span v-if="m.description" class="vsm-desc">
+                        {{ dlTranslateMode === "en" ? m.description : (m.description_zh ?? m.description) }}
+                      </span>
+                      <span class="vsm-support">
+                        <span v-if="m.current_version" class="vsm-ver">v{{ m.current_version }}</span>
+                        <span v-if="updMap[m.file_name]" class="vsm-new">→ v{{ updMap[m.file_name].latest_version }}</span>
+                      </span>
                     </span>
-                    <span v-if="m.description" class="vsm-desc">
-                      {{ dlTranslateMode === "en" ? m.description : (m.description_zh ?? m.description) }}
+                  </template>
+                  <!-- 识别不到：本地文件样式 -->
+                  <template v-else>
+                    <Puzzle :size="20" class="vsm-local-icon" />
+                    <span class="vsm-info">
+                      <span class="vsm-local-name">{{ m.file_name }}</span>
+                      <span class="vsm-local-meta">{{ fmtSize(m.size) }}</span>
                     </span>
-                    <span class="vsm-support">
-                      <span v-if="m.current_version" class="vsm-ver">v{{ m.current_version }}</span>
-                      <span v-if="updMap[m.file_name]" class="vsm-new">→ v{{ updMap[m.file_name].latest_version }}</span>
-                    </span>
-                  </span>
-                </template>
-                <!-- 识别不到：本地文件样式 -->
-                <template v-else>
-                  <Puzzle :size="20" class="vsm-local-icon" />
-                  <span class="vsm-info">
-                    <span class="vsm-local-name">{{ m.file_name }}</span>
-                    <span class="vsm-local-meta">{{ fmtSize(m.size) }}</span>
-                  </span>
-                </template>
-                <!-- 最右侧：hover 显示的更新 / 删除（更新按可更新状态禁用） -->
-                <div class="vsm-item-actions">
-                  <button
-                    class="vsm-item-btn update"
-                    :disabled="!updMap[m.file_name] || updatingFiles.has(m.file_name)"
-                    @click="updMap[m.file_name] && updateMod(versionName, updMap[m.file_name])"
-                  >
-                    <Upload :size="13" />
-                    <span>{{ updatingFiles.has(m.file_name) ? "更新中…" : "更新" }}</span>
-                  </button>
-                  <button class="vsm-item-btn danger" @click="openDelete(m.file_name)">
-                    <Trash2 :size="13" />
-                    <span>删除</span>
-                  </button>
+                  </template>
                 </div>
               </div>
             </div>
           </div>
         </Transition>
       </div>
+
+      <!-- 底部 action 栏：选中 ≥1 时滑出，全选/取消 + 批量更新/删除 -->
+      <Transition name="fade">
+        <div v-if="selecting" class="vsm-actions-bar">
+          <button class="vsm-ab-btn" @click="toggleAll">
+            {{ allVisibleSelected ? "取消全选" : "全选" }}
+          </button>
+          <button class="vsm-ab-btn" @click="clear">取消</button>
+          <span class="vsm-ab-count">已选 {{ selected.length }} 项</span>
+          <button
+            class="vsm-ab-btn update"
+            :disabled="updatableSelected.length === 0 || updatingFiles.size > 0"
+            @click="doBatchUpdate"
+          >
+            <Upload :size="13" />
+            <span>更新（{{ updatableSelected.length }}）</span>
+          </button>
+          <button class="vsm-ab-btn danger" @click="doBatchDelete">
+            <Trash2 :size="13" />
+            <span>删除（{{ selected.length }}）</span>
+          </button>
+        </div>
+      </Transition>
     </div>
 
     <!-- 删除 Mod 确认 dialog -->
     <AlertDialog v-model="deleteDialog" title="删除 Mod">
       <div class="vsm-dialog-body">
         <div class="vsm-dialog-text">
-          确定要删除 Mod「{{ deleteTarget }}」吗？该操作会删除文件且无法恢复。
+          确定要删除 {{ deleteLabel }} 吗？该操作会删除文件且无法恢复。
         </div>
       </div>
       <template #actions>
@@ -396,33 +449,41 @@ const { deleteDialog, deleteTarget, openDelete, confirmDelete } = useConfirmDele
 }
 
 .vsm-item {
-  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 4px 0;
+}
+
+.vsm-item-body {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px;
+  padding: 8px 10px;
   background: var(--surface-page);
-  border: 1px solid var(--border-default);
+  border: 2px solid transparent;
   border-radius: var(--radius-md);
-  transition: border-color 0.15s;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
 }
 
-.vsm-item:hover {
+.vsm-item-body:hover {
   border-color: var(--border-strong);
+  background: var(--surface-hover);
 }
 
+.vsm-item-body.selected {
+  border-color: var(--color-brand);
+}
+
+/* 让位过渡移除：info 不再为 hover 按钮留空 */
 .vsm-info {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  transition: padding-right 0.18s ease;
-}
-
-/* hover：文本右侧让位，给滑入的按钮留空间 */
-.vsm-item:hover .vsm-info {
-  padding-right: 160px;
 }
 
 .vsm-title-row {
@@ -516,61 +577,70 @@ const { deleteDialog, deleteTarget, openDelete, confirmDelete } = useConfirmDele
   color: var(--text-tertiary);
 }
 
-/* hover 操作区（更新 / 删除）：绝对定位不占布局，滑入 + 淡入 */
-.vsm-item-actions {
-  position: absolute;
-  right: 12px;
-  top: 50%;
-  transform: translateY(-50%) translateX(10px);
+/* 底部 action 栏：选中 ≥1 时滑出，固定列表卡底部 */
+.vsm-actions-bar {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 6px;
-  opacity: 0;
-  visibility: hidden; /* 隐藏态彻底移出命中测试（WebView2 下 pointer-events 过渡不可靠） */
-  transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s ease;
+  margin: 0 12px 12px;
+  padding: 10px 14px;
+  background: var(--surface-elevated);
+  border-top: 1px solid var(--border-default);
+  box-shadow: var(--shadow-md);
 }
 
-.vsm-item:hover .vsm-item-actions {
-  opacity: 1;
-  transform: translateY(-50%) translateX(0);
-  visibility: visible;
+.vsm-ab-count {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
 }
 
-.vsm-item-btn {
+.vsm-ab-btn {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 5px 12px;
+  padding: 6px 14px;
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.15s;
 }
 
-.vsm-item-btn.update {
-  border: 1px solid var(--color-brand);
-  background: var(--color-brand-bg);
+.vsm-ab-btn:hover:not(:disabled) {
+  border-color: var(--color-brand);
   color: var(--color-brand);
 }
 
-.vsm-item-btn.update:hover:not(:disabled) {
-  background: var(--color-brand);
-  color: var(--text-inverse);
-}
-
-.vsm-item-btn.update:disabled {
+.vsm-ab-btn:disabled {
   opacity: 0.45;
   cursor: default;
 }
 
-.vsm-item-btn.danger {
+.vsm-ab-btn.update {
+  border-color: var(--color-brand);
+  background: var(--color-brand-bg);
+  color: var(--color-brand);
+}
+
+.vsm-ab-btn.update:hover:not(:disabled) {
+  background: var(--color-brand);
+  color: var(--text-inverse);
+}
+
+.vsm-ab-btn.danger {
   border: 1px solid color-mix(in srgb, var(--color-danger) 40%, transparent);
   background: transparent;
   color: var(--color-danger);
 }
 
-.vsm-item-btn.danger:hover {
+.vsm-ab-btn.danger:hover:not(:disabled) {
   background: color-mix(in srgb, var(--color-danger) 8%, transparent);
   border-color: var(--color-danger);
 }
