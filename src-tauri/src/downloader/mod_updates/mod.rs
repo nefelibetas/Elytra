@@ -13,7 +13,8 @@ mod scan;
 mod update;
 
 pub use identify::{
-    list_dir_detailed, list_mods_detailed, ModFileDetail, ModListResult, ResourceListResult,
+    identify_one_file, list_dir_detailed, list_mods_detailed, ModFileDetail, ModListResult,
+    ResourceListResult,
 };
 pub use scan::{scan_dir_files, scan_mod_files, LocalModFile, ScanFilter};
 pub use update::{check_updates, delete_mod_file, update_mod_file, ModUpdate};

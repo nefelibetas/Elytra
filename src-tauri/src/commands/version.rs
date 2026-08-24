@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::commands::gamedirs::get_active_game_dir;
-use crate::downloader::mod_updates::{self, ModListResult, ModUpdate, ResourceListResult};
+use crate::downloader::mod_updates::{self, ModFileDetail, ModListResult, ModUpdate, ResourceListResult};
 
 /// 本地存档信息（saves 目录子目录扫描结果）。
 #[derive(Debug, Clone, Serialize)]
@@ -76,7 +76,7 @@ pub fn list_worlds(version_name: String) -> Vec<WorldInfo> {
             })
         })
         .collect();
-    worlds.sort_by(|a, b| b.last_modified.cmp(&a.last_modified));
+    worlds.sort_by_key(|w| std::cmp::Reverse(w.last_modified));
     worlds
 }
 
@@ -190,10 +190,28 @@ pub async fn delete_world(version_name: String, world_name: String) -> Result<()
 }
 
 /// 列出 mods 目录下的 mod 详情（.jar 扫描 + Modrinth 元数据识别；网络失败降级本地信息）。
+/// 兼容旧入口；前端现走逐文件增量识别（identify_mod_file）。
 #[tauri::command]
 pub async fn list_mods_detailed(version_name: String) -> Result<ModListResult, String> {
     let vdir = version_dir(&version_name)?;
     Ok(mod_updates::list_mods_detailed(&vdir.join("mods")).await)
+}
+
+/// 增量识别单个 mod 文件：sha1 → Modrinth 元数据。
+/// 返回 None = 未命中（HTTP 404）/文件缺失/网络失败——前端保持本地信息渲染；
+/// 前端逐文件并发调用，每项完成立即刷新列表（不用等全部识别完）。
+/// `file_name` 仅接受纯文件名（防路径穿越）。
+#[tauri::command]
+pub async fn identify_mod_file(
+    version_name: String,
+    file_name: String,
+) -> Result<Option<ModFileDetail>, String> {
+    if file_name.contains('/') || file_name.contains('\\') || file_name.contains("..") {
+        return Err("非法文件名".into());
+    }
+    let vdir = version_dir(&version_name)?;
+    let f = mod_updates::identify_one_file(&vdir.join("mods"), &file_name).await;
+    Ok(f)
 }
 
 /// 检查 mods 目录下的 mod 是否有更新（仅 Modrinth 源，命中不到的项目跳过）。

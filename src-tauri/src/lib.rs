@@ -45,6 +45,7 @@ pub fn run() {
             commands::version::list_resource_detailed,
             commands::version::delete_resource_file,
             commands::version::delete_world,
+            commands::version::identify_mod_file,
             commands::version::list_mods_detailed,
             commands::version::check_mod_updates,
             commands::version::update_mod_file,

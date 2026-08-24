@@ -350,7 +350,7 @@ async function confirmRename() {
 
       <!-- ── Mod tab ── -->
       <div v-else-if="tab === 'mods'" key="mods" class="vdc-pane">
-        <LoadingSpinner v-if="modsLoading" text="正在加载 Mod 信息…" />
+        <LoadingSpinner v-if="modsLoading && mods.length === 0" text="正在加载 Mod 信息…" />
         <ErrorState v-else-if="modsError" :text="modsError" />
         <EmptyState v-else-if="mods.length === 0">
           <Puzzle :size="40" :stroke-width="1.5" opacity="0.5" />
@@ -395,7 +395,7 @@ async function confirmRename() {
 
       <!-- ── 材质包 / 数据包 / 光影包 tab（Modrinth 识别双态列表）── -->
       <div v-else key="resources" class="vdc-pane">
-        <LoadingSpinner v-if="res.loading" text="加载中…" />
+        <LoadingSpinner v-if="res.loading && res.list.length === 0" text="加载中…" />
         <ErrorState v-else-if="res.error" :text="res.error" />
         <EmptyState v-else-if="res.list.length === 0">
           <component :is="resIcon" :size="40" :stroke-width="1.5" opacity="0.5" />
