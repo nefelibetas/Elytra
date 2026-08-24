@@ -89,17 +89,18 @@ const MAX_WORLD_ICON_BYTES: u64 = 512 * 1024;
 /// 缺失/超限/损坏返回 None（不报错，前端回退 Map 占位）。
 /// `world_name` 仅接受简单目录名，防路径穿越。
 #[tauri::command]
-pub fn get_world_icon(version_name: String, world_name: String) -> Option<Vec<u8>> {
+pub fn get_world_icon(
+    version_name: String,
+    world_name: String,
+) -> Option<crate::util::IconData> {
     if world_name.contains('/') || world_name.contains('\\') || world_name.contains("..") {
         return None;
     }
     let vdir = version_dir(&version_name).ok()?;
-    let path = vdir.join("saves").join(&world_name).join("icon.png");
-    let meta = std::fs::metadata(&path).ok()?;
-    if !meta.is_file() || meta.len() == 0 || meta.len() > MAX_WORLD_ICON_BYTES {
-        return None;
-    }
-    std::fs::read(&path).ok()
+    crate::util::icon_payload(
+        &vdir.join("saves").join(&world_name).join("icon.png"),
+        MAX_WORLD_ICON_BYTES,
+    )
 }
 
 /// 列出版本下资源目录（材质包/数据包/光影包/mod）中的文件，按名称排序；目录不存在返回空列表。

@@ -3,7 +3,6 @@
 // 缺失/失败保持 Map 占位（UI 回退 loader 图标）。模式对齐 versionDetail.ts 的世界缩略图。
 import { reactive } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { bytesToDataUrl } from "../utils/imageData";
 
 /** 版本目录名 → 图标 data URL（懒加载缓存）。 */
 export const versionIcons = reactive<Record<string, string>>({});
@@ -14,9 +13,12 @@ export async function loadVersionIcon(versionDirName: string) {
   if (versionIcons[versionDirName] || loading[versionDirName]) return;
   loading[versionDirName] = true;
   try {
-    const bytes = await invoke<number[] | null>("get_version_icon", { versionDirName });
-    if (bytes && bytes.length > 0) {
-      versionIcons[versionDirName] = bytesToDataUrl(bytes);
+    // 后端返回 { mime, base64 } 载荷（魔数嗅探 + 服务端编码，替代 JSON 数字数组）
+    const icon = await invoke<{ mime: string; data: string } | null>("get_version_icon", {
+      versionDirName,
+    });
+    if (icon) {
+      versionIcons[versionDirName] = `data:${icon.mime};base64,${icon.data}`;
     }
   } catch {
     // 缺失/读取失败：保持 Map 占位

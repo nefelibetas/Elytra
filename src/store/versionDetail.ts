@@ -5,7 +5,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { showToast } from "../utils/toast";
 import { errMsg } from "../utils/error";
 import { classifyVersion } from "../utils/versionClassify";
-import { bytesToDataUrl } from "../utils/imageData";
 import type { InstalledVersionInfo } from "./gameDirs";
 
 // ── 类型镜像 Rust（commands/version.rs + downloader/mod_updates.rs）──
@@ -110,12 +109,13 @@ export async function loadWorldIcon(versionName: string, worldName: string) {
   if (worldIcons[worldName] || worldIconsLoading[worldName]) return;
   worldIconsLoading[worldName] = true;
   try {
-    const bytes = await invoke<number[] | null>("get_world_icon", {
+    // 后端返回 { mime, base64 } 载荷（魔数嗅探 + 服务端编码，替代 JSON 数字数组）
+    const icon = await invoke<{ mime: string; data: string } | null>("get_world_icon", {
       versionName,
       worldName,
     });
-    if (bytes && bytes.length > 0) {
-      worldIcons[worldName] = bytesToDataUrl(bytes);
+    if (icon) {
+      worldIcons[worldName] = `data:${icon.mime};base64,${icon.data}`;
     }
   } catch {
     // 缺失/读取失败：保持 Map 占位
