@@ -167,12 +167,14 @@ onUnmounted(() => window.removeEventListener("click", onWindowClick));
   color: var(--text-tertiary);
   cursor: pointer;
   opacity: 0;
+  pointer-events: none; /* 隐藏态不拦截行点击 */
   transition: all 0.12s;
 }
 
 .vs-dir-item:hover .vs-dir-more,
 .vs-dir-item.menu-open .vs-dir-more {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .vs-dir-more:hover {

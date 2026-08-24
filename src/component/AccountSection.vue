@@ -584,11 +584,13 @@ function useOfflineName(name: string) {
   line-height: 1;
   cursor: pointer;
   opacity: 0;
+  pointer-events: none; /* 隐藏态不拦截行点击 */
   transition: all 0.12s;
 }
 
 .acct-row:hover .acct-del {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .acct-del:hover {
