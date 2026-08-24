@@ -9,6 +9,7 @@ pub mod mod_loader;
 pub mod mod_updates;
 pub mod model;
 pub mod modpack;
+pub mod probe;
 pub mod progress;
 pub mod proxy;
 pub mod reuse;

@@ -35,6 +35,10 @@ url = "2"
 percent-encoding = "2"
 getrandom = "0.2"
 zip = "2"
+# JDK 包解压：Adoptium（Temurin）的 mac/linux 仅提供 tar.gz（官方 API 返回的包
+# 格式 zip/tar.gz 随平台变化），需 tar + flate2（纯 Rust，flate2 默认 miniz_oxide 后端）
+tar = "0.4"
+flate2 = "1"
 # 安装任务持久化（#6）：SQLite 存任务快照，崩溃/重启后恢复。
 # 运行时 SqlitePoolOptions（无 migrate 宏）；与 TOML 并存期间 Settings.toml 读写路径不动
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }

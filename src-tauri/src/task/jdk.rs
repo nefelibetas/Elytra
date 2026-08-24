@@ -15,7 +15,8 @@ use crate::task::progress::{
 };
 use crate::task::{self, StepStatus, TaskProgress, TaskStatus};
 
-/// JDK 安装任务主体：官方 runtime → Azul 回退（jdk::download::auto_install），
+/// JDK 安装任务主体：按 jdk_source_mode 三态回退链（jdk::download::auto_install：
+/// 官方 → Adoptium[TUNA 镜像] → Azul），
 /// 完成后注册进 jdk 配置（discovered_jdks）。单步任务，进度照 files.rs 心跳模式：
 /// 原子计数器（文件数 + 字节增量）+ 150ms 心跳（EMA 速度/ETA），终态由
 /// set_error/set_cancelled/收尾 done 独占发出，心跳随 status 离开 Running 自退出。
@@ -145,7 +146,7 @@ pub async fn run_install_jdk(
         }
     });
 
-    // 下载 + 安装（官方 runtime → Azul 回退；取消/失败由 auto_install 返回）
+    // 下载 + 安装（按 jdk_source_mode 回退链；取消/失败由 auto_install 返回）
     let hook = crate::jdk::download::InstallProgress {
         cancel: Some(cancel),
         on_total: Some(&{

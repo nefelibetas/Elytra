@@ -1,14 +1,18 @@
-//! ── JRE 自动下载（managed Java）：无 Java 机器补齐"扫描→下载→校验→注册"闭环 ──
-//! 双源下载：Mojang 官方 runtime 优先（逐文件 sha1 校验，与官方启动器同构），
-//! 失败回退 Azul Zulu（包级 sha256 + zip 解压）。
+//! 下载链按 jdk_source_mode 三态路由：
+//! - auto（默认）：Mojang 官方 runtime 优先（逐文件 sha1 校验，与官方启动器同构），
+//!   失败回退 Adoptium（大文件 TUNA 清华镜像优先、404 回退官方，包级 sha256）与 Azul（包级 sha256）
+//! - officialOnly：仅 Mojang 官方 → Azul，不启用国内镜像
+//! - chinaOnly：Mojang（走文件源镜像）→ Adoptium 仅 TUNA 下载候选
+//!
 //! 下载目录：`{minecraft_dir}/runtime/{platform}/{version}/`，完成后经
 //! `scanner::inspect` 校验版本并注册进 persist 的 jdk section（discovered_jdks）。
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use crate::config::downloader::model::DownloaderConfig;
+use crate::config::downloader::model::{DownloaderConfig, JdkSourceMode};
 use crate::downloader::fetcher::{self, http};
+use crate::downloader::probe::probe_url;
 use crate::jdk::model::JdkInfo;
 use crate::jdk::scanner;
 use crate::util::{java_bin_path, parse_java_major};
@@ -28,6 +32,13 @@ pub struct InstallProgress<'a> {
 /// Mojang java-runtime all.json 固定资源地址（官方启动器 product 版本）。
 const RUNTIME_ALL_JSON: &str =
     "https://piston-meta.mojang.com/v1/products/java-runtime/2ec0cc96c44e5a76b9c8b7c39df7210883d12871/all.json";
+
+/// TUNA 清华镜像 Adoptium 文件镜像基址（与官方同文件、文件名一致，仅同步文件——
+/// 无 API、无 checksum，元数据必须走官方 API）。大文件下载优先用它省国内带宽。
+const TUNA_ADOPTIUM_BASE: &str = "https://mirrors.tuna.tsinghua.edu.cn/Adoptium";
+
+/// Adoptium API 轻量探测端点（available_releases 仅几十字节，比完整资产查询便宜）。
+const ADOPTIUM_API_PROBE: &str = "https://api.adoptium.net/v3/info/available_releases";
 
 /// 按 Java 主版本映射 Mojang runtime 组件名（all.json 的键）。
 /// 官方启动器为 1.20.5+ 用 epsilon（25）、1.18-1.20.4 用 delta（21）、
@@ -66,7 +77,7 @@ fn platform_key() -> &'static str {
     }
 }
 
-/// 统一入口：官方 runtime → Azul 回退。
+/// 统一入口：按 jdk_source_mode 三态选择回退链（见 installer_chain）。
 /// 已装同 major 的 managed runtime 时直接返回（幂等）。
 pub async fn auto_install(
     major: u32,
@@ -74,9 +85,9 @@ pub async fn auto_install(
     hook: &InstallProgress<'_>,
 ) -> Result<JdkInfo, String> {
     let dest_dir = runtime_dir(config, major);
-    // 已下载过：直接校验返回（兼容两种安装布局：Mojang 直接含 bin/；
-    // Azul 顶层为 zulu*/ 子目录——递归定位 java 根后再 inspect，
-    // 否则 Azul 装的 runtime 每次启动都会被误判未装而重下整个包）
+    // 已下载过：直接校验返回（兼容多种安装布局：Mojang 直接含 bin/；
+    // Adoptium/Azul 顶层为 jdk-*/、zulu*/ 子目录——递归定位 java 根后再 inspect，
+    // 否则装的 runtime 每次启动都会被误判未装而重下整个包）
     if let Some(home) = find_java_home(&dest_dir) {
         if let Ok(info) = scanner::inspect(&home) {
             if parse_java_major(&info.version) == Some(major) {
@@ -85,16 +96,131 @@ pub async fn auto_install(
         }
     }
 
-    match install_mojang_runtime(major, config, hook).await {
-        Ok(info) => Ok(info),
-        Err(e_mojang) => match install_azul_runtime(major, config, hook).await {
-            Ok(info) => Ok(info),
-            Err(e_azul) => Err(format!(
-                "下载 Java {} 失败\n官方源: {}\nAzul 源: {}",
-                major, e_mojang, e_azul
-            )),
-        },
+    // Auto（智能）模式：下载前预探测各环节可达性并剔除不可用源（3s 超时 + TTL 缓存）；
+    // OfficialOnly/ChinaOnly 单选语义不变（不探测，固定链）。
+    let chain = match config.jdk_source_mode {
+        JdkSourceMode::Auto => build_auto_chain(major, config).await,
+        other => installer_chain(other),
+    };
+    let mut errors = Vec::new();
+    for (installer, source_name) in chain {
+        match run_installer(&installer, major, config, hook).await {
+            Ok(info) => return Ok(info),
+            Err(e) => errors.push(format!("{source_name}: {e}")),
+        }
     }
+    Err(format!("下载 Java {} 失败\n{}", major, errors.join("\n")))
+}
+
+/// 回退链上的安装器（顺序由 jdk_source_mode 决定）。
+enum JdkInstaller {
+    /// Mojang 官方 runtime（manifest 获取与文件下载跟随文件源模式走镜像）
+    Mojang,
+    /// Adoptium：TUNA 镜像优先；`tuna_only`（chinaOnly）时官方 link 不参与下载候选
+    Adoptium { tuna_only: bool },
+    /// Azul Zulu（包级 sha256）
+    Azul,
+}
+
+async fn run_installer(
+    installer: &JdkInstaller,
+    major: u32,
+    config: &DownloaderConfig,
+    hook: &InstallProgress<'_>,
+) -> Result<JdkInfo, String> {
+    match installer {
+        JdkInstaller::Mojang => install_mojang_runtime(major, config, hook).await,
+        JdkInstaller::Adoptium { tuna_only } => {
+            install_adoptium_runtime(major, config, hook, *tuna_only).await
+        }
+        JdkInstaller::Azul => install_azul_runtime(major, config, hook).await,
+    }
+}
+
+/// 各源模式的回退链（名字仅用于错误拼接）：
+/// - officialOnly：官方 → Azul（不启用国内镜像）
+/// - chinaOnly：官方（文件层走镜像）→ Adoptium 仅 TUNA
+/// - auto（默认）：官方 → Adoptium（TUNA→官方）→ Azul 全链
+fn installer_chain(mode: JdkSourceMode) -> Vec<(JdkInstaller, &'static str)> {
+    match mode {
+        JdkSourceMode::OfficialOnly => vec![
+            (JdkInstaller::Mojang, "官方源"),
+            (JdkInstaller::Azul, "Azul 源"),
+        ],
+        JdkSourceMode::ChinaOnly => vec![
+            (JdkInstaller::Mojang, "官方源"),
+            (JdkInstaller::Adoptium { tuna_only: true }, "国内镜像源"),
+        ],
+        JdkSourceMode::Auto => vec![
+            (JdkInstaller::Mojang, "官方源"),
+            (JdkInstaller::Adoptium { tuna_only: false }, "Adoptium 源"),
+            (JdkInstaller::Azul, "Azul 源"),
+        ],
+    }
+}
+
+/// Auto 模式回退链：下载前**并发** HEAD 探测各环节，剔除不可达源——
+/// 被墙/黑洞网络下不再白等完整失败（Mojang 环节逐文件失败可达数十分钟），
+/// 直接跳到可用源。全不可达时保底回退完整链（探测可能误判，不能因探测剔除所有源）。
+/// 环节探测结果 TTL 10 分钟（probe_url 缓存），一次会话多次安装不重复探测。
+async fn build_auto_chain(major: u32, config: &DownloaderConfig) -> Vec<(JdkInstaller, &'static str)> {
+    // Mojang 环节可用性 = 官方 || BMCLAPI 镜像（fetch_with_fallback 内部会降级镜像）
+    let mirror_all_json = config
+        .file_sources_list()
+        .iter()
+        .map(|s| s.mirror_url(RUNTIME_ALL_JSON))
+        .next()
+        .unwrap_or_else(|| RUNTIME_ALL_JSON.to_string());
+    let azul_api_url = azul_probe_url(major);
+    let (mojang, mirror, adoptium_api, azul_api) = tokio::join!(
+        probe_url(RUNTIME_ALL_JSON),
+        probe_url(&mirror_all_json),
+        probe_url(ADOPTIUM_API_PROBE),
+        probe_url(&azul_api_url),
+    );
+    chain_from_probes(mojang.ok || mirror.ok, adoptium_api.ok, azul_api.ok)
+}
+
+/// 由探测结果构建 Auto 链（纯逻辑，便于单测）：不可达环节剔除；
+/// 全不可达保底全链（探测误判不致死）。
+fn chain_from_probes(
+    mojang_ok: bool,
+    adoptium_ok: bool,
+    azul_ok: bool,
+) -> Vec<(JdkInstaller, &'static str)> {
+    let mut chain = Vec::new();
+    if mojang_ok {
+        chain.push((JdkInstaller::Mojang, "官方源"));
+    }
+    if adoptium_ok {
+        chain.push((JdkInstaller::Adoptium { tuna_only: false }, "Adoptium 源"));
+    }
+    if azul_ok {
+        chain.push((JdkInstaller::Azul, "Azul 源"));
+    }
+    if chain.is_empty() {
+        chain = installer_chain(JdkSourceMode::Auto);
+    }
+    chain
+}
+
+/// Azul 元数据查询 URL（探测与正式查询共用构造）。
+fn azul_probe_url(major: u32) -> String {
+    let os = if cfg!(windows) {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux"
+    };
+    let arch = if cfg!(target_arch = "aarch64") {
+        "aarch64"
+    } else {
+        "x64"
+    };
+    format!(
+        "https://api.azul.com/metadata/v1/zulu/packages/?java_version={major}&os={os}&arch={arch}&archive_type=zip&java_package_type=jdk&javafx_bundled=false&release_status=ga&latest=true"
+    )
 }
 
 /// managed runtime 安装目录：`{minecraft_dir}/runtime/{platform}/java-{major}/`。
@@ -261,6 +387,222 @@ async fn install_mojang_runtime(
     Ok(info)
 }
 
+/// Adoptium（Eclipse Temurin）回退：官方 API 查最新 GA 包（含 sha256 checksum）→
+/// TUNA 清华镜像优先下载（国内带宽）、404/失败回退官方 link → sha256 校验 →
+/// 解压（zip/tar.gz）→ inspect。
+/// `tuna_only`（chinaOnly 模式）：下载候选仅 TUNA，官方 link 不参与——
+/// 元数据仍走官方 API（TUNA 只镜像文件、不提供 checksum，属不可绕过的例外）。
+async fn install_adoptium_runtime(
+    major: u32,
+    config: &DownloaderConfig,
+    hook: &InstallProgress<'_>,
+    tuna_only: bool,
+) -> Result<JdkInfo, String> {
+    // 1. 元数据：Adoptium API 最新 GA 资产（响应含全平台，按 os/arch 过滤）
+    let (os, arch) = adoptium_platform();
+    let api_url = format!(
+        "https://api.adoptium.net/v3/assets/latest/{major}/hotspot?os={os}&architecture={arch}&image_type=jdk"
+    );
+    let resp = http()
+        .get(&api_url)
+        .send()
+        .await
+        .map_err(|e| format!("查询 Adoptium 包失败\n{e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("Adoptium API 返回 {}", resp.status()));
+    }
+    let assets: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("解析 Adoptium 响应失败\n{e}"))?;
+    let asset = assets
+        .as_array()
+        .and_then(|a| {
+            a.iter().find(|x| {
+                x["binary"]["os"].as_str() == Some(os)
+                    && x["binary"]["architecture"].as_str() == Some(arch)
+            })
+        })
+        .ok_or("Adoptium 无匹配包")?;
+    let package = asset["binary"]["package"]
+        .as_object()
+        .ok_or("Adoptium 包缺 binary.package")?;
+    let name = package
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or("Adoptium 包缺文件名")?
+        .to_string();
+    let sha256 = package
+        .get("checksum")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    // 2. 下载候选：TUNA 镜像优先（文件名与官方一致，直接构造 URL）；
+    // Auto 模式先探测 TUNA 与官方 TTFB，快者优先、慢者作下载中降级兜底
+    let tuna_url = tuna_package_url(major, arch, os, &name);
+    let mut urls = vec![tuna_url.clone()];
+    if !tuna_only {
+        if let Some(link) = package.get("link").and_then(|v| v.as_str()) {
+            let tuna_probe = probe_url(&tuna_url).await;
+            let official_probe = probe_url(link).await;
+            if prefer_official_over_tuna(
+                official_probe.ok,
+                official_probe.ttfb_ms,
+                tuna_probe.ttfb_ms,
+            ) {
+                urls = vec![link.to_string(), tuna_url];
+            } else {
+                urls.push(link.to_string());
+            }
+        }
+    }
+
+    // 3. 下载 → sha256 校验（下载时 sha1 传空：先凭 HTTP 成功取包，
+    // 整包校验与 Azul 路径同构）→ 解压 → inspect
+    let ext = if name.ends_with(".tar.gz") || name.ends_with(".tgz") {
+        "tar.gz"
+    } else {
+        "zip"
+    };
+    let pkg_path = temp_file(&format!("adoptium-java-{major}.{ext}"));
+    let cb = delta_callback(hook.on_bytes);
+    fetcher::fetch_verified_c(&urls, &pkg_path, Some(cb), "", hook.cancel)
+        .await
+        .map_err(|e| format!("下载 Adoptium 包失败\n{e}"))?;
+    if let Some(f) = hook.on_file_done {
+        f();
+    }
+    if !sha256.is_empty() {
+        let actual = file_sha256(&pkg_path);
+        if actual != sha256 {
+            let _ = std::fs::remove_file(&pkg_path);
+            return Err("Adoptium 包 sha256 校验失败".into());
+        }
+    }
+
+    let dest_root = runtime_dir(config, major);
+    std::fs::create_dir_all(&dest_root).map_err(|e| format!("创建目录失败\n{e}"))?;
+    extract_archive(&pkg_path, &dest_root)?;
+    let _ = std::fs::remove_file(&pkg_path);
+
+    let home = find_java_home(&dest_root).ok_or("解压后未找到 JDK 根目录")?;
+    let info = scanner::inspect(&home).map_err(|e| format!("校验 Adoptium JDK 失败\n{e}"))?;
+    if parse_java_major(&info.version) != Some(major) {
+        return Err(format!(
+            "Adoptium 安装版本异常（需要 {}，实际 {}）",
+            major, info.version
+        ));
+    }
+    Ok(info)
+}
+
+/// Adoptium API 查询参数 / TUNA 目录的平台键（与 Azul 命名不同：mac 而非 macos）。
+fn adoptium_platform() -> (&'static str, &'static str) {
+    let os = if cfg!(windows) {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "mac"
+    } else {
+        "linux"
+    };
+    let arch = if cfg!(target_arch = "aarch64") {
+        "aarch64"
+    } else {
+        "x64"
+    };
+    (os, arch)
+}
+
+/// TUNA 镜像文件 URL：Adoptium 官方文件名与镜像完全一致，按镜像目录结构直接构造。
+fn tuna_package_url(major: u32, arch: &str, os: &str, name: &str) -> String {
+    format!("{TUNA_ADOPTIUM_BASE}/{major}/jdk/{arch}/{os}/{name}")
+}
+/// 源层排序决策（纯逻辑，便于单测）：官方探测可用且快于 TUNA → 官方优先；
+/// 官方探测失败/更慢 → TUNA 优先（现状默认）。探测失败不剔除候选，仅排序。
+fn prefer_official_over_tuna(official_ok: bool, official_ttfb_ms: u64, tuna_ttfb_ms: u64) -> bool {
+    official_ok && official_ttfb_ms < tuna_ttfb_ms
+}
+
+/// 解压 JDK 包到 dest_root：.zip 用 zip crate；.tar.gz/.tgz 用 tar + flate2
+/// （Adoptium 的 mac/linux 只提供 tar.gz）。所有条目过 safe_runtime_path 防路径穿越。
+fn extract_archive(package: &Path, dest_root: &Path) -> Result<(), String> {
+    let name = package.to_string_lossy().to_lowercase();
+    if name.ends_with(".zip") {
+        extract_zip(package, dest_root)
+    } else if name.ends_with(".tar.gz") || name.ends_with(".tgz") {
+        extract_tar_gz(package, dest_root)
+    } else {
+        Err(format!("不支持的 JDK 包格式\n{name}"))
+    }
+}
+
+/// zip 解压（Mojang/Azul/Adoptium 共用的包级解压；zip 内顶层目录保留）。
+fn extract_zip(package: &Path, dest_root: &Path) -> Result<(), String> {
+    let file =
+        std::fs::File::open(package).map_err(|e| format!("打开 JDK 包失败\n{e}"))?;
+    let mut archive =
+        zip::ZipArchive::new(file).map_err(|e| format!("读取 JDK 包失败\n{e}"))?;
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| format!("读取条目失败\n{e}"))?;
+        let name = entry.name().to_string();
+        let out = safe_runtime_path(dest_root, &name)?;
+        if entry.is_dir() {
+            std::fs::create_dir_all(&out).ok();
+            continue;
+        }
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        let mut file_out =
+            std::fs::File::create(&out).map_err(|e| format!("创建 {} 失败\n{e}", out.display()))?;
+        std::io::copy(&mut entry, &mut file_out)
+            .map_err(|e| format!("解压 {} 失败\n{e}", out.display()))?;
+    }
+    Ok(())
+}
+
+/// tar.gz 解压（Adoptium mac/linux 包格式）。条目路径先剥 `./` 前缀再过
+/// safe_runtime_path；符号链接等特殊条目跳过（JDK 包内实体文件已逐一下载，无链接依赖）。
+fn extract_tar_gz(package: &Path, dest_root: &Path) -> Result<(), String> {
+    let file =
+        std::fs::File::open(package).map_err(|e| format!("打开 JDK 包失败\n{e}"))?;
+    let gz = flate2::read::GzDecoder::new(file);
+    let mut archive = tar::Archive::new(gz);
+    let entries = archive
+        .entries()
+        .map_err(|e| format!("读取 JDK 包失败\n{e}"))?;
+    for entry in entries {
+        let mut entry = entry.map_err(|e| format!("读取条目失败\n{e}"))?;
+        let mut name = entry
+            .path()
+            .map_err(|e| format!("读取条目路径失败\n{e}"))?
+            .to_string_lossy()
+            .into_owned();
+        while let Some(stripped) = name.strip_prefix("./") {
+            name = stripped.to_string();
+        }
+        let out = safe_runtime_path(dest_root, &name)?;
+        if entry.header().entry_type().is_dir() {
+            std::fs::create_dir_all(&out).ok();
+            continue;
+        }
+        if !entry.header().entry_type().is_file() {
+            continue;
+        }
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        let mut file_out =
+            std::fs::File::create(&out).map_err(|e| format!("创建 {} 失败\n{e}", out.display()))?;
+        std::io::copy(&mut entry, &mut file_out)
+            .map_err(|e| format!("解压 {} 失败\n{e}", out.display()))?;
+    }
+    Ok(())
+}
+
 /// Azul Zulu 回退：metadata API 查 zip 包 → sha256 校验 → 解压 → inspect。
 async fn install_azul_runtime(
     major: u32,
@@ -331,27 +673,7 @@ async fn install_azul_runtime(
     // 解压到 runtime 目录（zip 内顶层目录保留，如 zulu17.x-ca-jdk17.x-win_x64/）
     let dest_root = runtime_dir(config, major);
     std::fs::create_dir_all(&dest_root).map_err(|e| format!("创建目录失败\n{e}"))?;
-    let file = std::fs::File::open(&zip_path).map_err(|e| format!("打开 Azul 包失败\n{e}"))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取 Azul 包失败\n{e}"))?;
-    for i in 0..archive.len() {
-        let mut entry = archive
-            .by_index(i)
-            .map_err(|e| format!("读取条目失败\n{e}"))?;
-        let name = entry.name().to_string();
-        // 路径穿越防护：拒绝 .. 与绝对路径
-        let out = safe_runtime_path(&dest_root, &name)?;
-        if entry.is_dir() {
-            std::fs::create_dir_all(&out).ok();
-            continue;
-        }
-        if let Some(parent) = out.parent() {
-            std::fs::create_dir_all(parent).ok();
-        }
-        let mut file_out =
-            std::fs::File::create(&out).map_err(|e| format!("创建 {} 失败\n{e}", out.display()))?;
-        std::io::copy(&mut entry, &mut file_out)
-            .map_err(|e| format!("解压 {} 失败\n{e}", out.display()))?;
-    }
+    extract_archive(&zip_path, &dest_root)?;
     let _ = std::fs::remove_file(&zip_path);
 
     // 找到含 bin/java(.exe) 的 JDK 根目录（zip 顶层目录名不定）
@@ -456,6 +778,96 @@ mod tests {
         assert!(safe_runtime_path(root, "").is_err());
     }
 
+    /// 三态配置对应正确回退链（顺序敏感：错误按链序拼接，先试的源先失败先展示）。
+    #[test]
+    fn installer_chain_matches_source_mode() {
+        let names = |mode: JdkSourceMode| {
+            installer_chain(mode)
+                .into_iter()
+                .map(|(_, n)| n)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            names(JdkSourceMode::Auto),
+            vec!["官方源", "Adoptium 源", "Azul 源"]
+        );
+        assert_eq!(
+            names(JdkSourceMode::OfficialOnly),
+            vec!["官方源", "Azul 源"]
+        );
+        assert_eq!(
+            names(JdkSourceMode::ChinaOnly),
+            vec!["官方源", "国内镜像源"]
+        );
+        // ChinaOnly 的 Adoptium 必须 tuna_only（官方 link 不参与下载候选）
+        assert!(matches!(
+            installer_chain(JdkSourceMode::ChinaOnly)[1].0,
+            JdkInstaller::Adoptium { tuna_only: true }
+        ));
+    }
+
+    /// TUNA 镜像 URL：文件名与官方一致，按镜像目录结构直接构造。
+    #[test]
+    fn adoptium_tuna_url_constructed_from_package_name() {
+        assert_eq!(
+            tuna_package_url(
+                21,
+                "x64",
+                "windows",
+                "OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.zip"
+            ),
+            "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/21/jdk/x64/windows/OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.zip"
+        );
+        assert_eq!(
+            tuna_package_url(
+                17,
+                "aarch64",
+                "mac",
+                "OpenJDK17U-jdk_aarch64_mac_hotspot_17.0.13_11.tar.gz"
+            ),
+            "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/17/jdk/aarch64/mac/OpenJDK17U-jdk_aarch64_mac_hotspot_17.0.13_11.tar.gz"
+        );
+    }
+
+    /// Auto 链构建（纯逻辑）：不可达环节剔除；全不可达保底完整链（探测误判不致死）。
+    #[test]
+    fn auto_chain_prunes_unreachable_sources() {
+        let names = |chain: Vec<(JdkInstaller, &'static str)>| {
+            chain.into_iter().map(|(_, n)| n).collect::<Vec<_>>()
+        };
+        // 全部可达 → 完整链
+        assert_eq!(
+            names(chain_from_probes(true, true, true)),
+            vec!["官方源", "Adoptium 源", "Azul 源"]
+        );
+        // Mojang 环节不可达（官方与镜像都死，被墙场景）→ 剔除，直入 Adoptium → Azul
+        assert_eq!(
+            names(chain_from_probes(false, true, true)),
+            vec!["Adoptium 源", "Azul 源"]
+        );
+        // Adoptium API 不可达 → 跳过 Adoptium，官方 → Azul
+        assert_eq!(
+            names(chain_from_probes(true, false, true)),
+            vec!["官方源", "Azul 源"]
+        );
+        // 全不可达 → 保底全链（探测可能误判，不能因探测剔除所有源）
+        assert_eq!(
+            names(chain_from_probes(false, false, false)),
+            vec!["官方源", "Adoptium 源", "Azul 源"]
+        );
+    }
+
+    /// 源层排序：官方探测可用且快 → 官方优先；官方失败/更慢 → TUNA 优先（默认）。
+    #[test]
+    fn prefer_fastest_source_ttfb() {
+        // 官方更快 → 官方优先
+        assert!(prefer_official_over_tuna(true, 100, 500));
+        // 官方探测失败 → TUNA 优先（官方候选保留作兜底，仅排序不剔除）
+        assert!(!prefer_official_over_tuna(false, 0, 500));
+        // 官方更慢 → TUNA 优先
+        assert!(!prefer_official_over_tuna(true, 900, 100));
+    }
+
     /// Azul 布局（runtime 根下套 zulu*/ 子目录）也能定位到 java 根——
     /// auto_install 幂等检查依赖它，否则 Azul 装的 runtime 每次启动都被误判未装重下。
     #[test]
@@ -470,6 +882,43 @@ mod tests {
             found.as_deref(),
             Some(home.as_path()),
             "应递归定位 zulu 子目录内的 java 根"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// tar.gz 解压（Adoptium mac/linux 包格式）：嵌套目录布局可解压且
+    /// find_java_home 能定位 JDK 根（mac 的 Contents/Home 深层布局同此）。
+    #[test]
+    fn extract_tar_gz_handles_nested_layout_and_finds_home() {
+        let tmp = std::env::temp_dir().join(format!("elytra_tgz_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let pkg = tmp.join("jdk.tar.gz");
+        {
+            let file = std::fs::File::create(&pkg).unwrap();
+            let enc = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+            let mut builder = tar::Builder::new(enc);
+            let entry_rel = java_bin_path(Path::new("jdk-21.0.12.1+1"))
+                .to_string_lossy()
+                .replace('\\', "/");
+            let bytes = b"fake java";
+            let mut header = tar::Header::new_gnu();
+            header.set_size(bytes.len() as u64);
+            header.set_mode(0o755);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, &entry_rel, &bytes[..])
+                .unwrap();
+            builder.finish().unwrap();
+        }
+        let dest = tmp.join("out");
+        std::fs::create_dir_all(&dest).unwrap();
+        extract_archive(&pkg, &dest).unwrap();
+        let found = find_java_home(&dest);
+        assert_eq!(
+            found.as_deref(),
+            Some(dest.join("jdk-21.0.12.1+1").as_path()),
+            "应递归定位嵌套 JDK 根"
         );
         std::fs::remove_dir_all(&tmp).ok();
     }

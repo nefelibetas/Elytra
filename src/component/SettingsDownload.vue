@@ -4,13 +4,14 @@ import { onMounted } from "vue";
 import { ChevronDown } from "@lucide/vue";
 import {
   dlFileMode, dlManifestMode, dlCommunityMode, dlConcurrency,
-  dlFileOpen, dlManifestOpen, dlCommunityOpen, dlNetworkOpen, dlTranslateOpen, dlTranslateMode,
+  dlFileOpen, dlManifestOpen, dlCommunityOpen, dlJdkOpen, dlJdkMode, dlNetworkOpen, dlTranslateOpen, dlTranslateMode,
   dlError, dlShowReleaseOnly, dlNetworkMode,
   sourceModeOptions, communitySourceOptions, sourceModeLabel,
+  jdkSourceOptions, jdkModeLabel,
   networkModeOptions, networkModeLabel,
   translateDisplayOptions, translateModeLabel,
   concurrencyLocked,
-  saveDownloadConfig, setFileMode, setCommunityMode, setManifestMode, setNetworkMode,
+  saveDownloadConfig, setFileMode, setCommunityMode, setJdkMode, setManifestMode, setNetworkMode,
   setTranslateMode, toggleDlOpen, loadDownloadConfig,
 } from "../store/downloaderConfig";
 
@@ -90,6 +91,31 @@ onMounted(loadDownloadConfig);
               class="dl-sel-item"
               :class="{ active: dlCommunityMode === opt.value }"
               @click="setCommunityMode(opt.value)"
+            >
+              <span class="dl-sel-item-label">{{ opt.label }}</span>
+              <span class="dl-sel-item-desc">{{ opt.desc }}</span>
+            </button>
+          </div>
+        </Transition>
+      </div>
+    </div>
+
+    <!-- JDK 下载源：官方 runtime → Adoptium（清华 TUNA 镜像优先）→ Azul 回退链 -->
+    <div class="dl-row">
+      <span class="dl-label">JDK 下载源</span>
+      <div class="dl-sel" :class="{ open: dlJdkOpen }">
+        <button class="dl-sel-btn" @click="toggleDlOpen('jdk')">
+          <span>{{ jdkModeLabel(dlJdkMode) }}</span>
+          <ChevronDown :size="12" />
+        </button>
+        <Transition name="dl-drop">
+          <div v-if="dlJdkOpen" class="dl-sel-menu">
+            <button
+              v-for="opt in jdkSourceOptions"
+              :key="opt.value"
+              class="dl-sel-item"
+              :class="{ active: dlJdkMode === opt.value }"
+              @click="setJdkMode(opt.value)"
             >
               <span class="dl-sel-item-label">{{ opt.label }}</span>
               <span class="dl-sel-item-desc">{{ opt.desc }}</span>
