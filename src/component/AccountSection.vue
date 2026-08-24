@@ -584,13 +584,13 @@ function useOfflineName(name: string) {
   line-height: 1;
   cursor: pointer;
   opacity: 0;
-  pointer-events: none; /* 隐藏态不拦截行点击 */
-  transition: all 0.12s;
+  visibility: hidden; /* 隐藏态彻底移出命中测试（WebView2 下 pointer-events 过渡不可靠） */
+  transition: opacity 0.12s, visibility 0.12s;
 }
 
 .acct-row:hover .acct-del {
   opacity: 1;
-  pointer-events: auto;
+  visibility: visible;
 }
 
 .acct-del:hover {
