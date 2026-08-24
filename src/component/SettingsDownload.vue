@@ -100,7 +100,7 @@ onMounted(loadDownloadConfig);
       </div>
     </div>
 
-    <!-- JDK 下载源：官方 runtime → Adoptium（清华 TUNA 镜像优先）→ Azul 回退链 -->
+    <!-- JDK 下载源：auto 并发测速三源最快优先；officialOnly 固定 Mojang → Azul；chinaOnly 固定 Mojang（镜像）→ Adoptium 仅 TUNA -->
     <div class="dl-row">
       <span class="dl-label">JDK 下载源</span>
       <div class="dl-sel" :class="{ open: dlJdkOpen }">

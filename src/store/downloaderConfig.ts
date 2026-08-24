@@ -32,11 +32,11 @@ export const communitySourceOptions = [
   { value: "chinaOnly", label: "仅MCIM镜像", desc: "仅使用MCIM镜像站" },
 ];
 
-// JDK（managed runtime）下载源：官方 runtime → Adoptium（TUNA 国内镜像优先）→ Azul
-// 的自动回退链；国内镜像模式大文件走清华 TUNA、元数据仍走 Adoptium 官方 API
-// （TUNA 只镜像文件不提供 checksum）
+// JDK（managed runtime）下载源三态：auto 并发速率探测三源（Mojang / Adoptium / Azul）
+// 最快优先、不可达兜底；officialOnly 固定 Mojang → Azul；chinaOnly 固定
+// Mojang（文件走文件源镜像）→ Adoptium 仅 TUNA（元数据例外走官方 API）。
 export const jdkSourceOptions = [
-  { value: "auto", label: "智能回退", desc: "官方 runtime 优先，失败依次回退 Adoptium（清华 TUNA 镜像优先）与 Azul" },
+  { value: "auto", label: "智能测速", desc: "Mojang / Adoptium / Azul 三源并发测速，最快者优先下载，不可达源自动兜底" },
   { value: "officialOnly", label: "仅官方源", desc: "仅使用 Mojang 官方与 Azul，不启用国内镜像" },
   { value: "chinaOnly", label: "仅国内镜像", desc: "Mojang 走文件源镜像，Adoptium 仅从清华 TUNA 下载（元数据例外走官方 API）" },
 ];
