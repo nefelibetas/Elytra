@@ -161,6 +161,10 @@ onUnmounted(() => {
         </div>
       </div>
     </Transition>
+    <!-- 窗口边缘加深：无边框窗口悬浮于桌面，页面底色与外部背景相近时
+         边界难辨。纯视觉覆盖层（描边 + 内阴影晕影），不拦截交互；
+         z 2000 位于内容/弹窗之上、toast(3000)/tooltip(3100) 之下 -->
+    <div class="edge-shade" aria-hidden="true"></div>
   </div>
 </template>
 
@@ -287,6 +291,11 @@ input, textarea {
 
   /* scrollbar */
   --scrollbar-thumb: #CBD5D1;
+
+  /* 窗口边缘加深（.edge-shade 覆盖层；色相取各主题深色调，避免
+     无边框窗口底色与外部应用背景相近时边界难辨） */
+  --edge-line: rgba(6, 78, 59, 0.40);
+  --edge-shade: rgba(6, 78, 59, 0.16);
 }
 
 /* ===== 主题 End（末影紫）：取自 Minecraft 末地 ===== */
@@ -313,6 +322,9 @@ input, textarea {
   --shadow-lg: 0 4px 16px rgba(36, 27, 69, 0.10);
 
   --scrollbar-thumb: #D2CBEA;
+
+  --edge-line: rgba(76, 29, 149, 0.38);
+  --edge-shade: rgba(76, 29, 149, 0.15);
 
   --ld-fabric: #B45309;
   --ld-forge: #E11D48;
@@ -345,6 +357,9 @@ input, textarea {
 
   --scrollbar-thumb: #DED2C8;
 
+  --edge-line: rgba(124, 45, 18, 0.38);
+  --edge-shade: rgba(124, 45, 18, 0.15);
+
   --ld-fabric: #EA580C;
   --ld-forge: #DC2626;
   --ld-neoforge: #65A30D;
@@ -376,6 +391,9 @@ input, textarea {
 
   --scrollbar-thumb: #C6D6E0;
 
+  --edge-line: rgba(12, 74, 110, 0.38);
+  --edge-shade: rgba(12, 74, 110, 0.15);
+
   --ld-fabric: #F59E0B;
   --ld-forge: #F43F5E;
   --ld-neoforge: #10B981;
@@ -399,8 +417,8 @@ input, textarea {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  width: 100vw;
   overflow: hidden;
+  position: relative;
   border-radius: var(--radius-md);
   background-color: var(--surface-page);
   color: var(--text-primary);
@@ -412,6 +430,20 @@ input, textarea {
   overflow-x: hidden;
   scrollbar-gutter: stable;
   background-color: var(--surface-page);
+}
+
+/* 窗口边缘加深覆盖层：色相随主题切换（--edge-line / --edge-shade）。
+   inset box-shadow 三端 WebView 均原生支持，无需 @supports 降级 */
+.edge-shade {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-md);
+  pointer-events: none;
+  z-index: 2000;
+  box-shadow:
+    inset 0 0 0 1.5px var(--edge-line),
+    inset 0 0 8px var(--edge-shade),
+    inset 0 0 36px var(--edge-shade);
 }
 
 /* Route transitions — simple opacity fade, normal flow, no scroll jitter */
