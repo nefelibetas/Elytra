@@ -20,8 +20,8 @@ pub async fn start_ms_login(app: AppHandle) -> Result<String, String> {
         h.abort();
     }
 
-    let state = microsoft::generate_state();
-    let pkce = microsoft::generate_pkce();
+    let state = microsoft::generate_state().map_err(|e| e.to_string())?;
+    let pkce = microsoft::generate_pkce().map_err(|e| e.to_string())?;
 
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", CALLBACK_PORT))
         .await

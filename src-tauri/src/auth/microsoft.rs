@@ -54,6 +54,8 @@ pub enum MsError {
     RateLimited(&'static str),
     /// 响应格式异常
     Malformed(String),
+    /// 系统 CSPRNG 不可用（极罕见，通常意味着系统级故障）
+    Rng(String),
 }
 
 impl std::fmt::Display for MsError {
@@ -72,6 +74,7 @@ impl std::fmt::Display for MsError {
                 "{what}请求过于频繁(429)\nMinecraft/微软认证服务临时限流,请等待几分钟后重试;频繁重试会延长限流时间"
             ),
             MsError::Malformed(e) => write!(f, "响应解析失败\n{e}"),
+            MsError::Rng(e) => write!(f, "生成安全随机数失败\n{e}"),
         }
     }
 }
@@ -90,23 +93,28 @@ pub struct Pkce {
 }
 
 /// 生成 PKCE code_verifier（43–128 字符）与 code_challenge（S256）。
-pub fn generate_pkce() -> Pkce {
+pub fn generate_pkce() -> Result<Pkce, MsError> {
     let mut bytes = [0u8; 64];
-    getrandom::getrandom(&mut bytes).expect("os rng unavailable");
+    random_bytes(&mut bytes)?;
     let verifier = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
     let digest = sha2::Sha256::digest(verifier.as_bytes());
     let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest);
-    Pkce {
+    Ok(Pkce {
         verifier,
         challenge,
-    }
+    })
 }
 
 /// 生成随机 state（防 CSRF）。
-pub fn generate_state() -> String {
+pub fn generate_state() -> Result<String, MsError> {
     let mut bytes = [0u8; 24];
-    getrandom::getrandom(&mut bytes).expect("os rng unavailable");
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+    random_bytes(&mut bytes)?;
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
+}
+
+/// 从系统 CSPRNG 填充随机字节；失败返回 Rng 错误（不再 panic）。
+fn random_bytes(buf: &mut [u8]) -> Result<(), MsError> {
+    getrandom::getrandom(buf).map_err(|e| MsError::Rng(e.to_string()))
 }
 
 /// 构建 application/x-www-form-urlencoded 请求体。
@@ -227,14 +235,44 @@ async fn refresh_ms(client: &reqwest::Client, refresh_token: &str) -> Result<MsT
 
 // ── Xbox / Minecraft 链路 ────────────────────────────────────────
 
+/// 共享助手：POST JSON → 状态检查 → 解析响应 JSON。
+/// 发送/解析失败→Http；429→RateLimited(what)；`special`(如 XSTS 401)返回 Some 则短路；
+/// 其余非 2xx→Http(`fail_label({status})` + extract_api_error)。成功返回响应 JSON。
+async fn post_oauth_json(
+    client: &reqwest::Client,
+    url: &str,
+    body: &serde_json::Value,
+    what: &'static str,
+    fail_label: &str,
+    special: impl FnOnce(reqwest::StatusCode, &serde_json::Value) -> Option<MsError>,
+) -> Result<serde_json::Value, MsError> {
+    let resp = client.post(url).json(body).send().await?;
+    let status = resp.status();
+    let json: serde_json::Value = resp.json().await?;
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Err(MsError::RateLimited(what));
+    }
+    if let Some(err) = special(status, &json) {
+        return Err(err);
+    }
+    if !status.is_success() {
+        return Err(MsError::Http(format!(
+            "{fail_label}({status})\n{}",
+            extract_api_error(&json)
+        )));
+    }
+    Ok(json)
+}
+
 /// 微软 token → XBL token + userhash。
 async fn authenticate_xbl(
     client: &reqwest::Client,
     ms_access_token: &str,
 ) -> Result<(String, String), MsError> {
-    let resp = client
-        .post(XBL_URL)
-        .json(&json!({
+    let json = post_oauth_json(
+        client,
+        XBL_URL,
+        &json!({
             "Properties": {
                 "AuthMethod": "RPS",
                 "SiteName": "user.auth.xboxlive.com",
@@ -242,20 +280,12 @@ async fn authenticate_xbl(
             },
             "RelyingParty": "http://auth.xboxlive.com",
             "TokenType": "JWT"
-        }))
-        .send()
-        .await?;
-    let status = resp.status();
-    let json: serde_json::Value = resp.json().await?;
-    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return Err(MsError::RateLimited("Xbox Live 鉴权"));
-    }
-    if !status.is_success() {
-        return Err(MsError::Http(format!(
-            "Xbox Live 鉴权失败({status})\n{}",
-            extract_api_error(&json)
-        )));
-    }
+        }),
+        "Xbox Live 鉴权",
+        "Xbox Live 鉴权失败",
+        |_, _| None,
+    )
+    .await?;
     let token = json
         .get("Token")
         .and_then(|v| v.as_str())
@@ -273,33 +303,28 @@ async fn authenticate_xsts(
     client: &reqwest::Client,
     xbl_token: &str,
 ) -> Result<(String, String), MsError> {
-    let resp = client
-        .post(XSTS_URL)
-        .json(&json!({
+    let json = post_oauth_json(
+        client,
+        XSTS_URL,
+        &json!({
             "Properties": {
                 "SandboxId": "RETAIL",
                 "UserTokens": [xbl_token]
             },
             "RelyingParty": "rp://api.minecraftservices.com/",
             "TokenType": "JWT"
-        }))
-        .send()
-        .await?;
-    let status = resp.status();
-    let json: serde_json::Value = resp.json().await?;
-    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return Err(MsError::RateLimited("Xbox 鉴权"));
-    }
-    if status == reqwest::StatusCode::UNAUTHORIZED {
-        let xerr = json.get("XErr").and_then(|v| v.as_i64()).unwrap_or(0);
-        return Err(MsError::Xsts(xerr));
-    }
-    if !status.is_success() {
-        return Err(MsError::Http(format!(
-            "Xbox 鉴权失败({status})\n{}",
-            extract_api_error(&json)
-        )));
-    }
+        }),
+        "Xbox 鉴权",
+        "Xbox 鉴权失败",
+        // 401 = Xbox 侧鉴权被拒，返回 XErr 码供上层给出具体原因
+        |status, json| {
+            (status == reqwest::StatusCode::UNAUTHORIZED).then(|| {
+                let xerr = json.get("XErr").and_then(|v| v.as_i64()).unwrap_or(0);
+                MsError::Xsts(xerr)
+            })
+        },
+    )
+    .await?;
     let token = json
         .get("Token")
         .and_then(|v| v.as_str())
@@ -333,22 +358,15 @@ async fn minecraft_login(
     uhs: &str,
     xsts_token: &str,
 ) -> Result<String, MsError> {
-    let resp = client
-        .post(MC_LOGIN_URL)
-        .json(&json!({ "identityToken": format!("XBL3.0 x={uhs};{xsts_token}") }))
-        .send()
-        .await?;
-    let status = resp.status();
-    let json: serde_json::Value = resp.json().await?;
-    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return Err(MsError::RateLimited("Minecraft 登录"));
-    }
-    if !status.is_success() {
-        return Err(MsError::Http(format!(
-            "Minecraft 登录失败({status})\n{}",
-            extract_api_error(&json)
-        )));
-    }
+    let json = post_oauth_json(
+        client,
+        MC_LOGIN_URL,
+        &json!({ "identityToken": format!("XBL3.0 x={uhs};{xsts_token}") }),
+        "Minecraft 登录",
+        "Minecraft 登录失败",
+        |_, _| None,
+    )
+    .await?;
     let token = json
         .get("access_token")
         .and_then(|v| v.as_str())
@@ -469,7 +487,7 @@ mod tests {
 
     #[test]
     fn test_pkce_generation() {
-        let pkce = generate_pkce();
+        let pkce = generate_pkce().unwrap();
         assert!((43..=128).contains(&pkce.verifier.len()));
         assert_eq!(pkce.challenge.len(), 43); // 32 bytes → 43 base64url chars
                                               // challenge 必须是 verifier 的 sha256（S256 一致性）
@@ -477,21 +495,21 @@ mod tests {
         let expect = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest);
         assert_eq!(pkce.challenge, expect);
         // 两次生成应不同
-        let pkce2 = generate_pkce();
+        let pkce2 = generate_pkce().unwrap();
         assert_ne!(pkce.verifier, pkce2.verifier);
     }
 
     #[test]
     fn test_state_random() {
-        let a = generate_state();
-        let b = generate_state();
+        let a = generate_state().unwrap();
+        let b = generate_state().unwrap();
         assert_ne!(a, b);
         assert!(a.len() >= 24);
     }
 
     #[test]
     fn test_build_auth_url() {
-        let pkce = generate_pkce();
+        let pkce = generate_pkce().unwrap();
         // 依赖 .env 注入的 MS_CLIENT_ID;无 .env 的 CI 环境跳过
         let Ok(url) = build_auth_url("st8", &pkce) else {
             return;
