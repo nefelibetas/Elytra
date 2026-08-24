@@ -10,6 +10,7 @@ import DownloadDetail from "../pages/DownloadDetail.vue";
 const ResourceDetail = () => import("../pages/ResourceDetail.vue");
 const VersionSelect = () => import("../pages/VersionSelect.vue");
 const VersionSetup = () => import("../pages/VersionSetup.vue");
+const CustomThemeEditor = () => import("../component/CustomThemeEditor.vue");
 
 declare module "vue-router" {
   interface RouteMeta {
@@ -30,6 +31,7 @@ const routes = [
   { path: ROUTE_RESOURCE_DETAIL, name: "resource-detail", component: ResourceDetail },
   { path: "/version-select", name: "version-select", component: VersionSelect },
   { path: "/version-setup", name: "version-setup", component: VersionSetup },
+  { path: "/custom-theme", name: "custom-theme", component: CustomThemeEditor },
 ];
 
 const router = createRouter({
@@ -45,6 +47,7 @@ const routeLevel: Record<string, number> = {
   "download-detail": 0,
   "resource-detail": 1,
   "version-select": 1,
+  "custom-theme": 1,
   "version-setup": 2,
 };
 

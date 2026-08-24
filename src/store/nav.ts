@@ -51,6 +51,13 @@ export function goBack(): boolean {
     return true;
   }
 
+  if (path === "/custom-theme") {
+    // 自定义外观编辑器 → 回设置页
+    pending += 1;
+    void router.push("/settings");
+    return true;
+  }
+
   // 其余（顶级 Tab / 版本选择 / 版本设置）→ 回启动页
   pending += 1;
   void router.push("/");

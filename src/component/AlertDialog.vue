@@ -6,11 +6,14 @@ const props = withDefaults(defineProps<{
   message?: string;
   /** 是否显示「复制错误信息」按钮（仅复杂错误需要） */
   copyable?: boolean;
+  /** 弹窗宽度档位：md 默认 440px（错误/确认）；lg 宽版（复杂编辑器如自定义外观） */
+  width?: "md" | "lg";
   modelValue: boolean;
 }>(), {
   title: "提示",
   message: "",
   copyable: false,
+  width: "md",
 });
 
 const emit = defineEmits<{
@@ -65,7 +68,7 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
 <template>
   <Transition name="dialog">
     <div v-if="modelValue" class="dialog-overlay" @click.self="close">
-      <div class="dialog-card">
+      <div class="dialog-card" :class="`dialog-card--${width}`">
         <div class="dialog-header">
           <span class="dialog-title">{{ title }}</span>
         </div>        
@@ -116,6 +119,11 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
   box-shadow: var(--shadow-lg);
   overflow: hidden;
   user-select: none;
+}
+
+/* 宽档：复杂编辑器（如自定义外观弹窗），内容区更宽 */
+.dialog-card--lg {
+  width: 680px;
 }
 
 .dialog-header {
