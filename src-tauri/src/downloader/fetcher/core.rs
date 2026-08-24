@@ -80,7 +80,10 @@ pub(super) async fn download_core<F: Fn(u64, u64)>(
 ) -> Result<DownloadResult, FetchError> {
     match kind {
         FetchKind::Retry => {
-            let c = client.unwrap_or_else(|| http());
+            // 局部持 Arc（http() 返回 Arc，客户端重建时旧引用计数释放）：
+            // 借用内部 Client 传给重试路径，Arc 活过整个 await。
+            let global = http();
+            let c = client.unwrap_or(global.as_ref());
             let url = urls.first().map(String::as_str).unwrap_or("");
             fetch_with_retries(c, url, dest, &progress, expected_sha1, cancel).await
         }
@@ -90,7 +93,8 @@ pub(super) async fn download_core<F: Fn(u64, u64)>(
         } => {
             if single_url_retry && urls.len() == 1 {
                 let url = urls.first().map(String::as_str).unwrap_or("");
-                return fetch_with_retries(http(), url, dest, &progress, expected_sha1, cancel)
+                let global = http();
+                return fetch_with_retries(global.as_ref(), url, dest, &progress, expected_sha1, cancel)
                     .await;
             }
             fetch_from_sources(urls, dest, &progress, total_timeout, expected_sha1, cancel).await

@@ -47,7 +47,23 @@ fn build_client() -> Client {
     builder.build().expect("reqwest::Client")
 }
 
-pub fn http() -> &'static Client {
-    static C: LazyLock<Client> = LazyLock::new(build_client);
-    &C
+/// 全局 HTTP client（带系统代理/超时/黑洞重定向防护；首次调用按当前
+/// network_mode 构建代理配置）。返回 Arc 以便 network_mode 切换时整体重建：
+/// `reset_http_client` 置空后下次调用按新配置重建；进行中下载持旧 Arc 引用
+/// 不受影响。探测（probe.rs）与下载全链路共用此 client，代理行为天然一致。
+pub fn http() -> std::sync::Arc<Client> {
+    let mut guard = HTTP_CLIENT.lock();
+    if guard.is_none() {
+        *guard = Some(std::sync::Arc::new(build_client()));
+    }
+    guard.clone().expect("http client")
 }
+
+/// network_mode（Auto/System/Direct）切换后调用：置空全局 client，
+/// 下次 `http()` 按新配置重建。旧 client 由持有者引用计数自然释放。
+pub fn reset_http_client() {
+    HTTP_CLIENT.lock().take();
+}
+
+static HTTP_CLIENT: LazyLock<parking_lot::Mutex<Option<std::sync::Arc<Client>>>> =
+    LazyLock::new(|| parking_lot::Mutex::new(None));

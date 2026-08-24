@@ -18,7 +18,15 @@ pub fn get_downloader_config() -> DownloaderConfig {
 
 #[tauri::command]
 pub fn save_downloader_config(config: DownloaderConfig) -> Result<(), String> {
-    persist::save(constants::SECT_DOWNLOADER, &config).map_err(|e| format!("保存配置失败\n{e}"))
+    let old: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
+    persist::save(constants::SECT_DOWNLOADER, &config).map_err(|e| format!("保存配置失败\n{e}"))?;
+    // 网络代理模式（Auto/System/Direct）变化 → 重建全局 http client：
+    // client 的代理配置在构建时固定，LazyLock 单例不重建则切换不生效
+    // （探测与下载全链路共用 http()，行为必须跟随用户设置）。
+    if old.network_mode != config.network_mode {
+        crate::downloader::fetcher::reset_http_client();
+    }
+    Ok(())
 }
 
 /// 已安装版本信息（get_installed_versions 返回项）。
