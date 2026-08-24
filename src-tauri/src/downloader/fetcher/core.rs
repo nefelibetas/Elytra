@@ -2,6 +2,7 @@
 //! 单 URL 重试路径（[`fetch_with_retries`]）或多源回退路径（[`fetch_from_sources`]）。
 
 use reqwest::Client;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
@@ -11,9 +12,12 @@ use tokio::sync::Semaphore;
 
 use super::redirect::{http, mirror_safe_redirect};
 use super::routes::{
-    record_route_failure, record_route_success, resolve_download_routes, source_mode,
+    record_route_failure, record_route_success, resolve_download_routes, route_health,
+    source_mode, DownloadRoute,
 };
 use super::{DownloadResult, FetchError};
+use crate::config::downloader::model::{DownloadSourceMode, ResourceClass};
+use crate::downloader::probe::{probe_domain, ProbeResult};
 use crate::downloader::proxy::apply_system_proxy;
 
 /// 镜像源并发信号量（全进程共享）：限制同一时刻对镜像源（BMCLAPI/MCIM）的请求数。
@@ -135,6 +139,35 @@ async fn fetch_with_retries<F: Fn(u64, u64)>(
     Err(last_err.unwrap())
 }
 
+/// 冷启动预探测排序（async）：并发对每个候选做域级 HEAD（TTL 缓存，同域文件共享），
+/// Loader 镜像先行 → 探测失败排后 → TTFB 升序。探测失败仍保留候选（下载期兜底）。
+async fn sort_routes_by_probes(routes: &mut [DownloadRoute], class: ResourceClass) {
+    let probes = futures_util::future::join_all(routes.iter().map(|r| async move {
+        (r.url.clone(), probe_domain(&r.url).await)
+    }))
+    .await
+    .into_iter()
+    .collect::<HashMap<_, _>>();
+    sort_routes_with_probes(routes, &probes, class);
+}
+
+/// 探测排序纯逻辑（便于单测）：Loader 镜像先行（官方 maven 限流语义保持）→
+/// 探测失败排后 → TTFB 升序；无探测样本视同失败（排后，不剔除）。
+pub(super) fn sort_routes_with_probes(
+    routes: &mut [DownloadRoute],
+    probes: &HashMap<String, ProbeResult>,
+    class: ResourceClass,
+) {
+    routes.sort_by_key(|r| {
+        let p = probes.get(&r.url).copied().unwrap_or(ProbeResult {
+            ok: false,
+            ttfb_ms: u64::MAX,
+        });
+        let loader_mirror_first = u8::from(!(class == ResourceClass::Loader && r.is_mirror));
+        (loader_mirror_first, !p.ok, p.ttfb_ms)
+    });
+}
+
 /// 单次请求结果（含 TTFB 供健康度记录）。
 struct FetchOnceOutput {
     dl: DownloadResult,
@@ -159,7 +192,20 @@ async fn fetch_from_sources<F: Fn(u64, u64)>(
     const MAX_ATTEMPTS: u32 = 3;
     // 自适应路由：去重 + 自动镜像候选（官方保底）+ mirror_first_loader/健康度排序。
     // 调用方传入的源顺序在非 Auto 模式下保持不变（向后兼容）。
-    let routes = resolve_download_routes(urls, source_mode());
+    let mut routes = resolve_download_routes(urls, source_mode());
+    // 下载前域级预探测（智能模式）：候选全部冷启动（无健康度样本）时，对候选域
+    // HEAD 测 TTFB 排序——首个文件不再白等黑洞超时（连接 2s + 读 30s → 探测 ≤3s）；
+    // 热启动（已有成功样本）走健康度自适应，不重复探测。探测失败不剔除，仅排后
+    // （下载期重试/换源兜底）。
+    if routes.len() > 1
+        && source_mode() == DownloadSourceMode::Auto
+        && routes.iter().all(|r| route_health(&r.url).samples == 0)
+    {
+        let class = crate::config::downloader::model::infer_resource_class(
+            urls.first().map(String::as_str).unwrap_or(""),
+        );
+        sort_routes_by_probes(&mut routes, class).await;
+    }
     // 收集每源/每轮全部错误（展示时去重），避免最后一个源覆盖前面的失败原因
     let mut errors: Vec<FetchError> = Vec::new();
     for attempt in 0..MAX_ATTEMPTS {
