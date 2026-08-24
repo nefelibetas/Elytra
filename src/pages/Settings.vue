@@ -1,16 +1,14 @@
 <script setup lang="ts">
 // 设置页容器：导航 + 各 tab 内容编排（业务在 store/组件，本文件不做配置逻辑）
-import { ref } from "vue";
 import { SlidersHorizontal, Download, Palette } from "@lucide/vue";
 import SettingsLaunchOptions from "../component/SettingsLaunchOptions.vue";
 import SettingsJdk from "../component/SettingsJdk.vue";
 import SettingsDownload from "../component/SettingsDownload.vue";
 import SettingsAppearance from "../component/SettingsAppearance.vue";
 import ScrollTopFab from "../component/ScrollTopFab.vue";
+import { settingsTab } from "../store/settingsTab";
 
-type Tab = "launch" | "download" | "appearance";
 
-const currentTab = ref<Tab>("launch");
 </script>
 
 <template>
@@ -19,24 +17,24 @@ const currentTab = ref<Tab>("launch");
       <div class="nav-divider"><span>设置</span></div>
       <button
         class="stg-tab"
-        :class="{ active: currentTab === 'launch' }"
-        @click="currentTab = 'launch'"
+        :class="{ active: settingsTab === 'launch' }"
+        @click="settingsTab = 'launch'"
       >
         <SlidersHorizontal :size="16" />
         启动设置
       </button>
       <button
         class="stg-tab"
-        :class="{ active: currentTab === 'download' }"
-        @click="currentTab = 'download'"
+        :class="{ active: settingsTab === 'download' }"
+        @click="settingsTab = 'download'"
       >
         <Download :size="16" />
         下载设置
       </button>
       <button
         class="stg-tab"
-        :class="{ active: currentTab === 'appearance' }"
-        @click="currentTab = 'appearance'"
+        :class="{ active: settingsTab === 'appearance' }"
+        @click="settingsTab = 'appearance'"
       >
         <Palette :size="16" />
         外观
@@ -46,13 +44,13 @@ const currentTab = ref<Tab>("launch");
     <div class="stg-body">
       <Transition name="page" mode="out-in">
         <!-- 启动设置：启动选项 / 内存 / Java -->
-        <div v-if="currentTab === 'launch'" key="launch" class="stg-page">
+        <div v-if="settingsTab === 'launch'" key="launch" class="stg-page">
           <SettingsLaunchOptions />
           <SettingsJdk />
         </div>
 
         <!-- 下载设置：管理游戏下载源 -->
-        <div v-else-if="currentTab === 'download'" key="download" class="stg-page">
+        <div v-else-if="settingsTab === 'download'" key="download" class="stg-page">
           <SettingsDownload />
         </div>
 

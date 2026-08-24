@@ -15,7 +15,8 @@ const isDetail = computed(
   () =>
     route.path === "/resource-detail" ||
     route.path === "/version-select" ||
-    route.path === "/version-setup",
+    route.path === "/version-setup" ||
+    route.path === "/custom-theme",
 );
 
 /** 次级页面标题栏文案。 */
@@ -23,6 +24,10 @@ const barTitle = computed(() => {
   if (route.path === "/version-select") return "版本选择";
   if (route.path === "/version-setup") {
     return `版本设置 - ${String(route.query.name ?? "")}`;
+  }
+  if (route.path === "/custom-theme") {
+    // 新建（无 id）与编辑（有 id）区分标题
+    return route.query.id ? "编辑自定义外观" : "新建自定义外观";
   }
   if (route.path === "/resource-detail") {
     // 资源详情：有译名时 "翻译名（原名）"，否则原名
