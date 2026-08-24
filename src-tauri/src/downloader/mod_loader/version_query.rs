@@ -88,7 +88,10 @@ fn cmp_version_asc(a: &str, b: &str) -> std::cmp::Ordering {
     let nums = |s: &str| -> Vec<u64> { s.split('.').filter_map(|x| x.parse().ok()).collect() };
     let (na, nb) = (nums(&ma), nums(&mb));
     for i in 0..na.len().max(nb.len()) {
-        let (va, vb) = (na.get(i).copied().unwrap_or(0), nb.get(i).copied().unwrap_or(0));
+        let (va, vb) = (
+            na.get(i).copied().unwrap_or(0),
+            nb.get(i).copied().unwrap_or(0),
+        );
         if va != vb {
             return va.cmp(&vb);
         }
@@ -160,7 +163,8 @@ pub async fn forge_versions(mc_version: &str) -> Result<Vec<String>, String> {
 }
 
 pub async fn fabric_versions(mc_version: &str) -> Result<Vec<String>, String> {
-    let data = fetch_versions::<FabricEntry>(|s| s.url(&s.fabric_list_url, &[("mc", mc_version)])).await?;
+    let data =
+        fetch_versions::<FabricEntry>(|s| s.url(&s.fabric_list_url, &[("mc", mc_version)])).await?;
     Ok(sort_versions_desc(
         data.into_iter().map(|e| e.loader.version).collect(),
     ))
@@ -168,7 +172,8 @@ pub async fn fabric_versions(mc_version: &str) -> Result<Vec<String>, String> {
 
 pub async fn quilt_versions(mc_version: &str) -> Result<Vec<String>, String> {
     // Quilt meta 实测乱序（0.20.0-beta.7 排在 beta.8 前、0.24.0 混在中间），必须显式排序
-    let data = fetch_versions::<QuiltEntry>(|s| s.url(&s.quilt_list_url, &[("mc", mc_version)])).await?;
+    let data =
+        fetch_versions::<QuiltEntry>(|s| s.url(&s.quilt_list_url, &[("mc", mc_version)])).await?;
     Ok(sort_versions_desc(
         data.into_iter().map(|e| e.loader.version).collect(),
     ))
@@ -186,7 +191,9 @@ pub async fn neoforge_versions(mc_version: &str) -> Result<Vec<String>, String> 
 }
 
 pub async fn optifine_versions(mc_version: &str) -> Result<Vec<String>, String> {
-    let data = fetch_versions::<OptiFineEntry>(|s| s.url(&s.optifine_list_url, &[("mc", mc_version)])).await?;
+    let data =
+        fetch_versions::<OptiFineEntry>(|s| s.url(&s.optifine_list_url, &[("mc", mc_version)]))
+            .await?;
     Ok(sort_optifine_desc(
         data.into_iter()
             .filter(|e| !e.filename.starts_with("preview_"))

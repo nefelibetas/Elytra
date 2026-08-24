@@ -96,7 +96,6 @@ pub struct PackPlan {
     pub overrides: Option<OverridesRef>,
 }
 
-
 /// 解析 modrinth.index.json 文本。
 /// 规范：<https://docs.modrinth.com/#spec/modrinth-index-json>。
 /// env.client == "unsupported" 的文件（服务端专属）剔除。
@@ -138,10 +137,7 @@ pub fn parse_modrinth_index(text: &str) -> Result<ModrinthParsed, String> {
         files.push(PackFile {
             path,
             url,
-            sha1: f["hashes"]["sha1"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string(),
+            sha1: f["hashes"]["sha1"].as_str().unwrap_or_default().to_string(),
             size: f["fileSize"].as_u64().unwrap_or(0),
         });
     }
@@ -244,8 +240,10 @@ pub fn resolve_cf_files(
     wanted: &[(i64, i64)],
 ) -> (Vec<PackFile>, Vec<String>) {
     use std::collections::HashMap;
-    let by_id: HashMap<i64, &serde_json::Value> =
-        data.iter().filter_map(|d| d["id"].as_i64().map(|i| (i, d))).collect();
+    let by_id: HashMap<i64, &serde_json::Value> = data
+        .iter()
+        .filter_map(|d| d["id"].as_i64().map(|i| (i, d)))
+        .collect();
     let mut files = Vec::new();
     let mut restricted = Vec::new();
     for (_, fid) in wanted {
@@ -409,10 +407,9 @@ pub fn assemble_plan(
     );
     // 目录选择优先复用：已存在同 cache_key 的整合包版本目录 → 更新语义，
     // 内容文件 sha1 幂等跳过才真正生效；否则新建并按 `_{n}` 消解冲突
-    let version_dir_name =
-        find_reusable_pack_dir(minecraft_dir, cache_key).unwrap_or_else(|| {
-            crate::util::unique_child_dir(&minecraft_dir.join("versions"), &base_dir)
-        });
+    let version_dir_name = find_reusable_pack_dir(minecraft_dir, cache_key).unwrap_or_else(|| {
+        crate::util::unique_child_dir(&minecraft_dir.join("versions"), &base_dir)
+    });
 
     Ok(PackPlan {
         name: pack_name.to_string(),
@@ -612,8 +609,8 @@ mod tests {
     fn write_mrpack_zip(path: &Path) {
         let file = std::fs::File::create(path).unwrap();
         let mut w = zip::ZipWriter::new(file);
-        let opts =
-            zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
         w.start_file("modrinth.index.json", opts).unwrap();
         w.write_all(MRPACK_INDEX.as_bytes()).unwrap();
         w.start_file("overrides/mods/a.jar", opts).unwrap();
@@ -653,8 +650,7 @@ mod tests {
         assert!(plan.loader.is_some(), "loader 透传");
         assert_eq!(plan.version_url, "https://piston-meta/v1.json");
         assert_eq!(
-            plan.version_dir_name,
-            "Demo _Pack_-1.21.1",
+            plan.version_dir_name, "Demo _Pack_-1.21.1",
             "非法字符替换 '_' 后拼 净化名-mc",
         );
         assert_eq!(plan.files.len(), 2);
@@ -664,10 +660,7 @@ mod tests {
         assert_eq!(ov.zip_path, zip_path.display().to_string());
 
         // 冲突消解：同名版本目录已存在 → _{n} 后缀（util::unique_child_dir 接入）
-        std::fs::create_dir_all(
-            mc.path().join("versions").join("Demo _Pack_-1.21.1"),
-        )
-        .unwrap();
+        std::fs::create_dir_all(mc.path().join("versions").join("Demo _Pack_-1.21.1")).unwrap();
         let reparsed = parse_modrinth_index(&text).unwrap();
         let plan2 = assemble_plan(
             &zip_path,
@@ -687,8 +680,8 @@ mod tests {
         let plain = dir.path().join("empty.mrpack");
         let f = std::fs::File::create(&plain).unwrap();
         let mut w = zip::ZipWriter::new(f);
-        let opts =
-            zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
         w.start_file("modrinth.index.json", opts).unwrap();
         w.write_all(
             br#"{"formatVersion":1,"game":"minecraft","dependencies":{"minecraft":"1.20.1"},"files":[]}"#,
@@ -699,9 +692,18 @@ mod tests {
             r#"{"formatVersion":1,"game":"minecraft","dependencies":{"minecraft":"1.20.1"},"files":[]}"#,
         )
         .unwrap();
-        let err =
-            assemble_plan(&plain, "E", "key-c", "1.20.1", p.loader, p.files, Vec::new(), "u".into(), mc.path())
-                .unwrap_err();
+        let err = assemble_plan(
+            &plain,
+            "E",
+            "key-c",
+            "1.20.1",
+            p.loader,
+            p.files,
+            Vec::new(),
+            "u".into(),
+            mc.path(),
+        )
+        .unwrap_err();
         assert!(err.contains("没有可安装的内容"), "空内容应报错: {err}");
     }
 
@@ -769,13 +771,15 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(mk("key-same"), "Demo-1.21.1_3", "同包重装应复用原目录（更新语义）");
+        assert_eq!(
+            mk("key-same"),
+            "Demo-1.21.1_3",
+            "同包重装应复用原目录（更新语义）"
+        );
         assert_eq!(
             mk("key-other"),
             "Demo Pack-1.21.1",
             "不同包不受标记影响，走常规命名"
         );
     }
-
-
 }

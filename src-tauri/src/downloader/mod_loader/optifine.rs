@@ -9,8 +9,8 @@
 // 而 classpath/missing 检查按 libraries/ 找）→ 启动被完整性检查拦截；mainClass 写死
 // launchwrapper → 1.13+ 无此类必崩。本文件按场景落位。
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use crate::config::downloader::model::DownloaderConfig;
 use crate::downloader::fetcher;
@@ -60,7 +60,10 @@ async fn download_optifabric(
     // 1. 项目 ID（slug 查，避免硬编码 ID 随项目迁移失效）
     let search = crate::downloader::community::curseforge_get(
         "/mods/search",
-        &[("slug", OPTIFABRIC_CF_SLUG.into()), ("pageSize", "1".into())],
+        &[
+            ("slug", OPTIFABRIC_CF_SLUG.into()),
+            ("pageSize", "1".into()),
+        ],
     )
     .await
     .map_err(|e| format!("查询 OptiFabric 项目失败\n{e}"))?;
@@ -90,13 +93,9 @@ async fn download_optifabric(
     // 3. forgecdn 直链下载（与单文件下载同一通道；x-api-key 由查询环节承担，下载可匿名）
     std::fs::create_dir_all(mods_dir).map_err(|e| format!("创建 mods 目录失败\n{e}"))?;
     let dest = mods_dir.join(&filename);
-    fetcher::fetch_bounded(
-        &[download_url],
-        &dest,
-        Some(step_progress(pc)),
-    )
-    .await
-    .map_err(|e| format!("下载 OptiFabric 失败\n{e}"))?;
+    fetcher::fetch_bounded(&[download_url], &dest, Some(step_progress(pc)))
+        .await
+        .map_err(|e| format!("下载 OptiFabric 失败\n{e}"))?;
     Ok(())
 }
 
@@ -134,9 +133,7 @@ fn build_vanilla_version_json(
 
 /// 每文件字节进度：增量累加进全局计数（收尾心跳显示速度）与 OptiFine 步骤计数；
 /// total（content-length）写入步骤分母。OptiFine jar 与 OptiFabric 共用同一步骤计数。
-fn step_progress(
-    pc: &crate::downloader::progress::ProgressCounters,
-) -> impl Fn(u64, u64) {
+fn step_progress(pc: &crate::downloader::progress::ProgressCounters) -> impl Fn(u64, u64) {
     let file_done = Arc::new(AtomicU64::new(0));
     let b = pc.bytes.clone();
     let sb = pc.step_bytes.clone();
@@ -180,10 +177,7 @@ pub async fn install_optifine(
     let (dest, artifact_path) = match mode {
         OptifineMode::Vanilla => {
             let lib_dir = config.minecraft_dir_abs().join("libraries").join(dir_name);
-            (
-                lib_dir.join(&filename),
-                format!("{dir_name}/{filename}"),
-            )
+            (lib_dir.join(&filename), format!("{dir_name}/{filename}"))
         }
         OptifineMode::ForgeLike | OptifineMode::FabricLike => {
             let mods_dir = vdir.join("mods");
@@ -206,18 +200,12 @@ pub async fn install_optifine(
             // 继承式 version.json：继承原版（assetIndex/arguments/父库等由启动端
             // env.rs load_version_json_with_inheritance 展开补齐；父版本须已安装，
             // 缺失时启动端明确报错引导补装原版）。
-            let json = build_vanilla_version_json(
-                dir_name,
-                mc_version,
-                patch,
-                &artifact_path,
-                &jar_url,
-            );
+            let json =
+                build_vanilla_version_json(dir_name, mc_version, patch, &artifact_path, &jar_url);
             let json_path = vdir.join(format!("{dir_name}.json"));
             std::fs::write(
                 &json_path,
-                serde_json::to_string_pretty(&json)
-                    .map_err(|e| format!("序列化失败\n{e}"))?,
+                serde_json::to_string_pretty(&json).map_err(|e| format!("序列化失败\n{e}"))?,
             )
             .map_err(|e| format!("写入 version.json 失败\n{e}"))?;
         }
@@ -226,8 +214,7 @@ pub async fn install_optifine(
             // 旧实现无条件覆盖 minimal json，会把 forge 生成的 json 顶掉。
         }
         OptifineMode::FabricLike => {
-            download_optifabric(mc_version, &vdir.join("mods"), pc)
-                .await?;
+            download_optifabric(mc_version, &vdir.join("mods"), pc).await?;
         }
     }
 
@@ -247,7 +234,10 @@ mod tests {
             "1.20.1-optifine-HD_U_I6/OptiFine_1.20.1_HD_U_I6.jar",
             "https://bmclapi2.bangbang93.com/optifine/1.20.1/HD_U/I6",
         );
-        assert_eq!(j["mainClass"], "net.minecraft.client.main.Main", "1.13+ 无 launchwrapper");
+        assert_eq!(
+            j["mainClass"], "net.minecraft.client.main.Main",
+            "1.13+ 无 launchwrapper"
+        );
         assert_eq!(j["inheritsFrom"], "1.20.1", "继承原版（启动端展开）");
         assert_eq!(j["id"], "1.20.1-optifine-HD_U_I6");
         let artifact = &j["libraries"][0]["downloads"]["artifact"];
@@ -285,7 +275,10 @@ mod tests {
     #[test]
     fn curseforge_file_pick_rejects_empty_url() {
         let data = serde_json::json!({ "data": [{ "fileName": "x.jar", "downloadUrl": "" }] });
-        assert!(pick_curseforge_file(&data).is_none(), "空下载 URL 视为无可用文件");
+        assert!(
+            pick_curseforge_file(&data).is_none(),
+            "空下载 URL 视为无可用文件"
+        );
         // 空 data / 缺字段也不 panic
         assert!(pick_curseforge_file(&serde_json::json!({})).is_none());
         assert!(pick_curseforge_file(&serde_json::json!({ "data": [] })).is_none());

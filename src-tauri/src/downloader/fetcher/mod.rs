@@ -4,12 +4,12 @@
 //! - `redirect`：重定向黑洞黑名单、安全跟随与全局 client；
 //! - `core`：多源下载核心（FetchOptions/download_core/fetch_with_retries）。
 
+use reqwest::Client;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
-use reqwest::Client;
 
-use self::core::{FetchKind, FetchOptions, download_core};
+use self::core::{download_core, FetchKind, FetchOptions};
 mod core;
 mod redirect;
 mod routes;

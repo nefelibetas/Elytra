@@ -25,15 +25,24 @@ fn should_download(lib: &Library) -> bool {
 
 /// Count how many libraries still need downloading (filtering + existence + sha1 check).
 pub fn count_pending(libraries: &[Library], lib_dir: &Path) -> usize {
-    libraries.iter().filter(|lib| {
-        if !should_download(lib) { return false; }
-        let Some(artifact) = lib.downloads.as_ref().and_then(|d| d.artifact.as_ref()) else { return false; };
-        let dest = lib_dir.join(&artifact.path);
-        // URL 为空的库（如 Forge client，由安装器 client.lzma 解压提供）无法下载，
-        // 但必须存在且 sha1 匹配——缺失说明安装不完整，应提示重装而非放行
-        if dest.exists() && file_sha1_matches(&dest, &artifact.sha1) { return false; }
-        true
-    }).count()
+    libraries
+        .iter()
+        .filter(|lib| {
+            if !should_download(lib) {
+                return false;
+            }
+            let Some(artifact) = lib.downloads.as_ref().and_then(|d| d.artifact.as_ref()) else {
+                return false;
+            };
+            let dest = lib_dir.join(&artifact.path);
+            // URL 为空的库（如 Forge client，由安装器 client.lzma 解压提供）无法下载，
+            // 但必须存在且 sha1 匹配——缺失说明安装不完整，应提示重装而非放行
+            if dest.exists() && file_sha1_matches(&dest, &artifact.sha1) {
+                return false;
+            }
+            true
+        })
+        .count()
 }
 
 /// 缺失/校验失败的支持库路径清单（与 count_pending 同过滤条件）。
@@ -57,32 +66,50 @@ pub fn missing_libraries(libraries: &[Library], lib_dir: &Path) -> Vec<String> {
 
 /// Count libraries that need to be present (passes filter + has artifact), regardless of local state.
 pub fn count_total(libraries: &[Library]) -> usize {
-    libraries.iter().filter(|lib| {
-        if !should_download(lib) { return false; }
-        lib.downloads.as_ref().and_then(|d| d.artifact.as_ref()).is_some()
-    }).count()
+    libraries
+        .iter()
+        .filter(|lib| {
+            if !should_download(lib) {
+                return false;
+            }
+            lib.downloads
+                .as_ref()
+                .and_then(|d| d.artifact.as_ref())
+                .is_some()
+        })
+        .count()
 }
 
 /// 全部应下载库的字节合计（与 count_total 同过滤条件）。
 pub fn total_lib_bytes(libraries: &[Library]) -> u64 {
-    libraries.iter().filter_map(|lib| {
-        if !should_download(lib) { return None; }
-        lib.downloads.as_ref()?.artifact.as_ref().map(|a| a.size)
-    }).sum()
+    libraries
+        .iter()
+        .filter_map(|lib| {
+            if !should_download(lib) {
+                return None;
+            }
+            lib.downloads.as_ref()?.artifact.as_ref().map(|a| a.size)
+        })
+        .sum()
 }
 
 /// 本地已存在且 sha1 匹配的库字节合计（与 count_pending 同过滤条件，取反）。
 pub fn existing_lib_bytes(libraries: &[Library], lib_dir: &Path) -> u64 {
-    libraries.iter().filter_map(|lib| {
-        if !should_download(lib) { return None; }
-        let artifact = lib.downloads.as_ref()?.artifact.as_ref()?;
-        let dest = lib_dir.join(&artifact.path);
-        if dest.exists() && file_sha1_matches(&dest, &artifact.sha1) {
-            Some(artifact.size)
-        } else {
-            None
-        }
-    }).sum()
+    libraries
+        .iter()
+        .filter_map(|lib| {
+            if !should_download(lib) {
+                return None;
+            }
+            let artifact = lib.downloads.as_ref()?.artifact.as_ref()?;
+            let dest = lib_dir.join(&artifact.path);
+            if dest.exists() && file_sha1_matches(&dest, &artifact.sha1) {
+                Some(artifact.size)
+            } else {
+                None
+            }
+        })
+        .sum()
 }
 
 /// 批量下载支持库（多源回退 + sha1 校验）。
@@ -98,8 +125,12 @@ pub async fn download_libraries(
     cancel: Option<&Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(), Vec<String>> {
     // (多源 URL, 目标, sha1, 本地复用源路径)
-    let mut tasks: Vec<(Vec<String>, std::path::PathBuf, String, Option<std::path::PathBuf>)> =
-        Vec::new();
+    let mut tasks: Vec<(
+        Vec<String>,
+        std::path::PathBuf,
+        String,
+        Option<std::path::PathBuf>,
+    )> = Vec::new();
     // 安装器内嵌提供、无法网络下载的库（如 Forge client.lzma）缺失时的错误
     let mut internal_missing: Vec<String> = Vec::new();
 
@@ -140,7 +171,10 @@ pub async fn download_libraries(
             continue;
         }
         // 每个源各构造一个 URL，下载时主源过慢/失败自动降级
-        let urls: Vec<String> = sources.iter().map(|s| s.mirror_url(&artifact.url)).collect();
+        let urls: Vec<String> = sources
+            .iter()
+            .map(|s| s.mirror_url(&artifact.url))
+            .collect();
         tasks.push((urls, dest, artifact.sha1.clone(), None));
     }
 
@@ -202,12 +236,9 @@ pub async fn download_libraries(
                                 ctr.fetch_add(1, Ordering::Relaxed);
                                 Ok(())
                             }
-                            Err(e2) => Err(format!(
-                                "{}: {}（本地复用失败: {}）",
-                                dest.display(),
-                                e2,
-                                e
-                            )),
+                            Err(e2) => {
+                                Err(format!("{}: {}（本地复用失败: {}）", dest.display(), e2, e))
+                            }
                         }
                     }
                 }

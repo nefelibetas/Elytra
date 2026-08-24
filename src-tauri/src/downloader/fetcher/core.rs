@@ -1,11 +1,11 @@
 //! 多源下载核心：9 个公开入口收敛于 [`download_core`]，按形态分流到
 //! 单 URL 重试路径（[`fetch_with_retries`]）或多源回退路径（[`fetch_from_sources`]）。
 
+use reqwest::Client;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
-use reqwest::Client;
 
 use tokio::sync::Semaphore;
 

@@ -8,10 +8,10 @@ use std::path::{Path, PathBuf};
 use futures_util::StreamExt;
 use serde::Serialize;
 
-use super::QUERY_CONCURRENCY;
-use crate::downloader::community::{ApiPlatform, api_routes, get_json_multi};
 use super::scan::ScanFilter;
+use super::QUERY_CONCURRENCY;
 use crate::downloader::community;
+use crate::downloader::community::{api_routes, get_json_multi, ApiPlatform};
 use crate::downloader::hash::sha1_hex;
 
 /// 本地 mod 详细列表项：Modrinth 命中时带项目元数据（图标/标题/描述/下载量/当前版本），
@@ -63,7 +63,11 @@ async fn identify_mod(dir: PathBuf, file_name: String) -> Result<Option<(String,
         ApiPlatform::Modrinth,
         &format!("/v2/version_file/{sha1}?algorithm=sha1"),
     );
-    match get_json_multi(&urls, |u| crate::downloader::fetcher::http().get(u.to_string())).await {
+    match get_json_multi(&urls, |u| {
+        crate::downloader::fetcher::http().get(u.to_string())
+    })
+    .await
+    {
         Ok(cur) => {
             let project_id = cur["project_id"].as_str().map(str::to_string);
             let current_version = cur["version_number"].as_str().map(str::to_string);
