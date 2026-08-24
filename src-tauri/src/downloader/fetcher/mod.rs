@@ -16,7 +16,7 @@ mod routes;
 #[cfg(test)]
 mod tests;
 
-pub use redirect::http;
+pub use redirect::{http, reset_http_client};
 
 #[derive(Debug)]
 pub struct DownloadResult {

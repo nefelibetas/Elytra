@@ -476,3 +476,17 @@ async fn mirror_requests_capped_at_mirror_concurrency() {
     );
     assert!(max > 1, "应存在真实并发（>1），实际 {}", max);
 }
+/// network_mode 切换重建：reset 后下次 http() 构建新实例（旧 Arc 由持有者释放）。
+/// 构建 reqwest Client 不联网，测试在离线环境亦通过。
+#[test]
+fn http_client_reset_rebuilds_new_instance() {
+    let a = http();
+    reset_http_client();
+    let b = http();
+    assert!(
+        !Arc::ptr_eq(&a, &b),
+        "reset 后应重建新 client 实例（代理配置随 network_mode 切换生效）"
+    );
+    // 重建后全局实例稳定（再次调用复用同一实例）
+    assert!(Arc::ptr_eq(&b, &http()));
+}
