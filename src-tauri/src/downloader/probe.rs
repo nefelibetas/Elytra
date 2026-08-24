@@ -57,6 +57,42 @@ pub(crate) async fn probe_url(url: &str) -> ProbeResult {
     if let Some(cached) = probe_cache_get(url) {
         return cached;
     }
+    let res = probe_url_uncached(url).await;
+    probe_cache_set(url.to_string(), res);
+    res
+}
+
+/// 域级探测：缓存键取域根（scheme://host/），探测值来自完整 URL——
+/// 同一域的文件共享缓存（跨文件/跨任务命中，游戏文件下载一次探测管全批次）；
+/// 用真实文件路径探测保证 2xx 判定有效（域根路径可能 404/403，误判不可达）。
+pub(crate) async fn probe_domain(url: &str) -> ProbeResult {
+    let key = domain_root(url);
+    if let Some(cached) = probe_cache_get(&key) {
+        return cached;
+    }
+    let res = probe_url_uncached(url).await;
+    probe_cache_set(key, res);
+    res
+}
+
+/// 提取域根（scheme://host/）作缓存键；探测目标来自下载清单，假定合法 URL。
+fn domain_root(url: &str) -> String {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url);
+    let host = rest.split('/').next().unwrap_or(rest);
+    if url.starts_with("https://") {
+        format!("https://{host}/")
+    } else if url.starts_with("http://") {
+        format!("http://{host}/")
+    } else {
+        url.to_string()
+    }
+}
+
+/// 探测执行体（无缓存）：3s 双保险超时 + 黑洞掐断，返回 TTFB/可达性。
+async fn probe_url_uncached(url: &str) -> ProbeResult {
     let t0 = Instant::now();
     let outcome = async {
         let resp = http()
@@ -70,7 +106,7 @@ pub(crate) async fn probe_url(url: &str) -> ProbeResult {
         }
         Ok::<(), String>(())
     };
-    let res = match tokio::time::timeout(Duration::from_secs(PROBE_TIMEOUT_SECS), outcome).await {
+    match tokio::time::timeout(Duration::from_secs(PROBE_TIMEOUT_SECS), outcome).await {
         Ok(Ok(())) => ProbeResult {
             ok: true,
             ttfb_ms: t0.elapsed().as_millis() as u64,
@@ -79,9 +115,7 @@ pub(crate) async fn probe_url(url: &str) -> ProbeResult {
             ok: false,
             ttfb_ms: t0.elapsed().as_millis() as u64,
         },
-    };
-    probe_cache_set(url.to_string(), res);
-    res
+    }
 }
 
 #[cfg(test)]

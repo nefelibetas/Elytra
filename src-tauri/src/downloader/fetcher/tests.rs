@@ -1,13 +1,15 @@
 //! fetcher 单元/集成行为测试（随物理拆分集中迁移，断言一字未改）。
-use super::core::is_mirror_url;
+use super::core::{is_mirror_url, sort_routes_with_probes};
 use super::redirect::redirect_allowed;
 use super::routes::{
     mirror_candidates, record_route_failure, record_route_success, resolve_download_routes,
-    route_health,
+    route_health, DownloadRoute,
 };
 use super::*;
-use crate::config::downloader::model::DownloadSourceMode;
+use crate::config::downloader::model::{DownloadSourceMode, ResourceClass};
 use crate::downloader::hash::sha1_hex;
+use crate::downloader::probe::ProbeResult;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// 本地 HTTP 服务器：每次请求返回固定 body（用于确定性校验失败/成功场景）。
@@ -489,4 +491,90 @@ fn http_client_reset_rebuilds_new_instance() {
     );
     // 重建后全局实例稳定（再次调用复用同一实例）
     assert!(Arc::ptr_eq(&b, &http()));
+}
+/// 冷启动预探测排序纯逻辑：Loader 镜像永远先行（官方 maven 限流语义）；
+/// 非 Loader 探测快者先行；探测失败/无样本排后（不剔除）。
+#[test]
+fn sort_routes_with_probes_orders_fastest_first() {
+    let mk = |url: &str| DownloadRoute {
+        url: url.into(),
+        is_mirror: url.contains("bmclapi"),
+    };
+    let ok = |ms: u64| ProbeResult {
+        ok: true,
+        ttfb_ms: ms,
+    };
+    let fail = ProbeResult {
+        ok: false,
+        ttfb_ms: 999,
+    };
+
+    // 非 Loader：官方快 → 官方前
+    let mut r = vec![
+        mk("https://libraries.minecraft.net/a.jar"),
+        mk("https://bmclapi2.bangbang93.com/libraries/a.jar"),
+    ];
+    sort_routes_with_probes(
+        &mut r,
+        &HashMap::from([
+            ("https://libraries.minecraft.net/a.jar".to_string(), ok(50)),
+            ("https://bmclapi2.bangbang93.com/libraries/a.jar".to_string(), ok(400)),
+        ]),
+        ResourceClass::Library,
+    );
+    assert!(r[0].url.contains("minecraft.net"), "官方快应先行: {}", r[0].url);
+
+    // 非 Loader：官方慢/失败 → 镜像前
+    let mut r = vec![
+        mk("https://libraries.minecraft.net/a.jar"),
+        mk("https://bmclapi2.bangbang93.com/libraries/a.jar"),
+    ];
+    sort_routes_with_probes(
+        &mut r,
+        &HashMap::from([
+            ("https://libraries.minecraft.net/a.jar".to_string(), fail),
+            ("https://bmclapi2.bangbang93.com/libraries/a.jar".to_string(), ok(80)),
+        ]),
+        ResourceClass::Library,
+    );
+    assert!(
+        r[0].url.contains("bmclapi"),
+        "官方探测失败应镜像先行: {}",
+        r[0].url
+    );
+
+    // Loader 类：镜像永远先行（即使官方探测更快）——官方 maven 限流语义
+    let mut r = vec![
+        mk("https://maven.minecraftforge.net/x.jar"),
+        mk("https://bmclapi2.bangbang93.com/maven/x.jar"),
+    ];
+    sort_routes_with_probes(
+        &mut r,
+        &HashMap::from([
+            ("https://maven.minecraftforge.net/x.jar".to_string(), ok(10)),
+            ("https://bmclapi2.bangbang93.com/maven/x.jar".to_string(), ok(500)),
+        ]),
+        ResourceClass::Loader,
+    );
+    assert!(
+        r[0].url.contains("bmclapi"),
+        "Loader 镜像先行语义不可被探测破坏: {}",
+        r[0].url
+    );
+
+    // 无探测样本视同失败排后（不剔除候选）
+    let mut r = vec![
+        mk("https://libraries.minecraft.net/b.jar"),
+        mk("https://bmclapi2.bangbang93.com/libraries/b.jar"),
+    ];
+    sort_routes_with_probes(
+        &mut r,
+        &HashMap::from([("https://bmclapi2.bangbang93.com/libraries/b.jar".to_string(), ok(60))]),
+        ResourceClass::Library,
+    );
+    assert!(
+        r[0].url.contains("bmclapi"),
+        "无样本的官方应排后（镜像探测成功在前）: {}",
+        r[0].url
+    );
 }
