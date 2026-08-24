@@ -234,8 +234,16 @@ pub async fn run_install(
     if let PackSource::Online { url, sha1, size } = &request.source {
         set_phase(app, progress, Some(TaskStatus::Running), "下载整合包", 0, StepStatus::Running);
         pack_bytes_est = *size;
-        let cached =
-            !sha1.is_empty() && zip_path.is_file() && crate::downloader::hash::file_sha1_matches(&zip_path, sha1);
+        // 强校验优先；清单未提供 sha1 时降级为体积弱校验——与 fetch_verified_c
+        // 空 sha1 跳过网络校验的信任模型一致，恢复场景不再整包重下
+        let cached = zip_path.is_file()
+            && match (sha1.is_empty(), *size) {
+                (false, _) => crate::downloader::hash::file_sha1_matches(&zip_path, sha1),
+                (true, s) if s > 0 => {
+                    std::fs::metadata(&zip_path).map(|m| m.len()).ok() == Some(s)
+                }
+                _ => false,
+            };
         if !cached {
             if let Err(e) = fetcher::fetch_verified_c(
                 &mcim_mirror_urls(url),
@@ -696,12 +704,18 @@ pub async fn run_install(
             let label = f.path.clone();
             let cancel = cancel.clone();
             let bytes = c.bytes.clone();
+            let size = f.size;
             set.spawn(async move {
-                // 幂等：目标已存在且 sha1 命中 → 跳过（恢复场景零重下）
-                if !sha1.is_empty()
-                    && dest.is_file()
-                    && crate::downloader::hash::file_sha1_matches(&dest, &sha1)
-                {
+                // 幂等：目标已存在且校验命中 → 跳过（恢复场景零重下）。
+                // sha1 缺失时降级为体积匹配（信任模型同上）
+                let hit = dest.is_file()
+                    && if !sha1.is_empty() {
+                        crate::downloader::hash::file_sha1_matches(&dest, &sha1)
+                    } else {
+                        size > 0
+                            && std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0) == size
+                    };
+                if hit {
                     return Ok((idx, 0u64));
                 }
                 if cancelled(&cancel) {
