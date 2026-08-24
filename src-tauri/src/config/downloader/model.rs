@@ -210,7 +210,6 @@ pub struct DownloaderConfig {
     /// 网络代理模式：auto（自动检测系统代理）/ system（强制系统代理）/ direct（强制直连）。
     #[serde(default)]
     pub network_mode: NetworkMode,
-    /// 社区搜索结果翻译显示模式：zh = 仅中文、both = 中英对照、en = 仅英文。
     /// 仅前端展示使用（后端仅存储透传；en 模式下搜索命令跳过翻译请求）。
     #[serde(default)]
     pub translate_display: String,
@@ -218,6 +217,44 @@ pub struct DownloaderConfig {
     /// 仅前端展示使用，后端仅存储透传。
     #[serde(default = "default_show_release_only")]
     pub show_release_only: bool,
+    /// JDK（managed runtime）下载源模式：auto 智能回退 / officialOnly 仅官方 / chinaOnly 仅国内镜像
+    #[serde(default)]
+    pub jdk_source_mode: JdkSourceMode,
+}
+
+/// JDK（managed runtime）下载源模式：
+/// - auto（默认）：Mojang 官方 runtime 优先，失败依次回退 Adoptium 与 Azul——
+///   Adoptium 大文件下载 TUNA 清华镜像优先（国内带宽）、404/失败回退官方 link
+/// - officialOnly：仅官方源（Mojang runtime → Azul），不启用国内镜像
+/// - chinaOnly：仅国内镜像（Mojang runtime 按文件源模式走镜像 → Adoptium 仅 TUNA
+///   下载候选、官方 link 不参与）。元数据仍走 Adoptium 官方 API：TUNA 只镜像文件、
+///   不提供 checksum，属不可绕过的例外
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum JdkSourceMode {
+    /// 仅官方源（Mojang runtime → Azul）
+    OfficialOnly,
+    /// 仅国内镜像（Adoptium TUNA 文件；元数据 API 例外走官方）
+    ChinaOnly,
+    /// 智能回退：官方 → Adoptium（TUNA→官方）→ Azul 全链
+    #[default]
+    Auto,
+}
+
+/// 自定义反序列化：未知值兜底 Auto（防手改 TOML 非法值导致整个
+/// downloader section 反序列化失败，persist 会整体回默认丢配置）。
+impl<'de> serde::Deserialize<'de> for JdkSourceMode {
+    fn deserialize<D>(d: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(d)?;
+        Ok(match s.as_str() {
+            "officialOnly" => Self::OfficialOnly,
+            "chinaOnly" => Self::ChinaOnly,
+            _ => Self::Auto,
+        })
+    }
 }
 
 fn default_show_release_only() -> bool {
@@ -236,6 +273,7 @@ impl Default for DownloaderConfig {
             network_mode: NetworkMode::Auto,
             translate_display: "zh".into(),
             show_release_only: true,
+            jdk_source_mode: JdkSourceMode::Auto,
         }
     }
 }
@@ -306,5 +344,32 @@ mod tests {
             ),
             "https://maven.neoforged.net/releases/net/neoforged/bus/8.0.5/bus-8.0.5.jar"
         );
+    }
+
+    /// JDK 源模式三态序列化 + 未知值兜底 Auto（与 DownloadSourceMode 同款行为，
+    /// 防手改 TOML 非法值导致整个 downloader section 反序列化失败回默认）。
+    #[test]
+    fn jdk_source_mode_parses_and_defaults_to_auto() {
+        fn parse(s: &str) -> JdkSourceMode {
+            serde_json::from_str(&format!("\"{s}\"")).unwrap()
+        }
+        assert_eq!(parse("officialOnly"), JdkSourceMode::OfficialOnly);
+        assert_eq!(parse("chinaOnly"), JdkSourceMode::ChinaOnly);
+        assert_eq!(parse("auto"), JdkSourceMode::Auto);
+        assert_eq!(parse("whatever"), JdkSourceMode::Auto);
+        // 默认值 = Auto（智能回退）
+        assert_eq!(JdkSourceMode::default(), JdkSourceMode::Auto);
+        // 序列化回 camelCase 三态
+        assert_eq!(
+            serde_json::to_string(&JdkSourceMode::Auto).unwrap(),
+            "\"auto\""
+        );
+        assert_eq!(
+            serde_json::to_string(&JdkSourceMode::ChinaOnly).unwrap(),
+            "\"chinaOnly\""
+        );
+        // DownloaderConfig 缺省 jdk_source_mode → Auto（旧配置兼容）
+        let cfg: DownloaderConfig = toml::from_str("concurrency = 64\nminecraft_dir = \".minecraft\"\nfile_source_mode = \"auto\"\nmanifest_source_mode = \"auto\"\ncommunity_source_mode = \"auto\"\n").unwrap();
+        assert_eq!(cfg.jdk_source_mode, JdkSourceMode::Auto);
     }
 }

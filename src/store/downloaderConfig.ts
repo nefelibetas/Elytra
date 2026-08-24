@@ -9,6 +9,10 @@ export const sourceModeOptions = [
   { value: "chinaOnly", label: "国内镜像源", desc: "仅使用国内镜像源，不自动回退" },
 ];
 
+export function sourceModeLabel(v: string) {
+  return sourceModeOptions.find((o) => o.value === v)?.label ?? v;
+}
+
 // 网络代理模式：auto 自动检测系统代理（Windows 注册表 / Linux 环境变量或 gsettings）；
 // system 强制系统代理；direct 强制直连（TUN 模式由网络层接管，直连也会走代理）
 export const networkModeOptions = [
@@ -28,8 +32,17 @@ export const communitySourceOptions = [
   { value: "chinaOnly", label: "仅MCIM镜像", desc: "仅使用MCIM镜像站" },
 ];
 
-export function sourceModeLabel(v: string) {
-  return sourceModeOptions.find((o) => o.value === v)?.label ?? v;
+// JDK（managed runtime）下载源：官方 runtime → Adoptium（TUNA 国内镜像优先）→ Azul
+// 的自动回退链；国内镜像模式大文件走清华 TUNA、元数据仍走 Adoptium 官方 API
+// （TUNA 只镜像文件不提供 checksum）
+export const jdkSourceOptions = [
+  { value: "auto", label: "智能回退", desc: "官方 runtime 优先，失败依次回退 Adoptium（清华 TUNA 镜像优先）与 Azul" },
+  { value: "officialOnly", label: "仅官方源", desc: "仅使用 Mojang 官方与 Azul，不启用国内镜像" },
+  { value: "chinaOnly", label: "仅国内镜像", desc: "Mojang 走文件源镜像，Adoptium 仅从清华 TUNA 下载（元数据例外走官方 API）" },
+];
+
+export function jdkModeLabel(v: string) {
+  return jdkSourceOptions.find((o) => o.value === v)?.label ?? v;
 }
 
 // 社区搜索结果翻译显示模式（默认仅中文；en 模式后端跳过翻译请求）
@@ -53,6 +66,7 @@ interface DownloaderConfig {
   minecraft_dir: string;
   translate_display?: string;
   show_release_only?: boolean;
+  jdk_source_mode?: string;
 }
 
 const section = useConfigSection();
@@ -61,6 +75,7 @@ export const dlError = section.error;
 export const dlFileMode = ref("auto");
 export const dlManifestMode = ref("auto");
 export const dlCommunityMode = ref("auto");
+export const dlJdkMode = ref("auto");
 export const dlConcurrency = ref(64);
 // 镜像源并发上限（后端 constants.rs MIRROR_CONCURRENCY，改动需同步）：
 // 官方源不限流、镜像源（BMCLAPI）30 并发即触发 429，镜像请求恒为 8 并发
@@ -70,14 +85,16 @@ export const concurrencyLocked = computed(() => dlFileMode.value === "chinaOnly"
 export const dlFileOpen = ref(false);
 export const dlManifestOpen = ref(false);
 export const dlCommunityOpen = ref(false);
+export const dlJdkOpen = ref(false);
 export const dlTranslateOpen = ref(false);
 
 /** 下载设置下拉互斥展开：打开指定下拉时关闭其他（点同一项 = toggle 关闭）。 */
-export function toggleDlOpen(target: "file" | "manifest" | "community" | "network" | "translate") {
+export function toggleDlOpen(target: "file" | "manifest" | "community" | "jdk" | "network" | "translate") {
   const map = {
     file: dlFileOpen,
     manifest: dlManifestOpen,
     community: dlCommunityOpen,
+    jdk: dlJdkOpen,
     network: dlNetworkOpen,
     translate: dlTranslateOpen,
   } as const;
@@ -106,6 +123,7 @@ export async function loadDownloadConfig() {
     dlFileMode.value = normalize(cfg.file_source_mode);
     dlManifestMode.value = normalize(cfg.manifest_source_mode);
     dlCommunityMode.value = normalize(cfg.community_source_mode);
+    dlJdkMode.value = normalize(cfg.jdk_source_mode);
     // 网络代理模式（旧配置无此字段 → 自动检测）
     dlNetworkMode.value =
       cfg.network_mode === "system" || cfg.network_mode === "direct" ? cfg.network_mode : "auto";
@@ -131,6 +149,7 @@ export async function saveDownloadConfig() {
         file_source_mode: dlFileMode.value,
         manifest_source_mode: dlManifestMode.value,
         community_source_mode: dlCommunityMode.value,
+        jdk_source_mode: dlJdkMode.value,
         network_mode: dlNetworkMode.value,
         concurrency: dlConcurrency.value,
         minecraft_dir: dlMinecraftDir.value,
@@ -150,6 +169,14 @@ export function setFileMode(v: string) {
 export function setCommunityMode(v: string) {
   dlCommunityMode.value = v;
   dlCommunityOpen.value = false;
+  saveDownloadConfig();
+}
+
+export function setJdkMode(v: string) {
+  if (v === "auto" || v === "officialOnly" || v === "chinaOnly") {
+    dlJdkMode.value = v;
+  }
+  dlJdkOpen.value = false;
   saveDownloadConfig();
 }
 
