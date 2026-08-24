@@ -207,8 +207,7 @@ pub(crate) fn extract_zip_safe(
     use crate::jdk::download::safe_runtime_path;
 
     let file = std::fs::File::open(zip_path).map_err(|e| format!("打开存档文件失败\n{e}"))?;
-    let mut archive =
-        zip::ZipArchive::new(file).map_err(|e| format!("读取存档文件失败\n{e}"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取存档文件失败\n{e}"))?;
     for i in 0..archive.len() {
         let mut entry = archive
             .by_index(i)
@@ -225,8 +224,8 @@ pub(crate) fn extract_zip_safe(
         if let Some(parent) = out.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败\n{e}"))?;
         }
-        let mut file_out = std::fs::File::create(&out)
-            .map_err(|e| format!("创建 {} 失败\n{e}", out.display()))?;
+        let mut file_out =
+            std::fs::File::create(&out).map_err(|e| format!("创建 {} 失败\n{e}", out.display()))?;
         std::io::copy(&mut entry, &mut file_out)
             .map_err(|e| format!("解压 {} 失败\n{e}", out.display()))?;
     }
@@ -358,7 +357,10 @@ mod tests {
             name: "org.lwjgl.lwjgl:lwjgl-platform:2.9.4-nightly-20150209".into(),
             downloads: None,
             rules: None,
-            natives: Some(HashMap::from([("windows".into(), "natives-windows".into())])),
+            natives: Some(HashMap::from([(
+                "windows".into(),
+                "natives-windows".into(),
+            )])),
             extract: None,
         };
         assert_eq!(legacy.natives_kind(), Some(NativesKind::Legacy));
@@ -403,7 +405,10 @@ mod tests {
         use std::sync::atomic::AtomicBool;
         let tmp = tempfile::tempdir().unwrap();
         let zip_path = tmp.path().join("evil.zip");
-        make_zip(&zip_path, &[("../evil.txt", b"boom"), ("level.dat", b"data")]);
+        make_zip(
+            &zip_path,
+            &[("../evil.txt", b"boom"), ("level.dat", b"data")],
+        );
         let dest = tmp.path().join("dest");
         let cancel = AtomicBool::new(false);
         let err = extract_zip_safe(&zip_path, &dest, &cancel).unwrap_err();

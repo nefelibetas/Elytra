@@ -1,12 +1,12 @@
 // ── Profile 式安装（Fabric / Quilt）：官方 meta profile JSON → merge_loader_profile 合并 ──
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 
 use crate::config::downloader::model::{DownloadSource, DownloaderConfig};
 use crate::downloader::fetcher::http;
 
-use super::{LoaderEvent, LoaderHook, merge_loader_profile};
+use super::{merge_loader_profile, LoaderEvent, LoaderHook};
 
 /// 10+ 参数均为必需数据（版本/模板/配置/字节计数/阶段钩子），私有实现细节，不抽象。
 /// `dir_name`/`vdir` 由 runner 的目标目录解析传入（含冲突重命名 `{id}_n`）——
@@ -57,10 +57,9 @@ async fn install_loader_via_profile(
         serde_json::from_value(merged["libraries"].clone()).unwrap_or_default();
     let sources: Vec<&DownloadSource> = config.file_sources_list();
     // LoaderLibs 步骤字节分母：需下载的 loader 依赖库总字节（本地扫描可算）
-    let pending_bytes = crate::downloader::library::total_lib_bytes(&libraries)
-        .saturating_sub(crate::downloader::library::existing_lib_bytes(
-            &libraries, &lib_dir,
-        ));
+    let pending_bytes = crate::downloader::library::total_lib_bytes(&libraries).saturating_sub(
+        crate::downloader::library::existing_lib_bytes(&libraries, &lib_dir),
+    );
     if pending_bytes > 0 {
         pc.step_total.store(pending_bytes, Ordering::Relaxed);
     }

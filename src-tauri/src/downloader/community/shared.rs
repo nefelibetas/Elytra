@@ -50,12 +50,14 @@ where
     let mut last_err = String::new();
     for (i, url) in urls.iter().enumerate() {
         let resp = match build(url)
-            .timeout(std::time::Duration::from_secs(if i == 0 && urls.len() > 1 {
-                // 主源过慢（5s）即降级镜像，对齐 version_query 自适应语义
-                5
-            } else {
-                QUERY_TIMEOUT_SECS
-            }))
+            .timeout(std::time::Duration::from_secs(
+                if i == 0 && urls.len() > 1 {
+                    // 主源过慢（5s）即降级镜像，对齐 version_query 自适应语义
+                    5
+                } else {
+                    QUERY_TIMEOUT_SECS
+                },
+            ))
             .send()
             .await
         {
@@ -80,8 +82,6 @@ where
     }
     Err(last_err)
 }
-
-
 
 /// 解析 MC 版本号为数值段（"1.21.1" → [1,21,1]）；含非数字段（snapshot 如 "24w14a"）返回 None。
 fn parse_game_version(v: &str) -> Option<Vec<u64>> {

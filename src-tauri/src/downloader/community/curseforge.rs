@@ -1,6 +1,6 @@
 //! CurseForge 平台实现（需要 x-api-key）：搜索 / 版本列表 / 详情 / 批量文件换链。
 
-use super::shared::{ApiPlatform, api_routes, get_json_multi, version_range};
+use super::shared::{api_routes, get_json_multi, version_range, ApiPlatform};
 use super::{
     CommunityDependency, CommunityDependencyItem, CommunitySearchPage, CommunitySearchResult,
     CommunityVersion,
@@ -104,7 +104,10 @@ pub(crate) async fn curseforge_get(
                 .map_err(|e| format!("URL 构造失败\n{}", e))
         })
         .collect::<Result<Vec<_>, String>>()?;
-    get_json_multi(&urls, |u| fetcher::http().get(u.to_string()).header("x-api-key", key)).await
+    get_json_multi(&urls, |u| {
+        fetcher::http().get(u.to_string()).header("x-api-key", key)
+    })
+    .await
 }
 
 /// 批量换链超时：数百个 fileID 一次请求，服务端聚合查询略慢于单查。
@@ -113,9 +116,7 @@ const CF_BATCH_TIMEOUT_SECS: u64 = 30;
 /// CurseForge 批量文件换链：`POST /v1/mods/files`（body `{"fileIds":[...]}`）
 /// → data 数组（id/fileName/downloadUrl/hashes/fileLength）。
 /// 整合包清单只有 (projectID, fileID) 数字引用，必须经此换取直链与 sha1。
-pub(crate) async fn curseforge_files(
-    file_ids: &[i64],
-) -> Result<Vec<serde_json::Value>, String> {
+pub(crate) async fn curseforge_files(file_ids: &[i64]) -> Result<Vec<serde_json::Value>, String> {
     let key = constants::CURSEFORGE_API_KEY
         .ok_or_else(|| "未配置 CurseForge API Key（项目根 .env 的 ELYTRA_CURSEFORGE_API_KEY），无法使用 CurseForge 来源".to_string())?;
     let mut last_err = String::new();
@@ -313,7 +314,9 @@ pub(super) async fn curseforge_versions(
         .collect())
 }
 
-pub(super) async fn curseforge_details(ids: &[String]) -> Result<Vec<CommunityDependencyItem>, String> {
+pub(super) async fn curseforge_details(
+    ids: &[String],
+) -> Result<Vec<CommunityDependencyItem>, String> {
     let joined = ids.join(",");
     let data = curseforge_get("/mods", &[("modIds", joined)]).await?;
     let arr = data["data"]

@@ -1,7 +1,7 @@
 // ── 完整下载任务主体（原版 / ModLoader / OptiFine / Fabric API）──
 
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use parking_lot::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use tauri::AppHandle;
@@ -74,7 +74,14 @@ pub async fn run_task(
     // 步骤分析：初始完整列表（json 步骤恒在，索引 0；零缺失维度检测后过滤）
     let mut specs = task.steps();
 
-    set_phase(&app, progress, Some(TaskStatus::Running), &specs[0].name, 0, StepStatus::Running);
+    set_phase(
+        &app,
+        progress,
+        Some(TaskStatus::Running),
+        &specs[0].name,
+        0,
+        StepStatus::Running,
+    );
     if cancelled(cancel) {
         return set_cancelled(&app, progress);
     }
@@ -88,7 +95,12 @@ pub async fn run_task(
             return set_error(&app, progress, e);
         }
     };
-    eprintln!("[task] 阶段A 完成 ({:.1}s): id={} libs={}", t0.elapsed().as_secs_f64(), vj.id, vj.libraries.len());
+    eprintln!(
+        "[task] 阶段A 完成 ({:.1}s): id={} libs={}",
+        t0.elapsed().as_secs_f64(),
+        vj.id,
+        vj.libraries.len()
+    );
     step_done(&app, progress, 0);
     if cancelled(cancel) {
         return set_cancelled(&app, progress);
@@ -121,8 +133,10 @@ pub async fn run_task(
     // ── 阶段 B：本地缺失检测 + 步骤布局 + 总进度基线（含资产清单 fetch 与多线程 sha1 检测）──
     eprintln!("[task] 阶段B: 本地扫描开始");
     let lib_dir = mc.join("libraries");
-    let scan = match init_local_scan(&app, progress, &vj, &config, &mc, &lib_dir, &mut specs, cancel)
-        .await
+    let scan = match init_local_scan(
+        &app, progress, &vj, &config, &mc, &lib_dir, &mut specs, cancel,
+    )
+    .await
     {
         Ok(s) => s,
         Err(e) => {
@@ -144,7 +158,8 @@ pub async fn run_task(
         scan.natives_pending,
     );
     // 安装步骤数：version json + jar + 全量库 + 全量资源 + natives 缺失数 + 安装步骤数
-    let mut total_files = 1 + scan.jar_total + scan.lib_total_all + scan.asst_total_all + scan.natives_pending;
+    let mut total_files =
+        1 + scan.jar_total + scan.lib_total_all + scan.asst_total_all + scan.natives_pending;
     if loader.is_some() {
         total_files += 2; // LoaderConfig + LoaderLibs
     }
@@ -507,7 +522,10 @@ pub async fn run_task(
         Ok::<_, Vec<String>>(())
     };
 
-    eprintln!("[task] 阶段C: 并行下载开始 ({:.1}s)", t0.elapsed().as_secs_f64());
+    eprintln!(
+        "[task] 阶段C: 并行下载开始 ({:.1}s)",
+        t0.elapsed().as_secs_f64()
+    );
     let parallel = tokio::try_join!(jar, libs, asst, natives, loader_dl, optifine_dl, fabric_dl);
     eprintln!("[task] 阶段C 并行结束 ({:.1}s)", t0.elapsed().as_secs_f64());
 
@@ -643,7 +661,11 @@ async fn init_local_scan(
     let lib_total_bytes = crate::downloader::library::total_lib_bytes(&vj.libraries);
     let lib_existing_bytes = crate::downloader::library::existing_lib_bytes(&vj.libraries, lib_dir);
 
-    let jar_total = if vj.downloads.client.is_some() { 1u32 } else { 0u32 };
+    let jar_total = if vj.downloads.client.is_some() {
+        1u32
+    } else {
+        0u32
+    };
     let jar_total_bytes = vj.downloads.client.as_ref().map(|c| c.size).unwrap_or(0);
 
     // natives 缺失数预计算（下载阶段独立计数器；total 计入 pending 数）
@@ -665,7 +687,10 @@ async fn init_local_scan(
         |total, total_bytes| {
             asst_total_all = total;
             asst_total_bytes = total_bytes;
-            eprintln!("[assets] on_total: 清单 {} 文件 / {}B，emit 已入队", total, total_bytes);
+            eprintln!(
+                "[assets] on_total: 清单 {} 文件 / {}B，emit 已入队",
+                total, total_bytes
+            );
             // 清单齐了：剩余=全量总数，已完成仅 version json（近似值，检测后覆盖为最终总数）
             set_total(
                 app,

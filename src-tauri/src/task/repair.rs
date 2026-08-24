@@ -2,9 +2,9 @@
 // scan_missing 被命令层调用；run_repair_task 为补全任务主体。
 // count_natives_missing / count_assets_all 为"缺失统计"共享助手，run_task 亦复用。
 
+use parking_lot::Mutex;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use parking_lot::Mutex;
 use std::sync::Arc;
 
 use tauri::AppHandle;
@@ -37,13 +37,12 @@ pub struct MissingReport {
 /// 原版目录可能被重命名过、loader 目录的 json 是 installer 合成的，只能删除重装。
 fn read_version_json(vdir: &Path) -> Result<VersionJson, String> {
     let dir_name = vdir.file_name().and_then(|s| s.to_str()).unwrap_or("");
-    let vj_path =
-        crate::launcher::args::find_version_json(vdir, dir_name).ok_or_else(|| {
-            format!(
-                "版本 JSON 缺失\n目录 {} 下未找到版本 JSON 文件，无法修复，请删除该版本后重新下载安装",
-                vdir.display()
-            )
-        })?;
+    let vj_path = crate::launcher::args::find_version_json(vdir, dir_name).ok_or_else(|| {
+        format!(
+            "版本 JSON 缺失\n目录 {} 下未找到版本 JSON 文件，无法修复，请删除该版本后重新下载安装",
+            vdir.display()
+        )
+    })?;
     let text = std::fs::read_to_string(&vj_path).map_err(|e| format!("读取版本文件失败\n{e}"))?;
     serde_json::from_str(&text).map_err(|e| {
         format!(
@@ -212,7 +211,14 @@ pub async fn run_repair_task(
     set_total(&app, progress, total_files, 0);
     set_completed(&app, progress, 0, 0);
     if let Some(i) = jar_idx {
-        set_phase(&app, progress, Some(TaskStatus::Running), "修复中", i, StepStatus::Running);
+        set_phase(
+            &app,
+            progress,
+            Some(TaskStatus::Running),
+            "修复中",
+            i,
+            StepStatus::Running,
+        );
     }
 
     let jar_counter = Arc::new(AtomicU32::new(0));
@@ -276,14 +282,7 @@ pub async fn run_repair_task(
         step_total: Arc::clone(&jar_total),
         ..Default::default()
     };
-    let jar = repair_jar(
-        &vj,
-        &vdir,
-        version_dir_name,
-        jar_missing,
-        &sources,
-        &pc_jar,
-    );
+    let jar = repair_jar(&vj, &vdir, version_dir_name, jar_missing, &sources, &pc_jar);
 
     let lib_dir = mc.join("libraries");
     let pc_lib = crate::downloader::progress::ProgressCounters {
@@ -348,7 +347,14 @@ pub async fn run_repair_task(
 
     // natives（幂等：已解压跳过；仅报告有缺失时才执行，与 steps 索引对应）
     if let Some(i) = natives_idx {
-        set_phase(&app, progress, None, "处理 native 库", i, StepStatus::Running);
+        set_phase(
+            &app,
+            progress,
+            None,
+            "处理 native 库",
+            i,
+            StepStatus::Running,
+        );
         if let Err(errors) = crate::downloader::extract::process_natives(
             &vj.libraries,
             &lib_dir,
@@ -388,7 +394,9 @@ pub async fn run_repair_task(
 
 /// 按缺失情况生成修复步骤索引（与 repair_steps 的生成顺序一致：
 /// jar → libs → assets → natives；natives 恒为最后一位，无需推进）。
-fn repair_step_indices(report: &MissingReport) -> (Option<usize>, Option<usize>, Option<usize>, Option<usize>) {
+fn repair_step_indices(
+    report: &MissingReport,
+) -> (Option<usize>, Option<usize>, Option<usize>, Option<usize>) {
     let mut idx = 0usize;
     let jar_idx = if report.client_jar {
         let i = idx;
@@ -538,7 +546,11 @@ pub async fn count_assets_all(
     let n_slices = items.chunks(chunk).len();
     let finished = std::sync::atomic::AtomicUsize::new(0);
     let (tx, rx) = std::sync::mpsc::channel::<u32>();
-    eprintln!("[assets] 开始 sha1 扫描: {} items / {} 线程", items.len(), n_threads);
+    eprintln!(
+        "[assets] 开始 sha1 扫描: {} items / {} 线程",
+        items.len(),
+        n_threads
+    );
     std::thread::scope(|s| {
         for slice in items.chunks(chunk) {
             let tx = tx.clone();
@@ -730,8 +742,7 @@ mod tests {
     async fn count_assets_all_end_to_end() {
         use crate::config::downloader::model::DownloaderConfig;
         let cfg = DownloaderConfig::default();
-        let mc =
-            std::env::temp_dir().join(format!("elytra_caa_e2e_{}", std::process::id()));
+        let mc = std::env::temp_dir().join(format!("elytra_caa_e2e_{}", std::process::id()));
         let url =
             "https://piston-meta.mojang.com/v1/packages/cf75b185cb35b32e299b0c8e674fa202d7911a3c/32.json";
         let sha1 = "cf75b185cb35b32e299b0c8e674fa202d7911a3c";
@@ -755,13 +766,16 @@ mod tests {
             ),
         )
         .await;
-        let (pending, pending_bytes) =
-            res.expect("B2 完整流程应在 30s 内完成（网络/代理问题会超时）")
-                .expect("count_assets_all 应成功");
+        let (pending, pending_bytes) = res
+            .expect("B2 完整流程应在 30s 内完成（网络/代理问题会超时）")
+            .expect("count_assets_all 应成功");
         assert!(total > 1000, "objects 清单应完整: {total}");
         assert_eq!(checked, total, "扫描进度应到全量");
         assert_eq!(pending, total, "空目录下应全部缺失");
-        assert_eq!(pending_bytes, total_bytes, "空目录全缺失字节应等于清单总字节");
+        assert_eq!(
+            pending_bytes, total_bytes,
+            "空目录全缺失字节应等于清单总字节"
+        );
         assert!(pending_bytes > 0);
         let _ = std::fs::remove_dir_all(&mc);
     }

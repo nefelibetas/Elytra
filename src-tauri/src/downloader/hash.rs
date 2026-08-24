@@ -41,7 +41,10 @@ pub fn file_sha1_matches_streaming(path: &Path, expected: &str) -> bool {
         }
     }
     let hash = hasher.finalize();
-    hash.iter().map(|b| format!("{:02x}", b)).collect::<String>() == expected
+    hash.iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>()
+        == expected
 }
 
 /// 任意读取器的流式 sha1（zip 成员等非文件来源用）；读失败返回 None。
@@ -56,7 +59,13 @@ pub fn reader_sha1_hex<R: std::io::Read>(mut reader: R) -> Option<String> {
             Err(_) => return None,
         }
     }
-    Some(hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect())
+    Some(
+        hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect(),
+    )
 }
 
 #[cfg(test)]
@@ -66,14 +75,8 @@ mod tests {
     #[test]
     fn test_sha1_hex() {
         // 标准测试向量（RFC 3174）：
-        assert_eq!(
-            sha1_hex(b"abc"),
-            "a9993e364706816aba3e25717850c26c9cd0d89d"
-        );
-        assert_eq!(
-            sha1_hex(b""),
-            "da39a3ee5e6b4b0d3255bfef95601890afd80709"
-        );
+        assert_eq!(sha1_hex(b"abc"), "a9993e364706816aba3e25717850c26c9cd0d89d");
+        assert_eq!(sha1_hex(b""), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
         // 长输入
         assert_eq!(
             sha1_hex(b"The quick brown fox jumps over the lazy dog"),
