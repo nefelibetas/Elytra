@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use tauri::AppHandle;
 
-use crate::config::downloader::model::{DownloadSource, DownloadSourceMode, DownloaderConfig};
+use crate::config::downloader::model::{DownloadSource, DownloaderConfig};
 use crate::constants;
 use crate::downloader::fetcher;
 use crate::downloader::mod_loader;
@@ -475,23 +475,12 @@ pub async fn run_task(
             let mods_dir = vdir.join("mods");
             std::fs::create_dir_all(&mods_dir).ok();
             let dest = mods_dir.join(filename);
-            // 多源候选（社区源模式配置 community_source_mode）：
-            // Modrinth 官方 CDN → MCIM 换域名镜像（国内不可达时快速降级）。
+            // 多源候选（社区源模式 community_source_mode）：Auto 模式下载前探测
+            // 官方 CDN 与 MCIM 镜像 TTFB 选快源（util::community_download_urls）。
             // 注意：fabric-api 只发布在 Modrinth/GitHub，maven.fabricmc.net 及其
             // 镜像（BMCLAPI /maven）上没有该构件，此前追加的 BMCLAPI maven 候选
             // 永远 404，只会污染"所有源均失败"的错误信息，已移除。
-            let official = url.to_string();
-            let mcim = url.replace("https://cdn.modrinth.com", "https://mod.mcimirror.top");
-            let urls = if mcim == official {
-                vec![official]
-            } else {
-                match config.community_source_mode {
-                    DownloadSourceMode::OfficialOnly => vec![official],
-                    DownloadSourceMode::ChinaOnly => vec![mcim],
-                    // Auto：官方优先，失败/过慢降级镜像（fetch_bounded 多源循环处理）
-                    DownloadSourceMode::Auto => vec![official, mcim],
-                }
-            };
+            let urls = crate::util::community_download_urls(url).await;
             // 字节级进度：增量累加进 bytes_counter（EmitLoop 显示速度）与 Fabric API 步骤计数
             let file_done = Arc::new(AtomicU64::new(0));
             let progress_cb = {
