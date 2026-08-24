@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // 版本设置-资源管理 tab（材质包/数据包/光影包）：标题卡（打开文件夹）+ 列表卡。
 // 双态表现：Modrinth 识别到 → 社区详情；未识别 → 本地文件 + 通用类型图标。
-import { computed, onMounted } from "vue";
+// 多选交互：点击 item 选中，底部 action 栏全选/取消 + 批量删除。
+import { computed, ref, onMounted } from "vue";
 import { useRoute } from "vue-router";
 import { Folder, Trash2, Palette, Database, Sun } from "@lucide/vue";
 import { invoke } from "@tauri-apps/api/core";
@@ -9,12 +10,12 @@ import { fmtCount, fmtSize } from "../utils/format";
 import { showToast } from "../utils/toast";
 import { errMsg } from "../utils/error";
 import { dlTranslateMode } from "../store/downloaderConfig";
+import { useSelectable } from "../utils/useSelectable";
 import IconImage from "./IconImage.vue";
 import AlertDialog from "./AlertDialog.vue";
 import LoadingSpinner from "./LoadingSpinner.vue";
 import EmptyState from "./EmptyState.vue";
 import ErrorState from "./ErrorState.vue";
-import { useConfirmDelete } from "../utils/useConfirmDelete";
 import {
   resourceRefs,
   loadResourceDetailed, loadResourceQuick,
@@ -50,6 +51,50 @@ const res = computed(() => {
 /** 当前类型已加载缓存的版本名。 */
 const loadedFor = computed(() => resourceRefs(props.kind).loadedFor.value);
 
+/** 多选状态：点击 item 切换选中，底部 action 栏批量操作。 */
+const { selected, selectedSet, selecting, allVisibleSelected, toggle, toggleAll, clear } =
+  useSelectable(computed(() => res.value.list.map(f => f.file_name)));
+
+/** 删除确认弹窗：目标名（选中单项时）或"N 项"批量文案。 */
+const deleteDialog = ref(false);
+const deleteLabel = ref("");
+/** 待删除列表（确认后逐个消费）。 */
+const deletePending = ref<string[]>([]);
+
+/** 批量删除选中项：一次确认后逐个删除。 */
+function doBatchDelete() {
+  const names = [...selected.value];
+  if (names.length === 0) return;
+  deleteLabel.value = names.length === 1 ? `「${names[0]}」` : `${names.length} 项资源`;
+  deletePending.value = names;
+  deleteDialog.value = true;
+}
+
+/** 确认删除：逐个执行，完成后刷新列表并清空选中。 */
+async function confirmDelete() {
+  const names = [...deletePending.value];
+  deleteDialog.value = false;
+  deletePending.value = [];
+  for (const n of names) {
+    try {
+      await invoke("delete_resource_file", {
+        versionName: versionName.value,
+        kind: props.kind,
+        fileName: n,
+      });
+      showToast(`已删除 ${n}`);
+    } catch (e) {
+      showToast(errMsg(e));
+    }
+  }
+  if (names.length > 0) {
+    // 刷新详细列表 + 快速扫描（主页卡片图标判定保持同步）
+    await loadResourceDetailed(versionName.value, props.kind);
+    await loadResourceQuick(versionName.value, props.kind);
+    clear();
+  }
+}
+
 onMounted(async () => {
   if (!versionName.value) return;
   // 缓存命中（切 Tab 回来/刚从主页进入）不重新加载，避免 loading 闪烁
@@ -70,25 +115,6 @@ async function openFolder() {
     showToast(errMsg(e));
   }
 }
-
-// ── 删除资源 dialog ──
-const { deleteDialog, deleteTarget, openDelete, confirmDelete } = useConfirmDelete(
-  async fileName => {
-    try {
-      await invoke("delete_resource_file", {
-        versionName: versionName.value,
-        kind: props.kind,
-        fileName,
-      });
-      showToast(`已删除 ${fileName}`);
-      // 刷新详细列表 + 快速扫描（主页卡片图标判定保持同步）
-      await loadResourceDetailed(versionName.value, props.kind);
-      await loadResourceQuick(versionName.value, props.kind);
-    } catch (e) {
-      showToast(errMsg(e));
-    }
-  },
-);
 </script>
 
 <template>
@@ -107,7 +133,7 @@ const { deleteDialog, deleteTarget, openDelete, confirmDelete } = useConfirmDele
     <div class="vsr-card vsr-list-card">
       <div class="vsr-content">
         <Transition name="fade" mode="out-in">
-          <LoadingSpinner v-if="res.loading" key="loading" :text="`加载${meta.label}信息…`" />
+          <LoadingSpinner v-if="res.loading && res.list.length === 0" key="loading" :text="`加载${meta.label}信息…`" />
           <ErrorState v-else-if="res.error" key="err" :text="res.error" />
           <EmptyState v-else-if="res.list.length === 0" key="empty">
             <component :is="meta.icon" :size="40" :stroke-width="1.5" opacity="0.5" />
@@ -117,50 +143,64 @@ const { deleteDialog, deleteTarget, openDelete, confirmDelete } = useConfirmDele
             <div v-if="res.networkError" class="vsr-net-warn">部分资源信息获取失败，已显示本地信息</div>
             <div class="vsr-list">
               <div v-for="f in res.list" :key="f.file_name" class="vsr-item">
-                <!-- 识别到：社区详情 -->
-                <template v-if="f.project_id">
-                  <IconImage :src="f.icon_url" :size="32" />
-                  <span class="vsr-info">
-                    <span class="vsr-title-row">
-                      <span class="vsr-title">{{ f.title_zh ?? f.title ?? f.file_name }}</span>
-                      <span v-if="f.title_zh" class="vsr-file">{{ f.file_name }}</span>
-                      <span v-if="f.downloads" class="vsr-sub">{{ fmtCount(f.downloads) }} 次下载</span>
+                <div
+                  class="vsr-item-body"
+                  :class="{ selected: selectedSet.has(f.file_name) }"
+                  @click="toggle(f.file_name)"
+                >
+                  <!-- 识别到：社区详情 -->
+                  <template v-if="f.project_id">
+                    <IconImage :src="f.icon_url" :size="32" />
+                    <span class="vsr-info">
+                      <span class="vsr-title-row">
+                        <span class="vsr-title">{{ f.title_zh ?? f.title ?? f.file_name }}</span>
+                        <span v-if="f.title_zh" class="vsr-file">{{ f.file_name }}</span>
+                        <span v-if="f.downloads" class="vsr-sub">{{ fmtCount(f.downloads) }} 次下载</span>
+                      </span>
+                      <span v-if="f.description" class="vsr-desc">
+                        {{ dlTranslateMode === "en" ? f.description : (f.description_zh ?? f.description) }}
+                      </span>
+                      <span v-if="f.current_version" class="vsr-support">
+                        <span class="vsr-ver">v{{ f.current_version }}</span>
+                      </span>
                     </span>
-                    <span v-if="f.description" class="vsr-desc">
-                      {{ dlTranslateMode === "en" ? f.description : (f.description_zh ?? f.description) }}
+                  </template>
+                  <!-- 未识别：本地文件 + 通用类型图标 -->
+                  <template v-else>
+                    <component :is="meta.icon" :size="20" class="vsr-local-icon" />
+                    <span class="vsr-info">
+                      <span class="vsr-local-name">{{ f.file_name }}</span>
+                      <span class="vsr-local-meta">{{ fmtSize(f.size) }}</span>
                     </span>
-                    <span v-if="f.current_version" class="vsr-support">
-                      <span class="vsr-ver">v{{ f.current_version }}</span>
-                    </span>
-                  </span>
-                </template>
-                <!-- 未识别：本地文件 + 通用类型图标 -->
-                <template v-else>
-                  <component :is="meta.icon" :size="20" class="vsr-local-icon" />
-                  <span class="vsr-info">
-                    <span class="vsr-local-name">{{ f.file_name }}</span>
-                    <span class="vsr-local-meta">{{ fmtSize(f.size) }}</span>
-                  </span>
-                </template>
-                <!-- hover 删除按钮 -->
-                <div class="vsr-item-actions">
-                  <button class="vsr-item-btn danger" @click="openDelete(f.file_name)">
-                    <Trash2 :size="13" />
-                    <span>删除</span>
-                  </button>
+                  </template>
                 </div>
               </div>
             </div>
           </div>
         </Transition>
       </div>
-    </div>
+       </div>
+
+    <!-- 底部 action 栏：选中 ≥1 时滑出，全选/取消 + 批量删除 -->
+    <Transition name="fade">
+      <div v-if="selecting" class="vsr-actions-bar">
+        <button class="vsr-ab-btn" @click="toggleAll">
+          {{ allVisibleSelected ? "取消全选" : "全选" }}
+        </button>
+        <button class="vsr-ab-btn" @click="clear">取消</button>
+        <span class="vsr-ab-count">已选 {{ selected.length }} 项</span>
+        <button class="vsr-ab-btn danger" @click="doBatchDelete">
+          <Trash2 :size="13" />
+          <span>删除（{{ selected.length }}）</span>
+        </button>
+      </div>
+    </Transition>
 
     <!-- 删除确认 dialog -->
     <AlertDialog v-model="deleteDialog" title="删除资源">
       <div class="vsr-dialog-body">
         <div class="vsr-dialog-text">
-          确定要删除「{{ deleteTarget }}」吗？该操作会删除文件且无法恢复。
+          确定要删除 {{ deleteLabel }} 吗？该操作会删除文件且无法恢复。
         </div>
       </div>
       <template #actions>
@@ -258,19 +298,32 @@ const { deleteDialog, deleteTarget, openDelete, confirmDelete } = useConfirmDele
 }
 
 .vsr-item {
-  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 4px 0;
+}
+
+.vsr-item-body {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px;
+  padding: 8px 10px;
   background: var(--surface-page);
-  border: 1px solid var(--border-default);
+  border: 2px solid transparent;
   border-radius: var(--radius-md);
-  transition: border-color 0.15s;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
 }
 
-.vsr-item:hover {
+.vsr-item-body:hover {
   border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.vsr-item-body.selected {
+  border-color: var(--color-brand);
 }
 
 .vsr-info {
@@ -279,11 +332,6 @@ const { deleteDialog, deleteTarget, openDelete, confirmDelete } = useConfirmDele
   display: flex;
   flex-direction: column;
   gap: 2px;
-  transition: padding-right 0.18s ease;
-}
-
-.vsr-item:hover .vsr-info {
-  padding-right: 100px;
 }
 
 .vsr-title-row {
@@ -367,47 +415,61 @@ const { deleteDialog, deleteTarget, openDelete, confirmDelete } = useConfirmDele
   color: var(--text-tertiary);
 }
 
-/* hover 操作区 */
-.vsr-item-actions {
-  position: absolute;
-  right: 12px;
-  top: 50%;
-  transform: translateY(-50%) translateX(10px);
+/* 底部 action 栏：选中 ≥1 时滑出，固定列表卡底部 */
+.vsr-actions-bar {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 6px;
-  opacity: 0;
-  visibility: hidden; /* 隐藏态彻底移出命中测试（WebView2 下 pointer-events 过渡不可靠） */
-  transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s ease;
+  margin: 0 12px 12px;
+  padding: 10px 14px;
+  background: var(--surface-elevated);
+  border-top: 1px solid var(--border-default);
+  box-shadow: var(--shadow-md);
 }
 
-.vsr-item:hover .vsr-item-actions {
-  opacity: 1;
-  transform: translateY(-50%) translateX(0);
-  visibility: visible;
+.vsr-ab-count {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
 }
 
-.vsr-item-btn {
+.vsr-ab-btn {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 5px 12px;
+  padding: 6px 14px;
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.15s;
 }
 
-.vsr-item-btn.danger {
+.vsr-ab-btn:hover:not(:disabled) {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
+}
+
+.vsr-ab-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.vsr-ab-btn.danger {
   border: 1px solid color-mix(in srgb, var(--color-danger) 40%, transparent);
   background: transparent;
   color: var(--color-danger);
 }
 
-.vsr-item-btn.danger:hover {
-  background: var(--color-danger);
-  color: var(--text-inverse);
+.vsr-ab-btn.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+  border-color: var(--color-danger);
 }
 
 .vsr-dialog-body {
