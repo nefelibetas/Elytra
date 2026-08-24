@@ -526,14 +526,14 @@ const { deleteDialog, deleteTarget, openDelete, confirmDelete } = useConfirmDele
   align-items: center;
   gap: 6px;
   opacity: 0;
-  pointer-events: none; /* 隐藏态不拦截 item 点击 */
-  transition: opacity 0.18s ease, transform 0.18s ease;
+  visibility: hidden; /* 隐藏态彻底移出命中测试（WebView2 下 pointer-events 过渡不可靠） */
+  transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s ease;
 }
 
 .vsm-item:hover .vsm-item-actions {
   opacity: 1;
   transform: translateY(-50%) translateX(0);
-  pointer-events: auto;
+  visibility: visible;
 }
 
 .vsm-item-btn {

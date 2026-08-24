@@ -43,7 +43,6 @@ const emit = defineEmits<{ click: []; refresh: [] }>();
 }
 
 .tab-refresh {
-  pointer-events: none; /* 隐藏态不拦截点击（opacity:0 仍参与命中测试），行其余区域可点 */
   position: absolute;
   right: 4px;
   width: 28px; height: 28px;
@@ -52,13 +51,14 @@ const emit = defineEmits<{ click: []; refresh: [] }>();
   color: var(--text-tertiary);
   cursor: pointer;
   border-radius: var(--radius-sm);
-  transition: all 0.15s;
+  transition: opacity 0.15s, visibility 0.15s;
   opacity: 0;
+  visibility: hidden; /* 隐藏态彻底移出命中测试（WebView2 下 pointer-events 过渡不可靠） */
 }
 
 .tab-row:hover .tab-refresh {
   opacity: 1;
-  pointer-events: auto;
+  visibility: visible;
 }
 .tab-refresh:hover {
   color: var(--color-brand);
