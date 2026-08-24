@@ -1,76 +1,67 @@
-// 应用内导航历史栈：为鼠标侧键（后退/前进）提供精确的 Vue 路由导航。
+// 鼠标侧键（后退/前进）的应用内导航。
 //
-// 侧键若直接触达 WebView 原生浏览器历史，会绕过 vue-router 自身的栈
-// 导致页面状态与路由不一致（UI 栈混乱，App.vue 曾整段禁用侧键）。
-// 这里改走自管栈：把每次真实导航的完整地址（fullPath）记录进栈，
-// 侧键只在栈内移动指针并 replace 回放，不新增浏览器历史条目，也不
-// 可能越出应用 —— 在根路由（/）处后退即为空操作，永不离开应用。
+// 侧键若直接触达 WebView 原生浏览器历史，会绕过 vue-router 自身栈导致
+// 页面状态与路由不一致（App.vue 曾在捕获阶段整段禁用侧键）。这里改由
+// 本模块跨出导航，按"页面语义"而非"走过的每一步"来定返回目标：
+//
+//   - 后退（goBack）：规则式返回上一级 —— 顶级 Tab/版本页回到启动页；
+//     资源详情回资源列表（或依赖链上一详情）；启动页处空操作（永不离开应用）。
+//   - 前进（goForward）：重进最后一次后退离开的页面（LIFO redo 栈），
+//     无可用前进目标时空操作（"不能在启动页更进一步"）。
+//
+// redo 栈在用户发起新导航时清空（afterEach 兜底），仅在程序化前后退
+// 期间保留，避免跨分支污染。TitleBar 的返回键与侧键共用 goBack，保证
+// 两套入口语义一致。
 
 import router from "../router";
+import { goBackDetail } from "./resourceDetail";
 
-/** 导航栈快照：history 为地址序列，index 指向当前所在位置。 */
-export interface NavStack {
-  history: string[];
-  index: number;
-  get canBack(): boolean;
-  get canForward(): boolean;
-}
+/** 程序化导航（本模块发起）计数：afterEach 消耗一枚 → 不清空 redo 栈。
+ *  用计数而非布尔开关，因资源详情的 goBackDetail 内部异步 push/replace，
+ *  其 afterEach 必须同样被视为"程序化"，否则会错误清空前进分支。 */
+let pending = 0;
 
-/** 供 App.vue 只读使用的当前栈。 */
-export const navStack: NavStack = {
-  history: [],
-  index: -1,
-  get canBack() {
-    return this.index > 0;
-  },
-  get canForward() {
-    return this.index >= 0 && this.index < this.history.length - 1;
-  },
-};
+/** 前进目标：后退越过的页面地址（fullPath），LIFO。 */
+let redoStack: string[] = [];
 
-/** 回放中置 true：afterEach 不再把回放目标当新导航入栈（指针已手动移动）。 */
-let replaying = false;
-
-/** 在 App 挂载时调用：以当前地址初始化栈，并挂 afterEach 记录导航。 */
+/** 在 App 挂载时调用：挂 afterEach 兜底清理 redo 栈（用户新导航断开前进分支）。 */
 export function initNavHistory() {
-  const start = router.currentRoute.value.fullPath || "/";
-  navStack.history = [start];
-  navStack.index = 0;
-
-  router.afterEach((to) => {
-    if (replaying) return;
-    const p = to.fullPath;
-    // 与当前重复（含 replace 同址刷新）不入栈；否则从当前点截断前进分支后入栈
-    if (navStack.history[navStack.index] !== p) {
-      navStack.history.length = navStack.index + 1;
-      navStack.history.push(p);
-      navStack.index += 1;
+  router.afterEach(() => {
+    if (pending > 0) {
+      pending -= 1;
+    } else {
+      redoStack.length = 0;
     }
   });
 }
 
-function replayTo(target: string) {
-  replaying = true;
-  // push 回放：不依赖浏览器历史，回放期间 afterEach 被 replaying 跳过
-  // （指针已在调用方移动），重登同一地址也不会重复入栈
-  const done = router.push(target).finally(() => {
-    replaying = false;
-  });
-  void done;
-}
+/** 规则式后退：按当前页面返回上一级；已在启动页返回 false（不可再退）。 */
+export function goBack(): boolean {
+  const current = router.currentRoute.value;
+  const path = current.path;
+  if (path === "/") return false; // 启动页不可再退（守卫：永不离开应用）
 
-/** 侧键后退：栈内前移回去；已在根（Launcher）则空操作。 */
-export function sideBack(): boolean {
-  if (!navStack.canBack) return false;
-  navStack.index -= 1;
-  replayTo(navStack.history[navStack.index]);
+  // 记录前进目标（向后要能重进刚离开的页面）
+  redoStack.push(current.fullPath);
+
+  if (path === "/resource-detail") {
+    // 资源详情：弹依赖链栈回上一详情；栈空回资源列表并恢复来源 tab
+    pending += 1;
+    goBackDetail();
+    return true;
+  }
+
+  // 其余（顶级 Tab / 版本选择 / 版本设置）→ 回启动页
+  pending += 1;
+  void router.push("/");
   return true;
 }
 
-/** 侧键前进：栈内后移重放；已到最后一项则空操作。 */
-export function sideForward(): boolean {
-  if (!navStack.canForward) return false;
-  navStack.index += 1;
-  replayTo(navStack.history[navStack.index]);
+/** 前进：重进最后一次后退离开的页面；无可前进目标返回 false。 */
+export function goForward(): boolean {
+  const target = redoStack.pop();
+  if (target === undefined) return false;
+  pending += 1;
+  void router.push(target);
   return true;
 }

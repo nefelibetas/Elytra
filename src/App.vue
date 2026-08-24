@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
-import { initNavHistory, sideBack, sideForward } from "./store/nav";
+import { initNavHistory, goBack, goForward } from "./store/nav";
 import { useRouter } from "vue-router";
 import TitleBar from "./component/TitleBar.vue";
 import AlertDialog from "./component/AlertDialog.vue";
@@ -88,8 +88,8 @@ function onSideButton(e: MouseEvent) {
     const now = Date.now();
     if (now - lastSideAt < 120) return; // mousedown/pointerdown 同键去重
     lastSideAt = now;
-    if (e.button === 3) sideBack();
-    else sideForward();
+    if (e.button === 3) goBack();
+    else goForward();
   }
 }
 
