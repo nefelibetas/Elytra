@@ -116,7 +116,16 @@ onMounted(async () => {
   overflow: hidden;
 }
 
-.right-hint {
++  width: 100%; /* 撑满 .right（flex 行方向不拉伸主轴，宽度塌缩成内容会水平偏左）
++                 —— 让 justify-content:center 真正水平居中 */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--text-tertiary);
+  user-select: none;
+}
   display: flex;
   flex-direction: column;
   align-items: center;
