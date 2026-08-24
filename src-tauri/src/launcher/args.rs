@@ -1,13 +1,13 @@
 use std::path::{Path, PathBuf};
 
-use crate::launcher::memory;
-use crate::launcher::model::{AuthMode, LauncherConfig, MemoryMode};
 use crate::constants;
 use crate::downloader::extract::{
     legacy_classifier_artifact, matches_rules, modern_native_matches, modern_natives_key,
     NativesKind,
 };
 use crate::downloader::model::VersionJson;
+use crate::launcher::memory;
+use crate::launcher::model::{AuthMode, LauncherConfig, MemoryMode};
 
 // ── 启动协议常量（集中维护，防拼写错误导致静默失败）──
 
@@ -682,7 +682,7 @@ fn collect_jvm_args(
     let mut jvm_preamble: Vec<String> = Vec::new(); // -cp 之前
     let mut system_props: Vec<String> = Vec::new(); // -D 类
     let mut jvm_tuning: Vec<String> = Vec::new(); // -cp 之后、mainClass 之前
-    // 与上方 classpath 构建保持一致：按平台选择分隔符（Windows ';' / Unix ':'）
+                                                  // 与上方 classpath 构建保持一致：按平台选择分隔符（Windows ';' / Unix ':'）
     let classpath_sep = if cfg!(windows) { ";" } else { ":" };
 
     // 从版本 JSON 的 arguments.jvm 提取

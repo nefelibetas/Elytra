@@ -44,9 +44,7 @@ fn dir_modified_secs(meta: &std::fs::Metadata) -> u64 {
 /// pub(crate)：版本图标命令（version_icon.rs）共用同一目录定位约定。
 pub(crate) fn version_dir(version_name: &str) -> Result<PathBuf, String> {
     let active = get_active_game_dir();
-    let dir = Path::new(&active.path)
-        .join("versions")
-        .join(version_name);
+    let dir = Path::new(&active.path).join("versions").join(version_name);
     if !dir.exists() {
         return Err(format!("版本目录不存在\n{}", dir.display()));
     }
@@ -89,10 +87,7 @@ const MAX_WORLD_ICON_BYTES: u64 = 512 * 1024;
 /// 缺失/超限/损坏返回 None（不报错，前端回退 Map 占位）。
 /// `world_name` 仅接受简单目录名，防路径穿越。
 #[tauri::command]
-pub fn get_world_icon(
-    version_name: String,
-    world_name: String,
-) -> Option<crate::util::IconData> {
+pub fn get_world_icon(version_name: String, world_name: String) -> Option<crate::util::IconData> {
     if world_name.contains('/') || world_name.contains('\\') || world_name.contains("..") {
         return None;
     }
@@ -152,11 +147,7 @@ pub async fn list_resource_detailed(
         });
     }
     let vdir = version_dir(&version_name)?;
-    Ok(mod_updates::list_dir_detailed(
-        &vdir.join(&kind),
-        mod_updates::ScanFilter::Zip,
-    )
-    .await)
+    Ok(mod_updates::list_dir_detailed(&vdir.join(&kind), mod_updates::ScanFilter::Zip).await)
 }
 
 /// 删除资源目录（材质包/数据包/光影包）下的单个文件。
@@ -262,8 +253,8 @@ fn pack_modpack(vdir: &Path, version_name: &str, save_path: &str) -> Result<(), 
 
     let file = std::fs::File::create(save_path).map_err(|e| format!("创建文件失败\n{e}"))?;
     let mut writer = zip::ZipWriter::new(file);
-    let opts = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored);
+    let opts =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
     let manifest = serde_json::json!({
         "name": version_name,
@@ -281,9 +272,7 @@ fn pack_modpack(vdir: &Path, version_name: &str, save_path: &str) -> Result<(), 
     for sub in subdirs {
         add_dir_to_zip(&mut writer, &vdir.join(sub), sub, opts)?;
     }
-    writer
-        .finish()
-        .map_err(|e| format!("写入 zip 失败\n{e}"))?;
+    writer.finish().map_err(|e| format!("写入 zip 失败\n{e}"))?;
     Ok(())
 }
 
@@ -306,13 +295,11 @@ fn add_dir_to_zip(
         if path.is_dir() {
             add_dir_to_zip(writer, &path, &name, opts)?;
         } else if path.is_file() {
-            let mut f = std::fs::File::open(&path)
-                .map_err(|err| format!("打开文件失败\n{err}"))?;
+            let mut f = std::fs::File::open(&path).map_err(|err| format!("打开文件失败\n{err}"))?;
             writer
                 .start_file(name, opts)
                 .map_err(|err| format!("写入文件失败\n{err}"))?;
-            std::io::copy(&mut f, writer)
-                .map_err(|err| format!("写入文件失败\n{err}"))?;
+            std::io::copy(&mut f, writer).map_err(|err| format!("写入文件失败\n{err}"))?;
         }
     }
     Ok(())
@@ -348,10 +335,22 @@ mod tests {
         let names: Vec<String> = (0..archive.len())
             .map(|i| archive.by_index(i).unwrap().name().to_string())
             .collect();
-        assert!(names.contains(&"manifest.json".to_string()), "缺 manifest: {names:?}");
-        assert!(names.contains(&"mods/".to_string()), "缺 mods 目录条目: {names:?}");
-        assert!(names.contains(&"mods/a.jar".to_string()), "缺 mods/a.jar: {names:?}");
-        assert!(names.contains(&"mods/nested/b.jar".to_string()), "缺嵌套文件: {names:?}");
+        assert!(
+            names.contains(&"manifest.json".to_string()),
+            "缺 manifest: {names:?}"
+        );
+        assert!(
+            names.contains(&"mods/".to_string()),
+            "缺 mods 目录条目: {names:?}"
+        );
+        assert!(
+            names.contains(&"mods/a.jar".to_string()),
+            "缺 mods/a.jar: {names:?}"
+        );
+        assert!(
+            names.contains(&"mods/nested/b.jar".to_string()),
+            "缺嵌套文件: {names:?}"
+        );
         assert!(
             !names.iter().any(|n| n.starts_with("config")),
             "不存在的 config 目录不应入包: {names:?}"

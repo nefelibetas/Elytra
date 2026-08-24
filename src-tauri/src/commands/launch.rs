@@ -7,14 +7,14 @@
 use std::path::PathBuf;
 use tauri::AppHandle;
 
+use crate::constants;
+use crate::downloader::model::VersionJson;
+use crate::jdk::model::{JdkConfig, JdkSelection};
 use crate::launcher::args::build_launch_command;
 use crate::launcher::env;
 use crate::launcher::model::{AuthMode, LauncherConfig};
 use crate::launcher::platform;
 use crate::launcher::skin;
-use crate::constants;
-use crate::downloader::model::VersionJson;
-use crate::jdk::model::{JdkConfig, JdkSelection};
 
 // ── 账号构造（启动前置）────────────────────────────
 
@@ -261,10 +261,7 @@ pub async fn spawn_game(
             command.creation_flags(flags);
             match command.spawn() {
                 Ok(c) => break c,
-                Err(e)
-                    if e.raw_os_error() == Some(5)
-                        && flags & CREATE_BREAKAWAY_FROM_JOB != 0 =>
-                {
+                Err(e) if e.raw_os_error() == Some(5) && flags & CREATE_BREAKAWAY_FROM_JOB != 0 => {
                     flags &= !CREATE_BREAKAWAY_FROM_JOB; // 最多重试一次
                 }
                 Err(e) => return Err(format!("启动游戏失败\n{e}")),
@@ -681,7 +678,10 @@ mod tests {
             "",
         )
         .args;
-        let cp_idx = args.iter().position(|a| a == "-cp").expect("-cp 参数应存在");
+        let cp_idx = args
+            .iter()
+            .position(|a| a == "-cp")
+            .expect("-cp 参数应存在");
         let cp = &args[cp_idx + 1];
         assert!(
             cp.contains("fabric-loader-0.19.3.jar") && cp.contains("sponge-mixin-0.17.3.jar"),

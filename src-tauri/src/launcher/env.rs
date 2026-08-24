@@ -4,11 +4,11 @@
 use std::path::PathBuf;
 
 use crate::config::downloader::model::DownloaderConfig;
-use crate::launcher::args::{find_file_in_dir, find_version_json};
-use crate::launcher::model::LauncherConfig;
 use crate::constants;
 use crate::downloader::model::VersionJson;
 use crate::jdk::model::{JdkConfig, JdkInfo, JdkSelection};
+use crate::launcher::args::{find_file_in_dir, find_version_json};
+use crate::launcher::model::LauncherConfig;
 use crate::persist;
 use crate::util::{java_bin_path, parse_java_major};
 
@@ -210,10 +210,7 @@ pub fn pre_launch_check(
                                 msg.push_str(&format!("\n  {}", b));
                             }
                             if bad_objects.len() > 20 {
-                                msg.push_str(&format!(
-                                    "\n  … 其余 {} 个",
-                                    bad_objects.len() - 20
-                                ));
+                                msg.push_str(&format!("\n  … 其余 {} 个", bad_objects.len() - 20));
                             }
                             missing.push(msg);
                         }

@@ -380,7 +380,10 @@ mod tests {
         };
         assert!(t(vec![item("a.jar"), item("b.jar")]).validate().is_ok());
         assert!(t(vec![]).validate().is_err(), "空文件列表应拒绝");
-        assert!(t(vec![item("../evil.jar")]).validate().is_err(), "穿越文件名应拒绝");
+        assert!(
+            t(vec![item("../evil.jar")]).validate().is_err(),
+            "穿越文件名应拒绝"
+        );
         let mut empty_dir = t(vec![item("a.jar")]);
         empty_dir.version_dir_name = "".into();
         assert!(empty_dir.validate().is_err(), "空版本目录应拒绝");

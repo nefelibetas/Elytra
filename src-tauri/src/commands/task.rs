@@ -1,13 +1,12 @@
 //! 下载任务命令（薄胶水层）：注册任务并 spawn 执行，编排逻辑在 task/runner.rs。
 
-use tauri::AppHandle;
 use std::path::Path;
-
+use tauri::AppHandle;
 
 use crate::config::downloader::model::DownloaderConfig;
 use crate::constants;
-use crate::persist;
 use crate::downloader::modpack::{ModpackRequest, PackSource};
+use crate::persist;
 use crate::task::{
     self, files, modpack, repair, runner, DownloadFileItem, DownloadFileKind, DownloadFileTask,
     DownloadFilesTask, DownloadTask, TaskSpec, TaskStatus,
@@ -40,7 +39,12 @@ fn spawn_task(
     name: String,
     steps: Vec<crate::task::StepSpec>,
     spec: crate::task::store::JobSpec,
-    run: impl FnOnce(AppHandle, std::sync::Arc<std::sync::atomic::AtomicBool>, std::sync::Arc<parking_lot::Mutex<crate::task::TaskProgress>>) + Send + 'static,
+    run: impl FnOnce(
+            AppHandle,
+            std::sync::Arc<std::sync::atomic::AtomicBool>,
+            std::sync::Arc<parking_lot::Mutex<crate::task::TaskProgress>>,
+        ) + Send
+        + 'static,
 ) -> Result<String, String> {
     let step_names: Vec<&str> = steps.iter().map(|s| s.name.as_str()).collect();
     let tm = task::global();
@@ -57,7 +61,10 @@ fn spawn_files_task(app: AppHandle, task: DownloadFilesTask) -> Result<String, S
     // 返回目录名，含冲突追加的 _{n}），直接校验目录存在即可；
     // mod / 资源包 / 数据包 / 光影包严格落盘到版本隔离目录 versions/{目录}/{kind_dir}/{filename}。
     let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
-    let dir = config.minecraft_dir_abs().join("versions").join(&task.version_dir_name);
+    let dir = config
+        .minecraft_dir_abs()
+        .join("versions")
+        .join(&task.version_dir_name);
     if !dir.is_dir() {
         return Err(format!(
             "目标版本目录不存在（请先在版本选择页选择已安装的版本）\n版本目录: {}",
@@ -123,10 +130,8 @@ pub async fn submit_missing_download(
     let steps = repair::repair_steps(&report);
     let tm = task::global();
     let name = format!("{} 版本修复", version_dir_name);
-    let (task_id, cancel, progress) = tm.create(
-        &name,
-        &steps.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
-    );
+    let (task_id, cancel, progress) =
+        tm.create(&name, &steps.iter().map(|s| s.as_str()).collect::<Vec<_>>());
 
     // 持久化快照（崩溃恢复依据；DB 故障静默）
     crate::task::store::save_snapshot(

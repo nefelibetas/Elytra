@@ -19,22 +19,22 @@ use std::time::Duration;
 use parking_lot::Mutex;
 use tauri::AppHandle;
 
-use crate::config::downloader::model::{DownloaderConfig, DownloadSource};
+use crate::config::downloader::model::{DownloadSource, DownloaderConfig};
 use crate::constants;
 use crate::downloader::fetcher;
+use crate::downloader::model::VersionJson;
 use crate::downloader::modpack::{
-    cache_key, build_plan, safe_rel_path, ModpackRequest, OverridesRef, PackFile, PackPlan,
+    build_plan, cache_key, safe_rel_path, ModpackRequest, OverridesRef, PackFile, PackPlan,
     PackSource,
 };
-use crate::downloader::model::VersionJson;
 use crate::downloader::progress::ProgressCounters;
 use crate::downloader::reuse::LocalRuntimeSource;
 use crate::task::progress::{
     cancelled, set_cancelled, set_error, set_phase, set_total, spawn_heartbeat, step_done,
     HeartbeatStats,
 };
-use crate::util::mcim_mirror_urls;
 use crate::task::{global, update_and_emit, StepInfo, StepStatus, TaskProgress, TaskStatus};
+use crate::util::mcim_mirror_urls;
 
 /// 包体缓存目录（exe 旁 Elytra/modpacks/，与 Settings.toml 同根约定）。
 fn cache_dir() -> PathBuf {
@@ -42,7 +42,6 @@ fn cache_dir() -> PathBuf {
         .join(constants::CONFIG_DIR)
         .join("modpacks")
 }
-
 
 /// 包体缓存路径（.mrpack/.zip 按来源扩展名）。
 pub fn zip_cache_path(request: &ModpackRequest) -> PathBuf {
@@ -127,12 +126,7 @@ impl Counters {
 }
 
 /// 完成一步：步骤状态置 done + 完成计数 +1。
-fn finish_step(
-    app: &AppHandle,
-    progress: &Arc<Mutex<TaskProgress>>,
-    idx: usize,
-    c: &Counters,
-) {
+fn finish_step(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, idx: usize, c: &Counters) {
     step_done(app, progress, idx);
     c.done_steps.fetch_add(1, Ordering::Relaxed);
 }
@@ -232,16 +226,21 @@ pub async fn run_install(
     // ── A1：获取包体（幂等：本地缓存 sha1 命中直接跳过）──
     let mut pack_bytes_est = 0u64;
     if let PackSource::Online { url, sha1, size } = &request.source {
-        set_phase(app, progress, Some(TaskStatus::Running), "下载整合包", 0, StepStatus::Running);
+        set_phase(
+            app,
+            progress,
+            Some(TaskStatus::Running),
+            "下载整合包",
+            0,
+            StepStatus::Running,
+        );
         pack_bytes_est = *size;
         // 强校验优先；清单未提供 sha1 时降级为体积弱校验——与 fetch_verified_c
         // 空 sha1 跳过网络校验的信任模型一致，恢复场景不再整包重下
         let cached = zip_path.is_file()
             && match (sha1.is_empty(), *size) {
                 (false, _) => crate::downloader::hash::file_sha1_matches(&zip_path, sha1),
-                (true, s) if s > 0 => {
-                    std::fs::metadata(&zip_path).map(|m| m.len()).ok() == Some(s)
-                }
+                (true, s) if s > 0 => std::fs::metadata(&zip_path).map(|m| m.len()).ok() == Some(s),
                 _ => false,
             };
         if !cached {
@@ -256,7 +255,9 @@ pub async fn run_install(
             {
                 return fail_or_cancel(app, progress, cancel, format!("下载整合包失败\n{e}"), None);
             }
-            pack_bytes_est = std::fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(*size);
+            pack_bytes_est = std::fs::metadata(&zip_path)
+                .map(|m| m.len())
+                .unwrap_or(*size);
         }
         step_done(app, progress, 0);
     }
@@ -283,7 +284,13 @@ pub async fn run_install(
         Err(e) => return fail_or_cancel(app, progress, cancel, e, None),
     };
     if let Err(e) = write_plan(&plan_path_for(request), &plan) {
-        return fail_or_cancel(app, progress, cancel, format!("写入安装计划失败\n{e}"), None);
+        return fail_or_cancel(
+            app,
+            progress,
+            cancel,
+            format!("写入安装计划失败\n{e}"),
+            None,
+        );
     }
     step_done(app, progress, parse_idx);
     let a_done = parse_idx + 1; // A 段已完成步骤数
@@ -298,7 +305,11 @@ pub async fn run_install(
     ];
     let (i_json, i_jar, i_libs, i_asst, i_nat) = (0, 1, 2, 3, 4);
     let (i_cfg, i_lbs) = if plan.loader.is_some() {
-        let label = plan.loader.as_ref().map(|l| l.kind.display_name()).unwrap_or("");
+        let label = plan
+            .loader
+            .as_ref()
+            .map(|l| l.kind.display_name())
+            .unwrap_or("");
         let cfg = names.len();
         names.push(format!("{label} 配置"));
         let lbs = names.len();
@@ -317,7 +328,10 @@ pub async fn run_install(
         idx
     });
 
-    let mut full_names: Vec<String> = initial_steps(request).iter().map(|s| s.to_string()).collect();
+    let mut full_names: Vec<String> = initial_steps(request)
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     full_names.extend(names.iter().cloned());
     replace_steps(app, progress, &full_names, a_done);
 
@@ -344,7 +358,10 @@ pub async fn run_install(
         },
     );
     // ── 目标目录：预指定名保证解析期/安装期一致 ──
-    let vdir = config.minecraft_dir_abs().join("versions").join(&plan.version_dir_name);
+    let vdir = config
+        .minecraft_dir_abs()
+        .join("versions")
+        .join(&plan.version_dir_name);
     let vdir_existed_before = vdir.exists();
     std::fs::create_dir_all(&vdir).ok();
     // 版本身份标记：重装/更新同名整合包时据此复用目录（内容 sha1 幂等跳过生效）
@@ -366,8 +383,14 @@ pub async fn run_install(
         let dest = vdir.join("pack-icon.png");
         if !dest.exists() {
             // 空 sha1 跳过校验；取消感知；MCIM 双源回退对 cdn.modrinth.com 适用
-            let _ =
-                fetcher::fetch_verified_c(&mcim_mirror_urls(icon), &dest, None::<fn(u64, u64)>, "", Some(cancel)).await;
+            let _ = fetcher::fetch_verified_c(
+                &mcim_mirror_urls(icon),
+                &dest,
+                None::<fn(u64, u64)>,
+                "",
+                Some(cancel),
+            )
+            .await;
         }
     }
     let sources: Vec<DownloadSource> = config.file_sources_list().into_iter().cloned().collect();
@@ -379,18 +402,31 @@ pub async fn run_install(
         cancel,
         crate::downloader::version::fetch_version_json_text(&plan.version_url, &config),
     )
-    .await {
+    .await
+    {
         Ok(t) => t,
         Err(e) => {
             emit_handle.abort();
-            return fail_or_cancel(app, progress, cancel, format!("拉取版本清单失败\n{e}"), Some(cleanup));
+            return fail_or_cancel(
+                app,
+                progress,
+                cancel,
+                format!("拉取版本清单失败\n{e}"),
+                Some(cleanup),
+            );
         }
     };
     let vj: VersionJson = match serde_json::from_str(&parent_text) {
         Ok(v) => v,
         Err(e) => {
             emit_handle.abort();
-            return fail_or_cancel(app, progress, cancel, format!("解析版本清单失败\n{e}"), Some(cleanup));
+            return fail_or_cancel(
+                app,
+                progress,
+                cancel,
+                format!("解析版本清单失败\n{e}"),
+                Some(cleanup),
+            );
         }
     };
     // 补齐 B 段总量估算：client + 库 + 资源索引声明总量
@@ -409,8 +445,8 @@ pub async fn run_install(
     // 无 loader 时写原版 JSON（loader 模式由 installer 写合并 JSON）。
     // 写盘失败必须报错：假成功会让版本缺 json、启动时报"未找到版本 JSON"。
     if plan.loader.is_none() {
-        let json = serde_json::to_string_pretty(&vj)
-            .map_err(|e| format!("序列化版本 JSON 失败\n{e}"));
+        let json =
+            serde_json::to_string_pretty(&vj).map_err(|e| format!("序列化版本 JSON 失败\n{e}"));
         match json {
             Ok(json) => {
                 let jp = vdir.join(format!("{}.json", plan.version_dir_name));
@@ -438,15 +474,37 @@ pub async fn run_install(
     }
 
     // ── B2：client.jar ──
-    set_phase(app, progress, None, "游戏主文件", i_jar, StepStatus::Running);
+    set_phase(
+        app,
+        progress,
+        None,
+        "游戏主文件",
+        i_jar,
+        StepStatus::Running,
+    );
     if let Some(cl) = &vj.downloads.client {
         let jar_path = vdir.join(format!("{}.jar", plan.version_dir_name));
-        let fresh = !(jar_path.exists() && crate::downloader::hash::file_sha1_matches(&jar_path, &cl.sha1));
+        let fresh =
+            !(jar_path.exists() && crate::downloader::hash::file_sha1_matches(&jar_path, &cl.sha1));
         if fresh {
             let urls: Vec<String> = sources.iter().map(|src| src.mirror_url(&cl.url)).collect();
-            if let Err(e) = fetcher::fetch_verified_c(&urls, &jar_path, None::<fn(u64, u64)>, &cl.sha1, Some(cancel)).await {
+            if let Err(e) = fetcher::fetch_verified_c(
+                &urls,
+                &jar_path,
+                None::<fn(u64, u64)>,
+                &cl.sha1,
+                Some(cancel),
+            )
+            .await
+            {
                 emit_handle.abort();
-                return fail_or_cancel(app, progress, cancel, format!("下载游戏主文件失败\n{e}"), Some(cleanup));
+                return fail_or_cancel(
+                    app,
+                    progress,
+                    cancel,
+                    format!("下载游戏主文件失败\n{e}"),
+                    Some(cleanup),
+                );
             }
             c.bytes.fetch_add(cl.size, Ordering::Relaxed);
         }
@@ -472,7 +530,13 @@ pub async fn run_install(
     .await
     {
         emit_handle.abort();
-        return fail_or_cancel(app, progress, cancel, format!("下载依赖库失败\n{}", e.join("; ")), Some(cleanup));
+        return fail_or_cancel(
+            app,
+            progress,
+            cancel,
+            format!("下载依赖库失败\n{}", e.join("; ")),
+            Some(cleanup),
+        );
     }
     finish_step(app, progress, i_libs, &c);
 
@@ -490,7 +554,13 @@ pub async fn run_install(
     .await
     {
         emit_handle.abort();
-        return fail_or_cancel(app, progress, cancel, format!("下载资源文件失败\n{}", e.join("; ")), Some(cleanup));
+        return fail_or_cancel(
+            app,
+            progress,
+            cancel,
+            format!("下载资源文件失败\n{}", e.join("; ")),
+            Some(cleanup),
+        );
     }
     finish_step(app, progress, i_asst, &c);
 
@@ -505,7 +575,13 @@ pub async fn run_install(
     .await
     {
         emit_handle.abort();
-        return fail_or_cancel(app, progress, cancel, format!("处理原生库失败\n{}", e.join("; ")), Some(cleanup));
+        return fail_or_cancel(
+            app,
+            progress,
+            cancel,
+            format!("处理原生库失败\n{}", e.join("; ")),
+            Some(cleanup),
+        );
     }
     finish_step(app, progress, i_nat, &c);
 
@@ -527,16 +603,57 @@ pub async fn run_install(
         let install_fut = async {
             match loader.kind {
                 crate::task::LoaderKind::Fabric => {
-                    mod_loader::install_fabric(&plan.mc_version, &loader.version, &plan.version_dir_name, &vdir, &parent_text, &config, &counters, Some(&hook)).await
+                    mod_loader::install_fabric(
+                        &plan.mc_version,
+                        &loader.version,
+                        &plan.version_dir_name,
+                        &vdir,
+                        &parent_text,
+                        &config,
+                        &counters,
+                        Some(&hook),
+                    )
+                    .await
                 }
                 crate::task::LoaderKind::Quilt => {
-                    mod_loader::install_quilt(&plan.mc_version, &loader.version, &plan.version_dir_name, &vdir, &parent_text, &config, &counters, Some(&hook)).await
+                    mod_loader::install_quilt(
+                        &plan.mc_version,
+                        &loader.version,
+                        &plan.version_dir_name,
+                        &vdir,
+                        &parent_text,
+                        &config,
+                        &counters,
+                        Some(&hook),
+                    )
+                    .await
                 }
                 crate::task::LoaderKind::Forge => {
-                    mod_loader::install_forge(&plan.mc_version, &loader.version, &plan.version_dir_name, &vdir, &parent_text, &config, &counters, cancel, Some(&hook)).await
+                    mod_loader::install_forge(
+                        &plan.mc_version,
+                        &loader.version,
+                        &plan.version_dir_name,
+                        &vdir,
+                        &parent_text,
+                        &config,
+                        &counters,
+                        cancel,
+                        Some(&hook),
+                    )
+                    .await
                 }
                 crate::task::LoaderKind::NeoForge => {
-                    mod_loader::install_neoforge(&loader.version, &plan.version_dir_name, &vdir, &parent_text, &config, &counters, cancel, Some(&hook)).await
+                    mod_loader::install_neoforge(
+                        &loader.version,
+                        &plan.version_dir_name,
+                        &vdir,
+                        &parent_text,
+                        &config,
+                        &counters,
+                        cancel,
+                        Some(&hook),
+                    )
+                    .await
                 }
             }
         };
@@ -698,7 +815,14 @@ pub async fn run_install(
                     );
                 }
             }
-            set_phase(app, progress, None, &format!("下载 {}", f.path), idx, StepStatus::Running);
+            set_phase(
+                app,
+                progress,
+                None,
+                &format!("下载 {}", f.path),
+                idx,
+                StepStatus::Running,
+            );
             let urls = mcim_mirror_urls(&f.url);
             let sha1 = f.sha1.clone();
             let label = f.path.clone();
@@ -712,8 +836,7 @@ pub async fn run_install(
                     && if !sha1.is_empty() {
                         crate::downloader::hash::file_sha1_matches(&dest, &sha1)
                     } else {
-                        size > 0
-                            && std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0) == size
+                        size > 0 && std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0) == size
                     };
                 if hit {
                     return Ok((idx, 0u64));
@@ -757,7 +880,13 @@ pub async fn run_install(
                 }
                 Err(e) => {
                     emit_handle.abort();
-                    return fail_or_cancel(app, progress, cancel, format!("下载工作线程异常\n{e}"), Some(cleanup));
+                    return fail_or_cancel(
+                        app,
+                        progress,
+                        cancel,
+                        format!("下载工作线程异常\n{e}"),
+                        Some(cleanup),
+                    );
                 }
             }
         }
@@ -765,16 +894,22 @@ pub async fn run_install(
 
     // ── C2：overrides 解压 ──
     if let (Some(ov), Some(idx)) = (&plan.overrides, i_overrides) {
-        set_phase(app, progress, None, "解压覆盖文件", idx, StepStatus::Running);
+        set_phase(
+            app,
+            progress,
+            None,
+            "解压覆盖文件",
+            idx,
+            StepStatus::Running,
+        );
         let ov = ov.clone();
         let vd = vdir.clone();
-        if let Err(e) =
-            race_cancel(cancel, async move {
-                tokio::task::spawn_blocking(move || extract_overrides(&ov, &vd))
-                    .await
-                    .map_err(|e| format!("解压工作线程异常\n{e}"))?
-            })
-            .await
+        if let Err(e) = race_cancel(cancel, async move {
+            tokio::task::spawn_blocking(move || extract_overrides(&ov, &vd))
+                .await
+                .map_err(|e| format!("解压工作线程异常\n{e}"))?
+        })
+        .await
         {
             emit_handle.abort();
             return fail_or_cancel(app, progress, cancel, e, Some(cleanup));
@@ -814,7 +949,9 @@ fn extract_member(
     name: &str,
     out: &Path,
 ) -> Result<(), String> {
-    let mut entry = archive.by_name(name).map_err(|e| format!("读取包内资源失败\n{e}"))?;
+    let mut entry = archive
+        .by_name(name)
+        .map_err(|e| format!("读取包内资源失败\n{e}"))?;
     if let Some(parent) = out.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败\n{e}"))?;
     }
@@ -830,7 +967,9 @@ fn extract_overrides(ov: &OverridesRef, vdir: &Path) -> Result<(), String> {
     let file = std::fs::File::open(&ov.zip_path).map_err(|e| format!("打开整合包缓存失败\n{e}"))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取整合包缓存失败\n{e}"))?;
     for i in 0..archive.len() {
-        let mut entry = archive.by_index(i).map_err(|e| format!("读取条目失败\n{e}"))?;
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| format!("读取条目失败\n{e}"))?;
         let Some(rel) = override_rel(entry.name(), &ov.prefix) else {
             continue;
         };
@@ -876,13 +1015,15 @@ mod tests {
     use std::io::Write as _;
 
     fn opts() -> zip::write::SimpleFileOptions {
-        zip::write::SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Stored)
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored)
     }
 
     #[test]
     fn override_rel_strips_prefix_and_skips_dirs() {
-        assert_eq!(override_rel("overrides/mods/a.jar", "overrides/"), Some("mods/a.jar"));
+        assert_eq!(
+            override_rel("overrides/mods/a.jar", "overrides/"),
+            Some("mods/a.jar")
+        );
         assert_eq!(override_rel("overrides/", "overrides/"), None);
         assert_eq!(override_rel("meta/other", "overrides/"), None);
     }
@@ -929,15 +1070,29 @@ mod tests {
         let online = ModpackRequest {
             name: "Demo".into(),
             icon_url: None,
-            source: PackSource::Online { url: "https://x/a.mrpack".into(), sha1: String::new(), size: 0 },
+            source: PackSource::Online {
+                url: "https://x/a.mrpack".into(),
+                sha1: String::new(),
+                size: 0,
+            },
         };
         let local = ModpackRequest {
             name: "Demo".into(),
             icon_url: None,
-            source: PackSource::Local { path: "C:/a.mrpack".into() },
+            source: PackSource::Local {
+                path: "C:/a.mrpack".into(),
+            },
         };
-        assert_ne!(cache_key(&online), cache_key(&local), "同名不同来源键应不同");
-        assert_eq!(cache_key(&online), cache_key(&online.clone()), "同来源键稳定");
+        assert_ne!(
+            cache_key(&online),
+            cache_key(&local),
+            "同名不同来源键应不同"
+        );
+        assert_eq!(
+            cache_key(&online),
+            cache_key(&online.clone()),
+            "同来源键稳定"
+        );
     }
 
     #[test]
@@ -945,7 +1100,11 @@ mod tests {
         let online = ModpackRequest {
             name: "D".into(),
             icon_url: None,
-            source: PackSource::Online { url: "u".into(), sha1: String::new(), size: 0 },
+            source: PackSource::Online {
+                url: "u".into(),
+                sha1: String::new(),
+                size: 0,
+            },
         };
         let local = ModpackRequest {
             name: "D".into(),
@@ -960,11 +1119,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let zip_path = dir.path().join("a.mrpack");
         write_test_zip(&zip_path, "modrinth.index.json"); // overrides/mods/a.jar
-        let mut ar =
-            zip::ZipArchive::new(std::fs::File::open(&zip_path).unwrap()).unwrap();
+        let mut ar = zip::ZipArchive::new(std::fs::File::open(&zip_path).unwrap()).unwrap();
 
         let expected = crate::downloader::hash::sha1_hex(b"jar-bytes");
-        assert_eq!(member_sha1(&mut ar, "overrides/mods/a.jar").as_deref(), Some(expected.as_str()));
+        assert_eq!(
+            member_sha1(&mut ar, "overrides/mods/a.jar").as_deref(),
+            Some(expected.as_str())
+        );
         assert_eq!(member_sha1(&mut ar, "overrides/missing.jar"), None);
 
         // 单成员解压：内容逐字节还原到目标路径
@@ -972,6 +1133,4 @@ mod tests {
         extract_member(&mut ar, "overrides/mods/a.jar", &out).unwrap();
         assert_eq!(std::fs::read(&out).unwrap(), b"jar-bytes");
     }
-
-
 }

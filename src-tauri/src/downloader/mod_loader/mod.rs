@@ -167,15 +167,11 @@ pub(crate) fn expand_inheritance(
 /// - 期望 sha1 已知（Forge：version.json 的 `forge:{ver}:client` 库 sha1）→ 存在且 sha1 匹配；
 /// - 期望 sha1 未知（NeoForge patched jar 无公开 hash）→ 存在且体积 ≥1MB 粗校验（对齐旧行为，
 ///   部分写入的残留不会误判）。
-pub(crate) fn processor_outputs_are_current(
-    outputs: &[(&std::path::Path, Option<&str>)],
-) -> bool {
-    outputs
-        .iter()
-        .all(|(p, sha1)| match sha1 {
-            Some(h) => crate::downloader::hash::file_sha1_matches(p, h),
-            None => p.metadata().map(|m| m.len() >= 1_000_000).unwrap_or(false),
-        })
+pub(crate) fn processor_outputs_are_current(outputs: &[(&std::path::Path, Option<&str>)]) -> bool {
+    outputs.iter().all(|(p, sha1)| match sha1 {
+        Some(h) => crate::downloader::hash::file_sha1_matches(p, h),
+        None => p.metadata().map(|m| m.len() >= 1_000_000).unwrap_or(false),
+    })
 }
 
 /// 运行安装器 Java 工具并收集输出（stdout/stderr 完整返回），轮询取消标志：
@@ -234,7 +230,6 @@ pub enum LoaderEvent {
 /// Send + Sync：钩子闭包会穿过 async task 边界（跨线程）。
 pub type LoaderHook<'a> = &'a (dyn Fn(LoaderEvent) + Send + Sync);
 
-
 /// 统一 ModLoader 安装入口：按种类分派四个安装器。
 /// runner（完整下载）与 task/modpack（整合包）共用，消除两份四路 match 重复。
 /// `cancel` 仅 Forge/NeoForge 使用（installer 式需 kill 子进程），Fabric/Quilt 忽略。
@@ -253,26 +248,66 @@ pub async fn install_loader(
 ) -> Result<(), String> {
     use crate::task::LoaderKind;
     // Fabric/Quilt 不接受 cancel——传 None 时借一个永不置位的静态令牌兜底
-        static NO_CANCEL_ARC: std::sync::LazyLock<std::sync::Arc<std::sync::atomic::AtomicBool>> =
+    static NO_CANCEL_ARC: std::sync::LazyLock<std::sync::Arc<std::sync::atomic::AtomicBool>> =
         std::sync::LazyLock::new(|| std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
     let default_cancel = || -> &std::sync::Arc<std::sync::atomic::AtomicBool> { &NO_CANCEL_ARC };
 
     match kind {
         LoaderKind::Fabric => {
-            install_fabric(mc_version, loader_version, dir_name, vdir, parent_text, config, counters, hook).await
+            install_fabric(
+                mc_version,
+                loader_version,
+                dir_name,
+                vdir,
+                parent_text,
+                config,
+                counters,
+                hook,
+            )
+            .await
         }
         LoaderKind::Quilt => {
-            install_quilt(mc_version, loader_version, dir_name, vdir, parent_text, config, counters, hook).await
+            install_quilt(
+                mc_version,
+                loader_version,
+                dir_name,
+                vdir,
+                parent_text,
+                config,
+                counters,
+                hook,
+            )
+            .await
         }
         LoaderKind::Forge => {
-            install_forge(mc_version, loader_version, dir_name, vdir, parent_text, config, counters, cancel.unwrap_or_else(default_cancel), hook).await
+            install_forge(
+                mc_version,
+                loader_version,
+                dir_name,
+                vdir,
+                parent_text,
+                config,
+                counters,
+                cancel.unwrap_or_else(default_cancel),
+                hook,
+            )
+            .await
         }
         LoaderKind::NeoForge => {
-            install_neoforge(loader_version, dir_name, vdir, parent_text, config, counters, cancel.unwrap_or_else(default_cancel), hook).await
+            install_neoforge(
+                loader_version,
+                dir_name,
+                vdir,
+                parent_text,
+                config,
+                counters,
+                cancel.unwrap_or_else(default_cancel),
+                hook,
+            )
+            .await
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -299,7 +334,10 @@ mod tests {
         let sha = crate::downloader::hash::sha1_hex(b"data");
         assert!(processor_outputs_are_current(&[(&p, Some(&sha))]));
         assert!(
-            !processor_outputs_are_current(&[(&p, Some("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"))]),
+            !processor_outputs_are_current(&[(
+                &p,
+                Some("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+            )]),
             "sha1 不匹配必须判定需重跑"
         );
         // 无 sha1 来源：体积阈值粗校验（≥1MB 视为就绪，对齐 NeoForge 旧行为）

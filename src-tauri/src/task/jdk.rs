@@ -46,7 +46,14 @@ pub async fn run_install_jdk(
         task::global().set_cleanup_path(&p.task_id, dest_dir.clone());
     }
 
-    set_phase(&app, progress, Some(TaskStatus::Running), &format!("下载 Java {major}"), 0, StepStatus::Running);
+    set_phase(
+        &app,
+        progress,
+        Some(TaskStatus::Running),
+        &format!("下载 Java {major}"),
+        0,
+        StepStatus::Running,
+    );
     if cancelled(cancel) {
         return set_cancelled(&app, progress);
     }

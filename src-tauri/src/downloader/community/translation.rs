@@ -2,8 +2,8 @@
 
 use std::collections::HashMap;
 
-use crate::downloader::fetcher;
 use super::shared::QUERY_TIMEOUT_SECS;
+use crate::downloader::fetcher;
 
 /// MCIM 镜像站（Modrinth/CurseForge API 与翻译数据镜像）
 const MCIM_API: &str = "https://mod.mcimirror.top";
