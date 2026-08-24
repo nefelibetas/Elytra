@@ -37,6 +37,20 @@ withDefaults(
 </template>
 
 <style scoped>
+/* 壳：Teleport 到 body 的 fixed 弹出层。left/top 由调用方内联传入，
+   必须 fixed 定位才生效——缺 position 会退化为 body 底部 static 块，
+   菜单渲染到窗口角落/屏幕外，表现为"点了没反应"。 */
+.menu-pop {
+  position: fixed;
+  z-index: 2100; /* 内容/边缘加深之上，toast(3000)/tooltip(3100) 之下 */
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-lg);
+  padding: 4px;
+  box-sizing: border-box;
+}
+
 .menu-pop :slotted(.menu-item) {
   padding: 8px 12px;
   font-size: 13px;
