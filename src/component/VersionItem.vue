@@ -74,12 +74,12 @@ const emit = defineEmits<{ select: [] }>();
   align-items: center;
   gap: 4px;
   opacity: 0;
-  pointer-events: none; /* 隐藏态不拦截整行点击 */
-  transition: opacity 0.12s;
+  visibility: hidden; /* 隐藏态彻底移出命中测试（对 WebView2/WebKit 最稳） */
+  transition: opacity 0.12s, visibility 0.12s;
 }
 
 .ver-item:hover .ver-actions {
   opacity: 1;
-  pointer-events: auto;
+  visibility: visible;
 }
 </style>
