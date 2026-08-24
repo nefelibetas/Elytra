@@ -223,6 +223,22 @@ pub async fn run_install(
     let online = matches!(request.source, PackSource::Online { .. });
     let zip_path = zip_cache_path(request);
 
+    // ── A 段临时心跳：正式心跳在解析完成后才启动（完整步骤表那时才知道），
+    // A 段若无心跳则包体下载全程 0%（无速度/ETA/百分比）。临时心跳只覆盖
+    // A1/A2：est = 包体大小，进度走字节公式；A 段结束后 abort，正式心跳接管。
+    let a_bytes = Arc::new(AtomicU64::new(0));
+    let a_est = Arc::new(AtomicU64::new(0));
+    let a_heartbeat = spawn_heartbeat(
+        app,
+        progress,
+        HeartbeatStats {
+            done_files: Arc::new(AtomicU32::new(0)),
+            total_files: u32::from(online) + 1,
+            bytes: Arc::clone(&a_bytes),
+            est_total_bytes: Arc::clone(&a_est),
+        },
+    );
+
     // ── A1：获取包体（幂等：本地缓存 sha1 命中直接跳过）──
     let mut pack_bytes_est = 0u64;
     if let PackSource::Online { url, sha1, size } = &request.source {
@@ -235,6 +251,7 @@ pub async fn run_install(
             StepStatus::Running,
         );
         pack_bytes_est = *size;
+        a_est.store(*size, Ordering::Relaxed);
         // 强校验优先；清单未提供 sha1 时降级为体积弱校验——与 fetch_verified_c
         // 空 sha1 跳过网络校验的信任模型一致，恢复场景不再整包重下
         let cached = zip_path.is_file()
@@ -244,10 +261,19 @@ pub async fn run_install(
                 _ => false,
             };
         if !cached {
+            // 下载字节经回调累加进临时心跳（绝对值 → swap 求增量）
+            let dl_cb = {
+                let a_bytes = Arc::clone(&a_bytes);
+                let last = Arc::new(AtomicU64::new(0));
+                move |d: u64, _t: u64| {
+                    let prev = last.swap(d, Ordering::Relaxed);
+                    a_bytes.fetch_add(d.saturating_sub(prev), Ordering::Relaxed);
+                }
+            };
             if let Err(e) = fetcher::fetch_verified_c(
                 &mcim_mirror_urls(url),
                 &zip_path,
-                None::<fn(u64, u64)>,
+                Some(dl_cb),
                 sha1,
                 Some(cancel),
             )
@@ -260,6 +286,7 @@ pub async fn run_install(
                 .unwrap_or(*size);
         }
         step_done(app, progress, 0);
+        a_bytes.store(pack_bytes_est, Ordering::Relaxed);
     }
     if cancelled(cancel) {
         set_cancelled(app, progress);
@@ -293,6 +320,8 @@ pub async fn run_install(
         );
     }
     step_done(app, progress, parse_idx);
+    // A 段结束：停临时心跳，正式 Counters/心跳在下方接管（est 补齐内容部分）
+    a_heartbeat.abort();
     let a_done = parse_idx + 1; // A 段已完成步骤数
 
     // ── 重建完整步骤表（B 段本体 + C 段内容）──
