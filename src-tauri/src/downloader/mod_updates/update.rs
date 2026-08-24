@@ -7,8 +7,8 @@ use serde::Serialize;
 
 use super::scan::LocalModFile;
 use super::identify::file_sha1;
-use super::{QUERY_CONCURRENCY, MODRINTH_API};
-use crate::downloader::community;
+use super::QUERY_CONCURRENCY;
+use crate::downloader::community::{ApiPlatform, api_routes, get_json_multi};
 use crate::downloader::fetcher;
 
 /// 单个 mod 的更新信息（check_updates 命中 Modrinth 且存在新版本时产出）。
@@ -33,12 +33,23 @@ async fn latest_version(
 ) -> Option<(String, String, String)> {
     let game_versions = serde_json::json!([mc_version]).to_string();
     let loaders = serde_json::json!([loader]).to_string();
-    let url = reqwest::Url::parse_with_params(
-        &format!("{}/v2/project/{}/version", MODRINTH_API, project_id),
-        &[("game_versions", game_versions), ("loaders", loaders)],
+    let urls: Vec<String> = api_routes(
+        ApiPlatform::Modrinth,
+        &format!("/v2/project/{project_id}/version"),
     )
-    .ok()?;
-    let data = community::get_json(url.as_str()).await.ok()?;
+    .iter()
+    .map(|base| {
+        reqwest::Url::parse_with_params(
+            base,
+            &[("game_versions", game_versions.clone()), ("loaders", loaders.clone())],
+        )
+        .map(|u| u.as_str().to_string())
+        .ok()
+    })
+    .collect::<Option<Vec<_>>>()?;
+    let data = get_json_multi(&urls, |u| crate::downloader::fetcher::http().get(u.to_string()))
+        .await
+        .ok()?;
     let arr = data.as_array()?;
     let first = arr.iter().find(|v| {
         v["version_number"].as_str().is_some()
@@ -94,8 +105,13 @@ pub async fn check_updates(
     let results = futures_util::stream::iter(inputs.into_iter().map(
         |(file_name, dir, mc, ld)| async move {
             let sha1 = file_sha1(dir.join(&file_name)).await?;
-            let url = format!("{}/v2/version_file/{}?algorithm=sha1", MODRINTH_API, sha1);
-            let cur = community::get_json(&url).await.ok()?;
+            let urls = api_routes(
+                ApiPlatform::Modrinth,
+                &format!("/v2/version_file/{sha1}?algorithm=sha1"),
+            );
+            let cur = get_json_multi(&urls, |u| crate::downloader::fetcher::http().get(u.to_string()))
+                .await
+                .ok()?;
             let project_id = cur["project_id"].as_str()?.to_string();
             let current_version = cur["version_number"].as_str()?.to_string();
             if current_version.is_empty() {
