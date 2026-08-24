@@ -1,26 +1,87 @@
-//! 两平台共用部分：JSON 交互请求通道与 MC 版本号解析/比较助手。
+//! 两平台共用部分：社区 API 路由（官方/MCIM 多候选）、多候选 JSON 请求、
+//! MC 版本号解析/比较助手。
 
-use crate::downloader::fetcher;
-
+use crate::config::downloader::model::{DownloadSourceMode, DownloaderConfig};
+use crate::constants;
 /// 搜索类交互请求超时（默认 client 300s 太长，搜索卡住不该让前端挂 5 分钟）
 pub(super) const QUERY_TIMEOUT_SECS: u64 = 10;
 
-/// JSON 交互请求（10s 超时）：直接 GET 解析，不做文件下载层的重试/换源（搜索失败即返回）。
-/// pub(crate)：本地 Mod 识别（mod_updates）复用同一查询通道，避免两份副本漂移。
-pub(crate) async fn get_json(url: &str) -> Result<serde_json::Value, String> {
-    let resp = fetcher::http()
-        .get(url)
-        .timeout(std::time::Duration::from_secs(QUERY_TIMEOUT_SECS))
-        .send()
-        .await
-        .map_err(|e| format!("请求失败\n{}", e))?;
-    if !resp.status().is_success() {
-        return Err(format!("请求失败\nHTTP {}", resp.status()));
-    }
-    resp.json::<serde_json::Value>()
-        .await
-        .map_err(|e| format!("解析 JSON 失败\n{}", e))
+/// 社区 API 平台（官方与 MCIM 镜像的路径映射规则不同）。
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ApiPlatform {
+    Modrinth,
+    CurseForge,
 }
+
+/// 社区 API 多源候选：按 community_source_mode 在官方与 MCIM 镜像间路由。
+/// 镜像映射（docs.mcimirror.top，"可直接替换 URL"）：
+///   api.modrinth.com   → mod.mcimirror.top/modrinth
+///   api.curseforge.com → mod.mcimirror.top/curseforge（/v1 前缀保留）
+/// Auto = 官方优先 + 镜像备用；ChinaOnly 仅镜像；OfficialOnly 仅官方。
+pub(crate) fn api_routes(platform: ApiPlatform, path: &str) -> Vec<String> {
+    let (official, mirror) = match platform {
+        ApiPlatform::Modrinth => (
+            format!("https://api.modrinth.com{path}"),
+            format!("https://mod.mcimirror.top/modrinth{path}"),
+        ),
+        ApiPlatform::CurseForge => (
+            format!("https://api.curseforge.com/v1{path}"),
+            format!("https://mod.mcimirror.top/curseforge/v1{path}"),
+        ),
+    };
+    let cfg: DownloaderConfig =
+        crate::persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
+    match cfg.community_source_mode {
+        DownloadSourceMode::OfficialOnly => vec![official],
+        DownloadSourceMode::ChinaOnly => vec![mirror],
+        DownloadSourceMode::Auto => vec![official, mirror],
+    }
+}
+
+/// 多候选 JSON GET：逐源尝试；双候选时主源 5s 短超时快速降级镜像；
+/// 404 属确定性未命中不换源。`build` 在给定 URL 上追加查询参数/鉴权头等。
+pub(crate) async fn get_json_multi<F>(
+    urls: &[String],
+    mut build: F,
+) -> Result<serde_json::Value, String>
+where
+    F: FnMut(&str) -> reqwest::RequestBuilder,
+{
+    let mut last_err = String::new();
+    for (i, url) in urls.iter().enumerate() {
+        let resp = match build(url)
+            .timeout(std::time::Duration::from_secs(if i == 0 && urls.len() > 1 {
+                // 主源过慢（5s）即降级镜像，对齐 version_query 自适应语义
+                5
+            } else {
+                QUERY_TIMEOUT_SECS
+            }))
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                last_err = format!("请求失败\n{}", e);
+                continue;
+            }
+        };
+        // 404 属确定性未命中（镜像同样不会有），不换源
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(format!("请求失败\nHTTP {}", resp.status()));
+        }
+        if !resp.status().is_success() {
+            last_err = format!("请求失败\nHTTP {}", resp.status());
+            continue;
+        }
+        return resp
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|e| format!("解析 JSON 失败\n{}", e));
+    }
+    Err(last_err)
+}
+
+
 
 /// 解析 MC 版本号为数值段（"1.21.1" → [1,21,1]）；含非数字段（snapshot 如 "24w14a"）返回 None。
 fn parse_game_version(v: &str) -> Option<Vec<u64>> {

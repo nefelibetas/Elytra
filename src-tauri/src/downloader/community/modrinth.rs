@@ -1,12 +1,12 @@
 //! Modrinth 平台实现（无需 key）：搜索 / 版本列表 / 详情原始 JSON。
 
-use super::shared::{get_json, version_range};
+use super::shared::{ApiPlatform, api_routes, get_json_multi, version_range};
+use crate::downloader::fetcher;
 use super::{
     CommunityDependency, CommunityDependencyItem, CommunitySearchPage, CommunitySearchResult,
     CommunityVersion,
 };
 
-const MODRINTH_API: &str = "https://api.modrinth.com";
 
 /// 已知 ModLoader 名（用于从 Modrinth categories 中过滤 loader 标签）。
 const KNOWN_LOADERS: [&str; 4] = ["fabric", "forge", "neoforge", "quilt"];
@@ -92,9 +92,15 @@ pub(super) async fn search_modrinth(
     if query.is_empty() {
         params.push(("index", "downloads".into()));
     }
-    let url = reqwest::Url::parse_with_params(&format!("{}/v2/search", MODRINTH_API), &params)
-        .map_err(|e| format!("URL 构造失败\n{}", e))?;
-    let data = get_json(url.as_str()).await?;
+    let urls: Vec<String> = api_routes(ApiPlatform::Modrinth, "/v2/search")
+        .iter()
+        .map(|base| {
+            reqwest::Url::parse_with_params(base, &params)
+                .map(|u| u.as_str().to_string())
+                .map_err(|e| format!("URL 构造失败\n{}", e))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let data = get_json_multi(&urls, |u| fetcher::http().get(u.to_string())).await?;
 
     let hits = data["hits"]
         .as_array()
@@ -149,12 +155,16 @@ pub(super) async fn modrinth_versions(
         let arr = serde_json::to_string(&vec![ld]).map_err(|e| format!("序列化数据失败\n{e}"))?;
         params.push(("loaders", arr));
     }
-    let url = reqwest::Url::parse_with_params(
-        &format!("{}/v2/project/{}/version", MODRINTH_API, project_id),
-        &params,
-    )
-    .map_err(|e| format!("URL 构造失败\n{}", e))?;
-    let data = get_json(url.as_str()).await?;
+    let urls: Vec<String> =
+        api_routes(ApiPlatform::Modrinth, &format!("/v2/project/{project_id}/version"))
+            .iter()
+            .map(|base| {
+                reqwest::Url::parse_with_params(base, &params)
+                    .map(|u| u.as_str().to_string())
+                    .map_err(|e| format!("URL 构造失败\n{}", e))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+    let data = get_json_multi(&urls, |u| fetcher::http().get(u.to_string())).await?;
 
     let arr = data
         .as_array()
@@ -220,12 +230,15 @@ pub(crate) async fn modrinth_projects_raw(
     ids: &[String],
 ) -> Result<Vec<serde_json::Value>, String> {
     let ids_json = serde_json::to_string(ids).map_err(|e| format!("序列化数据失败\n{e}"))?;
-    let url = reqwest::Url::parse_with_params(
-        &format!("{}/v2/projects", MODRINTH_API),
-        &[("ids", ids_json.as_str())],
-    )
-    .map_err(|e| format!("URL 构造失败\n{}", e))?;
-    let data = get_json(url.as_str()).await?;
+    let urls: Vec<String> = api_routes(ApiPlatform::Modrinth, "/v2/projects")
+        .iter()
+        .map(|base| {
+            reqwest::Url::parse_with_params(base, &[("ids", ids_json.as_str())])
+                .map(|u| u.as_str().to_string())
+                .map_err(|e| format!("URL 构造失败\n{}", e))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let data = get_json_multi(&urls, |u| fetcher::http().get(u.to_string())).await?;
     let arr = data
         .as_array()
         .ok_or_else(|| "项目详情响应格式错误".to_string())?;
