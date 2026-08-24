@@ -1,4 +1,6 @@
-//! 启动命令（薄胶水 + 进程管理）：账号构造、spawn 游戏进程、导出脚本、环境校验。
+//! 启动命令（游戏进程 spawn 与窗口可见轮询、启动环境校验）。
+//! 启动脚本导出在 commands/launch_script.rs，启动选项在 commands/launch_options.rs，
+//! 离线账号历史在 commands/offline_account.rs；
 //! 环境准备在 config/launcher/env.rs，离线皮肤在 config/launcher/skin.rs，命令构建在 config/launcher/args.rs，
 //! 平台调节（GPU/内存/优先级）在 config/launcher/platform.rs。
 
@@ -53,7 +55,7 @@ fn fill_missing_xuid(auth: &mut AuthMode) {
 /// 三个启动类命令（launch_game / export_launch_script / spawn_game）共享的前置：
 /// 构造账号（补 xuid）→ 加载配置与版本 JSON。
 #[allow(clippy::type_complexity)]
-fn prepare_launch(
+pub(crate) fn prepare_launch(
     version_dir_name: &str,
     auth_mode: &str,
     username: &str,
@@ -146,52 +148,6 @@ fn run_pre_launch_command(command: &str) -> Result<(), String> {
     }
 }
 
-// ── 导出脚本 ───────────────────────────────────────
-
-/// 渲染启动脚本内容（Windows: .bat；macOS/Linux: .sh）。
-/// 格式对齐 PCL 导出脚本：chcp 65001 + title + cd 版本目录 + java 命令行 + pause。
-fn render_launch_script(
-    args: &[String],
-    mc_dir: &std::path::Path,
-    version_dir_name: &str,
-) -> String {
-    #[cfg(target_os = "windows")]
-    {
-        let mut out = String::new();
-        out.push_str("chcp 65001>nul\r\n");
-        out.push_str("@echo off\r\n");
-        out.push_str(&format!("title 启动 - {version_dir_name}\r\n"));
-        out.push_str("echo 游戏正在启动，请稍候。\r\n");
-        let vdir = mc_dir.join("versions").join(version_dir_name);
-        out.push_str(&format!("cd /D \"{}\"\r\n\r\n", vdir.display()));
-        for a in args {
-            out.push('"');
-            out.push_str(&a.replace('%', "%%"));
-            out.push_str("\" ");
-        }
-        out.push_str("\r\necho 游戏已退出。\r\n");
-        out.push_str("pause\r\n");
-        out
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let mut out = String::from("#!/usr/bin/env sh\n");
-        out.push_str(&format!("# 启动 - {version_dir_name}\n"));
-        out.push_str(&format!(
-            "cd \"{}\"\n",
-            mc_dir.join("versions").join(version_dir_name).display()
-        ));
-        out.push_str("exec ");
-        for a in args {
-            out.push('\'');
-            out.push_str(&a.replace('\'', "'\\''"));
-            out.push_str("' ");
-        }
-        out.push('\n');
-        out
-    }
-}
-
 // ── Tauri Commands ──────────────────────────────────
 
 /// 启动前环境 + 完整性校验，供前端分阶段显示启动流程。
@@ -216,111 +172,6 @@ pub async fn check_launch_env(version_dir_name: String) -> Result<String, String
         })
         .unwrap_or_else(|| "自动选择".into());
     Ok(format!("环境校验通过（JDK: {}）", java_env))
-}
-
-/// 系统内存信息（MB）：总内存 + 当前可用内存。
-#[tauri::command]
-pub fn get_memory_info() -> (u64, u64) {
-    crate::launcher::memory::system_memory_mb()
-}
-
-/// 读取启动选项配置（launcher section）。
-#[tauri::command]
-pub fn get_launch_options() -> LauncherConfig {
-    crate::persist::read::<LauncherConfig>(constants::SECT_LAUNCHER).unwrap_or_default()
-}
-
-/// 保存启动选项配置（launcher section）。
-#[tauri::command]
-pub fn save_launch_options(config: LauncherConfig) -> Result<(), String> {
-    crate::persist::save(constants::SECT_LAUNCHER, &config)
-        .map_err(|e| format!("保存配置失败\n{e}"))
-}
-
-/// 读取最后一次使用的离线用户名（历史列表末尾；兼容旧版单值键）。
-#[tauri::command]
-pub fn get_last_offline_username() -> String {
-    let list: Vec<String> =
-        crate::persist::read(constants::SECT_OFFLINE_ACCOUNTS).unwrap_or_default();
-    list.last().cloned().unwrap_or_else(|| {
-        // 旧版单值兼容（首次输入即存后旧键闲置）
-        crate::persist::read::<String>("last_offline_username").unwrap_or_default()
-    })
-}
-
-/// 保存最后一次使用的离线用户名（历史列表 upsert，置为末尾；空名忽略）。
-#[tauri::command]
-pub fn save_last_offline_username(username: String) -> Result<(), String> {
-    save_offline_account(username)
-}
-
-/// 读取离线账号历史（最近使用升序，末尾为当前）。
-#[tauri::command]
-pub fn get_offline_accounts() -> Vec<String> {
-    crate::persist::read(constants::SECT_OFFLINE_ACCOUNTS).unwrap_or_default()
-}
-
-/// 保存/更新离线用户名到历史列表（输入即存；已存在则移到末尾，空名忽略）。
-#[tauri::command]
-pub fn save_offline_account(username: String) -> Result<(), String> {
-    let name = username.trim().to_string();
-    if name.is_empty() {
-        return Ok(());
-    }
-    let mut list: Vec<String> =
-        crate::persist::read(constants::SECT_OFFLINE_ACCOUNTS).unwrap_or_default();
-    list.retain(|n| n != &name);
-    list.push(name);
-    crate::persist::save(constants::SECT_OFFLINE_ACCOUNTS, &list)
-        .map_err(|e| format!("保存配置失败\n{e}"))?;
-    let _ = crate::persist::remove("last_offline_username"); // 旧单值键已并入列表
-    Ok(())
-}
-
-/// 移除指定离线用户名。
-#[tauri::command]
-pub fn remove_offline_account(username: String) -> Result<(), String> {
-    let mut list: Vec<String> =
-        crate::persist::read(constants::SECT_OFFLINE_ACCOUNTS).unwrap_or_default();
-    list.retain(|n| n != &username);
-    crate::persist::save(constants::SECT_OFFLINE_ACCOUNTS, &list)
-        .map_err(|e| format!("保存配置失败\n{e}"))
-}
-
-/// 导出启动脚本：按 PCL 风格生成平台对应脚本（Windows .bat / macOS/Linux .sh）写入指定路径。
-/// 返回写入的文件路径。
-#[tauri::command]
-pub async fn export_launch_script(
-    save_path: String,
-    version_dir_name: String,
-    auth_mode: String,
-    username: String,
-    access_token: String,
-    uuid: String,
-    xuid: String,
-) -> Result<String, String> {
-    let (auth, java_path, version_json, mc_dir, launcher_config, java_major) = prepare_launch(
-        &version_dir_name,
-        &auth_mode,
-        &username,
-        &access_token,
-        &uuid,
-        &xuid,
-    )?;
-    let cmd = build_launch_command(
-        &java_path,
-        &version_json,
-        &version_dir_name,
-        &mc_dir,
-        &launcher_config,
-        &auth,
-        java_major,
-        "",
-    );
-
-    let script = render_launch_script(&cmd.args, &mc_dir, &version_dir_name);
-    std::fs::write(&save_path, script).map_err(|e| format!("写入脚本失败\n{e}"))?;
-    Ok(save_path)
 }
 
 /// 启动 Minecraft 游戏进程。返回子进程 PID。
@@ -561,30 +412,6 @@ fn latest_crash_report(dir: &std::path::Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_render_launch_script_bat() {
-        #[cfg(target_os = "windows")]
-        {
-            let args = vec![
-                r"C:\java\bin\java.exe".to_string(),
-                "-Xmx2G".to_string(),
-                "net.minecraft.client.main.Main".to_string(),
-            ];
-            let s = render_launch_script(
-                &args,
-                std::path::Path::new(r"D:\Minecraft\.minecraft"),
-                "26.2",
-            );
-            assert!(s.starts_with("chcp 65001>nul\r\n"));
-            assert!(s.contains("title 启动 - 26.2\r\n"));
-            assert!(s.contains(r#"cd /D "D:\Minecraft\.minecraft\versions\26.2""#));
-            assert!(
-                s.contains(r#""C:\java\bin\java.exe" "-Xmx2G" "net.minecraft.client.main.Main" "#)
-            );
-            assert!(s.ends_with("pause\r\n"));
-        }
-    }
 
     /// 构造一个最小可用的版本 JSON（旧格式 minecraftArguments，保底参数路径）。
     fn minimal_version_json() -> VersionJson {
