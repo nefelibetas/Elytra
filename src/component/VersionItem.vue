@@ -74,10 +74,12 @@ const emit = defineEmits<{ select: [] }>();
   align-items: center;
   gap: 4px;
   opacity: 0;
+  pointer-events: none; /* 隐藏态不拦截整行点击 */
   transition: opacity 0.12s;
 }
 
 .ver-item:hover .ver-actions {
   opacity: 1;
+  pointer-events: auto;
 }
 </style>

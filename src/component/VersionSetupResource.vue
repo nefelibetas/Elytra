@@ -377,12 +377,14 @@ const { deleteDialog, deleteTarget, openDelete, confirmDelete } = useConfirmDele
   align-items: center;
   gap: 6px;
   opacity: 0;
+  pointer-events: none; /* 隐藏态不拦截 item 点击 */
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
 
 .vsr-item:hover .vsr-item-actions {
   opacity: 1;
   transform: translateY(-50%) translateX(0);
+  pointer-events: auto;
 }
 
 .vsr-item-btn {

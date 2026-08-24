@@ -43,6 +43,7 @@ const emit = defineEmits<{ click: []; refresh: [] }>();
 }
 
 .tab-refresh {
+  pointer-events: none; /* 隐藏态不拦截点击（opacity:0 仍参与命中测试），行其余区域可点 */
   position: absolute;
   right: 4px;
   width: 28px; height: 28px;
@@ -55,8 +56,10 @@ const emit = defineEmits<{ click: []; refresh: [] }>();
   opacity: 0;
 }
 
-.tab-row:hover .tab-refresh { opacity: 1; }
-
+.tab-row:hover .tab-refresh {
+  opacity: 1;
+  pointer-events: auto;
+}
 .tab-refresh:hover {
   color: var(--color-brand);
   background-color: var(--color-brand-bg);
