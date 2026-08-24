@@ -205,3 +205,72 @@ mod tests {
         assert_eq!(parse_java_major("11.0.2"), Some(11));
     }
 }
+
+/// 魔数嗅探图片 mime 类型（与 is_supported_image 同一判定集；未知返回 None）。
+pub fn image_mime(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Some("image/png");
+    }
+    if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        return Some("image/jpeg");
+    }
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some("image/webp");
+    }
+    if bytes.starts_with(b"GIF8") {
+        return Some("image/gif");
+    }
+    None
+}
+
+/// 字节 → base64（图标 IPC 用：JSON 数字数组膨胀 3~5 倍，base64 仅 +33%）。
+pub fn to_base64(bytes: &[u8]) -> String {
+    use base64::{engine, Engine as _};
+    engine::general_purpose::STANDARD.encode(bytes)
+}
+
+#[cfg(test)]
+mod tests_icon {
+    use super::*;
+
+    #[test]
+    fn image_mime_sniffs_supported_formats() {
+        assert_eq!(image_mime(b"\x89PNG\r\n\x1a\n"), Some("image/png"));
+        assert_eq!(image_mime(&[0xff, 0xd8, 0xff, 0xe0]), Some("image/jpeg"));
+        let webp = b"RIFF\x00\x00\x00\x00WEBPVP8 ".to_vec();
+        assert_eq!(image_mime(&webp), Some("image/webp"));
+        assert_eq!(image_mime(b"GIF89a"), Some("image/gif"));
+        assert_eq!(image_mime(b"<html>"), None);
+    }
+
+    #[test]
+    fn to_base64_matches_known_vectors() {
+        assert_eq!(to_base64(b""), "");
+        assert_eq!(to_base64(b"f"), "Zg==");
+        assert_eq!(to_base64(b"fo"), "Zm8=");
+        assert_eq!(to_base64(b"foo"), "Zm9v");
+        assert_eq!(to_base64(b"foobar"), "Zm9vYmFy");
+    }
+}
+
+/// 图标 IPC 载荷：mime 由魔数嗅探，data 为 base64。
+/// （替代 JSON 数字数组——后者每个字节膨胀 3~5 倍，大图标拖慢 IPC。）
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct IconData {
+    pub mime: String,
+    pub data: String,
+}
+
+/// 读取图片文件为图标载荷；超限/空文件/非支持格式返回 None（fail-closed）。
+pub fn icon_payload(path: &Path, max_bytes: u64) -> Option<IconData> {
+    let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_file() || meta.len() == 0 || meta.len() > max_bytes {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    let mime = image_mime(&bytes)?;
+    Some(IconData {
+        mime: mime.to_string(),
+        data: to_base64(&bytes),
+    })
+}
