@@ -11,6 +11,7 @@ import {
 import { avatarState, scheduleOfflineRender, renderAccountHead, renderOfflineHead, accountHeads, offlineHeads } from "../store/avatar";
 import { accountUi } from "../store/accountUi";
 import { showError } from "../store/alert";
+import MenuPopover from "./MenuPopover.vue";
 
 const avatarUrl = computed(() =>
   authMode.value === "premium" ? avatarState.premiumAvatar : avatarState.offlineAvatar,
@@ -220,43 +221,37 @@ function useOfflineName(name: string) {
         </div>
 
         <!-- 皮肤/披风菜单（跟随鼠标，出现在右下方） -->
-        <Teleport to="body">
-          <div
-            v-if="accountUi.skinMenu.visible"
-            class="skin-menu"
-            :style="{ left: accountUi.skinMenu.x + 'px', top: accountUi.skinMenu.y + 'px' }"
-            @click.stop
-          >
-            <div class="menu-item" @click="accountUi.uploadSkin">修改皮肤</div>
-            <div class="menu-item" @click="accountUi.refreshSkin">刷新皮肤</div>
-            <div class="menu-item" @click="accountUi.saveSkin">保存皮肤文件</div>
-            <div class="menu-sep"></div>
-            <div class="menu-item" @click="accountUi.openCapeDialog">修改披风</div>
-            <div class="menu-item" @click="accountUi.refreshCape">刷新披风列表</div>
-          </div>
-        </Teleport>
+        <MenuPopover
+          :visible="accountUi.skinMenu.visible"
+          :x="accountUi.skinMenu.x"
+          :y="accountUi.skinMenu.y"
+        >
+          <div class="menu-item" @click="accountUi.uploadSkin">修改皮肤</div>
+          <div class="menu-item" @click="accountUi.refreshSkin">刷新皮肤</div>
+          <div class="menu-item" @click="accountUi.saveSkin">保存皮肤文件</div>
+          <div class="menu-sep"></div>
+          <div class="menu-item" @click="accountUi.openCapeDialog">修改披风</div>
+          <div class="menu-item" @click="accountUi.refreshCape">刷新披风列表</div>
+        </MenuPopover>
 
         <!-- 编辑信息菜单（修改密码 / 修改玩家名） -->
-        <Teleport to="body">
-          <div
-            v-if="accountUi.editMenu.visible"
-            class="skin-menu"
-            :style="{ left: accountUi.editMenu.x + 'px', top: accountUi.editMenu.y + 'px' }"
-            @click.stop
-          >
-            <div class="menu-item" @click="accountUi.openPasswordPage">修改密码</div>
-            <div class="menu-item" @click="accountUi.openNameChangePage">修改玩家名</div>
-          </div>
-        </Teleport>
+        <MenuPopover
+          :visible="accountUi.editMenu.visible"
+          :x="accountUi.editMenu.x"
+          :y="accountUi.editMenu.y"
+        >
+          <div class="menu-item" @click="accountUi.openPasswordPage">修改密码</div>
+          <div class="menu-item" @click="accountUi.openNameChangePage">修改玩家名</div>
+        </MenuPopover>
 
         <!-- 账号列表菜单（历史正版账号切换/移除/登录新账号） -->
-        <Teleport to="body">
-          <div
-            v-if="accountUi.accountsMenu.visible"
-            class="skin-menu acct-menu accounts"
-            :style="{ left: accountUi.accountsMenu.x + 'px', top: accountUi.accountsMenu.y + 'px' }"
-            @click.stop
-          >
+        <MenuPopover
+          :visible="accountUi.accountsMenu.visible"
+          :x="accountUi.accountsMenu.x"
+          :y="accountUi.accountsMenu.y"
+          menu-class="acct-menu accounts"
+          max-height="320px"
+        >
             <template v-if="msAccounts.length">
               <div
                 v-for="acc in msAccounts"
@@ -285,8 +280,7 @@ function useOfflineName(name: string) {
             <div v-else class="menu-item acct-empty">暂无历史账号</div>
             <div class="menu-sep"></div>
             <div class="menu-item" @click="accountUi.closeAccountsMenu(); startMsLogin()">登录新账号</div>
-          </div>
-        </Teleport>
+        </MenuPopover>
       </div>
     </div>
   </div>
@@ -524,38 +518,7 @@ function useOfflineName(name: string) {
   border-color: var(--color-brand);
 }
 
-/* 皮肤/披风菜单 */
-.skin-menu {
-  position: fixed;
-  z-index: var(--z-menu, 1000);
-  min-width: 164px;
-  padding: 6px;
-  background: var(--surface-elevated);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-lg);
-}
-
-.menu-item {
-  padding: 8px 12px;
-  font-size: 13px;
-  color: var(--text-primary);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.12s;
-}
-
-.menu-item:hover {
-  background: var(--color-brand);
-  color: var(--text-inverse);
-}
-
-/* 账号列表菜单：行 + 删除按钮 */
-.acct-menu {
-  max-height: 320px;
-  overflow-y: auto;
-}
+/* 账号列表菜单：行 + 删除按钮（菜单壳与 .menu-item/.menu-sep 样式收敛在 MenuPopover） */
 
 .acct-row {
   display: flex;
@@ -633,20 +596,15 @@ function useOfflineName(name: string) {
   background: rgba(229, 72, 77, 0.12);
 }
 
-.acct-empty {
+.menu-item.acct-empty {
   color: var(--text-tertiary);
   cursor: default;
 }
 
-.acct-empty:hover {
+/* 双类提特异性：压过 MenuPopover 内 :slotted(.menu-item:hover) 的品牌色反白 */
+.menu-item.acct-empty:hover {
   background: transparent;
   color: var(--text-tertiary);
-}
-
-.menu-sep {
-  height: 1px;
-  margin: 5px 8px;
-  background: var(--border-default);
 }
 
 .ms-login-waiting {

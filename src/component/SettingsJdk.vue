@@ -1,11 +1,11 @@
 <script setup lang="ts">
 // Java 运行时卡片：选择器下拉 + 扫描/自定义目录 + 下载缺失 JDK + 高级项（JVM 参数/GC/复选框）
-import { onMounted, ref } from "vue";
-import { Zap, ChevronDown, Check, RefreshCw, FolderPlus, Download } from "@lucide/vue";
+import { computed, onMounted, ref } from "vue";
+import { RefreshCw, FolderPlus, Download } from "@lucide/vue";
 import DropSelect, { type SelOption } from "./DropSelect.vue";
 import {
-  jdkList, autoMode, activeJdk, pickerOpen, loading, jdkError,
-  pickerLabel, pickerSub, refreshJdks, selectCustomDir, selectAuto, selectJdk,
+  jdkList, autoMode, activeJdk, loading, jdkError,
+  refreshJdks, selectCustomDir, selectAuto, selectJdk,
   installJdk, loadConfig,
 } from "../store/jdkConfig";
 import {
@@ -36,6 +36,31 @@ async function handleInstallJdk() {
   } catch (e) {
     showToast(errMsg(e));
   }
+
+}
+/** JDK 选择下拉（DropSelect）：自动模式 + 扫描到的各 JDK，path 作唯一 value。 */
+const AUTO_VALUE = "__auto__";
+
+const jdkOptions = computed<SelOption[]>(() => [
+  { value: AUTO_VALUE, label: "自动选择", desc: "根据游戏版本需求自动匹配" },
+  ...jdkList.value.map(j => ({
+    value: j.path,
+    label: j.version,
+    desc: `${j.vendor} · ${j.bits} 位 · ${j.path}`,
+  })),
+]);
+
+/** 当前选中值：自动模式固定 AUTO_VALUE；手动为 activeJdk 的 path。 */
+const jdkValue = computed(() => (autoMode.value ? AUTO_VALUE : activeJdk.value?.path ?? ""));
+
+/** 下拉选择：切自动或按 path 选中对应 JDK（store 内保存配置）。 */
+function onJdkPick(value: string) {
+  if (value === AUTO_VALUE) {
+    selectAuto();
+    return;
+  }
+  const hit = jdkList.value.find(j => j.path === value);
+  if (hit) selectJdk(hit);
 }
 </script>
 
@@ -50,43 +75,12 @@ async function handleInstallJdk() {
     <div class="jdk-toolbar">
       <div class="jdk-toolbar-row">
         <div class="jdk-picker-wrap">
-          <button class="jdk-picker" :class="{ open: pickerOpen }" @click="pickerOpen = !pickerOpen">
-            <span class="jdk-picker-main">
-              <Zap :size="16" />
-              {{ pickerLabel }}
-            </span>
-            <span class="jdk-picker-sub">{{ pickerSub }}</span>
-            <ChevronDown class="jdk-chevron" :class="{ flip: pickerOpen }" :size="12" />
-          </button>
-
-          <!-- 展开列表 -->
-          <Transition name="drop">
-            <div v-if="pickerOpen" class="jdk-dropdown">
-              <button class="jdk-opt" :class="{ selected: autoMode }" @click="selectAuto">
-                <div class="jdk-opt-main">
-                  <span class="jdk-opt-title">自动选择</span>
-                  <span class="jdk-opt-sub">根据游戏版本需求自动匹配</span>
-                </div>
-                <Check v-if="autoMode" :size="14" />
-              </button>
-              <div v-if="jdkList.length" class="jdk-drop-divider"></div>
-              <button
-                v-for="jdk in jdkList"
-                :key="jdk.path"
-                class="jdk-opt"
-                :class="{ selected: !autoMode && activeJdk && activeJdk.path === jdk.path }"
-                @click="selectJdk(jdk)"
-              >
-                <div class="jdk-opt-main">
-                  <span class="jdk-opt-title">{{ jdk.version }}</span>
-                  <span class="jdk-opt-sub">{{ jdk.vendor }} · {{ jdk.bits }} 位</span>
-                  <span class="jdk-opt-path">{{ jdk.path }}</span>
-                </div>
-                <Check v-if="!autoMode && activeJdk && activeJdk.path === jdk.path" :size="14" />
-              </button>
-              <div v-if="!jdkList.length" class="jdk-drop-empty">暂无扫描结果，点击「刷新」扫描</div>
-            </div>
-          </Transition>
+          <DropSelect
+            :model-value="jdkValue"
+            :options="jdkOptions"
+            width="100%"
+            @update:model-value="onJdkPick"
+          />
         </div>
 
         <button class="tool-btn" :disabled="loading" @click="refreshJdks">
@@ -248,157 +242,6 @@ async function handleInstallJdk() {
   position: relative;
 }
 
-.jdk-picker {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--surface-page);
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.jdk-picker:hover {
-  border-color: var(--color-brand);
-}
-
-.jdk-picker.open {
-  border-color: var(--color-brand);
-  box-shadow: 0 0 0 3px var(--color-brand-bg);
-}
-
-.jdk-picker-main {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-  white-space: nowrap;
-}
-
-.jdk-picker-main svg {
-  color: var(--color-brand);
-}
-
-.jdk-picker-sub {
-  flex: 1;
-  min-width: 0;
-  font-size: 12px;
-  color: var(--text-tertiary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.jdk-chevron {
-  flex-shrink: 0;
-  color: var(--text-tertiary);
-  transition: transform 0.15s;
-}
-
-.jdk-chevron.flip {
-  transform: rotate(180deg);
-}
-
-/* 下拉列表 */
-.jdk-dropdown {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  right: 0;
-  max-height: 280px;
-  overflow-y: auto;
-  overflow-x: hidden;
-  overscroll-behavior-x: none;
-  touch-action: pan-y;
-  background: var(--surface-card);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
-  z-index: 100;
-  padding: 6px;
-}
-
-.jdk-opt {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 10px 12px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  cursor: pointer;
-  text-align: left;
-  transition: background 0.1s;
-}
-
-.jdk-opt:hover {
-  background: var(--surface-hover);
-}
-
-.jdk-opt.selected {
-  background: var(--color-brand-bg);
-}
-
-.jdk-opt.selected .jdk-opt-title {
-  color: var(--color-brand);
-}
-
-.jdk-opt-main {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.jdk-opt-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.jdk-opt-sub {
-  font-size: 11px;
-  color: var(--text-tertiary);
-}
-
-.jdk-opt-path {
-  font-size: 11px;
-  color: var(--text-tertiary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.jdk-opt > svg {
-  flex-shrink: 0;
-  color: var(--color-brand);
-}
-
-.jdk-drop-divider {
-  height: 1px;
-  background: var(--border-default);
-  margin: 4px 8px;
-}
-
-.jdk-drop-empty {
-  padding: 14px;
-  text-align: center;
-  font-size: 12px;
-  color: var(--text-tertiary);
-}
-
-/* 下拉动画 */
-.drop-enter-active { transition: all 0.15s ease-out; }
-.drop-leave-active { transition: all 0.1s ease-in; }
-.drop-enter-from { opacity: 0; transform: translateY(-6px); }
-.drop-leave-to { opacity: 0; transform: translateY(-6px); }
 
 .jdk-divider {
   height: 1px;

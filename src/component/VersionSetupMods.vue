@@ -16,6 +16,7 @@ import AlertDialog from "./AlertDialog.vue";
 import LoadingSpinner from "./LoadingSpinner.vue";
 import EmptyState from "./EmptyState.vue";
 import ErrorState from "./ErrorState.vue";
+import { useConfirmDelete } from "../utils/useConfirmDelete";
 import {
   mods, modsLoading, modsError, modsNetworkError, modsLoadedFor,
   updates, updatesChecked, checkingUpdates, updatesError, updatingFiles,
@@ -90,24 +91,16 @@ async function openModsFolder() {
 }
 
 // ── 删除 Mod dialog ──
-const deleteDialog = ref(false);
-const deleteTarget = ref("");
-
-function openDelete(fileName: string) {
-  deleteTarget.value = fileName;
-  deleteDialog.value = true;
-}
-
-async function confirmDelete() {
-  const fileName = deleteTarget.value;
-  deleteDialog.value = false;
-  try {
-    await deleteMod(versionName.value, fileName);
-    showToast(`已删除 ${fileName}`);
-  } catch (e) {
-    showToast(errMsg(e));
-  }
-}
+const { deleteDialog, deleteTarget, openDelete, confirmDelete } = useConfirmDelete(
+  async fileName => {
+    try {
+      await deleteMod(versionName.value, fileName);
+      showToast(`已删除 ${fileName}`);
+    } catch (e) {
+      showToast(errMsg(e));
+    }
+  },
+);
 </script>
 
 <template>

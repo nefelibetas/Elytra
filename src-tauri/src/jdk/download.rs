@@ -230,18 +230,9 @@ async fn install_mojang_runtime(
                     .iter()
                     .map(|s| s.mirror_url(url))
                     .collect();
-                // 字节增量回调：闭包需 Fn（fetch 内部按块调用），用 prev swap 算差分
-                let prev = AtomicU64::new(0);
-                let cb = {
-                    let prev = &prev;
-                    let on_bytes = hook.on_bytes;
-                    move |downloaded: u64, _total: u64| {
-                        let p = prev.swap(downloaded, Ordering::Relaxed);
-                        if let Some(f) = on_bytes {
-                            f(downloaded.saturating_sub(p));
-                        }
-                    }
-                };
+                // 字节增量回调：闭包需 Fn（fetch 内部按块调用），统一走
+                // delta_callback 差分助手（见其文档：不换 ProgressCounters::byte_callback）
+                let cb = delta_callback(hook.on_bytes);
                 fetcher::fetch_verified_c(&urls, &dest, Some(cb), sha1, hook.cancel)
                     .await
                     .map_err(|e| format!("下载 {path} 失败\n{e}"))?;
@@ -321,17 +312,8 @@ async fn install_azul_runtime(
     // 下载 zip → sha256 校验（单包：字节增量回调 + 完成后文件计数）
     let zip_path = temp_file(&format!("azul-java-{major}.zip"));
     let urls: Vec<String> = vec![download_url.clone()];
-    let prev = AtomicU64::new(0);
-    let cb = {
-        let prev = &prev;
-        let on_bytes = hook.on_bytes;
-        move |downloaded: u64, _total: u64| {
-            let p = prev.swap(downloaded, Ordering::Relaxed);
-            if let Some(f) = on_bytes {
-                f(downloaded.saturating_sub(p));
-            }
-        }
-    };
+    // 字节增量回调：同 Mojang 路径，统一走 delta_callback 差分助手
+    let cb = delta_callback(hook.on_bytes);
     fetcher::fetch_verified_c(&urls, &zip_path, Some(cb), "", hook.cancel)
         .await
         .map_err(|e| format!("下载 Azul 包失败\n{e}"))?;
@@ -408,14 +390,42 @@ fn temp_file(name: &str) -> PathBuf {
     dir.join(name)
 }
 
-/// 文件 sha256（Azul 包校验）。
+/// 字节增量回调工厂：闭包自持水位原子，swap-prev 差分出本次增量转给 `on_bytes`。
+/// 不换 ProgressCounters::byte_callback：JDK 安装链路没有 ProgressCounters 步骤计数，
+/// 字节进度经 InstallProgress::on_bytes 回调上报、由任务侧自行聚合，消费端与
+/// 全局计数器原子不同构。
+fn delta_callback<'a>(
+    on_bytes: Option<&'a (dyn Fn(u64) + Send + Sync)>,
+) -> impl Fn(u64, u64) + 'a {
+    let prev = AtomicU64::new(0);
+    move |downloaded: u64, _total: u64| {
+        let p = prev.swap(downloaded, Ordering::Relaxed);
+        if let Some(f) = on_bytes {
+            f(downloaded.saturating_sub(p));
+        }
+    }
+}
+
+/// 文件 sha256（Azul 包校验）。分块流式读取（1MB 缓冲，对齐 hash.rs 流式风格）：
+/// Azul zip 包可达数百 MB，整文件读内存只为算哈希不划算。任一读取失败返回空串
+/// （fail-closed：与期望值必不相等 → 校验失败，语义同旧整读实现）。
 fn file_sha256(path: &Path) -> String {
     use sha2::Digest;
-    let Ok(data) = std::fs::read(path) else {
+    use std::io::Read;
+    let Ok(file) = std::fs::File::open(path) else {
         return String::new();
     };
-    let hash = sha2::Sha256::digest(&data);
-    hash.iter().map(|b| format!("{:02x}", b)).collect()
+    let mut reader = std::io::BufReader::with_capacity(1024 * 1024, file);
+    let mut hasher = sha2::Sha256::new();
+    let mut buf = vec![0u8; 1024 * 1024];
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => hasher.update(&buf[..n]),
+            Err(_) => return String::new(),
+        }
+    }
+    hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 #[cfg(test)]

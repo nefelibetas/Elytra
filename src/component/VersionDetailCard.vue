@@ -28,11 +28,10 @@ import { selectedVersion, setSelected } from "../store/selectedVersion";
 import {
   worlds, worldsLoading, worldsError, worldIcons, loadWorldIcon,
   mods, modsQuick, modsLoading, modsError, modsNetworkError,
-  resourcepacks, resourcepacksLoading, resourcepacksError, resourcepacksNetworkError, resourcepacksQuick,
-  datapacks, datapacksLoading, datapacksError, datapacksNetworkError, datapacksQuick,
-  shaderpacks, shaderpacksLoading, shaderpacksError, shaderpacksNetworkError, shaderpacksQuick,
+  resourceRefs,
   isModLoaderVersion, versionLoader,
   resetVersionDetail, loadVersionLoader, loadWorlds, loadMods, loadModsQuick, loadResourceLists,
+  type ResourceKind,
 } from "../store/versionDetail";
 
 const versionName = computed(() => selectedVersion.value);
@@ -108,9 +107,9 @@ const SIDE_ICONS = {
 const tabs = computed<TabKind[]>(() => {
   const list: TabKind[] = ["worlds"];
   if (isModLoaderVersion.value && modsQuick.value.length > 0) list.push("mods");
-  if (resourcepacksQuick.value.length > 0) list.push("resourcepacks");
-  if (datapacksQuick.value.length > 0) list.push("datapacks");
-  if (shaderpacksQuick.value.length > 0) list.push("shaderpacks");
+  for (const k of ["resourcepacks", "datapacks", "shaderpacks"] as const) {
+    if (resourceRefs(k).quick.value.length > 0) list.push(k);
+  }
   return list;
 });
 
@@ -141,43 +140,33 @@ const folderMeta = computed(() => {
 });
 
 // ── 资源目录（材质包/数据包/光影包）通用列表数据 ──
-const resList = computed(() => {
-  if (tab.value === "resourcepacks") return resourcepacks.value;
-  if (tab.value === "datapacks") return datapacks.value;
-  if (tab.value === "shaderpacks") return shaderpacks.value;
-  return [];
+// 状态选择下沉 store 的 resourceRefs：此处按 tab 解包；非资源 tab 给空态兜底。
+function isResourceTab(t: TabKind): t is ResourceKind {
+  return t === "resourcepacks" || t === "datapacks" || t === "shaderpacks";
+}
+
+const res = computed(() => {
+  if (!isResourceTab(tab.value)) {
+    return { list: [], loading: false, error: "", networkError: false };
+  }
+  const r = resourceRefs(tab.value);
+  return {
+    list: r.list.value,
+    loading: r.loading.value,
+    error: r.error.value,
+    networkError: r.networkError.value,
+  };
 });
-const resLoading = computed(() =>
-  tab.value === "resourcepacks"
-    ? resourcepacksLoading.value
-    : tab.value === "datapacks"
-      ? datapacksLoading.value
-      : shaderpacksLoading.value,
-);
-const resError = computed(() =>
-  tab.value === "resourcepacks"
-    ? resourcepacksError.value
-    : tab.value === "datapacks"
-      ? datapacksError.value
-      : shaderpacksError.value,
-);
-const resNetworkError = computed(() =>
-  tab.value === "resourcepacks"
-    ? resourcepacksNetworkError.value
-    : tab.value === "datapacks"
-      ? datapacksNetworkError.value
-      : shaderpacksNetworkError.value,
-);
-const resIcon = computed(() =>
-  tab.value === "resourcepacks" ? Palette : tab.value === "datapacks" ? Database : Sun,
-);
-const resEmptyText = computed(() =>
-  tab.value === "resourcepacks"
-    ? "还没有材质包\n可将 zip 包放入 resourcepacks 目录"
-    : tab.value === "datapacks"
-      ? "还没有数据包\n可将 zip 包放入 datapacks 目录"
-      : "还没有光影包\n可将 zip 包放入 shaderpacks 目录",
-);
+
+/** 各资源类型的空态图标与文案。 */
+const RES_ICONS = { resourcepacks: Palette, datapacks: Database, shaderpacks: Sun } as const;
+const RES_EMPTY_TEXTS: Record<ResourceKind, string> = {
+  resourcepacks: "还没有材质包\n可将 zip 包放入 resourcepacks 目录",
+  datapacks: "还没有数据包\n可将 zip 包放入 datapacks 目录",
+  shaderpacks: "还没有光影包\n可将 zip 包放入 shaderpacks 目录",
+};
+const resIcon = computed(() => (isResourceTab(tab.value) ? RES_ICONS[tab.value] : Palette));
+const resEmptyText = computed(() => (isResourceTab(tab.value) ? RES_EMPTY_TEXTS[tab.value] : ""));
 
 // ── 版本切换：重置 + 加载 loader/存档/Mod/资源目录 ──
 watch(
@@ -406,18 +395,18 @@ async function confirmRename() {
 
       <!-- ── 材质包 / 数据包 / 光影包 tab（Modrinth 识别双态列表）── -->
       <div v-else key="resources" class="vdc-pane">
-        <LoadingSpinner v-if="resLoading" text="加载中…" />
-        <ErrorState v-else-if="resError" :text="resError" />
-        <EmptyState v-else-if="resList.length === 0">
+        <LoadingSpinner v-if="res.loading" text="加载中…" />
+        <ErrorState v-else-if="res.error" :text="res.error" />
+        <EmptyState v-else-if="res.list.length === 0">
           <component :is="resIcon" :size="40" :stroke-width="1.5" opacity="0.5" />
           <p>{{ resEmptyText }}</p>
         </EmptyState>
         <template v-else>
-          <div v-if="resNetworkError" class="vdc-net-warn">
+          <div v-if="res.networkError" class="vdc-net-warn">
             部分资源信息获取失败，已显示本地信息
           </div>
           <div class="vdc-mod-list">
-            <template v-for="f in resList" :key="f.file_name">
+            <template v-for="f in res.list" :key="f.file_name">
               <!-- 匹配到社区项目：图标 + 标题 + 描述 + 下载量 -->
               <div v-if="f.project_id" class="vdc-mod">
                 <IconImage :src="f.icon_url" :size="32" />

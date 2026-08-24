@@ -117,7 +117,7 @@ pub(super) async fn download_and_extract(
         resolve_version_json(&mut archive, &profile, &json_path, dir_name, parent_text).await?;
 
     // --- jar ---
-    let found_jar = resolve_jar(
+    let jar_missing = resolve_jar(
         &mut archive,
         &profile,
         source,
@@ -134,8 +134,8 @@ pub(super) async fn download_and_extract(
     if let Some(h) = hook {
         h(LoaderEvent::ConfigDone);
     }
-    if !found_jar {
-        return Err("未找到 client.jar".into());
+    if let Some(reason) = jar_missing {
+        return Err(format!("未找到 client.jar\n{reason}"));
     }
 
     // ── 下载展开后 JSON 的全部库（vanilla 库已存在自动跳过，实际拉取 ModLoader 增量）──
@@ -514,6 +514,8 @@ async fn resolve_version_json(
 }
 
 /// Resolve client jar from ZIP, maven download, or fallback to original manifest.
+/// 返回 `Ok(None)`：已取得 client.jar；`Ok(Some(原因))`：各策略均未命中，
+/// 附首个具体失败原因（供调用方最终报错指向真实故障点，而非笼统"未找到"）。
 async fn resolve_jar(
     archive: &mut zip::ZipArchive<std::fs::File>,
     profile: &Option<serde_json::Value>,
@@ -521,7 +523,7 @@ async fn resolve_jar(
     jar_path: &Path,
     dir_name: &str,
     json_path: &Path,
-) -> Result<bool, String> {
+) -> Result<Option<String>, String> {
     // 新版 Forge（26.x+）：install_profile 无 install 字段，ZIP 里只有 shim/universal（属 library，
     // 进 classpath 不进版本目录）；client.jar 由 version.json 的 downloads.client（继承 vanilla）提供，
     // runner 的 ClientJar 步骤下载。此时不需要（也不应）提取任何 Forge jar 覆盖 client。
@@ -530,7 +532,7 @@ async fn resolve_jar(
             if let Ok(json) = std::fs::read_to_string(json_path) {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) {
                     if v.pointer("/downloads/client").is_some() {
-                        return Ok(true);
+                        return Ok(None);
                     }
                 }
             }
@@ -546,7 +548,7 @@ async fn resolve_jar(
                     .map_err(|e| format!("读取安装程序条目失败\n{}", e))?;
                 if entry.name() == fp {
                     crate::downloader::extract::extract_entry_to(&mut entry, jar_path)?;
-                    return Ok(true);
+                    return Ok(None);
                 }
             }
         }
@@ -580,9 +582,12 @@ async fn resolve_jar(
             // Forge 构件在 maven.minecraftforge.net（source.maven_url 是 Mojang 库源，不适用）；
             // 镜像源经 mirror_url 重写到 BMCLAPI /maven/
             let jar_url = source.mirror_url(&format!("https://maven.minecraftforge.net/{path}"));
-            return Ok(fetcher::fetch(&jar_url, jar_path, None::<fn(u64, u64)>)
-                .await
-                .is_ok());
+            // maven 直下失败不再静默：原因随 Ok(Some(..)) 上交（本策略命中后
+            // 原实现即直接返回、不落后续策略，此处仅把吞掉的错误显式化）
+            return match fetcher::fetch(&jar_url, jar_path, None::<fn(u64, u64)>).await {
+                Ok(_) => Ok(None),
+                Err(e) => Ok(Some(format!("maven 下载 client.jar 失败\n{e}"))),
+            };
         }
     }
 
@@ -598,49 +603,65 @@ async fn resolve_jar(
             && !name.contains("javadoc")
         {
             crate::downloader::extract::extract_entry_to(&mut entry, jar_path)?;
-            return Ok(true);
+            return Ok(None);
         }
     }
-
     // Strategy 4: download client.jar from original version manifest
-    let manifest_url = format!("{}/mc/game/version_manifest_v2.json", source.manifest_url);
-    if let Ok(resp) = http().get(&manifest_url).send().await {
-        if let Ok(text) = resp.text().await {
-            if let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&text) {
-                if let Some(versions) = manifest["versions"].as_array() {
-                    // ponytail: mc_ver 由目录名连字符首段猜测，版本号含连字符时会错；应传 mc_version
-                    let mc_ver = dir_name.split('-').next().unwrap_or(dir_name);
-                    let entry = versions.iter().find(|v| v["id"].as_str() == Some(mc_ver));
-                    if let Some(entry) = entry {
-                        if let Some(url) = entry["url"].as_str() {
-                            let url = source.mirror_url(url);
-                            if let Ok(resp) = http().get(&url).send().await {
-                                if let Ok(vj) = resp.text().await {
-                                    if let Ok(vj_val) =
-                                        serde_json::from_str::<serde_json::Value>(&vj)
-                                    {
-                                        let dl_url = vj_val
-                                            .pointer("/downloads/client/url")
-                                            .and_then(|u| u.as_str())
-                                            .map(|u| source.mirror_url(u));
-                                        if let Some(dl_url) = dl_url {
-                                            return Ok(fetcher::fetch(
-                                                &dl_url,
-                                                jar_path,
-                                                None::<fn(u64, u64)>,
-                                            )
-                                            .await
-                                            .is_ok());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    // 兜底策略：原为多层 `if let Ok` 吞错链——任何一环失败都静默落到 Ok(false)，
+    // 排障时无从得知卡在哪一环。改为独立步骤函数逐环上抛具体错误；
+    // 失败原因随 Ok(Some(..)) 返回调用方拼入最终报错（回退语义不变）。
+    match resolve_jar_from_manifest(source, dir_name, jar_path).await {
+        Ok(()) => Ok(None),
+        Err(e) => Ok(Some(e)),
     }
+}
 
-    Ok(false)
+/// Strategy 4 的具体执行：官方版本清单 → 版本 JSON → downloads.client.url → 下载。
+/// 任一环节失败即返回具体原因；成功写入 jar_path 后返回 Ok(())。
+async fn resolve_jar_from_manifest(
+    source: &DownloadSource,
+    dir_name: &str,
+    jar_path: &Path,
+) -> Result<(), String> {
+    let manifest_url = format!("{}/mc/game/version_manifest_v2.json", source.manifest_url);
+    let text = http()
+        .get(&manifest_url)
+        .send()
+        .await
+        .map_err(|e| format!("拉取版本清单失败\n{e}"))?
+        .text()
+        .await
+        .map_err(|e| format!("读取版本清单失败\n{e}"))?;
+    let manifest: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("解析版本清单失败\n{e}"))?;
+    let versions = manifest["versions"]
+        .as_array()
+        .ok_or("版本清单缺 versions 数组")?;
+    // ponytail: mc_ver 由目录名连字符首段猜测，版本号含连字符时会错；应传 mc_version
+    let mc_ver = dir_name.split('-').next().unwrap_or(dir_name);
+    let entry = versions
+        .iter()
+        .find(|v| v["id"].as_str() == Some(mc_ver))
+        .ok_or_else(|| format!("版本清单未收录 {mc_ver}"))?;
+    let url = entry["url"].as_str().ok_or("版本条目缺 url")?;
+    let url = source.mirror_url(url);
+    let vj = http()
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("拉取版本 JSON 失败\n{e}"))?
+        .text()
+        .await
+        .map_err(|e| format!("读取版本 JSON 失败\n{e}"))?;
+    let vj_val: serde_json::Value =
+        serde_json::from_str(&vj).map_err(|e| format!("解析版本 JSON 失败\n{e}"))?;
+    let dl_url = vj_val
+        .pointer("/downloads/client/url")
+        .and_then(|u| u.as_str())
+        .map(|u| source.mirror_url(u))
+        .ok_or("版本 JSON 缺 downloads.client.url")?;
+    fetcher::fetch(&dl_url, jar_path, None::<fn(u64, u64)>)
+        .await
+        .map_err(|e| format!("下载 client.jar 失败\n{e}"))?;
+    Ok(())
 }
