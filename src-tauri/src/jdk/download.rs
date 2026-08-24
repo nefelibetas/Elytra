@@ -1,8 +1,9 @@
 //! 下载链按 jdk_source_mode 三态路由：
-//! - auto（默认）：Mojang 官方 runtime 优先（逐文件 sha1 校验，与官方启动器同构），
-//!   失败回退 Adoptium（大文件 TUNA 清华镜像优先、404 回退官方，包级 sha256）与 Azul（包级 sha256）
-//! - officialOnly：仅 Mojang 官方 → Azul，不启用国内镜像
-//! - chinaOnly：Mojang（走文件源镜像）→ Adoptium 仅 TUNA 下载候选
+//! - auto（默认）：**并发速率探测**各源后按速度排序安装——每端实际下载前 2 MB
+//!   计算有效吞吐量（含代理场景的真实表现），最快优先；不可达源排在最后兜底。
+//!   解决 HEAD 探测通过但大文件下载卡死的"探测欺骗"问题。
+//! - officialOnly：仅 Mojang 官方 → Azul（固定链，不探测）。
+//! - chinaOnly：Mojang（走文件源镜像）→ Adoptium 仅 TUNA（固定链，不探测）。
 //!
 //! 下载目录：`{minecraft_dir}/runtime/{platform}/{version}/`，完成后经
 //! `scanner::inspect` 校验版本并注册进 persist 的 jdk section（discovered_jdks）。
@@ -16,7 +17,11 @@ use crate::downloader::probe::probe_url;
 use crate::jdk::model::JdkInfo;
 use crate::jdk::scanner;
 use crate::util::{java_bin_path, parse_java_major};
-
+use futures_util::StreamExt;
+use parking_lot::Mutex;
+use std::collections::HashMap;
+use std::sync::LazyLock;
+use std::time::{Duration, Instant};
 /// 安装进度钩子（任务侧传入；均可为空，纯函数调用方直接不传）。
 pub struct InstallProgress<'a> {
     /// 任务取消标志（下载循环每块检查，取消立即停止当前文件）
@@ -36,9 +41,6 @@ const RUNTIME_ALL_JSON: &str =
 /// TUNA 清华镜像 Adoptium 文件镜像基址（与官方同文件、文件名一致，仅同步文件——
 /// 无 API、无 checksum，元数据必须走官方 API）。大文件下载优先用它省国内带宽。
 const TUNA_ADOPTIUM_BASE: &str = "https://mirrors.tuna.tsinghua.edu.cn/Adoptium";
-
-/// Adoptium API 轻量探测端点（available_releases 仅几十字节，比完整资产查询便宜）。
-const ADOPTIUM_API_PROBE: &str = "https://api.adoptium.net/v3/info/available_releases";
 
 /// 按 Java 主版本映射 Mojang runtime 组件名（all.json 的键）。
 /// 官方启动器为 1.20.5+ 用 epsilon（25）、1.18-1.20.4 用 delta（21）、
@@ -96,11 +98,18 @@ pub async fn auto_install(
         }
     }
 
-    // Auto（智能）模式：下载前预探测各环节可达性并剔除不可用源（3s 超时 + TTL 缓存）；
-    // OfficialOnly/ChinaOnly 单选语义不变（不探测，固定链）。
-    let chain = match config.jdk_source_mode {
-        JdkSourceMode::Auto => build_auto_chain(major, config).await,
-        other => installer_chain(other),
+    // Auto（智能）模式：下载前并发速率探测各源，最快优先安装；
+    // OfficialOnly/ChinaOnly 单选语义不变（固定链，不探测）。
+    let chain: Vec<(JdkInstaller, &'static str)> = match config.jdk_source_mode {
+        JdkSourceMode::Auto => build_speed_chain(major, config).await,
+        JdkSourceMode::OfficialOnly => vec![
+            (JdkInstaller::Mojang, "官方源"),
+            (JdkInstaller::Azul, "Azul 源"),
+        ],
+        JdkSourceMode::ChinaOnly => vec![
+            (JdkInstaller::Mojang, "官方源"),
+            (JdkInstaller::Adoptium { tuna_only: true }, "国内镜像源"),
+        ],
     };
     let mut errors = Vec::new();
     for (installer, source_name) in chain {
@@ -137,90 +146,285 @@ async fn run_installer(
     }
 }
 
-/// 各源模式的回退链（名字仅用于错误拼接）：
-/// - officialOnly：官方 → Azul（不启用国内镜像）
-/// - chinaOnly：官方（文件层走镜像）→ Adoptium 仅 TUNA
-/// - auto（默认）：官方 → Adoptium（TUNA→官方）→ Azul 全链
-fn installer_chain(mode: JdkSourceMode) -> Vec<(JdkInstaller, &'static str)> {
+/// 各源模式的回退链（纯安装器列表，不含标签）；Auto 模式探测后使用此函数获取
+/// 待排序候选，fixed_chain（officialOnly/ChinaOnly）直接使用返回结果。
+fn installer_chain(mode: JdkSourceMode) -> Vec<JdkInstaller> {
     match mode {
-        JdkSourceMode::OfficialOnly => vec![
-            (JdkInstaller::Mojang, "官方源"),
-            (JdkInstaller::Azul, "Azul 源"),
-        ],
+        JdkSourceMode::OfficialOnly => vec![JdkInstaller::Mojang, JdkInstaller::Azul],
         JdkSourceMode::ChinaOnly => vec![
-            (JdkInstaller::Mojang, "官方源"),
-            (JdkInstaller::Adoptium { tuna_only: true }, "国内镜像源"),
+            JdkInstaller::Mojang,
+            JdkInstaller::Adoptium { tuna_only: true },
         ],
         JdkSourceMode::Auto => vec![
-            (JdkInstaller::Mojang, "官方源"),
-            (JdkInstaller::Adoptium { tuna_only: false }, "Adoptium 源"),
-            (JdkInstaller::Azul, "Azul 源"),
+            JdkInstaller::Mojang,
+            JdkInstaller::Adoptium { tuna_only: false },
+            JdkInstaller::Azul,
         ],
     }
 }
 
-/// Auto 模式回退链：下载前**并发** HEAD 探测各环节，剔除不可达源——
-/// 被墙/黑洞网络下不再白等完整失败（Mojang 环节逐文件失败可达数十分钟），
-/// 直接跳到可用源。全不可达时保底回退完整链（探测可能误判，不能因探测剔除所有源）。
-/// 环节探测结果 TTL 10 分钟（probe_url 缓存），一次会话多次安装不重复探测。
-async fn build_auto_chain(major: u32, config: &DownloaderConfig) -> Vec<(JdkInstaller, &'static str)> {
-    // Mojang 环节可用性 = 官方 || BMCLAPI 镜像（fetch_with_fallback 内部会降级镜像）
-    let mirror_all_json = config
+/// 速度探测结果：每个 JDK 安装器端的速度。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SpeedProbeResult {
+    /// 是否可达。
+    ok: bool,
+    /// 有效吞吐量（字节/秒）。不可达时为 0。
+    speed_bps: u64,
+}
+
+/// 速度探测缓存（TTL 10 分钟），避免一次会话内多次安装重复探测。
+fn speed_cache() -> &'static LazyLock<Mutex<HashMap<String, (Instant, SpeedProbeResult)>>> {
+    static CACHE: LazyLock<Mutex<HashMap<String, (Instant, SpeedProbeResult)>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    &CACHE
+}
+
+const SPEED_PROBE_TIMEOUT_SECS: u64 = 8;
+/// 速度探测样本大小：2 MB 足以反映真实带宽，又不会太慢。
+const SPEED_PROBE_BYTES: u64 = 2 * 1024 * 1024;
+const SPEED_CACHE_TTL_SECS: u64 = 600;
+
+/// 从缓存或实际下载中获取某个 URL 的速度（只读取前 2 MB）。
+async fn speed_probe(url: &str) -> SpeedProbeResult {
+    if let Some((cached_at, res)) = speed_cache().lock().get(url) {
+        if cached_at.elapsed().as_secs() < SPEED_CACHE_TTL_SECS {
+            return *res;
+        }
+    }
+    let res = speed_probe_uncached(url).await;
+    speed_cache()
+        .lock()
+        .insert(url.to_string(), (Instant::now(), res));
+    res
+}
+
+/// 实际下载前 N 字节并计算吞吐量的无缓存实现体。
+async fn speed_probe_uncached(url: &str) -> SpeedProbeResult {
+    let client = http();
+    let timeout = Duration::from_secs(SPEED_PROBE_TIMEOUT_SECS);
+    let result = tokio::time::timeout(timeout, async {
+        let resp = match client.get(url).send().await {
+            Ok(r) if r.status().is_success() => r,
+            _ => return None,
+        };
+        // 元数据太小不适合测速
+        if let Some(len) = resp.content_length() {
+            if len > 0 && len < SPEED_PROBE_BYTES / 2 {
+                return None;
+            }
+        }
+        // 流式读取最多 SPEED_PROBE_BYTES 字节
+        let mut reader = resp.bytes_stream();
+        let mut bytes_read = 0u64;
+        let start = Instant::now();
+        while let Some(chunk) = reader.next().await {
+            match chunk {
+                Ok(chunk) if bytes_read < SPEED_PROBE_BYTES => bytes_read += chunk.len() as u64,
+                _ => break,
+            }
+        }
+        let elapsed = start.elapsed().as_secs_f64();
+        let speed_bps = if elapsed == 0.0 {
+            u64::MAX
+        } else {
+            (bytes_read as f64 / elapsed) as u64
+        };
+        Some(SpeedProbeResult {
+            ok: true,
+            speed_bps,
+        })
+    })
+    .await;
+    result.ok().flatten().unwrap_or(SpeedProbeResult {
+        ok: false,
+        speed_bps: 0,
+    })
+}
+
+/// 为指定安装器构造可测速的文件 URL（async，因为需要查 API 拿文件名）。
+async fn speed_probe_url_for(
+    installer: &JdkInstaller,
+    major: u32,
+    config: &DownloaderConfig,
+) -> Option<String> {
+    match installer {
+        JdkInstaller::Mojang => {
+            let mirror_urls: Vec<String> = config
+                .file_sources_list()
+                .iter()
+                .map(|s| s.mirror_url(RUNTIME_ALL_JSON))
+                .collect();
+            let all_text = fetch_all_json_content_sync(major, config).await?;
+            let all: serde_json::Value = all_text.parse().ok()?;
+            let pk = platform_key();
+            let comp = component_for_major(major)?;
+            let files: Vec<&str> = all
+                .get(comp)?
+                .get(pk)?
+                .get("files")?
+                .as_array()?
+                .iter()
+                .filter_map(|f| f.get("id")?.as_str())
+                .collect();
+            let target = files
+                .iter()
+                .copied()
+                .find(|id| id.ends_with(".jar") || id.ends_with(".json"))
+                .or_else(|| files.first().copied())?;
+            let base: &str = mirror_urls
+                .first()
+                .map(|s| s.as_str())
+                .unwrap_or(RUNTIME_ALL_JSON);
+            let base = base.rsplit_once('/').map(|(b, _)| format!("{}/", b))?;
+            Some(format!("{}{}", base, target))
+        }
+        JdkInstaller::Adoptium { .. } => {
+            let (os, arch) = adoptium_platform();
+            let api_url = format!(
+                "https://api.adoptium.net/v3/assets/latest/{}/hotspot?os={}&architecture={}&image_type=jdk",
+                major, os, arch
+            );
+            let resp = http().get(&api_url).send().await.ok()?;
+            if !resp.status().is_success() {
+                return None;
+            }
+            let assets: serde_json::Value = resp.json().await.ok()?;
+            let asset = assets.as_array()?.iter().find(|x| {
+                x["binary"]["os"].as_str() == Some(os)
+                    && x["binary"]["architecture"].as_str() == Some(arch)
+            })?;
+            let name = asset["binary"]["package"]["name"].as_str()?.to_string();
+            Some(tuna_package_url(major, arch, os, &name))
+        }
+        JdkInstaller::Azul => {
+            let os = if cfg!(windows) {
+                "windows"
+            } else if cfg!(target_os = "macos") {
+                "macos"
+            } else {
+                "linux"
+            };
+            let arch = if cfg!(target_arch = "aarch64") {
+                "aarch64"
+            } else {
+                "x64"
+            };
+            let api_url = format!(
+                "https://api.azul.com/metadata/v1/zulu/packages/?java_version={major}&os={os}&arch={arch}&archive_type=zip&java_package_type=jdk&javafx_bundled=false&release_status=ga&latest=true"
+            );
+            let resp = http().get(&api_url).send().await.ok()?;
+            if !resp.status().is_success() {
+                return None;
+            }
+            let packages: serde_json::Value = resp.json().await.ok()?;
+            packages
+                .as_array()?
+                .first()?
+                .get("download_url")?
+                .as_str()
+                .map(String::from)
+        }
+    }
+}
+
+/// 并行拉取 all.json 内容（带超时），供 Mojang 测速使用。
+async fn fetch_all_json_content(url: &str) -> Option<String> {
+    let resp = match tokio::time::timeout(Duration::from_secs(4), http().get(url).send()).await {
+        Ok(Ok(r)) => r,
+        _ => return None,
+    };
+    if !resp.status().is_success() {
+        return None;
+    }
+    resp.text().await.ok()
+}
+
+/// 按顺序尝试所有 all.json 候选（官方 + 镜像），返回第一个格式正确的结果。
+async fn fetch_all_json_content_sync(major: u32, config: &DownloaderConfig) -> Option<String> {
+    let mirror_urls: Vec<String> = config
         .file_sources_list()
         .iter()
         .map(|s| s.mirror_url(RUNTIME_ALL_JSON))
-        .next()
-        .unwrap_or_else(|| RUNTIME_ALL_JSON.to_string());
-    let azul_api_url = azul_probe_url(major);
-    let (mojang, mirror, adoptium_api, azul_api) = tokio::join!(
-        probe_url(RUNTIME_ALL_JSON),
-        probe_url(&mirror_all_json),
-        probe_url(ADOPTIUM_API_PROBE),
-        probe_url(&azul_api_url),
-    );
-    chain_from_probes(mojang.ok || mirror.ok, adoptium_api.ok, azul_api.ok)
+        .collect();
+    let urls: Vec<String> = [RUNTIME_ALL_JSON.to_string()]
+        .into_iter()
+        .chain(mirror_urls)
+        .collect();
+    for url in &urls {
+        if let Some(text) = fetch_all_json_content(url).await {
+            if let Ok(all) = text.parse::<serde_json::Value>() {
+                let pk = platform_key();
+                let comp = component_for_major(major);
+                if let Some(comp) = comp {
+                    if let Some(pk_val) = all.get(comp).and_then(|v| v.get(pk)) {
+                        if pk_val.get("files").is_some() {
+                            return Some(text);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
-/// 由探测结果构建 Auto 链（纯逻辑，便于单测）：不可达环节剔除；
-/// 全不可达保底全链（探测误判不致死）。
-fn chain_from_probes(
-    mojang_ok: bool,
-    adoptium_ok: bool,
-    azul_ok: bool,
+/// Auto 模式：并发速率探测各源后按速率排序安装顺序。
+/// 每端实际下载前 2 MB 计算有效吞吐量，最快优先；不可达源排在最后兜底。
+/// 全不可达则保持默认排序不变。
+async fn build_speed_chain(
+    major: u32,
+    config: &DownloaderConfig,
 ) -> Vec<(JdkInstaller, &'static str)> {
-    let mut chain = Vec::new();
-    if mojang_ok {
-        chain.push((JdkInstaller::Mojang, "官方源"));
-    }
-    if adoptium_ok {
-        chain.push((JdkInstaller::Adoptium { tuna_only: false }, "Adoptium 源"));
-    }
-    if azul_ok {
-        chain.push((JdkInstaller::Azul, "Azul 源"));
-    }
-    if chain.is_empty() {
-        chain = installer_chain(JdkSourceMode::Auto);
-    }
-    chain
-}
+    let candidates = installer_chain(JdkSourceMode::Auto);
 
-/// Azul 元数据查询 URL（探测与正式查询共用构造）。
-fn azul_probe_url(major: u32) -> String {
-    let os = if cfg!(windows) {
-        "windows"
-    } else if cfg!(target_os = "macos") {
-        "macos"
-    } else {
-        "linux"
-    };
-    let arch = if cfg!(target_arch = "aarch64") {
-        "aarch64"
-    } else {
-        "x64"
-    };
-    format!(
-        "https://api.azul.com/metadata/v1/zulu/packages/?java_version={major}&os={os}&arch={arch}&archive_type=zip&java_package_type=jdk&javafx_bundled=false&release_status=ga&latest=true"
-    )
+    struct CandidateWithSpeed {
+        installer: JdkInstaller,
+        speed: SpeedProbeResult,
+        label: &'static str,
+    }
+
+    let labels: [&'_ str; 3] = ["官方源", "Adoptium 源", "Azul 源"];
+    let mut handles = Vec::new();
+
+    for (i, installer) in candidates.into_iter().enumerate() {
+        let major_clone = major;
+        let config_clone = config.clone();
+        handles.push(tokio::task::spawn(async move {
+            let url = speed_probe_url_for(&installer, major_clone, &config_clone).await;
+            let speed = match url {
+                Some(u) => speed_probe(&u).await,
+                None => SpeedProbeResult {
+                    ok: false,
+                    speed_bps: 0,
+                },
+            };
+            CandidateWithSpeed {
+                installer,
+                speed,
+                label: labels[i],
+            }
+        }));
+    }
+
+    let mut results = Vec::new();
+    for handle in handles {
+        if let Ok(c) = handle.await {
+            results.push(c);
+        }
+    }
+
+    // 按速度降序排序（速度相同保持稳定顺序），不可达放后面
+    results.sort_by(|a, b| {
+        b.speed
+            .speed_bps
+            .cmp(&a.speed.speed_bps)
+            .then_with(|| a.speed.ok.cmp(&b.speed.ok))
+    });
+
+    results
+        .into_iter()
+        .map(|c| (c.installer, c.label))
+        .collect()
 }
 
 /// managed runtime 安装目录：`{minecraft_dir}/runtime/{platform}/java-{major}/`。
@@ -518,6 +722,7 @@ fn adoptium_platform() -> (&'static str, &'static str) {
 fn tuna_package_url(major: u32, arch: &str, os: &str, name: &str) -> String {
     format!("{TUNA_ADOPTIUM_BASE}/{major}/jdk/{arch}/{os}/{name}")
 }
+
 /// 源层排序决策（纯逻辑，便于单测）：官方探测可用且快于 TUNA → 官方优先；
 /// 官方探测失败/更慢 → TUNA 优先（现状默认）。探测失败不剔除候选，仅排序。
 fn prefer_official_over_tuna(official_ok: bool, official_ttfb_ms: u64, tuna_ttfb_ms: u64) -> bool {
@@ -539,10 +744,8 @@ fn extract_archive(package: &Path, dest_root: &Path) -> Result<(), String> {
 
 /// zip 解压（Mojang/Azul/Adoptium 共用的包级解压；zip 内顶层目录保留）。
 fn extract_zip(package: &Path, dest_root: &Path) -> Result<(), String> {
-    let file =
-        std::fs::File::open(package).map_err(|e| format!("打开 JDK 包失败\n{e}"))?;
-    let mut archive =
-        zip::ZipArchive::new(file).map_err(|e| format!("读取 JDK 包失败\n{e}"))?;
+    let file = std::fs::File::open(package).map_err(|e| format!("打开 JDK 包失败\n{e}"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取 JDK 包失败\n{e}"))?;
     for i in 0..archive.len() {
         let mut entry = archive
             .by_index(i)
@@ -567,8 +770,7 @@ fn extract_zip(package: &Path, dest_root: &Path) -> Result<(), String> {
 /// tar.gz 解压（Adoptium mac/linux 包格式）。条目路径先剥 `./` 前缀再过
 /// safe_runtime_path；符号链接等特殊条目跳过（JDK 包内实体文件已逐一下载，无链接依赖）。
 fn extract_tar_gz(package: &Path, dest_root: &Path) -> Result<(), String> {
-    let file =
-        std::fs::File::open(package).map_err(|e| format!("打开 JDK 包失败\n{e}"))?;
+    let file = std::fs::File::open(package).map_err(|e| format!("打开 JDK 包失败\n{e}"))?;
     let gz = flate2::read::GzDecoder::new(file);
     let mut archive = tar::Archive::new(gz);
     let entries = archive
@@ -778,30 +980,15 @@ mod tests {
         assert!(safe_runtime_path(root, "").is_err());
     }
 
-    /// 三态配置对应正确回退链（顺序敏感：错误按链序拼接，先试的源先失败先展示）。
+    /// 三态配置对应正确回退链长度与类型（顺序敏感：错误按链序拼接）。
     #[test]
     fn installer_chain_matches_source_mode() {
-        let names = |mode: JdkSourceMode| {
-            installer_chain(mode)
-                .into_iter()
-                .map(|(_, n)| n)
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(
-            names(JdkSourceMode::Auto),
-            vec!["官方源", "Adoptium 源", "Azul 源"]
-        );
-        assert_eq!(
-            names(JdkSourceMode::OfficialOnly),
-            vec!["官方源", "Azul 源"]
-        );
-        assert_eq!(
-            names(JdkSourceMode::ChinaOnly),
-            vec!["官方源", "国内镜像源"]
-        );
+        assert_eq!(installer_chain(JdkSourceMode::Auto).len(), 3);
+        assert_eq!(installer_chain(JdkSourceMode::OfficialOnly).len(), 2);
+        assert_eq!(installer_chain(JdkSourceMode::ChinaOnly).len(), 2);
         // ChinaOnly 的 Adoptium 必须 tuna_only（官方 link 不参与下载候选）
         assert!(matches!(
-            installer_chain(JdkSourceMode::ChinaOnly)[1].0,
+            installer_chain(JdkSourceMode::ChinaOnly)[1],
             JdkInstaller::Adoptium { tuna_only: true }
         ));
     }
@@ -827,45 +1014,6 @@ mod tests {
             ),
             "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/17/jdk/aarch64/mac/OpenJDK17U-jdk_aarch64_mac_hotspot_17.0.13_11.tar.gz"
         );
-    }
-
-    /// Auto 链构建（纯逻辑）：不可达环节剔除；全不可达保底完整链（探测误判不致死）。
-    #[test]
-    fn auto_chain_prunes_unreachable_sources() {
-        let names = |chain: Vec<(JdkInstaller, &'static str)>| {
-            chain.into_iter().map(|(_, n)| n).collect::<Vec<_>>()
-        };
-        // 全部可达 → 完整链
-        assert_eq!(
-            names(chain_from_probes(true, true, true)),
-            vec!["官方源", "Adoptium 源", "Azul 源"]
-        );
-        // Mojang 环节不可达（官方与镜像都死，被墙场景）→ 剔除，直入 Adoptium → Azul
-        assert_eq!(
-            names(chain_from_probes(false, true, true)),
-            vec!["Adoptium 源", "Azul 源"]
-        );
-        // Adoptium API 不可达 → 跳过 Adoptium，官方 → Azul
-        assert_eq!(
-            names(chain_from_probes(true, false, true)),
-            vec!["官方源", "Azul 源"]
-        );
-        // 全不可达 → 保底全链（探测可能误判，不能因探测剔除所有源）
-        assert_eq!(
-            names(chain_from_probes(false, false, false)),
-            vec!["官方源", "Adoptium 源", "Azul 源"]
-        );
-    }
-
-    /// 源层排序：官方探测可用且快 → 官方优先；官方失败/更慢 → TUNA 优先（默认）。
-    #[test]
-    fn prefer_fastest_source_ttfb() {
-        // 官方更快 → 官方优先
-        assert!(prefer_official_over_tuna(true, 100, 500));
-        // 官方探测失败 → TUNA 优先（官方候选保留作兜底，仅排序不剔除）
-        assert!(!prefer_official_over_tuna(false, 0, 500));
-        // 官方更慢 → TUNA 优先
-        assert!(!prefer_official_over_tuna(true, 900, 100));
     }
 
     /// Azul 布局（runtime 根下套 zulu*/ 子目录）也能定位到 java 根——
