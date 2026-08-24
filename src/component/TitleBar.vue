@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { useRoute } from "vue-router";
+
+import { goBack } from "../store/nav";
 import { ArrowLeft, Play, Download, ListChecks, Settings, Minus, X, Feather } from "@lucide/vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { detailTitle, goBackDetail } from "../store/resourceDetail";
+import { detailTitle } from "../store/resourceDetail";
 import { dlState } from "../store/download";
 
 const route = useRoute();
-const router = useRouter();
 const appWindow = getCurrentWindow();
 
 const isDetail = computed(
@@ -50,31 +51,6 @@ function onMouseDown(e: MouseEvent) {
   appWindow.startDragging();
 }
 
-function goBack() {
-  const p = router.currentRoute.value.path;
-  if (p === "/version-select") {
-    router.push("/");
-    return;
-  }
-  if (p === "/version-setup") {
-    // 按进入来源返回：主页卡片或版本选择页进入都能回到原页面；
-    // 无内部导航历史（直接打开链接）时兜底回版本选择
-    const back = (window.history.state as { back?: string } | null)?.back;
-    if (back && back.startsWith("/")) {
-      router.push(back);
-      return;
-    }
-    router.push("/version-select");
-    return;
-  }
-  if (p === "/resource-detail") {
-    // 资源详情：弹详情历史栈（前置依赖链）；栈空回下载页并恢复来源 tab
-    goBackDetail();
-    return;
-  }
-  // 其余详情页返回启动页
-  router.push("/");
-}
 </script>
 
 <template>
