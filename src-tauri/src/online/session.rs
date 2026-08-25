@@ -130,15 +130,16 @@ fn build_config(config: &SessionConfig) -> Result<TomlConfigLoader, String> {
                     .parse()
                     .map_err(|e| format!("host 虚拟 IP 非法\n{e}"))?,
             ));
-            // 入口端口=room.port（探测的空闲端口，≠游戏端口）；mc_port 为游戏端口。
-            let entry_port = config.room.port.ok_or("房间码缺少入口端口")?;
-            let mc_port = config.mc_port.ok_or("host 需要游戏端口")?;
-            // 虚拟网内 guest 访问 host虚拟IP:入口端口 → 本地游戏 127.0.0.1:mc_port
-            cfg.set_port_forwards(vec![PortForwardConfig {
-                bind_addr: SocketAddr::from((Ipv4Addr::UNSPECIFIED, entry_port)),
-                dst_addr: SocketAddr::from((Ipv4Addr::LOCALHOST, mc_port)),
-                proto: "tcp".to_string(),
-            }]);
+            // Waiting 阶段 mc_port 尚无 → 只建网不配转发；
+            // 检测到游戏端口后重建实例：入口端口 + 游戏端口齐备才配转发。
+            if let (Some(entry_port), Some(mc_port)) = (config.room.port, config.mc_port) {
+                // 虚拟网内 guest 访问 host虚拟IP:入口端口 → 本地游戏 127.0.0.1:mc_port
+                cfg.set_port_forwards(vec![PortForwardConfig {
+                    bind_addr: SocketAddr::from((Ipv4Addr::UNSPECIFIED, entry_port)),
+                    dst_addr: SocketAddr::from((Ipv4Addr::LOCALHOST, mc_port)),
+                    proto: "tcp".to_string(),
+                }]);
+            }
         }
         SessionRole::Guest => {
             cfg.set_dhcp(true);
@@ -162,4 +163,52 @@ fn set_no_tun(cfg: &TomlConfigLoader) {
     flags.no_tun = true;
     flags.use_smoltcp = true;
     cfg.set_flags(flags);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg(role: SessionRole, port: Option<u16>, mc_port: Option<u16>) -> SessionConfig {
+        let room = match port {
+            Some(p) => crate::online::create_room().with_port(p),
+            None => crate::online::create_room(),
+        };
+        SessionConfig {
+            role,
+            room,
+            local_port: Some(49152),
+            mc_port,
+            public_nodes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn host_waiting_no_mc_port_builds_without_error() {
+        // Waiting 阶段：入口端口已编入、游戏端口未知 → 应能建网（无转发）。
+        let c = cfg(SessionRole::Host, Some(40000), None);
+        let toml = build_config(&c).expect("等待游戏端口时 host 建网不应失败");
+        assert!(toml.get_port_forwards().is_empty(), "Waiting 阶段不应配转发");
+    }
+
+    #[test]
+    fn host_hosting_builds_forward_to_local_game() {
+        // Hosting 阶段：入口端口 + 游戏端口齐备 → 转发到本地游戏端口。
+        let c = cfg(SessionRole::Host, Some(40000), Some(25565));
+        let toml = build_config(&c).expect("host 转发建网应成功");
+        let fwds = toml.get_port_forwards();
+        assert_eq!(fwds.len(), 1, "Hosting 阶段应配一条转发");
+        assert_eq!(fwds[0].bind_addr, SocketAddr::from((Ipv4Addr::UNSPECIFIED, 40000)));
+        assert_eq!(fwds[0].dst_addr, SocketAddr::from((Ipv4Addr::LOCALHOST, 25565)));
+    }
+
+    #[test]
+    fn guest_forwards_to_host_virtual_ip_entry_port() {
+        let c = cfg(SessionRole::Guest, Some(40000), None);
+        let toml = build_config(&c).expect("guest 建网应成功");
+        let fwds = toml.get_port_forwards();
+        assert_eq!(fwds.len(), 1);
+        assert_eq!(fwds[0].bind_addr, SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
+        assert_eq!(fwds[0].dst_addr, SocketAddr::from((HOST_VIRTUAL_IP_V4, 40000)));
+    }
 }
