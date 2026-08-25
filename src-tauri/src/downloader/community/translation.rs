@@ -3,10 +3,8 @@
 use std::collections::HashMap;
 
 use super::shared::QUERY_TIMEOUT_SECS;
+use crate::downloader::endpoints::CommunityEndpoints;
 use crate::downloader::fetcher;
-
-/// MCIM 镜像站（Modrinth/CurseForge API 与翻译数据镜像）
-const MCIM_API: &str = "https://mod.mcimirror.top";
 
 /// 翻译缓存 TTL（10 分钟，低频变化数据，对齐 downloader/source.rs 缓存模式）
 const TRANSLATION_CACHE_TTL_SECS: u64 = 600;
@@ -91,7 +89,7 @@ pub(crate) async fn fetch_translations(source: &str, ids: &[String]) -> HashMap<
         return result;
     };
     let resp = fetcher::http()
-        .post(format!("{}/translate/{}", MCIM_API, source))
+        .post(format!("{}/translate/{}", CommunityEndpoints::TRANSLATION_API_BASE, source))
         .json(&body)
         .timeout(std::time::Duration::from_secs(QUERY_TIMEOUT_SECS))
         .send()

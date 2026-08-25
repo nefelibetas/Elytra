@@ -222,8 +222,8 @@ pub async fn fabric_api_versions(mc_version: &str) -> Result<Vec<FabricApiVersio
         mc_version
     );
     let cfg = config();
-    let official = format!("https://api.modrinth.com{path}");
-    let china = format!("https://mod.mcimirror.top/modrinth{path}");
+    let official = format!("{}{path}", crate::downloader::endpoints::CommunityEndpoints::MODRINTH_API_BASE);
+    let china = format!("{}{path}", crate::downloader::endpoints::CommunityEndpoints::MODRINTH_MIRROR_BASE);
     let urls = match cfg.community_source_mode {
         DownloadSourceMode::OfficialOnly => vec![official],
         DownloadSourceMode::ChinaOnly => vec![china],
