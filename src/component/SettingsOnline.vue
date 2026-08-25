@@ -187,6 +187,7 @@ async function copyRoomCode() {
 .online-status {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
   padding: 8px 0;
   font-size: 13px;
@@ -266,7 +267,7 @@ async function copyRoomCode() {
   font-weight: 600;
   color: var(--color-brand);
   letter-spacing: 0.5px;
-  user-select: all;
+  user-select: none;
 }
 .online-hint {
   font-size: 12px;
