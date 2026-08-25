@@ -188,7 +188,10 @@ pub async fn start_host(app: &tauri::AppHandle) -> Result<OnlineSnapshot, String
             if svc.status == OnlineStatus::Hosting {
                 continue;
             }
-            // Waiting → Hosting：重建实例补转发
+            // Waiting → Hosting：先停旧实例（释放 11010 监听端口），再重建补转发。
+            if let Some(old) = svc.session.take() {
+                old.stop().await;
+            }
             let Some(room) = svc.room.clone() else {
                 return;
             };
