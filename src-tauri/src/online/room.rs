@@ -5,8 +5,8 @@
 //!   16 字符 × 5bit = 80bit，剔易混字符），80bit 随机碰撞概率足够低；
 //! - 网络名与密钥由 **HMAC(固定盐, 身份段)** 派生（端口不参与派生，
 //!   host 可先建网、检测到游戏端口后再补全房间码展示）；
-//! - 可选端口段 `:PORT`：host 开联机时把游戏端口编入房间码，
-//!   guest 解析房间码即可获得目标端口，无需手动填写；
+//! - 可选端口段 `:PORT`：host 开联机时把入口端口编入房间码，
+//!   guest 解析房间码即可获得连接端口，无需手动填写；
 //! - 非法字符/格式本地拒绝，避免无效连接。
 
 use hmac::{Hmac, Mac};
@@ -28,7 +28,8 @@ pub fn create_room() -> RoomCredential {
     RoomCredential::derive(Uuid::new_v4(), None)
 }
 
-/// 生成新房间码并携带游戏端口（host 开联机时用）。
+/// 生成新房间码并携带入口端口（仅测试用；正式流程 host 用 create_room + with_port）。
+#[cfg(test)]
 pub fn create_room_with_port(port: u16) -> RoomCredential {
     RoomCredential::derive(Uuid::new_v4(), Some(port))
 }
@@ -130,7 +131,8 @@ pub struct RoomCredential {
     pub code: String,
     pub network_name: String,
     pub network_secret: String,
-    /// host 游戏端口（guest 经此获得目标端口；纯身份场景为 None）。
+    /// host 入口端口（guest 连 host虚拟IP:此端口；编入房间码）。
+    /// 与游戏端口解耦：host 侧由 mod.rs 探测空闲端口，避免与游戏监听冲突。
     pub port: Option<u16>,
 }
 

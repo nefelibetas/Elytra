@@ -18,12 +18,14 @@ export interface OnlineSnapshot {
 }
 
 export const onlineStatus = ref<OnlineStatus>("idle");
-/** 当前房间码（host：waiting 时为身份段，hosting 时含端口可分享）。 */
+/** 当前房间码（host：waiting 时为入口端口身份段，hosting 时含端口可分享）。 */
 export const onlineRoomCode = ref("");
 /** guest 加入后的本地转发端口（游戏内填 127.0.0.1:此端口）。 */
 export const onlineLocalPort = ref<number | null>(null);
-/** 操作错误（内联展示）。 */
-export const onlineError = ref("");
+/** host 区操作错误（内联展示在"作为主机"卡片）。 */
+export const onlineErrorHost = ref("");
+/** guest 区操作错误（内联展示在"加入联机"卡片）。 */
+export const onlineErrorGuest = ref("");
 
 function applySnapshot(snap: OnlineSnapshot) {
   onlineStatus.value = snap.status;
@@ -53,36 +55,38 @@ export async function loadOnlineStatus() {
 
 /** 开启联机（host）：立即建网进入 waiting；检测到游戏端口后自动转 hosting。 */
 export async function startHost() {
-  onlineError.value = "";
+  onlineErrorHost.value = "";
   try {
     applySnapshot(await invoke<OnlineSnapshot>("online_start_host"));
   } catch (e) {
-    onlineError.value = String(e);
+    onlineErrorHost.value = String(e);
     throw e;
   }
 }
 
 /** 加入联机（guest）：解析房间码自动拿端口，返回本地转发端口。 */
 export async function joinRoom(roomCode: string) {
-  onlineError.value = "";
+  onlineErrorGuest.value = "";
   try {
     const port = await invoke<number>("online_join", { roomCode });
     onlineLocalPort.value = port;
     onlineStatus.value = "joining";
     return port;
   } catch (e) {
-    onlineError.value = String(e);
+    onlineErrorGuest.value = String(e);
     throw e;
   }
 }
 
 /** 停止联机。 */
 export async function stopOnline() {
-  onlineError.value = "";
+  onlineErrorHost.value = "";
+  onlineErrorGuest.value = "";
   try {
     await invoke("online_stop");
     applySnapshot({ status: "idle", room_code: null, local_port: null });
   } catch (e) {
-    onlineError.value = String(e);
+    // 停止失败对 host 区展示（会话归属不确定时归 host）
+    onlineErrorHost.value = String(e);
   }
 }
