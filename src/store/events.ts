@@ -11,6 +11,8 @@ export const EVT_MS_LOGIN_COMPLETE = "ms-login-complete";
 export const EVT_GAME_EXITED = "game-exited";
 /** 游戏主窗口可见（[pid, versionLabel]；后端 EnumWindows 轮询判定） */
 export const EVT_GAME_WINDOW_VISIBLE = "game-window-visible";
+/** 联机状态变更（{ status: "idle"|"hosting"|"joining" }） */
+export const EVT_ONLINE_STATE = "online-state";
 
 // ── 事件 payload 类型（集中定义，store 经 re-export 保持既有 import 路径兼容）──
 
