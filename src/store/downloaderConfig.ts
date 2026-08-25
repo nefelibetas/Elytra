@@ -87,6 +87,33 @@ export const dlManifestOpen = ref(false);
 export const dlCommunityOpen = ref(false);
 export const dlJdkOpen = ref(false);
 export const dlTranslateOpen = ref(false);
+/**
+ * 下载源主开关：四细分（文件/版本列表/社区/JDK）是否一致时显示统一值，
+ * 不一致显示 "custom"。默认收起，展开可见四个细分各自独立设置。
+ * 纯前端聚合，不改后端四个独立字段。
+ */
+export type SourceMasterValue = "auto" | "officialOnly" | "chinaOnly" | "custom";
+const sourceModes = [dlFileMode, dlManifestMode, dlCommunityMode, dlJdkMode];
+export const dlSourceMaster = computed<SourceMasterValue>(() => {
+  const first = sourceModes[0].value;
+  if (sourceModes.every((m) => m.value === first)) return first as SourceMasterValue;
+  return "custom";
+});
+export const dlSourceOpen = ref(false);
+
+/** 主开关联动：设统一值同步四个细分（Skip "custom"，custom 状态下不触发）。 */
+export function setSourceMaster(v: SourceMasterValue) {
+  if (v === "custom") {
+    dlSourceOpen.value = false;
+    return;
+  }
+  dlFileMode.value = v;
+  dlManifestMode.value = v;
+  dlCommunityMode.value = v;
+  dlJdkMode.value = v;
+  dlSourceOpen.value = false;
+  saveDownloadConfig();
+}
 
 /** 下载设置下拉互斥展开：打开指定下拉时关闭其他（点同一项 = toggle 关闭）。 */
 export function toggleDlOpen(target: "file" | "manifest" | "community" | "jdk" | "network" | "translate") {

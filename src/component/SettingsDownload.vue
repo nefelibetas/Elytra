@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 下载设置卡片（管理游戏下载源）：文件/版本列表/社区源 + 网络代理 + 线程数
+// 下载设置卡片（管理游戏下载源）：下载源主开关 + 细分折叠 + 网络代理 + 线程数
 import { onMounted } from "vue";
 import { ChevronDown } from "@lucide/vue";
 import {
@@ -13,6 +13,7 @@ import {
   concurrencyLocked,
   saveDownloadConfig, setFileMode, setCommunityMode, setJdkMode, setManifestMode, setNetworkMode,
   setTranslateMode, toggleDlOpen, loadDownloadConfig,
+  dlSourceMaster, dlSourceOpen, setSourceMaster,
 } from "../store/downloaderConfig";
 
 onMounted(loadDownloadConfig);
@@ -22,25 +23,25 @@ onMounted(loadDownloadConfig);
   <div class="stg-card">
     <div class="stg-card-hdr">
       <h3>管理游戏下载源</h3>
-      <div class="stg-card-sub">游戏文件与版本列表的下载来源、线程数与速度控制</div>
+      <div class="stg-card-sub">游戏文件、版本列表、社区资源与 JDK 的下载来源与线程数</div>
     </div>
 
-    <!-- 文件下载源：点击展开选项 -->
+    <!-- 下载源（主开关）：四细分统一切换；展开可单独调整 -->
     <div class="dl-row">
-      <span class="dl-label">文件下载源</span>
-      <div class="dl-sel" :class="{ open: dlFileOpen }">
-        <button class="dl-sel-btn" @click="toggleDlOpen('file')">
-          <span>{{ sourceModeLabel(dlFileMode) }}</span>
+      <span class="dl-label">下载源</span>
+      <div class="dl-sel" :class="{ open: dlSourceOpen }">
+        <button class="dl-sel-btn" @click="dlSourceOpen = !dlSourceOpen">
+          <span>{{ dlSourceMaster === 'custom' ? '自定义（已单独设置）' : sourceModeLabel(dlSourceMaster) }}</span>
           <ChevronDown :size="12" />
         </button>
         <Transition name="dl-drop">
-          <div v-if="dlFileOpen" class="dl-sel-menu">
+          <div v-if="dlSourceOpen" class="dl-sel-menu">
             <button
               v-for="opt in sourceModeOptions"
               :key="opt.value"
               class="dl-sel-item"
-              :class="{ active: dlFileMode === opt.value }"
-              @click="setFileMode(opt.value)"
+              :class="{ active: dlSourceMaster === opt.value }"
+              @click="setSourceMaster(opt.value as any)"
             >
               <span class="dl-sel-item-label">{{ opt.label }}</span>
               <span class="dl-sel-item-desc">{{ opt.desc }}</span>
@@ -50,80 +51,110 @@ onMounted(loadDownloadConfig);
       </div>
     </div>
 
-    <!-- 版本列表源 -->
-    <div class="dl-row">
-      <span class="dl-label">版本列表源</span>
-      <div class="dl-sel" :class="{ open: dlManifestOpen }">
-        <button class="dl-sel-btn" @click="toggleDlOpen('manifest')">
-          <span>{{ sourceModeLabel(dlManifestMode) }}</span>
-          <ChevronDown :size="12" />
-        </button>
-        <Transition name="dl-drop">
-          <div v-if="dlManifestOpen" class="dl-sel-menu">
-            <button
-              v-for="opt in sourceModeOptions"
-              :key="opt.value"
-              class="dl-sel-item"
-              :class="{ active: dlManifestMode === opt.value }"
-              @click="setManifestMode(opt.value)"
-            >
-              <span class="dl-sel-item-label">{{ opt.label }}</span>
-              <span class="dl-sel-item-desc">{{ opt.desc }}</span>
+    <!-- 细分源设置：跟随主开关展开，四类各自独立 -->
+    <Transition name="expand">
+      <div v-if="dlSourceOpen" class="dl-source-detail">
+        <!-- 文件下载源：点击展开选项 -->
+        <div class="dl-row">
+          <span class="dl-label">文件下载源</span>
+          <div class="dl-sel" :class="{ open: dlFileOpen }">
+            <button class="dl-sel-btn" @click="toggleDlOpen('file')">
+              <span>{{ sourceModeLabel(dlFileMode) }}</span>
+              <ChevronDown :size="12" />
             </button>
+            <Transition name="dl-drop">
+              <div v-if="dlFileOpen" class="dl-sel-menu">
+                <button
+                  v-for="opt in sourceModeOptions"
+                  :key="opt.value"
+                  class="dl-sel-item"
+                  :class="{ active: dlFileMode === opt.value }"
+                  @click="setFileMode(opt.value)"
+                >
+                  <span class="dl-sel-item-label">{{ opt.label }}</span>
+                  <span class="dl-sel-item-desc">{{ opt.desc }}</span>
+                </button>
+              </div>
+            </Transition>
           </div>
-        </Transition>
-      </div>
-    </div>
+        </div>
 
-    <!-- 社区下载源：Modrinth 官方 vs MCIM 镜像（管理 Fabric API 等社区资源） -->
-    <div class="dl-row">
-      <span class="dl-label">社区下载源</span>
-      <div class="dl-sel" :class="{ open: dlCommunityOpen }">
-        <button class="dl-sel-btn" @click="toggleDlOpen('community')">
-          <span>{{ communitySourceOptions.find(o => o.value === dlCommunityMode)?.label ?? dlCommunityMode }}</span>
-          <ChevronDown :size="12" />
-        </button>
-        <Transition name="dl-drop">
-          <div v-if="dlCommunityOpen" class="dl-sel-menu">
-            <button
-              v-for="opt in communitySourceOptions"
-              :key="opt.value"
-              class="dl-sel-item"
-              :class="{ active: dlCommunityMode === opt.value }"
-              @click="setCommunityMode(opt.value)"
-            >
-              <span class="dl-sel-item-label">{{ opt.label }}</span>
-              <span class="dl-sel-item-desc">{{ opt.desc }}</span>
+        <!-- 版本列表源 -->
+        <div class="dl-row">
+          <span class="dl-label">版本列表源</span>
+          <div class="dl-sel" :class="{ open: dlManifestOpen }">
+            <button class="dl-sel-btn" @click="toggleDlOpen('manifest')">
+              <span>{{ sourceModeLabel(dlManifestMode) }}</span>
+              <ChevronDown :size="12" />
             </button>
+            <Transition name="dl-drop">
+              <div v-if="dlManifestOpen" class="dl-sel-menu">
+                <button
+                  v-for="opt in sourceModeOptions"
+                  :key="opt.value"
+                  class="dl-sel-item"
+                  :class="{ active: dlManifestMode === opt.value }"
+                  @click="setManifestMode(opt.value)"
+                >
+                  <span class="dl-sel-item-label">{{ opt.label }}</span>
+                  <span class="dl-sel-item-desc">{{ opt.desc }}</span>
+                </button>
+              </div>
+            </Transition>
           </div>
-        </Transition>
-      </div>
-    </div>
+        </div>
 
-    <!-- JDK 下载源：auto 并发测速三源最快优先；officialOnly 固定 Mojang → Azul；chinaOnly 固定 Mojang（镜像）→ Adoptium 仅 TUNA -->
-    <div class="dl-row">
-      <span class="dl-label">JDK 下载源</span>
-      <div class="dl-sel" :class="{ open: dlJdkOpen }">
-        <button class="dl-sel-btn" @click="toggleDlOpen('jdk')">
-          <span>{{ jdkModeLabel(dlJdkMode) }}</span>
-          <ChevronDown :size="12" />
-        </button>
-        <Transition name="dl-drop">
-          <div v-if="dlJdkOpen" class="dl-sel-menu">
-            <button
-              v-for="opt in jdkSourceOptions"
-              :key="opt.value"
-              class="dl-sel-item"
-              :class="{ active: dlJdkMode === opt.value }"
-              @click="setJdkMode(opt.value)"
-            >
-              <span class="dl-sel-item-label">{{ opt.label }}</span>
-              <span class="dl-sel-item-desc">{{ opt.desc }}</span>
+        <!-- 社区下载源：Modrinth 官方 vs MCIM 镜像（管理 Fabric API 等社区资源） -->
+        <div class="dl-row">
+          <span class="dl-label">社区下载源</span>
+          <div class="dl-sel" :class="{ open: dlCommunityOpen }">
+            <button class="dl-sel-btn" @click="toggleDlOpen('community')">
+              <span>{{ communitySourceOptions.find(o => o.value === dlCommunityMode)?.label ?? dlCommunityMode }}</span>
+              <ChevronDown :size="12" />
             </button>
+            <Transition name="dl-drop">
+              <div v-if="dlCommunityOpen" class="dl-sel-menu">
+                <button
+                  v-for="opt in communitySourceOptions"
+                  :key="opt.value"
+                  class="dl-sel-item"
+                  :class="{ active: dlCommunityMode === opt.value }"
+                  @click="setCommunityMode(opt.value)"
+                >
+                  <span class="dl-sel-item-label">{{ opt.label }}</span>
+                  <span class="dl-sel-item-desc">{{ opt.desc }}</span>
+                </button>
+              </div>
+            </Transition>
           </div>
-        </Transition>
+        </div>
+
+        <!-- JDK 下载源：auto 并发测速三源最快优先；officialOnly 固定 Mojang → Azul；chinaOnly 固定 Mojang（镜像）→ Adoptium 仅 TUNA -->
+        <div class="dl-row">
+          <span class="dl-label">JDK 下载源</span>
+          <div class="dl-sel" :class="{ open: dlJdkOpen }">
+            <button class="dl-sel-btn" @click="toggleDlOpen('jdk')">
+              <span>{{ jdkModeLabel(dlJdkMode) }}</span>
+              <ChevronDown :size="12" />
+            </button>
+            <Transition name="dl-drop">
+              <div v-if="dlJdkOpen" class="dl-sel-menu">
+                <button
+                  v-for="opt in jdkSourceOptions"
+                  :key="opt.value"
+                  class="dl-sel-item"
+                  :class="{ active: dlJdkMode === opt.value }"
+                  @click="setJdkMode(opt.value)"
+                >
+                  <span class="dl-sel-item-label">{{ opt.label }}</span>
+                  <span class="dl-sel-item-desc">{{ opt.desc }}</span>
+                </button>
+              </div>
+            </Transition>
+          </div>
+        </div>
       </div>
-    </div>
+    </Transition>
 
     <!-- 网络代理：自动检测系统代理 / 强制系统代理 / 直连（TUN 由网络层接管） -->
     <div class="dl-row">
@@ -217,6 +248,21 @@ onMounted(loadDownloadConfig);
   align-items: center;
   gap: 14px;
   padding: 9px 0;
+}
+
+/* 细分源设置容器：主开关展开区，缩进突出层级 */
+.dl-source-detail {
+  margin-left: 12px;
+  padding-left: 14px;
+  border-left: 1px solid var(--border-default);
+}
+.dl-source-detail .dl-row {
+  padding: 6px 0;
+}
+.dl-source-detail .dl-label {
+  flex-basis: 84px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
 }
 
 .dl-label {
@@ -357,5 +403,20 @@ onMounted(loadDownloadConfig);
 .dl-drop-leave-to {
   opacity: 0;
   transform: translateY(-6px);
+}
+
+/* 细分源区展开/收起动画（max-height 显式目标值保证动画生效） */
+.expand-enter-active,
+.expand-leave-active {
+  transition: max-height 0.25s ease, opacity 0.2s ease;
+}
+.expand-enter-to,
+.expand-leave-from {
+  max-height: 1000px;
+}
+.expand-enter-from,
+.expand-leave-to {
+  max-height: 0;
+  opacity: 0;
 }
 </style>
