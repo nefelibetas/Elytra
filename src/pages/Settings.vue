@@ -1,14 +1,13 @@
 <script setup lang="ts">
 // 设置页容器：导航 + 各 tab 内容编排（业务在 store/组件，本文件不做配置逻辑）
-import { SlidersHorizontal, Download, Palette } from "@lucide/vue";
+import { SlidersHorizontal, Download, Palette, Link2 } from "@lucide/vue";
 import SettingsLaunchOptions from "../component/SettingsLaunchOptions.vue";
 import SettingsJdk from "../component/SettingsJdk.vue";
 import SettingsDownload from "../component/SettingsDownload.vue";
 import SettingsAppearance from "../component/SettingsAppearance.vue";
+import SettingsOnline from "../component/SettingsOnline.vue";
 import ScrollTopFab from "../component/ScrollTopFab.vue";
 import { settingsTab } from "../store/settingsTab";
-
-
 </script>
 
 <template>
@@ -39,6 +38,14 @@ import { settingsTab } from "../store/settingsTab";
         <Palette :size="16" />
         外观
       </button>
+      <button
+        class="stg-tab"
+        :class="{ active: settingsTab === 'online' }"
+        @click="settingsTab = 'online'"
+      >
+        <Link2 :size="16" />
+        联机
+      </button>
     </nav>
 
     <div class="stg-body">
@@ -55,8 +62,13 @@ import { settingsTab } from "../store/settingsTab";
         </div>
 
         <!-- 外观：亮色 / 暗色 / 跟随系统 -->
-        <div v-else key="appearance" class="stg-page">
+        <div v-else-if="settingsTab === 'appearance'" key="appearance" class="stg-page">
           <SettingsAppearance />
+        </div>
+
+        <!-- 联机：EasyTier 虚拟局域网 -->
+        <div v-else key="online" class="stg-page">
+          <SettingsOnline />
         </div>
       </Transition>
     </div>
