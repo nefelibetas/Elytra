@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use crate::config::downloader::model::{DownloaderConfig, JdkSourceMode};
 use crate::downloader::fetcher::{self, http};
 use crate::downloader::probe::probe_url;
+use crate::downloader::endpoints::JdkEndpoints;
 use crate::jdk::model::JdkInfo;
 use crate::jdk::scanner;
 use crate::util::{java_bin_path, parse_java_major};
@@ -22,25 +23,18 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
+
 /// 安装进度钩子（任务侧传入；均可为空，纯函数调用方直接不传）。
 pub struct InstallProgress<'a> {
-    /// 任务取消标志（下载循环每块检查，取消立即停止当前文件）
-    pub cancel: Option<&'a AtomicBool>,
-    /// 报告总文件数/总字节（manifest 解析后；Azul 路径不报，进度回退文件数）
-    pub on_total: Option<&'a (dyn Fn(u32, u64) + Send + Sync)>,
-    /// 字节增量（当前文件下载中；调用方自行持有 prev 做差分）
-    pub on_bytes: Option<&'a (dyn Fn(u64) + Send + Sync)>,
-    /// 单文件下载完成
-    pub on_file_done: Option<&'a (dyn Fn() + Send + Sync)>,
+	/// 任务取消标志（下载循环每块检查，取消立即停止当前文件）
+	pub cancel: Option<&'a AtomicBool>,
+	/// 报告总文件数/总字节（manifest 解析后；Azul 路径不报，进度回退文件数）
+	pub on_total: Option<&'a (dyn Fn(u32, u64) + Send + Sync)>,
+	/// 字节增量（当前文件下载中；调用方自行持有 prev 做差分）
+	pub on_bytes: Option<&'a (dyn Fn(u64) + Send + Sync)>,
+	/// 单文件下载完成
+	pub on_file_done: Option<&'a (dyn Fn() + Send + Sync)>,
 }
-
-/// Mojang java-runtime all.json 固定资源地址（官方启动器 product 版本）。
-const RUNTIME_ALL_JSON: &str =
-    "https://piston-meta.mojang.com/v1/products/java-runtime/2ec0cc96c44e5a76b9c8b7c39df7210883d12871/all.json";
-
-/// TUNA 清华镜像 Adoptium 文件镜像基址（与官方同文件、文件名一致，仅同步文件——
-/// 无 API、无 checksum，元数据必须走官方 API）。大文件下载优先用它省国内带宽。
-const TUNA_ADOPTIUM_BASE: &str = "https://mirrors.tuna.tsinghua.edu.cn/Adoptium";
 
 /// 按 Java 主版本映射 Mojang runtime 组件名（all.json 的键）。
 /// 官方启动器为 1.20.5+ 用 epsilon（25）、1.18-1.20.4 用 delta（21）、
@@ -252,7 +246,7 @@ async fn speed_probe_url_for(
             let mirror_urls: Vec<String> = config
                 .file_sources_list()
                 .iter()
-                .map(|s| s.mirror_url(RUNTIME_ALL_JSON))
+                .map(|s| s.mirror_url(JdkEndpoints::RUNTIME_ALL_JSON))
                 .collect();
             let all_text = fetch_all_json_content_sync(major, config).await?;
             let all: serde_json::Value = all_text.parse().ok()?;
@@ -274,15 +268,15 @@ async fn speed_probe_url_for(
             let base: &str = mirror_urls
                 .first()
                 .map(|s| s.as_str())
-                .unwrap_or(RUNTIME_ALL_JSON);
+                .unwrap_or(JdkEndpoints::RUNTIME_ALL_JSON);
             let base = base.rsplit_once('/').map(|(b, _)| format!("{}/", b))?;
             Some(format!("{}{}", base, target))
         }
         JdkInstaller::Adoptium { .. } => {
             let (os, arch) = adoptium_platform();
             let api_url = format!(
-                "https://api.adoptium.net/v3/assets/latest/{}/hotspot?os={}&architecture={}&image_type=jdk",
-                major, os, arch
+                "{}/v3/assets/latest/{}/hotspot?os={}&architecture={}&image_type=jdk",
+                JdkEndpoints::ADOPTIUM_API_BASE, major, os, arch
             );
             let resp = http().get(&api_url).send().await.ok()?;
             if !resp.status().is_success() {
@@ -310,7 +304,8 @@ async fn speed_probe_url_for(
                 "x64"
             };
             let api_url = format!(
-                "https://api.azul.com/metadata/v1/zulu/packages/?java_version={major}&os={os}&arch={arch}&archive_type=zip&java_package_type=jdk&javafx_bundled=false&release_status=ga&latest=true"
+                "{}/metadata/v1/zulu/packages/?java_version={major}&os={os}&arch={arch}&archive_type=zip&java_package_type=jdk&javafx_bundled=false&release_status=ga&latest=true",
+                JdkEndpoints::AZUL_API_BASE
             );
             let resp = http().get(&api_url).send().await.ok()?;
             if !resp.status().is_success() {
@@ -344,9 +339,9 @@ async fn fetch_all_json_content_sync(major: u32, config: &DownloaderConfig) -> O
     let mirror_urls: Vec<String> = config
         .file_sources_list()
         .iter()
-        .map(|s| s.mirror_url(RUNTIME_ALL_JSON))
+        .map(|s| s.mirror_url(JdkEndpoints::RUNTIME_ALL_JSON))
         .collect();
-    let urls: Vec<String> = [RUNTIME_ALL_JSON.to_string()]
+    let urls: Vec<String> = [JdkEndpoints::RUNTIME_ALL_JSON.to_string()]
         .into_iter()
         .chain(mirror_urls)
         .collect();
@@ -468,7 +463,7 @@ async fn install_mojang_runtime(
         .fetch_with_fallback(
             config.file_source_mode,
             crate::downloader::source::CacheBehaviour::DefaultTtl,
-            |s| s.mirror_url(RUNTIME_ALL_JSON),
+            |s| s.mirror_url(JdkEndpoints::RUNTIME_ALL_JSON),
         )
         .await
         .map_err(|e| format!("获取 Java runtime 索引失败\n{e}"))?;
@@ -605,7 +600,8 @@ async fn install_adoptium_runtime(
     // 1. 元数据：Adoptium API 最新 GA 资产（响应含全平台，按 os/arch 过滤）
     let (os, arch) = adoptium_platform();
     let api_url = format!(
-        "https://api.adoptium.net/v3/assets/latest/{major}/hotspot?os={os}&architecture={arch}&image_type=jdk"
+        "{}/v3/assets/latest/{major}/hotspot?os={os}&architecture={arch}&image_type=jdk",
+        JdkEndpoints::ADOPTIUM_API_BASE
     );
     let resp = http()
         .get(&api_url)
@@ -720,7 +716,7 @@ fn adoptium_platform() -> (&'static str, &'static str) {
 
 /// TUNA 镜像文件 URL：Adoptium 官方文件名与镜像完全一致，按镜像目录结构直接构造。
 fn tuna_package_url(major: u32, arch: &str, os: &str, name: &str) -> String {
-    format!("{TUNA_ADOPTIUM_BASE}/{major}/jdk/{arch}/{os}/{name}")
+    format!("{}/{major}/jdk/{arch}/{os}/{name}", JdkEndpoints::TUNA_ADOPTIUM_BASE)
 }
 
 /// 源层排序决策（纯逻辑，便于单测）：官方探测可用且快于 TUNA → 官方优先；
@@ -824,7 +820,8 @@ async fn install_azul_runtime(
         "x64"
     };
     let api_url = format!(
-        "https://api.azul.com/metadata/v1/zulu/packages/?java_version={major}&os={os}&arch={arch}&archive_type=zip&java_package_type=jdk&javafx_bundled=false&release_status=ga&latest=true"
+        "{}/metadata/v1/zulu/packages/?java_version={major}&os={os}&arch={arch}&archive_type=zip&java_package_type=jdk&javafx_bundled=false&release_status=ga&latest=true",
+        JdkEndpoints::AZUL_API_BASE
     );
     let resp = http()
         .get(&api_url)

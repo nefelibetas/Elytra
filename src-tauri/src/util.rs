@@ -144,7 +144,10 @@ pub fn unique_child_dir(parent: &Path, base: &str) -> String {
 /// 非 cdn.modrinth.com URL 仅返回官方一源。社区资源文件下载统一经此构造多源。
 pub async fn community_download_urls(url: &str) -> Vec<String> {
     let official = url.to_string();
-    let mirrored = official.replace("https://cdn.modrinth.com", "https://mod.mcimirror.top");
+    let mirrored = official.replace(
+        crate::downloader::endpoints::CommunityEndpoints::MODRINTH_CDN_BASE,
+        crate::downloader::endpoints::CommunityEndpoints::MODRINTH_CDN_MIRROR_BASE,
+    );
     if mirrored == official {
         return vec![official];
     }

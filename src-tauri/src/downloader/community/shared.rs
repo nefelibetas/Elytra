@@ -17,16 +17,15 @@ pub(crate) enum ApiPlatform {
 /// 镜像映射（docs.mcimirror.top，"可直接替换 URL"）：
 ///   api.modrinth.com   → mod.mcimirror.top/modrinth
 ///   api.curseforge.com → mod.mcimirror.top/curseforge（/v1 前缀保留）
-/// Auto = 官方优先 + 镜像备用；ChinaOnly 仅镜像；OfficialOnly 仅官方。
 pub(crate) fn api_routes(platform: ApiPlatform, path: &str) -> Vec<String> {
     let (official, mirror) = match platform {
         ApiPlatform::Modrinth => (
-            format!("https://api.modrinth.com{path}"),
-            format!("https://mod.mcimirror.top/modrinth{path}"),
+            format!("{}{path}", crate::downloader::endpoints::CommunityEndpoints::MODRINTH_API_BASE),
+            format!("{}{path}", crate::downloader::endpoints::CommunityEndpoints::MODRINTH_MIRROR_BASE),
         ),
         ApiPlatform::CurseForge => (
-            format!("https://api.curseforge.com/v1{path}"),
-            format!("https://mod.mcimirror.top/curseforge/v1{path}"),
+            format!("{}{path}", crate::downloader::endpoints::CommunityEndpoints::CURSEFORGE_API_BASE),
+            format!("{}{path}", crate::downloader::endpoints::CommunityEndpoints::CURSEFORGE_MIRROR_BASE),
         ),
     };
     let cfg: DownloaderConfig =
