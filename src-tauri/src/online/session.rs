@@ -5,10 +5,13 @@
 //! - **socks5 feature** 必须启用（easytier `gateway_enabled = cfg!(feature="socks5")`，
 //!   否则端口转发不启动）；
 //! - host 固定虚拟 IP，guest DHCP 拿 IP；
-//! - 双方连同一公共协调节点（`-p tcp://node.invalid:11010`），虚拟网内互发现，
-//!   无需知道对方真实 IP；
-//! - 端口转发：host `0.0.0.0:mc_port → 127.0.0.1:mc_port`（虚拟网流量桥到本地游戏），
-//!   guest `127.0.0.1:local_port → host虚拟IP:mc_port`（本地可连）。
+//! - 双方连同一公共协调节点（`-p tcp://node.invalid:11010`），虚拟网内互发现；
+//! - 端口转发方向（spike 验证 + 冲突修正）：
+//!   host 转发 `bind 0.0.0.0:入口端口 → dst 127.0.0.1:mc_port`；
+//!   guest 转发 `bind 127.0.0.1:本地端口 → dst host虚拟IP:入口端口`。
+//!   入口端口是 host 探测的空闲端口（≠游戏端口），避免与游戏自身监听冲突
+//!   （真实 MC"对局域网开放"会 bind 0.0.0.0:mc_port，若 easytier 也 bind 同端口
+//!   即 10013/WSAEACCES）。入口端口编入房间码，guest 据此连接。
 
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -29,6 +32,9 @@ pub const DEFAULT_PUBLIC_NODES: &[&str] = &[
 /// host 虚拟网固定 IP（与陶瓦同网段，避免真实网络冲突）。
 pub const HOST_VIRTUAL_IP: &str = "10.144.144.1";
 
+/// host 虚拟网固定 IP 解析（session 转发 dst 用；[Ipv4Addr;4]）。
+const HOST_VIRTUAL_IP_V4: Ipv4Addr = Ipv4Addr::new(10, 144, 144, 1);
+
 /// host 监听端口（供 guest/公共节点连接，虚拟网协调用）。
 pub const HOST_LISTEN_PORT: u16 = 11010;
 
@@ -45,6 +51,8 @@ pub struct SessionConfig {
     pub room: RoomCredential,
     /// guest 本地暴露端口（Guest 角色用；None 则随机分配）。
     pub local_port: Option<u16>,
+    /// host 侧游戏端口（真实 MC 端口，仅 host 本地转发 dst 用，不进房间码）。
+    pub mc_port: Option<u16>,
     /// 公共协调节点列表（可覆盖默认）。
     pub public_nodes: Vec<String>,
 }
@@ -58,7 +66,7 @@ pub struct EasyTierSession {
 }
 
 impl EasyTierSession {
-    /// 创建并启动会话。
+    /// 创建并启动实例。
     pub async fn start(config: SessionConfig) -> Result<Self, String> {
         let toml = build_config(&config)?;
         let instance = create_native_instance(toml).map_err(|e| format!("创建联机会话失败\n{e}"))?;
@@ -122,25 +130,24 @@ fn build_config(config: &SessionConfig) -> Result<TomlConfigLoader, String> {
                     .parse()
                     .map_err(|e| format!("host 虚拟 IP 非法\n{e}"))?,
             ));
-            // 端口可选：等待游戏"对局域网开放"期间先建网不转发，
-            // 检测到端口后由上层重建实例补转发（网名密钥不变，peer 自动重连）。
-            if let Some(mc_port) = config.room.port {
-                // 虚拟网内收到的游戏流量 → 本地游戏服务器
-                cfg.set_port_forwards(vec![PortForwardConfig {
-                    bind_addr: SocketAddr::from((Ipv4Addr::UNSPECIFIED, mc_port)),
-                    dst_addr: SocketAddr::from((Ipv4Addr::LOCALHOST, mc_port)),
-                    proto: "tcp".to_string(),
-                }]);
-            }
+            // 入口端口=room.port（探测的空闲端口，≠游戏端口）；mc_port 为游戏端口。
+            let entry_port = config.room.port.ok_or("房间码缺少入口端口")?;
+            let mc_port = config.mc_port.ok_or("host 需要游戏端口")?;
+            // 虚拟网内 guest 访问 host虚拟IP:入口端口 → 本地游戏 127.0.0.1:mc_port
+            cfg.set_port_forwards(vec![PortForwardConfig {
+                bind_addr: SocketAddr::from((Ipv4Addr::UNSPECIFIED, entry_port)),
+                dst_addr: SocketAddr::from((Ipv4Addr::LOCALHOST, mc_port)),
+                proto: "tcp".to_string(),
+            }]);
         }
         SessionRole::Guest => {
             cfg.set_dhcp(true);
-            // 本地端口 → host 虚拟 IP 的游戏端口
-            let mc_port = config.room.port.ok_or("房间码缺少游戏端口")?;
+            // 本地端口 → host 虚拟 IP 的入口端口（host 转本地游戏）
+            let entry_port = config.room.port.ok_or("房间码缺少入口端口")?;
             let local_port = config.local_port.unwrap_or(0);
             cfg.set_port_forwards(vec![PortForwardConfig {
                 bind_addr: SocketAddr::from((Ipv4Addr::LOCALHOST, local_port)),
-                dst_addr: SocketAddr::from(([10, 144, 144, 1], mc_port)),
+                dst_addr: SocketAddr::from((HOST_VIRTUAL_IP_V4, entry_port)),
                 proto: "tcp".to_string(),
             }]);
         }

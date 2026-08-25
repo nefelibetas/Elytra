@@ -6,7 +6,8 @@
 import { onMounted, ref } from "vue";
 import { Copy, Link2, Unplug } from "@lucide/vue";
 import {
-  onlineStatus, onlineRoomCode, onlineLocalPort, onlineError,
+  onlineStatus, onlineRoomCode, onlineLocalPort,
+  onlineErrorHost, onlineErrorGuest,
   startHost, joinRoom, stopOnline, loadOnlineStatus, ensureOnlineListen,
 } from "../store/online";
 import { showToast } from "../utils/toast";
@@ -101,6 +102,8 @@ async function copyRoomCode() {
         <span class="online-room-code">{{ onlineRoomCode }}</span>
       </div>
 
+      <div v-if="onlineErrorHost" class="online-error">{{ errMsg(onlineErrorHost) }}</div>
+
       <div class="online-actions">
         <button
           v-if="onlineStatus === 'hosting'"
@@ -151,6 +154,8 @@ async function copyRoomCode() {
         <span class="online-hint">游戏内添加服务器填此地址</span>
       </div>
 
+      <div v-if="onlineErrorGuest" class="online-error">{{ errMsg(onlineErrorGuest) }}</div>
+
       <div class="online-actions">
         <button
           v-if="onlineStatus === 'joining'"
@@ -171,8 +176,6 @@ async function copyRoomCode() {
         </button>
       </div>
     </div>
-
-    <div v-if="onlineError" class="online-error">{{ errMsg(onlineError) }}</div>
   </div>
 </template>
 

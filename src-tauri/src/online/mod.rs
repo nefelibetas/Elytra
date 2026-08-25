@@ -1,11 +1,16 @@
 //! 联机领域层：EasyTier 库内嵌虚拟局域网 + 端口转发（host/guest）。
 //!
 //! host 流程（顺序自由）：
-//! 1. `start_host` → 先建虚拟网（无转发），状态 `Waiting`，后台组播轮询；
-//! 2. 游戏"对局域网开放"→ 扫描器拿到端口 → 重建实例补转发 → `Hosting`，
-//!    房间码补全端口段，可分享。
+//! 1. `start_host` → 探测入口端口 → 先建虚拟网（无转发），状态 `Waiting`，后台组播轮询；
+//! 2. 游戏"对局域网开放"→ 扫描器拿到游戏端口 → 重建实例补转发 → `Hosting`，
+//!    房间码补全入口端口段，可分享。
 //!
-//! guest：`join(room_code)` → 解析房间码拿 host 端口 → 加入虚拟网 + 本地转发。
+//! guest：`join(room_code)` → 解析房间码拿 host 入口端口 → 加入虚拟网 + 本地转发。
+//!
+//! 端口设计（10013 冲突修正）：真实 MC"对局域网开放"会 bind `0.0.0.0:mc_port`，
+//! easytier 转发若 bind 同端口即 WSAEACCES。故 host 转发 bind **入口端口**
+//! （探测的空闲端口，≠游戏端口，编入房间码）→ dst 本地游戏端口；
+//! guest 转发 dst 为 host 虚拟 IP 的入口端口。
 //!
 //! 事件：经 `EMIT_TX` 队列派发 `online-state`（载荷 [`OnlineSnapshot`]）。
 
@@ -13,7 +18,7 @@ mod mc_discover;
 mod room;
 mod session;
 
-pub use room::{create_room, create_room_with_port, parse_room_code, RoomCredential};
+pub use room::{create_room, parse_room_code, RoomCredential};
 pub use session::EasyTierSession;
 
 use std::sync::LazyLock;
@@ -35,7 +40,7 @@ const DISCOVER_POLL: Duration = Duration::from_secs(1);
 pub enum OnlineStatus {
     /// 未联机。
     Idle,
-    /// host 虚拟网已建、等待游戏开放局域网（未拿到端口）。
+    /// host 虚拟网已建、等待游戏开放局域网（未拿到游戏端口）。
     Waiting,
     /// host 联机中（已检测到游戏端口，转发生效）。
     Hosting,
@@ -105,8 +110,8 @@ fn emit_snapshot(app: &tauri::AppHandle, snap: &OnlineSnapshot) {
     emit_event(app, ONLINE_STATE, snap.clone());
 }
 
-/// 开启联机（作为 host）：立即建虚拟网进入 `Waiting`，
-/// 后台等游戏"对局域网开放"的组播广播，检测到端口后自动补转发并补全房间码。
+/// 开启联机（作为 host）：探测入口端口 → 立即建虚拟网进入 `Waiting`，
+/// 后台等游戏"对局域网开放"的组播广播，检测到游戏端口后自动补转发并补全房间码。
 pub async fn start_host(app: &tauri::AppHandle) -> Result<OnlineSnapshot, String> {
     let mut svc = SERVICE.lock().await;
     if svc.session.is_some() {
@@ -118,11 +123,16 @@ pub async fn start_host(app: &tauri::AppHandle) -> Result<OnlineSnapshot, String
     if svc.scanner.is_none() {
         svc.scanner = Some(MinecraftScanner::start());
     }
-    let room = create_room();
+    // 入口端口：全程不变的空闲端口（≠游戏端口，避免与游戏监听冲突）。
+    // 一开始就编入房间码；Waiting 阶段先建网（无转发），
+    // 检测到游戏端口后重建实例补转发（bind 此端口 → 本地游戏）。
+    let entry_port = free_tcp_port()?;
+    let room = create_room().with_port(entry_port);
     let cfg = SessionConfig {
         role: SessionRole::Host,
         room: room.clone(),
         local_port: None,
+        mc_port: None,
         public_nodes: Vec::new(),
     };
     let s = EasyTierSession::start(cfg).await?;
@@ -143,10 +153,11 @@ pub async fn start_host(app: &tauri::AppHandle) -> Result<OnlineSnapshot, String
             if svc.generation != gen || svc.status != OnlineStatus::Waiting {
                 return;
             }
-            let Some(port) = svc.scanner.as_ref().and_then(|sc| sc.get_port()) else {
+            let Some(mc_port) = svc.scanner.as_ref().and_then(|sc| sc.get_port()) else {
                 continue;
             };
-            let Some(room) = svc.room.as_ref().map(|r| r.clone().with_port(port)) else {
+            // room 在 start_host 时已带入口端口，直接复用（身份不变）
+            let Some(room) = svc.room.clone() else {
                 return;
             };
             if let Some(old) = svc.session.take() {
@@ -156,6 +167,7 @@ pub async fn start_host(app: &tauri::AppHandle) -> Result<OnlineSnapshot, String
                 role: SessionRole::Host,
                 room: room.clone(),
                 local_port: None,
+                mc_port: Some(mc_port),
                 public_nodes: Vec::new(),
             };
             match EasyTierSession::start(cfg).await {
@@ -181,7 +193,7 @@ pub async fn start_host(app: &tauri::AppHandle) -> Result<OnlineSnapshot, String
     Ok(snap)
 }
 
-/// 加入联机（作为 guest）：解析房间码（含 host 端口）→ 加入虚拟网 → 本地端口转发。
+/// 加入联机（作为 guest）：解析房间码（含 host 入口端口）→ 加入虚拟网 → 本地端口转发。
 pub async fn join(app: &tauri::AppHandle, room_code: &str) -> Result<u16, String> {
     let mut svc = SERVICE.lock().await;
     if svc.session.is_some() {
@@ -189,7 +201,7 @@ pub async fn join(app: &tauri::AppHandle, room_code: &str) -> Result<u16, String
     }
     let room = parse_room_code(room_code)
         .ok_or_else(|| "房间码无效\n请检查格式（U/XXXX-XXXX-XXXX-XXXX:端口）".to_string())?;
-    let _mc_port = room.port.ok_or_else(|| {
+    room.port.ok_or_else(|| {
         "房间码缺少端口\n请让主机重新复制完整房间码（需在检测到游戏后生成）".to_string()
     })?;
     // 本地转发端口：预先占一个空闲端口再交给转发配置（bind :0 实际端口不可查）
@@ -199,6 +211,7 @@ pub async fn join(app: &tauri::AppHandle, room_code: &str) -> Result<u16, String
         role: SessionRole::Guest,
         room: room.clone(),
         local_port: Some(local_port),
+        mc_port: None,
         public_nodes: Vec::new(),
     };
     let s = EasyTierSession::start(cfg).await?;
