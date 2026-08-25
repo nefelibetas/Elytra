@@ -8,6 +8,7 @@ pub mod launch_options;
 pub mod launch_script;
 pub mod loader;
 pub mod offline_account;
+pub mod online;
 pub mod task;
 pub mod version;
 pub mod version_icon;
