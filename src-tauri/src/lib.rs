@@ -6,6 +6,7 @@ pub mod downloader;
 mod events;
 mod jdk;
 pub mod launcher;
+pub mod online;
 mod persist;
 pub mod task;
 pub mod util;
@@ -107,6 +108,10 @@ pub fn run() {
             commands::account::fetch_capes,
             commands::account::set_active_cape,
             commands::account::disable_cape,
+            commands::online::online_start_host,
+            commands::online::online_join,
+            commands::online::online_stop,
+            commands::online::online_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

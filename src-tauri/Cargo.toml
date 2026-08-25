@@ -30,11 +30,17 @@ futures-util = "0.3"
 serde_json = "1"
 sha1 = "0.10"
 sha2 = "0.10"
+# 联机房间码（online/room.rs）：uuid 生成房间码、hmac 派生网络凭据
+uuid = { version = "1", features = ["v4"] }
+hmac = "0.12"
 base64 = "0.22"
 url = "2"
 percent-encoding = "2"
 getrandom = "0.2"
-zip = "2"
+# JDK 包解压：zip crate。默认 features 含 lzma/xz/zstd，会与 easytier 的 liblzma-sys 冲突
+# （links=lzma 冲突），Minecraft/JDK 生态 zip 均为 deflate 压缩，故关默认只留
+# deflate/bzip2/aes-crypto/time
+zip = { version = "2", default-features = false, features = ["deflate", "bzip2", "aes-crypto", "time"] }
 # JDK 包解压：Adoptium（Temurin）的 mac/linux 仅提供 tar.gz（官方 API 返回的包
 # 格式 zip/tar.gz 随平台变化），需 tar + flate2（纯 Rust，flate2 默认 miniz_oxide 后端）
 tar = "0.4"
@@ -44,6 +50,12 @@ flate2 = "1"
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
 # 锁：立即 unwrap 的场景用 parking_lot（无 poisoning 路径，guard 更小更快）
 parking_lot = "0.12"
+# 联机（#online）：EasyTier 库内嵌虚拟局域网 + 端口转发。
+# 剔 tun feature：纯用户态 no_tun+smoltcp+socks5，无需 wintun 驱动/管理员权限。
+# socks5 = gateway 启用开关（gateway_enabled 由 cfg!(feature="socks5") 决定），端口转发依此启动；
+# management = 实例事件订阅；aes-gcm = 加密；quic = 传输协议。
+easytier = { git = "https://github.com/EasyTier/EasyTier", default-features = false, features = ["management", "socks5", "smoltcp", "quic", "websocket", "logging", "aes-gcm"] }
+easytier-core = { git = "https://github.com/EasyTier/EasyTier", default-features = false }
 # 读 Windows 系统代理（注册表 Internet Settings）：reqwest 默认不读系统代理，
 # 用户开着系统代理（Clash 等）时官方源直连被劫持/黑洞，需显式走代理
 [target.'cfg(windows)'.dependencies]

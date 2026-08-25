@@ -10,3 +10,5 @@ pub const GAME_EXITED: &str = "game-exited";
 pub const GAME_WINDOW_VISIBLE: &str = "game-window-visible";
 /// 批量文件下载失败挂起，等待用户决策（{ task_id, file_name, error }）
 pub const TASK_WAITING_USER: &str = "task-waiting-user";
+/// 联机状态快照（OnlineSnapshot：{ status, room_code?, local_port? }）
+pub const ONLINE_STATE: &str = "online-state";
