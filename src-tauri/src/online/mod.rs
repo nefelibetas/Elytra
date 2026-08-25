@@ -91,6 +91,16 @@ impl Default for OnlineServiceInner {
     }
 }
 
+impl OnlineServiceInner {
+    /// 当前会话角色（无会话/空闲 → Host，后台任务据此判断是否自管）。
+    fn role(&self) -> SessionRole {
+        self.session
+            .as_ref()
+            .map(|s| s.role)
+            .unwrap_or(SessionRole::Host)
+    }
+}
+
 static SERVICE: LazyLock<Mutex<OnlineServiceInner>> =
     LazyLock::new(|| Mutex::new(OnlineServiceInner::default()));
 
@@ -143,26 +153,45 @@ pub async fn start_host(app: &tauri::AppHandle) -> Result<OnlineSnapshot, String
     emit_snapshot(app, &snap);
     drop(svc);
 
-    // 后台发现任务：拿到游戏端口 → 重建实例补转发（网名密钥不变，peer 自动重连）
+    // 后台发现任务（持续运行直到 stop/重开）：完整状态机。
+    //
+    // - Waiting → Hosting：扫描到游戏端口 → 重建实例补转发；
+    // - Hosting → Waiting：游戏的组播端口消失（已退出"对局域网开放"）→
+    //   停转发实例、降回 Waiting，等待下一次开局域网（房间码入口端口不变）。
+    // - 仅代际不符（被 stop/start_host 重置）才退出。
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         loop {
             tokio::time::sleep(DISCOVER_POLL).await;
             let mut svc = SERVICE.lock().await;
-            // 已停止/重开/状态被改：本任务过期退出
-            if svc.generation != gen || svc.status != OnlineStatus::Waiting {
+            // 已停止/重开：本任务过期退出
+            if svc.generation != gen {
+                return;
+            }
+            // 仅 host 会话由本任务驱动（guest 由 join 管理）；状态异常退出
+            if svc.role() != SessionRole::Host {
                 return;
             }
             let Some(mc_port) = svc.scanner.as_ref().and_then(|sc| sc.get_port()) else {
+                // 端口消失：若在 Hosting，降回 Waiting（停转发，保留房间码）
+                if svc.status == OnlineStatus::Hosting {
+                    if let Some(old) = svc.session.take() {
+                        old.stop().await;
+                    }
+                    svc.status = OnlineStatus::Waiting;
+                    let snap = snapshot_inner(&svc);
+                    emit_snapshot(&app, &snap);
+                }
                 continue;
             };
-            // room 在 start_host 时已带入口端口，直接复用（身份不变）
+            // 已有转发且端口未变：无事可做
+            if svc.status == OnlineStatus::Hosting {
+                continue;
+            }
+            // Waiting → Hosting：重建实例补转发
             let Some(room) = svc.room.clone() else {
                 return;
             };
-            if let Some(old) = svc.session.take() {
-                old.stop().await;
-            }
             let cfg = SessionConfig {
                 role: SessionRole::Host,
                 room: room.clone(),
@@ -177,8 +206,7 @@ pub async fn start_host(app: &tauri::AppHandle) -> Result<OnlineSnapshot, String
                     svc.room = Some(room);
                 }
                 Err(e) => {
-                    // 重建失败：回退空闲态并释放扫描器，错误经快照无法携带——
-                    // 记日志即可；用户可重试
+                    // 重建失败：回退空闲态并释放扫描器
                     eprintln!("联机端口转发重建失败: {e}");
                     svc.status = OnlineStatus::Idle;
                     svc.room = None;
@@ -187,7 +215,6 @@ pub async fn start_host(app: &tauri::AppHandle) -> Result<OnlineSnapshot, String
             }
             let snap = snapshot_inner(&svc);
             emit_snapshot(&app, &snap);
-            return;
         }
     });
     Ok(snap)
