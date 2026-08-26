@@ -378,14 +378,14 @@ pub async fn run_task(
     let loader_dl = async {
         if let Some(loader) = loader {
             // 阶段钩子：安装内部在对应事件点推进 LoaderConfig/LoaderLibs 两步
-            let hook = |ev: crate::downloader::mod_loader::LoaderEvent| match ev {
-                crate::downloader::mod_loader::LoaderEvent::ConfigDone => {
+            let hook = |ev: mod_loader::LoaderEvent| match ev {
+                mod_loader::LoaderEvent::ConfigDone => {
                     if let Some(i) = i_cfg {
                         step_done(&app, progress, i);
                     }
                     cfg_done.store(true, Ordering::Relaxed);
                 }
-                crate::downloader::mod_loader::LoaderEvent::LibsDone => {
+                mod_loader::LoaderEvent::LibsDone => {
                     if let Some(i) = i_lbs {
                         step_done(&app, progress, i);
                     }
@@ -426,10 +426,10 @@ pub async fn run_task(
             // - 无 loader（纯后端调用，前端不暴露）：纯净版独立版本 + classpath 库
             let mode = match loader {
                 Some(l) => match l.kind {
-                    crate::task::LoaderKind::Fabric | crate::task::LoaderKind::Quilt => {
+                    task::LoaderKind::Fabric | task::LoaderKind::Quilt => {
                         mod_loader::OptifineMode::FabricLike
                     }
-                    crate::task::LoaderKind::Forge | crate::task::LoaderKind::NeoForge => {
+                    task::LoaderKind::Forge | task::LoaderKind::NeoForge => {
                         mod_loader::OptifineMode::ForgeLike
                     }
                 },
@@ -659,7 +659,7 @@ async fn init_local_scan(
 
     // natives 缺失数预计算（下载阶段独立计数器；total 计入 pending 数）
     let natives_pending = count_natives_missing(&vj.libraries, lib_dir);
-    let natives_pending_bytes = crate::task::repair::natives_missing_bytes(&vj.libraries, lib_dir);
+    let natives_pending_bytes = task::repair::natives_missing_bytes(&vj.libraries, lib_dir);
 
     // 资源清单：fetch asset index（网络）→ 报资产总数（文件+字节）；再多线程 sha1 检测本地（逐批上报）
     let mut asst_total_all = 0u32;

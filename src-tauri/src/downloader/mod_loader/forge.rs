@@ -80,12 +80,12 @@ pub(super) async fn download_and_extract(
         let lb = pc.step_bytes.clone();
         let lt = pc.step_total.clone();
         move |downloaded: u64, total: u64| {
-            let prev = fd.swap(downloaded, std::sync::atomic::Ordering::Relaxed);
+            let prev = fd.swap(downloaded, Ordering::Relaxed);
             let delta = downloaded.saturating_sub(prev);
-            b.fetch_add(delta, std::sync::atomic::Ordering::Relaxed);
-            lb.fetch_add(delta, std::sync::atomic::Ordering::Relaxed);
+            b.fetch_add(delta, Ordering::Relaxed);
+            lb.fetch_add(delta, Ordering::Relaxed);
             if total > 0 {
-                lt.store(total, std::sync::atomic::Ordering::Relaxed);
+                lt.store(total, Ordering::Relaxed);
             }
         }
     };
@@ -245,7 +245,7 @@ async fn extract_forge_client_lzma(
     lib_dir: &Path,
     mc_dir: &Path,
     dir_name: &str,
-    config: &crate::config::downloader::model::DownloaderConfig,
+    config: &DownloaderConfig,
     cancel: &Arc<AtomicBool>,
 ) -> Result<(), String> {
     // 定位 URL 为空的 forge client 库（其 path/sha1 由 version.json 给出）
@@ -327,7 +327,7 @@ async fn extract_forge_client_lzma(
         ),
         ("trove", "trove/trove/1.0.2/trove-1.0.2.jar"),
     ];
-    let sources: Vec<&crate::config::downloader::model::DownloadSource> =
+    let sources: Vec<&DownloadSource> =
         config.file_sources_list();
     for (name, maven_path) in TOOL_JARS {
         let tool_dest = tools.join(format!("{name}.jar"));
@@ -338,7 +338,7 @@ async fn extract_forge_client_lzma(
             .iter()
             .map(|s| s.mirror_url(&format!("https://maven.minecraftforge.net/{maven_path}")))
             .collect();
-        crate::downloader::fetcher::fetch_fallback(&urls, &tool_dest, None::<fn(u64, u64)>)
+        fetcher::fetch_fallback(&urls, &tool_dest, None::<fn(u64, u64)>)
             .await
             .map_err(|e| format!("下载 {name} 工具失败\n{e}"))?;
     }
@@ -433,16 +433,16 @@ pub(super) async fn wait_for_vanilla_client(
 }
 
 /// 运行补丁工具所需的 Java 可执行文件（与游戏启动同一套 JDK 配置）。
-pub(super) fn resolve_java() -> Result<std::path::PathBuf, String> {
+pub(super) fn resolve_java() -> Result<PathBuf, String> {
     use crate::jdk::model::JdkSelection;
     let cfg = crate::jdk::read();
     match cfg.jdk_selection {
-        JdkSelection::Manual { path } => Ok(java_bin_path(std::path::Path::new(&path))),
+        JdkSelection::Manual { path } => Ok(java_bin_path(Path::new(&path))),
         JdkSelection::Auto => {
             let jdk = cfg.discovered_jdks.first().ok_or(
                 "未检测到 Java 环境，无法生成 Forge client（需要 JDK 运行官方补丁工具，请先在设置中配置 Java）",
             )?;
-            Ok(java_bin_path(std::path::Path::new(&jdk.path)))
+            Ok(java_bin_path(Path::new(&jdk.path)))
         }
     }
 }

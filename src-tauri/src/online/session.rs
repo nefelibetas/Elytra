@@ -1,6 +1,6 @@
 //! EasyTier 会话封装：库内嵌（非子进程）创建/启动/停止虚拟局域网实例。
 //!
-//! 关键配置（spike 验证的配方）：
+//! 关键配置：
 //! - **no_tun + use_smoltcp**：纯用户态，无需 wintun 驱动/管理员权限；
 //! - **socks5 feature** 必须启用（easytier `gateway_enabled = cfg!(feature="socks5")`，
 //!   否则端口转发不启动）；

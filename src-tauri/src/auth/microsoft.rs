@@ -527,7 +527,7 @@ mod tests {
 
     #[test]
     fn test_extract_tokens_error() {
-        let json = serde_json::json!({
+        let json = json!({
             "error": "invalid_grant",
             "error_description": "AADSTS70008: code expired"
         });

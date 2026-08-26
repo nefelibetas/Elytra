@@ -78,11 +78,11 @@ pub fn java_bin_path(home: &Path) -> PathBuf {
 }
 
 /// 启动器可执行文件所在目录（配置文件与默认游戏目录的基准）。
-pub fn exe_dir() -> std::path::PathBuf {
+pub fn exe_dir() -> PathBuf {
     std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// FNV-1a 64 位散列（跨进程稳定，非加密）：离线皮肤哈希 / 缓存键派生共用。

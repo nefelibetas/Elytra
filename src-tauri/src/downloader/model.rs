@@ -125,7 +125,7 @@ pub struct Library {
     pub downloads: Option<LibraryDownloads>,
     pub rules: Option<Vec<Rule>>,
     #[serde(default)]
-    pub natives: Option<std::collections::HashMap<String, String>>,
+    pub natives: Option<HashMap<String, String>>,
     #[serde(default)]
     pub extract: Option<ExtractRules>,
 }
@@ -135,7 +135,7 @@ pub struct Library {
 pub struct LibraryDownloads {
     pub artifact: Option<Artifact>,
     #[serde(default)]
-    pub classifiers: Option<std::collections::HashMap<String, Artifact>>,
+    pub classifiers: Option<HashMap<String, Artifact>>,
 }
 
 /// Artifact

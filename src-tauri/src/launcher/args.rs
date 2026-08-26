@@ -626,7 +626,7 @@ fn add_native_props(props: &mut Vec<String>, natives_dir: &Path, version_json: &
 }
 
 /// 在目录中扫描第一个指定扩展名的文件（文件名可能与目录名不同，如目录被重命名）。
-pub fn find_file_in_dir(dir: &std::path::Path, ext: &str) -> Option<std::path::PathBuf> {
+pub fn find_file_in_dir(dir: &Path, ext: &str) -> Option<PathBuf> {
     std::fs::read_dir(dir)
         .ok()?
         .filter_map(|e| e.ok())
@@ -644,7 +644,7 @@ pub fn find_file_in_dir(dir: &std::path::Path, ext: &str) -> Option<std::path::P
 /// 含 `"mainClass"` 键的 json——PCL2 版本隔离实例目录混有游戏数据 json
 /// （TrashSlotSaveState/patchouli_data/usercache 等），字典序第一个
 /// 可能不是版本 json，直接解析会报 "missing field assetIndex"。
-pub fn find_version_json(dir: &std::path::Path, dir_name: &str) -> Option<std::path::PathBuf> {
+pub fn find_version_json(dir: &Path, dir_name: &str) -> Option<PathBuf> {
     let named = dir.join(format!("{dir_name}.{EXT_JSON}"));
     if named.is_file() {
         return Some(named);

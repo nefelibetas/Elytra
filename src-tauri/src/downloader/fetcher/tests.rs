@@ -439,7 +439,7 @@ async fn mirror_requests_capped_at_mirror_concurrency() {
                 let mut buf = [0u8; 4096];
                 let _ = sock.read(&mut buf).await;
                 // 模拟下载耗时，给并发统计留出窗口
-                tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+                tokio::time::sleep(Duration::from_millis(80)).await;
                 let body = b"mirror-content";
                 let head = format!(
                     "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
