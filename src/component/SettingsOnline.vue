@@ -198,11 +198,10 @@ async function handleSaveConfig() {
     <!-- 协调服务器（跨网联机） -->
     <div class="online-sec">
       <div class="online-sec-title">协调服务器（跨网联机）</div>
+      <p class="online-desc">
+        不在同一局域网时，host 与 guest 需连到同一个协调服务器才能互相发现（EasyTier
         官方公共节点已下线）。默认内置一个社区备用节点，可直接使用；也可填自己或朋友的
         服务器地址，每行一个，格式如
-        <span class="online-mono">tcp://1.2.3.4:11010</span>。留空则仅支持同一局域网直连。
-      </p>
-        官方公共节点已下线）。可填自己或朋友的服务器地址，每行一个，格式如
         <span class="online-mono">tcp://1.2.3.4:11010</span>。留空则仅支持同一局域网直连。
       </p>
       <textarea
