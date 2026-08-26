@@ -181,7 +181,9 @@ fn build_config(config: &SessionConfig) -> Result<TomlConfigLoader, String> {
             let entry_port = config.room.port.ok_or("房间码缺少入口端口")?;
             let local_port = config.local_port.unwrap_or(0);
             cfg.set_port_forwards(vec![PortForwardConfig {
-                bind_addr: SocketAddr::from((Ipv4Addr::LOCALHOST, local_port)),
+                // bind 0.0.0.0：guest 的 MC 客户端经"局域网发现"连 <本机IP>:local_port
+                // （广播源为本机网卡 IP，非回环；见 mc_advertise.rs）
+                bind_addr: SocketAddr::from((Ipv4Addr::UNSPECIFIED, local_port)),
                 dst_addr: SocketAddr::from((HOST_VIRTUAL_IP_V4, entry_port)),
                 proto: "tcp".to_string(),
             }]);
@@ -262,7 +264,7 @@ mod tests {
         assert_eq!(fwds.len(), 1);
         assert_eq!(
             fwds[0].bind_addr,
-            SocketAddr::from((Ipv4Addr::LOCALHOST, 49152))
+            SocketAddr::from((Ipv4Addr::UNSPECIFIED, 49152))
         );
         assert_eq!(
             fwds[0].dst_addr,
