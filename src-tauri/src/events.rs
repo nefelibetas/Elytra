@@ -12,3 +12,5 @@ pub const GAME_WINDOW_VISIBLE: &str = "game-window-visible";
 pub const TASK_WAITING_USER: &str = "task-waiting-user";
 /// 联机状态快照（OnlineSnapshot：{ status, room_code?, local_port? }）
 pub const ONLINE_STATE: &str = "online-state";
+/// 游戏日志检测到会话验证失败（MC 服务器正版验证拒绝离线会话；空 payload，触发一次）
+pub const GAME_SESSION_ERROR: &str = "game-session-error";
