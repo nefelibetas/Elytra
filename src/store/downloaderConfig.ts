@@ -9,10 +9,6 @@ export const sourceModeOptions = [
   { value: "chinaOnly", label: "国内镜像源", desc: "仅使用国内镜像源，不自动回退" },
 ];
 
-export function sourceModeLabel(v: string) {
-  return sourceModeOptions.find((o) => o.value === v)?.label ?? v;
-}
-
 // 网络代理模式：auto 自动检测系统代理（Windows 注册表 / Linux 环境变量或 gsettings）；
 // system 强制系统代理；direct 强制直连（TUN 模式由网络层接管，直连也会走代理）
 export const networkModeOptions = [
@@ -20,10 +16,6 @@ export const networkModeOptions = [
   { value: "system", label: "系统代理", desc: "强制使用系统代理（检测不到时回退直连）" },
   { value: "direct", label: "直连", desc: "不走应用层代理，直连网络（TUN 模式仍由系统接管）" },
 ];
-
-export function networkModeLabel(v: string) {
-  return networkModeOptions.find((o) => o.value === v)?.label ?? v;
-}
 
 // 社区下载源：Modrinth 官方 API/CDN vs MCIM 国内镜像（管理 Fabric API 等社区资源）
 export const communitySourceOptions = [
@@ -41,20 +33,12 @@ export const jdkSourceOptions = [
   { value: "chinaOnly", label: "仅国内镜像", desc: "Mojang 走文件源镜像，Adoptium 仅从清华 TUNA 下载（元数据例外走官方 API）" },
 ];
 
-export function jdkModeLabel(v: string) {
-  return jdkSourceOptions.find((o) => o.value === v)?.label ?? v;
-}
-
 // 社区搜索结果翻译显示模式（默认仅中文；en 模式后端跳过翻译请求）
 // 标题译名来自内置表（热门 Mod 社区常用名），简介翻译来自 MCIM
 export const translateDisplayOptions = [
   { value: "zh", label: "仅中文", desc: "标题与简介显示中文（默认）" },
   { value: "en", label: "仅英文", desc: "不请求翻译，显示英文原文" },
 ];
-
-export function translateModeLabel(v: string) {
-  return translateDisplayOptions.find((o) => o.value === v)?.label ?? v;
-}
 
 interface DownloaderConfig {
   file_source_mode: string;
@@ -108,7 +92,6 @@ export function setSourceMaster(v: SourceMasterValue) {
 }
 export const dlMinecraftDir = ref(".minecraft");
 export const dlNetworkMode = ref("auto");
-export const dlNetworkOpen = ref(false);
 export const dlTranslateMode = ref<"zh" | "en">("zh");
 /** 社区资源版本列表仅显示正式版（默认开启，过滤快照/预发布/候选版本） */
 export const dlShowReleaseOnly = ref(true);
