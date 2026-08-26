@@ -291,14 +291,58 @@ fn free_tcp_port() -> Result<u16, String> {
         .map_err(|e| format!("分配本地端口失败\n{e}"))
 }
 
-/// 探测本机默认出口 IPv4（编入房间码 `@IP` 段，供同网 guest 直连）。
-/// UDP connect 只做路由选择（不发包），立即返回，无需外网可达。
+/// 探测本机局域网 IPv4（编入房间码 `@IP` 段，供同网 guest 直连）。
+/// 枚举所有网卡，排除回环/链路本地/代理 TUN 虚拟段（198.18.0.0/15 为 Clash 等
+/// 常见 fake-ip 保留段）与自家 easytier 虚拟网段（10.144.144.0/24），取第一个私网 IPv4。
+/// 不能用 UDP connect 拿默认出口 IP：Clash TUN 模式下会返回虚拟网卡 IP
+/// （实测 198.18.0.1），局域网其他机器不可达，guest 直连必失败。
 fn detect_lan_ip() -> Option<String> {
-    let socket = std::net::UdpSocket::bind(("0.0.0.0", 0)).ok()?;
-    socket.connect(("8.8.8.8", 80)).ok()?;
-    let ip = socket.local_addr().ok()?.ip();
-    if ip.is_loopback() || ip.is_unspecified() {
-        return None;
+    use network_interface::{NetworkInterface, NetworkInterfaceConfig};
+    for iface in NetworkInterface::show().ok()? {
+        for addr in iface.addr {
+            let std::net::IpAddr::V4(v4) = addr.ip() else {
+                continue;
+            };
+            let o = v4.octets();
+            // 排除：回环、链路本地（APIPA）、Clash TUN fake-ip 段、自家虚拟网段
+            if v4.is_loopback()
+                || v4.is_link_local()
+                || (o[0] == 198 && o[1] == 18)
+                || (o[0] == 10 && o[1] == 144 && o[2] == 144)
+            {
+                continue;
+            }
+            if v4.is_private() {
+                return Some(v4.to_string());
+            }
+        }
     }
-    Some(ip.to_string())
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// detect_lan_ip 不应返回代理 TUN 虚拟 IP（Clash fake-ip 段）或自家虚拟网段；
+    /// 本机（Clash TUN 198.18.0.1 + 物理 192.168.1.2）应选物理私网 IP。
+    #[test]
+    fn detect_lan_ip_excludes_tun_and_virtual_segments() {
+        let Some(ip) = detect_lan_ip() else {
+            eprintln!("detect_lan_ip = None（无可用私网接口，跳过断言）");
+            return;
+        };
+        let v4: std::net::Ipv4Addr = ip.parse().expect("应返回合法 IPv4");
+        let o = v4.octets();
+        assert!(
+            !(o[0] == 198 && o[1] == 18),
+            "不应返回代理 TUN 虚拟 IP: {ip}"
+        );
+        assert!(
+            !(o[0] == 10 && o[1] == 144 && o[2] == 144),
+            "不应返回 easytier 虚拟网段 IP: {ip}"
+        );
+        assert!(v4.is_private(), "应返回私网 IP: {ip}");
+        eprintln!("detect_lan_ip = {ip}");
+    }
 }
