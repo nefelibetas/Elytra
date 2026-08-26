@@ -219,10 +219,10 @@ input, textarea {
   /* 标题栏前景：标题栏铺品牌渐变，白字与半透明白叠层独立于正文语义色 */
   --titlebar-fg: #FFFFFF;
   --titlebar-fg-dim: rgba(255, 255, 255, 0.7);
-  /* 浮层层级常量：FAB < 右键菜单 < 模态弹窗 < toast < tooltip。
+  /* 浮层层级常量：FAB < 模态弹窗 < 内容/边缘加深 < 右键菜单 < toast < tooltip。
      组件内一律引用变量，禁止裸写数值（曾经 waiting 弹窗 z=200 被菜单盖住的根因）。 */
   --z-fab: 900;
-  --z-menu: 1000;
+  --z-menu: 2100;
   --z-modal: 1100;
   --z-toast: 3000;
   --z-tooltip: 3100;
@@ -253,7 +253,6 @@ input, textarea {
 
   /* surface */
   --surface-page: #F2F6F3;
-  --surface-header: var(--surface-elevated);
   --surface-card: #FFFFFF;
   --surface-elevated: #FFFFFF;
   --surface-input: var(--surface-card);

@@ -28,12 +28,6 @@
   font-size: 12px;
   color: var(--text-tertiary);
 }
-
-.stg-card-sub .stg-warn {
-  margin-left: 6px;
-  color: var(--color-danger); /* 柔和红，非刺眼 */
-}
-
 /* ===== 通用控件 ===== */
 .tool-btn {
   display: flex;
@@ -88,25 +82,6 @@
   color: var(--text-secondary);
 }
 
-.lo-select {
-  flex: 1;
-  height: 30px;
-  padding: 0 8px;
-  font-size: 13px;
-  color: var(--text-primary);
-  background-color: var(--surface-input, var(--surface-card));
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  outline: none;
-  cursor: pointer;
-  transition: border-color 0.15s;
-}
-
-.lo-select:hover,
-.lo-select:focus {
-  border-color: var(--color-brand);
-}
-
 .lo-input {
   flex: 1;
   height: 30px;
@@ -130,11 +105,6 @@
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.lo-winsize .lo-select {
-  flex: none;
-  width: 140px;
 }
 
 .lo-num {

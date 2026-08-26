@@ -157,11 +157,6 @@ function onMouseDown(e: MouseEvent) {
 .back-btn:hover { background-color: color-mix(in srgb, var(--titlebar-fg) 15%, transparent); color: var(--titlebar-fg); }
 .back-btn { white-space: nowrap; }
 
-.dt-title {
-  font-size: 14px; font-weight: 600;
-  color: color-mix(in srgb, var(--titlebar-fg) 90%, transparent);
-}
-
 .tc {
   flex: 1;
   display: flex;
