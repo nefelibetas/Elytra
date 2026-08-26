@@ -6,6 +6,9 @@
 //!    房间码补全入口端口段，可分享。
 //!
 //! guest：`join(room_code)` → 解析房间码拿 host 入口端口 → 加入虚拟网 + 本地转发。
+//! 同时启动 MC 局域网广播模拟（[`mc_advertise`]）：guest 的 MC 客户端在
+//! "局域网"标签页看到本服务器，走局域网发现路径跳过会话校验
+//! （离线手动 IP 直连会报"登录失败：无效会话"，MC 26.2 实测）。
 //!
 //! 端口设计（10013 冲突修正）：真实 MC"对局域网开放"会 bind `0.0.0.0:mc_port`，
 //! easytier 转发若 bind 同端口即 WSAEACCES。故 host 转发 bind **入口端口**
@@ -14,6 +17,7 @@
 //!
 //! 事件：经 `EMIT_TX` 队列派发 `online-state`（载荷 [`OnlineSnapshot`]）。
 
+mod mc_advertise;
 mod mc_discover;
 mod room;
 mod session;
@@ -28,6 +32,7 @@ use tokio::sync::Mutex;
 use crate::events::ONLINE_STATE;
 use crate::task::emit_event;
 
+use self::mc_advertise::McAdvertiser;
 use self::mc_discover::MinecraftScanner;
 use self::session::HOST_LISTEN_PORT;
 
@@ -64,7 +69,7 @@ impl OnlineStatus {
 pub struct OnlineSnapshot {
     pub status: &'static str,
     pub room_code: Option<String>,
-    /// guest 本地转发端口（游戏内填 127.0.0.1:<port>）；非 guest 为 None。
+    /// guest 本地转发端口（游戏内连 127.0.0.1:<port>，经"局域网"标签页进入）；非 guest 为 None。
     pub local_port: Option<u16>,
 }
 
@@ -75,6 +80,9 @@ struct OnlineServiceInner {
     room: Option<RoomCredential>,
     /// 组播扫描器（host 用；drop 即停线程）。
     scanner: Option<MinecraftScanner>,
+    /// 组播广播器（guest 用：模拟 MC 局域网服务器，使 guest 客户端走
+    /// 局域网发现路径跳过会话校验；drop 即停线程）。
+    advertiser: Option<McAdvertiser>,
     /// 会话代际：stop/start_host 递增，旧的后台发现任务据此自杀。
     generation: u64,
 }
@@ -86,6 +94,7 @@ impl Default for OnlineServiceInner {
             status: OnlineStatus::Idle,
             room: None,
             scanner: None,
+            advertiser: None,
             generation: 0,
         }
     }
@@ -257,6 +266,9 @@ pub async fn join(app: &tauri::AppHandle, room_code: &str) -> Result<u16, String
     svc.session = Some(s);
     svc.status = OnlineStatus::Joining;
     svc.room = Some(room);
+    // guest 端模拟 MC 局域网广播：客户端在"局域网"标签页看到本服务器，
+    // 走局域网发现路径跳过会话校验（离线手动 IP 直连会报"无效会话"）。
+    svc.advertiser = Some(McAdvertiser::start(local_port));
     let snap = snapshot_inner(&svc);
     emit_snapshot(app, &snap);
     Ok(local_port)
@@ -270,6 +282,7 @@ pub async fn stop(app: &tauri::AppHandle) -> Result<(), String> {
         s.stop().await;
     }
     svc.scanner = None; // Drop → 组播线程退出
+    svc.advertiser = None; // Drop → 广播线程退出
     svc.status = OnlineStatus::Idle;
     svc.room = None;
     let snap = snapshot_inner(&svc);
