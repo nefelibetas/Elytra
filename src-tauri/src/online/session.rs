@@ -2,16 +2,21 @@
 //!
 //! 关键配置：
 //! - **no_tun + use_smoltcp**：纯用户态，无需 wintun 驱动/管理员权限；
-//! - **socks5 feature** 必须启用（easytier `gateway_enabled = cfg!(feature="socks5")`，
-//!   否则端口转发不启动）；
+//! - **socks5 feature** 必须启用（easytier `gateway_enabled` 由
+//!   `cfg!(feature="socks5")` 经 `smoltcp` → `proxy-smoltcp-stack` 传递控制），
+//!   否则端口转发不启动；
+//! - **bind_device = false**：easytier 默认 true 会枚举本机 IPv4 预绑定源地址，
+//!   bind 物理 IP 后 connect 回环/局域网目标在 Windows 报 10049（实测复现）；
 //! - host 固定虚拟 IP，guest DHCP 拿 IP；
-//! - 双方连同一公共协调节点（`-p tcp://node.invalid:11010`），虚拟网内互发现；
 //! - 端口转发方向（spike 验证 + 冲突修正）：
 //!   host 转发 `bind 0.0.0.0:入口端口 → dst 127.0.0.1:mc_port`；
 //!   guest 转发 `bind 127.0.0.1:本地端口 → dst host虚拟IP:入口端口`。
 //!   入口端口是 host 探测的空闲端口（≠游戏端口），避免与游戏自身监听冲突
 //!   （真实 MC"对局域网开放"会 bind 0.0.0.0:mc_port，若 easytier 也 bind 同端口
 //!   即 10013/WSAEACCES）。入口端口编入房间码，guest 据此连接。
+//! - 协调节点：easytier 官方公共节点（node.invalid / node.invalid）
+//!   已于 2026 年下线（DNS NXDOMAIN，实测），不再作为默认值；由 OnlineService
+//!   显式传入（空 = 不连外部节点，host 自建网 / guest 直连 host）。
 
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -23,19 +28,13 @@ use easytier_core::config::toml::{NetworkIdentity, PeerConfig};
 
 use super::room::RoomCredential;
 
-/// 免费公共协调节点（EasyTier 社区提供，打洞失败时中继兜底）。
-pub const DEFAULT_PUBLIC_NODES: &[&str] = &[
-    "tcp://node.invalid:11010",
-    "tcp://node.invalid:54321",
-];
-
 /// host 虚拟网固定 IP（与陶瓦同网段，避免真实网络冲突）。
 pub const HOST_VIRTUAL_IP: &str = "10.144.144.1";
 
 /// host 虚拟网固定 IP 解析（session 转发 dst 用；[Ipv4Addr;4]）。
 const HOST_VIRTUAL_IP_V4: Ipv4Addr = Ipv4Addr::new(10, 144, 144, 1);
 
-/// host 监听端口（供 guest/公共节点连接，虚拟网协调用）。
+/// host 监听端口（供 guest/协调节点连接，虚拟网协调用）。
 pub const HOST_LISTEN_PORT: u16 = 11010;
 
 /// 会话角色。
@@ -53,7 +52,7 @@ pub struct SessionConfig {
     pub local_port: Option<u16>,
     /// host 侧游戏端口（真实 MC 端口，仅 host 本地转发 dst 用，不进房间码）。
     pub mc_port: Option<u16>,
-    /// 公共协调节点列表（可覆盖默认）。
+    /// 协调节点列表（host/guest 连同一批节点虚拟网内互发现；空 = 不连外部节点）。
     pub public_nodes: Vec<String>,
 }
 
@@ -99,17 +98,14 @@ fn build_config(config: &SessionConfig) -> Result<TomlConfigLoader, String> {
     ));
     set_no_tun(&cfg);
 
-    // 公共协调节点：host/guest 连同一批节点，虚拟网内互发现
-    let nodes: Vec<String> = if config.public_nodes.is_empty() {
-        DEFAULT_PUBLIC_NODES.iter().map(|s| s.to_string()).collect()
-    } else {
-        config.public_nodes.clone()
-    };
+    // 协调节点：host/guest 连同一批节点，虚拟网内互发现。
+    // 空列表 = 不连任何外部节点（host 自建网 / guest 直连 host）。
+    let nodes: Vec<String> = config.public_nodes.clone();
     let mut peers = Vec::new();
     for uri_str in nodes {
         let uri = uri_str
             .parse()
-            .map_err(|e| format!("公共节点地址非法\n{e}"))?;
+            .map_err(|e| format!("协调节点地址非法\n{e}"))?;
         peers.push(PeerConfig {
             uri,
             peer_public_key: None,
@@ -165,6 +161,11 @@ fn set_no_tun(cfg: &TomlConfigLoader) {
     let mut flags = cfg.get_flags();
     flags.no_tun = true;
     flags.use_smoltcp = true;
+    // bind_device 默认 true：easytier 会枚举本机 IPv4 预绑定源地址再 connect。
+    // bind 物理 IP 后 connect 127.0.0.1（回环）或部分局域网目标时，
+    // Windows 报 WSAEADDRNOTAVAIL(10049) 导致连不上（实测复现）。
+    // 关闭后由 OS 自动选源，回环/局域网都正常。
+    flags.bind_device = false;
     cfg.set_flags(flags);
 }
 

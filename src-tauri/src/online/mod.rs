@@ -29,7 +29,7 @@ use crate::events::ONLINE_STATE;
 use crate::task::emit_event;
 
 use self::mc_discover::MinecraftScanner;
-use self::session::{SessionConfig, SessionRole};
+use self::session::{HOST_LISTEN_PORT, SessionConfig, SessionRole};
 
 /// 端口发现轮询间隔（游戏每 1.5s 广播一次组播，1s 轮询足够快）。
 const DISCOVER_POLL: Duration = Duration::from_secs(1);
@@ -137,13 +137,16 @@ pub async fn start_host(app: &tauri::AppHandle) -> Result<OnlineSnapshot, String
     // 一开始就编入房间码；Waiting 阶段先建网（无转发），
     // 检测到游戏端口后重建实例补转发（bind 此端口 → 本地游戏）。
     let entry_port = free_tcp_port()?;
-    let room = create_room().with_port(entry_port);
+    let room = create_room()
+        .with_port(entry_port)
+        .with_lan_ip(detect_lan_ip().unwrap_or_default());
+    let public_nodes = crate::config::online::OnlineConfig::from_persist().public_nodes;
     let cfg = SessionConfig {
         role: SessionRole::Host,
         room: room.clone(),
         local_port: None,
         mc_port: None,
-        public_nodes: Vec::new(),
+        public_nodes,
     };
     let s = EasyTierSession::start(cfg).await?;
     svc.session = Some(s);
@@ -200,7 +203,7 @@ pub async fn start_host(app: &tauri::AppHandle) -> Result<OnlineSnapshot, String
                 room: room.clone(),
                 local_port: None,
                 mc_port: Some(mc_port),
-                public_nodes: Vec::new(),
+                public_nodes: crate::config::online::OnlineConfig::from_persist().public_nodes,
             };
             match EasyTierSession::start(cfg).await {
                 Ok(s) => {
@@ -237,12 +240,18 @@ pub async fn join(app: &tauri::AppHandle, room_code: &str) -> Result<u16, String
     // 本地转发端口：预先占一个空闲端口再交给转发配置（bind :0 实际端口不可查）
     let local_port = free_tcp_port()?;
     svc.generation += 1;
+    // 协调节点：配置的服务器 + 房间码携带的 host 局域网 IP（同网直连）。
+    // easytier 官方公共节点已下线，同网场景靠直连 host 互发现。
+    let mut public_nodes = crate::config::online::OnlineConfig::from_persist().public_nodes;
+    if let Some(lan_ip) = &room.lan_ip {
+        public_nodes.push(format!("tcp://{lan_ip}:{HOST_LISTEN_PORT}"));
+    }
     let cfg = SessionConfig {
         role: SessionRole::Guest,
         room: room.clone(),
         local_port: Some(local_port),
         mc_port: None,
-        public_nodes: Vec::new(),
+        public_nodes,
     };
     let s = EasyTierSession::start(cfg).await?;
     svc.session = Some(s);
@@ -280,4 +289,16 @@ fn free_tcp_port() -> Result<u16, String> {
         .and_then(|l| l.local_addr())
         .map(|a| a.port())
         .map_err(|e| format!("分配本地端口失败\n{e}"))
+}
+
+/// 探测本机默认出口 IPv4（编入房间码 `@IP` 段，供同网 guest 直连）。
+/// UDP connect 只做路由选择（不发包），立即返回，无需外网可达。
+fn detect_lan_ip() -> Option<String> {
+    let socket = std::net::UdpSocket::bind(("0.0.0.0", 0)).ok()?;
+    socket.connect(("8.8.8.8", 80)).ok()?;
+    let ip = socket.local_addr().ok()?.ip();
+    if ip.is_loopback() || ip.is_unspecified() {
+        return None;
+    }
+    Some(ip.to_string())
 }
