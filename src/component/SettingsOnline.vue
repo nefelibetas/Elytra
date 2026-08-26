@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 联机设置卡片：EasyTier 虚拟局域网。host 开房间拿码，guest 输码加入，
-// 加入后本地端口转发，游戏内填 127.0.0.1:<端口> 即可连 host 的游戏。
+// 加入后本地端口转发并模拟 MC 局域网广播，游戏内"局域网"标签页点 "Elytra 联机" 进入
+// （MC 26.2 对手动 IP 连接校验会话，离线账号需走局域网发现路径）。
 // 顺序自由：可先点"开启联机"（等待态），再在游戏里"对局域网开放"；
 // 检测到游戏端口后自动生成完整房间码。
 // 同网直连：host 局域网 IP 自动编入房间码（@IP 段），guest 解析后直连 host；
@@ -45,8 +46,8 @@ async function handleStartHost() {
 async function handleJoin() {
   busy.value = true;
   try {
-    const port = await joinRoom(roomCodeInput.value.trim());
-    showToast(`已加入，本地端口 ${port}`);
+    await joinRoom(roomCodeInput.value.trim());
+    showToast(`已加入，游戏内局域网标签页点 "Elytra 联机"`);
   } catch (e) {
     showToast(errMsg(e));
   } finally {
@@ -161,10 +162,7 @@ async function handleSaveConfig() {
       </div>
     </div>
 
-    <!-- guest：加入联机 -->
-    <div class="online-sec">
-      <div class="online-sec-title">加入联机</div>
-      <p class="online-desc">输入主机分享的房间码，加入后游戏内添加服务器填下方地址。</p>
+      <p class="online-desc">输入主机分享的房间码，加入后游戏内多人游戏 → 局域网标签页点 "Elytra 联机" 进入。</p>
 
       <div class="online-row">
         <span class="online-label">房间码</span>
@@ -178,10 +176,9 @@ async function handleSaveConfig() {
       </div>
 
       <div v-if="onlineStatus === 'joining' && onlineLocalPort" class="online-room">
-        <span class="online-room-code">127.0.0.1:{{ onlineLocalPort }}</span>
-        <span class="online-hint">游戏内添加服务器填此地址</span>
+        <span class="online-room-code">Elytra 联机</span>
+        <span class="online-hint">游戏内局域网标签页已出现，点击进入（本地端口 {{ onlineLocalPort }}）</span>
       </div>
-
       <div v-if="onlineErrorGuest" class="online-error">{{ errMsg(onlineErrorGuest) }}</div>
 
       <div class="online-actions">

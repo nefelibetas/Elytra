@@ -11,8 +11,8 @@
 //!   由该 flag 控制出站（默认 false）；不开启则回退 smoltcp 用户态 TCP，
 //!   MC 登录配置同步（registry 数百 KB~数 MB）会中断（实测"连接中断"）；
 //! - host 固定虚拟 IP，guest DHCP 拿 IP；
-//! - 端口转发方向（spike 验证 + 冲突修正）：
-//!   host 转发 `bind 0.0.0.0:入口端口 → dst 127.0.0.1:mc_port`；
+//!   guest 转发 `bind 0.0.0.0:本地端口 → dst host虚拟IP:入口端口`（bind 全网卡：
+//!   guest 客户端经"局域网发现"连 `<本机IP>:本地端口`，见 mc_advertise.rs）。
 //!   guest 转发 `bind 127.0.0.1:本地端口 → dst host虚拟IP:入口端口`。
 //!   入口端口是 host 探测的空闲端口（≠游戏端口），避免与游戏自身监听冲突
 //!   （真实 MC"对局域网开放"会 bind 0.0.0.0:mc_port，若 easytier 也 bind 同端口
@@ -62,7 +62,7 @@ pub(crate) fn init_easytier_logging() {
     });
 }
 
-/// host 虚拟网固定 IP（与陶瓦同网段，避免真实网络冲突）。
+/// host 虚拟网固定 IP（私有保留段，避免与真实网络冲突）。
 pub const HOST_VIRTUAL_IP: &str = "10.144.144.1";
 
 /// host 虚拟网固定 IP 解析（session 转发 dst 用；[Ipv4Addr;4]）。

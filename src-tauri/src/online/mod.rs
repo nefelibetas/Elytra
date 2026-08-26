@@ -34,7 +34,7 @@ use crate::task::emit_event;
 
 use self::mc_advertise::McAdvertiser;
 use self::mc_discover::MinecraftScanner;
-use self::session::HOST_LISTEN_PORT;
+use self::session::{HOST_LISTEN_PORT, HOST_VIRTUAL_IP};
 
 /// 端口发现轮询间隔（游戏每 1.5s 广播一次组播，1s 轮询足够快）。
 const DISCOVER_POLL: Duration = Duration::from_secs(1);
@@ -235,7 +235,8 @@ pub async fn start_host(app: &tauri::AppHandle) -> Result<OnlineSnapshot, String
     Ok(snap)
 }
 
-/// 加入联机（作为 guest）：解析房间码（含 host 入口端口）→ 加入虚拟网 → 本地端口转发。
+/// 建网后探测 host 虚拟 IP 的入口端口可达性：可达才返回成功（前端引导进游戏），
+/// 超时判定房间无效（主机离线/房间码过期）并回滚会话。
 pub async fn join(app: &tauri::AppHandle, room_code: &str) -> Result<u16, String> {
     let mut svc = SERVICE.lock().await;
     if svc.session.is_some() {
@@ -269,12 +270,50 @@ pub async fn join(app: &tauri::AppHandle, room_code: &str) -> Result<u16, String
     // guest 端模拟 MC 局域网广播：客户端在"局域网"标签页看到本服务器，
     // 走局域网发现路径跳过会话校验（离线手动 IP 直连会报"无效会话"）。
     svc.advertiser = Some(McAdvertiser::start(local_port));
+    let entry_port = svc.room.as_ref().and_then(|r| r.port);
+    drop(svc); // 探测期间不持锁（stop 需要）
+
+    // 探测 host 可达性：连 host 虚拟 IP 的入口端口（经 easytier 数据面到 host 转发）。
+    // 成功 = host 在线且转发链路就绪；超时 = 房间无效。
+    let reachable = match entry_port {
+        Some(port) => probe_host_reachable(port).await,
+        None => false,
+    };
+
+    let mut svc = SERVICE.lock().await;
+    if !reachable || svc.session.is_none() {
+        // 房间无效或被 stop：回滚会话并报错
+        svc.generation += 1;
+        if let Some(s) = svc.session.take() {
+            s.stop().await;
+        }
+        svc.advertiser = None;
+        svc.status = OnlineStatus::Idle;
+        svc.room = None;
+        let snap = snapshot_inner(&svc);
+        emit_snapshot(app, &snap);
+        return Err("房间无效或主机离线\n请确认主机已开启联机并重新分享房间码".to_string());
+    }
     let snap = snapshot_inner(&svc);
     emit_snapshot(app, &snap);
     Ok(local_port)
 }
 
-/// 停止联机（host/guest 通用）：递增代际使后台任务退出。
+/// 探测 host 虚拟 IP 入口端口可达性：每秒重试，最多 10s。
+/// 连接成功即 host 转发监听存在（host 在线）；无论 MC 是否响应。
+async fn probe_host_reachable(entry_port: u16) -> bool {
+    const PROBE_RETRIES: u32 = 10;
+    for _ in 0..PROBE_RETRIES {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        if tokio::net::TcpStream::connect((HOST_VIRTUAL_IP, entry_port))
+            .await
+            .is_ok()
+        {
+            return true;
+        }
+    }
+    false
+}
 pub async fn stop(app: &tauri::AppHandle) -> Result<(), String> {
     let mut svc = SERVICE.lock().await;
     svc.generation += 1;
