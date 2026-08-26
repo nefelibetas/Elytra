@@ -42,7 +42,7 @@ withDefaults(
    菜单渲染到窗口角落/屏幕外，表现为"点了没反应"。 */
 .menu-pop {
   position: fixed;
-  z-index: 2100; /* 内容/边缘加深之上，toast(3000)/tooltip(3100) 之下 */
+  z-index: var(--z-menu); /* 内容/边缘加深(2000)之上，toast(3000)/tooltip(3100) 之下 */
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-default);
   background: var(--surface-card);
