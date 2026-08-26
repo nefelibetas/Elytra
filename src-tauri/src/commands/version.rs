@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::commands::gamedirs::get_active_game_dir;
-use crate::downloader::mod_updates::{self, ModFileDetail, ModListResult, ModUpdate, ResourceListResult};
+use crate::downloader::mod_updates::{
+    self, ModFileDetail, ModListResult, ModUpdate, ResourceListResult,
+};
 
 /// 本地存档信息（saves 目录子目录扫描结果）。
 #[derive(Debug, Clone, Serialize)]
@@ -28,15 +30,6 @@ pub struct ResourceFile {
     pub size: u64,
     /// 最后修改时间（unix 秒）
     pub last_modified: u64,
-}
-
-/// 文件最后修改时间（unix 秒），读取失败回退 0。
-fn dir_modified_secs(meta: &std::fs::Metadata) -> u64 {
-    meta.modified()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
 }
 
 /// 版本目录绝对路径（versions/{name}）。目录不存在时返回错误（与 ensure_game_folder 语义区分：
@@ -72,7 +65,7 @@ pub fn list_worlds(version_name: String) -> Vec<WorldInfo> {
             let meta = e.metadata().ok()?;
             Some(WorldInfo {
                 name,
-                last_modified: dir_modified_secs(&meta),
+                last_modified: crate::util::modified_secs(&meta),
             })
         })
         .collect();
@@ -123,7 +116,7 @@ pub fn list_resource_files(version_name: String, kind: String) -> Vec<ResourceFi
             Some(ResourceFile {
                 name: e.file_name().to_string_lossy().to_string(),
                 size: meta.len(),
-                last_modified: dir_modified_secs(&meta),
+                last_modified: crate::util::modified_secs(&meta),
             })
         })
         .collect();
