@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { StepStatus } from "./download";
 import type { InstalledVersionInfo } from "./gameDirs";
-import { EVT_GAME_EXITED, EVT_GAME_WINDOW_VISIBLE } from "./events";
+import { EVT_GAME_EXITED, EVT_GAME_SESSION_ERROR, EVT_GAME_WINDOW_VISIBLE } from "./events";
 import { authMode, msAccount, username, type MsAccountInfo } from "./auth";
 import { selectedVersion, setSelected, getSavedDir } from "./selectedVersion";
 import { showError } from "./alert";
@@ -209,5 +209,22 @@ export async function ensureGameExitListener() {
         true,
       );
     }
+  });
+}
+
+let sessionErrorListenerReady = false;
+
+/** 幂等注册 game-session-error 监听：检测到"无效会话"时弹引导（MC 机制，给出解决路径）。 */
+export async function ensureSessionErrorListener() {
+  if (sessionErrorListenerReady) return;
+  sessionErrorListenerReady = true;
+  await listen(EVT_GAME_SESSION_ERROR, () => {
+    showError(
+      "检测到会话验证失败：MC 服务器开启了正版验证，离线会话被拒绝（无效会话）\n" +
+        "解决：\n" +
+        "1. 主机用离线模式启动游戏（服务器将不再验证会话），朋友即可加入\n" +
+        "2. 或朋友改用正版账号（微软登录）启动游戏",
+      true,
+    );
   });
 }
