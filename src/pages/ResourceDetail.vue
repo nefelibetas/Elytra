@@ -196,7 +196,7 @@ function onItemChange() {
     resourceDetail.pendingVersionError = "";
     return;
   }
-  loadVersions();
+  void loadVersions();
 }
 
 watch(item, onItemChange, { immediate: true });

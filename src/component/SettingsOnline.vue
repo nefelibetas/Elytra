@@ -15,7 +15,7 @@ import { errMsg } from "../utils/error";
 
 onMounted(() => {
   ensureOnlineListen();
-  loadOnlineStatus();
+  void loadOnlineStatus();
 });
 
 /** guest 输入的房间码。 */

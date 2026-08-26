@@ -89,7 +89,7 @@ async function removeAccount(uuid: string) {
 /** 移除当前账号（登出按钮：从列表移除，而非清空全部）。 */
 function removeCurrentMsAccount() {
   const acc = msAccount.value;
-  if (acc) removeAccount(acc.uuid);
+  if (acc) void removeAccount(acc.uuid);
 }
 
 /** 从历史选择离线用户名。 */

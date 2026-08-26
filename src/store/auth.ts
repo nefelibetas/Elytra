@@ -33,7 +33,7 @@ export const username = ref("");
 // 账号变化（登录/退出）时渲染正版头像（模块级注册一次，避免路由往返累积监听）
 watch(msAccount, () => {
   avatarState.avatarError = false;
-  renderPremiumAvatar(msAccount.value?.uuid ?? "");
+  void renderPremiumAvatar(msAccount.value?.uuid ?? "");
 });
 
 export function setAuthMode(mode: AuthMode) {

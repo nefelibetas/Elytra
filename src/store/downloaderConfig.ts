@@ -88,7 +88,7 @@ export function setSourceMaster(v: SourceMasterValue) {
   dlManifestMode.value = v;
   dlCommunityMode.value = v;
   dlJdkMode.value = v;
-  saveDownloadConfig();
+  void saveDownloadConfig();
 }
 export const dlMinecraftDir = ref(".minecraft");
 export const dlNetworkMode = ref("auto");
@@ -144,36 +144,36 @@ export async function saveDownloadConfig() {
 
 export function setFileMode(v: string) {
   dlFileMode.value = v;
-  saveDownloadConfig();
+  void saveDownloadConfig();
 }
 
 export function setCommunityMode(v: string) {
   dlCommunityMode.value = v;
-  saveDownloadConfig();
+  void saveDownloadConfig();
 }
 
 export function setJdkMode(v: string) {
   if (v === "auto" || v === "officialOnly" || v === "chinaOnly") {
     dlJdkMode.value = v;
   }
-  saveDownloadConfig();
+  void saveDownloadConfig();
 }
 
 export function setManifestMode(v: string) {
   dlManifestMode.value = v;
-  saveDownloadConfig();
+  void saveDownloadConfig();
 }
 
 export function setTranslateMode(v: string) {
   if (v === "zh" || v === "en") {
     dlTranslateMode.value = v;
   }
-  saveDownloadConfig();
+  void saveDownloadConfig();
 }
 
 export function setNetworkMode(v: string) {
   if (v === "auto" || v === "system" || v === "direct") {
     dlNetworkMode.value = v;
   }
-  saveDownloadConfig();
+  void saveDownloadConfig();
 }
