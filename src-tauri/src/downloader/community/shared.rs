@@ -20,12 +20,24 @@ pub(crate) enum ApiPlatform {
 pub(crate) fn api_routes(platform: ApiPlatform, path: &str) -> Vec<String> {
     let (official, mirror) = match platform {
         ApiPlatform::Modrinth => (
-            format!("{}{path}", crate::downloader::endpoints::CommunityEndpoints::MODRINTH_API_BASE),
-            format!("{}{path}", crate::downloader::endpoints::CommunityEndpoints::MODRINTH_MIRROR_BASE),
+            format!(
+                "{}{path}",
+                crate::downloader::endpoints::CommunityEndpoints::MODRINTH_API_BASE
+            ),
+            format!(
+                "{}{path}",
+                crate::downloader::endpoints::CommunityEndpoints::MODRINTH_MIRROR_BASE
+            ),
         ),
         ApiPlatform::CurseForge => (
-            format!("{}{path}", crate::downloader::endpoints::CommunityEndpoints::CURSEFORGE_API_BASE),
-            format!("{}{path}", crate::downloader::endpoints::CommunityEndpoints::CURSEFORGE_MIRROR_BASE),
+            format!(
+                "{}{path}",
+                crate::downloader::endpoints::CommunityEndpoints::CURSEFORGE_API_BASE
+            ),
+            format!(
+                "{}{path}",
+                crate::downloader::endpoints::CommunityEndpoints::CURSEFORGE_MIRROR_BASE
+            ),
         ),
     };
     let cfg: DownloaderConfig =
@@ -35,6 +47,23 @@ pub(crate) fn api_routes(platform: ApiPlatform, path: &str) -> Vec<String> {
         DownloadSourceMode::ChinaOnly => vec![mirror],
         DownloadSourceMode::Auto => vec![official, mirror],
     }
+}
+
+/// 多候选 URL 构造：对每个路由 base 追加查询参数。
+/// 统一"api_routes + parse_with_params + 错误文案"的重复样板。
+pub(crate) fn api_urls(
+    platform: ApiPlatform,
+    path: &str,
+    params: &[(&str, String)],
+) -> Result<Vec<String>, String> {
+    api_routes(platform, path)
+        .iter()
+        .map(|base| {
+            reqwest::Url::parse_with_params(base, params)
+                .map(|u| u.as_str().to_string())
+                .map_err(|e| format!("URL 构造失败\n{}", e))
+        })
+        .collect::<Result<Vec<_>, String>>()
 }
 
 /// 多候选 JSON GET：逐源尝试；双候选时主源 5s 短超时快速降级镜像；

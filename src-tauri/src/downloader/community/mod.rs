@@ -20,7 +20,7 @@ use serde::Serialize;
 // ── 对外路径保持原样（commands / mod_updates / modpack / mod_loader 依赖这些名字）──
 
 /// JSON 查询通道（mod_updates 复用）。
-pub(crate) use shared::{api_routes, get_json_multi, ApiPlatform};
+pub(crate) use shared::{api_routes, api_urls, get_json_multi, ApiPlatform};
 
 /// CurseForge 批量文件换链（modpack.rs 整合包安装复用）。
 pub(crate) use curseforge::curseforge_files;

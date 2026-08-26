@@ -1,6 +1,6 @@
 //! CurseForge 平台实现（需要 x-api-key）：搜索 / 版本列表 / 详情 / 批量文件换链。
 
-use super::shared::{api_routes, get_json_multi, version_range, ApiPlatform};
+use super::shared::{api_routes, api_urls, get_json_multi, version_range, ApiPlatform};
 use super::{
     CommunityDependency, CommunityDependencyItem, CommunitySearchPage, CommunitySearchResult,
     CommunityVersion,
@@ -96,14 +96,7 @@ pub(crate) async fn curseforge_get(
         .ok_or_else(|| "未配置 CurseForge API Key（项目根 .env 的 ELYTRA_CURSEFORGE_API_KEY），无法使用 CurseForge 来源".to_string())?;
     let mut all: Vec<(&str, String)> = vec![("gameId", CURSEFORGE_GAME_ID.to_string())];
     all.extend_from_slice(params);
-    let urls: Vec<String> = api_routes(ApiPlatform::CurseForge, path)
-        .iter()
-        .map(|base| {
-            reqwest::Url::parse_with_params(base, &all)
-                .map(|u| u.as_str().to_string())
-                .map_err(|e| format!("URL 构造失败\n{}", e))
-        })
-        .collect::<Result<Vec<_>, String>>()?;
+    let urls: Vec<String> = api_urls(ApiPlatform::CurseForge, path, &all)?;
     get_json_multi(&urls, |u| {
         fetcher::http().get(u.to_string()).header("x-api-key", key)
     })
