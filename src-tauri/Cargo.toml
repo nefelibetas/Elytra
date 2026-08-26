@@ -54,7 +54,10 @@ parking_lot = "0.12"
 # 剔 tun feature：纯用户态 no_tun+smoltcp+socks5，无需 wintun 驱动/管理员权限。
 # socks5 = gateway 启用开关（gateway_enabled 由 cfg!(feature="socks5") 决定），端口转发依此启动；
 # management = 实例事件订阅；aes-gcm = 加密；quic = 传输协议。
-easytier = { git = "https://github.com/EasyTier/EasyTier", default-features = false, features = ["management", "socks5", "smoltcp", "quic", "websocket", "logging", "aes-gcm"] }
+# kcp = port_forward 数据面首选传输（DataPlaneTcpConnectOptions::gateway 为 PreferKcp）：
+#   缺 kcp feature 时 kcp_ready=false，回退 smoltcp 用户态 TCP 栈，
+#   MC 登录配置同步（registry 数百 KB~数 MB）传输会中断（实测"连接中断"）。
+easytier = { git = "https://github.com/EasyTier/EasyTier", default-features = false, features = ["management", "socks5", "smoltcp", "kcp", "quic", "websocket", "logging", "aes-gcm"] }
 easytier-core = { git = "https://github.com/EasyTier/EasyTier", default-features = false }
 # 联机 LAN IP 检测（online/mod.rs detect_lan_ip）：枚举网卡排除代理 TUN 虚拟段
 # （Clash 198.18.0.0/15 等），UDP connect 在 TUN 模式会拿到虚拟网卡 IP，不可路由

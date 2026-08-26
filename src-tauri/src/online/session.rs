@@ -166,6 +166,10 @@ fn set_no_tun(cfg: &TomlConfigLoader) {
     // Windows 报 WSAEADDRNOTAVAIL(10049) 导致连不上（实测复现）。
     // 关闭后由 OS 自动选源，回环/局域网都正常。
     flags.bind_device = false;
+    // KCP 数据面出站：port_forward 数据面首选 KCP（PreferKcp），
+    // 由 enable_kcp_proxy 控制（默认 false）；不开启则回退 smoltcp 用户态 TCP，
+    // MC 登录配置同步（registry 数百 KB~数 MB）会中断（实测"连接中断"）。
+    flags.enable_kcp_proxy = true;
     cfg.set_flags(flags);
 }
 
