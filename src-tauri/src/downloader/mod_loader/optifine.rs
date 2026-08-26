@@ -9,9 +9,6 @@
 // 而 classpath/missing 检查按 libraries/ 找）→ 启动被完整性检查拦截；mainClass 写死
 // launchwrapper → 1.13+ 无此类必崩。本文件按场景落位。
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-
 use crate::config::downloader::model::DownloaderConfig;
 use crate::downloader::fetcher;
 
@@ -93,7 +90,7 @@ async fn download_optifabric(
     // 3. forgecdn 直链下载（与单文件下载同一通道；x-api-key 由查询环节承担，下载可匿名）
     std::fs::create_dir_all(mods_dir).map_err(|e| format!("创建 mods 目录失败\n{e}"))?;
     let dest = mods_dir.join(&filename);
-    fetcher::fetch_bounded(&[download_url], &dest, Some(step_progress(pc)))
+    fetcher::fetch_bounded(&[download_url], &dest, Some(pc.step_progress()))
         .await
         .map_err(|e| format!("下载 OptiFabric 失败\n{e}"))?;
     Ok(())
@@ -129,24 +126,6 @@ fn build_vanilla_version_json(
         "inheritsFrom": mc_version,
         "type": "release"
     })
-}
-
-/// 每文件字节进度：增量累加进全局计数（收尾心跳显示速度）与 OptiFine 步骤计数；
-/// total（content-length）写入步骤分母。OptiFine jar 与 OptiFabric 共用同一步骤计数。
-fn step_progress(pc: &crate::downloader::progress::ProgressCounters) -> impl Fn(u64, u64) {
-    let file_done = Arc::new(AtomicU64::new(0));
-    let b = pc.bytes.clone();
-    let sb = pc.step_bytes.clone();
-    let st = pc.step_total.clone();
-    move |downloaded: u64, total: u64| {
-        let prev = file_done.swap(downloaded, Ordering::Relaxed);
-        let delta = downloaded.saturating_sub(prev);
-        b.fetch_add(delta, Ordering::Relaxed);
-        sb.fetch_add(delta, Ordering::Relaxed);
-        if total > 0 {
-            st.store(total, Ordering::Relaxed);
-        }
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -188,10 +167,10 @@ pub async fn install_optifine(
         std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败\n{e}"))?;
     }
 
-    // 字节级进度：复用同文件私有助手 step_progress（增量累加进全局计数与
+    // 字节级进度：ProgressCounters::step_progress 工厂（增量累加进全局计数与
     // OptiFine 步骤计数；total 写入步骤分母）。不换 ProgressCounters::byte_callback：
     // 后者不写 step_total，而 OptiFine jar 下载需要步骤分母显示总字节。
-    fetcher::fetch(&jar_url, &dest, Some(step_progress(pc)))
+    fetcher::fetch(&jar_url, &dest, Some(pc.step_progress()))
         .await
         .map_err(|e| format!("下载 OptiFine 失败\n{e}"))?;
 

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use crate::config::downloader::model::DownloadSource;
@@ -153,18 +153,7 @@ pub async fn process_natives(
         // 跨任务互斥：防多任务并发写同一 natives 文件互相踩踏
         let _file_lock = crate::task::wait_path_lock(&dest).await;
         // 字节级进度：增量累加进全局与 natives 步骤计数（重试时进度从 0 重新开始，增量不会为负）
-        let file_done = Arc::new(AtomicU64::new(0));
-        let progress = {
-            let fd = file_done.clone();
-            let bc = pc.bytes.clone();
-            let sb = pc.step_bytes.clone();
-            move |downloaded: u64, _total: u64| {
-                let prev = fd.swap(downloaded, Ordering::Relaxed);
-                let delta = downloaded.saturating_sub(prev);
-                bc.fetch_add(delta, Ordering::Relaxed);
-                sb.fetch_add(delta, Ordering::Relaxed);
-            }
-        };
+        let progress = pc.byte_callback();
         // 逐源 sha1 校验下载：某源返回内容不匹配自动换下一源重试（镜像缓存陈旧场景）。
         match fetcher::fetch_verified_c(
             &urls,

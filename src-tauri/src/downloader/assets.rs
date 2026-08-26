@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
@@ -9,6 +9,7 @@ use super::hash::file_sha1_matches;
 use super::reuse::{classify_local_artifact, copy_verified_local, LocalRuntimeSource};
 use crate::config::downloader::model::DownloaderConfig;
 use crate::downloader::fetcher;
+use crate::downloader::progress::ProgressCounters;
 
 /// 资源下载失败止损阈值：超过即停（资源数庞大，大量失败通常是源整体不可达，
 /// 继续下发只是空耗——与 libraries 的"收齐错误"语义相反，那是可修复的个别缺失）。
@@ -144,18 +145,12 @@ pub async fn download_assets(
             // 跨任务互斥：多任务共用 assets 目录，防并发写同一资源互相踩踏
             let _file_lock = crate::task::wait_path_lock(&dest).await;
             // 字节级进度：增量累加进全局计数（重试从 0 重新开始，增量不会为负）
-            let progress = {
-                let file_done = Arc::new(AtomicU64::new(0));
-                let fd = file_done.clone();
-                let b = bc.clone();
-                let s = sb.clone();
-                move |downloaded: u64, _total: u64| {
-                    let prev = fd.swap(downloaded, Ordering::Relaxed);
-                    let delta = downloaded.saturating_sub(prev);
-                    b.fetch_add(delta, Ordering::Relaxed);
-                    s.fetch_add(delta, Ordering::Relaxed);
-                }
-            };
+            let progress = ProgressCounters {
+                bytes: bc.clone(),
+                step_bytes: sb.clone(),
+                ..Default::default()
+            }
+            .byte_callback();
             // 复用分支：本地复制；失败降级为网络下载，不致命
             if let Some(src) = local {
                 match copy_verified_local(&src, &dest, obj_size, Some(progress.clone())).await {

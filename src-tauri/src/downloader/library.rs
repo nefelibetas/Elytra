@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
@@ -112,6 +112,12 @@ pub fn existing_lib_bytes(libraries: &[Library], lib_dir: &Path) -> u64 {
         .sum()
 }
 
+/// 需下载库的字节合计（total_lib_bytes − existing_lib_bytes）。
+/// fabric（LoaderLibs 分母预填）与 runner（阶段 C 字节统计）共用。
+pub fn pending_lib_bytes(libraries: &[Library], lib_dir: &Path) -> u64 {
+    total_lib_bytes(libraries).saturating_sub(existing_lib_bytes(libraries, lib_dir))
+}
+
 /// 批量下载支持库（多源回退 + sha1 校验）。
 /// `reuse`：可选本地运行时复用根——dest 缺失且复用根有 size+sha1 匹配的同相对路径文件时，
 /// 本地复制（计入进度）而非网络下载；未命中照常走网络（迁移用户省数百 MB）。
@@ -203,18 +209,12 @@ pub async fn download_libraries(
             let _file_lock = crate::task::wait_path_lock(&dest).await;
             // 字节级进度：把本文件已下载字节的增量累加进全局计数（而非完成时整体累加），
             // 让任务层能算出平滑的实时速度。重试时进度从 0 重新开始，saturating_sub 保证不减。
-            let progress = {
-                let file_done = Arc::new(AtomicU64::new(0));
-                let fd = file_done.clone();
-                let b = bc.clone();
-                let s = sb.clone();
-                move |downloaded: u64, _total: u64| {
-                    let prev = fd.swap(downloaded, Ordering::Relaxed);
-                    let delta = downloaded.saturating_sub(prev);
-                    b.fetch_add(delta, Ordering::Relaxed);
-                    s.fetch_add(delta, Ordering::Relaxed);
-                }
-            };
+            let progress = crate::downloader::progress::ProgressCounters {
+                bytes: bc.clone(),
+                step_bytes: sb.clone(),
+                ..Default::default()
+            }
+            .byte_callback();
             // 复用分支：本地复制（进度语义与下载一致）；失败降级为网络下载，不致命
             if let Some(src) = local_src {
                 match copy_verified_local(&src, &dest, 0, Some(progress.clone())).await {
