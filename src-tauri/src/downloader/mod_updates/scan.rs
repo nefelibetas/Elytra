@@ -53,12 +53,7 @@ pub fn scan_dir_files(dir: &Path, filter: ScanFilter) -> Vec<LocalModFile> {
         out.push(LocalModFile {
             file_name: file_name.to_string(),
             size: meta.len(),
-            last_modified: meta
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_secs())
-                .unwrap_or(0),
+            last_modified: crate::util::modified_secs(&meta),
         });
     }
     out.sort_by(|a, b| a.file_name.cmp(&b.file_name));

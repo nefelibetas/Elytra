@@ -94,7 +94,8 @@ pub async fn identify_one_file(dir: &Path, file_name: &str) -> Option<ModFileDet
     let file_name = file_name.to_string();
     let dir = dir.to_path_buf();
     // identify_mod 内部计算 sha1；文件缺失/网络失败返回 None（与详细列表降级语义一致）
-    let (project_id, current_version) = identify_mod(dir.clone(), file_name.clone()).await.ok()??;
+    let (project_id, current_version) =
+        identify_mod(dir.clone(), file_name.clone()).await.ok()??;
 
     // 单项目元数据（projects?ids=[id] 同批量端点，仅一个 id）
     let meta = fetch_project_meta(&[Some((project_id.clone(), current_version.clone()))]).await?;
@@ -112,9 +113,7 @@ pub async fn identify_one_file(dir: &Path, file_name: &str) -> Option<ModFileDet
     let size = meta_file.as_ref().map(|m| m.len()).unwrap_or(0);
     let last_modified = meta_file
         .as_ref()
-        .and_then(|m| m.modified().ok())
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
+        .map(crate::util::modified_secs)
         .unwrap_or(0);
 
     Some(ModFileDetail {
