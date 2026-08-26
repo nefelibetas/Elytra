@@ -84,10 +84,7 @@ pub async fn run_install_jdk(
         let cur_total = cur_total.clone();
         async move {
             let mut tick = tokio::time::interval(std::time::Duration::from_millis(150));
-            let mut last_bytes = 0u64;
-            let mut last_sample = std::time::Instant::now();
-            let mut last_progress_at = std::time::Instant::now();
-            let mut speed_ema: f64 = 0.0;
+            let mut sampler = crate::task::progress::SpeedSampler::new();
             loop {
                 tick.tick().await;
                 // 终态（done/error/cancelled）由任务侧收口发出，心跳随之自退出
@@ -99,32 +96,11 @@ pub async fn run_install_jdk(
                 let cb = cur_bytes.load(Ordering::Relaxed);
                 let ct = cur_total.load(Ordering::Relaxed);
                 let cur = acc_bytes.load(Ordering::Relaxed) + cb;
-                let now = std::time::Instant::now();
-                if cur > last_bytes {
-                    last_progress_at = now;
-                }
-                let dt = now.duration_since(last_sample).as_secs_f64();
-                if dt >= 0.3 && cur > last_bytes {
-                    let instant = (cur - last_bytes) as f64 / dt;
-                    speed_ema = if speed_ema <= 0.0 {
-                        instant
-                    } else {
-                        speed_ema * 0.6 + instant * 0.4
-                    };
-                    last_bytes = cur;
-                    last_sample = now;
-                }
+                let total_bytes = progress.lock().total_bytes;
+                let (speed_bps, eta) = sampler.sample(cur, total_bytes);
                 task::update_and_emit(&app, &progress, |p| {
-                    p.speed_bps = speed_ema;
-                    let remaining = p.total_bytes.saturating_sub(cur);
-                    p.eta_seconds = if speed_ema >= 1024.0
-                        && remaining > 0
-                        && now.duration_since(last_progress_at) <= std::time::Duration::from_secs(4)
-                    {
-                        Some((remaining as f64 / speed_ema).ceil() as u64)
-                    } else {
-                        None
-                    };
+                    p.speed_bps = speed_bps;
+                    p.eta_seconds = eta;
                     p.completed_files = fd;
                     p.total_files = ft;
                     p.completed_bytes = cur;
