@@ -27,7 +27,7 @@ export interface OnlineConfig {
 export const onlineStatus = ref<OnlineStatus>("idle");
 /** 当前房间码（host：waiting 时为入口端口身份段，hosting 时含端口可分享）。 */
 export const onlineRoomCode = ref("");
-/** guest 加入后的本地转发端口（游戏内填 127.0.0.1:此端口）。 */
+/** guest 加入后的本地转发端口（游戏内局域网标签页点 "Elytra 联机" 进入，此端口为参考）。 */
 export const onlineLocalPort = ref<number | null>(null);
 /** host 区操作错误（内联展示在"作为主机"卡片）。 */
 export const onlineErrorHost = ref("");
