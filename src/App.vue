@@ -226,6 +226,9 @@ input, textarea {
   --z-modal: 1100;
   --z-toast: 3000;
   --z-tooltip: 3100;
+  /* 滑块填充比例（range 进度条）：组件经 style="--range-pct: N%" 内联注入覆盖，
+     此处默认值仅为静态解析兜底（settings-shared.css 的 var() 引用）。 */
+  --range-pct: 0%;
   font-family: Inter, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "Noto Sans SC", sans-serif;
   font-size: 14px;
   line-height: 1.5;
