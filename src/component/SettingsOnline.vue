@@ -109,10 +109,7 @@ async function handleSaveConfig() {
     <!-- host：作为主机 -->
     <div class="online-sec">
       <div class="online-sec-title">作为主机</div>
-      <p class="online-desc">
-        点"开启联机"后，在游戏里"对局域网开放"即可——启动器自动检测游戏端口并生成完整房间码，
-        把码发给朋友即可加入你的游戏。同一局域网的朋友直接加入即可，先后顺序随意。
-      </p>
+      <p class="online-desc">点"开启联机"后，游戏里"对局域网开放"即可——启动器自动生成房间码，发给朋友即可加入。</p>
 
       <!-- 等待态：提示 + 停止 -->
       <div v-if="onlineStatus === 'waiting'" class="online-waiting">
@@ -209,12 +206,7 @@ async function handleSaveConfig() {
     <!-- 协调服务器（跨网联机） -->
     <div class="online-sec">
       <div class="online-sec-title">协调服务器（跨网联机）</div>
-      <p class="online-desc">
-        不在同一局域网时，host 与 guest 需连到同一个协调服务器才能互相发现（EasyTier
-        官方公共节点已下线）。默认内置一个社区备用节点，可直接使用；也可填自己或朋友的
-        服务器地址，每行一个，格式如
-        <span class="online-mono">tcp://1.2.3.4:11010</span>。留空则仅支持同一局域网直连。
-      </p>
+      <p class="online-desc">跨网联机需连同一个协调服务器才能互相发现。默认内置社区节点，也可填自己的地址（每行一个，如 <span class="online-mono">tcp://1.2.3.4:11010</span>），留空仅支持同一局域网。</p>
       <textarea
         v-model="onlinePublicNodes"
         class="online-textarea"
@@ -313,6 +305,7 @@ async function handleSaveConfig() {
 .online-textarea {
   width: 100%;
   box-sizing: border-box;
+  height: 64px;
   padding: 8px 10px;
   font-size: 13px;
   font-family: "Cascadia Mono", "Consolas", monospace;
@@ -320,7 +313,7 @@ async function handleSaveConfig() {
   background-color: var(--surface-elevated);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
-  resize: vertical;
+  resize: none;
 }
 .online-textarea:focus {
   border-color: var(--color-brand);
