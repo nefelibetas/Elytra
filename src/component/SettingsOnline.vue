@@ -3,12 +3,15 @@
 // 加入后本地端口转发，游戏内填 127.0.0.1:<端口> 即可连 host 的游戏。
 // 顺序自由：可先点"开启联机"（等待态），再在游戏里"对局域网开放"；
 // 检测到游戏端口后自动生成完整房间码。
+// 同网直连：host 局域网 IP 自动编入房间码（@IP 段），guest 解析后直连 host；
+// 跨网联机需配置协调服务器（easytier 官方公共节点已下线）。
 import { onMounted, ref } from "vue";
-import { Copy, Link2, Unplug } from "@lucide/vue";
+import { Copy, Link2, Save, Unplug } from "@lucide/vue";
 import {
-  onlineStatus, onlineRoomCode, onlineLocalPort,
+  onlinePublicNodes, onlineStatus, onlineRoomCode, onlineLocalPort,
   onlineErrorHost, onlineErrorGuest,
-  startHost, joinRoom, stopOnline, loadOnlineStatus, ensureOnlineListen,
+  startHost, joinRoom, stopOnline, loadOnlineStatus, loadOnlineConfig,
+  saveOnlineConfig, ensureOnlineListen,
 } from "../store/online";
 import { showToast } from "../utils/toast";
 import { errMsg } from "../utils/error";
@@ -16,11 +19,14 @@ import { errMsg } from "../utils/error";
 onMounted(() => {
   ensureOnlineListen();
   void loadOnlineStatus();
+  void loadOnlineConfig();
 });
 
 /** guest 输入的房间码。 */
 const roomCodeInput = ref("");
 const busy = ref(false);
+/** 协调服务器保存中。 */
+const savingConfig = ref(false);
 
 async function handleStartHost() {
   busy.value = true;
@@ -63,6 +69,18 @@ async function copyRoomCode() {
     showToast("复制失败，请手动复制");
   }
 }
+
+async function handleSaveConfig() {
+  savingConfig.value = true;
+  try {
+    await saveOnlineConfig();
+    showToast("协调服务器已保存");
+  } catch (e) {
+    showToast(errMsg(e));
+  } finally {
+    savingConfig.value = false;
+  }
+}
 </script>
 
 <template>
@@ -90,7 +108,7 @@ async function copyRoomCode() {
       <div class="online-sec-title">作为主机</div>
       <p class="online-desc">
         点"开启联机"后，在游戏里"对局域网开放"即可——启动器自动检测游戏端口并生成完整房间码，
-        把码发给朋友即可加入你的游戏。先后顺序随意。
+        把码发给朋友即可加入你的游戏。同一局域网的朋友直接加入即可，先后顺序随意。
       </p>
 
       <!-- 等待态：提示 + 停止 -->
@@ -176,6 +194,30 @@ async function copyRoomCode() {
         </button>
       </div>
     </div>
+
+    <!-- 协调服务器（跨网联机） -->
+    <div class="online-sec">
+      <div class="online-sec-title">协调服务器（跨网联机）</div>
+        官方公共节点已下线）。默认内置一个社区备用节点，可直接使用；也可填自己或朋友的
+        服务器地址，每行一个，格式如
+        <span class="online-mono">tcp://1.2.3.4:11010</span>。留空则仅支持同一局域网直连。
+      </p>
+        官方公共节点已下线）。可填自己或朋友的服务器地址，每行一个，格式如
+        <span class="online-mono">tcp://1.2.3.4:11010</span>。留空则仅支持同一局域网直连。
+      </p>
+      <textarea
+        v-model="onlinePublicNodes"
+        class="online-textarea"
+        rows="3"
+        placeholder="tcp://服务器地址:11010"
+      ></textarea>
+      <div class="online-actions">
+        <button class="online-btn" :disabled="savingConfig" @click="handleSaveConfig">
+          <Save :size="14" />
+          {{ savingConfig ? "保存中..." : "保存" }}
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -228,6 +270,10 @@ async function copyRoomCode() {
   line-height: 1.5;
   margin: 0 0 10px;
 }
+.online-mono {
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  color: var(--text-secondary);
+}
 .online-row {
   display: flex;
   align-items: center;
@@ -251,6 +297,22 @@ async function copyRoomCode() {
   border-radius: var(--radius-sm);
 }
 .online-input:focus {
+  border-color: var(--color-brand);
+  outline: none;
+}
+.online-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  color: var(--text-primary);
+  background-color: var(--surface-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  resize: vertical;
+}
+.online-textarea:focus {
   border-color: var(--color-brand);
   outline: none;
 }
@@ -307,24 +369,25 @@ async function copyRoomCode() {
   border-color: var(--color-brand);
   color: var(--text-primary);
 }
-.online-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.online-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.online-btn-stop {
+  color: var(--text-danger, #e5484d);
+}
 .online-btn-primary {
-  color: var(--color-brand);
+  color: #fff;
+  background-color: var(--color-brand);
   border-color: var(--color-brand);
 }
 .online-btn-primary:hover:not(:disabled) {
-  background-color: var(--color-brand-bg);
-}
-.online-btn-stop {
-  color: var(--color-danger);
-  border-color: var(--color-danger);
-}
-.online-btn-stop:hover:not(:disabled) {
-  background-color: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  filter: brightness(1.1);
+  color: #fff;
 }
 .online-error {
-  margin-top: 10px;
+  padding: 6px 0;
   font-size: 12px;
-  color: var(--color-danger);
+  color: var(--text-danger, #e5484d);
 }
 </style>

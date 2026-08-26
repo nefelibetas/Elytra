@@ -2,6 +2,8 @@
 // 调后端命令（commands/online.rs），监听 online-state 事件同步状态。
 // 顺序自由：host 可先开联机（waiting）再在游戏里"对局域网开放"，
 // 后端检测到端口后事件推送 hosting + 完整房间码；guest 从房间码解析端口。
+// 同网直连：host 局域网 IP 编入房间码（@IP 段），guest 解析后直连 host；
+// 跨网联机需在设置里配置协调服务器（easytier 官方公共节点已下线）。
 import { ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -17,6 +19,11 @@ export interface OnlineSnapshot {
   local_port: number | null;
 }
 
+/** 联机配置（镜像 Rust OnlineConfig）。 */
+export interface OnlineConfig {
+  public_nodes: string[];
+}
+
 export const onlineStatus = ref<OnlineStatus>("idle");
 /** 当前房间码（host：waiting 时为入口端口身份段，hosting 时含端口可分享）。 */
 export const onlineRoomCode = ref("");
@@ -26,6 +33,8 @@ export const onlineLocalPort = ref<number | null>(null);
 export const onlineErrorHost = ref("");
 /** guest 区操作错误（内联展示在"加入联机"卡片）。 */
 export const onlineErrorGuest = ref("");
+/** 协调服务器列表（每行一个 easytier peer URI，如 tcp://1.2.3.4:11010）。 */
+export const onlinePublicNodes = ref("");
 
 function applySnapshot(snap: OnlineSnapshot) {
   onlineStatus.value = snap.status;
@@ -51,6 +60,25 @@ export async function loadOnlineStatus() {
   } catch {
     // 查询失败保持默认
   }
+}
+
+/** 加载协调服务器配置。 */
+export async function loadOnlineConfig() {
+  try {
+    const cfg = await invoke<OnlineConfig>("get_online_config");
+    onlinePublicNodes.value = (cfg.public_nodes ?? []).join("\n");
+  } catch {
+    // 查询失败保持默认
+  }
+}
+
+/** 保存协调服务器配置（空 = 仅同网直连）。 */
+export async function saveOnlineConfig() {
+  const nodes = onlinePublicNodes.value
+    .split("\n")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  await invoke("save_online_config", { config: { public_nodes: nodes } });
 }
 
 /** 开启联机（host）：立即建网进入 waiting；检测到游戏端口后自动转 hosting。 */
