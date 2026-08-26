@@ -7,6 +7,9 @@
 //!   否则端口转发不启动；
 //! - **bind_device = false**：easytier 默认 true 会枚举本机 IPv4 预绑定源地址，
 //!   bind 物理 IP 后 connect 回环/局域网目标在 Windows 报 10049（实测复现）；
+//! - **enable_kcp_proxy = true**：port_forward 数据面首选 KCP（PreferKcp），
+//!   由该 flag 控制出站（默认 false）；不开启则回退 smoltcp 用户态 TCP，
+//!   MC 登录配置同步（registry 数百 KB~数 MB）会中断（实测"连接中断"）；
 //! - host 固定虚拟 IP，guest DHCP 拿 IP；
 //! - 端口转发方向（spike 验证 + 冲突修正）：
 //!   host 转发 `bind 0.0.0.0:入口端口 → dst 127.0.0.1:mc_port`；
@@ -27,6 +30,37 @@ use easytier_core::config::gateway::PortForwardConfig;
 use easytier_core::config::toml::{NetworkIdentity, PeerConfig};
 
 use super::room::RoomCredential;
+
+/// easytier 全局日志初始化锁（其 LOGGER 是进程级 OnceLock，重复 init 报错）。
+static EASYTIER_LOG_INIT: std::sync::Once = std::sync::Once::new();
+
+/// 初始化 easytier 文件日志（联机诊断）：抓数据面实际路由（KCP vs smoltcp）、
+/// peer 连接/虚拟 IP、连接建立与断开原因，输出到 exe 旁
+/// `Elytra/online-easytier.log`（debug 级，10MB × 3 轮转）。
+/// 文件懒创建：首条 easytier 日志事件才建文件。
+/// 调用幂等（Once）；失败仅打印 stderr，不影响联机主流程。
+pub(crate) fn init_easytier_logging() {
+    EASYTIER_LOG_INIT.call_once(|| {
+        use easytier::common::config::{ConsoleLoggerConfig, FileLoggerConfig, LoggingConfig};
+        let dir = crate::util::exe_dir().join(crate::constants::CONFIG_DIR);
+        let _ = std::fs::create_dir_all(&dir);
+        let cfg = LoggingConfig {
+            file_logger: Some(FileLoggerConfig {
+                level: Some("debug".into()),
+                file: Some("online-easytier.log".into()),
+                dir: Some(dir.to_string_lossy().into_owned()),
+                size_mb: Some(10),
+                count: Some(3),
+            }),
+            console_logger: Some(ConsoleLoggerConfig {
+                level: Some("info".into()),
+            }),
+        };
+        if let Err(e) = easytier::common::log::init(&cfg, false) {
+            eprintln!("[online] easytier 日志初始化失败: {e}");
+        }
+    });
+}
 
 /// host 虚拟网固定 IP（与陶瓦同网段，避免真实网络冲突）。
 pub const HOST_VIRTUAL_IP: &str = "10.144.144.1";
@@ -67,6 +101,7 @@ pub struct EasyTierSession {
 impl EasyTierSession {
     /// 创建并启动实例。
     pub async fn start(config: SessionConfig) -> Result<Self, String> {
+        init_easytier_logging();
         let toml = build_config(&config)?;
         let instance =
             create_native_instance(toml).map_err(|e| format!("创建联机会话失败\n{e}"))?;
@@ -233,5 +268,14 @@ mod tests {
             fwds[0].dst_addr,
             SocketAddr::from((HOST_VIRTUAL_IP_V4, 40000))
         );
+    }
+
+    #[test]
+    fn easytier_logging_inits_once() {
+        // 幂等：重复调用不 panic（easytier LOGGER 进程级单例）。
+        // 日志文件为懒创建（easytier RollingFileAppender 首条日志事件才建），
+        // 此处只验证初始化不报错；落盘由集成测试 online_diag 验证。
+        init_easytier_logging();
+        init_easytier_logging();
     }
 }

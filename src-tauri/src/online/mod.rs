@@ -19,7 +19,7 @@ mod room;
 mod session;
 
 pub use room::{create_room, parse_room_code, RoomCredential};
-pub use session::EasyTierSession;
+pub use session::{EasyTierSession, SessionConfig, SessionRole};
 
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -29,7 +29,7 @@ use crate::events::ONLINE_STATE;
 use crate::task::emit_event;
 
 use self::mc_discover::MinecraftScanner;
-use self::session::{HOST_LISTEN_PORT, SessionConfig, SessionRole};
+use self::session::HOST_LISTEN_PORT;
 
 /// 端口发现轮询间隔（游戏每 1.5s 广播一次组播，1s 轮询足够快）。
 const DISCOVER_POLL: Duration = Duration::from_secs(1);
