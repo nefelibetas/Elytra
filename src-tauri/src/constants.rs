@@ -51,6 +51,8 @@ pub const SECT_MS_ACCOUNTS: &str = "ms_accounts";
 pub const SECT_OFFLINE_ACCOUNTS: &str = "offline_accounts";
 /// persist section: 游戏目录
 pub const SECT_GAME_DIRS: &str = "game_dirs";
+/// persist section: 联机配置（协调节点等）
+pub const SECT_ONLINE: &str = "online";
 
 #[cfg(test)]
 mod tests {

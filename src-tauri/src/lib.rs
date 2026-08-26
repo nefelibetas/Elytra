@@ -39,7 +39,10 @@ use commands::offline_account::{
     get_last_offline_username, get_offline_accounts, remove_offline_account,
     save_last_offline_username, save_offline_account,
 };
-use commands::online::{online_join, online_start_host, online_status, online_stop};
+use commands::online::{
+    get_online_config, online_join, online_start_host, online_status, online_stop,
+    save_online_config,
+};
 use commands::task::{
     cancel_task, decide_waiting_task, dismiss_interrupted_task, download_files,
     download_single_file, install_modpack, list_interrupted_tasks, resume_task, scan_missing_files,
@@ -154,7 +157,9 @@ pub fn run() {
             online_start_host,
             online_join,
             online_stop,
-            online_status,
+                        online_status,
+            get_online_config,
+            save_online_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
