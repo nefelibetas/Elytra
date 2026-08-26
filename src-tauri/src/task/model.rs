@@ -233,6 +233,19 @@ pub struct ModpackInstallSpec {
 }
 
 #[cfg(test)]
+pub(crate) fn test_valid_task() -> DownloadTask {
+    DownloadTask {
+        version_id: "26.2".into(),
+        version_url: "https://example.com/26.2.json".into(),
+        mc_version: "26.2".into(),
+        loader: None,
+        optifine_patch: None,
+        version_dir_name: None,
+        fabric_api: None,
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::task::steps::TaskSpec;
@@ -290,22 +303,10 @@ mod tests {
         assert_eq!(DownloadFileKind::World.kind_dir(), "saves");
     }
 
-    fn valid_task() -> DownloadTask {
-        DownloadTask {
-            version_id: "26.2".into(),
-            version_url: "https://example.com/26.2.json".into(),
-            mc_version: "26.2".into(),
-            loader: None,
-            optifine_patch: None,
-            version_dir_name: None,
-            fabric_api: None,
-        }
-    }
-
     #[test]
     fn download_task_validate_ok() {
-        assert!(valid_task().validate().is_ok());
-        let mut t = valid_task();
+        assert!(test_valid_task().validate().is_ok());
+        let mut t = test_valid_task();
         t.loader = Some(LoaderChoice {
             kind: LoaderKind::Fabric,
             version: "0.19.3".into(),
@@ -320,21 +321,21 @@ mod tests {
 
     #[test]
     fn download_task_validate_rejects() {
-        let mut t = valid_task();
+        let mut t = test_valid_task();
         t.fabric_api = Some(FabricApi {
             url: "u".into(),
             version: "v".into(),
         });
         assert!(t.validate().is_err(), "Fabric API 无 Fabric loader 应拒绝");
 
-        let mut t = valid_task();
+        let mut t = test_valid_task();
         t.loader = Some(LoaderChoice {
             kind: LoaderKind::Forge,
             version: "  ".into(),
         });
         assert!(t.validate().is_err(), "空 loader 版本应拒绝");
 
-        let mut t = valid_task();
+        let mut t = test_valid_task();
         t.loader = Some(LoaderChoice {
             kind: LoaderKind::Quilt,
             version: "1.0".into(),
@@ -345,7 +346,7 @@ mod tests {
         });
         assert!(t.validate().is_err(), "Fabric API 配 Quilt 应拒绝");
 
-        let mut t = valid_task();
+        let mut t = test_valid_task();
         t.version_id = "".into();
         assert!(t.validate().is_err(), "空版本 id 应拒绝");
     }
