@@ -39,12 +39,6 @@ export interface ModFileDetail {
   current_version: string | null;
 }
 
-/** list_mods_detailed 返回（网络失败时 mods 仍含本地信息）。 */
-export interface ModListResult {
-  mods: ModFileDetail[];
-  network_error: boolean;
-}
-
 export interface ModUpdate {
   file_name: string;
   project_id: string;

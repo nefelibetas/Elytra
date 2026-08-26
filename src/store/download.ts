@@ -54,24 +54,6 @@ export interface DownloadTask {
 
 export type DownloadFileKind = "mod" | "resourcepack" | "datapack" | "shader" | "world";
 
-export interface DownloadFileTask {
-  version_dir_name: string
-  kind: DownloadFileKind
-  url: string
-  filename: string
-}
-
-export interface DownloadFileItem {
-  kind: DownloadFileKind
-  url: string
-  filename: string
-}
-
-export interface DownloadFilesTask {
-  version_dir_name: string
-  files: DownloadFileItem[]
-}
-
 /** 任务资源名映射：taskId → 资源名（社区资源单文件下载注册，完成提示用）。
  *  模块级（非 dlState 内）避免响应式开销；done 事件消费后即删除。 */
 export const taskNames = new Map<string, string>();
@@ -375,16 +357,6 @@ export async function resumeAllInterrupted() {
   } else if (jobs.length > 0) {
     showToast(`恢复完成（${failed} 个失败，可能已过期）`);
   }
-}
-
-/** 忽略（放弃恢复）：删除后端快照，本次及后续启动不再提示。 */
-export async function dismissInterrupted(jobId: string) {
-  try {
-    await invoke("dismiss_interrupted_task", { taskId: jobId });
-  } catch {
-    // 忽略失败不影响本地清理
-  }
-  interruptedJobs.value = interruptedJobs.value.filter((j) => j.id !== jobId);
 }
 
 /** 忽略全部中断任务（放弃恢复）：横幅一键清空，避免每个任务一个忽略按钮。 */
