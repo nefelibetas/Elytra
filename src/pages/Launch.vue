@@ -21,10 +21,10 @@ onMounted(async () => {
   await loadLastUsername();
   await loadMsAccounts();
   await loadOfflineAccounts();
-  renderOfflineAvatar(username.value);
+  void renderOfflineAvatar(username.value);
   // 账号变化（登录/退出）时渲染正版头像；初始已保存的账号也立即渲染
   // （watch(msAccount) 已移入 auth store 模块级，路由往返不累积注册）
-  renderPremiumAvatar(msAccount.value?.uuid ?? "");
+  void renderPremiumAvatar(msAccount.value?.uuid ?? "");
 
   await ensureLoginListener();
   await ensureGameExitListener();

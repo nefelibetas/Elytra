@@ -174,10 +174,10 @@ watch(
   nv => {
     if (!nv) return;
     resetVersionDetail();
-    loadVersionLoader(nv);
-    loadWorlds(nv);
-    loadModsQuick(nv);
-    loadMods(nv);
+    void loadVersionLoader(nv);
+    void loadWorlds(nv);
+    void loadModsQuick(nv);
+    void loadMods(nv);
     loadResourceLists(nv);
   },
   { immediate: true },

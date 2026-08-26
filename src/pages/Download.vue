@@ -36,8 +36,9 @@ const bodyEl = ref<HTMLElement>();
 
 onMounted(async () => {
   vdState.fetchManifest();
-  // 加载下载配置（翻译显示模式等）：保证社区搜索前配置已从持久化读入
-  loadDownloadConfig();
+  // 加载下载配置（翻译显示模式等）：社区搜索的翻译开关依赖 dlTranslateMode，
+  // 必须等配置读入后再发起搜索（否则 en 模式首帧仍请求翻译）
+  await loadDownloadConfig();
   // 预加载社区 tab 热门（对齐 PCL2）：进入下载页即并发请求，切 tab 秒开；
   // ensureAutoSearch 幂等（模块级标志），watch 切 tab 时不会重复请求
   communitySearch.ensureAutoSearch();

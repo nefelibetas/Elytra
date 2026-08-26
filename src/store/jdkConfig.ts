@@ -86,7 +86,7 @@ export async function installJdk(major: number): Promise<void> {
     registerTaskDoneHook(taskId, () => {
       const m = pendingInstall.get(taskId);
       pendingInstall.delete(taskId);
-      if (m !== undefined) onJdkInstalled(m);
+      if (m !== undefined) void onJdkInstalled(m);
     });
     // 预注册任务卡片（kind 标记：App.vue 的完成回调据此跳过 toast/跳转）
     // 并做统一竞态校正；silentFastExit：本函数已有"已提交"提示，不叠加中性提示。
@@ -133,12 +133,12 @@ async function onJdkInstalled(major: number) {
 export function selectAuto() {
   autoMode.value = true;
   activeJdk.value = null;
-  saveConfig();
+  void saveConfig();
 }
 
 export function selectJdk(env: JdkInfo) {
   autoMode.value = false;
   activeJdk.value = env;
-  saveConfig();
+  void saveConfig();
 }
 

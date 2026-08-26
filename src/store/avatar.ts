@@ -193,7 +193,7 @@ export function generatePixelFace(name: string): string {
 export function scheduleOfflineRender(name: string) {
   avatarState.avatarError = false;
   if (avatarTimer) clearTimeout(avatarTimer);
-  avatarTimer = window.setTimeout(() => renderOfflineAvatar(name), 1337);
+  avatarTimer = window.setTimeout(() => void renderOfflineAvatar(name), 1337);
 }
 
 // ── 账号列表 2D 头像（sessionserver 皮肤截取头部，按 uuid 模块级缓存）──
