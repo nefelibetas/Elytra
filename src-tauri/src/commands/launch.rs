@@ -9,7 +9,7 @@ use tauri::AppHandle;
 
 use crate::constants;
 use crate::downloader::model::VersionJson;
-use crate::jdk::model::{JdkConfig, JdkSelection};
+use crate::jdk::model::JdkConfig;
 use crate::launcher::args::build_launch_command;
 use crate::launcher::env;
 use crate::launcher::model::{AuthMode, LauncherConfig};
@@ -162,14 +162,7 @@ pub async fn check_launch_env(version_dir_name: String) -> Result<String, String
 
     let java_env = crate::persist::read::<JdkConfig>(constants::SECT_JDK)
         .ok()
-        .and_then(|c| match c.jdk_selection {
-            JdkSelection::Manual { path } => c
-                .discovered_jdks
-                .iter()
-                .find(|e| e.path == path)
-                .map(|e| e.version.clone()),
-            JdkSelection::Auto => None,
-        })
+        .and_then(|c| env::selected_jdk_version(&c))
         .unwrap_or_else(|| "自动选择".into());
     Ok(format!("环境校验通过（JDK: {}）", java_env))
 }

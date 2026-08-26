@@ -12,6 +12,20 @@ use crate::launcher::model::LauncherConfig;
 use crate::persist;
 use crate::util::{java_bin_path, parse_java_major};
 
+/// 按 JDK 选择配置解析实际使用的 JDK 版本字符串：
+/// - Manual：在 discovered_jdks 中按 path 匹配，返回其 version；
+/// - Auto / 未匹配：None（调用方自行给兜底文案）。
+pub fn selected_jdk_version(jdk_config: &JdkConfig) -> Option<String> {
+    match &jdk_config.jdk_selection {
+        JdkSelection::Manual { path } => jdk_config
+            .discovered_jdks
+            .iter()
+            .find(|e| &e.path == path)
+            .map(|e| e.version.clone()),
+        JdkSelection::Auto => None,
+    }
+}
+
 /// 加载全部持久化配置 + 解析版本 JSON，供 launch/spawn 共用。
 #[allow(clippy::type_complexity)]
 pub fn load_launch_config(
