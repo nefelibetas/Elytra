@@ -170,19 +170,28 @@ pub enum DownloadSourceMode {
 /// 自定义反序列化（含旧配置迁移）：历史上 preferOfficial/preferChina 两态并入 Auto——
 /// preferOfficial 语义（官方优先+慢降级）与 Auto 完全一致；
 /// preferChina（镜像优先）在 Auto 下由健康度自适应（官方失败/过慢 → 镜像接管）等效实现。
-impl<'de> serde::Deserialize<'de> for DownloadSourceMode {
-    fn deserialize<D>(d: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = String::deserialize(d)?;
-        Ok(match s.as_str() {
-            "officialOnly" => Self::OfficialOnly,
-            "chinaOnly" => Self::ChinaOnly,
-            _ => Self::Auto,
-        })
-    }
+/// 三态模式共用反序列化：仅识别 officialOnly/chinaOnly，未知值兜底 Auto
+/// （防手改 TOML 非法值导致整个 downloader section 反序列化失败丢配置）。
+/// 用于 DownloadSourceMode 与 JdkSourceMode，消除两个同构 impl。
+macro_rules! deserialize_mode {
+    ($t:ty) => {
+        impl<'de> serde::Deserialize<'de> for $t {
+            fn deserialize<D>(d: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                let s = String::deserialize(d)?;
+                Ok(match s.as_str() {
+                    "officialOnly" => Self::OfficialOnly,
+                    "chinaOnly" => Self::ChinaOnly,
+                    _ => Self::Auto,
+                })
+            }
+        }
+    };
 }
+
+deserialize_mode!(DownloadSourceMode);
 
 fn default_sources() -> Vec<DownloadSource> {
     vec![official(), china()]
@@ -240,21 +249,7 @@ pub enum JdkSourceMode {
     Auto,
 }
 
-/// 自定义反序列化：未知值兜底 Auto（防手改 TOML 非法值导致整个
-/// downloader section 反序列化失败，persist 会整体回默认丢配置）。
-impl<'de> serde::Deserialize<'de> for JdkSourceMode {
-    fn deserialize<D>(d: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = String::deserialize(d)?;
-        Ok(match s.as_str() {
-            "officialOnly" => Self::OfficialOnly,
-            "chinaOnly" => Self::ChinaOnly,
-            _ => Self::Auto,
-        })
-    }
-}
+deserialize_mode!(JdkSourceMode);
 
 fn default_show_release_only() -> bool {
     true

@@ -124,18 +124,7 @@ impl TaskSpec for DownloadFilesTask {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn valid_task() -> DownloadTask {
-        DownloadTask {
-            version_id: "26.2".into(),
-            version_url: "https://example.com/26.2.json".into(),
-            mc_version: "26.2".into(),
-            loader: None,
-            optifine_patch: None,
-            version_dir_name: None,
-            fabric_api: None,
-        }
-    }
+    use crate::task::model::test_valid_task as valid_task;
 
     #[test]
     fn download_task_steps_analysis() {
