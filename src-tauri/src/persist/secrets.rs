@@ -76,11 +76,11 @@ fn encrypt_bytes(data: &[u8]) -> Result<Vec<u8>, String> {
     }
     #[cfg(target_os = "linux")]
     {
-        key_utils::encrypt(data)
+        key_utils::encrypt_linux(data)
     }
     #[cfg(target_os = "macos")]
     {
-        keychain::encrypt(data)
+        keychain::encrypt_macos(data)
     }
 }
 
@@ -91,11 +91,11 @@ fn decrypt_bytes(data: &[u8]) -> Result<Vec<u8>, String> {
     }
     #[cfg(target_os = "linux")]
     {
-        key_utils::decrypt(data)
+        key_utils::decrypt_linux(data)
     }
     #[cfg(target_os = "macos")]
     {
-        keychain::decrypt(data)
+        keychain::decrypt_macos(data)
     }
 }
 
@@ -235,14 +235,14 @@ mod key_utils {
         MASTER_KEY.as_ref()
     }
 
-    pub fn encrypt(data: &[u8]) -> Result<Vec<u8>, String> {
+    pub fn encrypt_linux(data: &[u8]) -> Result<Vec<u8>, String> {
         match master_key() {
             Some(key) => super::key_encrypt(key, data),
             None => Ok(data.to_vec()),
         }
     }
 
-    pub fn decrypt(data: &[u8]) -> Result<Vec<u8>, String> {
+    pub fn decrypt_linux(data: &[u8]) -> Result<Vec<u8>, String> {
         match master_key() {
             Some(key) => super::key_decrypt(key, data),
             None => Ok(data.to_vec()),
@@ -317,14 +317,14 @@ mod keychain {
         MASTER_KEY.as_ref()
     }
 
-    pub fn encrypt(data: &[u8]) -> Result<Vec<u8>, String> {
+    pub fn encrypt_macos(data: &[u8]) -> Result<Vec<u8>, String> {
         match master_key() {
             Some(key) => super::key_encrypt(key, data),
             None => Ok(data.to_vec()),
         }
     }
 
-    pub fn decrypt(data: &[u8]) -> Result<Vec<u8>, String> {
+    pub fn decrypt_macos(data: &[u8]) -> Result<Vec<u8>, String> {
         match master_key() {
             Some(key) => super::key_decrypt(key, data),
             None => Ok(data.to_vec()),
