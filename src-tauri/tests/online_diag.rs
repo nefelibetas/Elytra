@@ -3,12 +3,15 @@
 //!
 //! 真实场景链路：
 //!   guest 游戏 → 127.0.0.1:guest_local_port（guest OS 监听）
-//!   → data plane smoltcp → 虚拟网 10.144.144.1:entry_port
+//!   → data plane（KCP/smoltcp）→ 虚拟网 10.144.144.1:entry_port
 //!   → host OS 监听 0.0.0.0:entry_port → 127.0.0.1:mc_port（本地游戏）
 //!
-//! 已知坑：flags.bind_device 默认 true 会枚举本机 IPv4 预绑定源地址，
-//! bind 物理 IP 后 connect 127.0.0.1(回环) → Windows WSAEADDRNOTAVAIL(10049)。
-//! 必须 bind_device=false（由 OS 自动选源）。
+//! 已知坑：
+//! - flags.bind_device 默认 true 会枚举本机 IPv4 预绑定源地址，
+//!   bind 物理 IP 后 connect 127.0.0.1(回环) → Windows WSAEADDRNOTAVAIL(10049)。
+//!   必须 bind_device=false（由 OS 自动选源）。
+//! - kcp feature 必须启用：port_forward 数据面首选 KCP（PreferKcp），
+//!   缺 feature 回退 smoltcp 用户态 TCP，MC 登录配置同步（registry 大数据）会中断。
 //!
 //! 运行：cd src-tauri && cargo test --test online_diag -- --nocapture --test-threads=1
 
@@ -54,6 +57,8 @@ fn build_config(
     // bind 物理 IP 后 connect 127.0.0.1(回环) → Windows WSAEADDRNOTAVAIL(10049)。
     // 关闭后由 OS 自动选源，回环/局域网都正常。
     flags.bind_device = false;
+    // KCP 数据面出站（port_forward 首选 KCP，缺则回退 smoltcp 大数据中断）
+    flags.enable_kcp_proxy = true;
     cfg.set_flags(flags);
 
     let peers: Vec<PeerConfig> = peers
@@ -108,12 +113,11 @@ fn spawn_echo_server(mc_port: u16) {
                 Ok(mut s) => {
                     eprintln!("[echo] accepted {s:?}");
                     std::thread::spawn(move || {
-                        let mut buf = [0u8; 1024];
+                        let mut buf = [0u8; 65536];
                         loop {
                             match s.read(&mut buf) {
                                 Ok(0) | Err(_) => break,
                                 Ok(n) => {
-                                    eprintln!("[echo] recv {} bytes, echo back", n);
                                     if s.write_all(&buf[..n]).is_err() {
                                         break;
                                     }
@@ -206,7 +210,7 @@ async fn host_guest_tcp_roundtrip() {
         Err(_) => eprintln!("== 测试 1 失败：host 转发链路不通（入口端口未监听或转发失败）"),
     }
 
-    // 2) guest → host 经虚拟网
+    // 2) guest → host 经虚拟网（小数据）
     eprintln!("== 测试 2：guest 连 127.0.0.1:{guest_local_port}");
     let t2 = tokio::time::timeout(
         Duration::from_secs(20),
@@ -222,6 +226,40 @@ async fn host_guest_tcp_roundtrip() {
     match t2 {
         Ok(_) => eprintln!("== 测试 2 OK：guest → 虚拟网 → host → echo 全链路通"),
         Err(_) => eprintln!("== 测试 2 失败：guest → host 虚拟网链路不通"),
+    }
+
+    // 3) 大数据传输（模拟 MC 登录配置同步 registry；smoltcp 数据面曾在此中断，
+    //    kcp feature 启用后数据面走 KCP 应稳定）
+    eprintln!("== 测试 3：guest → host 传输 5MB（模拟 MC registry 同步）");
+    let t3 = tokio::time::timeout(
+        Duration::from_secs(60),
+        async {
+            let mut s = TcpStream::connect(("127.0.0.1", guest_local_port)).unwrap();
+            let chunk = vec![0x5au8; 8192];
+            let total = 5 * 1024 * 1024;
+            let mut written = 0usize;
+            while written < total {
+                let n = (total - written).min(chunk.len());
+                s.write_all(&chunk[..n]).unwrap();
+                written += n;
+            }
+            s.flush().unwrap();
+            // 读回同样大小并校验
+            let mut read_back = 0usize;
+            let mut buf = [0u8; 8192];
+            while read_back < total {
+                let n = s.read(&mut buf).unwrap();
+                assert!(n > 0, "大数据传输中断（read 返回 0）");
+                assert!(buf[..n].iter().all(|&b| b == 0x5a), "数据损坏");
+                read_back += n;
+            }
+            assert_eq!(read_back, total, "回读字节数不符");
+        },
+    )
+    .await;
+    match t3 {
+        Ok(_) => eprintln!("== 测试 3 OK：5MB 大数据传输完整（数据面正常）"),
+        Err(e) => eprintln!("== 测试 3 失败：大数据传输中断: {e}"),
     }
 
     host.stop().await;
