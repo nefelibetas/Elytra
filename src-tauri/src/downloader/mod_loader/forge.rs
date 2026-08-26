@@ -72,24 +72,9 @@ pub(super) async fn download_and_extract(
         .and_then(|u| u.rsplit('/').next())
         .unwrap_or("installer.jar");
     let installer_path = tmp.join(installer_name);
-    // 字节级进度：增量累加进外部计数器（收尾心跳显示速度）；同时写入 LoaderLibs 步骤计数
-    let file_done = Arc::new(std::sync::atomic::AtomicU64::new(0));
-    let progress = {
-        let fd = file_done.clone();
-        let b = pc.bytes.clone();
-        let lb = pc.step_bytes.clone();
-        let lt = pc.step_total.clone();
-        move |downloaded: u64, total: u64| {
-            let prev = fd.swap(downloaded, Ordering::Relaxed);
-            let delta = downloaded.saturating_sub(prev);
-            b.fetch_add(delta, Ordering::Relaxed);
-            lb.fetch_add(delta, Ordering::Relaxed);
-            if total > 0 {
-                lt.store(total, Ordering::Relaxed);
-            }
-        }
-    };
-    fetcher::fetch_fallback(installer_urls, &installer_path, Some(progress))
+    // 字节级进度：step_progress 工厂（增量累加进全局与 LoaderLibs 步骤计数，
+    // total 写入步骤分母）
+    fetcher::fetch_fallback(installer_urls, &installer_path, Some(pc.step_progress()))
         .await
         .map_err(|e| format!("下载安装程序失败\n{}", e))?;
 
@@ -327,8 +312,7 @@ async fn extract_forge_client_lzma(
         ),
         ("trove", "trove/trove/1.0.2/trove-1.0.2.jar"),
     ];
-    let sources: Vec<&DownloadSource> =
-        config.file_sources_list();
+    let sources: Vec<&DownloadSource> = config.file_sources_list();
     for (name, maven_path) in TOOL_JARS {
         let tool_dest = tools.join(format!("{name}.jar"));
         if tool_dest.exists() {

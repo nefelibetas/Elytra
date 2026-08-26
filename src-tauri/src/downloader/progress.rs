@@ -25,18 +25,44 @@ pub struct ProgressCounters {
 }
 
 impl ProgressCounters {
-    /// 字节增量回调工厂：维护 worker 本地水位，把每次回调的增量累加进
-    /// `bytes` / `step_bytes`。替代各任务层手写的 "swap-prev + saturating_sub" 闭包。
-    /// 返回值 `(closure)` 可直接传给 `fetcher::fetch_verified_c` 的进度参数。
-    pub fn byte_callback(&self) -> impl Fn(u64, u64) + Send + Sync {
+    /// 字节增量回调工厂（含步骤分母写入）：维护 worker 本地水位，把每次回调的
+    /// 增量累加进 `bytes` / `step_bytes`；`total > 0` 时把 content-length 写入
+    /// `step_total`（步骤分母）。替代各任务层手写的 "swap-prev + saturating_sub" 闭包。
+    /// 返回值 `(closure)` 可直接传给各 fetch 变体（`fetch_verified_c` 等）的进度参数。
+    pub fn step_progress(&self) -> impl Fn(u64, u64) + Clone + Send + Sync {
         let last = Arc::new(AtomicU64::new(0));
         let bytes = Arc::clone(&self.bytes);
         let step_bytes = Arc::clone(&self.step_bytes);
-        move |done: u64, _total: u64| {
-            let prev = last.swap(done, Ordering::Relaxed);
-            let delta = done.saturating_sub(prev);
+        let step_total = Arc::clone(&self.step_total);
+        move |downloaded: u64, total: u64| {
+            let prev = last.swap(downloaded, Ordering::Relaxed);
+            let delta = downloaded.saturating_sub(prev);
             bytes.fetch_add(delta, Ordering::Relaxed);
             step_bytes.fetch_add(delta, Ordering::Relaxed);
+            if total > 0 {
+                step_total.store(total, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// 字节增量回调工厂（写 `bytes` / `step_bytes`，不动步骤分母）。
+    /// `step_progress` 的语义子集（step_total 恒不写入）。
+    pub fn byte_callback(&self) -> impl Fn(u64, u64) + Clone + Send + Sync {
+        self.step_progress()
+    }
+
+    /// 覆盖式回调工厂：把当前下载字节绝对值写入 `bytes`，`total > 0` 时写入
+    /// `step_total`。用于单文件进度被任务层按"当前文件绝对值"消费的场景
+    /// （client.jar 下载：EmitLoop 读 jar_bytes/jar_total 做 jar_total 回退），
+    /// 与 `step_progress` 的增量累加语义不同。
+    pub fn overwrite_callback(&self) -> impl Fn(u64, u64) + Clone + Send + Sync {
+        let bytes = Arc::clone(&self.bytes);
+        let step_total = Arc::clone(&self.step_total);
+        move |downloaded: u64, total: u64| {
+            bytes.store(downloaded, Ordering::Relaxed);
+            if total > 0 {
+                step_total.store(total, Ordering::Relaxed);
+            }
         }
     }
 }

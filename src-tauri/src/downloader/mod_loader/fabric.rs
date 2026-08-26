@@ -57,9 +57,7 @@ async fn install_loader_via_profile(
         serde_json::from_value(merged["libraries"].clone()).unwrap_or_default();
     let sources: Vec<&DownloadSource> = config.file_sources_list();
     // LoaderLibs 步骤字节分母：需下载的 loader 依赖库总字节（本地扫描可算）
-    let pending_bytes = crate::downloader::library::total_lib_bytes(&libraries).saturating_sub(
-        crate::downloader::library::existing_lib_bytes(&libraries, &lib_dir),
-    );
+    let pending_bytes = crate::downloader::library::pending_lib_bytes(&libraries, &lib_dir);
     if pending_bytes > 0 {
         pc.step_total.store(pending_bytes, Ordering::Relaxed);
     }
