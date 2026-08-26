@@ -97,12 +97,13 @@ fn verify_env(
 
 // ── 进程管理 ───────────────────────────────────────
 
-/// 会话验证失败关键字（MC 服务器开启正版验证时，离线/失效会话客户端被拒绝）。
+/// 只匹配**服务器拒绝**的明确文案：MC 客户端离线启动时 authlib 内部访问会话服务
+/// 也会抛裸 "Invalid session"（启动噪音，非被服务器拒绝），宽匹配会误报。
 const SESSION_ERROR_MARKERS: &[&str] = &[
-    "Invalid session",
-    "InvalidCredentialsException",
-    "无效会话",
-    "Failed to login",
+    "Failed to login: Invalid session",
+    "登录失败：无效会话",
+    "Invalid session (Try restarting your game)",
+    "无效会话（请尝试重启游戏）",
 ];
 
 /// 读取子进程输出并追加写入日志文件，直到 EOF 或出错。
