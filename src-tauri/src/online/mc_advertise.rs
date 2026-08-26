@@ -2,7 +2,7 @@
 //!
 //! 背景：MC 26.2 客户端对"手动输入 IP"的连接做会话校验，离线账号会报
 //! "登录失败：无效会话"；而"局域网发现"路径（多人游戏 → 局域网标签页）
-//! 跳过会话校验，离线可正常进入。Elytra 联机（guest 连 127.0.0.1:本地端口）
+//! 跳过会话校验，离线可正常进入。Elytra 联机（guest 连本地转发端口）
 //! 属于前者，故登录失败。
 //!
 //! 修复：guest 加入联机后，在本机周期性地向 MC 局域网发现组播
@@ -10,8 +10,9 @@
 //! 使 guest 的 MC 客户端在"局域网"标签页看到该服务器（本机组播回环），
 //! 点击进入走局域网发现路径，跳过会话校验，经 easytier 转发到 host 正常登录。
 //!
-//! 广播 socket bind 127.0.0.1 → 源 IP 为 127.0.0.1，MC 客户端据此连接
-//! 127.0.0.1:本地端口（与 guest 转发端口 bind 127.0.0.1 一致）。
+//! 广播 socket bind 0.0.0.0 → 源 IP 为 OS 选的主网卡地址（回环源本机收不到，
+//! 实测 127.0.0.1 源无效）；MC 客户端据此连 `<本机IP>:本地端口`
+//! （guest 转发端口须同绑 0.0.0.0，见 session.rs）。
 
 use std::net::UdpSocket;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -37,15 +38,16 @@ pub struct McAdvertiser {
 impl McAdvertiser {
     /// 启动广播线程：向 MC 局域网发现组播周期广播本地转发端口。
     pub fn start(local_port: u16) -> Self {
-        Self::start_with_motd(local_port, DEFAULT_MOTD)
+        Self::start_internal(local_port, DEFAULT_MOTD, MC_MULTICAST_PORT)
     }
 
-    /// 带自定义服务器名启动（供测试/扩展）。
-    fn start_with_motd(local_port: u16, motd: &str) -> Self {
+    fn start_internal(local_port: u16, motd: &str, multicast_port: u16) -> Self {
         let (quit_tx, quit_rx) = channel::<()>();
         let payload = format!("[MOTD]{motd}[/MOTD][AD]{local_port}[/AD]");
         thread::spawn(move || {
-            let Ok(socket) = UdpSocket::bind(("127.0.0.1", 0)) else {
+            // bind 0.0.0.0：源 IP 由 OS 选主网卡地址（回环源收不到，实测），
+            // MC 客户端连 <本机IP>:local_port（转发端口同绑 0.0.0.0）。
+            let Ok(socket) = UdpSocket::bind(("0.0.0.0", 0)) else {
                 eprintln!("[online] MC 广播 socket 绑定失败（联机功能不受影响）");
                 return;
             };
@@ -53,7 +55,7 @@ impl McAdvertiser {
             let _ = socket.set_multicast_loop_v4(true);
             let _ = socket.set_multicast_ttl_v4(1);
             while !is_quit(&quit_rx) {
-                let _ = socket.send_to(payload.as_bytes(), (MC_MULTICAST_ADDR, MC_MULTICAST_PORT));
+                let _ = socket.send_to(payload.as_bytes(), (MC_MULTICAST_ADDR, multicast_port));
                 thread::sleep(ADVERTISE_INTERVAL);
             }
         });
@@ -89,5 +91,27 @@ mod tests {
         let payload = format!("[MOTD]Elytra 联机[/MOTD][AD]34567[/AD]");
         assert!(payload.starts_with("[MOTD]"));
         assert!(payload.contains("[AD]34567[/AD]"));
+    }
+
+    /// 端到端：启动广播器（注入测试组播端口），加入组播组监听，
+    /// 应在本机回环收到格式正确的广播（Windows 组播回环验证）。
+    #[test]
+    fn broadcast_loopback_reachable() {
+        const TEST_PORT: u16 = 4448;
+        let a = McAdvertiser::start_internal(34567, "test", TEST_PORT);
+        let recv = UdpSocket::bind(("0.0.0.0", TEST_PORT)).expect("bind listen");
+        recv
+            .join_multicast_v4(&"224.0.2.60".parse().unwrap(), &"0.0.0.0".parse().unwrap())
+            .expect("join multicast group");
+        recv.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut buf = [0u8; 256];
+        let (n, src) = recv.recv_from(&mut buf).expect("应收到组播回环广播");
+        let text = String::from_utf8_lossy(&buf[..n]);
+        assert!(
+            text.starts_with("[MOTD]") && text.contains("[AD]34567[/AD]"),
+            "广播格式不符: {text}"
+        );
+        eprintln!("收到广播 {text} from {src}");
+        drop(a);
     }
 }
