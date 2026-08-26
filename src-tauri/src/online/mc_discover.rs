@@ -36,10 +36,7 @@ impl MinecraftScanner {
     }
 
     /// 监听循环：绑定组播 socket，收包解析端口，超时老化。
-    fn run(
-        quit_rx: Receiver<()>,
-        port: Arc<Mutex<Vec<(u16, Instant)>>>,
-    ) -> std::io::Result<()> {
+    fn run(quit_rx: Receiver<()>, port: Arc<Mutex<Vec<(u16, Instant)>>>) -> std::io::Result<()> {
         let socket = UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], MC_MULTICAST_PORT)))?;
         socket.join_multicast_v4(&MC_MULTICAST_IP, &Ipv4Addr::UNSPECIFIED)?;
         socket.set_read_timeout(Some(Duration::from_millis(300)))?;
@@ -60,7 +57,9 @@ impl MinecraftScanner {
             }
             // 老化过期端口
             let now = Instant::now();
-            port.lock().unwrap().retain(|(_, at)| now.duration_since(*at) < PORT_TTL);
+            port.lock()
+                .unwrap()
+                .retain(|(_, at)| now.duration_since(*at) < PORT_TTL);
         }
     }
 
@@ -91,7 +90,10 @@ mod tests {
 
     #[test]
     fn parses_mc_multicast_payload() {
-        assert_eq!(parse_port(b"[MOTD]A server[/MOTD][AD]25565[/AD]"), Some(25565));
+        assert_eq!(
+            parse_port(b"[MOTD]A server[/MOTD][AD]25565[/AD]"),
+            Some(25565)
+        );
         assert_eq!(parse_port(b"[AD]50000[/AD]"), Some(50000));
         assert_eq!(parse_port(b"nope"), None);
         assert_eq!(parse_port(b"[AD]abc[/AD]"), None);

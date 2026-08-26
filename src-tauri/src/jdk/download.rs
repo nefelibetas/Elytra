@@ -12,9 +12,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::config::downloader::model::{DownloaderConfig, JdkSourceMode};
+use crate::downloader::endpoints::JdkEndpoints;
 use crate::downloader::fetcher::{self, http};
 use crate::downloader::probe::probe_url;
-use crate::downloader::endpoints::JdkEndpoints;
 use crate::jdk::model::JdkInfo;
 use crate::jdk::scanner;
 use crate::util::{java_bin_path, parse_java_major};
@@ -26,14 +26,14 @@ use std::time::{Duration, Instant};
 
 /// 安装进度钩子（任务侧传入；均可为空，纯函数调用方直接不传）。
 pub struct InstallProgress<'a> {
-	/// 任务取消标志（下载循环每块检查，取消立即停止当前文件）
-	pub cancel: Option<&'a AtomicBool>,
-	/// 报告总文件数/总字节（manifest 解析后；Azul 路径不报，进度回退文件数）
-	pub on_total: Option<&'a (dyn Fn(u32, u64) + Send + Sync)>,
-	/// 字节增量（当前文件下载中；调用方自行持有 prev 做差分）
-	pub on_bytes: Option<&'a (dyn Fn(u64) + Send + Sync)>,
-	/// 单文件下载完成
-	pub on_file_done: Option<&'a (dyn Fn() + Send + Sync)>,
+    /// 任务取消标志（下载循环每块检查，取消立即停止当前文件）
+    pub cancel: Option<&'a AtomicBool>,
+    /// 报告总文件数/总字节（manifest 解析后；Azul 路径不报，进度回退文件数）
+    pub on_total: Option<&'a (dyn Fn(u32, u64) + Send + Sync)>,
+    /// 字节增量（当前文件下载中；调用方自行持有 prev 做差分）
+    pub on_bytes: Option<&'a (dyn Fn(u64) + Send + Sync)>,
+    /// 单文件下载完成
+    pub on_file_done: Option<&'a (dyn Fn() + Send + Sync)>,
 }
 
 /// 按 Java 主版本映射 Mojang runtime 组件名（all.json 的键）。
@@ -276,7 +276,10 @@ async fn speed_probe_url_for(
             let (os, arch) = adoptium_platform();
             let api_url = format!(
                 "{}/v3/assets/latest/{}/hotspot?os={}&architecture={}&image_type=jdk",
-                JdkEndpoints::ADOPTIUM_API_BASE, major, os, arch
+                JdkEndpoints::ADOPTIUM_API_BASE,
+                major,
+                os,
+                arch
             );
             let resp = http().get(&api_url).send().await.ok()?;
             if !resp.status().is_success() {
@@ -716,7 +719,10 @@ fn adoptium_platform() -> (&'static str, &'static str) {
 
 /// TUNA 镜像文件 URL：Adoptium 官方文件名与镜像完全一致，按镜像目录结构直接构造。
 fn tuna_package_url(major: u32, arch: &str, os: &str, name: &str) -> String {
-    format!("{}/{major}/jdk/{arch}/{os}/{name}", JdkEndpoints::TUNA_ADOPTIUM_BASE)
+    format!(
+        "{}/{major}/jdk/{arch}/{os}/{name}",
+        JdkEndpoints::TUNA_ADOPTIUM_BASE
+    )
 }
 
 /// 源层排序决策（纯逻辑，便于单测）：官方探测可用且快于 TUNA → 官方优先；

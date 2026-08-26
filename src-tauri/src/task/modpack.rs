@@ -270,14 +270,8 @@ pub async fn run_install(
                 }
             };
             let urls = crate::util::community_download_urls(url).await;
-            if let Err(e) = fetcher::fetch_verified_c(
-                &urls,
-                &zip_path,
-                Some(dl_cb),
-                sha1,
-                Some(cancel),
-            )
-            .await
+            if let Err(e) =
+                fetcher::fetch_verified_c(&urls, &zip_path, Some(dl_cb), sha1, Some(cancel)).await
             {
                 return fail_or_cancel(app, progress, cancel, format!("下载整合包失败\n{e}"), None);
             }
@@ -413,14 +407,8 @@ pub async fn run_install(
         if !dest.exists() {
             // 空 sha1 跳过校验；取消感知；MCIM 双源回退对 cdn.modrinth.com 适用
             let urls = crate::util::community_download_urls(icon).await;
-            let _ = fetcher::fetch_verified_c(
-                &urls,
-                &dest,
-                None::<fn(u64, u64)>,
-                "",
-                Some(cancel),
-            )
-            .await;
+            let _ = fetcher::fetch_verified_c(&urls, &dest, None::<fn(u64, u64)>, "", Some(cancel))
+                .await;
         }
     }
     let sources: Vec<DownloadSource> = config.file_sources_list().into_iter().cloned().collect();

@@ -518,11 +518,18 @@ fn sort_routes_with_probes_orders_fastest_first() {
         &mut r,
         &HashMap::from([
             ("https://libraries.minecraft.net/a.jar".to_string(), ok(50)),
-            ("https://bmclapi2.bangbang93.com/libraries/a.jar".to_string(), ok(400)),
+            (
+                "https://bmclapi2.bangbang93.com/libraries/a.jar".to_string(),
+                ok(400),
+            ),
         ]),
         ResourceClass::Library,
     );
-    assert!(r[0].url.contains("minecraft.net"), "官方快应先行: {}", r[0].url);
+    assert!(
+        r[0].url.contains("minecraft.net"),
+        "官方快应先行: {}",
+        r[0].url
+    );
 
     // 非 Loader：官方慢/失败 → 镜像前
     let mut r = vec![
@@ -533,7 +540,10 @@ fn sort_routes_with_probes_orders_fastest_first() {
         &mut r,
         &HashMap::from([
             ("https://libraries.minecraft.net/a.jar".to_string(), fail),
-            ("https://bmclapi2.bangbang93.com/libraries/a.jar".to_string(), ok(80)),
+            (
+                "https://bmclapi2.bangbang93.com/libraries/a.jar".to_string(),
+                ok(80),
+            ),
         ]),
         ResourceClass::Library,
     );
@@ -552,7 +562,10 @@ fn sort_routes_with_probes_orders_fastest_first() {
         &mut r,
         &HashMap::from([
             ("https://maven.minecraftforge.net/x.jar".to_string(), ok(10)),
-            ("https://bmclapi2.bangbang93.com/maven/x.jar".to_string(), ok(500)),
+            (
+                "https://bmclapi2.bangbang93.com/maven/x.jar".to_string(),
+                ok(500),
+            ),
         ]),
         ResourceClass::Loader,
     );
@@ -569,7 +582,10 @@ fn sort_routes_with_probes_orders_fastest_first() {
     ];
     sort_routes_with_probes(
         &mut r,
-        &HashMap::from([("https://bmclapi2.bangbang93.com/libraries/b.jar".to_string(), ok(60))]),
+        &HashMap::from([(
+            "https://bmclapi2.bangbang93.com/libraries/b.jar".to_string(),
+            ok(60),
+        )]),
         ResourceClass::Library,
     );
     assert!(
