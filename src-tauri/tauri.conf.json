@@ -29,6 +29,10 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "BridgeFishDev",
+    "copyright": "Copyright © 2026 BridgeFishDev",
+    "shortDescription": "A cross-platform lightweight Minecraft launcher",
+    "longDescription": "A modern, lightweight Minecraft launcher built with Tauri and Rust, providing a great option for Linux and cross-platform users.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
