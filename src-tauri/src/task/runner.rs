@@ -261,14 +261,14 @@ pub async fn run_task(
             let jar_path = vdir.join(format!("{}.jar", dir_name));
             let jbytes = Arc::clone(&jar_bytes_counter);
             let jar_total = Arc::clone(&jar_total_size);
-            let cb = move |downloaded: u64, total: u64| {
-                // 只写 jar 自己的字节计数；不碰 bytes_counter（那是 libs/assets 的增量累加，
-                // 覆盖写会冲掉已累加值导致速度跳变）
-                jbytes.store(downloaded, Ordering::Relaxed);
-                if total > 0 {
-                    jar_total.store(total, Ordering::Relaxed);
-                }
-            };
+            // 只写 jar 自己的字节计数；不碰 bytes_counter（那是 libs/assets 的增量累加，
+            // 覆盖写会冲掉已累加值导致速度跳变）
+            let cb = ProgressCounters {
+                bytes: jbytes,
+                step_total: jar_total,
+                ..Default::default()
+            }
+            .overwrite_callback();
             // 本地运行时复用：迁移用户已有同版本 client jar（size+sha1 校验通过）→ 本地复制；
             // 失败降级网络下载（与 libraries/assets 一致，不致命）
             let client_rel = format!("versions/{}/{}.jar", dir_name, dir_name);
@@ -482,22 +482,13 @@ pub async fn run_task(
             // 永远 404，只会污染"所有源均失败"的错误信息，已移除。
             let urls = crate::util::community_download_urls(url).await;
             // 字节级进度：增量累加进 bytes_counter（EmitLoop 显示速度）与 Fabric API 步骤计数
-            let file_done = Arc::new(AtomicU64::new(0));
-            let progress_cb = {
-                let fd = file_done.clone();
-                let bc = Arc::clone(&bytes_counter);
-                let fb = Arc::clone(&fabric_step_bytes);
-                let ft = Arc::clone(&fabric_step_total);
-                move |downloaded: u64, total: u64| {
-                    let prev = fd.swap(downloaded, Ordering::Relaxed);
-                    let delta = downloaded.saturating_sub(prev);
-                    bc.fetch_add(delta, Ordering::Relaxed);
-                    fb.fetch_add(delta, Ordering::Relaxed);
-                    if total > 0 {
-                        ft.store(total, Ordering::Relaxed);
-                    }
-                }
-            };
+            let progress_cb = ProgressCounters {
+                bytes: Arc::clone(&bytes_counter),
+                step_bytes: Arc::clone(&fabric_step_bytes),
+                step_total: Arc::clone(&fabric_step_total),
+                ..Default::default()
+            }
+            .step_progress();
             match fetcher::fetch_bounded_c(&urls, &dest, Some(progress_cb), Some(cancel)).await {
                 Ok(_) => {
                     if let Some(i) = i_fab {

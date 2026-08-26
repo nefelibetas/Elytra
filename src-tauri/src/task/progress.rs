@@ -19,6 +19,57 @@ fn b2u(b: &AtomicBool) -> u32 {
     }
 }
 
+/// EMA 速度采样器：相邻采样差分 + 指数平滑（0.6/0.4，≥300ms 采样窗），
+/// 停滞（>4s 无推进）或速度过低（<1KB/s）时 ETA 置 None。
+/// 供 EmitLoop / spawn_tail_loop / spawn_heartbeat / jdk 心跳共用，消除四处手写重复。
+pub(crate) struct SpeedSampler {
+    last_bytes: u64,
+    last_sample: Instant,
+    last_progress_at: Instant,
+    speed_ema: f64,
+}
+
+impl SpeedSampler {
+    pub fn new() -> Self {
+        Self {
+            last_bytes: 0,
+            last_sample: Instant::now(),
+            last_progress_at: Instant::now(),
+            speed_ema: 0.0,
+        }
+    }
+
+    /// 喂入当前累计字节与总字节，返回 `(speed_bps, eta_seconds)`。
+    /// 采样窗 ≥300ms 且字节有推进才更新 EMA；停滞 >4s 或速度 <1KB/s 时 ETA 为 None。
+    pub fn sample(&mut self, cur_bytes: u64, total_bytes: u64) -> (f64, Option<u64>) {
+        let now = Instant::now();
+        if cur_bytes > self.last_bytes {
+            self.last_progress_at = now;
+        }
+        let dt = now.duration_since(self.last_sample).as_secs_f64();
+        if dt >= 0.3 && cur_bytes > self.last_bytes {
+            let instant = (cur_bytes - self.last_bytes) as f64 / dt;
+            self.speed_ema = if self.speed_ema <= 0.0 {
+                instant
+            } else {
+                self.speed_ema * 0.6 + instant * 0.4
+            };
+            self.last_bytes = cur_bytes;
+            self.last_sample = now;
+        }
+        let remaining = total_bytes.saturating_sub(cur_bytes);
+        let eta = if self.speed_ema >= 1024.0
+            && remaining > 0
+            && now.duration_since(self.last_progress_at) <= Duration::from_secs(4)
+        {
+            Some((remaining as f64 / self.speed_ema).ceil() as u64)
+        } else {
+            None
+        };
+        (self.speed_ema, eta)
+    }
+}
+
 /// 下载任务共享的进度上报循环：读原子计数器 → 更新分步/总进度 → emit。
 /// run_task（完整下载）与 run_repair_task（补全）共用，消除整段复制。
 /// 字段由兄弟模块（runner/repair）构造时填充，故全部 pub。
@@ -76,12 +127,10 @@ pub struct EmitLoop {
 }
 
 impl EmitLoop {
+    /// 进度上报主循环（run_task / run_repair_task 共用）。
     pub fn spawn(self) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
-            let mut last_bytes: u64 = 0;
-            let mut last_sample = Instant::now();
-            let mut last_progress_at = Instant::now();
-            let mut speed_ema: f64 = 0.0;
+            let mut sampler = SpeedSampler::new();
             loop {
                 let jd = self.jar_done.load(Ordering::Relaxed);
                 let jb = self.jar_bytes.load(Ordering::Relaxed);
@@ -105,35 +154,11 @@ impl EmitLoop {
                         break;
                     }
 
-                    // 实时速度：字节增量差分 + EMA 平滑（每轮采样，间隔 >=300ms 才更新）
+                    // 实时速度：字节增量差分 + EMA 平滑（SpeedSampler 统一采样/ETA）
                     let cur_bytes = self.bytes.load(Ordering::Relaxed) + jb;
-                    let now = Instant::now();
-                    if cur_bytes > last_bytes {
-                        last_progress_at = now; // 有实际字节推进才刷新停滞时钟
-                    }
-                    let dt = now.duration_since(last_sample).as_secs_f64();
-                    if dt >= 0.3 && cur_bytes >= last_bytes {
-                        let instant = (cur_bytes - last_bytes) as f64 / dt;
-                        speed_ema = if speed_ema <= 0.0 {
-                            instant
-                        } else {
-                            speed_ema * 0.6 + instant * 0.4
-                        };
-                        last_bytes = cur_bytes;
-                        last_sample = now;
-                    }
-                    p.speed_bps = speed_ema;
-                    // ETA：剩余字节 / 速度；停滞（>4s 无推进）或速度过低（<1KB/s）时置 None，
-                    // 不显示假数字（镜像黑洞/下载死掉时进度条干等）。
-                    let remaining = self.total_bytes.saturating_sub(completed_bytes);
-                    p.eta_seconds = if speed_ema >= 1024.0
-                        && remaining > 0
-                        && now.duration_since(last_progress_at) <= Duration::from_secs(4)
-                    {
-                        Some((remaining as f64 / speed_ema).ceil() as u64)
-                    } else {
-                        None
-                    };
+                    let (speed_bps, eta) = sampler.sample(cur_bytes, self.total_bytes);
+                    p.speed_bps = speed_bps;
+                    p.eta_seconds = eta;
                     p.completed_files = completed;
                     p.completed_bytes = completed_bytes;
                     // 最终总数（含 natives/安装步骤）每 tick 写回，剩余文件不会变负
@@ -289,31 +314,13 @@ pub fn spawn_tail_loop(
         let progress = progress.clone();
         async move {
             let mut tick = tokio::time::interval(Duration::from_millis(150));
-            let mut last_bytes: u64 = 0;
-            let mut last_sample = Instant::now();
-            let mut last_progress_at = Instant::now();
-            let mut speed_ema: f64 = 0.0;
+            let mut sampler = SpeedSampler::new();
             let mut base_done: u64 = 0;
             let mut base_cnt: u64 = 0;
             let mut initialized = false;
             loop {
                 tick.tick().await;
                 let cur = bytes.load(Ordering::Relaxed);
-                let now = Instant::now();
-                if cur > last_bytes {
-                    last_progress_at = now;
-                }
-                let dt = now.duration_since(last_sample).as_secs_f64();
-                if dt >= 0.3 && cur >= last_bytes {
-                    let instant = (cur - last_bytes) as f64 / dt;
-                    speed_ema = if speed_ema <= 0.0 {
-                        instant
-                    } else {
-                        speed_ema * 0.6 + instant * 0.4
-                    };
-                    last_bytes = cur;
-                    last_sample = now;
-                }
                 let snapshot = {
                     let mut p = progress.lock();
                     if p.status != TaskStatus::Running {
@@ -324,18 +331,16 @@ pub fn spawn_tail_loop(
                         base_cnt = cur;
                         initialized = true;
                     }
-                    p.speed_bps = speed_ema;
                     p.completed_bytes = base_done + cur.saturating_sub(base_cnt);
-                    // ETA：剩余字节 / 速度；停滞（>4s 无推进）或速度过低时 None
-                    let remaining = p.total_bytes.saturating_sub(p.completed_bytes);
-                    p.eta_seconds = if speed_ema >= 1024.0
-                        && remaining > 0
-                        && now.duration_since(last_progress_at) <= Duration::from_secs(4)
-                    {
-                        Some((remaining as f64 / speed_ema).ceil() as u64)
-                    } else {
-                        None
-                    };
+                    // ETA 基于带基线的 completed 字节：sampler 内部用 (总 - 当前增量) 计算，
+                    // 传入按基线换算后的总字节即可等价。
+                    let total_for_eta = p
+                        .total_bytes
+                        .saturating_add(base_done)
+                        .saturating_sub(base_cnt);
+                    let (speed_bps, eta) = sampler.sample(cur, total_for_eta);
+                    p.speed_bps = speed_bps;
+                    p.eta_seconds = eta;
                     // 快照克隆后锁外 emit（同 EmitLoop：emit 阻塞不占 progress 锁）
                     Some(p.clone())
                 };
@@ -498,7 +503,7 @@ pub fn spawn_heartbeat(
     progress: &Arc<Mutex<TaskProgress>>,
     stats: HeartbeatStats,
 ) -> tauri::async_runtime::JoinHandle<()> {
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     let done_files = stats.done_files;
     let bytes = stats.bytes;
@@ -509,10 +514,7 @@ pub fn spawn_heartbeat(
         let progress = progress.clone();
         async move {
             let mut tick = tokio::time::interval(Duration::from_millis(150));
-            let mut last_bytes = 0u64;
-            let mut last_sample = Instant::now();
-            let mut last_progress_at = Instant::now();
-            let mut speed_ema: f64 = 0.0;
+            let mut sampler = SpeedSampler::new();
             loop {
                 tick.tick().await;
                 // 终态（done/error/cancelled）由任务侧收口发出——心跳不得覆写，
@@ -528,37 +530,15 @@ pub fn spawn_heartbeat(
                 }
                 let cur = bytes.load(Ordering::Relaxed);
                 let total_bytes = est.load(Ordering::Relaxed);
-                let now = Instant::now();
-                if cur > last_bytes {
-                    last_progress_at = now;
-                }
-                let dt = now.duration_since(last_sample).as_secs_f64();
-                if dt >= 0.3 && cur > last_bytes {
-                    let instant = (cur - last_bytes) as f64 / dt;
-                    speed_ema = if speed_ema <= 0.0 {
-                        instant
-                    } else {
-                        speed_ema * 0.6 + instant * 0.4
-                    };
-                    last_bytes = cur;
-                    last_sample = now;
-                }
+                let (speed_bps, eta) = sampler.sample(cur, total_bytes);
                 update_and_emit(&app, &progress, |p| {
                     p.status = TaskStatus::Running;
                     p.completed_files = done_files.load(Ordering::Relaxed);
                     p.total_files = total_files;
                     p.completed_bytes = cur;
                     p.total_bytes = total_bytes;
-                    p.speed_bps = speed_ema;
-                    let remaining = total_bytes.saturating_sub(cur);
-                    p.eta_seconds = if speed_ema >= 1024.0
-                        && remaining > 0
-                        && now.duration_since(last_progress_at) <= Duration::from_secs(4)
-                    {
-                        Some((remaining as f64 / speed_ema).ceil() as u64)
-                    } else {
-                        None
-                    };
+                    p.speed_bps = speed_bps;
+                    p.eta_seconds = eta;
                     update_progress(p);
                 });
             }

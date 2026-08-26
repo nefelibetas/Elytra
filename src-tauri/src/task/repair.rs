@@ -52,38 +52,35 @@ fn read_version_json(vdir: &Path) -> Result<VersionJson, String> {
     })
 }
 
-/// 统计缺失/损坏的 native classifier JAR 数（sha1 校验，与 process_natives 同遍历逻辑）。
-pub fn count_natives_missing(libraries: &[Library], lib_dir: &Path) -> u32 {
+/// 缺失/损坏的 native classifier JAR 列表（sha1 校验，与 process_natives 同过滤条件：
+/// 仅旧式 natives 参与；新式作为普通库由 count_pending 统计）。
+/// 调用方按需聚合（count / size 求和），消除 count/bytes 两个同遍历函数。
+pub fn missing_native_artifacts<'a, 'b>(
+    libraries: &'a [Library],
+    lib_dir: &'b Path,
+) -> impl Iterator<Item = &'a crate::downloader::model::Artifact> + use<'a, 'b> {
     use crate::downloader::extract::legacy_classifier_artifact;
     use crate::downloader::hash::file_sha1_matches;
-    libraries
-        .iter()
-        .filter(|lib| {
-            // 仅旧式 natives 参与；新式作为普通库由 count_pending 统计
-            let Some(artifact) = legacy_classifier_artifact(lib) else {
-                return false;
-            };
-            let dest = lib_dir.join(&artifact.path);
-            !(dest.exists() && file_sha1_matches(&dest, &artifact.sha1))
-        })
-        .count() as u32
+    libraries.iter().filter_map(move |lib| {
+        let artifact = legacy_classifier_artifact(lib)?;
+        let dest = lib_dir.join(&artifact.path);
+        if dest.exists() && file_sha1_matches(&dest, &artifact.sha1) {
+            None
+        } else {
+            Some(artifact)
+        }
+    })
 }
 
-/// 缺失 natives 的总字节（与 count_natives_missing 同过滤条件，取 artifact.size 求和）。
+/// 统计缺失/损坏的 native classifier JAR 数（聚合 missing_native_artifacts）。
+pub fn count_natives_missing(libraries: &[Library], lib_dir: &Path) -> u32 {
+    missing_native_artifacts(libraries, lib_dir).count() as u32
+}
+
+/// 缺失 natives 的总字节（聚合 missing_native_artifacts）。
 pub fn natives_missing_bytes(libraries: &[Library], lib_dir: &Path) -> u64 {
-    use crate::downloader::extract::legacy_classifier_artifact;
-    use crate::downloader::hash::file_sha1_matches;
-    libraries
-        .iter()
-        .filter_map(|lib| {
-            let artifact = legacy_classifier_artifact(lib)?;
-            let dest = lib_dir.join(&artifact.path);
-            if dest.exists() && file_sha1_matches(&dest, &artifact.sha1) {
-                None
-            } else {
-                Some(artifact.size)
-            }
-        })
+    missing_native_artifacts(libraries, lib_dir)
+        .map(|a| a.size)
         .sum()
 }
 
@@ -450,20 +447,12 @@ async fn repair_jar(
         if let Some(ref c) = vj.downloads.client {
             let urls: Vec<String> = sources.iter().map(|src| src.mirror_url(&c.url)).collect();
             let jar_path = vdir.join(format!("{version_dir_name}.jar"));
-            // 不换 ProgressCounters::byte_callback：此处是覆盖式写入（EmitLoop 把
-            // jar_bytes/jar_total 当作"当前下载绝对值"消费并做 jar_total 回退），
-            // 而工厂是增量累加且写 step_bytes——语义不吻合，保留手写闭包。
-            let jbc2 = Arc::clone(&pc.bytes);
-            let jt2 = Arc::clone(&pc.step_total);
+            // 用 overwrite_callback（覆盖式写入：EmitLoop 把 jar_bytes/jar_total
+            // 当作"当前下载绝对值"消费并做 jar_total 回退）；已知大小先预填分母。
             if c.size > 0 {
-                jt2.store(c.size, Ordering::Relaxed);
+                pc.step_total.store(c.size, Ordering::Relaxed);
             }
-            let cb = move |downloaded: u64, total: u64| {
-                jbc2.store(downloaded, Ordering::Relaxed);
-                if total > 0 {
-                    jt2.store(total, Ordering::Relaxed);
-                }
-            };
+            let cb = pc.overwrite_callback();
             // 逐源 sha1 校验下载：镜像 CDN 返回不完整/错误内容自动换源重试
             crate::downloader::fetcher::fetch_verified(&urls, &jar_path, Some(cb), &c.sha1)
                 .await
