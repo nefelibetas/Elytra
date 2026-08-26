@@ -3,6 +3,7 @@ import App from "./App.vue";
 import router from "./router";
 import { applyTheme } from "./store/theme";
 import tooltip from "./utils/tooltip";
+import "./styles/transitions.css";
 
 // 主题在挂载前应用，避免首帧闪白（暗色模式必须）
 applyTheme();

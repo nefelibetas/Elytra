@@ -122,7 +122,7 @@ onMounted(() => {
   window.addEventListener("popstate", onPopState);
   ensureListen();
   // 崩溃/重启恢复检查：拉取上次未完成的任务（DownloadDetail 横幅询问恢复）
-  checkInterrupted();
+  void checkInterrupted();
   // 应用启动即持续监听系统内存（设置页/启动页共用）
   startMemoryMonitor();
 });
@@ -196,11 +196,6 @@ html, body {
    键盘/编程聚焦保留品牌色可见轮廓（可访问性底线；Tab 键拦截时仅对编程焦点生效，无害）。 */
 :focus { outline: none; }
 :focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
-
-#app {
-  height: 100%;
-  width: 100%;
-}
 
 /* 输入控件保持可选中/可编辑 */
 input, textarea {
@@ -457,22 +452,6 @@ input, textarea {
     inset 0 0 24px var(--edge-shade);
 }
 
-/* Route transitions — simple opacity fade, normal flow, no scroll jitter */
-.route-enter-active,
-.route-leave-active,
-.slide-left-enter-active,
-.slide-left-leave-active,
-.slide-right-enter-active,
-.slide-right-leave-active {
-  transition: opacity 0.18s ease;
-}
-.route-enter-from,
-.slide-left-enter-from,
-.slide-right-enter-from { opacity: 0; }
-.route-leave-to,
-.slide-left-leave-to,
-.slide-right-leave-to { opacity: 0; }
-
 .toast {
   position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
   z-index: var(--z-toast, 3000);
@@ -506,12 +485,12 @@ input, textarea {
 .wd-title { margin: 0 0 10px; font-size: 16px; color: var(--text-primary); }
 
 .wd-file {
-  margin: 0 0 6px; font-size: 13.5px; font-weight: 600;
+  margin: 0 0 6px; font-size: 13px; font-weight: 600;
   color: var(--text-primary); word-break: break-all;
 }
 
 .wd-err {
-  margin: 0 0 18px; font-size: 12.5px; color: var(--text-tertiary);
+  margin: 0 0 18px; font-size: 13px; color: var(--text-tertiary);
   word-break: break-all; max-height: 140px; overflow-y: auto;
   line-height: 1.6;
 }
