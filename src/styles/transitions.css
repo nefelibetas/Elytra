@@ -1,0 +1,19 @@
+/* 路由切换过渡动画（Route transitions — simple opacity fade, no scroll jitter）。
+ * 与 App.vue 的组件级过渡（toast/fade）分离：路由过渡类名由 router 动态
+ * 注入（route.meta.transition，见 router/index.ts beforeEach），静态分析
+ * 无法在 SFC 模板中命中，独立成文件避免 Volar unused selectors 误报。
+ */
+.route-enter-active,
+.route-leave-active,
+.slide-left-enter-active,
+.slide-left-leave-active,
+.slide-right-enter-active,
+.slide-right-leave-active {
+  transition: opacity 0.18s ease;
+}
+.route-enter-from,
+.slide-left-enter-from,
+.slide-right-enter-from { opacity: 0; }
+.route-leave-to,
+.slide-left-leave-to,
+.slide-right-leave-to { opacity: 0; }

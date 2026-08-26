@@ -3,8 +3,13 @@
     <head>
         <meta charset="UTF-8" />
         <link rel="icon" type="image/svg+xml" href="/icon.svg" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Elytra Launcher</title>
+        <style>
+            /* Vue 挂载点撑满视口（挂载点样式归位于此，App.vue 模板无 #app 元素） */
+            #app {
+                height: 100%;
+                width: 100%;
+            }
+        </style>
     </head>
 
     <body>
