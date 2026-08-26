@@ -291,7 +291,7 @@ mod tests {
         // 主源 = 黑洞（4s 超时），备用源 = 不可达端口（快速失败）
         cfg.sources = vec![blackhole(port), blackhole(1)];
 
-        let t0 = std::time::Instant::now();
+        let t0 = Instant::now();
         let res = cfg
             .fetch_with_fallback(
                 DownloadSourceMode::Auto,

@@ -218,7 +218,7 @@ pub(crate) fn extract_zip_safe(
             std::fs::create_dir_all(&out).ok();
             continue;
         }
-        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+        if cancel.load(Ordering::Relaxed) {
             return Err("任务已取消\n".into());
         }
         if let Some(parent) = out.parent() {
@@ -461,7 +461,7 @@ mod tests {
         let dest = tmp.path().join("dest");
         let cancel = AtomicBool::new(false);
         // 取消标记由外部在解压前设置：首个文件条目前检查即中止
-        cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        cancel.store(true, Ordering::Relaxed);
         let err = extract_zip_safe(&zip_path, &dest, &cancel).unwrap_err();
         assert!(err.contains("取消"), "应返回取消错误，实际: {err}");
     }

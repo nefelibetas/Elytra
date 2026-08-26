@@ -22,7 +22,7 @@ pub async fn start_download(app: AppHandle, task: DownloadTask) -> Result<String
         app,
         task.name(),
         task.steps(),
-        crate::task::store::JobSpec::Download(task.clone()),
+        task::store::JobSpec::Download(task.clone()),
         move |a, cancel, progress| {
             tauri::async_runtime::spawn(async move {
                 runner::run_task(a, &cancel, &progress, &task).await;
@@ -37,12 +37,12 @@ pub async fn start_download(app: AppHandle, task: DownloadTask) -> Result<String
 fn spawn_task(
     app: AppHandle,
     name: String,
-    steps: Vec<crate::task::StepSpec>,
-    spec: crate::task::store::JobSpec,
+    steps: Vec<task::StepSpec>,
+    spec: task::store::JobSpec,
     run: impl FnOnce(
             AppHandle,
             std::sync::Arc<std::sync::atomic::AtomicBool>,
-            std::sync::Arc<parking_lot::Mutex<crate::task::TaskProgress>>,
+            std::sync::Arc<parking_lot::Mutex<task::TaskProgress>>,
         ) + Send
         + 'static,
 ) -> Result<String, String> {
@@ -50,7 +50,7 @@ fn spawn_task(
     let tm = task::global();
     let (task_id, cancel, progress) = tm.create(&name, &step_names);
     // 持久化快照（崩溃/重启恢复依据；DB 故障静默）
-    crate::task::store::save_snapshot(&task_id, &name, &spec, crate::task::TaskStatus::Running);
+    task::store::save_snapshot(&task_id, &name, &spec, TaskStatus::Running);
     run(app, cancel, progress);
     Ok(task_id)
 }
@@ -76,7 +76,7 @@ fn spawn_files_task(app: AppHandle, task: DownloadFilesTask) -> Result<String, S
         app,
         task.name(),
         task.steps(),
-        crate::task::store::JobSpec::Files(task.clone()),
+        task::store::JobSpec::Files(task.clone()),
         move |a, cancel, progress| {
             tauri::async_runtime::spawn(async move {
                 files::run_files_task(a, &cancel, &progress, &task).await;
@@ -134,13 +134,13 @@ pub async fn submit_missing_download(
         tm.create(&name, &steps.iter().map(|s| s.as_str()).collect::<Vec<_>>());
 
     // 持久化快照（崩溃恢复依据；DB 故障静默）
-    crate::task::store::save_snapshot(
+    task::store::save_snapshot(
         &task_id,
         &name,
-        &crate::task::store::JobSpec::Repair {
+        &task::store::JobSpec::Repair {
             version_dir_name: version_dir_name.clone(),
         },
-        crate::task::TaskStatus::Running,
+        TaskStatus::Running,
     );
 
     tauri::async_runtime::spawn(async move {
@@ -164,11 +164,11 @@ pub async fn submit_install_jdk(app: AppHandle, major: u32) -> Result<String, St
     let (task_id, cancel, progress) = tm.create(&name, &steps);
 
     // 持久化快照（崩溃恢复依据；DB 故障静默）
-    crate::task::store::save_snapshot(
+    task::store::save_snapshot(
         &task_id,
         &name,
-        &crate::task::store::JobSpec::InstallJdk { major },
-        crate::task::TaskStatus::Running,
+        &task::store::JobSpec::InstallJdk { major },
+        TaskStatus::Running,
     );
 
     tauri::async_runtime::spawn(async move {
@@ -180,8 +180,8 @@ pub async fn submit_install_jdk(app: AppHandle, major: u32) -> Result<String, St
 
 /// 列出上次进程退出时未完成的任务（running/interrupted 快照），供前端询问恢复。
 #[tauri::command]
-pub fn list_interrupted_tasks() -> Vec<crate::task::store::InterruptedJob> {
-    crate::task::store::list_interrupted()
+pub fn list_interrupted_tasks() -> Vec<task::store::InterruptedJob> {
+    task::store::list_interrupted()
 }
 
 /// 恢复中断任务：读取快照 → 用恢复凭证重新提交（幂等重跑——
@@ -189,9 +189,9 @@ pub fn list_interrupted_tasks() -> Vec<crate::task::store::InterruptedJob> {
 #[tauri::command]
 pub async fn resume_task(app: AppHandle, task_id: String) -> Result<String, String> {
     use crate::task::store::JobSpec;
-    let (_name, spec) = crate::task::store::load_spec(&task_id).ok_or("任务快照不存在或已过期")?;
+    let (_name, spec) = task::store::load_spec(&task_id).ok_or("任务快照不存在或已过期")?;
     // 恢复即重跑：旧快照删除，spawn 时写入新快照（新 task_id）
-    crate::task::store::remove_snapshot(&task_id);
+    task::store::remove_snapshot(&task_id);
     match spec {
         JobSpec::Download(task) => start_download(app, task).await,
         JobSpec::Files(task) => {
@@ -237,7 +237,7 @@ fn cleanup_file_parts(task: &DownloadFilesTask) {
 /// 放弃恢复：删除任务快照（后续启动不再提示）。
 #[tauri::command]
 pub fn dismiss_interrupted_task(task_id: String) {
-    crate::task::store::remove_snapshot(&task_id);
+    task::store::remove_snapshot(&task_id);
 }
 
 #[tauri::command]
@@ -309,13 +309,13 @@ pub async fn install_modpack(app: AppHandle, request: ModpackRequest) -> Result<
     let name = format!("整合包：{}", request.name);
     let steps = modpack::initial_steps(&request);
     let (task_id, cancel, progress) = tm.create(&name, &steps);
-    crate::task::store::save_snapshot(
+    task::store::save_snapshot(
         &task_id,
         &name,
-        &crate::task::store::JobSpec::ModpackInstall(crate::task::model::ModpackInstallSpec {
+        &task::store::JobSpec::ModpackInstall(task::model::ModpackInstallSpec {
             request: request.clone(),
         }),
-        crate::task::TaskStatus::Running,
+        TaskStatus::Running,
     );
     tauri::async_runtime::spawn(async move {
         modpack::run_install(&app, &cancel, &progress, &request).await;

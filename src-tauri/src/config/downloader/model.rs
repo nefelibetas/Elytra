@@ -179,7 +179,6 @@ impl<'de> serde::Deserialize<'de> for DownloadSourceMode {
         Ok(match s.as_str() {
             "officialOnly" => Self::OfficialOnly,
             "chinaOnly" => Self::ChinaOnly,
-            // preferOfficial / preferChina / auto / 未知值 → 自适应
             _ => Self::Auto,
         })
     }

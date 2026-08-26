@@ -129,7 +129,7 @@ async fn fetch_with_retries<F: Fn(u64, u64)>(
                 // 失败清理残留（下一次尝试或后续下载会重新创建）
                 let _ = std::fs::remove_file(dest);
                 if attempt + 1 < MAX_ATTEMPTS {
-                    tokio::time::sleep(std::time::Duration::from_millis(500 * (1 << attempt)))
+                    tokio::time::sleep(Duration::from_millis(500 * (1 << attempt)))
                         .await;
                 }
                 last_err = Some(e);
@@ -213,7 +213,7 @@ async fn fetch_from_sources<F: Fn(u64, u64)>(
             return Err(FetchError::Cancelled);
         }
         for route in &routes {
-            let mut builder = reqwest::Client::builder()
+            let mut builder = Client::builder()
                 .connect_timeout(Duration::from_secs(2))
                 // 读黑洞防挂死：连接建立后 30s 无数据（镜像假死/TCP 黑洞）即掐断换源；
                 // 持续有数据（慢速但稳定）的源不受影响。此前大文件路径无任何超时，
@@ -256,7 +256,7 @@ async fn fetch_from_sources<F: Fn(u64, u64)>(
             }
         }
         if attempt + 1 < MAX_ATTEMPTS {
-            tokio::time::sleep(std::time::Duration::from_millis(500 * (1 << attempt))).await;
+            tokio::time::sleep(Duration::from_millis(500 * (1 << attempt))).await;
         }
     }
     // 全部源都是内容校验失败 → Checksum（镜像内容问题，重试无意义）

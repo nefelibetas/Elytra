@@ -537,10 +537,10 @@ pub async fn count_assets_all(
         .unwrap_or(4)
         .clamp(1, 8);
     let chunk = items.len().div_ceil(n_threads);
-    let pending = std::sync::atomic::AtomicU32::new(0);
-    let pending_bytes = std::sync::atomic::AtomicU64::new(0);
-    let checked = std::sync::atomic::AtomicU32::new(0);
-    let existing_bytes = std::sync::atomic::AtomicU64::new(0);
+    let pending = AtomicU32::new(0);
+    let pending_bytes = AtomicU64::new(0);
+    let checked = AtomicU32::new(0);
+    let existing_bytes = AtomicU64::new(0);
     // 检测进度经 mpsc 汇总到主线程逐批回调（多线程直接调 emit 会造成锁竞争）。
     // 主循环用 recv_timeout 轮询，期间检查取消——否则卡在扫描阶段的任务无法取消。
     let n_slices = items.chunks(chunk).len();
@@ -568,23 +568,23 @@ pub async fn count_assets_all(
                         break; // 任务已取消：尽早退出，避免整目录扫描拖住取消
                     }
                     if dest.exists() && file_sha1_matches(dest, hash) {
-                        existing.fetch_add(*size, std::sync::atomic::Ordering::Relaxed);
+                        existing.fetch_add(*size, Ordering::Relaxed);
                     } else {
                         p += 1;
                         pb_local += *size;
                     }
                     done += 1;
                     if done.is_multiple_of(500) {
-                        checked.fetch_add(done, std::sync::atomic::Ordering::Relaxed);
+                        checked.fetch_add(done, Ordering::Relaxed);
                         let _ = tx.send(done);
                         done = 0;
                     }
                 }
-                checked.fetch_add(done, std::sync::atomic::Ordering::Relaxed);
+                checked.fetch_add(done, Ordering::Relaxed);
                 let _ = tx.send(done);
-                counter.fetch_add(p, std::sync::atomic::Ordering::Relaxed);
-                pb.fetch_add(pb_local, std::sync::atomic::Ordering::Relaxed);
-                finished.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                counter.fetch_add(p, Ordering::Relaxed);
+                pb.fetch_add(pb_local, Ordering::Relaxed);
+                finished.fetch_add(1, Ordering::Relaxed);
             });
         }
         drop(tx);
@@ -592,15 +592,15 @@ pub async fn count_assets_all(
             match rx.recv_timeout(std::time::Duration::from_millis(500)) {
                 Ok(_) => {
                     on_checked(
-                        checked.load(std::sync::atomic::Ordering::Relaxed),
-                        existing_bytes.load(std::sync::atomic::Ordering::Relaxed),
+                        checked.load(Ordering::Relaxed),
+                        existing_bytes.load(Ordering::Relaxed),
                     );
                 }
                 Err(_) => {
                     // 500ms 无消息：可能仍在扫描大文件，或所有线程已退出（finished 全）。
                     // 线程全退或任务取消时结束；取消后 scope 等待线程收尾（秒级）。
                     if cancel.is_some_and(|c| c.load(Ordering::Relaxed))
-                        || finished.load(std::sync::atomic::Ordering::Relaxed) >= n_slices
+                        || finished.load(Ordering::Relaxed) >= n_slices
                     {
                         break;
                     }
@@ -612,8 +612,8 @@ pub async fn count_assets_all(
         return Err("任务已取消".into());
     }
     Ok((
-        pending.load(std::sync::atomic::Ordering::Relaxed),
-        pending_bytes.load(std::sync::atomic::Ordering::Relaxed),
+        pending.load(Ordering::Relaxed),
+        pending_bytes.load(Ordering::Relaxed),
     ))
 }
 

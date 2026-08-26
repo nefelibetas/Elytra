@@ -34,10 +34,10 @@ fn ensure_simple_dir_name(name: &str) -> Result<(), String> {
 
 /// 读取版本图标载荷（自定义 > 整合包；都没有返回 None，UI 回退 loader 图标）。
 #[tauri::command]
-pub fn get_version_icon(version_dir_name: String) -> Option<crate::util::IconData> {
+pub fn get_version_icon(version_dir_name: String) -> Option<util::IconData> {
     ensure_simple_dir_name(&version_dir_name).ok()?;
     let vdir = version_dir(&version_dir_name).ok()?;
-    crate::util::icon_payload(&version_icon_path(&vdir)?, MAX_PACK_ICON_BYTES)
+    util::icon_payload(&version_icon_path(&vdir)?, MAX_PACK_ICON_BYTES)
 }
 
 /// 图标来源："custom"=用户自定义 / "pack"=整合包项目图 / "default"=无（loader 图标）。
