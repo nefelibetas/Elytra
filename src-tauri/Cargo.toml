@@ -56,6 +56,9 @@ parking_lot = "0.12"
 # management = 实例事件订阅；aes-gcm = 加密；quic = 传输协议。
 easytier = { git = "https://github.com/EasyTier/EasyTier", default-features = false, features = ["management", "socks5", "smoltcp", "quic", "websocket", "logging", "aes-gcm"] }
 easytier-core = { git = "https://github.com/EasyTier/EasyTier", default-features = false }
+# 联机 LAN IP 检测（online/mod.rs detect_lan_ip）：枚举网卡排除代理 TUN 虚拟段
+# （Clash 198.18.0.0/15 等），UDP connect 在 TUN 模式会拿到虚拟网卡 IP，不可路由
+network-interface = "2"
 # 读 Windows 系统代理（注册表 Internet Settings）：reqwest 默认不读系统代理，
 # 用户开着系统代理（Clash 等）时官方源直连被劫持/黑洞，需显式走代理
 [target.'cfg(windows)'.dependencies]
