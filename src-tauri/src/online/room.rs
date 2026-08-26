@@ -92,7 +92,11 @@ fn encode_uuid_identity(uuid: &Uuid) -> String {
             let bit_idx = bit_pos + b;
             let byte = bit_idx / 8;
             let shift = 7 - (bit_idx % 8);
-            let bit = if byte < 10 { (bytes[byte] >> shift) & 1 } else { 0 };
+            let bit = if byte < 10 {
+                (bytes[byte] >> shift) & 1
+            } else {
+                0
+            };
             v = (v << 1) | bit;
         }
         if emitted > 0 && emitted.is_multiple_of(SEGMENT_LEN) {
@@ -198,7 +202,10 @@ mod tests {
         );
         assert!(room.code.contains(":50000"), "端口段应存在");
         for ch in identity.chars().filter(|c| *c != '-') {
-            assert!(!matches!(ch, 'I' | 'L' | 'O' | 'U'), "生成码含易混字符 {ch}");
+            assert!(
+                !matches!(ch, 'I' | 'L' | 'O' | 'U'),
+                "生成码含易混字符 {ch}"
+            );
         }
         let segs: Vec<&str> = identity.split('-').collect();
         assert_eq!(segs.len(), 4);

@@ -1,7 +1,7 @@
 pub mod assets;
 pub mod community;
-pub mod extract;
 pub mod endpoints;
+pub mod extract;
 pub mod fetcher;
 pub mod hash;
 pub mod library;

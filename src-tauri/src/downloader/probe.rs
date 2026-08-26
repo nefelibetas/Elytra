@@ -45,7 +45,11 @@ fn probe_cache_set(url: String, res: ProbeResult) {
     let mut m = probe_cache().lock();
     m.insert(url, (Instant::now(), res));
     if m.len() > PROBE_CACHE_MAX {
-        if let Some(oldest) = m.iter().min_by_key(|(_, (t, _))| *t).map(|(k, _)| k.clone()) {
+        if let Some(oldest) = m
+            .iter()
+            .min_by_key(|(_, (t, _))| *t)
+            .map(|(k, _)| k.clone())
+        {
             m.remove(&oldest);
         }
     }

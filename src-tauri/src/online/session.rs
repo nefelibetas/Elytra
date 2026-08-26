@@ -69,7 +69,8 @@ impl EasyTierSession {
     /// 创建并启动实例。
     pub async fn start(config: SessionConfig) -> Result<Self, String> {
         let toml = build_config(&config)?;
-        let instance = create_native_instance(toml).map_err(|e| format!("创建联机会话失败\n{e}"))?;
+        let instance =
+            create_native_instance(toml).map_err(|e| format!("创建联机会话失败\n{e}"))?;
         instance
             .clone()
             .start()
@@ -121,7 +122,9 @@ fn build_config(config: &SessionConfig) -> Result<TomlConfigLoader, String> {
         SessionRole::Host => format!("tcp://0.0.0.0:{HOST_LISTEN_PORT}"),
         SessionRole::Guest => "tcp://0.0.0.0:0".to_string(),
     };
-    cfg.set_listeners(vec![listen.parse().map_err(|e| format!("监听地址非法\n{e}"))?]);
+    cfg.set_listeners(vec![listen
+        .parse()
+        .map_err(|e| format!("监听地址非法\n{e}"))?]);
 
     match config.role {
         SessionRole::Host => {
@@ -188,7 +191,10 @@ mod tests {
         // Waiting 阶段：入口端口已编入、游戏端口未知 → 应能建网（无转发）。
         let c = cfg(SessionRole::Host, Some(40000), None);
         let toml = build_config(&c).expect("等待游戏端口时 host 建网不应失败");
-        assert!(toml.get_port_forwards().is_empty(), "Waiting 阶段不应配转发");
+        assert!(
+            toml.get_port_forwards().is_empty(),
+            "Waiting 阶段不应配转发"
+        );
     }
 
     #[test]
@@ -198,8 +204,14 @@ mod tests {
         let toml = build_config(&c).expect("host 转发建网应成功");
         let fwds = toml.get_port_forwards();
         assert_eq!(fwds.len(), 1, "Hosting 阶段应配一条转发");
-        assert_eq!(fwds[0].bind_addr, SocketAddr::from((Ipv4Addr::UNSPECIFIED, 40000)));
-        assert_eq!(fwds[0].dst_addr, SocketAddr::from((Ipv4Addr::LOCALHOST, 25565)));
+        assert_eq!(
+            fwds[0].bind_addr,
+            SocketAddr::from((Ipv4Addr::UNSPECIFIED, 40000))
+        );
+        assert_eq!(
+            fwds[0].dst_addr,
+            SocketAddr::from((Ipv4Addr::LOCALHOST, 25565))
+        );
     }
 
     #[test]
@@ -208,7 +220,13 @@ mod tests {
         let toml = build_config(&c).expect("guest 建网应成功");
         let fwds = toml.get_port_forwards();
         assert_eq!(fwds.len(), 1);
-        assert_eq!(fwds[0].bind_addr, SocketAddr::from((Ipv4Addr::LOCALHOST, 49152)));
-        assert_eq!(fwds[0].dst_addr, SocketAddr::from((HOST_VIRTUAL_IP_V4, 40000)));
+        assert_eq!(
+            fwds[0].bind_addr,
+            SocketAddr::from((Ipv4Addr::LOCALHOST, 49152))
+        );
+        assert_eq!(
+            fwds[0].dst_addr,
+            SocketAddr::from((HOST_VIRTUAL_IP_V4, 40000))
+        );
     }
 }

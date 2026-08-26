@@ -12,8 +12,8 @@ use tokio::sync::Semaphore;
 
 use super::redirect::{http, mirror_safe_redirect};
 use super::routes::{
-    record_route_failure, record_route_success, resolve_download_routes, route_health,
-    source_mode, DownloadRoute,
+    record_route_failure, record_route_success, resolve_download_routes, route_health, source_mode,
+    DownloadRoute,
 };
 use super::{DownloadResult, FetchError};
 use crate::config::downloader::model::{DownloadSourceMode, ResourceClass};
@@ -98,8 +98,15 @@ pub(super) async fn download_core<F: Fn(u64, u64)>(
             if single_url_retry && urls.len() == 1 {
                 let url = urls.first().map(String::as_str).unwrap_or("");
                 let global = http();
-                return fetch_with_retries(global.as_ref(), url, dest, &progress, expected_sha1, cancel)
-                    .await;
+                return fetch_with_retries(
+                    global.as_ref(),
+                    url,
+                    dest,
+                    &progress,
+                    expected_sha1,
+                    cancel,
+                )
+                .await;
             }
             fetch_from_sources(urls, dest, &progress, total_timeout, expected_sha1, cancel).await
         }
@@ -129,8 +136,7 @@ async fn fetch_with_retries<F: Fn(u64, u64)>(
                 // 失败清理残留（下一次尝试或后续下载会重新创建）
                 let _ = std::fs::remove_file(dest);
                 if attempt + 1 < MAX_ATTEMPTS {
-                    tokio::time::sleep(Duration::from_millis(500 * (1 << attempt)))
-                        .await;
+                    tokio::time::sleep(Duration::from_millis(500 * (1 << attempt))).await;
                 }
                 last_err = Some(e);
             }
@@ -142,9 +148,11 @@ async fn fetch_with_retries<F: Fn(u64, u64)>(
 /// 冷启动预探测排序（async）：并发对每个候选做域级 HEAD（TTL 缓存，同域文件共享），
 /// Loader 镜像先行 → 探测失败排后 → TTFB 升序。探测失败仍保留候选（下载期兜底）。
 async fn sort_routes_by_probes(routes: &mut [DownloadRoute], class: ResourceClass) {
-    let probes = futures_util::future::join_all(routes.iter().map(|r| async move {
-        (r.url.clone(), probe_domain(&r.url).await)
-    }))
+    let probes = futures_util::future::join_all(
+        routes
+            .iter()
+            .map(|r| async move { (r.url.clone(), probe_domain(&r.url).await) }),
+    )
     .await
     .into_iter()
     .collect::<HashMap<_, _>>();

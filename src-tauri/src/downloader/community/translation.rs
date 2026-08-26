@@ -89,7 +89,11 @@ pub(crate) async fn fetch_translations(source: &str, ids: &[String]) -> HashMap<
         return result;
     };
     let resp = fetcher::http()
-        .post(format!("{}/translate/{}", CommunityEndpoints::TRANSLATION_API_BASE, source))
+        .post(format!(
+            "{}/translate/{}",
+            CommunityEndpoints::TRANSLATION_API_BASE,
+            source
+        ))
         .json(&body)
         .timeout(std::time::Duration::from_secs(QUERY_TIMEOUT_SECS))
         .send()
