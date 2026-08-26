@@ -162,6 +162,9 @@ async function handleSaveConfig() {
       </div>
     </div>
 
+    <!-- guest：加入联机 -->
+    <div class="online-sec">
+      <div class="online-sec-title">加入联机</div>
       <p class="online-desc">输入主机分享的房间码，加入后游戏内多人游戏 → 局域网标签页点 "Elytra 联机" 进入。</p>
 
       <div class="online-row">
@@ -179,6 +182,7 @@ async function handleSaveConfig() {
         <span class="online-room-code">Elytra 联机</span>
         <span class="online-hint">游戏内局域网标签页已出现，点击进入（本地端口 {{ onlineLocalPort }}）</span>
       </div>
+
       <div v-if="onlineErrorGuest" class="online-error">{{ errMsg(onlineErrorGuest) }}</div>
 
       <div class="online-actions">
