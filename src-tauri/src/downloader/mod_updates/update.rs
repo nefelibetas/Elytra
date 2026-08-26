@@ -8,7 +8,7 @@ use serde::Serialize;
 use super::identify::file_sha1;
 use super::scan::LocalModFile;
 use super::QUERY_CONCURRENCY;
-use crate::downloader::community::{api_routes, get_json_multi, ApiPlatform};
+use crate::downloader::community::{api_routes, api_urls, get_json_multi, ApiPlatform};
 use crate::downloader::fetcher;
 
 /// 单个 mod 的更新信息（check_updates 命中 Modrinth 且存在新版本时产出）。
@@ -33,23 +33,15 @@ async fn latest_version(
 ) -> Option<(String, String, String)> {
     let game_versions = serde_json::json!([mc_version]).to_string();
     let loaders = serde_json::json!([loader]).to_string();
-    let urls: Vec<String> = api_routes(
+    let urls: Vec<String> = api_urls(
         ApiPlatform::Modrinth,
         &format!("/v2/project/{project_id}/version"),
+        &[
+            ("game_versions", game_versions.clone()),
+            ("loaders", loaders.clone()),
+        ],
     )
-    .iter()
-    .map(|base| {
-        reqwest::Url::parse_with_params(
-            base,
-            &[
-                ("game_versions", game_versions.clone()),
-                ("loaders", loaders.clone()),
-            ],
-        )
-        .map(|u| u.as_str().to_string())
-        .ok()
-    })
-    .collect::<Option<Vec<_>>>()?;
+    .ok()?;
     let data = get_json_multi(&urls, |u| {
         crate::downloader::fetcher::http().get(u.to_string())
     })
