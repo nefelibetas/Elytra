@@ -97,26 +97,13 @@ fn verify_env(
 
 // ── 进程管理 ───────────────────────────────────────
 
-/// 只匹配**服务器拒绝**的明确文案：MC 客户端离线启动时 authlib 内部访问会话服务
-/// 也会抛裸 "Invalid session"（启动噪音，非被服务器拒绝），宽匹配会误报。
-const SESSION_ERROR_MARKERS: &[&str] = &[
-    "Failed to login: Invalid session",
-    "登录失败：无效会话",
-    "Invalid session (Try restarting your game)",
-    "无效会话（请尝试重启游戏）",
-];
-
 /// 读取子进程输出并追加写入日志文件，直到 EOF 或出错。
-/// 同时滚动检测会话错误（命中一次推 `game-session-error` 事件，前端引导解决）。
 fn drain_to_file(
     reader: &mut impl std::io::Read,
     path: &std::path::Path,
     is_stderr: bool,
-    app: Option<&tauri::AppHandle>,
-    session_error_sent: &std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
     use std::io::Write;
-    use std::sync::atomic::Ordering;
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -126,8 +113,6 @@ fn drain_to_file(
         .open(path)
         .ok();
     let mut buf = [0u8; 4096];
-    // 滚动窗口：检测关键字可跨块命中，同时限制内存（只留尾部 8KB）
-    let mut window = String::new();
     loop {
         match reader.read(&mut buf) {
             Ok(0) | Err(_) => break,
@@ -138,19 +123,6 @@ fn drain_to_file(
                     }
                     let _ = f.write_all(&buf[..n]);
                     let _ = f.write_all(b"\n");
-                }
-                // 会话错误检测：首次命中推送一次（游戏窗口在前台，用户可立即看到引导）
-                if !session_error_sent.load(Ordering::Relaxed) {
-                    window.push_str(&String::from_utf8_lossy(&buf[..n]));
-                    if window.len() > 8192 {
-                        window = window[window.len() - 8192..].to_string();
-                    }
-                    if SESSION_ERROR_MARKERS.iter().any(|m| window.contains(m)) {
-                        session_error_sent.store(true, Ordering::Relaxed);
-                        if let Some(app) = app {
-                            crate::task::emit_event(app, crate::events::GAME_SESSION_ERROR, ());
-                        }
-                    }
                 }
             }
         }
@@ -305,22 +277,16 @@ pub async fn spawn_game(
 
     // 捕获子进程 stdout/stderr 写入日志文件（避免 GBK 乱码污染终端，同时保留诊断信息）
        let log_path = mc_dir.join("logs").join("elytra-launch.log");
-        // 会话错误已推送标志：stdout/stderr 两条 drain 线程共享，只推一次
-    let session_error_sent = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     if let Some(mut so) = child.stdout.take() {
         let lp = log_path.clone();
-                        let app = app.clone();
-        let flag = session_error_sent.clone();
         std::thread::spawn(move || {
-                        drain_to_file(&mut so, &lp, false, Some(&app), &flag)
+            drain_to_file(&mut so, &lp, false)
         });
     }
     if let Some(mut se) = child.stderr.take() {
         let lp = log_path.clone();
-                        let app = app.clone();
-        let flag = session_error_sent.clone();
         std::thread::spawn(move || {
-                        drain_to_file(&mut se, &lp, true, Some(&app), &flag)
+            drain_to_file(&mut se, &lp, true)
         });
     }
 

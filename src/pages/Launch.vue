@@ -14,7 +14,7 @@ import { renderOfflineAvatar, renderPremiumAvatar } from "../store/avatar";
 import {
   msAccount, username, loadMsAccounts, loadOfflineAccounts, loadLastUsername, ensureLoginListener,
 } from "../store/auth";
-import { launchState, loadVersions, ensureGameExitListener, ensureSessionErrorListener } from "../store/launch";
+import { launchState, loadVersions, ensureGameExitListener } from "../store/launch";
 import { selectedVersion } from "../store/selectedVersion";
 
 onMounted(async () => {
@@ -28,7 +28,6 @@ onMounted(async () => {
 
   await ensureLoginListener();
   await ensureGameExitListener();
-  await ensureSessionErrorListener();
   await loadVersions();
 });
 </script>
