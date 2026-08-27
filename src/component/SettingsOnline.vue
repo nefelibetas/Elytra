@@ -15,7 +15,6 @@ import {
   startHost, joinRoom, stopOnline, loadOnlineStatus, loadOnlineConfig,
   saveOnlineConfig, ensureOnlineListen,
 } from "../store/online";
-import { authMode } from "../store/auth";
 import { showToast } from "../utils/toast";
 import { errMsg } from "../utils/error";
 
@@ -118,14 +117,6 @@ async function handleSaveConfig() {
 
       <div v-if="onlineStatus === 'hosting'" class="online-room">
         <span class="online-room-code">{{ onlineRoomCode }}</span>
-      </div>
-
-      <div v-if="onlineStatus === 'hosting' || onlineStatus === 'waiting'" class="online-session-hint">
-        {{
-          authMode === "premium"
-            ? "正版模式：朋友需用正版账号（微软登录）启动游戏才能加入；离线模式会被服务器拒绝（无效会话）"
-            : "离线模式：服务器不验证会话，朋友用任意模式都能加入"
-        }}
       </div>
 
       <div v-if="onlineErrorHost" class="online-error">{{ errMsg(onlineErrorHost) }}</div>
@@ -344,17 +335,6 @@ async function handleSaveConfig() {
   font-size: 12.5px;
   color: var(--text-tertiary);
   font-style: italic;
-}
-/* 会话模式提示（正版验证影响朋友加入） */
-.online-session-hint {
-  padding: 6px 10px;
-  margin: 6px 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--text-secondary);
-  background-color: var(--surface-elevated);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
 }
 /* 按钮区：始终右下角 */
 .online-actions {
