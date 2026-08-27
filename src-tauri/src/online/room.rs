@@ -190,8 +190,8 @@ impl RoomCredential {
     /// 按当前身份/端口/IP 重建展示码（身份段从 code 中剥离）。
     fn encode_code(room: &Self) -> String {
         let body = room.code.trim_start_matches("U/");
-        let identity = body.split(':').next().unwrap_or(body);
-        let identity = identity.split('@').next().unwrap_or(identity);
+        let identity = body.split_once(":").map(|(id, _)| id).unwrap_or(body);
+        let identity = identity.split_once("@").map(|(id, _)| id).unwrap_or(identity);
         let mut code = format!("U/{identity}");
         if let Some(p) = room.port {
             code.push_str(&format!(":{p}"));
