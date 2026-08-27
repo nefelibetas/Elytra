@@ -88,7 +88,7 @@ mod tests {
     #[test]
     fn builds_multicast_payload() {
         // 与 mc_discover 的 parse_port 格式互操作
-        let payload = format!("[MOTD]Elytra 联机[/MOTD][AD]34567[/AD]");
+        let payload = "[MOTD]Elytra 联机[/MOTD][AD]34567[/AD]".to_string();
         assert!(payload.starts_with("[MOTD]"));
         assert!(payload.contains("[AD]34567[/AD]"));
     }
