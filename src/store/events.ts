@@ -13,8 +13,6 @@ export const EVT_GAME_EXITED = "game-exited";
 export const EVT_GAME_WINDOW_VISIBLE = "game-window-visible";
 /** 联机状态变更（{ status: "idle"|"hosting"|"joining" }） */
 export const EVT_ONLINE_STATE = "online-state";
-/** 游戏日志检测到会话验证失败（空 payload；MC 服务器正版验证拒绝离线会话） */
-export const EVT_GAME_SESSION_ERROR = "game-session-error";
 
 // ── 事件 payload 类型（集中定义，store 经 re-export 保持既有 import 路径兼容）──
 
