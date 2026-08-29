@@ -7,8 +7,8 @@ import { Plus, Trash2, LogOut, ExternalLink } from "@lucide/vue";
 import DropSelect from "./DropSelect.vue";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
-  externalAccount, loadExternalAccounts,
-  loginExternal, removeExternalAccount,
+  externalAccount, externalAccounts, loadExternalAccounts,
+  loginExternal, removeExternalAccount, switchExternalAccount,
 } from "../store/auth";
 import { showToast } from "../utils/toast";
 import { errMsg } from "../utils/error";
@@ -29,6 +29,8 @@ const extUser = ref("");
 const extPass = ref("");
 const extBusy = ref(false);
 const extError = ref("");
+/** 已登录时是否展开"登录新账号"表单 */
+const showLoginForm = ref(false);
 
 /** 新增预设输入（label + value）。 */
 const newLabel = ref("");
@@ -45,6 +47,7 @@ async function doLogin() {
     await loginExternal(extApi.value.trim(), extUser.value.trim(), extPass.value);
     extUser.value = "";
     extPass.value = "";
+    showLoginForm.value = false;
     showToast("登录成功");
   } catch (e) {
     extError.value = String(e);
@@ -130,20 +133,46 @@ onMounted(() => {
       <div class="stg-card-sub">外置认证（authlib-injector），登录后游戏内显示该站皮肤</div>
     </div>
 
-    <!-- 当前登录状态 -->
+    <!-- 当前启用账号（启用账号制：多账号并存，一个启用） -->
     <div v-if="externalAccount" class="tp-current">
       <span class="tp-cur-name" :title="externalAccount.name">
         {{ externalAccount.site_username || externalAccount.name }}
       </span>
       <span class="tp-cur-server" :title="externalAccount.api_url">{{ externalAccount.api_url }}</span>
+      <span class="tp-cur-badge">启用中</span>
       <button class="tp-btn" @click="removeCurrent">
         <LogOut :size="13" />
-        移除账号
+        移除
       </button>
     </div>
 
-    <!-- 登录表单（未登录时） -->
-    <div v-if="!externalAccount" class="tp-login">
+    <!-- 全部已存账号（点击切换启用） -->
+    <div v-if="externalAccounts.length" class="tp-accounts">
+      <div
+        v-for="acc in externalAccounts"
+        :key="acc.api_url + acc.uuid"
+        class="tp-acct"
+        :class="{ current: acc.uuid === externalAccount?.uuid && acc.api_url === externalAccount?.api_url }"
+        @click="switchExternalAccount(acc.api_url, acc.uuid)"
+      >
+        <span class="tp-acct-check">{{ acc.uuid === externalAccount?.uuid && acc.api_url === externalAccount?.api_url ? "✓" : "" }}</span>
+        <span class="tp-acct-name" :title="acc.name">{{ acc.site_username || acc.name }}</span>
+        <span class="tp-acct-server" :title="acc.api_url">{{ acc.api_url }}</span>
+        <button
+          class="tp-del"
+          title="移除该账号"
+          @click.stop="removeExternalAccount(acc.api_url, acc.uuid)"
+        >×</button>
+      </div>
+    </div>
+
+    <!-- 登录新账号（已登录时折叠展开；未登录时直接显示表单） -->
+    <button v-if="externalAccount" class="tp-btn tp-new" @click="showLoginForm = !showLoginForm">
+      {{ showLoginForm ? "收起" : "+ 登录新账号" }}
+    </button>
+
+    <!-- 登录表单 -->
+    <div v-if="!externalAccount || showLoginForm" class="tp-login">
       <!-- 行1：服务器选择 + 打开站点 -->
       <div class="tp-row tp-field">
         <span class="tp-label">服务器</span>
@@ -244,6 +273,67 @@ onMounted(() => {
   border-radius: 8px;
   background: var(--surface-elevated);
 }
+.tp-cur-badge {
+  flex: none;
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 10px;
+  background: var(--color-brand);
+  color: var(--text-inverse);
+}
+.tp-accounts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+.tp-acct {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.12s;
+}
+.tp-acct:hover {
+  border-color: var(--color-brand);
+}
+.tp-acct.current {
+  border-color: var(--color-brand);
+  background: var(--color-brand-bg);
+}
+.tp-acct-check {
+  flex: none;
+  width: 14px;
+  color: var(--color-brand);
+  font-weight: 700;
+}
+.tp-acct-name {
+  flex: none;
+  min-width: 0;
+  max-width: 150px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tp-acct-server {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tp-new {
+  margin-top: 8px;
+}
+
 .tp-cur-name {
   font-size: 13px;
   font-weight: 600;
