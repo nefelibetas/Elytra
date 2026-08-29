@@ -392,7 +392,8 @@ function useOfflineName(name: string) {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
+  margin-top: 4px;
 }
 .ext-goto {
   position: relative;
