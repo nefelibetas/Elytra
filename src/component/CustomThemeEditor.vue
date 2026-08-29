@@ -516,12 +516,13 @@ function save() {
   cursor: default;
 }
 
-.pv-static:hover {
+/* 特异性 0,3,0 高于 .pv-part:hover（0,2,0），保证不可配置部位不显示 hover 提示 */
+.pv-part.pv-static:hover {
   outline: none;
   z-index: auto;
 }
 
-.pv-static:hover .pv-tag {
+.pv-part.pv-static:hover .pv-tag {
   opacity: 0;
 }
 
