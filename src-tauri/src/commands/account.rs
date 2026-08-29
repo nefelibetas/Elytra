@@ -151,8 +151,12 @@ pub async fn save_skin(uuid: String, path: String) -> Result<(), String> {
 
 /// 上传本地皮肤到官方账号（POST multipart: variant=CLASSIC + file）。
 #[tauri::command]
-pub async fn upload_skin_file(access_token: String, file_path: String) -> Result<(), String> {
-    account::upload_skin(&access_token, &file_path).await
+pub async fn upload_skin_file(access_token: String, file_path: String, variant: String) -> Result<(), String> {
+    if !matches!(variant.as_str(), "CLASSIC" | "SLIM") {
+        return Err(format!("未知皮肤模型
+{variant}"));
+    }
+    account::upload_skin(&access_token, &file_path, &variant).await
 }
 
 /// 拉取官方披风列表（GET /minecraft/profile，需 Bearer token）。

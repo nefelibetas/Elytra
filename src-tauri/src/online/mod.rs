@@ -204,7 +204,11 @@ pub async fn start_host(app: &tauri::AppHandle) -> Result<OnlineSnapshot, String
                 return;
             };
             // 存档名（MOTD）补入房间码：guest 端 MC 局域网广播显示真实世界名
-            let motd = svc.scanner.as_ref().map(|sc| sc.get_motd()).unwrap_or_default();
+            let motd = svc
+                .scanner
+                .as_ref()
+                .map(|sc| sc.get_motd())
+                .unwrap_or_default();
             let room = if motd.is_empty() {
                 room
             } else {

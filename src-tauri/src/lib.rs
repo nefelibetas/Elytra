@@ -157,7 +157,7 @@ pub fn run() {
             online_start_host,
             online_join,
             online_stop,
-                        online_status,
+            online_status,
             get_online_config,
             save_online_config,
         ])
