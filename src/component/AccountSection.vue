@@ -14,7 +14,6 @@ import { accountUi } from "../store/accountUi";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { showToast } from "../utils/toast";
-import { errMsg } from "../utils/error";
 import { showError } from "../store/alert";
 import { settingsTab } from "../store/settingsTab";
 import { useRouter } from "vue-router";
