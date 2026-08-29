@@ -257,7 +257,7 @@ function useOfflineName(name: string) {
           </div>
         </div>
 
-        <div v-else-if="authMode === 'thirdparty'" class="user-actions">
+        <div v-if="authMode === 'thirdparty'" class="user-actions">
           <template v-if="externalAccount">
             <!-- 第三方账号列表（切换/移除） -->
             <button
