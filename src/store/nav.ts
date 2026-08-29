@@ -13,6 +13,7 @@
 // 期间保留，避免跨分支污染。TitleBar 的返回键与侧键共用 goBack，保证
 // 两套入口语义一致。
 
+import { vdState } from "./versionDownload";
 import router from "../router";
 import { goBackDetail } from "./resourceDetail";
 
@@ -51,14 +52,21 @@ export function goBack(): boolean {
     return true;
   }
 
-  if (path === "/custom-theme") {
-    // 自定义外观编辑器 → 回设置页
+  if (path === "/download") {
+    // 资源中心-原版游戏：详情态先回列表（清选中版本，停在资源中心页），
+    // 列表态回启动页（保持原有顶级 Tab 语义）
+    if (vdState.selectedVersion) {
+      pending += 1; // 详情→列表的 query 清理视为程序化（保 redo 栈）
+      vdState.backToList();
+      return true;
+    }
     pending += 1;
-    void router.push("/settings");
+    void router.push("/");
     return true;
   }
 
   // 其余（顶级 Tab / 版本选择 / 版本设置）→ 回启动页
+
   pending += 1;
   void router.push("/");
   return true;
