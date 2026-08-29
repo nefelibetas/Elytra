@@ -37,14 +37,16 @@ async function openLogDir() {
         <h3>启动器日志</h3>
         <div class="stg-card-sub">启动器自身输出（exe 旁 Elytra/launcher.log 尾部 200 行）</div>
       </div>
-      <button class="slog-refresh" @click="openLogDir">
-        <FolderOpen :size="13" />
-        打开目录
-      </button>
-      <button class="slog-refresh" :disabled="loading" @click="loadLog">
-        <RefreshCw :size="13" :class="{ spin: loading }" />
-        刷新
-      </button>
+      <div class="slog-actions">
+        <button class="slog-refresh" @click="openLogDir">
+          <FolderOpen :size="13" />
+          打开目录
+        </button>
+        <button class="slog-refresh" :disabled="loading" @click="loadLog">
+          <RefreshCw :size="13" :class="{ spin: loading }" />
+          刷新
+        </button>
+      </div>
     </div>
     <pre class="slog-pre">{{ logText }}</pre>
   </div>
@@ -52,6 +54,12 @@ async function openLogDir() {
 
 <style scoped>
 /* 标题（左）+ 刷新按钮（右，底对齐）同行 */
+.slog-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
 .slog-hdr {
   display: flex;
   align-items: flex-end;

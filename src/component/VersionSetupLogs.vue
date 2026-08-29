@@ -54,14 +54,16 @@ async function openLogDir() {
           <div class="setup-card-title">游戏日志</div>
           <div class="setup-desc">该版本 logs/latest.log 与启动器捕获日志的尾部 200 行</div>
         </div>
-        <button class="vslog-refresh" @click="openLogDir">
-          <FolderOpen :size="13" />
-          打开目录
-        </button>
-        <button class="vslog-refresh" :disabled="loading" @click="loadLog">
-          <RefreshCw :size="13" :class="{ spin: loading }" />
-          刷新
-        </button>
+        <div class="vslog-actions">
+          <button class="vslog-refresh" @click="openLogDir">
+            <FolderOpen :size="13" />
+            打开目录
+          </button>
+          <button class="vslog-refresh" :disabled="loading" @click="loadLog">
+            <RefreshCw :size="13" :class="{ spin: loading }" />
+            刷新
+          </button>
+        </div>
       </div>
       <pre class="vslog-pre">{{ logText }}</pre>
     </div>
@@ -81,6 +83,12 @@ async function openLogDir() {
   border-radius: var(--radius-md);
   max-width: 720px;
   padding: 14px 16px;
+}
+.vslog-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
 }
 .setup-card-hdr {
   display: flex;
