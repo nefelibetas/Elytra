@@ -149,52 +149,20 @@ export async function renderSkinHead3D(b64: string): Promise<string> {
   const img = await loadImage(`data:image/png;base64,${b64}`);
   const g = Math.floor(img.width / 8); // 每格像素（64→8，128→16）
   const canvas = document.createElement("canvas");
-  canvas.width = 84;
-  canvas.height = 84;
+  canvas.width = 72;
+  canvas.height = 72;
   const ctx = canvas.getContext("2d")!;
   ctx.imageSmoothingEnabled = false;
-  // 布局：正面 56px，投影 24px（3/4 视角，对齐正版 visage 风格）
-  const s = 56;
-  const proj = 24;
-  const x = 4;
-  const y = 26;
-  // 顶面（先画，被正面盖）：斜切 y' = y - 0.45x
-  const drawTop = (sx: number, alpha: number) => {
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.transform(1, -0.45, 0, 1, x, y);
-    ctx.drawImage(img, sx, 0, g, g, 0, -proj, s, proj);
-    ctx.restore();
-  };
-  // 右面：斜切 x' = x - 0.45y
-  const drawSide = (sx: number, alpha: number) => {
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.transform(1, 0, -0.45, 1, x + s, y);
-    ctx.drawImage(img, sx, g, g, g, 0, 0, proj, s);
-    ctx.restore();
-  };
-  // 顶面（皮肤 1,0）→ 右面（2,1）→ 正面（1,1）
-  drawTop(g, 0.82);
-  drawSide(g * 2, 0.72);
-  ctx.drawImage(img, g, g, g, g, x, y, s, s);
-  // 帽子层（64px：5,1 / 6,1 / 5,0；128px 偏移双倍）
-  if (img.width >= 64) {
-    drawTop(g * 5, 0.95);
-    drawSide(g * 6, 0.85);
-    ctx.drawImage(img, g * 5, g, g, g, x, y, s, s);
+  // 大头照：头部正面（1,1 格）放大到 64px，居中
+  ctx.drawImage(img, g, g, g, g, 4, 4, 64, 64);
+  // 帽子层（64px 旧格式独立帽子区 5,1；128px 新格式无独立帽，跳过）
+  if (img.width < 100) {
+    ctx.drawImage(img, g * 5, g, g, g, 4, 4, 64, 64);
   }
-  // 底部阴影
-  ctx.save();
-  ctx.fillStyle = "rgba(0,0,0,0.28)";
-  ctx.beginPath();
-  ctx.ellipse(42, 80, 32, 5, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
   return canvas.toDataURL("image/png");
 }
 
-/** 第三方登录（皮肤站）3D 头像：拉 skin → 前端 canvas 3D 渲染。 */
+/** 第三方登录（皮肤站）头像：拉 skin → 2D 大头照渲染。 */
 export async function renderExternalAvatar(apiUrl: string, uuid: string, force = false) {
   const key = `${apiUrl}|${uuid}`;
   if (!uuid || !apiUrl) {
