@@ -284,6 +284,15 @@ pub fn switch_external_account(api_url: String, uuid: String) -> Result<(), Stri
     crate::auth::external::switch(&api_url, &uuid)
 }
 
+/// 刷新第三方账号（refresh：新 token + 最新角色列表 + 角色变化同步）。
+#[tauri::command]
+pub async fn refresh_external_account(
+    api_url: String,
+    uuid: String,
+) -> Result<crate::auth::external::ExternalAccount, String> {
+    crate::auth::external::refresh_account(&api_url, &uuid).await
+}
+
 /// 切换第三方账号角色（refresh + selectedProfile，无密码）。
 #[tauri::command]
 pub async fn switch_external_role(
