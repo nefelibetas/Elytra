@@ -391,7 +391,7 @@ function useOfflineName(name: string) {
 .ext-status {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   gap: 6px;
 }
 .ext-goto {
