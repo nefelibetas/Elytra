@@ -142,6 +142,7 @@ onMounted(() => {
 
     <!-- 登录表单（未登录时） -->
     <div v-if="!externalAccount" class="tp-login">
+      <!-- 行1：服务器选择 + 打开站点 -->
       <div class="tp-row tp-field">
         <span class="tp-label">服务器</span>
         <DropSelect
@@ -151,7 +152,16 @@ onMounted(() => {
           width="220px"
           @update:model-value="extApi = $event"
         />
+        <button
+          class="tp-btn tp-open"
+          :disabled="!extApi.trim()"
+          title="打开该皮肤站官网"
+          @click="openServerLink(extApi)"
+        >
+          <ExternalLink :size="13" />
+        </button>
       </div>
+      <!-- 行2：账号 + 密码 + 登录 -->
       <div class="tp-row tp-field">
         <input v-model="extUser" class="tp-input" type="text" placeholder="皮肤站账号" />
         <input
@@ -161,24 +171,12 @@ onMounted(() => {
           placeholder="密码"
           @keyup.enter="doLogin"
         />
-      </div>
-      <div class="tp-actions">
-        <button
-          class="tp-btn"
-          :disabled="!extApi.trim()"
-          title="打开该皮肤站官网"
-          @click="openServerLink(extApi)"
-        >
-          <ExternalLink :size="13" />
-          打开站点
+        <button class="tp-btn tp-primary tp-login-btn" :disabled="extBusy" @click="doLogin">
+          {{ extBusy ? "登录中…" : "登录" }}
         </button>
-        <div class="tp-actions-right">
-          <span v-if="extError" class="tp-error">{{ extError }}</span>
-          <button class="tp-btn tp-primary" :disabled="extBusy" @click="doLogin">
-            {{ extBusy ? "登录中…" : "登录" }}
-          </button>
-        </div>
       </div>
+      <!-- 行3：错误提示（出现时） -->
+      <div v-if="extError" class="tp-error-row">{{ extError }}</div>
     </div>
   </div>
 
@@ -278,16 +276,19 @@ onMounted(() => {
 .tp-input:focus {
   border-color: var(--color-brand);
 }
-.tp-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+.tp-open {
+  flex: none;
+  padding: 5px 9px;
 }
-.tp-actions-right {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.tp-login-btn {
+  flex: none;
+}
+.tp-error-row {
+  font-size: 11.5px;
+  color: var(--color-danger);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .tp-btn {
   flex: none;
