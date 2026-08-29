@@ -7,8 +7,7 @@ import {
   authMode, msAccount, msAccounts, offlineAccounts, username, setAuthMode, msLoginState,
   startMsLogin, cancelMsLogin, switchMsAccount, removeMsAccount,
   saveOfflineAccount, removeOfflineAccount,
-  externalAccount, externalAccounts, loadExternalAccounts,
-  removeExternalAccount, switchExternalAccount,
+  externalAccount, loadExternalAccounts,
 } from "../store/auth";
 import { avatarState, scheduleOfflineRender, renderAccountHead, renderOfflineHead, accountHeads, offlineHeads } from "../store/avatar";
 import { accountUi } from "../store/accountUi";
@@ -44,16 +43,6 @@ function goThirdPartyLogin() {
   void router.push("/settings");
 }
 
-/** 移除当前第三方账号。 */
-async function removeCurrentExternal() {
-  const acc = externalAccount.value;
-  if (!acc) return;
-  try {
-    await removeExternalAccount(acc.api_url, acc.uuid);
-  } catch (e) {
-    showError(`移除账号失败：${String(e)}`, true);
-  }
-}
 
 
 onMounted(() => {
@@ -229,23 +218,6 @@ function useOfflineName(name: string) {
           </div>
         </div>
 
-        <div v-if="authMode === 'thirdparty'" class="user-actions">
-          <template v-if="externalAccount">
-            <!-- 第三方账号列表（切换/移除） -->
-            <button
-              class="icon-btn"
-              v-tooltip="'第三方账号列表'"
-              @click.stop="accountUi.openAccountsMenu($event)"
-            >
-              <Users :size="14" />
-            </button>
-            <!-- 移除当前第三方账号 -->
-            <button class="icon-btn" v-tooltip="'移除当前账号'" @click="removeCurrentExternal">
-              <LogOut :size="14" />
-            </button>
-          </template>
-        </div>
-
         <div v-if="authMode === 'premium'" class="user-actions">
           <div v-if="msLoginState === 'waiting'" class="ms-login-waiting">
             <span class="ls-spin"></span>
@@ -338,30 +310,6 @@ function useOfflineName(name: string) {
               </div>
             </template>
             <div v-else class="menu-item acct-empty">暂无历史账号</div>
-            <template v-if="externalAccounts.length">
-              <div class="menu-sep"></div>
-              <div class="menu-item acct-empty">第三方账号</div>
-              <div
-                v-for="acc in externalAccounts"
-                :key="acc.api_url + acc.uuid"
-                class="acct-row"
-                :class="{ current: acc.uuid === externalAccount?.uuid && acc.api_url === externalAccount?.api_url }"
-                @click="switchExternalAccount(acc.api_url, acc.uuid); setAuthMode('thirdparty')"
-              >
-                <UserRound :size="16" class="acct-icon" />
-                <span class="acct-name">{{ acc.name }}</span>
-                <span class="acct-server" :title="acc.api_url">{{ acc.api_url }}</span>
-                <span
-                  v-if="acc.uuid === externalAccount?.uuid && acc.api_url === externalAccount?.api_url"
-                  class="acct-check"
-                >✓</span>
-                <button
-                  class="acct-del"
-                  title="移除该账号"
-                  @click.stop="removeExternalAccount(acc.api_url, acc.uuid)"
-                >×</button>
-              </div>
-            </template>
             <div class="menu-sep"></div>
             <div class="menu-item" @click="accountUi.closeAccountsMenu(); startMsLogin()">登录新账号</div>
         </MenuPopover>
