@@ -248,7 +248,7 @@ function useOfflineName(name: string) {
                       <span class="ext-role-name">{{ r.name }}</span>
                     </div>
                   </template>
-                  <div v-else class="ext-role-empty">暂无角色信息（重新登录获取）</div>
+                  <div v-else class="ext-role-empty">暂无角色信息</div>
                 </div>
               </div>
             </template>
@@ -546,10 +546,10 @@ function useOfflineName(name: string) {
   white-space: nowrap;
 }
 .ext-role-empty {
-  padding: 6px 10px;
+  padding: 8px 12px;
   font-size: 11.5px;
   color: var(--text-tertiary);
-  min-width: 180px;
+  white-space: nowrap;
   text-align: center;
 }
 .ext-role.current {

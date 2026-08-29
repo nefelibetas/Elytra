@@ -236,7 +236,8 @@ pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccoun
         .as_str()
         .ok_or("刷新响应缺少 accessToken")?
         .to_string();
-    // 最新角色列表
+    // 最新角色列表：部分服务器（Ely.by 等）refresh 响应不含 availableProfiles，
+    // 缺失/为空时保留原列表（避免清空导致'暂无角色信息'）
     let profiles = json["availableProfiles"]
         .as_array()
         .map(|arr| {
@@ -249,7 +250,8 @@ pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccoun
                 })
                 .collect()
         })
-        .unwrap_or_default();
+        .filter(|list: &Vec<ExternalProfile>| !list.is_empty())
+        .unwrap_or_else(|| acc.profiles.clone());
     // 当前角色（selectedProfile；可能被删/改名 → 同步）
     if let Some(sp) = json.get("selectedProfile").filter(|p| !p.is_null()) {
         if let (Some(id), Some(name)) = (sp["id"].as_str(), sp["name"].as_str()) {
