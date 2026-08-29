@@ -21,9 +21,9 @@
 ## ✨ Features
 
 - 📦 Version download: official / China-mirror multi-source fallback, sha1 verification, concurrency & rate limiting
-- 🧩 ModLoader: install Fabric / Quilt / Forge / NeoForge / OptiFine, LiteLoader version query
+- 🧩 ModLoader: install Fabric / Quilt / Forge / NeoForge / OptiFine
 - 🔐 Accounts: Microsoft login (OAuth PKCE), offline mode
-- 🎭 Offline skin: fixed random-hash Steve/Alex (aligned with PCL2, only below 1.19.2)
+- 🎭 Offline skin: fixed random-hash Steve/Alex
 - ☕ Automatic JDK scanning and custom configuration
 - 🚀 Multiple game directories, download task management, launch argument building & game process management
 
