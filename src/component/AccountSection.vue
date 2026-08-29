@@ -1,16 +1,20 @@
 <script setup lang="ts">
 // 账号区：正版/离线切换 + 用户区（头像/用户名/登录/操作菜单）。
 // 菜单跟随鼠标 Teleport 到 body；window click 关闭菜单（组件挂载周期内注册）。
-import { computed, onMounted, onUnmounted, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ShieldCheck, User, UserRound, Shirt, Pencil, LogOut, Users, ChevronDown, Link2 } from "@lucide/vue";
 import {
   authMode, msAccount, msAccounts, offlineAccounts, username, setAuthMode, msLoginState,
   startMsLogin, cancelMsLogin, switchMsAccount, removeMsAccount,
   saveOfflineAccount, removeOfflineAccount,
-  externalAccount, loadExternalAccounts,
+  externalAccount, loadExternalAccounts, switchExternalRole,
 } from "../store/auth";
 import { avatarState, scheduleOfflineRender, renderAccountHead, renderOfflineHead, accountHeads, offlineHeads } from "../store/avatar";
 import { accountUi } from "../store/accountUi";
+import { invoke } from "@tauri-apps/api/core";
+import { save } from "@tauri-apps/plugin-dialog";
+import { showToast } from "../utils/toast";
+import { errMsg } from "../utils/error";
 import { showError } from "../store/alert";
 import { settingsTab } from "../store/settingsTab";
 import { useRouter } from "vue-router";
@@ -46,6 +50,37 @@ function goThirdPartyLogin() {
   settingsTab.value = "thirdparty";
   void router.push("/settings");
 }
+/** 第三方已登录时的附加操作（多角色切换 / 皮肤下载）。 */
+const showRoles = ref(false);
+/** 切换角色（refresh + selectedProfile）。 */
+async function doSwitchRole(profileId: string, profileName: string) {
+  const acc = externalAccount.value;
+  if (!acc) return;
+  showRoles.value = false;
+  try {
+    await switchExternalRole(acc.api_url, acc.uuid, profileId, profileName);
+    showToast(`已切换到角色 ${profileName}`);
+  } catch (e) {
+    showError(`切换角色失败：${String(e)}`, true);
+  }
+}
+/** 下载皮肤文件（拉当前皮肤保存）。 */
+async function downloadExternalSkin() {
+  const acc = externalAccount.value;
+  if (!acc) return;
+  const path = await save({
+    defaultPath: `${acc.name}.png`,
+    filters: [{ name: "PNG 图片", extensions: ["png"] }],
+  });
+  if (!path) return;
+  try {
+    await invoke("save_external_skin", { apiUrl: acc.api_url, uuid: acc.uuid, path });
+    showToast("皮肤已下载");
+  } catch (e) {
+    showToast(errMsg(e));
+  }
+}
+
 
 
 
@@ -169,7 +204,24 @@ function useOfflineName(name: string) {
             {{ msAccount?.name || '未登录' }}
           </div>
           <div v-else-if="authMode === 'thirdparty'" class="uname" :class="{ 'uname-empty': !externalAccount }">
-            <template v-if="externalAccount">{{ externalAccount.name }}</template>
+            <template v-if="externalAccount">
+              <div class="ext-name">{{ externalAccount.name }}</div>
+              <div class="ext-actions">
+                <template v-if="(externalAccount.profiles?.length ?? 0) > 1">
+                  <button class="ext-act" @click.stop="showRoles = !showRoles">切换角色</button>
+                  <div v-if="showRoles" class="ext-roles" @click.stop>
+                    <div
+                      v-for="r in externalAccount.profiles"
+                      :key="r.id"
+                      class="ext-role"
+                      :class="{ current: r.id === externalAccount.uuid }"
+                      @click="doSwitchRole(r.id, r.name)"
+                    >{{ r.name }}</div>
+                  </div>
+                </template>
+                <button class="ext-act" @click="downloadExternalSkin">下载皮肤</button>
+              </div>
+            </template>
             <div v-else class="ext-status">
               <span class="ext-hint">未登录第三方账号</span>
               <button class="ext-goto" @click="goThirdPartyLogin">去登录</button>
@@ -392,6 +444,61 @@ function useOfflineName(name: string) {
   font-size: 12px;
   color: var(--text-tertiary);
 }
+.ext-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.ext-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  position: relative;
+}
+.ext-act {
+  padding: 3px 10px;
+  font-size: 11.5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.ext-act:hover {
+  color: var(--color-brand);
+  border-color: var(--color-brand);
+}
+.ext-roles {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 120px;
+  padding: 4px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-md);
+}
+.ext-role {
+  padding: 5px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 5px;
+}
+.ext-role:hover {
+  background: var(--color-brand-bg);
+  color: var(--color-brand);
+}
+.ext-role.current {
+  color: var(--color-brand);
+  font-weight: 600;
+}
+
 .ext-status {
   display: flex;
   flex-direction: column;
