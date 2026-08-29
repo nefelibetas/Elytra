@@ -27,7 +27,7 @@ import { dlTranslateMode } from "../store/downloaderConfig";
 import { selectedVersion, setSelected } from "../store/selectedVersion";
 import {
   worlds, worldsLoading, worldsError, worldIcons, loadWorldIcon,
-  mods, modsQuick, modsLoading, modsError, modsNetworkError,
+  mods, modsLoading, modsError, modsNetworkError,
   resourceRefs,
   isModLoaderVersion, versionLoader,
   resetVersionDetail, loadVersionLoader, loadWorlds, loadMods, loadModsQuick, loadResourceLists,
@@ -99,17 +99,26 @@ const SIDE_ICONS = {
 } as const;
 
 /**
- * 可见 Tab 列表（按实际存在的资源展示）：
- * - 存档始终显示（不管是否为空）
- * - Mod 仅 ModLoader 版本且 mods 目录有文件时显示
- * - 材质包/数据包/光影包仅目录非空时显示
+ * 可见 Tab 列表（固定展示通用资源入口）：
+ * - 存档/光影/材质包始终显示（不管是否为空，空态有引导文案）
+ * - 数据包仅 1.13+ 支持（Minecraft 数据包功能 1.13 引入）
+ * - Mod 仅 ModLoader 版本显示（mods 为特殊资源，需 loader 才有意义）
  */
-const tabs = computed<TabKind[]>(() => {
-  const list: TabKind[] = ["worlds"];
-  if (isModLoaderVersion.value && modsQuick.value.length > 0) list.push("mods");
-  for (const k of ["resourcepacks", "datapacks", "shaderpacks"] as const) {
-    if (resourceRefs(k).quick.value.length > 0) list.push(k);
+/** 数据包目录 1.13+ 才支持（1.12 及更早无 datapacks）。26.x 新命名也能正确比较。 */
+function supportsDatapacks(mc: string): boolean {
+  const t = mc.split(".").map(Number);
+  const min = [1, 13];
+  for (let i = 0; i < Math.max(t.length, min.length); i++) {
+    const a = t[i] ?? 0;
+    const b = min[i] ?? 0;
+    if (a !== b) return a > b;
   }
+  return true;
+}
+const tabs = computed<TabKind[]>(() => {
+  const list: TabKind[] = ["worlds", "shaderpacks", "resourcepacks"];
+  if (supportsDatapacks(info.value.mcVersion)) list.push("datapacks");
+  if (isModLoaderVersion.value) list.push("mods");
   return list;
 });
 
