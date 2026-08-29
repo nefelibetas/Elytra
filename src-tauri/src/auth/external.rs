@@ -187,6 +187,85 @@ pub async fn login(
     })
 }
 
+/// 刷新账号：refresh（accessToken + clientToken）→ 新 token + 最新角色列表。
+/// 覆盖极端场景：皮肤站增删角色（availableProfiles 变化）、当前角色被删/改名（selectedProfile 变化）。
+pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccount, String> {
+    let mut list = read_all();
+    let Some(idx) = list.iter().position(|a| a.api_url == api_url && a.uuid == uuid) else {
+        return Err(format!("账号不存在\n{api_url} {uuid}"));
+    };
+    let acc = list[idx].clone();
+    let client_token = acc
+        .client_token
+        .as_deref()
+        .ok_or("该账号缺少凭据，请重新登录")?
+        .to_string();
+    let api = api_url.trim().trim_end_matches('/');
+    let url = if is_ely_by(api) {
+        format!("{api}/auth/refresh")
+    } else {
+        format!("{api}/authserver/refresh")
+    };
+    let body = serde_json::json!({
+        "accessToken": acc.access_token,
+        "clientToken": client_token,
+        "requestUser": true,
+    });
+    let resp = crate::downloader::fetcher::http()
+        .post(&url)
+        .json(&body)
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| format!("刷新请求失败\n{e}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        let msg = serde_json::from_str::<serde_json::Value>(&text)
+            .ok()
+            .and_then(|v| v["errorMessage"].as_str().map(str::to_string))
+            .unwrap_or_else(|| format!("HTTP {status}"));
+        // 401/ForbiddenOperationException = token 失效（密码改/账号删）→ 提示重新登录
+        return Err(format!("登录凭据已失效，请重新登录\n{msg}"));
+    }
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("响应解析失败\n{e}"))?;
+    let new_token = json["accessToken"]
+        .as_str()
+        .ok_or("刷新响应缺少 accessToken")?
+        .to_string();
+    // 最新角色列表
+    let profiles = json["availableProfiles"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|p| {
+                    Some(ExternalProfile {
+                        id: p["id"].as_str()?.to_string(),
+                        name: p["name"].as_str()?.to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    // 当前角色（selectedProfile；可能被删/改名 → 同步）
+    if let Some(sp) = json.get("selectedProfile").filter(|p| !p.is_null()) {
+        if let (Some(id), Some(name)) = (sp["id"].as_str(), sp["name"].as_str()) {
+            list[idx].uuid = id.to_string();
+            list[idx].name = name.to_string();
+        }
+    }
+    list[idx].access_token = new_token;
+    list[idx].profiles = profiles;
+    let updated = list.remove(idx);
+    list.push(updated.clone());
+    let bytes = serde_json::to_vec(&list).map_err(|e| format!("序列化数据失败\n{e}"))?;
+    crate::persist::secrets::save_secret(constants::SECT_EXTERNAL_ACCOUNTS, &bytes)?;
+    Ok(updated)
+}
+
 /// 切换当前角色：refresh（accessToken + clientToken + selectedProfile）→ 新 token。
 /// Yggdrasil 标准（authlib-injector 支持）；无 clientToken 时回退报错需重新登录。
 pub async fn switch_role(

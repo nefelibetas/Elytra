@@ -1,17 +1,19 @@
 <script setup lang="ts">
 // 账号区：正版/离线切换 + 用户区（头像/用户名/登录/操作菜单）。
 // 菜单跟随鼠标 Teleport 到 body；window click 关闭菜单（组件挂载周期内注册）。
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { ShieldCheck, User, UserRound, Shirt, Pencil, LogOut, Users, ChevronDown, Link2 } from "@lucide/vue";
 import {
   authMode, msAccount, msAccounts, offlineAccounts, username, setAuthMode, msLoginState,
   startMsLogin, cancelMsLogin, switchMsAccount, removeMsAccount,
   saveOfflineAccount, removeOfflineAccount,
-  externalAccount, loadExternalAccounts, switchExternalRole,
+  externalAccount, loadExternalAccounts, switchExternalRole, refreshExternalAccount,
 } from "../store/auth";
 import { avatarState, scheduleOfflineRender, renderAccountHead, renderOfflineHead, accountHeads, offlineHeads } from "../store/avatar";
 import { accountUi } from "../store/accountUi";
 import { showToast } from "../utils/toast";
+import { invoke } from "@tauri-apps/api/core";
+import { renderSkinHead3D, renderExternalAvatar } from "../store/avatar";
 import { showError } from "../store/alert";
 import { settingsTab } from "../store/settingsTab";
 import { useRouter } from "vue-router";
@@ -41,7 +43,10 @@ watch(username, (v) => {
 });
 
 // window click 统一关闭菜单（组件挂载周期内注册；箭头函数保持 this 绑定）
-const closeHandler = () => accountUi.closeMenus();
+const closeHandler = () => {
+  accountUi.closeMenus();
+  showRoles.value = false;
+};
 
 function goThirdPartyLogin() {
   settingsTab.value = "thirdparty";
@@ -49,6 +54,47 @@ function goThirdPartyLogin() {
 }
 /** 第三方已登录时的附加操作（多角色切换 / 皮肤下载）。 */
 const showRoles = ref(false);
+/** 角色头像缓存（profile_id → dataURL），面板打开时懒加载。 */
+const roleHeads = reactive<Record<string, string>>({});
+/** 拉取角色皮肤头（2D 大头照）。 */
+async function loadRoleHead(apiUrl: string, roleId: string) {
+  if (roleHeads[roleId]) return;
+  try {
+    const b64 = await invoke<string>("fetch_external_skin", { apiUrl, uuid: roleId });
+    roleHeads[roleId] = await renderSkinHead3D(b64);
+  } catch {
+    // 无皮肤：保持占位
+  }
+}
+// 打开角色面板：先 refresh 账号（自动读取最新角色列表，覆盖皮肤站增删角色/改名的极端场景），
+// 再懒加载全部角色头像
+watch(showRoles, async (open) => {
+  if (!open) return;
+  const acc = externalAccount.value;
+  if (!acc) return;
+  try {
+    await refreshExternalAccount(acc.api_url, acc.uuid);
+  } catch (e) {
+    showError(`角色列表刷新失败：${String(e)}`, true);
+    showRoles.value = false;
+    return;
+  }
+  const fresh = externalAccount.value;
+  if (!fresh) return;
+  for (const r of fresh.profiles ?? []) {
+    void loadRoleHead(fresh.api_url, r.id);
+  }
+});
+
+/** 刷新皮肤：皮肤站在皮肤站修改后重新拉取渲染头像。 */
+function refreshExternalSkin() {
+  const acc = externalAccount.value;
+  if (!acc) return;
+  // 强制重拉 + 渲染
+  void renderExternalAvatar(acc.api_url, acc.uuid, true);
+  showToast("皮肤已刷新");
+}
+
 /** 切换角色（refresh + selectedProfile）。 */
 async function doSwitchRole(profileId: string, profileName: string) {
   const acc = externalAccount.value;
@@ -188,6 +234,7 @@ function useOfflineName(name: string) {
               <div class="ext-name">{{ externalAccount.name }}</div>
               <div class="ext-actions">
                 <button class="ext-act" @click.stop="showRoles = !showRoles">切换角色</button>
+                <button class="ext-act" @click="refreshExternalSkin">刷新皮肤</button>
                 <div v-if="showRoles" class="ext-roles" @click.stop>
                   <template v-if="externalAccount.profiles?.length">
                     <div
@@ -196,7 +243,10 @@ function useOfflineName(name: string) {
                       class="ext-role"
                       :class="{ current: r.id === externalAccount.uuid }"
                       @click="doSwitchRole(r.id, r.name)"
-                    >{{ r.name }}</div>
+                    >
+                      <img v-if="roleHeads[r.id]" :src="roleHeads[r.id]" class="ext-role-head" alt="" />
+                      <span class="ext-role-name">{{ r.name }}</span>
+                    </div>
                   </template>
                   <div v-else class="ext-role-empty">暂无角色信息（重新登录获取）</div>
                 </div>
@@ -467,20 +517,40 @@ function useOfflineName(name: string) {
   box-shadow: var(--shadow-md);
 }
 .ext-role {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 5px 10px;
   font-size: 12px;
   color: var(--text-secondary);
   cursor: pointer;
   border-radius: 5px;
+  min-width: 170px;
 }
 .ext-role:hover {
   background: var(--color-brand-bg);
   color: var(--color-brand);
 }
+.ext-role-head {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  image-rendering: pixelated;
+}
+.ext-role-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .ext-role-empty {
   padding: 6px 10px;
   font-size: 11.5px;
   color: var(--text-tertiary);
+  min-width: 180px;
+  text-align: center;
 }
 .ext-role.current {
   color: var(--color-brand);

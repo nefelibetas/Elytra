@@ -111,6 +111,12 @@ export async function switchExternalAccount(apiUrl: string, uuid: string) {
   await loadExternalAccounts();
 }
 
+/** 刷新第三方账号（refresh：新 token + 最新角色列表 + 角色变化同步）。 */
+export async function refreshExternalAccount(apiUrl: string, uuid: string) {
+  await invoke<ExternalAccountInfo>("refresh_external_account", { apiUrl, uuid });
+  await loadExternalAccounts();
+}
+
 /** 切换第三方账号角色（refresh + selectedProfile，无密码）。 */
 export async function switchExternalRole(apiUrl: string, uuid: string, profileId: string, profileName: string) {
   const acc = await invoke<ExternalAccountInfo>("switch_external_role", {
