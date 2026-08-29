@@ -401,6 +401,8 @@ function useOfflineName(name: string) {
 .ext-goto:hover {
   border-color: var(--color-brand);
 }
+
+.account-sec {
   flex: 1;
   display: flex;
   flex-direction: column;
