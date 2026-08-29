@@ -29,6 +29,19 @@ pub struct ExternalAccount {
     /// 皮肤站登录账号（authenticate 响应 user.username；旧账号为 None）
     #[serde(default)]
     pub site_username: Option<String>,
+    /// Yggdrasil clientToken（refresh 换角色/续期用；旧账号为 None）
+    #[serde(default)]
+    pub client_token: Option<String>,
+    /// 账号全部角色（authenticate 响应 availableProfiles；切换角色用）
+    #[serde(default)]
+    pub profiles: Vec<ExternalProfile>,
+}
+
+/// 一个 Minecraft 角色（第三方账号可绑定多角色）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExternalProfile {
+    pub id: String,
+    pub name: String,
 }
 
 /// 读取全部第三方账号（登录时间升序，末尾 = 当前账号）。无账号返回空列表。
@@ -49,6 +62,18 @@ pub fn save(account: &ExternalAccount) -> Result<(), String> {
     let mut list = read_all();
     list.retain(|a| !(a.uuid == account.uuid && a.api_url == account.api_url));
     list.push(account.clone());
+    let bytes = serde_json::to_vec(&list).map_err(|e| format!("序列化数据失败\n{e}"))?;
+    crate::persist::secrets::save_secret(constants::SECT_EXTERNAL_ACCOUNTS, &bytes)
+}
+
+/// 切换当前账号：从列表移除再重加（置末尾 = 启用）。
+pub fn switch(api_url: &str, uuid: &str) -> Result<(), String> {
+    let mut list = read_all();
+    let Some(idx) = list.iter().position(|a| a.api_url == api_url && a.uuid == uuid) else {
+        return Err(format!("账号不存在\n{api_url} {uuid}"));
+    };
+    let acc = list.remove(idx);
+    list.push(acc);
     let bytes = serde_json::to_vec(&list).map_err(|e| format!("序列化数据失败\n{e}"))?;
     crate::persist::secrets::save_secret(constants::SECT_EXTERNAL_ACCOUNTS, &bytes)
 }
@@ -84,11 +109,13 @@ pub async fn login(
     } else {
         format!("{api}/authserver/authenticate")
     };
+    let client_token = uuid::Uuid::new_v4().to_string();
     let body = serde_json::json!({
         "agent": { "name": "Minecraft", "version": 1 },
         "username": username,
         "password": password,
         "requestUser": true,
+        "clientToken": client_token,
     });
     let resp = crate::downloader::fetcher::http()
         .post(&url)
@@ -115,6 +142,25 @@ pub async fn login(
         .as_str()
         .ok_or("登录响应缺少 accessToken")?
         .to_string();
+    // 客户端 token（refresh 换角色/续期必需；服务器通常回显，无则用请求生成的）
+    let client_token = json["clientToken"]
+        .as_str()
+        .map(str::to_string)
+        .or_else(|| Some(client_token));
+    // 全部角色（availableProfiles）
+    let profiles = json["availableProfiles"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|p| {
+                    Some(ExternalProfile {
+                        id: p["id"].as_str()?.to_string(),
+                        name: p["name"].as_str()?.to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     // selectedProfile 优先；缺失（多角色未选）取 availableProfiles 第一个
     let profile = json
         .get("selectedProfile")
@@ -136,7 +182,76 @@ pub async fn login(
         name,
         access_token: token,
         site_username,
+        client_token,
+        profiles,
     })
+}
+
+/// 切换当前角色：refresh（accessToken + clientToken + selectedProfile）→ 新 token。
+/// Yggdrasil 标准（authlib-injector 支持）；无 clientToken 时回退报错需重新登录。
+pub async fn switch_role(
+    api_url: &str,
+    uuid: &str,
+    profile_id: &str,
+    profile_name: &str,
+) -> Result<ExternalAccount, String> {
+    let mut list = read_all();
+    let Some(idx) = list.iter().position(|a| a.api_url == api_url && a.uuid == uuid) else {
+        return Err(format!("账号不存在\n{api_url} {uuid}"));
+    };
+    let acc = list[idx].clone();
+    let client_token = acc
+        .client_token
+        .as_deref()
+        .ok_or("该账号缺少凭据，请重新登录")?
+        .to_string();
+    let api = api_url.trim().trim_end_matches('/');
+    // Ely.by 非标准 refresh 路径（/auth/refresh）；标准 /authserver/refresh
+    let url = if is_ely_by(api) {
+        format!("{api}/auth/refresh")
+    } else {
+        format!("{api}/authserver/refresh")
+    };
+    let body = serde_json::json!({
+        "accessToken": acc.access_token,
+        "clientToken": client_token,
+        "selectedProfile": { "id": profile_id, "name": profile_name },
+        "requestUser": true,
+    });
+    let resp = crate::downloader::fetcher::http()
+        .post(&url)
+        .json(&body)
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| format!("切换角色请求失败\n{e}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        let msg = serde_json::from_str::<serde_json::Value>(&text)
+            .ok()
+            .and_then(|v| v["errorMessage"].as_str().map(str::to_string))
+            .unwrap_or_else(|| format!("HTTP {status}"));
+        return Err(format!("切换角色失败\n{msg}"));
+    }
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("响应解析失败\n{e}"))?;
+    let new_token = json["accessToken"]
+        .as_str()
+        .ok_or("切换响应缺少 accessToken")?
+        .to_string();
+    // 更新账号：新角色 + 新 token
+    list[idx].uuid = profile_id.to_string();
+    list[idx].name = profile_name.to_string();
+    list[idx].access_token = new_token;
+    // 保持启用（置末尾）
+    let updated = list.remove(idx);
+    list.push(updated.clone());
+    let bytes = serde_json::to_vec(&list).map_err(|e| format!("序列化数据失败\n{e}"))?;
+    crate::persist::secrets::save_secret(constants::SECT_EXTERNAL_ACCOUNTS, &bytes)?;
+    Ok(updated)
 }
 
 /// 确保 authlib-injector.jar 存在（数据目录）。缺失时从官方/BMCLAPI 镜像拉取
@@ -230,6 +345,8 @@ mod tests {
             name: name.into(),
             access_token: "at".into(),
             site_username: Some("site".into()),
+            client_token: Some("ct".into()),
+            profiles: vec![],
         }
     }
 

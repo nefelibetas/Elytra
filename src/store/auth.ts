@@ -27,12 +27,18 @@ export const authMode = ref<AuthMode>(
       ? "thirdparty"
       : "premium",
 );
+export interface ExternalProfile {
+  id: string;
+  name: string;
+}
 export interface ExternalAccountInfo {
   api_url: string;
   uuid: string;
   name: string;
   access_token: string;
   site_username?: string | null;
+  client_token?: string | null;
+  profiles?: ExternalProfile[];
 }
 /** 当前第三方账号（列表末尾 = 最近登录/切换）。 */
 export const externalAccount = ref<ExternalAccountInfo | null>(null);
@@ -103,6 +109,18 @@ export async function removeExternalAccount(apiUrl: string, uuid: string) {
 export async function switchExternalAccount(apiUrl: string, uuid: string) {
   await invoke("switch_external_account", { apiUrl, uuid });
   await loadExternalAccounts();
+}
+
+/** 切换第三方账号角色（refresh + selectedProfile，无密码）。 */
+export async function switchExternalRole(apiUrl: string, uuid: string, profileId: string, profileName: string) {
+  const acc = await invoke<ExternalAccountInfo>("switch_external_role", {
+    apiUrl,
+    uuid,
+    profileId,
+    profileName,
+  });
+  await loadExternalAccounts();
+  return acc;
 }
 
 export async function loadMsAccounts() {

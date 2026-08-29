@@ -183,6 +183,19 @@ pub async fn fetch_external_skin(api_url: String, uuid: String) -> Result<String
 }
 
 
+/// 第三方账号皮肤下载：拉 skin.png → 写指定路径（base64 解出）。
+#[tauri::command]
+pub async fn save_external_skin(api_url: String, uuid: String, path: String) -> Result<(), String> {
+    let b64 = fetch_external_skin(api_url, uuid).await?;
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&b64)
+        .map_err(|e| format!("皮肤数据解码失败\n{e}"))?;
+    tokio::fs::write(&path, bytes)
+        .await
+        .map_err(|e| format!("写入文件失败\n{e}"))
+}
+
 /// 把当前皮肤保存到用户指定路径。
 #[tauri::command]
 pub async fn save_skin(uuid: String, path: String) -> Result<(), String> {
@@ -263,6 +276,23 @@ pub async fn external_login(
 #[tauri::command]
 pub fn get_external_accounts() -> Vec<crate::auth::external::ExternalAccount> {
     crate::auth::external::read_all()
+}
+
+/// 切换当前第三方账号（置为列表末尾 = 启用）。
+#[tauri::command]
+pub fn switch_external_account(api_url: String, uuid: String) -> Result<(), String> {
+    crate::auth::external::switch(&api_url, &uuid)
+}
+
+/// 切换第三方账号角色（refresh + selectedProfile，无密码）。
+#[tauri::command]
+pub async fn switch_external_role(
+    api_url: String,
+    uuid: String,
+    profile_id: String,
+    profile_name: String,
+) -> Result<crate::auth::external::ExternalAccount, String> {
+    crate::auth::external::switch_role(&api_url, &uuid, &profile_id, &profile_name).await
 }
 
 /// 移除第三方账号（api_url + uuid 定位）。
