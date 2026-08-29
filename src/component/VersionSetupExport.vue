@@ -76,8 +76,8 @@ async function exportScript() {
 async function exportModpack() {
   try {
     const path = await save({
-      defaultPath: `${versionName.value}.mrpack`,
-      filters: [{ name: "整合包 (mrpack)", extensions: ["mrpack"] }],
+      defaultPath: `${versionName.value}.zip`,
+      filters: [{ name: "整合包 (mrpack/zip)", extensions: ["zip"] }],
     });
     if (!path) return; // 用户取消
     await invoke("export_modpack", {
