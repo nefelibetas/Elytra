@@ -28,7 +28,7 @@ use commands::gamedirs::{
     rename_version_dir, set_active_game_dir,
 };
 use commands::jdk::{auto_scan_jdk, get_jdk_config, save_jdk_config, scan_custom_jdk};
-use commands::launch::{check_launch_env, get_game_log, get_launcher_log, spawn_game};
+use commands::launch::{check_launch_env, get_game_log, get_launcher_log, open_launcher_log_dir, spawn_game};
 use commands::launch_options::{get_launch_options, get_memory_info, save_launch_options};
 use commands::launch_script::export_launch_script;
 use commands::loader::{
@@ -138,6 +138,7 @@ pub fn run() {
             spawn_game,
             get_game_log,
             get_launcher_log,
+            open_launcher_log_dir,
             check_launch_env,
             get_memory_info,
             get_launch_options,

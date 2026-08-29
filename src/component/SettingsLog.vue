@@ -2,7 +2,7 @@
 // 设置-启动器日志：查看启动器自身输出（stdout/stderr 重定向到 exe 旁 Elytra/launcher.log）。
 import { onMounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { RefreshCw } from "@lucide/vue";
+import { RefreshCw, FolderOpen } from "@lucide/vue";
 
 const logText = ref("");
 const loading = ref(false);
@@ -19,6 +19,15 @@ async function loadLog() {
 }
 
 onMounted(loadLog);
+
+/** 打开启动器日志所在目录（exe 旁 Elytra/）。 */
+async function openLogDir() {
+  try {
+    await invoke("open_launcher_log_dir");
+  } catch (e) {
+    /* 目录不存在时忽略 */
+  }
+}
 </script>
 
 <template>
@@ -28,6 +37,10 @@ onMounted(loadLog);
         <h3>启动器日志</h3>
         <div class="stg-card-sub">启动器自身输出（exe 旁 Elytra/launcher.log 尾部 200 行）</div>
       </div>
+      <button class="slog-refresh" @click="openLogDir">
+        <FolderOpen :size="13" />
+        打开目录
+      </button>
       <button class="slog-refresh" :disabled="loading" @click="loadLog">
         <RefreshCw :size="13" :class="{ spin: loading }" />
         刷新

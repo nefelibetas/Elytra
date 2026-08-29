@@ -4,7 +4,7 @@
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { invoke } from "@tauri-apps/api/core";
-import { RefreshCw } from "@lucide/vue";
+import { RefreshCw, FolderOpen } from "@lucide/vue";
 import { activePath } from "../store/gameDirs";
 
 const route = useRoute();
@@ -33,6 +33,17 @@ async function loadLog() {
 }
 
 onMounted(loadLog);
+
+/** 打开该版本的 logs 目录（latest.log 所在）；目录未创建时回退打开版本目录。 */
+async function openLogDir() {
+  if (!activePath.value) return;
+  const vdir = activePath.value.replace(/\\+$/, "") + "/versions/" + versionName.value;
+  try {
+    await invoke("open_folder", { path: vdir + "/logs" });
+  } catch {
+    await invoke("open_folder", { path: vdir });
+  }
+}
 </script>
 
 <template>
@@ -43,6 +54,10 @@ onMounted(loadLog);
           <div class="setup-card-title">游戏日志</div>
           <div class="setup-desc">该版本 logs/latest.log 与启动器捕获日志的尾部 200 行</div>
         </div>
+        <button class="vslog-refresh" @click="openLogDir">
+          <FolderOpen :size="13" />
+          打开目录
+        </button>
         <button class="vslog-refresh" :disabled="loading" @click="loadLog">
           <RefreshCw :size="13" :class="{ spin: loading }" />
           刷新

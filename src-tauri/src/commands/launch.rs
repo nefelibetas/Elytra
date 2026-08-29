@@ -415,6 +415,13 @@ pub async fn get_game_log(game_dir: String, version_name: String) -> String {
         .unwrap_or_default()
 }
 
+/// 打开启动器日志所在目录（exe 旁 Elytra/，launcher.log 所在地）。
+#[tauri::command]
+pub fn open_launcher_log_dir(app: tauri::AppHandle) -> Result<(), String> {
+    let dir = crate::util::exe_dir().join(crate::constants::CONFIG_DIR);
+    super::gamedirs::open_folder(app, dir.to_string_lossy().to_string())
+}
+
 /// 读取启动器日志尾部（最多 200 行）：exe 旁 Elytra/launcher.log（stdout/stderr 重定向落盘）。
 /// 文件不存在/不可读返回空字符串（不报错）。
 #[tauri::command]
