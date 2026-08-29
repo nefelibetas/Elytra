@@ -70,12 +70,14 @@ async function exportScript() {
   }
 }
 
-/** 导出整合包：把版本的 mods/config/shaderpacks/resourcepacks 打包为 zip。 */
+/** 导出整合包：把版本的 mods/config/shaderpacks/resourcepacks/datapacks 打包为
+ * 标准 MRPACK（Modrinth 格式 v1，overrides 物理打包 + 空 files），
+ * 任意支持 mrpack 的启动器可导入（存档不打包）。 */
 async function exportModpack() {
   try {
     const path = await save({
-      defaultPath: `${versionName.value}.zip`,
-      filters: [{ name: "整合包", extensions: ["zip"] }],
+      defaultPath: `${versionName.value}.mrpack`,
+      filters: [{ name: "整合包 (mrpack)", extensions: ["mrpack"] }],
     });
     if (!path) return; // 用户取消
     await invoke("export_modpack", {
@@ -110,8 +112,8 @@ async function exportModpack() {
     <div class="setup-card">
       <div class="setup-card-title">导出整合包</div>
       <div class="setup-desc">
-        将当前版本的 mods / config / shaderpacks / resourcepacks 打包为 ZIP，
-        可用于分享或备份（不含游戏本体与存档）。
+        将当前版本的 mods / config / shaderpacks / resourcepacks / datapacks 打包为
+        标准 MRPACK（Modrinth 格式），可用于分享或备份（不含游戏本体与存档）。
       </div>
       <div class="setup-btn-row">
         <button class="setup-btn" @click="exportModpack">

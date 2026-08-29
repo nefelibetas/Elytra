@@ -66,6 +66,24 @@ pub fn mc_version_from_dir(dir_name: &str) -> &str {
     base
 }
 
+/// 从版本目录名解析 ModLoader：(loader_key, loader_version)。
+/// `26.2-fabric-0.16.9` → Some(("fabric", "0.16.9"))；vanilla → None；
+/// 冲突重命名 `_n` 后缀先剥离。optifine 也识别（导出 mrpack 时忽略——mrpack
+/// dependencies 无 OptiFine 标准键，文件本体已在 overrides 里）。
+pub fn loader_from_dir(dir_name: &str) -> Option<(&str, &str)> {
+    const LOADER_KEYS: &[&str] = &["fabric", "forge", "neoforge", "quilt", "optifine"];
+    let base = dir_name.split('_').next().unwrap_or(dir_name);
+    for key in LOADER_KEYS {
+        let marker = format!("-{key}-");
+        if let Some(idx) = base.find(&marker) {
+            if idx > 0 {
+                return Some((key, &base[idx + marker.len()..]));
+            }
+        }
+    }
+    None
+}
+
 /// 从版本字符串解析主版本号。
 /// 支持格式："17.0.8" → 17, "21" → 21, "25-ea" → 25, "1.8.0_202" → 8
 pub fn parse_java_major(version: &str) -> Option<u32> {
