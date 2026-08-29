@@ -54,30 +54,30 @@ async function save() {
       <div class="vssrv">
         <div class="vssrv-row">
           <label class="vssrv-label" for="vssrv-server">服务器地址</label>
-      <input
-        id="vssrv-server"
-        v-model="server"
-        class="vssrv-input"
-        type="text"
-        placeholder="留空不直连（如 mc.example.com）"
-        maxlength="128"
-        @change="save"
-      />
-    </div>
-    <div class="vssrv-row">
-      <label class="vssrv-label" for="vssrv-port">端口</label>
-      <input
-        id="vssrv-port"
-        v-model="port"
-        class="vssrv-input"
-        type="number"
-        min="1"
-        max="65535"
-        placeholder="25565"
-        @change="save"
-      />
-      <span v-if="saved" class="vssrv-saved">已保存</span>
-    </div>
+          <input
+            id="vssrv-server"
+            v-model="server"
+            class="vssrv-input"
+            type="text"
+            placeholder="留空不直连（如 mc.example.com）"
+            maxlength="128"
+            @change="save"
+          />
+        </div>
+        <div class="vssrv-row">
+          <label class="vssrv-label" for="vssrv-port">端口</label>
+          <input
+            id="vssrv-port"
+            v-model="port"
+            class="vssrv-input"
+            type="number"
+            min="1"
+            max="65535"
+            placeholder="25565"
+            @change="save"
+          />
+          <span v-if="saved" class="vssrv-saved">已保存</span>
+        </div>
         <p class="vssrv-note">
           启动游戏时自动连接该服务器（--server/--port）。仅对当前版本生效；留空则按全局配置。
         </p>
@@ -86,7 +86,6 @@ async function save() {
   </div>
 </template>
 
-<style scoped>
 <style scoped>
 .vs-page {
   flex: 1;
@@ -108,7 +107,9 @@ async function save() {
   gap: 12px;
   margin-bottom: 14px;
 }
-.setup-card-titles { min-width: 0; }
+.setup-card-titles {
+  min-width: 0;
+}
 .setup-card-title {
   font-size: 12px;
   font-weight: 600;
