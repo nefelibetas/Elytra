@@ -144,6 +144,7 @@ async function restoreDefault() {
 
 .setup-btn-row {
   display: flex;
+  justify-content: flex-end;
   gap: 8px;
   padding: 10px 16px 14px;
   flex-wrap: wrap;
