@@ -135,7 +135,7 @@ onMounted(() => {
 
     <!-- 当前启用账号（启用账号制：多账号并存，一个启用） -->
     <div v-if="externalAccount" class="tp-current">
-      <span class="tp-cur-name" :title="(externalAccount.site_username || '?') + ' · 角色 ' + externalAccount.name">
+      <span class="tp-cur-name">
         {{ externalAccount.site_username || "未知账号" }}
       </span>
       <span class="tp-cur-server" :title="externalAccount.api_url">{{ externalAccount.api_url }}</span>
@@ -156,7 +156,7 @@ onMounted(() => {
         @click="switchExternalAccount(acc.api_url, acc.uuid)"
       >
         <span class="tp-acct-check">{{ acc.uuid === externalAccount?.uuid && acc.api_url === externalAccount?.api_url ? "✓" : "" }}</span>
-        <span class="tp-acct-name" :title="(acc.site_username || '?') + ' · 角色 ' + acc.name">{{ acc.site_username || "未知账号" }}</span>
+        <span class="tp-acct-name">{{ acc.site_username || "未知账号" }}</span>
         <span class="tp-acct-server" :title="acc.api_url">{{ acc.api_url }}</span>
         <button
           class="tp-del"
