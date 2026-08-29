@@ -236,14 +236,12 @@ function save() {
             :class="{ active: activeField === '--border-strong' }"
             @click="pickField('--border-strong')"
           ></span>
-          <span class="pv-part pv-window-btn" @click="pickField('--border-strong')"></span>
+          <span class="pv-part pv-window-btn" pv-static"></span>
         </div>
         <div class="pv-main">
           <div class="pv-sidebar">
             <span
-              class="pv-part pv-side-item pv-side-active"
-              :class="{ active: activeField === '--color-brand' }"
-              @click="pickField('--color-brand')"
+              class="pv-part pv-side-item pv-side-active pv-static"
             ></span>
             <span
               class="pv-part pv-side-item"
@@ -251,22 +249,16 @@ function save() {
               @click="pickField('--text-secondary')"
             ></span>
             <span
-              class="pv-part pv-side-item"
-              :class="{ active: activeField === '--border-strong' }"
-              @click="pickField('--border-strong')"
+              class="pv-part pv-side-item pv-static"
             ></span>
           </div>
           <div class="pv-content">
             <div class="pv-card pv-card-head">
               <span
-                class="pv-part pv-card-title"
-                :class="{ active: activeField === '--text-primary' }"
-                @click="pickField('--text-primary')"
+                class="pv-part pv-card-title pv-static"
               ></span>
               <span
-                class="pv-part pv-card-btn"
-                :class="{ active: activeField === '--color-brand' }"
-                @click="pickField('--color-brand')"
+                class="pv-part pv-card-btn pv-static"
               ></span>
             </div>
             <div class="pv-card pv-card-list">
@@ -276,9 +268,7 @@ function save() {
                 @click="pickField('--surface-hover')"
               ></span>
               <span
-                class="pv-part pv-list-item pv-list-sel"
-                :class="{ active: activeField === '--color-brand' }"
-                @click="pickField('--color-brand')"
+                class="pv-part pv-list-item pv-list-sel pv-static"
               ></span>
               <span class="pv-part pv-list-item pv-list-plain"></span>
             </div>
@@ -286,14 +276,10 @@ function save() {
         </div>
         <div class="pv-foot">
           <span
-            class="pv-part pv-foot-btn"
-            :class="{ active: activeField === '--text-secondary' }"
-            @click="pickField('--text-secondary')"
+            class="pv-part pv-foot-btn pv-static"
           ></span>
           <span
-            class="pv-part pv-foot-btn pv-foot-primary"
-            :class="{ active: activeField === '--color-brand' }"
-            @click="pickField('--color-brand')"
+            class="pv-part pv-foot-btn pv-foot-primary pv-static"
           ></span>
         </div>
         <span
@@ -524,6 +510,19 @@ function save() {
   position: relative;
   cursor: pointer;
   transition: outline 0.12s;
+}
+
+.pv-static {
+  cursor: default;
+}
+
+.pv-static:hover {
+  outline: none;
+  z-index: auto;
+}
+
+.pv-static:hover .pv-tag {
+  opacity: 0;
 }
 
 .pv-part:hover {
