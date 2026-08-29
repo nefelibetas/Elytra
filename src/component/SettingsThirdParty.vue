@@ -3,8 +3,9 @@
 // 启动页仅显示登录状态，登录逻辑集中在此。
 import { computed, onMounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { Plus, Trash2, LogOut } from "@lucide/vue";
+import { Plus, Trash2, LogOut, ExternalLink } from "@lucide/vue";
 import DropSelect from "./DropSelect.vue";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   externalAccount, loadExternalAccounts,
   loginExternal, removeExternalAccount,
@@ -110,6 +111,12 @@ function removePreset(i: number) {
   presetServers.value.splice(i, 1);
   void savePresets();
 }
+/** 打开服务器站点（官网）：取 URL 域名拼 https:// 前缀。仅预设/有效 URL 可开。 */
+function openServerLink(url: string) {
+  const host = url.replace(/^https?:\/\//, "").split("/")[0];
+  if (host) void openUrl(`https://${host}`);
+}
+
 
 onMounted(() => {
   void loadExternalAccounts();
@@ -161,11 +168,22 @@ onMounted(() => {
           @keyup.enter="doLogin"
         />
       </div>
-      <div class="tp-row tp-field">
-        <button class="tp-btn tp-primary" :disabled="extBusy" @click="doLogin">
-          {{ extBusy ? "登录中…" : "登录" }}
+      <div class="tp-actions">
+        <button
+          class="tp-btn"
+          :disabled="!extApi.trim()"
+          title="打开该皮肤站官网（仅预设地址可用）"
+          @click="openServerLink(extApi)"
+        >
+          <ExternalLink :size="13" />
+          打开站点
         </button>
-        <span v-if="extError" class="tp-error">{{ extError }}</span>
+        <div class="tp-actions-right">
+          <span v-if="extError" class="tp-error">{{ extError }}</span>
+          <button class="tp-btn tp-primary" :disabled="extBusy" @click="doLogin">
+            {{ extBusy ? "登录中…" : "登录" }}
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -179,6 +197,9 @@ onMounted(() => {
     <div class="tp-list">
       <div v-for="(sv, i) in presetServers" :key="sv" class="tp-row">
         <span class="tp-url" :title="sv">{{ sv }}</span>
+        <button class="tp-del" title="打开站点" @click="openServerLink(sv)">
+          <ExternalLink :size="13" />
+        </button>
         <button class="tp-del" title="移除" @click="removePreset(i)">
           <Trash2 :size="13" />
         </button>
@@ -236,6 +257,18 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.tp-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.tp-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
 }
 .tp-field {
   gap: 8px;
