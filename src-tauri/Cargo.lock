@@ -15,6 +15,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.2.17",
  "hmac",
+ "libc",
  "network-interface",
  "parking_lot",
  "percent-encoding",

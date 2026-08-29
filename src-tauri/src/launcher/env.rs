@@ -45,6 +45,19 @@ pub fn load_launch_config(
     let launcher_config: LauncherConfig =
         persist::read(constants::SECT_LAUNCHER).unwrap_or_default();
 
+    // 版本级服务器直连（版本设置里配的 --server/--port）优先，覆盖全局 LauncherConfig
+    let version_server: crate::commands::version::VersionServer =
+        persist::read(&format!("version_server_{version_dir_name}")).unwrap_or_default();
+    let launcher_config = if version_server.server.is_some() || version_server.port.is_some() {
+        LauncherConfig {
+            server: version_server.server.or(launcher_config.server),
+            port: version_server.port.or(launcher_config.port),
+            ..launcher_config
+        }
+    } else {
+        launcher_config
+    };
+
     // minecraft_dir 可能是相对路径（默认 ".minecraft"），统一转绝对，
     // 避免 classpath / natives 路径基于 java 进程 cwd 解析出错
     let mc_dir = dl_config.minecraft_dir_abs();

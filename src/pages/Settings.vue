@@ -1,11 +1,12 @@
 <script setup lang="ts">
 // 设置页容器：导航 + 各 tab 内容编排（业务在 store/组件，本文件不做配置逻辑）
-import { SlidersHorizontal, Download, Palette, Link2 } from "@lucide/vue";
+import { SlidersHorizontal, Download, Palette, Link2, FileText } from "@lucide/vue";
 import SettingsLaunchOptions from "../component/SettingsLaunchOptions.vue";
 import SettingsJdk from "../component/SettingsJdk.vue";
 import SettingsDownload from "../component/SettingsDownload.vue";
 import SettingsAppearance from "../component/SettingsAppearance.vue";
 import SettingsOnline from "../component/SettingsOnline.vue";
+import SettingsLog from "../component/SettingsLog.vue";
 import ScrollTopFab from "../component/ScrollTopFab.vue";
 import { settingsTab } from "../store/settingsTab";
 </script>
@@ -46,6 +47,14 @@ import { settingsTab } from "../store/settingsTab";
         <Link2 :size="16" />
         联机
       </button>
+      <button
+        class="stg-tab"
+        :class="{ active: settingsTab === 'log' }"
+        @click="settingsTab = 'log'"
+      >
+        <FileText :size="16" />
+        启动器日志
+      </button>
     </nav>
 
     <div class="stg-body">
@@ -67,8 +76,13 @@ import { settingsTab } from "../store/settingsTab";
         </div>
 
         <!-- 联机：EasyTier 虚拟局域网 -->
-        <div v-else key="online" class="stg-page">
+        <div v-else-if="settingsTab === 'online'" key="online" class="stg-page">
           <SettingsOnline />
+        </div>
+
+        <!-- 启动器日志 -->
+        <div v-else key="log" class="stg-page">
+          <SettingsLog />
         </div>
       </Transition>
     </div>
