@@ -147,20 +147,6 @@ pub async fn login(
         .as_str()
         .map(str::to_string)
         .or(Some(client_token));
-    // 全部角色（availableProfiles）
-    let profiles = json["availableProfiles"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|p| {
-                    Some(ExternalProfile {
-                        id: p["id"].as_str()?.to_string(),
-                        name: p["name"].as_str()?.to_string(),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
     // selectedProfile 优先；缺失（多角色未选）取 availableProfiles 第一个
     let profile = json
         .get("selectedProfile")
@@ -176,6 +162,25 @@ pub async fn login(
         .map(str::to_string)
         .filter(|s| !s.is_empty())
         .or_else(|| Some(username.trim().to_string()));
+    // 全部角色（availableProfiles）：LittleSkin 等部分实现不返回该字段，
+    // 空时用当前角色兜底（保证面板至少显示一个角色）
+    let profiles = json["availableProfiles"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|p| {
+                    Some(ExternalProfile {
+                        id: p["id"].as_str()?.to_string(),
+                        name: p["name"].as_str()?.to_string(),
+                    })
+                })
+                .collect()
+        })
+        .filter(|list: &Vec<ExternalProfile>| !list.is_empty())
+        .unwrap_or_else(|| vec![ExternalProfile {
+            id: uuid.clone(),
+            name: name.clone(),
+        }]);
     Ok(ExternalAccount {
         api_url: api,
         uuid,
@@ -251,7 +256,16 @@ pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccoun
                 .collect()
         })
         .filter(|list: &Vec<ExternalProfile>| !list.is_empty())
-        .unwrap_or_else(|| acc.profiles.clone());
+        .unwrap_or_else(|| {
+            if acc.profiles.is_empty() {
+                vec![ExternalProfile {
+                    id: uuid.to_string(),
+                    name: acc.name.clone(),
+                }]
+            } else {
+                acc.profiles.clone()
+            }
+        });
     // 当前角色（selectedProfile；可能被删/改名 → 同步）
     if let Some(sp) = json.get("selectedProfile").filter(|p| !p.is_null()) {
         if let (Some(id), Some(name)) = (sp["id"].as_str(), sp["name"].as_str()) {

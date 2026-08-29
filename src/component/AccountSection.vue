@@ -2,7 +2,7 @@
 // 账号区：正版/离线切换 + 用户区（头像/用户名/登录/操作菜单）。
 // 菜单跟随鼠标 Teleport 到 body；window click 关闭菜单（组件挂载周期内注册）。
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
-import { ShieldCheck, User, UserRound, Shirt, Pencil, LogOut, Users, ChevronDown, Link2 } from "@lucide/vue";
+import { ShieldCheck, User, UserRound, Shirt, Pencil, LogOut, Users, ChevronDown, Link2, RotateCcw, RefreshCw } from "@lucide/vue";
 import {
   authMode, msAccount, msAccounts, offlineAccounts, username, setAuthMode, msLoginState,
   startMsLogin, cancelMsLogin, switchMsAccount, removeMsAccount,
@@ -233,8 +233,13 @@ function useOfflineName(name: string) {
             <template v-if="externalAccount">
               <div class="ext-name">{{ externalAccount.name }}</div>
               <div class="ext-actions">
-                <button class="ext-act" @click.stop="showRoles = !showRoles">切换角色</button>
-                <button class="ext-act" @click="refreshExternalSkin">刷新皮肤</button>
+                <button class="ext-icon" title="切换角色" @click.stop="showRoles = !showRoles">
+                  <RotateCcw :size="12" />
+                </button>
+                <button class="ext-icon" title="刷新皮肤" @click="refreshExternalSkin">
+                  <RefreshCw :size="12" />
+                </button>
+                <Transition name="ext-pop">
                 <div v-if="showRoles" class="ext-roles" @click.stop>
                   <template v-if="externalAccount.profiles?.length">
                     <div
@@ -250,6 +255,7 @@ function useOfflineName(name: string) {
                   </template>
                   <div v-else class="ext-role-empty">暂无角色信息</div>
                 </div>
+                </Transition>
               </div>
             </template>
             <div v-else class="ext-status">
@@ -487,7 +493,40 @@ function useOfflineName(name: string) {
   gap: 6px;
   margin-top: 6px;
   position: relative;
+  opacity: 0;
+  transition: opacity 0.15s;
 }
+.uname:hover .ext-actions,
+.ext-actions:hover {
+  opacity: 1;
+}
+.ext-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.ext-icon:hover {
+  color: var(--color-brand);
+  border-color: var(--color-brand);
+}
+.ext-pop-enter-active,
+.ext-pop-leave-active {
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.ext-pop-enter-from,
+.ext-pop-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
 .ext-act {
   padding: 3px 10px;
   font-size: 11.5px;
