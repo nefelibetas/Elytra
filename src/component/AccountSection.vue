@@ -64,23 +64,6 @@ async function doSwitchRole(profileId: string, profileName: string) {
     showError(`切换角色失败：${String(e)}`, true);
   }
 }
-/** 下载皮肤文件（拉当前皮肤保存）。 */
-async function downloadExternalSkin() {
-  const acc = externalAccount.value;
-  if (!acc) return;
-  const path = await save({
-    defaultPath: `${acc.name}.png`,
-    filters: [{ name: "PNG 图片", extensions: ["png"] }],
-  });
-  if (!path) return;
-  try {
-    await invoke("save_external_skin", { apiUrl: acc.api_url, uuid: acc.uuid, path });
-    showToast("皮肤已下载");
-  } catch (e) {
-    showToast(errMsg(e));
-  }
-}
-
 
 
 
@@ -207,9 +190,9 @@ function useOfflineName(name: string) {
             <template v-if="externalAccount">
               <div class="ext-name">{{ externalAccount.name }}</div>
               <div class="ext-actions">
-                <template v-if="(externalAccount.profiles?.length ?? 0) > 1">
-                  <button class="ext-act" @click.stop="showRoles = !showRoles">切换角色</button>
-                  <div v-if="showRoles" class="ext-roles" @click.stop>
+                <button class="ext-act" @click.stop="showRoles = !showRoles">切换角色</button>
+                <div v-if="showRoles" class="ext-roles" @click.stop>
+                  <template v-if="externalAccount.profiles?.length">
                     <div
                       v-for="r in externalAccount.profiles"
                       :key="r.id"
@@ -217,9 +200,9 @@ function useOfflineName(name: string) {
                       :class="{ current: r.id === externalAccount.uuid }"
                       @click="doSwitchRole(r.id, r.name)"
                     >{{ r.name }}</div>
-                  </div>
-                </template>
-                <button class="ext-act" @click="downloadExternalSkin">下载皮肤</button>
+                  </template>
+                  <div v-else class="ext-role-empty">暂无角色信息（重新登录获取）</div>
+                </div>
               </div>
             </template>
             <div v-else class="ext-status">
@@ -448,10 +431,12 @@ function useOfflineName(name: string) {
   font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
+  text-align: center;
 }
 .ext-actions {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   margin-top: 6px;
   position: relative;
@@ -472,7 +457,8 @@ function useOfflineName(name: string) {
 .ext-roles {
   position: absolute;
   top: calc(100% + 4px);
-  left: 0;
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 20;
   display: flex;
   flex-direction: column;
@@ -493,6 +479,11 @@ function useOfflineName(name: string) {
 .ext-role:hover {
   background: var(--color-brand-bg);
   color: var(--color-brand);
+}
+.ext-role-empty {
+  padding: 6px 10px;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
 }
 .ext-role.current {
   color: var(--color-brand);
