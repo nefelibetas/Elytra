@@ -56,6 +56,11 @@ pub enum WindowSize {
 pub struct LauncherConfig {
     pub memory: MemoryMode,
 
+    /// 最小堆 -Xms（MB）；None = 不设置（JVM 默认，随 -Xmx 的 1/64 起扩）。
+    /// 仅 Custom 内存模式生效（Auto 下 -Xmx 动态推测，固定 -Xms 可能超上限）。
+    #[serde(default)]
+    pub min_memory: Option<u32>,
+
     /// 游戏窗口标题；空 = 不改（不传 -Dminecraft.window.title）。
     #[serde(default)]
     pub window_title: String,
@@ -111,6 +116,7 @@ impl Default for LauncherConfig {
     fn default() -> Self {
         Self {
             memory: MemoryMode::default(),
+            min_memory: None,
             window_title: String::new(),
             process_priority: ProcessPriority::default(),
             window_size: WindowSize::default(),

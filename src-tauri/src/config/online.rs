@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 /// - `tcp://8.138.31.80:11010`：社区公共服务器（阿里云），2026-08 实测可达且支持打洞；
 /// - `tcp://public.easytier.top:11010` / `tcp://public.easytier.cn:11010`：easytier 官方
 ///   公共节点域名（文档/教程常用；是否在线随官方运营，不可达时由并行机制跳过）。
+///
 /// 节点可能随时变动，用户在设置里可修改/清空（保存后以用户值为准）。
 pub const DEFAULT_PUBLIC_NODES: &[&str] = &[
     "tcp://8.138.31.80:11010",

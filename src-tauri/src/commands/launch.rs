@@ -98,11 +98,7 @@ fn verify_env(
 // ── 进程管理 ───────────────────────────────────────
 
 /// 读取子进程输出并追加写入日志文件，直到 EOF 或出错。
-fn drain_to_file(
-    reader: &mut impl std::io::Read,
-    path: &std::path::Path,
-    is_stderr: bool,
-) {
+fn drain_to_file(reader: &mut impl std::io::Read, path: &std::path::Path, is_stderr: bool) {
     use std::io::Write;
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -276,18 +272,14 @@ pub async fn spawn_game(
     platform::set_process_priority(pid, launcher_config.process_priority);
 
     // 捕获子进程 stdout/stderr 写入日志文件（避免 GBK 乱码污染终端，同时保留诊断信息）
-       let log_path = mc_dir.join("logs").join("elytra-launch.log");
+    let log_path = mc_dir.join("logs").join("elytra-launch.log");
     if let Some(mut so) = child.stdout.take() {
         let lp = log_path.clone();
-        std::thread::spawn(move || {
-            drain_to_file(&mut so, &lp, false)
-        });
+        std::thread::spawn(move || drain_to_file(&mut so, &lp, false));
     }
     if let Some(mut se) = child.stderr.take() {
         let lp = log_path.clone();
-        std::thread::spawn(move || {
-            drain_to_file(&mut se, &lp, true)
-        });
+        std::thread::spawn(move || drain_to_file(&mut se, &lp, true));
     }
 
     // 后台线程：轮询游戏主窗口出现（可见后推送 game-window-visible）并等待进程退出。
@@ -410,6 +402,7 @@ fn latest_crash_report(dir: &std::path::Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::launcher::model::MemoryMode;
 
     /// 构造一个最小可用的版本 JSON（旧格式 minecraftArguments，保底参数路径）。
     fn minimal_version_json() -> VersionJson {
@@ -694,5 +687,49 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_min_memory_xms_injection() {
+        // Custom + min_memory → 注入 -Xms（clamp 到 -Xmx 内）
+        let mut cfg = LauncherConfig::default();
+        cfg.memory = MemoryMode::Custom(4096);
+        cfg.min_memory = Some(2048);
+        let args = build_cmd(&cfg);
+        assert!(
+            args.iter().any(|a| a == "-Xmx4096m"),
+            "Custom 应有 -Xmx4096m: {args:?}"
+        );
+        assert!(
+            args.iter().any(|a| a == "-Xms2048m"),
+            "Custom+min 应有 -Xms2048m: {args:?}"
+        );
+
+        // min_memory > Xmx → clamp 到 Xmx
+        let mut cfg = LauncherConfig::default();
+        cfg.memory = MemoryMode::Custom(1024);
+        cfg.min_memory = Some(8192);
+        let args = build_cmd(&cfg);
+        assert!(
+            args.iter().any(|a| a == "-Xms1024m"),
+            "超上限应 clamp 到 -Xmx: {args:?}"
+        );
+
+        // Auto 模式忽略 min_memory（-Xmx 动态推测，固定 -Xms 可能超上限）
+        let mut cfg = LauncherConfig::default();
+        cfg.memory = MemoryMode::Auto;
+        cfg.min_memory = Some(2048);
+        let args = build_cmd(&cfg);
+        assert!(
+            !args.iter().any(|a| a.starts_with("-Xms")),
+            "Auto 模式不应注入 -Xms: {args:?}"
+        );
+
+        // 默认（无 min_memory）不注入 -Xms
+        let args = build_cmd(&LauncherConfig::default());
+        assert!(
+            !args.iter().any(|a| a.starts_with("-Xms")),
+            "默认不应有 -Xms: {args:?}"
+        );
     }
 }
