@@ -125,4 +125,3 @@ onMounted(loadLog);
   to { transform: rotate(360deg); }
 }
 </style>
-</style>

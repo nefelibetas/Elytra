@@ -299,7 +299,7 @@ async function confirmRename() {
     <!-- 中间层：侧边资源导航 + 列表区 -->
     <div class="vdc-main">
       <nav class="vdc-side">
-        <div v-if="tabs.length > 1" class="vdc-side-nav">
+        <div class="vdc-side-nav">
           <button
             v-for="t in tabs"
             :key="t"
