@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Elytra Launcher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前端）** 的 Minecraft 启动器。功能：游戏版本下载（官方/国内镜像多源）、ModLoader 安装（Fabric/Quilt/Forge/NeoForge/OptiFine；LiteLoader 仅版本查询）、微软正版登录（OAuth PKCE）、离线模式（固定随机默认皮肤）、**JDK 扫描 + managed runtime 自动下载**（Mojang 官方 → Azul 双源回退）、Mod 双源搜索与**依赖解析**、下载任务管理、启动参数构建与游戏进程管理、**局域网联机**（easytier 库内嵌虚拟局域网 + 端口转发，房间码互连，无需公网服务器）。
+Elytra Launcher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前端）** 的 Minecraft 启动器。功能：游戏版本下载（官方/国内镜像多源）、ModLoader 安装（Fabric/Quilt/Forge/NeoForge/OptiFine）、微软正版登录（OAuth PKCE）、离线模式（固定随机默认皮肤）、**JDK 扫描 + managed runtime 自动下载**（Mojang 官方 → Azul 双源回退）、Mod 双源搜索与**依赖解析**、下载任务管理、启动参数构建与游戏进程管理、**局域网联机**（easytier 库内嵌虚拟局域网 + 端口转发，房间码互连，无需公网服务器）。
 
 后端约 60+ 个 `#[tauri::command]`（联机 7 个），前端 7 个页面，无状态管理库（模块级 `reactive()` 单例）。
 
