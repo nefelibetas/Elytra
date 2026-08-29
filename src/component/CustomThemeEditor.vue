@@ -236,7 +236,7 @@ function save() {
             :class="{ active: activeField === '--border-strong' }"
             @click="pickField('--border-strong')"
           ></span>
-          <span class="pv-part pv-window-btn" pv-static"></span>
+          <span class="pv-part pv-window-btn pv-static"></span>
         </div>
         <div class="pv-main">
           <div class="pv-sidebar">
