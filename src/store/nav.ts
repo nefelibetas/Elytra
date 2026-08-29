@@ -65,6 +65,13 @@ export function goBack(): boolean {
     return true;
   }
 
+  if (path === "/custom-theme") {
+    // 自定义外观编辑器：回设置页（settingsTab 保持外观 tab）
+    pending += 1;
+    void router.push("/settings");
+    return true;
+  }
+
   if (path === "/version-setup") {
     // 版本设置：从版本选择进入 → 回版本选择；其他入口 → 回启动页
     const back = (history.state as { back?: string } | null)?.back ?? "";
