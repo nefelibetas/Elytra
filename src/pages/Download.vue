@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 资源中心页容器：导航 + 各 tab 内容编排（具体逻辑在 store/组件中，本文件不做业务）
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import DownloadTab from "../component/DownloadTab.vue";
 import VanillaList from "../component/VanillaList.vue";
 import VanillaDetail from "../component/VanillaDetail.vue";
@@ -33,6 +34,31 @@ import {
 const tab = computed(() => downloadTabState.current);
 /** 右侧滚动容器（切 tab 时复位滚动位置） */
 const bodyEl = ref<HTMLElement>();
+const route = useRoute();
+const router = useRouter();
+
+// 原版游戏详情态 ↔ 路由 query：进入详情 push ?v=<id>（产生历史项），
+// 鼠标侧键/浏览器后退 → query 消失 → 回列表；避免侧键直接离开资源中心页
+watch(
+  () => vdState.selectedVersion?.id,
+  (id) => {
+    const cur = route.query.v;
+    if (id && cur !== id) {
+      router.push({ path: "/download", query: { v: id } });
+    } else if (!id && cur) {
+      router.replace({ path: "/download" });
+    }
+  },
+);
+
+watch(
+  () => route.query.v,
+  (v) => {
+    if (!v && vdState.selectedVersion) {
+      vdState.backToList();
+    }
+  },
+);
 
 onMounted(async () => {
   vdState.fetchManifest();
