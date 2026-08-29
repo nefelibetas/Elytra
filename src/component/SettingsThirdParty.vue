@@ -3,7 +3,7 @@
 // 下拉选项 = 内置预设 + 用户预设（下面有什么，上面才能选什么）。
 import { computed, onMounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { Plus, Trash2, LogOut, ExternalLink } from "@lucide/vue";
+import { Plus, Trash2, ExternalLink } from "@lucide/vue";
 import DropSelect from "./DropSelect.vue";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
@@ -53,17 +53,6 @@ async function doLogin() {
     extError.value = String(e);
   } finally {
     extBusy.value = false;
-  }
-}
-
-async function removeCurrent() {
-  const acc = externalAccount.value;
-  if (!acc) return;
-  try {
-    await removeExternalAccount(acc.api_url, acc.uuid);
-    showToast("已移除");
-  } catch (e) {
-    showToast(errMsg(e));
   }
 }
 
@@ -133,19 +122,6 @@ onMounted(() => {
       <div class="stg-card-sub">外置认证（authlib-injector），登录后游戏内显示该站皮肤</div>
     </div>
 
-    <!-- 当前启用账号（启用账号制：多账号并存，一个启用） -->
-    <div v-if="externalAccount" class="tp-current">
-      <span class="tp-cur-name">
-        {{ externalAccount.site_username || "未知账号" }}
-      </span>
-      <span class="tp-cur-server" :title="externalAccount.api_url">{{ externalAccount.api_url }}</span>
-      <span class="tp-cur-badge">启用中</span>
-      <button class="tp-btn" @click="removeCurrent">
-        <LogOut :size="13" />
-        移除
-      </button>
-    </div>
-
     <!-- 全部已存账号（点击切换启用） -->
     <div v-if="externalAccounts.length" class="tp-accounts">
       <div
@@ -166,13 +142,17 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- 登录新账号（已登录时折叠展开；未登录时直接显示表单） -->
-    <button v-if="externalAccount" class="tp-btn tp-new" @click="showLoginForm = !showLoginForm">
-      {{ showLoginForm ? "收起" : "+ 登录新账号" }}
-    </button>
+    <!-- 登录新账号：分隔线中间插文本（可点击开关）；未登录时表单直接显示 -->
+    <div v-if="externalAccount" class="tp-divider" @click="showLoginForm = !showLoginForm">
+      <span class="tp-divider-line"></span>
+      <span class="tp-divider-text">{{ showLoginForm ? "收起" : "登录新账号" }}</span>
+      <span class="tp-divider-line"></span>
+    </div>
 
-    <!-- 登录表单 -->
+    <!-- 登录表单（展开动画） -->
+    <Transition name="expand">
     <div v-if="!externalAccount || showLoginForm" class="tp-login">
+
       <!-- 行1：服务器选择 + 打开站点 -->
       <div class="tp-row tp-field">
         <span class="tp-label">服务器</span>
@@ -209,6 +189,7 @@ onMounted(() => {
       <!-- 行3：错误提示（出现时） -->
       <div v-if="extError" class="tp-error-row">{{ extError }}</div>
     </div>
+    </Transition>
   </div>
 
   <!-- 预设服务器管理 -->
@@ -259,11 +240,51 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.tp-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 0 6px;
+  cursor: pointer;
+  user-select: none;
+}
+.tp-divider-line {
+  flex: 1;
+  height: 1px;
+  background: var(--border-default);
+}
+.tp-divider-text {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  transition: color 0.12s;
+}
+.tp-divider:hover .tp-divider-text {
+  color: var(--color-brand);
+}
+
 .tp-login {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
+/* 展开/收起动画（max-height 写在 enter-to/leave-from，勿移 active） */
+.expand-enter-active,
+.expand-leave-active {
+  transition: max-height 0.22s ease, opacity 0.18s ease;
+}
+.expand-enter-from,
+.expand-leave-to {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+}
+.expand-enter-to,
+.expand-leave-from {
+  max-height: 1000px;
+  overflow: hidden;
+}
+
 .tp-current {
   display: flex;
   align-items: center;
@@ -329,9 +350,6 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.tp-new {
-  margin-top: 8px;
 }
 
 .tp-cur-name {
