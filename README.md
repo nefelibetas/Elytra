@@ -21,9 +21,9 @@
 ## ✨ 功能
 
 - 📦 游戏版本下载：官方源 / 国内镜像多源回退，sha1 校验，并发与限速
-- 🧩 ModLoader：Fabric / Quilt / Forge / NeoForge / OptiFine 安装，LiteLoader 版本查询
+- 🧩 ModLoader：Fabric / Quilt / Forge / NeoForge / OptiFine 安装
 - 🔐 账号：微软正版登录（OAuth PKCE）、离线模式
-- 🎭 离线皮肤：固定随机哈希 Steve/Alex（对齐 PCL2 机制，仅 1.19.2 以下）
+- 🎭 离线皮肤：固定随机哈希 Steve/Alex
 - 🌐 局域网联机：EasyTier 虚拟局域网（房间码互连，无需公网服务器），跨网可配协调服务器
 
 ## 🛠️ 开发
