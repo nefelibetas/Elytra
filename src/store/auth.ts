@@ -37,6 +37,7 @@ export interface ExternalAccountInfo {
   name: string;
   access_token: string;
   site_username?: string | null;
+  server_name?: string | null;
   client_token?: string | null;
   profiles?: ExternalProfile[];
 }

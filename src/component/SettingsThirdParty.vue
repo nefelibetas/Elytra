@@ -133,7 +133,7 @@ onMounted(() => {
       >
         <span class="tp-acct-check">{{ acc.uuid === externalAccount?.uuid && acc.api_url === externalAccount?.api_url ? "✓" : "" }}</span>
         <span class="tp-acct-name">{{ acc.site_username || "未知账号" }}</span>
-        <span class="tp-acct-server" :title="acc.api_url">{{ acc.api_url }}</span>
+        <span class="tp-acct-server" :title="acc.api_url">{{ acc.server_name || acc.api_url }}</span>
         <button
           class="tp-del"
           title="移除该账号"

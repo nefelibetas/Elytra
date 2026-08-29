@@ -54,8 +54,10 @@ function goThirdPartyLogin() {
 }
 /** 第三方已登录时的附加操作（多角色切换 / 皮肤下载）。 */
 const showRoles = ref(false);
-/** 账号区 hover 状态（显示操作按钮，Vue 事件驱动避免 CSS 选择器失效）。 */
+/** 用户区 hover 状态（显示操作按钮；模板中直接赋值 ref 解包不写回，用函数显式 .value）。 */
 const extHover = ref(false);
+function onExtEnter() { extHover.value = true; }
+function onExtLeave() { extHover.value = false; }
 /** 角色头像缓存（profile_id → dataURL），面板打开时懒加载。 */
 const roleHeads = reactive<Record<string, string>>({});
 /** 拉取角色皮肤头（2D 大头照）。 */
@@ -189,7 +191,7 @@ function useOfflineName(name: string) {
 </script>
 
 <template>
-  <div class="account-sec" @mouseenter="extHover = true" @mouseleave="extHover = false">
+  <div class="account-sec">
     <div class="section s-auth">
       <div class="auth-toggle">
         <button
@@ -220,7 +222,12 @@ function useOfflineName(name: string) {
     </div>
 
     <div class="section s-user">
-      <div class="user-area" :class="{ 'menu-open': accountUi.skinMenu.visible || accountUi.editMenu.visible || accountUi.accountsMenu.visible }">
+      <div
+        class="user-area"
+        :class="{ 'menu-open': accountUi.skinMenu.visible || accountUi.editMenu.visible || accountUi.accountsMenu.visible }"
+        @mouseenter="onExtEnter"
+        @mouseleave="onExtLeave"
+      >
         <div class="user-main">
           <div class="avatar">
             <img
@@ -501,7 +508,7 @@ function useOfflineName(name: string) {
   gap: 6px;
   margin-top: 8px;
   position: relative;
-  /* 默认隐藏（占位），hover 账号区显示（Vue 事件驱动，纯 opacity） */
+  /* 默认隐藏（占位不塌缩），hover 用户区显示 */
   opacity: 0;
   transition: opacity 0.15s;
 }
