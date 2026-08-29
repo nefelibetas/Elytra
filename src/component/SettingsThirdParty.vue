@@ -15,6 +15,7 @@ import { errMsg } from "../utils/error";
 /** 内置常用验证服务器（label 展示名 + value API 地址）。 */
 const BUILTIN_SERVERS = [
   { label: "LittleSkin", value: "https://littleskin.cn/api/yggdrasil" },
+  { label: "Ely.by", value: "https://authserver.ely.by/api/yggdrasil" },
 ] as const;
 
 /** 用户预设服务器（设置里管理，value = API 地址；label 取域名短名）。 */
