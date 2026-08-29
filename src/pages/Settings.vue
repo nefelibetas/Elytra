@@ -26,6 +26,14 @@ import { settingsTab } from "../store/settingsTab";
       </button>
       <button
         class="stg-tab"
+        :class="{ active: settingsTab === 'thirdparty' }"
+        @click="settingsTab = 'thirdparty'"
+      >
+        <KeyRound :size="16" />
+        第三方登录
+      </button>
+      <button
+        class="stg-tab"
         :class="{ active: settingsTab === 'download' }"
         @click="settingsTab = 'download'"
       >
@@ -56,14 +64,6 @@ import { settingsTab } from "../store/settingsTab";
         <FileText :size="16" />
         启动器日志
       </button>
-      <button
-        class="stg-tab"
-        :class="{ active: settingsTab === 'thirdparty' }"
-        @click="settingsTab = 'thirdparty'"
-      >
-        <KeyRound :size="16" />
-        第三方登录
-      </button>
     </nav>
 
     <div class="stg-body">
@@ -75,6 +75,10 @@ import { settingsTab } from "../store/settingsTab";
         </div>
 
         <!-- 下载设置：管理游戏下载源 -->
+        <div v-else-if="settingsTab === 'thirdparty'" key="thirdparty" class="stg-page">
+          <SettingsThirdParty />
+        </div>
+
         <div v-else-if="settingsTab === 'download'" key="download" class="stg-page">
           <SettingsDownload />
         </div>
@@ -87,11 +91,6 @@ import { settingsTab } from "../store/settingsTab";
         <!-- 联机：EasyTier 虚拟局域网 -->
         <div v-else-if="settingsTab === 'online'" key="online" class="stg-page">
           <SettingsOnline />
-        </div>
-
-        <!-- 第三方登录 -->
-        <div v-else-if="settingsTab === 'thirdparty'" key="thirdparty" class="stg-page">
-          <SettingsThirdParty />
         </div>
 
         <!-- 启动器日志 -->
