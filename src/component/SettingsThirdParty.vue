@@ -132,7 +132,9 @@ onMounted(() => {
 
     <!-- 当前登录状态 -->
     <div v-if="externalAccount" class="tp-current">
-      <span class="tp-cur-name">{{ externalAccount.name }}</span>
+      <span class="tp-cur-name" :title="externalAccount.name">
+        {{ externalAccount.site_username || externalAccount.name }}
+      </span>
       <span class="tp-cur-server" :title="externalAccount.api_url">{{ externalAccount.api_url }}</span>
       <button class="tp-btn" @click="removeCurrent">
         <LogOut :size="13" />
