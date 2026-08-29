@@ -20,7 +20,11 @@ import AlertDialog from "./AlertDialog.vue";
 const router = useRouter();
 
 const avatarUrl = computed(() =>
-  authMode.value === "premium" ? avatarState.premiumAvatar : avatarState.offlineAvatar,
+  authMode.value === "premium"
+    ? avatarState.premiumAvatar
+    : authMode.value === "thirdparty"
+      ? avatarState.externalAvatar
+      : avatarState.offlineAvatar,
 );
 
 /** 用户名输入防抖 1.337s 后刷新离线头像 */

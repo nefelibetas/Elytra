@@ -22,12 +22,15 @@ function randomIsAlex(name: string): boolean {
 export const avatarState = reactive({
   premiumAvatar: "",
   offlineAvatar: "",
+  /** 第三方登录（皮肤站）3D 头像 */
+  externalAvatar: "",
   avatarError: false,
 });
 
 // 模块级去重缓存：账号/用户名未变不重复请求（路由切换重挂载不重复请求、不闪占位）
 let lastPremiumUuid = "";
 let lastOfflineName = "";
+let lastExternalKey = "";
 let avatarTimer: number | undefined;
 
 /** 正版：后端经 visage 3D 渲染服务获取头部图（浏览器无法设置自定义 UA，走后端）。
@@ -137,6 +140,96 @@ export async function renderSkinHead(b64: string): Promise<string> {  const img 
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(img, grid, grid, grid, grid, 0, 0, 68, 68);
   return canvas.toDataURL("image/png");
+}
+
+/** 3D 头部渲染：前/右/顶三面 + 帽子层 + 底部阴影（Minecraft 皮肤头标准视角）。
+ * skin 布局（8px 网格）：头正面 (1,1) 右侧 (2,1) 顶部 (1,0)；帽子同偏移 (5,1)(6,1)(5,0)。
+ * 128px（1.8+ 新格式）grid=16，偏移双倍。 */
+export async function renderSkinHead3D(b64: string): Promise<string> {
+  const img = await loadImage(`data:image/png;base64,${b64}`);
+  const g = Math.floor(img.width / 8); // 64→8，128→16
+  const canvas = document.createElement("canvas");
+  canvas.width = 72;
+  canvas.height = 72;
+  const ctx = canvas.getContext("2d")!;
+  ctx.imageSmoothingEnabled = false;
+  // 基准像素尺寸（渲染到 72×72，头占 64px）
+  const px = 8;
+  const h = 8 * px; // 头 64px
+  const half = h * 0.42; // 侧/顶投影宽度
+  const faceX = (72 - h) / 2 - half * 0.5;
+  const faceY = (72 - h) / 2 - half * 0.35;
+  const drawFace = (sx: number, sy: number, ox: number, oy: number, w: number, shade: number) => {
+    ctx.save();
+    ctx.globalAlpha = shade;
+    ctx.drawImage(img, sx, sy, w, w, ox, oy, w, w);
+    ctx.restore();
+  };
+  const drawSide = (sx: number, sy: number, ox: number, oy: number, shade: number) => {
+    ctx.save();
+    ctx.globalAlpha = shade;
+    ctx.beginPath();
+    ctx.moveTo(ox + h, oy + half * 0.5);
+    ctx.lineTo(ox + h + half, oy);
+    ctx.lineTo(ox + h + half, oy + h);
+    ctx.lineTo(ox + h, oy + h - half * 0.5);
+    ctx.closePath();
+    ctx.clip();
+    ctx.drawImage(img, sx, sy, h, h, ox + h, oy, half + 2, h);
+    ctx.restore();
+  };
+  const drawTop = (sx: number, sy: number, ox: number, oy: number, shade: number) => {
+    ctx.save();
+    ctx.globalAlpha = shade;
+    ctx.beginPath();
+    ctx.moveTo(ox, oy + half * 0.5);
+    ctx.lineTo(ox + half * 0.5, oy);
+    ctx.lineTo(ox + h + half * 0.5, oy);
+    ctx.lineTo(ox + h, oy + half * 0.5);
+    ctx.closePath();
+    ctx.clip();
+    ctx.drawImage(img, sx, sy, h, h, ox, oy - half * 0.5, h + 1, half + 1);
+    ctx.restore();
+  };
+  // 顺序：顶 → 侧 → 正面（正面最后盖住接缝）
+  drawTop(g, 0, faceX, faceY, 0.82);
+  drawSide(g * 2, g, faceX, faceY, 0.72);
+  drawFace(g, g, faceX, faceY, h, 1);
+  // 帽子层（64px skin：40,8 / 48,8 / 40,0；128px：偏移双倍）
+  if (img.width >= 64) {
+    drawTop(g * 5, 0, faceX, faceY, 0.95);
+    drawSide(g * 6, g, faceX, faceY, 0.85);
+    drawFace(g * 5, g, faceX, faceY, h, 1);
+  }
+  // 底部阴影
+  ctx.save();
+  ctx.fillStyle = "rgba(0,0,0,0.28)";
+  ctx.beginPath();
+  ctx.ellipse(72 / 2, 72 - 6, h * 0.55, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  return canvas.toDataURL("image/png");
+}
+
+/** 第三方登录（皮肤站）3D 头像：拉 skin → 3D 渲染。key = api_url + uuid 防重复。 */
+export async function renderExternalAvatar(apiUrl: string, uuid: string, force = false) {
+  const key = `${apiUrl}|${uuid}`;
+  if (!uuid || !apiUrl) {
+    avatarState.externalAvatar = "";
+    lastExternalKey = "";
+    return;
+  }
+  if (!force && lastExternalKey === key) return;
+  lastExternalKey = key;
+  try {
+    const b64 = await invoke<string>("fetch_external_skin", { apiUrl, uuid });
+    avatarState.externalAvatar = await renderSkinHead3D(b64);
+    avatarState.avatarError = false;
+  } catch (e) {
+    console.error("第三方头像加载失败:", e);
+    avatarState.externalAvatar = "";
+    lastExternalKey = "";
+  }
 }
 
 /** 按用户名生成 Minecraft 风格 8×8 像素脸（确定性，左右镜像）——离线用户名非真实账号时的回退。

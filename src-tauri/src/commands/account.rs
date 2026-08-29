@@ -136,6 +136,53 @@ pub async fn fetch_account_skin(uuid: String) -> Result<String, String> {
     fetch_skin(uuid).await
 }
 
+/// 拉取第三方账号（authlib-injector / 皮肤站）的皮肤 PNG（base64，供 3D 头像）。
+/// 标准 Yggdrasil：GET {api}/sessionserver/session/minecraft/profile/{uuid} → properties[0].value
+/// （base64 JSON 含 textures.skin.url）；Ely.by 非标准路径 /session/profile/{uuid}。
+#[tauri::command]
+pub async fn fetch_external_skin(api_url: String, uuid: String) -> Result<String, String> {
+    let api = api_url.trim().trim_end_matches('/');
+    if api.is_empty() {
+        return Err("验证服务器地址为空".into());
+    }
+    let is_ely = crate::auth::external::is_ely_by(api);
+    let url = if is_ely {
+        format!("{api}/session/profile/{uuid}")
+    } else {
+        format!("{api}/sessionserver/session/minecraft/profile/{uuid}")
+    };
+    let resp = crate::downloader::fetcher::http()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| format!("请求皮肤失败\n{e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("该账号未设置皮肤\nHTTP {}", resp.status()));
+    }
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("响应解析失败\n{e}"))?;
+    // properties[0].value = base64 的 {textures:{SKIN:{url}}}（标准格式）
+    let prop = json["properties"]
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|p| p["value"].as_str())
+        .ok_or("该账号未设置皮肤")?;
+    use base64::Engine;
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(prop)
+        .map_err(|e| format!("皮肤数据解码失败\n{e}"))?;
+    let textures: serde_json::Value = serde_json::from_slice(&decoded)
+        .map_err(|e| format!("皮肤信息解析失败\n{e}"))?;
+    let skin_url = textures["textures"]["SKIN"]["url"]
+        .as_str()
+        .ok_or("该账号未设置皮肤")?;
+    crate::auth::account::fetch_b64(skin_url, "下载皮肤").await
+}
+
+
 /// 把当前皮肤保存到用户指定路径。
 #[tauri::command]
 pub async fn save_skin(uuid: String, path: String) -> Result<(), String> {

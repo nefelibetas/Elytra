@@ -12,7 +12,7 @@ pub mod task;
 pub mod util;
 
 use commands::account::{
-    cancel_ms_login, disable_cape, external_login, fetch_account_skin, fetch_avatar, fetch_capes,
+    cancel_ms_login, disable_cape, external_login, fetch_account_skin, fetch_external_skin, fetch_avatar, fetch_capes,
     fetch_default_skin, fetch_texture_id, get_external_accounts, get_ms_account, get_ms_accounts,
     get_third_party_config, refresh_ms_account, remove_external_account, remove_ms_account,
     save_skin, save_third_party_config, set_active_cape, start_ms_login, switch_ms_account,
@@ -166,6 +166,7 @@ pub fn run() {
             fetch_avatar,
             fetch_texture_id,
             fetch_account_skin,
+            fetch_external_skin,
             fetch_default_skin,
             save_skin,
             upload_skin_file,
