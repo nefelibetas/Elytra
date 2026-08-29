@@ -193,11 +193,17 @@ async function handleSaveConfig() {
         </button>
       </div>
     </div>
-
     <!-- 协调服务器（跨网联机） -->
     <div class="online-sec">
+
       <div class="online-sec-title">协调服务器（跨网联机）</div>
       <p class="online-desc">跨网联机需连同一个协调服务器才能互相发现。默认内置社区节点，也可填自己的地址（每行一个，如 <span class="online-mono">tcp://1.2.3.4:11010</span>），留空仅支持同一局域网。</p>
+      <a
+        class="online-link"
+        href="https://easytier.cn"
+        target="_blank"
+        rel="noopener"
+      >如何搭建/寻找协调服务器（EasyTier 教程）→</a>
       <textarea
         v-model="onlinePublicNodes"
         class="online-textarea"
@@ -262,6 +268,16 @@ async function handleSaveConfig() {
   color: var(--text-tertiary);
   line-height: 1.5;
   margin: 0 0 10px;
+}
+.online-link {
+  display: inline-block;
+  font-size: 12px;
+  color: var(--color-brand);
+  text-decoration: none;
+  margin-bottom: 8px;
+}
+.online-link:hover {
+  text-decoration: underline;
 }
 .online-mono {
   font-family: "Cascadia Mono", "Consolas", monospace;

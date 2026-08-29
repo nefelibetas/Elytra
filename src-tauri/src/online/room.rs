@@ -1,17 +1,20 @@
-//! 房间码：UUID → Base32 短码，HMAC 派生网络名与密钥，可携带入口端口与 host 局域网 IP。
+//! 房间码：UUID → Base32 短码，HMAC 派生网络名与密钥，可携带入口端口、host 局域网 IP
+//! 与存档名（MOTD）。
 //!
 //! 设计：房间码即虚拟局域网的身份凭据，分享给朋友即可加入同一虚拟网。
 //! - 码本身是 UUID 前 80bit 的 Base32 短码（`U/XXXX-XXXX-XXXX-XXXX`，
 //!   16 字符 × 5bit = 80bit，剔易混字符），80bit 随机碰撞概率足够低；
-//! - 网络名与密钥由 **HMAC(固定盐, 身份段)** 派生（端口/IP 不参与派生，
+//! - 网络名与密钥由 **HMAC(固定盐, 身份段)** 派生（端口/IP/MOTD 不参与派生，
 //!   host 可先建网、检测到游戏端口后再补全房间码展示）；
 //! - 可选端口段 `:PORT`：host 开联机时把入口端口编入房间码，
 //!   guest 解析房间码即可获得连接端口，无需手动填写；
 //! - 可选局域网段 `@IP`：host 的局域网 IPv4（同网直连用，绕开协调节点；
 //!   easytier 官方公共节点已下线，同网场景必须靠直连互发现）；
+//! - 可选存档段 `#<urlencoded>`：host 存档名（guest 端 MC 局域网广播显示用）；
 //! - 非法字符/格式本地拒绝，避免无效连接。
 
 use hmac::{Hmac, Mac};
+use percent_encoding::{NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 use sha2::Sha256;
 use uuid::Uuid;
 
@@ -27,26 +30,35 @@ const SECRET_SALT: &[u8] = b"elytra-online-secret-v1";
 
 /// 生成新房间码（纯身份，无端口段）。
 pub fn create_room() -> RoomCredential {
-    RoomCredential::derive(Uuid::new_v4(), None, None)
+    RoomCredential::derive(Uuid::new_v4(), None, None, None)
 }
 
 /// 生成新房间码并携带入口端口（仅测试用；正式流程 host 用 create_room + with_port）。
 #[cfg(test)]
 pub fn create_room_with_port(port: u16) -> RoomCredential {
-    RoomCredential::derive(Uuid::new_v4(), Some(port), None)
+    RoomCredential::derive(Uuid::new_v4(), Some(port), None, None)
 }
 
-/// 解析房间码文本（`U/XXXX-XXXX-XXXX-XXXX`、带 `:PORT` 或带 `@IP`）。非法/校验失败返回 None。
+/// 解析房间码文本（`U/XXXX-XXXX-XXXX-XXXX`、带 `:PORT` / `@IP` / `#MOTD`）。非法/校验失败返回 None。
 pub fn parse_room_code(code: &str) -> Option<RoomCredential> {
-    let code = code.trim().to_ascii_uppercase();
-    let body = code.strip_prefix("U/")?;
+    let code = code.trim();
+    // 先分离可选存档段 `#<urlencoded>`（MOTD 保持大小写，不参与身份转大写）
+    let (body, motd) = match code.split_once('#') {
+        Some((rest, motd_enc)) => {
+            let motd = percent_decode_str(motd_enc).decode_utf8().ok()?.into_owned();
+            (rest, Some(motd))
+        }
+        None => (code, None),
+    };
+    let body = body.to_ascii_uppercase();
+    let body = body.strip_prefix("U/")?;
     // 分离可选局域网段：`@IP` 之后的部分必须是合法 IPv4
     let (port_part, lan_ip) = match body.split_once('@') {
         Some((rest, ip)) => {
             let ip = ip.parse::<std::net::Ipv4Addr>().ok()?.to_string();
             (rest, Some(ip))
         }
-        None => (body, None),
+        None => (body, None::<String>),
     };
     // 分离可选端口段：有端口段但解析失败 → 整体非法
     let (identity, port) = match port_part.split_once(':') {
@@ -87,7 +99,7 @@ pub fn parse_room_code(code: &str) -> Option<RoomCredential> {
     if port_part.split(':').next().unwrap_or("") != expect {
         return None;
     }
-    Some(RoomCredential::derive(uuid, port, lan_ip))
+    Some(RoomCredential::derive(uuid, port, lan_ip, motd))
 }
 
 /// 把 UUID 前 80bit 编码为身份短码（无端口段）。
@@ -151,12 +163,15 @@ pub struct RoomCredential {
     /// host 局域网 IPv4（同网直连用；编入房间码可选段 `@IP`）。
     /// easytier 官方公共协调节点已下线，同网场景靠 guest 直连 host 互发现。
     pub lan_ip: Option<String>,
+    /// host 存档名（MC LAN 广播 MOTD；编入房间码可选段 `#<urlencoded>`）。
+    /// guest 解析后用于本机 MC 局域网广播显示（同网多房间可区分）。
+    pub motd: Option<String>,
 }
 
 impl RoomCredential {
-    fn derive(uuid: Uuid, port: Option<u16>, lan_ip: Option<String>) -> Self {
+    fn derive(uuid: Uuid, port: Option<u16>, lan_ip: Option<String>, motd: Option<String>) -> Self {
         let identity = encode_uuid_identity(&uuid);
-        // HMAC 只基于身份段（不含端口/IP）：host 可先建网后补端口/IP，
+        // HMAC 只基于身份段（不含端口/IP/MOTD）：host 可先建网后补段，
         // 网名/密钥在等待端口期间保持不变（实例无需换身份）。
         let mut code = format!("U/{identity}");
         if let Some(p) = port {
@@ -165,12 +180,19 @@ impl RoomCredential {
         if let Some(ip) = &lan_ip {
             code.push_str(&format!("@{ip}"));
         }
+        if let Some(m) = &motd {
+            code.push_str(&format!(
+                "#{}",
+                utf8_percent_encode(m, NON_ALPHANUMERIC)
+            ));
+        }
         Self {
             network_name: derive(NET_SALT, &identity),
             network_secret: derive(SECRET_SALT, &identity),
             code,
             port,
             lan_ip,
+            motd,
         }
     }
     /// 在已有凭据上补端口：仅更新展示码与 port 字段；
@@ -187,17 +209,31 @@ impl RoomCredential {
         self.code = Self::encode_code(&self);
         self
     }
-    /// 按当前身份/端口/IP 重建展示码（身份段从 code 中剥离）。
+    /// 在已有凭据上补存档名（MOTD）：仅更新展示码与 motd 字段；
+    /// 网名/密钥不变（派生只吃身份段），运行中的虚拟网身份不受影响。
+    pub fn with_motd(mut self, motd: String) -> Self {
+        self.motd = Some(motd);
+        self.code = Self::encode_code(&self);
+        self
+    }
+    /// 按当前身份/端口/IP/MOTD 重建展示码（身份段从 code 中剥离）。
     fn encode_code(room: &Self) -> String {
         let body = room.code.trim_start_matches("U/");
         let identity = body.split_once(":").map(|(id, _)| id).unwrap_or(body);
         let identity = identity.split_once("@").map(|(id, _)| id).unwrap_or(identity);
+        let identity = identity
+            .split_once("#")
+            .map(|(id, _)| id)
+            .unwrap_or(identity);
         let mut code = format!("U/{identity}");
         if let Some(p) = room.port {
             code.push_str(&format!(":{p}"));
         }
         if let Some(ip) = &room.lan_ip {
             code.push_str(&format!("@{ip}"));
+        }
+        if let Some(m) = &room.motd {
+            code.push_str(&format!("#{}", utf8_percent_encode(m, NON_ALPHANUMERIC)));
         }
         code
     }
@@ -216,6 +252,7 @@ mod tests {
         assert_eq!(parsed.network_secret, room.network_secret, "密钥派生应一致");
         assert_eq!(parsed.port, None, "无端口场景");
         assert_eq!(parsed.lan_ip, None, "无局域网 IP 场景");
+        assert_eq!(parsed.motd, None, "无存档段场景");
     }
 
     #[test]
@@ -242,6 +279,32 @@ mod tests {
         );
         assert_eq!(parsed.network_name, room.network_name, "网名派生不受 IP 影响");
         assert_eq!(parsed.network_secret, room.network_secret);
+    }
+
+    #[test]
+    fn room_with_motd_roundtrip() {
+        // 中文 + 特殊字符存档名：urlencode 往返一致
+        let room = create_room_with_port(25565).with_motd("新的世界:test@x".to_string());
+        assert!(room.code.contains('#'), "存档段应存在");
+        let parsed = parse_room_code(&room.code).expect("带存档段房间码应可解析");
+        assert_eq!(parsed.code, room.code, "重编码应一致");
+        assert_eq!(parsed.port, Some(25565), "端口应保留");
+        assert_eq!(
+            parsed.motd.as_deref(),
+            Some("新的世界:test@x"),
+            "存档名应解析出来"
+        );
+        assert_eq!(parsed.network_name, room.network_name, "网名派生不受存档影响");
+    }
+
+    #[test]
+    fn room_with_motd_only_roundtrip() {
+        let room = create_room().with_motd("Elytra 联机".to_string());
+        let parsed = parse_room_code(&room.code).expect("仅存档段房间码应可解析");
+        assert_eq!(parsed.code, room.code);
+        assert_eq!(parsed.port, None);
+        assert_eq!(parsed.lan_ip, None);
+        assert_eq!(parsed.motd.as_deref(), Some("Elytra 联机"));
     }
 
     #[test]

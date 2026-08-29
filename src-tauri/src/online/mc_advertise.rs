@@ -9,6 +9,7 @@
 //! （224.0.2.60:4445）广播 `[MOTD]<名字>[/MOTD][AD]<本地端口>[/AD]`，
 //! 使 guest 的 MC 客户端在"局域网"标签页看到该服务器（本机组播回环），
 //! 点击进入走局域网发现路径，跳过会话校验，经 easytier 转发到 host 正常登录。
+//! 服务器名取房间码携带的 host 存档名（MOTD），无则回退固定文案。
 //!
 //! 广播 socket bind 0.0.0.0 → 源 IP 为 OS 选的主网卡地址（回环源本机收不到，
 //! 实测 127.0.0.1 源无效）；MC 客户端据此连 `<本机IP>:本地端口`
@@ -26,8 +27,7 @@ const MC_MULTICAST_PORT: u16 = 4445;
 /// 广播周期：MC 客户端对广播的 TTL 为 5s，1.5s 一次足够刷新。
 const ADVERTISE_INTERVAL: Duration = Duration::from_millis(1500);
 
-/// 广播中显示的服务器名（guest 无 host 存档名，用固定标识，用户可在
-/// 局域网标签页认出）。
+/// 广播中显示的服务器名回退文案（房间码无 host 存档名时）。
 const DEFAULT_MOTD: &str = "Elytra 联机";
 
 /// 组播广播器：drop 即停线程。
@@ -39,6 +39,16 @@ impl McAdvertiser {
     /// 启动广播线程：向 MC 局域网发现组播周期广播本地转发端口。
     pub fn start(local_port: u16) -> Self {
         Self::start_internal(local_port, DEFAULT_MOTD, MC_MULTICAST_PORT)
+    }
+
+    /// 带自定义服务器名启动（host 存档名；空串回退默认文案）。
+    pub fn start_with_motd(local_port: u16, motd: &str) -> Self {
+        let motd = if motd.trim().is_empty() {
+            DEFAULT_MOTD
+        } else {
+            motd
+        };
+        Self::start_internal(local_port, motd, MC_MULTICAST_PORT)
     }
 
     fn start_internal(local_port: u16, motd: &str, multicast_port: u16) -> Self {
@@ -88,9 +98,18 @@ mod tests {
     #[test]
     fn builds_multicast_payload() {
         // 与 mc_discover 的 parse_port 格式互操作
-        let payload = "[MOTD]Elytra 联机[/MOTD][AD]34567[/AD]".to_string();
+        let payload = format!("[MOTD]Elytra 联机[/MOTD][AD]34567[/AD]");
         assert!(payload.starts_with("[MOTD]"));
         assert!(payload.contains("[AD]34567[/AD]"));
+    }
+
+    #[test]
+    fn motd_fallback_to_default() {
+        // 空串 MOTD → 回退默认文案（payload 不为空 MOTD 段）
+        let a = McAdvertiser::start_with_motd(40000, "");
+        drop(a);
+        let a = McAdvertiser::start_with_motd(40000, "新的世界");
+        drop(a);
     }
 
     /// 端到端：启动广播器（注入测试组播端口），加入组播组监听，

@@ -115,8 +115,16 @@ export const vdState = reactive({
   showLoader(ld: string): boolean {
     const mc = this.selectedVersion?.id;
     if (mc && !this.loaderSupported(ld, mc)) return false;
-    // OptiFine 依附于主 ModLoader：未选主 loader 时不显示
-    if (!isMainLoader(ld)) return !!this.selectedMainLoader;
+    if (!isMainLoader(ld)) {
+      if (!this.selectedMainLoader) return false;
+      // OptiFabric 桥接仅支持至 1.20.x：Fabric/Quilt + 1.21+ 组合直接过滤
+      // （安装时也会明确报错，这里在下载流程提前隐藏）
+      if (ld === "optifine" && mc && versionGte(mc, "1.21")) {
+        const main = this.selectedMainLoader;
+        if (main === "fabric" || main === "quilt") return false;
+      }
+      return true;
+    }
     if (!this.selectedMainLoader) return true;
     return ld === this.selectedMainLoader;
   },
@@ -386,10 +394,15 @@ watch(
 );
 
 // Auto-fetch Fabric API when Fabric is selected
+
 watch(() => vdState.selectedMainLoader, (ld) => {
   // 未选主 ModLoader 时隐藏 OptiFine：同时清掉残留选择，防止被静默提交
   if (!ld) delete vdState.selectedLoaderVersions["optifine"];
   const mc = vdState.selectedVersion?.id;
+  // OptiFabric 仅支持至 1.20.x：Fabric/Quilt + 1.21+ 时清掉 OptiFine 残留
+  if ((ld === "fabric" || ld === "quilt") && mc && versionGte(mc, "1.21")) {
+    delete vdState.selectedLoaderVersions["optifine"];
+  }
   if (ld === "fabric" && mc) {
     vdState.fetchFabricApi(mc);
   } else if (ld !== "fabric") {
