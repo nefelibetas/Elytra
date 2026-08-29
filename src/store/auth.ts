@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { EVT_MS_LOGIN_COMPLETE } from "./events";
 import { showError } from "./alert";
-import { avatarState, renderPremiumAvatar } from "./avatar";
+import { avatarState, renderPremiumAvatar, renderExternalAvatar } from "./avatar";
 
 export type AuthMode = "premium" | "offline" | "thirdparty";
 
@@ -48,6 +48,12 @@ export const username = ref("");
 watch(msAccount, () => {
   avatarState.avatarError = false;
   void renderPremiumAvatar(msAccount.value?.uuid ?? "");
+});
+
+// 第三方账号变化时渲染皮肤站 3D 头像
+watch(externalAccount, () => {
+  avatarState.avatarError = false;
+  void renderExternalAvatar(externalAccount.value?.api_url ?? "", externalAccount.value?.uuid ?? "");
 });
 
 export function setAuthMode(mode: AuthMode) {

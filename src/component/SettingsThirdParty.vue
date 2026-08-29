@@ -185,12 +185,11 @@ onMounted(() => {
     <div class="stg-card-hdr">
       <h3>预设服务器</h3>
       <div class="stg-card-sub">登录下拉选项来自此处（含内置）；新增填名称 + 地址</div>
-      <p class="tp-compat">
-        兼容说明：内置 LittleSkin 与自建皮肤站为标准 Yggdrasil 格式（如
-        https://xxx/api/yggdrasil）
-        <b>Ely.by 为内置特殊适配</b>（非标准路径，自动处理）
-        自定义添加请使用标准格式地址
-      </p>
+      <div class="tp-compat">
+        <div>兼容说明：内置 LittleSkin 与自建皮肤站为标准 Yggdrasil 格式（如 https://xxx/api/yggdrasil）</div>
+        <div><b>Ely.by 为内置特殊适配</b>（非标准路径，自动处理）</div>
+        <div>自定义添加请使用标准格式地址</div>
+      </div>
     </div>
     <div class="tp-list">
       <div v-for="(sv, i) in presetServers" :key="sv.value" class="tp-row">
@@ -323,6 +322,7 @@ onMounted(() => {
   border-color: var(--color-brand);
 }
 .tp-primary:hover {
+  color: var(--text-inverse);
   opacity: 0.9;
 }
 .tp-error {
