@@ -235,6 +235,37 @@ pub async fn update_mod_file(
     mod_updates::update_mod_file(&vdir.join("mods"), &file_name, &file_url, &file_sha1).await
 }
 
+/// 版本级服务器直连配置（快速进服 --server/--port，per-version 存储）。
+/// 存储于 persist section `version_server_{version_name}`；为空时启动回退全局 LauncherConfig。
+#[derive(Debug, Clone, Default, Serialize, serde::Deserialize)]
+pub struct VersionServer {
+    pub server: Option<String>,
+    pub port: Option<u16>,
+}
+
+#[tauri::command]
+pub fn get_version_server(version_name: String) -> VersionServer {
+    crate::persist::read(&format!("version_server_{version_name}")).unwrap_or_default()
+}
+
+#[tauri::command]
+pub fn save_version_server(
+    version_name: String,
+    server: Option<String>,
+    port: Option<u16>,
+) -> Result<(), String> {
+    let cfg = VersionServer {
+        server: server.filter(|s| !s.trim().is_empty()),
+        port,
+    };
+    crate::persist::save(&format!("version_server_{version_name}"), &cfg).map_err(|e| {
+        format!(
+            "保存失败
+{e}"
+        )
+    })
+}
+
 /// 删除 mods 目录下的单个 mod 文件。
 #[tauri::command]
 pub fn delete_mod_file(version_name: String, file_name: String) -> Result<(), String> {

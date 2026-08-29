@@ -28,7 +28,7 @@ use commands::gamedirs::{
     rename_version_dir, set_active_game_dir,
 };
 use commands::jdk::{auto_scan_jdk, get_jdk_config, save_jdk_config, scan_custom_jdk};
-use commands::launch::{check_launch_env, get_game_log, spawn_game};
+use commands::launch::{check_launch_env, get_game_log, get_launcher_log, spawn_game};
 use commands::launch_options::{get_launch_options, get_memory_info, save_launch_options};
 use commands::launch_script::export_launch_script;
 use commands::loader::{
@@ -50,8 +50,9 @@ use commands::task::{
 };
 use commands::version::{
     check_mod_updates, delete_mod_file, delete_resource_file, delete_world, export_modpack,
-    get_world_icon, identify_mod_file, list_mods_detailed, list_resource_detailed,
-    list_resource_files, list_worlds, toggle_mod_file, update_mod_file,
+    get_version_server, get_world_icon, identify_mod_file, list_mods_detailed,
+    list_resource_detailed, list_resource_files, list_worlds, save_version_server, toggle_mod_file,
+    update_mod_file,
 };
 use commands::version_icon::{
     get_version_icon, get_version_icon_source, reset_version_icon, set_version_icon,
@@ -59,6 +60,8 @@ use commands::version_icon::{
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 启动器日志落盘（stdout/stderr → Elytra/launcher.log）
+    util::init_file_logging();
     task::init();
     // 启动时后台自动扫描 JDK（已有持久化结果则跳过）
     std::thread::spawn(|| {
@@ -97,6 +100,8 @@ pub fn run() {
             check_mod_updates,
             update_mod_file,
             delete_mod_file,
+            get_version_server,
+            save_version_server,
             toggle_mod_file,
             export_modpack,
             get_version_icon,
@@ -132,6 +137,7 @@ pub fn run() {
             dismiss_interrupted_task,
             spawn_game,
             get_game_log,
+            get_launcher_log,
             check_launch_env,
             get_memory_info,
             get_launch_options,

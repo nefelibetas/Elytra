@@ -3,8 +3,10 @@
 import { computed, ref } from "vue";
 import type { Component } from "vue";
 import { useRoute } from "vue-router";
-import { Puzzle, Map, Palette, Sun, Database, Upload, ImagePlus, RefreshCw } from "@lucide/vue";
+import { Puzzle, Map, Palette, Sun, Database, Upload, ImagePlus, RefreshCw, FileText, Server } from "@lucide/vue";
 import VersionSetupMisc from "../component/VersionSetupMisc.vue";
+import VersionSetupLogs from "../component/VersionSetupLogs.vue";
+import VersionSetupServer from "../component/VersionSetupServer.vue";
 import VersionSetupExport from "../component/VersionSetupExport.vue";
 import VersionSetupMods from "../component/VersionSetupMods.vue";
 import VersionSetupSaves from "../component/VersionSetupSaves.vue";
@@ -14,7 +16,7 @@ import {
   loadWorlds, loadResourceDetailed, loadResourceQuick,
 } from "../store/versionDetail";
 
-type TabKey = "mods" | "saves" | "resourcepacks" | "shaderpacks" | "datapacks" | "export" | "misc";
+type TabKey = "mods" | "saves" | "resourcepacks" | "shaderpacks" | "datapacks" | "export" | "logs" | "server" | "misc";
 
 const tabs: { key: TabKey; label: string; icon: Component }[] = [
   { key: "mods", label: "Mod 管理", icon: Puzzle },
@@ -23,6 +25,8 @@ const tabs: { key: TabKey; label: string; icon: Component }[] = [
   { key: "shaderpacks", label: "光影包管理", icon: Sun },
   { key: "datapacks", label: "数据包管理", icon: Database },
   { key: "export", label: "导出", icon: Upload },
+  { key: "logs", label: "游戏日志", icon: FileText },
+  { key: "server", label: "服务器", icon: Server },
   { key: "misc", label: "图标", icon: ImagePlus },
 ];
 
@@ -55,6 +59,8 @@ const REFRESHERS: Record<TabKey, () => void> = {
     void loadResourceQuick(versionName.value, "datapacks");
   },
   export: () => {},
+  logs: () => {},
+  server: () => {},
   misc: () => {},
 };
 </script>
@@ -112,6 +118,10 @@ const REFRESHERS: Record<TabKey, () => void> = {
         />
 
         <VersionSetupExport v-else-if="activeTab === 'export'" key="export" />
+
+        <VersionSetupLogs v-else-if="activeTab === 'logs'" key="logs" />
+
+        <VersionSetupServer v-else-if="activeTab === 'server'" key="server" />
 
         <VersionSetupMisc v-else key="misc" />
       </Transition>

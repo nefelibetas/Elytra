@@ -64,6 +64,9 @@ easytier-core = { git = "https://github.com/EasyTier/EasyTier", default-features
 network-interface = "2"
 # 读 Windows 系统代理（注册表 Internet Settings）：reqwest 默认不读系统代理，
 # 用户开着系统代理（Clash 等）时官方源直连被劫持/黑洞，需显式走代理
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
 # 非 Windows 钥匙串主密钥加密：secrets.bin 每条 value 用主密钥 ChaCha20-Poly1305 加密

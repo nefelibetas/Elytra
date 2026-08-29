@@ -399,17 +399,30 @@ fn latest_crash_report(dir: &std::path::Path) -> Option<String> {
     latest.map(|(_, p)| p)
 }
 
-/// 读取游戏日志尾部（最多 200 行）：优先启动器捕获日志 elytra-launch.log，
-/// 为空/不存在时回退原版游戏日志 latest.log；两文件均不可读时返回空字符串（不报错）。
+/// 读取游戏日志尾部（最多 200 行）：优先版本目录 logs/latest.log（游戏自身日志，
+/// 游戏 cwd 是版本目录，latest.log/crash-reports 都落在那里），
+/// 为空/不存在时回退启动器捕获日志 <game_dir>/logs/elytra-launch.log；均不可读返回空串。
 #[tauri::command]
-pub async fn get_game_log(game_dir: String) -> String {
-    let logs_dir = std::path::Path::new(&game_dir).join("logs");
-    let launch_log =
-        std::fs::read_to_string(logs_dir.join("elytra-launch.log")).unwrap_or_default();
-    if !launch_log.trim().is_empty() {
-        return tail_lines(&launch_log);
+pub async fn get_game_log(game_dir: String, version_name: String) -> String {
+    let mc = std::path::Path::new(&game_dir);
+    let version_logs = mc.join("versions").join(&version_name).join("logs");
+    let game_log = std::fs::read_to_string(version_logs.join("latest.log")).unwrap_or_default();
+    if !game_log.trim().is_empty() {
+        return tail_lines(&game_log);
     }
-    std::fs::read_to_string(logs_dir.join("latest.log"))
+    std::fs::read_to_string(mc.join("logs").join("elytra-launch.log"))
+        .map(|text| tail_lines(&text))
+        .unwrap_or_default()
+}
+
+/// 读取启动器日志尾部（最多 200 行）：exe 旁 Elytra/launcher.log（stdout/stderr 重定向落盘）。
+/// 文件不存在/不可读返回空字符串（不报错）。
+#[tauri::command]
+pub async fn get_launcher_log() -> String {
+    let path = crate::util::exe_dir()
+        .join(crate::constants::CONFIG_DIR)
+        .join("launcher.log");
+    std::fs::read_to_string(path)
         .map(|text| tail_lines(&text))
         .unwrap_or_default()
 }
