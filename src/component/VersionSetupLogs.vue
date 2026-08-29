@@ -36,34 +36,55 @@ onMounted(loadLog);
 </script>
 
 <template>
-  <div class="vslog">
-    <div class="vslog-hdr">
-      <span class="vslog-title">游戏日志</span>
-      <button class="vslog-refresh" :disabled="loading" @click="loadLog">
-        <RefreshCw :size="13" :class="{ spin: loading }" />
-        刷新
-      </button>
+  <div class="vs-page">
+    <div class="setup-card">
+      <div class="setup-card-hdr">
+        <div class="setup-card-titles">
+          <div class="setup-card-title">游戏日志</div>
+          <div class="setup-desc">该版本 logs/latest.log 与启动器捕获日志的尾部 200 行</div>
+        </div>
+        <button class="vslog-refresh" :disabled="loading" @click="loadLog">
+          <RefreshCw :size="13" :class="{ spin: loading }" />
+          刷新
+        </button>
+      </div>
+      <pre class="vslog-pre">{{ logText }}</pre>
     </div>
-    <pre class="vslog-pre">{{ logText }}</pre>
   </div>
 </template>
 
 <style scoped>
-.vslog {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  height: 100%;
+.vs-page {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
-.vslog-hdr {
+.setup-card {
+  background: var(--surface-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  max-width: 720px;
+  padding: 14px 16px;
+}
+.setup-card-hdr {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
 }
-.vslog-title {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary);
+.setup-card-titles { min-width: 0; }
+.setup-card-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  letter-spacing: 0.5px;
+}
+.setup-desc {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-tertiary);
 }
 .vslog-refresh {
   display: inline-flex;
@@ -82,9 +103,9 @@ onMounted(loadLog);
   border-color: var(--color-brand);
 }
 .vslog-pre {
-  flex: 1;
   margin: 0;
   padding: 12px;
+  max-height: 60vh;
   overflow: auto;
   font-family: Consolas, "Courier New", monospace;
   font-size: 12px;
@@ -103,4 +124,5 @@ onMounted(loadLog);
 @keyframes vslog-spin {
   to { transform: rotate(360deg); }
 }
+</style>
 </style>
