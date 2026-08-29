@@ -65,6 +65,19 @@ export function goBack(): boolean {
     return true;
   }
 
+  if (path === "/version-setup") {
+    // 版本设置：从版本选择进入 → 回版本选择；其他入口 → 回启动页
+    const back = (history.state as { back?: string } | null)?.back ?? "";
+    if (back.includes("/version-select")) {
+      pending += 1;
+      void router.push("/version-select");
+      return true;
+    }
+    pending += 1;
+    void router.push("/");
+    return true;
+  }
+
   // 其余（顶级 Tab / 版本选择 / 版本设置）→ 回启动页
 
   pending += 1;
