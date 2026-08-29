@@ -43,9 +43,17 @@ async function save() {
 </script>
 
 <template>
-  <div class="vssrv">
-    <div class="vssrv-row">
-      <label class="vssrv-label" for="vssrv-server">服务器地址</label>
+  <div class="vs-page">
+    <div class="setup-card">
+      <div class="setup-card-hdr">
+        <div class="setup-card-titles">
+          <div class="setup-card-title">服务器</div>
+          <div class="setup-desc">启动时自动连接该服务器（--server/--port），仅对当前版本生效</div>
+        </div>
+      </div>
+      <div class="vssrv">
+        <div class="vssrv-row">
+          <label class="vssrv-label" for="vssrv-server">服务器地址</label>
       <input
         id="vssrv-server"
         v-model="server"
@@ -70,18 +78,52 @@ async function save() {
       />
       <span v-if="saved" class="vssrv-saved">已保存</span>
     </div>
-    <p class="vssrv-note">
-      启动游戏时自动连接该服务器（--server/--port）。仅对当前版本生效；留空则按全局配置。
-    </p>
+        <p class="vssrv-note">
+          启动游戏时自动连接该服务器（--server/--port）。仅对当前版本生效；留空则按全局配置。
+        </p>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
+<style scoped>
+.vs-page {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.setup-card {
+  background: var(--surface-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  max-width: 560px;
+  padding: 14px 16px;
+}
+.setup-card-hdr {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.setup-card-titles { min-width: 0; }
+.setup-card-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  letter-spacing: 0.5px;
+}
+.setup-desc {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
 .vssrv {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  max-width: 460px;
 }
 .vssrv-row {
   display: flex;
@@ -119,4 +161,5 @@ async function save() {
   line-height: 1.6;
   color: var(--text-tertiary);
 }
+</style>
 </style>
