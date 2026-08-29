@@ -54,6 +54,8 @@ function goThirdPartyLogin() {
 }
 /** 第三方已登录时的附加操作（多角色切换 / 皮肤下载）。 */
 const showRoles = ref(false);
+/** 账号区 hover 状态（显示操作按钮，Vue 事件驱动避免 CSS 选择器失效）。 */
+const extHover = ref(false);
 /** 角色头像缓存（profile_id → dataURL），面板打开时懒加载。 */
 const roleHeads = reactive<Record<string, string>>({});
 /** 拉取角色皮肤头（2D 大头照）。 */
@@ -86,13 +88,18 @@ watch(showRoles, async (open) => {
   }
 });
 
-/** 刷新皮肤：皮肤站在皮肤站修改后重新拉取渲染头像。 */
-function refreshExternalSkin() {
+/** 刷新角色和皮肤：refresh 账号（最新 token + 角色列表同步）→ 重拉皮肤渲染头像。 */
+async function refreshExternalSkin() {
   const acc = externalAccount.value;
   if (!acc) return;
-  // 强制重拉 + 渲染
-  void renderExternalAvatar(acc.api_url, acc.uuid, true);
-  showToast("皮肤已刷新");
+  try {
+    await refreshExternalAccount(acc.api_url, acc.uuid);
+    const fresh = externalAccount.value;
+    if (fresh) void renderExternalAvatar(fresh.api_url, fresh.uuid, true);
+    showToast("角色与皮肤已刷新");
+  } catch (e) {
+    showError(`刷新失败：${String(e)}`, true);
+  }
 }
 
 /** 切换角色（refresh + selectedProfile）。 */
@@ -182,7 +189,7 @@ function useOfflineName(name: string) {
 </script>
 
 <template>
-  <div class="account-sec">
+  <div class="account-sec" @mouseenter="extHover = true" @mouseleave="extHover = false">
     <div class="section s-auth">
       <div class="auth-toggle">
         <button
@@ -232,11 +239,11 @@ function useOfflineName(name: string) {
           <div v-else-if="authMode === 'thirdparty'" class="uname" :class="{ 'uname-empty': !externalAccount }">
             <template v-if="externalAccount">
               <div class="ext-name">{{ externalAccount.name }}</div>
-              <div class="ext-actions">
+              <div class="ext-actions" :class="{ show: extHover || showRoles }">
                 <button class="ext-icon" title="切换角色" @click.stop="showRoles = !showRoles">
                   <RotateCcw :size="12" />
                 </button>
-                <button class="ext-icon" title="刷新皮肤" @click="refreshExternalSkin">
+                <button class="ext-icon" title="刷新角色和皮肤" @click="refreshExternalSkin">
                   <RefreshCw :size="12" />
                 </button>
                 <Transition name="ext-pop">
@@ -250,6 +257,7 @@ function useOfflineName(name: string) {
                       @click="doSwitchRole(r.id, r.name)"
                     >
                       <img v-if="roleHeads[r.id]" :src="roleHeads[r.id]" class="ext-role-head" alt="" />
+                      <span v-else class="ext-role-head ext-role-ph"></span>
                       <span class="ext-role-name">{{ r.name }}</span>
                     </div>
                   </template>
@@ -295,7 +303,7 @@ function useOfflineName(name: string) {
                       alt=""
                       draggable="false"
                     />
-                    <UserRound v-else :size="16" class="acct-icon" />
+                    <UserRound v-else :size="20" class="acct-icon" />
                     <span class="acct-name">{{ name }}</span>
                     <button
                       class="acct-del"
@@ -493,6 +501,12 @@ function useOfflineName(name: string) {
   gap: 6px;
   margin-top: 8px;
   position: relative;
+  /* 默认隐藏（占位），hover 账号区显示（Vue 事件驱动，纯 opacity） */
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.ext-actions.show {
+  opacity: 1;
 }
 .ext-icon {
   display: inline-flex;
@@ -570,6 +584,9 @@ function useOfflineName(name: string) {
   height: 22px;
   border-radius: 4px;
   image-rendering: pixelated;
+}
+.ext-role-ph {
+  background: var(--surface-hover);
 }
 .ext-role-name {
   flex: 1;
@@ -700,6 +717,9 @@ function useOfflineName(name: string) {
   border-radius: 0;
   overflow: hidden;
   color: var(--color-brand);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   /* 占位图标时无背景，与周围一致；图片时由 img 铺满 */
   background-color: transparent;
 }
@@ -715,6 +735,7 @@ function useOfflineName(name: string) {
   object-fit: cover;
   display: block;
   image-rendering: pixelated;
+  flex: none;
 }
 
 .uname {
