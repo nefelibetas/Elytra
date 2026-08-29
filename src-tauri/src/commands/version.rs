@@ -292,34 +292,69 @@ pub async fn export_modpack(version_name: String, save_path: String) -> Result<(
         .map_err(|e| format!("打包任务失败\n{e}"))?
 }
 
+/// 导出标准 MRPACK 整合包（Modrinth 格式 v1）：所有内容物理打包进 `overrides/`，
+/// `modrinth.index.json` 声明版本与 loader 依赖、`files` 留空（离线可用，任意
+/// 支持 mrpack 的启动器导入均解压 overrides 即用）。存档（saves）不打包。
 fn pack_modpack(vdir: &Path, version_name: &str, save_path: &str) -> Result<(), String> {
-    // 收集存在的顶层目录
-    let subdirs: Vec<&str> = ["mods", "config", "shaderpacks", "resourcepacks"]
-        .iter()
-        .copied()
-        .filter(|d| vdir.join(d).is_dir())
-        .collect();
+    // 收集存在的顶层目录（数据包 1.13+ 有 datapacks 目录，一并导出）
+    let subdirs: Vec<&str> = [
+        "mods",
+        "config",
+        "shaderpacks",
+        "resourcepacks",
+        "datapacks",
+    ]
+    .iter()
+    .copied()
+    .filter(|d| vdir.join(d).is_dir())
+    .collect();
 
     let file = std::fs::File::create(save_path).map_err(|e| format!("创建文件失败\n{e}"))?;
     let mut writer = zip::ZipWriter::new(file);
-    let opts =
-        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    // mrpack 惯例 Deflated（Stored 只适合已压缩文件；config/资源包收益明显）
+    let opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    let mc_version = crate::util::mc_version_from_dir(version_name);
+    let mut dependencies = serde_json::Map::new();
+    dependencies.insert("minecraft".into(), serde_json::json!(mc_version));
+    // loader 依赖键与导入侧 modrinth_loader 一致：fabric-loader / quilt-loader / forge / neoforge
+    if let Some((key, ver)) = crate::util::loader_from_dir(version_name) {
+        let dep_key = match key {
+            "fabric" => "fabric-loader",
+            "quilt" => "quilt-loader",
+            "forge" | "neoforge" => key,
+            _ => "",
+        };
+        if !dep_key.is_empty() {
+            dependencies.insert(dep_key.into(), serde_json::json!(ver));
+        }
+    }
 
     let manifest = serde_json::json!({
+        "formatVersion": 1,
+        "game": "minecraft",
+        "versionId": mc_version,
         "name": version_name,
-        "directories": subdirs,
-        "exported_at": unix_now(),
+        "summary": "",
+        "files": [],
+        "dependencies": dependencies,
     });
     let content = serde_json::to_vec_pretty(&manifest).map_err(|e| format!("序列化失败\n{e}"))?;
     writer
-        .start_file("manifest.json", opts)
-        .map_err(|e| format!("写入 manifest 失败\n{e}"))?;
+        .start_file("modrinth.index.json", opts)
+        .map_err(|e| format!("写入清单失败\n{e}"))?;
     writer
         .write_all(&content)
-        .map_err(|e| format!("写入 manifest 失败\n{e}"))?;
+        .map_err(|e| format!("写入清单失败\n{e}"))?;
 
     for sub in subdirs {
-        add_dir_to_zip(&mut writer, &vdir.join(sub), sub, opts)?;
+        add_dir_to_zip(
+            &mut writer,
+            &vdir.join(sub),
+            &format!("overrides/{sub}"),
+            opts,
+        )?;
     }
     writer.finish().map_err(|e| format!("写入 zip 失败\n{e}"))?;
     Ok(())
@@ -354,14 +389,6 @@ fn add_dir_to_zip(
     Ok(())
 }
 
-/// 当前 unix 时间戳（秒，String 便于进 JSON）；系统时间异常时退回 0（不影响打包主流程）。
-fn unix_now() -> String {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs().to_string())
-        .unwrap_or_else(|_| "0".to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -385,35 +412,39 @@ mod tests {
             .map(|i| archive.by_index(i).unwrap().name().to_string())
             .collect();
         assert!(
-            names.contains(&"manifest.json".to_string()),
-            "缺 manifest: {names:?}"
+            names.contains(&"modrinth.index.json".to_string()),
+            "缺 modrinth.index.json: {names:?}"
         );
         assert!(
-            names.contains(&"mods/".to_string()),
-            "缺 mods 目录条目: {names:?}"
+            names.contains(&"overrides/mods/".to_string()),
+            "缺 overrides/mods 目录条目: {names:?}"
         );
         assert!(
-            names.contains(&"mods/a.jar".to_string()),
-            "缺 mods/a.jar: {names:?}"
+            names.contains(&"overrides/mods/a.jar".to_string()),
+            "缺 overrides/mods/a.jar: {names:?}"
         );
         assert!(
-            names.contains(&"mods/nested/b.jar".to_string()),
+            names.contains(&"overrides/mods/nested/b.jar".to_string()),
             "缺嵌套文件: {names:?}"
         );
         assert!(
-            !names.iter().any(|n| n.starts_with("config")),
+            !names.iter().any(|n| n.starts_with("overrides/config")),
             "不存在的 config 目录不应入包: {names:?}"
         );
 
         let mut m = String::new();
         archive
-            .by_name("manifest.json")
+            .by_name("modrinth.index.json")
             .unwrap()
             .read_to_string(&mut m)
             .unwrap();
         let j: serde_json::Value = serde_json::from_str(&m).unwrap();
-        assert_eq!(j["name"], "1.20.1-fabric-1.0");
-        assert_eq!(j["directories"][0], "mods");
+        assert_eq!(j["formatVersion"], 1);
+        assert_eq!(j["game"], "minecraft");
+        assert_eq!(j["versionId"], "1.20.1");
+        assert_eq!(j["dependencies"]["minecraft"], "1.20.1");
+        assert_eq!(j["dependencies"]["fabric-loader"], "1.0");
+        assert_eq!(j["files"], serde_json::json!([]));
     }
 
     #[test]
@@ -428,6 +459,6 @@ mod tests {
         let names: Vec<String> = (0..archive.len())
             .map(|i| archive.by_index(i).unwrap().name().to_string())
             .collect();
-        assert_eq!(names, vec!["manifest.json"]);
+        assert_eq!(names, vec!["modrinth.index.json"]);
     }
 }
