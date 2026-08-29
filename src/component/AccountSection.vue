@@ -403,11 +403,6 @@ function useOfflineName(name: string) {
   border-radius: 6px;
   background: var(--color-brand);
   color: var(--text-inverse);
-  font-size: 12px;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--color-brand);
   cursor: pointer;
 }
 .ext-goto:hover {
