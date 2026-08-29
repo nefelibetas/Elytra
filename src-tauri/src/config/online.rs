@@ -1,10 +1,15 @@
 use serde::{Deserialize, Serialize};
 
-/// 默认协调节点（备用）：首次使用联机功能时的预填值，开箱即用。
-/// `tcp://8.138.31.80:11010` 为社区公共服务器（阿里云），2026-08 实测可达且支持打洞；
-/// 社区节点可能随时变动，用户在设置里可修改/清空（保存后以用户值为准）。
-/// easytier 官方公共节点（public.easytier.top 等）已下线（DNS NXDOMAIN），不再内置。
-pub const DEFAULT_PUBLIC_NODES: &[&str] = &["tcp://8.138.31.80:11010"];
+/// 多节点并行连接（easytier 任一可用即可组网，天然主备；不可达的自动跳过）。
+/// - `tcp://8.138.31.80:11010`：社区公共服务器（阿里云），2026-08 实测可达且支持打洞；
+/// - `tcp://public.easytier.top:11010` / `tcp://public.easytier.cn:11010`：easytier 官方
+///   公共节点域名（文档/教程常用；是否在线随官方运营，不可达时由并行机制跳过）。
+/// 节点可能随时变动，用户在设置里可修改/清空（保存后以用户值为准）。
+pub const DEFAULT_PUBLIC_NODES: &[&str] = &[
+    "tcp://8.138.31.80:11010",
+    "tcp://public.easytier.top:11010",
+    "tcp://public.easytier.cn:11010",
+];
 
 /// 联机配置（persist section "online"）。
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]

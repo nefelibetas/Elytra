@@ -200,12 +200,15 @@ pub async fn start_host(app: &tauri::AppHandle) -> Result<OnlineSnapshot, String
             if svc.status == OnlineStatus::Hosting {
                 continue;
             }
-            // Waiting → Hosting：先停旧实例（释放 11010 监听端口），再重建补转发。
-            if let Some(old) = svc.session.take() {
-                old.stop().await;
-            }
             let Some(room) = svc.room.clone() else {
                 return;
+            };
+            // 存档名（MOTD）补入房间码：guest 端 MC 局域网广播显示真实世界名
+            let motd = svc.scanner.as_ref().map(|sc| sc.get_motd()).unwrap_or_default();
+            let room = if motd.is_empty() {
+                room
+            } else {
+                room.with_motd(motd)
             };
             let cfg = SessionConfig {
                 role: SessionRole::Host,
@@ -266,10 +269,12 @@ pub async fn join(app: &tauri::AppHandle, room_code: &str) -> Result<u16, String
     let s = EasyTierSession::start(cfg).await?;
     svc.session = Some(s);
     svc.status = OnlineStatus::Joining;
+    // 存档名优先用房间码携带的 host MOTD（无则广播回退默认文案）
+    let motd = room.motd.clone().unwrap_or_default();
     svc.room = Some(room);
     // guest 端模拟 MC 局域网广播：客户端在"局域网"标签页看到本服务器，
     // 走局域网发现路径跳过会话校验（离线手动 IP 直连会报"无效会话"）。
-    svc.advertiser = Some(McAdvertiser::start(local_port));
+    svc.advertiser = Some(McAdvertiser::start_with_motd(local_port, &motd));
     let entry_port = svc.room.as_ref().and_then(|r| r.port);
     drop(svc); // 探测期间不持锁（stop 需要）
 
