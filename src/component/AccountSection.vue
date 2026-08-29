@@ -166,10 +166,10 @@ function useOfflineName(name: string) {
           </div>
           <div v-else-if="authMode === 'thirdparty'" class="uname" :class="{ 'uname-empty': !externalAccount }">
             <template v-if="externalAccount">{{ externalAccount.name }}</template>
-            <template v-else>
-              <span class="ext-hint">未登录</span>
+            <div v-else class="ext-status">
+              <span class="ext-hint">未登录第三方账号</span>
               <button class="ext-goto" @click="goThirdPartyLogin">去登录</button>
-            </template>
+            </div>
           </div>
           <div v-else class="offline-name">
             <input
@@ -388,9 +388,21 @@ function useOfflineName(name: string) {
   font-size: 12px;
   color: var(--text-tertiary);
 }
+.ext-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
 .ext-goto {
-  margin-left: 8px;
-  padding: 3px 10px;
+  position: relative;
+  z-index: 2;
+  padding: 6px 18px;
+  font-size: 12.5px;
+  border: 1px solid var(--color-brand);
+  border-radius: 6px;
+  background: var(--color-brand);
+  color: var(--text-inverse);
   font-size: 12px;
   border: 1px solid var(--border-strong);
   border-radius: 6px;
@@ -424,14 +436,18 @@ function useOfflineName(name: string) {
   justify-content: center;
   gap: 4px;
   width: 100%;
+  flex-wrap: nowrap;
 }
 
 .auth-btn {
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 6px 20px;
+  gap: 5px;
+  padding: 6px 6px;
+  white-space: nowrap;
   border-radius: var(--radius-sm);
   border: none;
   background: transparent;
@@ -440,6 +456,11 @@ function useOfflineName(name: string) {
   font-weight: 500;
   cursor: pointer;
   transition: all 0.15s;
+}
+
+.auth-btn span {
+  flex: none;
+  white-space: nowrap;
 }
 
 .auth-btn:hover {
