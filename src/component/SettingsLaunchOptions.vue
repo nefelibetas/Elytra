@@ -5,13 +5,19 @@ import { memState } from "../store/memory";
 import DropSelect, { type SelOption } from "./DropSelect.vue";
 import {
   loWindowTitle, loPriority, loWinMode, loWinW, loWinH, loGameLang,
-  loMemMode, loMemMb, loMemOptimize, loVerifySsl, launchError,
+  loMemMode, loMemMb, loMinMem, loMemOptimize, loVerifySsl, launchError,
   memUsedMb, memGameMb, memUsedPct, memGamePct,
   saveLaunchOptions, loadLaunchOptions,
 } from "../store/launchOptions";
 import { memLabelLeft, fmtGb } from "../utils/format";
 
 onMounted(loadLaunchOptions);
+
+/** 最小内存开关：null = 不设置（JVM 默认）；开启默认取 512MB。 */
+function toggleMinMem() {
+  loMinMem.value = loMinMem.value === null ? Math.min(512, loMemMb.value) : null;
+  saveLaunchOptions();
+}
 
 /** 进程优先级选项（DropSelect 用）。 */
 const priorityOptions: SelOption[] = [
@@ -146,6 +152,25 @@ const winsizeOptions: SelOption[] = [
           @change="saveLaunchOptions"
         />
         <span class="mem-slider-val" :class="{ disabled: loMemMode !== 'Custom' }">{{ fmtGb(loMemMb) }}</span>
+      </div>
+      <div class="lo-row">
+        <label class="lo-check">
+          <input :checked="loMinMem !== null" type="checkbox" :disabled="loMemMode !== 'Custom'" @change="toggleMinMem" />
+          <span :class="{ dim: loMemMode !== 'Custom' }">最小内存（-Xms）</span>
+        </label>
+        <input
+          v-if="loMinMem !== null"
+          v-model.number="loMinMem"
+          class="mem-slider"
+          type="range"
+          :min="256"
+          :max="loMemMb"
+          step="128"
+          :disabled="loMemMode !== 'Custom'"
+          :style="{ '--range-pct': ((loMinMem - 256) / (loMemMb - 256) * 100) + '%' }"
+          @change="saveLaunchOptions"
+        />
+        <span v-if="loMinMem !== null" class="mem-slider-val" :class="{ disabled: loMemMode !== 'Custom' }">{{ loMinMem }} MB</span>
       </div>
       <div class="lo-row">
         <label class="lo-check">

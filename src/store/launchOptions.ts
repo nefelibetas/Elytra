@@ -6,6 +6,7 @@ import { useConfigSection } from "../utils/useConfigSection";
 
 export interface LauncherOptions {
   memory: "Auto" | { Custom: number };
+  min_memory: number | null;
   window_title: string;
   process_priority: "Low" | "Normal" | "High" | "RealTime";
   window_size: "Default" | { Custom: [number, number] };
@@ -34,6 +35,7 @@ export const loGameLang = ref("auto_zh_CN");
 // 内存分配（状态由全局 startMemoryMonitor 持续刷新）
 export const loMemMode = ref<"Auto" | "Custom">("Auto");
 export const loMemMb = ref(4096);
+export const loMinMem = ref<number | null>(null);
 export const loMemOptimize = ref(false);
 
 export const memUsedMb = computed(() => Math.max(0, memState.totalMb - memState.availMb));
@@ -104,6 +106,7 @@ export async function loadLaunchOptions() {
     loGameLang.value = cfg.game_language ?? "auto_zh_CN";
     loMemMode.value = cfg.memory === "Auto" ? "Auto" : "Custom";
     if (cfg.memory !== "Auto") loMemMb.value = (cfg.memory as any).Custom ?? 4096;
+    loMinMem.value = cfg.min_memory ?? null;
     loMemOptimize.value = !!cfg.pre_launch_memory_optimize;
     // 内存快照由全局监听提供；首帧未就绪时补拉一次
     if (!memState.availMb) {
@@ -137,6 +140,7 @@ export async function saveLaunchOptions() {
     cfg.game_args = loGameArgs.value.split(/\n/).map(s => s.trim()).filter(Boolean);
     cfg.pre_launch_cmd = loPreCmd.value.trim();
     cfg.memory = loMemMode.value === "Custom" ? { Custom: loMemMb.value } : "Auto";
+    cfg.min_memory = loMinMem.value;
     cfg.pre_launch_memory_optimize = loMemOptimize.value;
     cfg.gc_type = loGc.value;
     cfg.disable_launch_wrapper = loDisableWrapper.value;

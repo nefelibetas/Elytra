@@ -759,6 +759,14 @@ fn collect_jvm_args(
         MemoryMode::Custom(mb) => mb,
     };
     jvm_tuning.push(format!("{}{}m", PREFIX_XMX, mem_mb));
+    // 最小堆：仅 Custom 模式生效（Auto 下 -Xmx 动态推测，固定 -Xms 可能超上限）；
+    // 值 clamp 到 -Xmx 以内（-Xms > -Xmx 会让 JVM 直接启动失败）。
+    if let Some(min_mb) = config
+        .min_memory
+        .filter(|_| matches!(config.memory, MemoryMode::Custom(_)))
+    {
+        jvm_tuning.push(format!("{}{}m", PREFIX_XMS, min_mb.min(mem_mb)));
+    }
 
     // GC 参数
     jvm_tuning.extend(memory::gc_args(&config.gc_type));
