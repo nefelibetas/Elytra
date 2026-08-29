@@ -424,7 +424,13 @@ pub fn build_launch_command(
         let jar = crate::util::exe_dir()
             .join(crate::constants::CONFIG_DIR)
             .join(crate::auth::external::AUTHLIB_JAR);
-        args.push(format!("-javaagent:{}={}", jar.display(), api_url));
+        // Ely.by 用 authlib-injector 内置别名；其余标准站传完整 URL
+        let server = if crate::auth::external::is_ely_by(api_url) {
+            "ely.by".to_string()
+        } else {
+            api_url.clone()
+        };
+        args.push(format!("-javaagent:{}={}", jar.display(), server));
         args.push("-Dauthlibinjector.side=client".to_string());
     }
     args.push(main_class);

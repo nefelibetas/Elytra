@@ -9,6 +9,12 @@ use crate::constants;
 /// authlib-injector jar 文件名（数据目录 = exe 旁 Elytra/）。
 pub const AUTHLIB_JAR: &str = "authlib-injector.jar";
 
+/// Ely.by 使用非标准 Yggdrasil 路径（POST /auth/authenticate）且注入需别名
+/// `ely.by`（authlib-injector 内置适配）。据此检测走特殊分支。
+pub fn is_ely_by(api_url: &str) -> bool {
+    api_url.contains("ely.by")
+}
+
 /// 第三方账号（含验证服务器地址与短期 access_token）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExternalAccount {
@@ -69,7 +75,12 @@ pub async fn login(
     if username.trim().is_empty() || password.is_empty() {
         return Err("请输入账号与密码".into());
     }
-    let url = format!("{api}/authserver/authenticate");
+    // Ely.by 非标准路径：/auth/authenticate；其余标准 /authserver/authenticate
+    let url = if is_ely_by(&api) {
+        format!("{api}/auth/authenticate")
+    } else {
+        format!("{api}/authserver/authenticate")
+    };
     let body = serde_json::json!({
         "agent": { "name": "Minecraft", "version": 1 },
         "username": username,
