@@ -32,6 +32,19 @@ fn build_auth(
             uuid: uuid.to_string(),
             xuid: xuid.to_string(),
         },
+        "external" => {
+            // 第三方登录：账号从 secrets 读（uuid/name/token/api_url 一致），
+            // 前端传 username/uuid/token；api_url 从当前第三方账号取
+            let api_url = crate::auth::external::read()
+                .map(|a| a.api_url)
+                .unwrap_or_default();
+            AuthMode::External {
+                username: username.to_string(),
+                access_token: access_token.to_string(),
+                uuid: uuid.to_string(),
+                api_url,
+            }
+        }
         _ => AuthMode::Offline {
             username: username.to_string(),
             uuid: String::new(), // 由 apply_offline_skin 按离线皮肤设置填充
@@ -67,6 +80,16 @@ pub(crate) fn prepare_launch(
     fill_missing_xuid(&mut auth);
     let (java_path, version_json, mc_dir, launcher_config, java_major) =
         env::load_launch_config(version_dir_name)?;
+    // 第三方登录：启动前确保 authlib-injector.jar 存在（注入必需，缺失会启动失败）
+    // 第三方登录：启动前确保 authlib-injector.jar 存在（注入必需，缺失会启动失败）
+    if matches!(auth, AuthMode::External { .. }) {
+        let jar = crate::util::exe_dir()
+            .join(crate::constants::CONFIG_DIR)
+            .join(crate::auth::external::AUTHLIB_JAR);
+        if !jar.exists() {
+            return Err("第三方登录组件缺失\n请重新登录第三方账号以恢复 authlib-injector.jar".into());
+        }
+    }
     Ok((
         auth,
         java_path,

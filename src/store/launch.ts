@@ -6,7 +6,7 @@ import { listen } from "@tauri-apps/api/event";
 import type { StepStatus } from "./download";
 import type { InstalledVersionInfo } from "./gameDirs";
 import { EVT_GAME_EXITED, EVT_GAME_WINDOW_VISIBLE } from "./events";
-import { authMode, msAccount, username, type MsAccountInfo } from "./auth";
+import { authMode, msAccount, username, externalAccount, type MsAccountInfo } from "./auth";
 import { selectedVersion, setSelected, getSavedDir } from "./selectedVersion";
 import { showError } from "./alert";
 
@@ -74,6 +74,7 @@ export async function doLaunch(navigateToDownload: () => void) {
   }
 
   const isOffline = authMode.value === "offline";
+  const isThirdParty = authMode.value === "thirdparty";
 
   // 离线模式必须输入用户名
   if (isOffline && !username.value.trim()) {
@@ -83,12 +84,22 @@ export async function doLaunch(navigateToDownload: () => void) {
 
   // 正版模式必须已登录；启动前静默刷新 token
   // （界面切换在前，刷新是网络请求，避免点击后界面无反馈）
-  if (!isOffline && !msAccount.value) {
+  if (!isOffline && !isThirdParty && !msAccount.value) {
     showError("请先登录 Microsoft 账号");
     return;
   }
 
-  const name = isOffline ? username.value.trim() : (msAccount.value?.name ?? "");
+  // 第三方模式必须已登录
+  if (isThirdParty && !externalAccount.value) {
+    showError("请先登录第三方账号");
+    return;
+  }
+
+  const name = isOffline
+    ? username.value.trim()
+    : isThirdParty
+      ? (externalAccount.value?.name ?? "")
+      : (msAccount.value?.name ?? "");
   launchState.phase = "running";
   launchState.steps = [
     { name: "检查 Java 环境", status: "running" },
@@ -98,8 +109,8 @@ export async function doLaunch(navigateToDownload: () => void) {
   ];
 
   try {
-    // 正版：等待 token 刷新完成（失败时重置并返回，不重复弹窗）
-    if (!isOffline) {
+    // 正版：等待 token 刷新完成（失败时重置并返回，不重复弹窗）；第三方/离线跳过
+    if (!isOffline && !isThirdParty) {
       try {
         msAccount.value = await invoke<MsAccountInfo>("refresh_ms_account");
       } catch (e) {
@@ -121,11 +132,19 @@ export async function doLaunch(navigateToDownload: () => void) {
     step("启动游戏", "running");
     const pid = await invoke("spawn_game", {
       versionDirName: selectedVersion.value,
-      authMode: isOffline ? "offline" : "online",
+      authMode: isOffline ? "offline" : isThirdParty ? "external" : "online",
       username: name,
-      accessToken: isOffline ? "" : (msAccount.value?.access_token ?? ""),
-      uuid: isOffline ? "" : (msAccount.value?.uuid ?? ""),
-      xuid: isOffline ? "" : (msAccount.value?.xuid ?? ""),
+      accessToken: isOffline
+        ? ""
+        : isThirdParty
+          ? (externalAccount.value?.access_token ?? "")
+          : (msAccount.value?.access_token ?? ""),
+      uuid: isOffline
+        ? ""
+        : isThirdParty
+          ? (externalAccount.value?.uuid ?? "")
+          : (msAccount.value?.uuid ?? ""),
+      xuid: isOffline || isThirdParty ? "" : (msAccount.value?.xuid ?? ""),
     });
     step("启动游戏", "done");
     step("等待游戏窗口", "running");

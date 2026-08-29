@@ -193,3 +193,60 @@ pub async fn refresh_ms_account() -> Result<MsAccount, String> {
     crate::auth::model::save(&refreshed)?;
     Ok(refreshed)
 }
+
+// ── 第三方登录（authlib-injector / 皮肤站 / Yggdrasil 兼容服务器）──
+
+/// 第三方登录：验证服务器地址 + 账号密码 → authenticate → 保存账号 + 确保 jar。
+#[tauri::command]
+pub async fn external_login(
+    api_url: String,
+    username: String,
+    password: String,
+) -> Result<crate::auth::external::ExternalAccount, String> {
+    let acc = crate::auth::external::login(&api_url, &username, &password).await?;
+    crate::auth::external::save(&acc)?;
+    // 登录成功即确保 authlib-injector.jar 就绪（启动注入用）；失败不阻塞登录
+    if let Err(e) = crate::auth::external::ensure_jar().await {
+        eprintln!("[external] authlib-injector 下载失败: {e}");
+    }
+    Ok(acc)
+}
+
+/// 第三方账号列表。
+#[tauri::command]
+pub fn get_external_accounts() -> Vec<crate::auth::external::ExternalAccount> {
+    crate::auth::external::read_all()
+}
+
+/// 移除第三方账号（api_url + uuid 定位）。
+#[tauri::command]
+pub fn remove_external_account(api_url: String, uuid: String) -> Result<(), String> {
+    crate::auth::external::remove(&api_url, &uuid)
+}
+
+/// 第三方登录配置（预设验证服务器地址列表）。
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct ThirdPartyConfig {
+    /// 常用验证服务器（皮肤站）预设列表
+    pub servers: Vec<String>,
+}
+
+/// 读取第三方配置（无配置回默认预设）。
+#[tauri::command]
+pub fn get_third_party_config() -> ThirdPartyConfig {
+    let cfg: ThirdPartyConfig =
+        crate::persist::read(crate::constants::SECT_THIRD_PARTY).unwrap_or_default();
+    if cfg.servers.is_empty() {
+        return ThirdPartyConfig {
+            servers: vec!["https://littleskin.cn/api/yggdrasil".into()],
+        };
+    }
+    cfg
+}
+
+/// 保存第三方配置（预设列表）。
+#[tauri::command]
+pub fn save_third_party_config(config: ThirdPartyConfig) -> Result<(), String> {
+    crate::persist::save(crate::constants::SECT_THIRD_PARTY, &config)
+        .map_err(|e| format!("保存失败\n{e}"))
+}

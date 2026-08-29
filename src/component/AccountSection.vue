@@ -1,15 +1,18 @@
 <script setup lang="ts">
 // 账号区：正版/离线切换 + 用户区（头像/用户名/登录/操作菜单）。
 // 菜单跟随鼠标 Teleport 到 body；window click 关闭菜单（组件挂载周期内注册）。
-import { computed, onMounted, onUnmounted, watch } from "vue";
-import { ShieldCheck, User, UserRound, Shirt, Pencil, LogOut, Users, ChevronDown } from "@lucide/vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { ShieldCheck, User, UserRound, Shirt, Pencil, LogOut, Users, ChevronDown, Link2 } from "@lucide/vue";
 import {
   authMode, msAccount, msAccounts, offlineAccounts, username, setAuthMode, msLoginState,
   startMsLogin, cancelMsLogin, switchMsAccount, removeMsAccount,
   saveOfflineAccount, removeOfflineAccount,
+  externalAccount, externalAccounts, loadExternalAccounts,
+  loginExternal, removeExternalAccount, switchExternalAccount,
 } from "../store/auth";
 import { avatarState, scheduleOfflineRender, renderAccountHead, renderOfflineHead, accountHeads, offlineHeads } from "../store/avatar";
 import { accountUi } from "../store/accountUi";
+import { invoke } from "@tauri-apps/api/core";
 import { showError } from "../store/alert";
 import MenuPopover from "./MenuPopover.vue";
 import AlertDialog from "./AlertDialog.vue";
@@ -37,6 +40,62 @@ onMounted(() => window.addEventListener("click", closeHandler));
 onUnmounted(() => {
   window.clearTimeout(offlineSaveTimer);
   window.removeEventListener("click", closeHandler);
+});
+
+// ── 第三方登录（authlib-injector / 皮肤站）──
+
+/** 预设验证服务器（设置页可管理）。 */
+const thirdPartyServers = ref<string[]>([]);
+const extApi = ref("");
+const extUser = ref("");
+const extPass = ref("");
+const extBusy = ref(false);
+const extError = ref("");
+
+async function loadThirdPartyConfig() {
+  try {
+    const cfg = await invoke<{ servers: string[] }>("get_third_party_config");
+    thirdPartyServers.value = cfg.servers ?? [];
+    if (!extApi.value && thirdPartyServers.value.length) {
+      extApi.value = thirdPartyServers.value[0];
+    }
+  } catch {
+    thirdPartyServers.value = [];
+  }
+}
+
+/** 第三方登录：服务器 + 账号密码 → authenticate。 */
+async function doExternalLogin() {
+  if (extBusy.value) return;
+  if (!extApi.value.trim()) { extError.value = "请输入验证服务器地址"; return; }
+  if (!extUser.value.trim() || !extPass.value) { extError.value = "请输入账号与密码"; return; }
+  extBusy.value = true;
+  extError.value = "";
+  try {
+    await loginExternal(extApi.value.trim(), extUser.value.trim(), extPass.value);
+    extUser.value = "";
+    extPass.value = "";
+  } catch (e) {
+    extError.value = String(e);
+  } finally {
+    extBusy.value = false;
+  }
+}
+
+/** 移除当前第三方账号。 */
+async function removeCurrentExternal() {
+  const acc = externalAccount.value;
+  if (!acc) return;
+  try {
+    await removeExternalAccount(acc.api_url, acc.uuid);
+  } catch (e) {
+    showError(`移除账号失败：${String(e)}`, true);
+  }
+}
+
+onMounted(() => {
+  void loadExternalAccounts();
+  void loadThirdPartyConfig();
 });
 
 // ── 账号列表 2D 头像（打开菜单时并发预加载，会话内缓存）──
@@ -120,6 +179,14 @@ function useOfflineName(name: string) {
           <User :size="16" />
           <span>离线</span>
         </button>
+        <button
+          class="auth-btn"
+          :class="{ active: authMode === 'thirdparty' }"
+          @click="setAuthMode('thirdparty')"
+        >
+          <Link2 :size="16" />
+          <span>第三方</span>
+        </button>
       </div>
     </div>
 
@@ -139,6 +206,9 @@ function useOfflineName(name: string) {
           </div>
           <div v-if="authMode === 'premium'" class="uname" :class="{ 'uname-empty': !msAccount }">
             {{ msAccount?.name || '未登录' }}
+          </div>
+          <div v-else-if="authMode === 'thirdparty'" class="uname" :class="{ 'uname-empty': !externalAccount }">
+            {{ externalAccount?.name || '未登录' }}
           </div>
           <div v-else class="offline-name">
             <input
@@ -184,6 +254,59 @@ function useOfflineName(name: string) {
                 <div v-else class="menu-item acct-empty">暂无历史用户名</div>
               </div>
             </Transition>
+          </div>
+        </div>
+
+        <div v-else-if="authMode === 'thirdparty'" class="user-actions">
+          <template v-if="externalAccount">
+            <!-- 第三方账号列表（切换/移除） -->
+            <button
+              class="icon-btn"
+              v-tooltip="'第三方账号列表'"
+              @click.stop="accountUi.openAccountsMenu($event)"
+            >
+              <Users :size="14" />
+            </button>
+            <!-- 移除当前第三方账号 -->
+            <button class="icon-btn" v-tooltip="'移除当前账号'" @click="removeCurrentExternal">
+              <LogOut :size="14" />
+            </button>
+          </template>
+        </div>
+
+        <!-- 第三方登录表单（未登录时显示） -->
+        <div v-if="authMode === 'thirdparty' && !externalAccount" class="ext-login">
+          <div class="ext-row">
+            <input
+              v-model="extApi"
+              class="ext-input"
+              type="text"
+              placeholder="验证服务器地址，如 littleskin.cn/api/yggdrasil"
+            />
+            <select
+              class="ext-preset"
+              @change="extApi = ($event.target as HTMLSelectElement).value"
+            >
+              <option value="" disabled>预设</option>
+              <option v-for="sv in thirdPartyServers" :key="sv" :value="sv">{{ sv }}</option>
+            </select>
+          </div>
+          <div class="ext-row">
+            <input v-model="extUser" class="ext-input" type="text" placeholder="皮肤站账号" />
+            <input
+              v-model="extPass"
+              class="ext-input"
+              type="password"
+              placeholder="密码"
+              @keyup.enter="doExternalLogin"
+            />
+          </div>
+          <div class="ext-row">
+            <button class="act-btn" :disabled="extBusy" @click="doExternalLogin">
+              <Link2 :size="14" />
+              <span>{{ extBusy ? "登录中…" : "登录" }}</span>
+            </button>
+            <span v-if="extError" class="ext-error">{{ extError }}</span>
           </div>
         </div>
 
@@ -279,6 +402,30 @@ function useOfflineName(name: string) {
               </div>
             </template>
             <div v-else class="menu-item acct-empty">暂无历史账号</div>
+            <template v-if="externalAccounts.length">
+              <div class="menu-sep"></div>
+              <div class="menu-item acct-empty">第三方账号</div>
+              <div
+                v-for="acc in externalAccounts"
+                :key="acc.api_url + acc.uuid"
+                class="acct-row"
+                :class="{ current: acc.uuid === externalAccount?.uuid && acc.api_url === externalAccount?.api_url }"
+                @click="switchExternalAccount(acc.api_url, acc.uuid); setAuthMode('thirdparty')"
+              >
+                <UserRound :size="16" class="acct-icon" />
+                <span class="acct-name">{{ acc.name }}</span>
+                <span class="acct-server" :title="acc.api_url">{{ acc.api_url }}</span>
+                <span
+                  v-if="acc.uuid === externalAccount?.uuid && acc.api_url === externalAccount?.api_url"
+                  class="acct-check"
+                >✓</span>
+                <button
+                  class="acct-del"
+                  title="移除该账号"
+                  @click.stop="removeExternalAccount(acc.api_url, acc.uuid)"
+                >×</button>
+              </div>
+            </template>
             <div class="menu-sep"></div>
             <div class="menu-item" @click="accountUi.closeAccountsMenu(); startMsLogin()">登录新账号</div>
         </MenuPopover>
@@ -298,6 +445,61 @@ function useOfflineName(name: string) {
 </template>
 
 <style scoped>
+.ext-login {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.ext-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ext-input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  outline: none;
+}
+.ext-input:focus {
+  border-color: var(--color-brand);
+}
+.ext-preset {
+  flex: none;
+  max-width: 180px;
+  height: 28px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  outline: none;
+}
+.ext-error {
+  flex: 1;
+  font-size: 11px;
+  color: var(--color-danger);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.acct-server {
+  flex: none;
+  max-width: 140px;
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .account-sec {
   flex: 1;
   display: flex;
