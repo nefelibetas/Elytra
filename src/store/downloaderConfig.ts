@@ -61,6 +61,7 @@ export const dlManifestMode = ref("auto");
 export const dlCommunityMode = ref("auto");
 export const dlJdkMode = ref("auto");
 export const dlConcurrency = ref(64);
+export const dlMaxSpeed = ref(0); // bytes/s，0 = 不限
 // 镜像源并发上限（后端 constants.rs MIRROR_CONCURRENCY，改动需同步）：
 // 官方源不限流、镜像源（BMCLAPI）30 并发即触发 429，镜像请求恒为 8 并发
 export const MIRROR_CONCURRENCY = 8;
@@ -119,6 +120,7 @@ export async function loadDownloadConfig() {
       dlTranslateMode.value = mode === "both" ? "zh" : mode;
     }
     dlShowReleaseOnly.value = cfg.show_release_only ?? true;
+    dlMaxSpeed.value = cfg.max_speed ?? 0;
   } catch {
     // 无配置时保持默认
   }
@@ -137,6 +139,7 @@ export async function saveDownloadConfig() {
         minecraft_dir: dlMinecraftDir.value,
         translate_display: dlTranslateMode.value,
         show_release_only: dlShowReleaseOnly.value,
+        max_speed: dlMaxSpeed.value,
       },
     });
   });

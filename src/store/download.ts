@@ -14,7 +14,7 @@ export type TaskKind = "jdk";
 export interface TaskItem {
   taskId: string
   name: string
-  status: "pending" | "running" | "done" | "error" | "cancelled"
+  status: "pending" | "running" | "done" | "error" | "cancelled" | "paused"
   progress: number
   speedBps: number
   /** 预计剩余秒数；停滞或速度过低时为 null */
@@ -208,6 +208,26 @@ export const dlState = reactive({
     taskDoneHooks.delete(taskId)
   },
 
+  /** 暂停任务：停下载、保留目录与快照；卡片本地标 paused（供继续/放弃）。
+   *  后端 runner 随后收尾会 emit 一次 cancelled 事件，事件处理对 paused 任务忽略。 */
+  async pauseTask(taskId: string) {
+    await invoke("pause_task", { taskId })
+    const idx = this.tasks.findIndex(t => t.taskId === taskId)
+    if (idx >= 0) this.tasks[idx].status = "paused"
+  },
+
+  /** 继续暂停任务：后端读快照重跑（已完成文件 sha1 跳过），新任务经事件自动注册；移除旧卡片。 */
+  async resumePausedTask(taskId: string) {
+    await invoke("resume_task", { taskId })
+    this.removeTask(taskId)
+  },
+
+  /** 放弃暂停任务：删快照（重启不再提示恢复）+ 移除卡片。 */
+  async dismissPausedTask(taskId: string) {
+    try { await invoke("dismiss_interrupted_task", { taskId }) } catch { /* 快照已删则忽略 */ }
+    this.removeTask(taskId)
+  },
+
   /** 任务完成回调：第一参为完成提示文案；第三参为版本下载任务的安装目录名
    *  （下载完成自动选中该版本，供 Mod 下载目标使用） */
   onTaskDone: null as ((message: string, kind?: TaskKind, versionDir?: string) => void) | null,
@@ -265,6 +285,7 @@ export function ensureListen() {
         taskDoneHooks.delete(p.task_id);
         return
       }
+      if (p.status === "cancelled" && dlState.tasks[idx].status === "paused") return
       dlState.tasks[idx].name = p.name
       dlState.tasks[idx].status = p.status as TaskItem["status"]
       dlState.tasks[idx].progress = p.progress

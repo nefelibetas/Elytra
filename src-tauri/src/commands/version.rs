@@ -242,6 +242,13 @@ pub fn delete_mod_file(version_name: String, file_name: String) -> Result<(), St
     mod_updates::delete_mod_file(&vdir.join("mods"), &file_name)
 }
 
+/// 切换 mods 目录下单个 mod 文件的启用/禁用状态（重命名 .jar → .jar.disabled，扫描自动隐藏）。
+#[tauri::command]
+pub fn toggle_mod_file(version_name: String, file_name: String) -> Result<bool, String> {
+    let vdir = version_dir(&version_name)?;
+    mod_updates::toggle_mod_file(&vdir.join("mods"), &file_name)
+}
+
 /// 导出整合包：把版本目录下的 mods/config/shaderpacks/resourcepacks 打进 zip
 /// （顶层同名目录 + manifest.json 元数据）。目录缺失自动跳过；打包走 spawn_blocking 防阻塞。
 /// jar 等已压缩内容用 Stored（不二次压缩，速度优先）。

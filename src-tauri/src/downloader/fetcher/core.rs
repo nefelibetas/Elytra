@@ -4,7 +4,7 @@
 use reqwest::Client;
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
@@ -23,6 +23,14 @@ use crate::downloader::proxy::apply_system_proxy;
 /// 镜像源并发信号量（全进程共享）：限制同一时刻对镜像源（BMCLAPI/MCIM）的请求数。
 /// 官方源实测 128 并发稳定无限流；镜像源 30 并发即触发 429，故镜像请求独立于
 /// 任务并发（官方用用户配置并发，镜像恒为 MIRROR_CONCURRENCY）。
+/// 全局限速（bytes/s，0 = 不限）。由配置保存/任务启动时同步。
+static SPEED_LIMIT: AtomicU64 = AtomicU64::new(0);
+
+/// 设置全局限速（bytes/s，0 关闭）。
+pub fn set_speed_limit(bytes: u64) {
+    SPEED_LIMIT.store(bytes, Ordering::Relaxed);
+}
+
 static MIRROR_SEM: LazyLock<Arc<Semaphore>> =
     LazyLock::new(|| Arc::new(Semaphore::new(crate::constants::MIRROR_CONCURRENCY)));
 
@@ -363,6 +371,17 @@ async fn fetch_once<F: Fn(u64, u64)>(
         downloaded = downloaded.saturating_add(chunk.len() as u64);
         if let Some(cb) = progress.as_ref() {
             cb(downloaded, total);
+        }
+        // 限速：按累计字节/限速推算目标耗时，落后则补睡到目标时刻
+        // （每块检查；限速为 0 = 不限）。睡眠期间不响应 cancel——块间
+        // 的取消检查在循环头部，限速时取消延迟 ≤ 一个块的时间。
+        let limit = SPEED_LIMIT.load(Ordering::Relaxed);
+        if limit > 0 {
+            let target_secs = downloaded as f64 / limit as f64;
+            let elapsed_secs = start.elapsed().as_secs_f64();
+            if elapsed_secs < target_secs {
+                tokio::time::sleep(Duration::from_secs_f64(target_secs - elapsed_secs)).await;
+            }
         }
     }
 

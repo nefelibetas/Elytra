@@ -26,6 +26,8 @@ const ARG_HEIGHT: &str = "--height";
 const ARG_USER_PROPERTIES: &str = "--userProperties";
 const ARG_USER_PROPERTIES_LEGACY: &str = "--user-properties";
 const ARG_PROFILE_PROPERTIES: &str = "--profileProperties";
+const ARG_SERVER: &str = "--server";
+const ARG_PORT: &str = "--port";
 
 // JVM 系统属性键（-D 前缀 + 值；拼接场景用带 = 前缀常量）
 const SYS_LAUNCHER_BRAND: &str = "-Dminecraft.launcher.brand=";
@@ -406,6 +408,18 @@ pub fn build_launch_command(
     args.extend(jvm_tuning);
     args.push(main_class);
     args.extend(game_args);
+    // 服务器直连：快速进服（追加到游戏参数末尾，用户自定义 game_args 之前）
+    if let Some(server) = config.server.as_deref() {
+        let server = server.trim();
+        if !server.is_empty() {
+            args.push(ARG_SERVER.to_string());
+            args.push(server.to_string());
+        }
+    }
+    if let Some(port) = config.port {
+        args.push(ARG_PORT.to_string());
+        args.push(port.to_string());
+    }
     args.extend(config.game_args.iter().cloned());
 
     LaunchCommand {

@@ -91,6 +91,14 @@ pub struct LauncherConfig {
     #[serde(default = "default_zh")]
     pub game_language: String,
 
+    /// 服务器直连：快速进服（--server/--port 追加到游戏参数末尾）。None = 不指定。
+    #[serde(default)]
+    pub server: Option<String>,
+
+    /// 服务器直连端口（配合 server 使用；None = 不传 --port）。
+    #[serde(default)]
+    pub port: Option<u16>,
+
     /// 正版登录时验证 SSL 证书（默认关闭，规避国内网络证书链不完整问题）。
     #[serde(default)]
     pub verify_ssl: bool,
@@ -125,6 +133,8 @@ impl Default for LauncherConfig {
             pre_launch_memory_optimize: false,
             use_high_performance_gpu: true,
             game_language: "auto_zh_CN".into(),
+            server: None,
+            port: None,
             verify_ssl: false,
             jvm_args: vec![
                 "-XX:-OmitStackTraceInFastThrow".into(),

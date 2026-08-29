@@ -15,6 +15,8 @@ export interface LauncherOptions {
   use_high_performance_gpu: boolean;
   pre_launch_memory_optimize: boolean;
   game_language: string;
+  server: string | null;
+  port: number | null;
   jvm_args: string[];
   game_args: string[];
   pre_launch_cmd: string;
@@ -31,6 +33,10 @@ export const loWinMode = ref<"Default" | "Custom">("Default");
 export const loWinW = ref(1280);
 export const loWinH = ref(720);
 export const loGameLang = ref("auto_zh_CN");
+
+// 服务器直连（快速进服）
+export const loServer = ref("");
+export const loPort = ref("");
 
 // 内存分配（状态由全局 startMemoryMonitor 持续刷新）
 export const loMemMode = ref<"Auto" | "Custom">("Auto");
@@ -104,6 +110,8 @@ export async function loadLaunchOptions() {
     // 高性能显卡默认开启：旧配置/旧后端缺字段时按 true 处理
     loHighGpu.value = cfg.use_high_performance_gpu ?? true;
     loGameLang.value = cfg.game_language ?? "auto_zh_CN";
+    loServer.value = cfg.server ?? "";
+    loPort.value = cfg.port != null ? String(cfg.port) : "";
     loMemMode.value = cfg.memory === "Auto" ? "Auto" : "Custom";
     if (cfg.memory !== "Auto") loMemMb.value = (cfg.memory as any).Custom ?? 4096;
     loMinMem.value = cfg.min_memory ?? null;
@@ -148,6 +156,8 @@ export async function saveLaunchOptions() {
     cfg.verify_ssl = loVerifySsl.value;
     cfg.use_high_performance_gpu = loHighGpu.value;
     cfg.game_language = loGameLang.value;
+    cfg.server = loServer.value.trim() || null;
+    cfg.port = loPort.value.trim() ? Number(loPort.value.trim()) : null;
     await invoke("save_launch_options", { config: cfg });
   });
 }

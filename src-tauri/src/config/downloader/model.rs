@@ -204,6 +204,9 @@ pub struct DownloaderConfig {
     pub sources: Vec<DownloadSource>,
     pub concurrency: u32,
     pub minecraft_dir: String,
+    /// 全局限速（bytes/s）；0/None = 不限制。fetcher 全局生效。
+    #[serde(default)]
+    pub max_speed: u64,
     /// 文件下载源模式（client JAR / 支持库 / 资源 / ModLoader）
     #[serde(default)]
     pub file_source_mode: DownloadSourceMode,
@@ -260,6 +263,7 @@ impl Default for DownloaderConfig {
         Self {
             sources: vec![official(), china()],
             concurrency: 64,
+            max_speed: 0,
             minecraft_dir: ".minecraft".into(),
             file_source_mode: DownloadSourceMode::Auto,
             manifest_source_mode: DownloadSourceMode::Auto,
