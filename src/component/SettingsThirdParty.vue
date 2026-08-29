@@ -4,6 +4,7 @@
 import { computed, onMounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { Plus, Trash2, LogOut } from "@lucide/vue";
+import DropSelect from "./DropSelect.vue";
 import {
   externalAccount, loadExternalAccounts,
   loginExternal, removeExternalAccount,
@@ -135,12 +136,13 @@ onMounted(() => {
     <!-- 登录表单 -->
     <div v-if="!externalAccount" class="tp-login">
       <div class="tp-row tp-field">
-        <select v-model="extApi" class="tp-select">
-          <option v-for="opt in serverOptions" :key="opt.value" :value="opt.value">
-            {{ opt.label }}
-          </option>
-          <option value="">自定义…</option>
-        </select>
+        <DropSelect
+          :model-value="extApi"
+          :options="serverOptions"
+          placeholder="选择服务器"
+          width="170px"
+          @update:model-value="extApi = $event"
+        />
         <input
           v-model="extApi"
           class="tp-input"
