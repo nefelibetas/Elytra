@@ -199,6 +199,29 @@ mod tests {
     use super::*;
 
     #[test]
+    #[test]
+    fn toggle_mod_file_disables_and_enables() {
+        let dir = tempfile::tempdir().unwrap();
+        let jar = dir.path().join("a.jar");
+        std::fs::write(&jar, b"x").unwrap();
+
+        // 禁用：a.jar → a.jar.disabled，返回 true
+        assert!(toggle_mod_file(dir.path(), "a.jar").unwrap());
+        assert!(!jar.exists());
+        assert!(dir.path().join("a.jar.disabled").exists(), "禁用应改名 .disabled");
+
+        // 重复禁用：现在文件是 a.jar.disabled（不是 .jar 结尾）→ 走启用分支改名回去
+        assert!(!toggle_mod_file(dir.path(), "a.jar").unwrap(), "应回退为启用");
+        assert!(jar.exists());
+        assert!(!dir.path().join("a.jar.disabled").exists());
+
+        // 不存在报错
+        assert!(toggle_mod_file(dir.path(), "missing.jar").is_err(), "不存在应报错");
+
+        // 路径穿越拒绝
+        assert!(toggle_mod_file(dir.path(), "../b.jar").is_err(), "穿越路径拒绝");
+    }
+
     fn delete_mod_file_removes_and_guards() {
         let dir = tempfile::tempdir().unwrap();
         let jar = dir.path().join("a.jar");
