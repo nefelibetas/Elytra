@@ -24,8 +24,7 @@
 - 🧩 ModLoader：Fabric / Quilt / Forge / NeoForge / OptiFine 安装，LiteLoader 版本查询
 - 🔐 账号：微软正版登录（OAuth PKCE）、离线模式
 - 🎭 离线皮肤：固定随机哈希 Steve/Alex（对齐 PCL2 机制，仅 1.19.2 以下）
-- ☕ JDK 自动扫描与自定义配置
-- 🚀 多游戏目录、下载任务管理、启动参数构建与游戏进程管理
+- 🌐 局域网联机：EasyTier 虚拟局域网（房间码互连，无需公网服务器），跨网可配协调服务器
 
 ## 🛠️ 开发
 
@@ -42,7 +41,7 @@ pnpm tauri build      # 发布构建
 ## 📁 结构
 
 - 🖼️ `src/` — Vue 3 前端（6 个页面 + 模块级 `reactive()` 状态单例）
-- 🦀 `src-tauri/` — Rust 后端：`commands/` 命令胶水层、`task/` 任务管理器与下载编排、`config/launcher/` 启动构建/环境/离线皮肤、`auth/` 微软登录与皮肤 API、`downloader/` 下载引擎、`persist/` TOML 配置
+- 🦀 `src-tauri/` — Rust 后端：`commands/` 命令胶水层、`task/` 任务管理器与下载编排、`config/launcher/` 启动构建/环境/离线皮肤、`auth/` 微软登录与皮肤 API、`downloader/` 下载引擎、`online/` EasyTier 局域网联机、`persist/` TOML 配置
 - 📚 `docs/` — 设计文档
 - 📄 `LICENSE` — MIT 许可证
 
