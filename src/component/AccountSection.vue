@@ -12,7 +12,6 @@ import {
 import { avatarState, scheduleOfflineRender, renderAccountHead, renderOfflineHead, accountHeads, offlineHeads } from "../store/avatar";
 import { accountUi } from "../store/accountUi";
 import { invoke } from "@tauri-apps/api/core";
-import { save } from "@tauri-apps/plugin-dialog";
 import { showToast } from "../utils/toast";
 import { showError } from "../store/alert";
 import { settingsTab } from "../store/settingsTab";
