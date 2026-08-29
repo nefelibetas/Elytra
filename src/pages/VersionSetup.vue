@@ -24,9 +24,9 @@ const tabs: { key: TabKey; label: string; icon: Component }[] = [
   { key: "resourcepacks", label: "资源包管理", icon: Palette },
   { key: "shaderpacks", label: "光影包管理", icon: Sun },
   { key: "datapacks", label: "数据包管理", icon: Database },
-  { key: "logs", label: "游戏日志", icon: FileText },
   { key: "server", label: "服务器", icon: Server },
   { key: "misc", label: "图标", icon: ImagePlus },
+  { key: "logs", label: "游戏日志", icon: FileText },
   { key: "export", label: "导出", icon: Upload },
 ];
 
