@@ -32,6 +32,7 @@ export interface ExternalAccountInfo {
   uuid: string;
   name: string;
   access_token: string;
+  site_username?: string | null;
 }
 /** 当前第三方账号（列表末尾 = 最近登录/切换）。 */
 export const externalAccount = ref<ExternalAccountInfo | null>(null);

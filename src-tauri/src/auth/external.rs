@@ -26,6 +26,9 @@ pub struct ExternalAccount {
     pub name: String,
     /// 服务器签发的 access_token（启动游戏用）
     pub access_token: String,
+    /// 皮肤站登录账号（authenticate 响应 user.username；旧账号为 None）
+    #[serde(default)]
+    pub site_username: Option<String>,
 }
 
 /// 读取全部第三方账号（登录时间升序，末尾 = 当前账号）。无账号返回空列表。
@@ -120,11 +123,14 @@ pub async fn login(
         .ok_or("账号没有可用角色（请先在皮肤站创建角色）")?;
     let uuid = profile["id"].as_str().ok_or("角色缺少 id")?.to_string();
     let name = profile["name"].as_str().ok_or("角色缺少 name")?.to_string();
+    // 站点登录账号（requestUser: true 时响应含 user.username）
+    let site_username = json["user"]["username"].as_str().map(str::to_string);
     Ok(ExternalAccount {
         api_url: api,
         uuid,
         name,
         access_token: token,
+        site_username,
     })
 }
 
@@ -218,6 +224,7 @@ mod tests {
             uuid: uuid.into(),
             name: name.into(),
             access_token: "at".into(),
+            site_username: Some("site".into()),
         }
     }
 
