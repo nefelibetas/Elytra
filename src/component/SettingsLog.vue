@@ -23,9 +23,11 @@ onMounted(loadLog);
 
 <template>
   <div class="stg-card">
-    <div class="stg-card-hdr">
-      <h3>启动器日志</h3>
-      <div class="stg-card-sub">启动器自身输出（exe 旁 Elytra/launcher.log 尾部 200 行）</div>
+    <div class="stg-card-hdr slog-hdr">
+      <div class="slog-titles">
+        <h3>启动器日志</h3>
+        <div class="stg-card-sub">启动器自身输出（exe 旁 Elytra/launcher.log 尾部 200 行）</div>
+      </div>
       <button class="slog-refresh" :disabled="loading" @click="loadLog">
         <RefreshCw :size="13" :class="{ spin: loading }" />
         刷新
@@ -36,6 +38,16 @@ onMounted(loadLog);
 </template>
 
 <style scoped>
+/* 标题（左）+ 刷新按钮（右，底对齐）同行 */
+.slog-hdr {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+.slog-titles {
+  min-width: 0;
+}
 .slog-refresh {
   display: inline-flex;
   align-items: center;
