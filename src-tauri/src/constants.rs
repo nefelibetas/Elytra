@@ -47,6 +47,8 @@ pub const SECT_LAUNCHER: &str = "launcher";
 pub const SECT_JDK: &str = "jdk";
 /// persist section: 微软账号列表（secrets.bin 加密存储，按登录时间排序，末尾为当前）
 pub const SECT_MS_ACCOUNTS: &str = "ms_accounts";
+pub const SECT_EXTERNAL_ACCOUNTS: &str = "external_accounts";
+pub const SECT_THIRD_PARTY: &str = "third_party";
 /// persist section: 离线账号历史列表（最近使用排序，末尾为当前）
 pub const SECT_OFFLINE_ACCOUNTS: &str = "offline_accounts";
 /// persist section: 游戏目录

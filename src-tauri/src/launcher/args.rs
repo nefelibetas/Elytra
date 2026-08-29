@@ -366,6 +366,18 @@ pub fn build_launch_command(
             xuid.as_str(),
             USER_TYPE_MSA,
         ),
+        AuthMode::External {
+            username,
+            access_token,
+            uuid,
+            ..
+        } => (
+            username.as_str(),
+            uuid.as_str(),
+            access_token.as_str(),
+            "",
+            USER_TYPE_MSA,
+        ),
     };
 
     let game_ctx = TemplateContext {
@@ -406,6 +418,15 @@ pub fn build_launch_command(
     args.push(ARG_CP.to_string());
     args.push(classpath_str);
     args.extend(jvm_tuning);
+    // 第三方登录（authlib-injector）：javaagent 注入 + client side
+    // （jar 登录时下载到数据目录；缺失由启动前置检查拦截）
+    if let AuthMode::External { api_url, .. } = auth {
+        let jar = crate::util::exe_dir()
+            .join(crate::constants::CONFIG_DIR)
+            .join(crate::auth::external::AUTHLIB_JAR);
+        args.push(format!("-javaagent:{}={}", jar.display(), api_url));
+        args.push("-Dauthlibinjector.side=client".to_string());
+    }
     args.push(main_class);
     args.extend(game_args);
     // 服务器直连：快速进服（追加到游戏参数末尾，用户自定义 game_args 之前）

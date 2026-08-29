@@ -3,6 +3,7 @@
 import { SlidersHorizontal, Download, Palette, Link2, FileText } from "@lucide/vue";
 import SettingsLaunchOptions from "../component/SettingsLaunchOptions.vue";
 import SettingsJdk from "../component/SettingsJdk.vue";
+import SettingsThirdParty from "../component/SettingsThirdParty.vue";
 import SettingsDownload from "../component/SettingsDownload.vue";
 import SettingsAppearance from "../component/SettingsAppearance.vue";
 import SettingsOnline from "../component/SettingsOnline.vue";
@@ -63,6 +64,7 @@ import { settingsTab } from "../store/settingsTab";
         <div v-if="settingsTab === 'launch'" key="launch" class="stg-page">
           <SettingsLaunchOptions />
           <SettingsJdk />
+          <SettingsThirdParty />
         </div>
 
         <!-- 下载设置：管理游戏下载源 -->

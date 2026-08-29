@@ -12,9 +12,10 @@ pub mod task;
 pub mod util;
 
 use commands::account::{
-    cancel_ms_login, disable_cape, fetch_account_skin, fetch_avatar, fetch_capes,
-    fetch_default_skin, fetch_texture_id, get_ms_account, get_ms_accounts, refresh_ms_account,
-    remove_ms_account, save_skin, set_active_cape, start_ms_login, switch_ms_account,
+    cancel_ms_login, disable_cape, external_login, fetch_account_skin, fetch_avatar, fetch_capes,
+    fetch_default_skin, fetch_texture_id, get_external_accounts, get_ms_account, get_ms_accounts,
+    get_third_party_config, refresh_ms_account, remove_external_account, remove_ms_account,
+    save_skin, save_third_party_config, set_active_cape, start_ms_login, switch_ms_account,
     upload_skin_file,
 };
 use commands::community::{get_community_details, get_community_versions, search_community};
@@ -28,7 +29,9 @@ use commands::gamedirs::{
     rename_version_dir, set_active_game_dir,
 };
 use commands::jdk::{auto_scan_jdk, get_jdk_config, save_jdk_config, scan_custom_jdk};
-use commands::launch::{check_launch_env, get_game_log, get_launcher_log, open_launcher_log_dir, spawn_game};
+use commands::launch::{
+    check_launch_env, get_game_log, get_launcher_log, open_launcher_log_dir, spawn_game,
+};
 use commands::launch_options::{get_launch_options, get_memory_info, save_launch_options};
 use commands::launch_script::export_launch_script;
 use commands::loader::{
@@ -149,6 +152,11 @@ pub fn run() {
             save_offline_account,
             remove_offline_account,
             start_ms_login,
+            external_login,
+            get_external_accounts,
+            remove_external_account,
+            get_third_party_config,
+            save_third_party_config,
             cancel_ms_login,
             get_ms_account,
             get_ms_accounts,

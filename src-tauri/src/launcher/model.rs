@@ -23,6 +23,14 @@ pub enum AuthMode {
         uuid: String,
         xuid: String,
     },
+    /// 第三方登录（authlib-injector / 皮肤站 / Yggdrasil 兼容服务器）。
+    /// api_url = 验证服务器根地址（如 https://littleskin.cn/api/yggdrasil）。
+    External {
+        username: String,
+        access_token: String,
+        uuid: String,
+        api_url: String,
+    },
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

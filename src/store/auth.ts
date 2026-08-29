@@ -7,7 +7,7 @@ import { EVT_MS_LOGIN_COMPLETE } from "./events";
 import { showError } from "./alert";
 import { avatarState, renderPremiumAvatar } from "./avatar";
 
-export type AuthMode = "premium" | "offline";
+export type AuthMode = "premium" | "offline" | "thirdparty";
 
 export const AUTH_MODE_KEY = "elytra.authMode";
 
@@ -21,8 +21,22 @@ export interface MsAccountInfo {
 }
 
 export const authMode = ref<AuthMode>(
-  localStorage.getItem(AUTH_MODE_KEY) === "offline" ? "offline" : "premium",
+  localStorage.getItem(AUTH_MODE_KEY) === "offline"
+    ? "offline"
+    : localStorage.getItem(AUTH_MODE_KEY) === "thirdparty"
+      ? "thirdparty"
+      : "premium",
 );
+export interface ExternalAccountInfo {
+  api_url: string;
+  uuid: string;
+  name: string;
+  access_token: string;
+}
+/** 当前第三方账号（列表末尾 = 最近登录/切换）。 */
+export const externalAccount = ref<ExternalAccountInfo | null>(null);
+/** 全部已保存第三方账号。 */
+export const externalAccounts = ref<ExternalAccountInfo[]>([]);
 export const msAccount = ref<MsAccountInfo | null>(null);
 /** 全部已保存正版账号（登录时间升序，末尾 = 当前），供账号列表菜单使用 */
 export const msAccounts = ref<MsAccountInfo[]>([]);
@@ -50,6 +64,40 @@ export async function loadMsAccount() {
 }
 
 /** 加载全部正版账号（当前 = 列表末尾，即最近登录/切换的）。 */
+/** 加载全部第三方账号（当前 = 列表末尾）。 */
+export async function loadExternalAccounts() {
+  try {
+    externalAccounts.value = (await invoke<ExternalAccountInfo[]>("get_external_accounts")) ?? [];
+    externalAccount.value = externalAccounts.value[externalAccounts.value.length - 1] ?? null;
+  } catch {
+    externalAccounts.value = [];
+    externalAccount.value = null;
+  }
+}
+
+/** 第三方登录：服务器地址 + 账号密码 → 保存账号。 */
+export async function loginExternal(apiUrl: string, account: string, password: string) {
+  const acc = await invoke<ExternalAccountInfo>("external_login", {
+    apiUrl,
+    username: account,
+    password,
+  });
+  await loadExternalAccounts();
+  return acc;
+}
+
+/** 移除第三方账号。 */
+export async function removeExternalAccount(apiUrl: string, uuid: string) {
+  await invoke("remove_external_account", { apiUrl, uuid });
+  await loadExternalAccounts();
+}
+
+/** 切换第三方账号（后端置为列表末尾 = 当前）。 */
+export async function switchExternalAccount(apiUrl: string, uuid: string) {
+  await invoke("switch_external_account", { apiUrl, uuid });
+  await loadExternalAccounts();
+}
+
 export async function loadMsAccounts() {
   try {
     msAccounts.value = (await invoke<MsAccountInfo[]>("get_ms_accounts")) ?? [];
