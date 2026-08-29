@@ -123,8 +123,13 @@ pub async fn login(
         .ok_or("账号没有可用角色（请先在皮肤站创建角色）")?;
     let uuid = profile["id"].as_str().ok_or("角色缺少 id")?.to_string();
     let name = profile["name"].as_str().ok_or("角色缺少 name")?.to_string();
-    // 站点登录账号（requestUser: true 时响应含 user.username）
-    let site_username = json["user"]["username"].as_str().map(str::to_string);
+    // 站点登录账号：优先响应 user.username（部分服务器返回 null），
+    // 回退登录输入的账号名（LittleSkin 等支持用户名/邮箱登录，输入即账号标识）
+    let site_username = json["user"]["username"]
+        .as_str()
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
+        .or_else(|| Some(username.trim().to_string()));
     Ok(ExternalAccount {
         api_url: api,
         uuid,
