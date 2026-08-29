@@ -246,10 +246,6 @@ pub fn default_third_party_servers() -> Vec<ThirdPartyServer> {
             label: "LittleSkin".into(),
             value: "https://littleskin.cn/api/yggdrasil".into(),
         },
-        ThirdPartyServer {
-            label: "Ely.by".into(),
-            value: "https://authserver.ely.by/api/yggdrasil".into(),
-        },
     ]
 }
 
