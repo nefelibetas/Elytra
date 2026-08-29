@@ -38,7 +38,8 @@ const route = useRoute();
 const router = useRouter();
 
 // 原版游戏详情态 ↔ 路由 query：进入详情 push ?v=<id>（产生历史项），
-// 鼠标侧键/浏览器后退 → query 消失 → 回列表；避免侧键直接离开资源中心页
+// 浏览器原生后退 → query 消失 → 回列表（侧键由 nav.ts goBack 规则处理，
+// 此处兜底原生历史/URL 直达场景）
 watch(
   () => vdState.selectedVersion?.id,
   (id) => {
@@ -56,6 +57,10 @@ watch(
   (v) => {
     if (!v && vdState.selectedVersion) {
       vdState.backToList();
+    } else if (v && !vdState.selectedVersion) {
+      // goForward/URL 直达：恢复详情态
+      const meta = vdState.manifest?.versions.find((x) => x.id === v);
+      if (meta) vdState.selectVersion(meta);
     }
   },
 );

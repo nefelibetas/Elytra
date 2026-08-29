@@ -36,10 +36,6 @@ pub struct McAdvertiser {
 }
 
 impl McAdvertiser {
-    /// 启动广播线程：向 MC 局域网发现组播周期广播本地转发端口。
-    pub fn start(local_port: u16) -> Self {
-        Self::start_internal(local_port, DEFAULT_MOTD, MC_MULTICAST_PORT)
-    }
 
     /// 带自定义服务器名启动（host 存档名；空串回退默认文案）。
     pub fn start_with_motd(local_port: u16, motd: &str) -> Self {
@@ -90,7 +86,7 @@ mod tests {
     #[test]
     fn advertiser_starts_and_stops() {
         // 启动 + drop 不 panic（线程自杀）
-        let a = McAdvertiser::start(25565);
+        let a = McAdvertiser::start_with_motd(25565, "");
         thread::sleep(Duration::from_millis(200));
         drop(a);
     }
