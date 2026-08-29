@@ -42,6 +42,10 @@ export const accountUi = reactive({
   /** 当前选中披风 id，"" = 无披风 */
   selectedCapeId: "",
 
+  // 皮肤模型选择 dialog（上传前确认 CLASSIC/SLIM）
+  skinModelDialog: false,
+  pendingSkinPath: "",
+
   openEditMenu(e: MouseEvent) {
     if (this.editMenu.visible) {
       this.closeEditMenu();
@@ -163,10 +167,22 @@ export const accountUi = reactive({
       filters: [{ name: "PNG 图片", extensions: ["png"] }],
     });
     if (!path) return;
+    this.pendingSkinPath = path;
+    this.skinModelDialog = true;
+  },
+
+  /** 1b. 确认模型后上传（CLASSIC = 经典 Steve 宽模型 / SLIM = 纤细 Alex 窄模型）。 */
+  async confirmUploadSkin(variant: "CLASSIC" | "SLIM") {
+    this.skinModelDialog = false;
+    const acct = msAccount.value;
+    if (!acct || !this.pendingSkinPath) return;
+    const path = this.pendingSkinPath;
+    this.pendingSkinPath = "";
     try {
       await invoke("upload_skin_file", {
         accessToken: acct.access_token,
         filePath: path,
+        variant,
       });
       showToast("皮肤上传成功，正在刷新头像…");
       // 等 Mojang 处理生效后按新 texture ID 渲染

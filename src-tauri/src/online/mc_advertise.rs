@@ -16,7 +16,7 @@
 //! （guest 转发端口须同绑 0.0.0.0，见 session.rs）。
 
 use std::net::UdpSocket;
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
 
@@ -36,7 +36,6 @@ pub struct McAdvertiser {
 }
 
 impl McAdvertiser {
-
     /// 带自定义服务器名启动（host 存档名；空串回退默认文案）。
     pub fn start_with_motd(local_port: u16, motd: &str) -> Self {
         let motd = if motd.trim().is_empty() {
@@ -70,7 +69,10 @@ impl McAdvertiser {
 }
 
 fn is_quit(quit_rx: &Receiver<()>) -> bool {
-    matches!(quit_rx.try_recv(), Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected))
+    matches!(
+        quit_rx.try_recv(),
+        Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected)
+    )
 }
 
 impl Drop for McAdvertiser {
@@ -115,8 +117,7 @@ mod tests {
         const TEST_PORT: u16 = 4448;
         let a = McAdvertiser::start_internal(34567, "test", TEST_PORT);
         let recv = UdpSocket::bind(("0.0.0.0", TEST_PORT)).expect("bind listen");
-        recv
-            .join_multicast_v4(&"224.0.2.60".parse().unwrap(), &"0.0.0.0".parse().unwrap())
+        recv.join_multicast_v4(&"224.0.2.60".parse().unwrap(), &"0.0.0.0".parse().unwrap())
             .expect("join multicast group");
         recv.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
         let mut buf = [0u8; 256];

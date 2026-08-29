@@ -12,6 +12,7 @@ import { avatarState, scheduleOfflineRender, renderAccountHead, renderOfflineHea
 import { accountUi } from "../store/accountUi";
 import { showError } from "../store/alert";
 import MenuPopover from "./MenuPopover.vue";
+import AlertDialog from "./AlertDialog.vue";
 
 const avatarUrl = computed(() =>
   authMode.value === "premium" ? avatarState.premiumAvatar : avatarState.offlineAvatar,
@@ -283,6 +284,16 @@ function useOfflineName(name: string) {
         </MenuPopover>
       </div>
     </div>
+
+    <!-- 上传皮肤前确认模型：CLASSIC（经典 Steve 宽）/ SLIM（纤细 Alex 窄） -->
+    <AlertDialog v-model="accountUi.skinModelDialog" title="选择皮肤模型">
+      <div class="skin-model-desc">上传后将替换当前皮肤，模型不可中途更换（需重新上传）。</div>
+      <template #actions>
+        <button class="dialog-btn" @click="accountUi.skinModelDialog = false">取消</button>
+        <button class="dialog-btn danger" @click="accountUi.confirmUploadSkin('CLASSIC')">经典模型（Steve）</button>
+        <button class="dialog-btn" @click="accountUi.confirmUploadSkin('SLIM')">纤细模型（Alex）</button>
+      </template>
+    </AlertDialog>
   </div>
 </template>
 
@@ -666,4 +677,10 @@ function useOfflineName(name: string) {
   color: var(--color-brand);
   background-color: var(--color-brand-bg);
 }
+.skin-model-desc {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
 </style>

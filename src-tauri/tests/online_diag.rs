@@ -107,16 +107,13 @@ async fn host_guest_tcp_roundtrip() {
 
     // 1) host 本地直连测试：OS 监听入口端口 → 转发到本地 echo
     eprintln!("== 测试 1：host 本机直连 127.0.0.1:{entry_port}");
-    let t1 = tokio::time::timeout(
-        Duration::from_secs(5),
-        async {
-            let mut s = TcpStream::connect(("127.0.0.1", entry_port)).unwrap();
-            s.write_all(b"t1").unwrap();
-            let mut buf = [0u8; 2];
-            s.read_exact(&mut buf).unwrap();
-            assert_eq!(&buf, b"t1");
-        },
-    )
+    let t1 = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut s = TcpStream::connect(("127.0.0.1", entry_port)).unwrap();
+        s.write_all(b"t1").unwrap();
+        let mut buf = [0u8; 2];
+        s.read_exact(&mut buf).unwrap();
+        assert_eq!(&buf, b"t1");
+    })
     .await;
     match t1 {
         Ok(_) => eprintln!("== 测试 1 OK：host 转发链路通"),
@@ -125,16 +122,13 @@ async fn host_guest_tcp_roundtrip() {
 
     // 2) guest → host 经虚拟网（小数据）
     eprintln!("== 测试 2：guest 连 127.0.0.1:{guest_local_port}");
-    let t2 = tokio::time::timeout(
-        Duration::from_secs(20),
-        async {
-            let mut s = TcpStream::connect(("127.0.0.1", guest_local_port)).unwrap();
-            s.write_all(b"t2").unwrap();
-            let mut buf = [0u8; 2];
-            s.read_exact(&mut buf).unwrap();
-            assert_eq!(&buf, b"t2");
-        },
-    )
+    let t2 = tokio::time::timeout(Duration::from_secs(20), async {
+        let mut s = TcpStream::connect(("127.0.0.1", guest_local_port)).unwrap();
+        s.write_all(b"t2").unwrap();
+        let mut buf = [0u8; 2];
+        s.read_exact(&mut buf).unwrap();
+        assert_eq!(&buf, b"t2");
+    })
     .await;
     match t2 {
         Ok(_) => eprintln!("== 测试 2 OK：guest → 虚拟网 → host → echo 全链路通"),
@@ -144,30 +138,27 @@ async fn host_guest_tcp_roundtrip() {
     // 3) 大数据传输（模拟 MC 登录配置同步 registry；smoltcp 数据面曾在此中断，
     //    kcp feature + enable_kcp_proxy 后数据面走 KCP 应稳定）
     eprintln!("== 测试 3：guest → host 传输 5MB（模拟 MC registry 同步）");
-    let t3 = tokio::time::timeout(
-        Duration::from_secs(60),
-        async {
-            let mut s = TcpStream::connect(("127.0.0.1", guest_local_port)).unwrap();
-            let chunk = vec![0x5au8; 8192];
-            let total = 5 * 1024 * 1024;
-            let mut written = 0usize;
-            while written < total {
-                let n = (total - written).min(chunk.len());
-                s.write_all(&chunk[..n]).unwrap();
-                written += n;
-            }
-            s.flush().unwrap();
-            let mut read_back = 0usize;
-            let mut buf = [0u8; 8192];
-            while read_back < total {
-                let n = s.read(&mut buf).unwrap();
-                assert!(n > 0, "大数据传输中断（read 返回 0）");
-                assert!(buf[..n].iter().all(|&b| b == 0x5a), "数据损坏");
-                read_back += n;
-            }
-            assert_eq!(read_back, total, "回读字节数不符");
-        },
-    )
+    let t3 = tokio::time::timeout(Duration::from_secs(60), async {
+        let mut s = TcpStream::connect(("127.0.0.1", guest_local_port)).unwrap();
+        let chunk = vec![0x5au8; 8192];
+        let total = 5 * 1024 * 1024;
+        let mut written = 0usize;
+        while written < total {
+            let n = (total - written).min(chunk.len());
+            s.write_all(&chunk[..n]).unwrap();
+            written += n;
+        }
+        s.flush().unwrap();
+        let mut read_back = 0usize;
+        let mut buf = [0u8; 8192];
+        while read_back < total {
+            let n = s.read(&mut buf).unwrap();
+            assert!(n > 0, "大数据传输中断（read 返回 0）");
+            assert!(buf[..n].iter().all(|&b| b == 0x5a), "数据损坏");
+            read_back += n;
+        }
+        assert_eq!(read_back, total, "回读字节数不符");
+    })
     .await;
     match t3 {
         Ok(_) => eprintln!("== 测试 3 OK：5MB 大数据传输完整（数据面正常）"),
@@ -179,7 +170,10 @@ async fn host_guest_tcp_roundtrip() {
     let log_path = elytra_lib::util::exe_dir()
         .join(elytra_lib::constants::CONFIG_DIR)
         .join("online-easytier.log");
-    eprintln!("== 测试 4：easytier 日志 = {log_path:?} exists={}", log_path.exists());
+    eprintln!(
+        "== 测试 4：easytier 日志 = {log_path:?} exists={}",
+        log_path.exists()
+    );
     assert!(
         log_path.exists(),
         "easytier 日志应已生成（host/guest 实例运行过）"

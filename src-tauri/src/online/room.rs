@@ -14,7 +14,7 @@
 //! - 非法字符/格式本地拒绝，避免无效连接。
 
 use hmac::{Hmac, Mac};
-use percent_encoding::{NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
+use percent_encoding::{percent_decode_str, utf8_percent_encode, NON_ALPHANUMERIC};
 use sha2::Sha256;
 use uuid::Uuid;
 
@@ -45,7 +45,10 @@ pub fn parse_room_code(code: &str) -> Option<RoomCredential> {
     // 先分离可选存档段 `#<urlencoded>`（MOTD 保持大小写，不参与身份转大写）
     let (body, motd) = match code.split_once('#') {
         Some((rest, motd_enc)) => {
-            let motd = percent_decode_str(motd_enc).decode_utf8().ok()?.into_owned();
+            let motd = percent_decode_str(motd_enc)
+                .decode_utf8()
+                .ok()?
+                .into_owned();
             (rest, Some(motd))
         }
         None => (code, None),
@@ -181,10 +184,7 @@ impl RoomCredential {
             code.push_str(&format!("@{ip}"));
         }
         if let Some(m) = &motd {
-            code.push_str(&format!(
-                "#{}",
-                utf8_percent_encode(m, NON_ALPHANUMERIC)
-            ));
+            code.push_str(&format!("#{}", utf8_percent_encode(m, NON_ALPHANUMERIC)));
         }
         Self {
             network_name: derive(NET_SALT, &identity),
@@ -220,7 +220,10 @@ impl RoomCredential {
     fn encode_code(room: &Self) -> String {
         let body = room.code.trim_start_matches("U/");
         let identity = body.split_once(":").map(|(id, _)| id).unwrap_or(body);
-        let identity = identity.split_once("@").map(|(id, _)| id).unwrap_or(identity);
+        let identity = identity
+            .split_once("@")
+            .map(|(id, _)| id)
+            .unwrap_or(identity);
         let identity = identity
             .split_once("#")
             .map(|(id, _)| id)
@@ -277,7 +280,10 @@ mod tests {
             Some("192.168.1.2"),
             "局域网 IP 应解析出来"
         );
-        assert_eq!(parsed.network_name, room.network_name, "网名派生不受 IP 影响");
+        assert_eq!(
+            parsed.network_name, room.network_name,
+            "网名派生不受 IP 影响"
+        );
         assert_eq!(parsed.network_secret, room.network_secret);
     }
 
@@ -294,7 +300,10 @@ mod tests {
             Some("新的世界:test@x"),
             "存档名应解析出来"
         );
-        assert_eq!(parsed.network_name, room.network_name, "网名派生不受存档影响");
+        assert_eq!(
+            parsed.network_name, room.network_name,
+            "网名派生不受存档影响"
+        );
     }
 
     #[test]
