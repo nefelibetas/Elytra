@@ -283,19 +283,112 @@ pub fn toggle_mod_file(version_name: String, file_name: String) -> Result<bool, 
 /// 导出整合包：把版本目录下的 mods/config/shaderpacks/resourcepacks 打进 zip
 /// （顶层同名目录 + manifest.json 元数据）。目录缺失自动跳过；打包走 spawn_blocking 防阻塞。
 /// jar 等已压缩内容用 Stored（不二次压缩，速度优先）。
+/// mrpack files[] 条目（Modrinth 在线分发元数据）。
+#[derive(serde::Serialize)]
+struct HostedPackFile {
+    path: String,
+    hashes: serde_json::Value,
+    downloads: Vec<String>,
+    file_size: u64,
+}
+
+/// 扫描 mods/ 下压缩类文件 → sha1 → Modrinth version_files 匹配 →
+/// 返回 (files[] 条目, 需从 overrides 排除的文件名集合)。
+/// 网络失败/匹配不到：文件留在 overrides 物理打包（离线降级，静默）。
+async fn resolve_hosted_mods(
+    vdir: &std::path::Path,
+) -> (Vec<HostedPackFile>, std::collections::HashSet<String>) {
+    let mods_dir = vdir.join("mods");
+    let Ok(rd) = std::fs::read_dir(&mods_dir) else {
+        return (Vec::new(), std::collections::HashSet::new());
+    };
+    // 压缩/资源类文件（与 PCL2 导出集合一致：jar/zip/rar/disabled/old）
+    let mut candidates: Vec<std::path::PathBuf> = rd
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.is_file()
+                && matches!(
+                    p.extension().and_then(|x| x.to_str()),
+                    Some("jar" | "zip" | "rar" | "disabled" | "old")
+                )
+        })
+        .collect();
+    if candidates.is_empty() {
+        return (Vec::new(), std::collections::HashSet::new());
+    }
+    // 算 sha1（文件小，顺序读即可）
+    let mut sha1s: Vec<String> = Vec::with_capacity(candidates.len());
+    let mut kept: Vec<(std::path::PathBuf, Vec<u8>, String)> = Vec::with_capacity(candidates.len());
+    for path in candidates.drain(..) {
+        let Ok(data) = std::fs::read(&path) else {
+            continue;
+        };
+        let sha1 = crate::downloader::hash::sha1_hex(&data);
+        kept.push((path, data, sha1.clone()));
+        sha1s.push(sha1);
+    }
+    if kept.is_empty() {
+        return (Vec::new(), std::collections::HashSet::new());
+    }
+    // Modrinth 批量匹配
+    let raw = match crate::downloader::community::modrinth_version_files(&sha1s).await {
+        Ok(v) => v,
+        Err(_) => return (Vec::new(), std::collections::HashSet::new()), // 离线降级
+    };
+    let mut hosted = Vec::new();
+    let mut names = std::collections::HashSet::new();
+    for (path, data, sha1) in kept {
+        let Some(hit) = raw.get(&sha1) else { continue };
+        let Some(files) = hit.get("files").and_then(|f| f.as_array()) else {
+            continue;
+        };
+        let Some(first) = files.first() else { continue };
+        let Some(url) = first.get("url").and_then(|u| u.as_str()) else {
+            continue;
+        };
+        let fname = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        hosted.push(HostedPackFile {
+            path: format!("mods/{fname}"),
+            hashes: serde_json::json!({
+                "sha1": sha1,
+                "sha512": crate::downloader::hash::sha512_hex(&data),
+            }),
+            downloads: vec![url.to_string()],
+            file_size: data.len() as u64,
+        });
+        names.insert(fname);
+    }
+    (hosted, names)
+}
+
 #[tauri::command]
 pub async fn export_modpack(version_name: String, save_path: String) -> Result<(), String> {
     let vdir = version_dir(&version_name)?;
     let name = version_name.clone();
-    tokio::task::spawn_blocking(move || pack_modpack(&vdir, &name, &save_path))
-        .await
-        .map_err(|e| format!("打包任务失败\n{e}"))?
+    // Modrinth hash 匹配（对齐 PCL2 导出）：能匹配的 mod 走 files[]（在线分发，
+    // 包内不物理携带）；匹配不到/网络失败的全量物理打包进 overrides。
+    let (hosted, hosted_names) = resolve_hosted_mods(&vdir).await;
+    tokio::task::spawn_blocking(move || {
+        pack_modpack(&vdir, &name, &save_path, &hosted, &hosted_names)
+    })
+    .await
+    .map_err(|e| format!("打包任务失败\n{e}"))?
 }
 
 /// 导出标准 MRPACK 整合包（Modrinth 格式 v1）：所有内容物理打包进 `overrides/`，
 /// `modrinth.index.json` 声明版本与 loader 依赖、`files` 留空（离线可用，任意
 /// 支持 mrpack 的启动器导入均解压 overrides 即用）。存档（saves）不打包。
-fn pack_modpack(vdir: &Path, version_name: &str, save_path: &str) -> Result<(), String> {
+fn pack_modpack(
+    vdir: &Path,
+    version_name: &str,
+    save_path: &str,
+    hosted: &[HostedPackFile],
+    hosted_names: &std::collections::HashSet<String>,
+) -> Result<(), String> {
     // 收集存在的顶层目录（数据包 1.13+ 有 datapacks 目录，一并导出）
     let subdirs: Vec<&str> = [
         "mods",
@@ -337,7 +430,7 @@ fn pack_modpack(vdir: &Path, version_name: &str, save_path: &str) -> Result<(), 
         "versionId": mc_version,
         "name": version_name,
         "summary": "",
-        "files": [],
+        "files": hosted,
         "dependencies": dependencies,
     });
     let content = serde_json::to_vec_pretty(&manifest).map_err(|e| format!("序列化失败\n{e}"))?;
@@ -349,11 +442,18 @@ fn pack_modpack(vdir: &Path, version_name: &str, save_path: &str) -> Result<(), 
         .map_err(|e| format!("写入清单失败\n{e}"))?;
 
     for sub in subdirs {
+        // hosted mod（在线分发）不物理打包进 overrides
+        let skip = if sub == "mods" {
+            Some(hosted_names)
+        } else {
+            None
+        };
         add_dir_to_zip(
             &mut writer,
             &vdir.join(sub),
             &format!("overrides/{sub}"),
             opts,
+            skip,
         )?;
     }
     writer.finish().map_err(|e| format!("写入 zip 失败\n{e}"))?;
@@ -366,6 +466,7 @@ fn add_dir_to_zip(
     dir: &Path,
     prefix: &str,
     opts: zip::write::SimpleFileOptions,
+    skip_files: Option<&std::collections::HashSet<String>>,
 ) -> Result<(), String> {
     writer
         .add_directory(format!("{prefix}/"), opts)
@@ -376,8 +477,15 @@ fn add_dir_to_zip(
     for e in entries.flatten() {
         let path = e.path();
         let name = format!("{}/{}", prefix, e.file_name().to_string_lossy());
+        // 顶层 hosted 文件跳过（mrpack files[] 在线分发，不物理打包）
+        if path.is_file()
+            && skip_files
+                .is_some_and(|set| set.contains(&e.file_name().to_string_lossy().to_string()))
+        {
+            continue;
+        }
         if path.is_dir() {
-            add_dir_to_zip(writer, &path, &name, opts)?;
+            add_dir_to_zip(writer, &path, &name, opts, None)?;
         } else if path.is_file() {
             let mut f = std::fs::File::open(&path).map_err(|err| format!("打开文件失败\n{err}"))?;
             writer
@@ -404,7 +512,14 @@ mod tests {
         // config 目录不存在 → 打包时跳过
         let out = tempfile::tempdir().unwrap();
         let zip_path = out.path().join("pack.zip");
-        pack_modpack(vdir.path(), "1.20.1-fabric-1.0", zip_path.to_str().unwrap()).unwrap();
+        pack_modpack(
+            vdir.path(),
+            "1.20.1-fabric-1.0",
+            zip_path.to_str().unwrap(),
+            &[],
+            &std::collections::HashSet::new(),
+        )
+        .unwrap();
 
         let file = std::fs::File::open(&zip_path).unwrap();
         let mut archive = zip::ZipArchive::new(file).unwrap();
@@ -452,7 +567,14 @@ mod tests {
         let vdir = tempfile::tempdir().unwrap(); // 无任何内容目录
         let out = tempfile::tempdir().unwrap();
         let zip_path = out.path().join("pack.zip");
-        pack_modpack(vdir.path(), "1.20.1", zip_path.to_str().unwrap()).unwrap();
+        pack_modpack(
+            vdir.path(),
+            "1.20.1",
+            zip_path.to_str().unwrap(),
+            &[],
+            &std::collections::HashSet::new(),
+        )
+        .unwrap();
 
         let file = std::fs::File::open(&zip_path).unwrap();
         let mut archive = zip::ZipArchive::new(file).unwrap();

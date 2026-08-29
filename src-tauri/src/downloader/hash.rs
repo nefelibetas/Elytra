@@ -1,5 +1,12 @@
 use std::path::Path;
 
+/// sha512 十六进制（mrpack files[].hashes.sha512 要求；Modrinth 校验用）。
+pub fn sha512_hex(data: &[u8]) -> String {
+    use sha2::Digest;
+    let hash = sha2::Sha512::digest(data);
+    hash.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
 pub fn sha1_hex(data: &[u8]) -> String {
     use sha1::Digest;
     let hash = sha1::Sha1::digest(data);

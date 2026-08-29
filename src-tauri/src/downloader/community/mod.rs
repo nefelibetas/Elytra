@@ -200,3 +200,48 @@ pub async fn get_community_details(
     }
     Ok(items)
 }
+
+/// 按 sha1 批量查询 Modrinth 文件（POST /v2/version_files，mrpack 导出 files[] 用）。
+/// 响应：`{sha1: {files: [{url, hashes:{sha1,sha512}, size}]}}`；官方源优先，失败降级 MCIM 镜像。
+/// 全部失败返回 Err（调用方降级为全量物理打包）。
+pub async fn modrinth_version_files(hashes: &[String]) -> Result<serde_json::Value, String> {
+    if hashes.is_empty() {
+        return Ok(serde_json::json!({}));
+    }
+    let body = serde_json::json!({"hashes": hashes, "algorithm": "sha1"});
+    let official = format!(
+        "{}/v2/version_files",
+        crate::downloader::endpoints::CommunityEndpoints::MODRINTH_API_BASE
+    );
+    let mirror = format!(
+        "{}/v2/version_files",
+        crate::downloader::endpoints::CommunityEndpoints::MODRINTH_MIRROR_BASE
+    );
+    let mut last_err = String::new();
+    for (i, url) in [official, mirror].into_iter().enumerate() {
+        let timeout = if i == 0 {
+            std::time::Duration::from_secs(5) // 官方过慢即降级镜像
+        } else {
+            std::time::Duration::from_secs(10)
+        };
+        let resp = match crate::downloader::fetcher::http()
+            .post(&url)
+            .json(&body)
+            .timeout(timeout)
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                last_err = format!("请求失败\n{e}");
+                continue;
+            }
+        };
+        if !resp.status().is_success() {
+            last_err = format!("HTTP {}", resp.status());
+            continue;
+        }
+        return resp.json().await.map_err(|e| format!("响应解析失败\n{e}"));
+    }
+    Err(last_err)
+}
