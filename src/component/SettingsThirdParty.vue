@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// 设置-第三方登录：登录（服务器下拉内置+预设+自定义，账号密码）+ 预设管理。
-// 启动页仅显示登录状态，登录逻辑集中在此。
+// 设置-第三方登录：登录（服务器下拉选择）+ 预设管理（label + value）。
+// 下拉选项 = 内置预设 + 用户预设（下面有什么，上面才能选什么）。
 import { computed, onMounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { Plus, Trash2, LogOut, ExternalLink } from "@lucide/vue";
@@ -13,44 +13,31 @@ import {
 import { showToast } from "../utils/toast";
 import { errMsg } from "../utils/error";
 
-/** 内置常用验证服务器（label 展示名 + value API 地址）。 */
-const BUILTIN_SERVERS = [
-  { label: "LittleSkin", value: "https://littleskin.cn/api/yggdrasil" },
-  { label: "Ely.by", value: "https://authserver.ely.by/api/yggdrasil" },
-] as const;
-
-/** 用户预设服务器（设置里管理，value = API 地址；label 取域名短名）。 */
-const presetServers = ref<string[]>([]);
-
-/** 合并后的下拉选项：内置 + 预设。 */
-const serverOptions = computed(() => {
-  const options: { label: string; value: string }[] = BUILTIN_SERVERS.map(b => ({ label: b.label, value: b.value }));
-  for (const url of presetServers.value) {
-    if (BUILTIN_SERVERS.some(b => b.value === url)) continue;
-    options.push({ label: shortLabel(url), value: url });
-  }
-  return options;
-});
-
-/** URL → 展示短名（域名或去掉协议的路径首段）。 */
-function shortLabel(url: string): string {
-  const cleaned = url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
-  const host = cleaned.split("/")[0];
-  // 已知皮肤站常见域名直接展示域名主体
-  return host || url;
+interface ServerOption {
+  label: string;
+  value: string;
 }
+
+/** 预设服务器列表（内置 + 用户新增；get_third_party_config 默认返回内置）。 */
+const presetServers = ref<ServerOption[]>([]);
+
+/** 登录下拉选项 = 全部预设。 */
+const serverOptions = computed(() => presetServers.value);
 
 const extApi = ref("");
 const extUser = ref("");
 const extPass = ref("");
 const extBusy = ref(false);
 const extError = ref("");
-const newServer = ref("");
 
-/** 登录：服务器（选中或自定义）+ 账号密码。 */
+/** 新增预设输入（label + value）。 */
+const newLabel = ref("");
+const newValue = ref("");
+
+/** 登录：选中服务器 + 账号密码。 */
 async function doLogin() {
   if (extBusy.value) return;
-  if (!extApi.value.trim()) { extError.value = "请选择或输入验证服务器地址"; return; }
+  if (!extApi.value.trim()) { extError.value = "请选择验证服务器"; return; }
   if (!extUser.value.trim() || !extPass.value) { extError.value = "请输入账号与密码"; return; }
   extBusy.value = true;
   extError.value = "";
@@ -77,11 +64,20 @@ async function removeCurrent() {
   }
 }
 
+/** 打开服务器站点（官网）：取 value 域名拼 https://。 */
+function openServerLink(url: string) {
+  const host = url.replace(/^https?:\/\//, "").split("/")[0];
+  if (host) void openUrl(`https://${host}`);
+}
+
 // ── 预设管理 ──
 async function loadPresets() {
   try {
-    const cfg = await invoke<{ servers: string[] }>("get_third_party_config");
+    const cfg = await invoke<{ servers: { label: string; value: string }[] }>("get_third_party_config");
     presetServers.value = cfg.servers ?? [];
+    if (!extApi.value && presetServers.value.length) {
+      extApi.value = presetServers.value[0].value;
+    }
   } catch {
     presetServers.value = [];
   }
@@ -96,27 +92,30 @@ async function savePresets() {
 }
 
 function addPreset() {
-  const v = newServer.value.trim();
-  if (!v) return;
-  if (presetServers.value.includes(v) || BUILTIN_SERVERS.some(b => b.value === v)) {
+  const label = newLabel.value.trim();
+  const value = newValue.value.trim();
+  if (!label || !value) {
+    showToast("请填写名称与地址");
+    return;
+  }
+  if (presetServers.value.some(s => s.value === value)) {
     showToast("该地址已存在");
     return;
   }
-  presetServers.value.push(v);
-  newServer.value = "";
+  presetServers.value.push({ label, value });
+  newLabel.value = "";
+  newValue.value = "";
   void savePresets();
 }
 
 function removePreset(i: number) {
   presetServers.value.splice(i, 1);
+  // 当前选中的服务器被删 → 回退第一个
+  if (extApi.value && !presetServers.value.some(s => s.value === extApi.value)) {
+    extApi.value = presetServers.value[0]?.value ?? "";
+  }
   void savePresets();
 }
-/** 打开服务器站点（官网）：取 URL 域名拼 https:// 前缀。仅预设/有效 URL 可开。 */
-function openServerLink(url: string) {
-  const host = url.replace(/^https?:\/\//, "").split("/")[0];
-  if (host) void openUrl(`https://${host}`);
-}
-
 
 onMounted(() => {
   void loadExternalAccounts();
@@ -141,21 +140,16 @@ onMounted(() => {
       </button>
     </div>
 
-    <!-- 登录表单 -->
+    <!-- 登录表单（未登录时） -->
     <div v-if="!externalAccount" class="tp-login">
       <div class="tp-row tp-field">
+        <span class="tp-label">服务器</span>
         <DropSelect
           :model-value="extApi"
           :options="serverOptions"
           placeholder="选择服务器"
-          width="170px"
+          width="220px"
           @update:model-value="extApi = $event"
-        />
-        <input
-          v-model="extApi"
-          class="tp-input"
-          type="text"
-          placeholder="验证服务器地址（如 littleskin.cn/api/yggdrasil）"
         />
       </div>
       <div class="tp-row tp-field">
@@ -172,7 +166,7 @@ onMounted(() => {
         <button
           class="tp-btn"
           :disabled="!extApi.trim()"
-          title="打开该皮肤站官网（仅预设地址可用）"
+          title="打开该皮肤站官网"
           @click="openServerLink(extApi)"
         >
           <ExternalLink :size="13" />
@@ -192,27 +186,33 @@ onMounted(() => {
   <div class="stg-card">
     <div class="stg-card-hdr">
       <h3>预设服务器</h3>
-      <div class="stg-card-sub">常用皮肤站地址，登录下拉可直接选择</div>
+      <div class="stg-card-sub">登录下拉选项来自此处（含内置）；新增填名称 + 地址</div>
     </div>
     <div class="tp-list">
-      <div v-for="(sv, i) in presetServers" :key="sv" class="tp-row">
-        <span class="tp-url" :title="sv">{{ sv }}</span>
-        <button class="tp-del" title="打开站点" @click="openServerLink(sv)">
+      <div v-for="(sv, i) in presetServers" :key="sv.value" class="tp-row">
+        <span class="tp-name" :title="sv.value">{{ sv.label }}</span>
+        <span class="tp-url" :title="sv.value">{{ sv.value }}</span>
+        <button class="tp-del" title="打开站点" @click="openServerLink(sv.value)">
           <ExternalLink :size="13" />
         </button>
         <button class="tp-del" title="移除" @click="removePreset(i)">
           <Trash2 :size="13" />
         </button>
       </div>
-      <div v-if="presetServers.length === 0" class="tp-empty">
-        无自定义预设（内置 LittleSkin；可添加其他皮肤站地址）
-      </div>
-      <div class="tp-row tp-add">
+      <div v-if="presetServers.length === 0" class="tp-empty">暂无预设</div>
+      <div class="tp-add-row">
         <input
-          v-model="newServer"
+          v-model="newLabel"
+          class="tp-input tp-add-label"
+          type="text"
+          placeholder="名称（如 LittleSkin）"
+          @keyup.enter="addPreset"
+        />
+        <input
+          v-model="newValue"
           class="tp-input"
           type="text"
-          placeholder="如 https://littleskin.cn/api/yggdrasil"
+          placeholder="地址（如 https://littleskin.cn/api/yggdrasil）"
           @keyup.enter="addPreset"
         />
         <button class="tp-btn" @click="addPreset">
@@ -258,32 +258,10 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
 }
-.tp-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-.tp-actions-right {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-left: auto;
-}
-.tp-field {
-  gap: 8px;
-}
-.tp-select {
+.tp-label {
   flex: none;
-  max-width: 160px;
-  height: 30px;
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--text-secondary);
-  background: var(--surface-elevated);
-  border: 1px solid var(--border-default);
-  border-radius: 6px;
-  outline: none;
-  padding: 0 6px;
 }
 .tp-input {
   flex: 1;
@@ -299,6 +277,17 @@ onMounted(() => {
 }
 .tp-input:focus {
   border-color: var(--color-brand);
+}
+.tp-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.tp-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 .tp-btn {
   flex: none;
@@ -316,6 +305,10 @@ onMounted(() => {
 .tp-btn:hover {
   color: var(--color-brand);
   border-color: var(--color-brand);
+}
+.tp-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 .tp-primary {
   color: var(--text-inverse);
@@ -338,10 +331,22 @@ onMounted(() => {
   flex-direction: column;
   gap: 6px;
 }
+.tp-name {
+  flex: none;
+  min-width: 0;
+  max-width: 160px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .tp-url {
   flex: 1;
-  font-size: 12px;
-  color: var(--text-secondary);
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -370,8 +375,16 @@ onMounted(() => {
   color: var(--text-tertiary);
   text-align: center;
 }
-.tp-add {
-  border-style: dashed;
-  border-color: var(--border-strong);
+.tp-add-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+}
+.tp-add-label {
+  flex: none;
+  max-width: 140px;
 }
 </style>

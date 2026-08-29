@@ -224,21 +224,43 @@ pub fn remove_external_account(api_url: String, uuid: String) -> Result<(), Stri
     crate::auth::external::remove(&api_url, &uuid)
 }
 
-/// 第三方登录配置（预设验证服务器地址列表）。
+/// 预设验证服务器（label 展示名 + value API 地址）。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ThirdPartyServer {
+    pub label: String,
+    pub value: String,
+}
+
+/// 第三方登录配置（预设验证服务器列表，label + value）。
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ThirdPartyConfig {
     /// 常用验证服务器（皮肤站）预设列表
-    pub servers: Vec<String>,
+    #[serde(default)]
+    pub servers: Vec<ThirdPartyServer>,
 }
 
-/// 读取第三方配置（无配置回默认预设）。
+/// 默认内置预设（知名 Yggdrasil 兼容站）。
+pub fn default_third_party_servers() -> Vec<ThirdPartyServer> {
+    vec![
+        ThirdPartyServer {
+            label: "LittleSkin".into(),
+            value: "https://littleskin.cn/api/yggdrasil".into(),
+        },
+        ThirdPartyServer {
+            label: "Ely.by".into(),
+            value: "https://authserver.ely.by/api/yggdrasil".into(),
+        },
+    ]
+}
+
+/// 读取第三方配置（无配置回默认内置预设）。
 #[tauri::command]
 pub fn get_third_party_config() -> ThirdPartyConfig {
     let cfg: ThirdPartyConfig =
         crate::persist::read(crate::constants::SECT_THIRD_PARTY).unwrap_or_default();
     if cfg.servers.is_empty() {
         return ThirdPartyConfig {
-            servers: vec!["https://littleskin.cn/api/yggdrasil".into()],
+            servers: default_third_party_servers(),
         };
     }
     cfg
