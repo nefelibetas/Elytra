@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 设置页容器：导航 + 各 tab 内容编排（业务在 store/组件，本文件不做配置逻辑）
-import { SlidersHorizontal, Download, Palette, Link2, FileText } from "@lucide/vue";
+import { SlidersHorizontal, Download, Palette, Link2, FileText, KeyRound } from "@lucide/vue";
 import SettingsLaunchOptions from "../component/SettingsLaunchOptions.vue";
 import SettingsJdk from "../component/SettingsJdk.vue";
 import SettingsThirdParty from "../component/SettingsThirdParty.vue";
@@ -56,6 +56,14 @@ import { settingsTab } from "../store/settingsTab";
         <FileText :size="16" />
         启动器日志
       </button>
+      <button
+        class="stg-tab"
+        :class="{ active: settingsTab === 'thirdparty' }"
+        @click="settingsTab = 'thirdparty'"
+      >
+        <KeyRound :size="16" />
+        第三方登录
+      </button>
     </nav>
 
     <div class="stg-body">
@@ -64,7 +72,6 @@ import { settingsTab } from "../store/settingsTab";
         <div v-if="settingsTab === 'launch'" key="launch" class="stg-page">
           <SettingsLaunchOptions />
           <SettingsJdk />
-          <SettingsThirdParty />
         </div>
 
         <!-- 下载设置：管理游戏下载源 -->
@@ -80,6 +87,11 @@ import { settingsTab } from "../store/settingsTab";
         <!-- 联机：EasyTier 虚拟局域网 -->
         <div v-else-if="settingsTab === 'online'" key="online" class="stg-page">
           <SettingsOnline />
+        </div>
+
+        <!-- 第三方登录 -->
+        <div v-else-if="settingsTab === 'thirdparty'" key="thirdparty" class="stg-page">
+          <SettingsThirdParty />
         </div>
 
         <!-- 启动器日志 -->
