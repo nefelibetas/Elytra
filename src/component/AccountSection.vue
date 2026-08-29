@@ -491,27 +491,21 @@ function useOfflineName(name: string) {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  margin-top: 6px;
+  margin-top: 8px;
   position: relative;
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-.uname:hover .ext-actions,
-.ext-actions:hover {
-  opacity: 1;
 }
 .ext-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
-  border: 1px solid var(--border-strong);
-  border-radius: 5px;
-  background: transparent;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default);
+  background-color: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.12s;
+  transition: all 0.15s;
 }
 .ext-icon:hover {
   color: var(--color-brand);
