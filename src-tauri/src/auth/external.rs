@@ -146,7 +146,7 @@ pub async fn login(
     let client_token = json["clientToken"]
         .as_str()
         .map(str::to_string)
-        .or_else(|| Some(client_token));
+        .or(Some(client_token));
     // 全部角色（availableProfiles）
     let profiles = json["availableProfiles"]
         .as_array()
