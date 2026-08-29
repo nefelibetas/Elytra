@@ -1,8 +1,10 @@
 <script setup lang="ts">
 // 启动页容器：左列（启动进度 / 账号区 + 启动区）编排 + 右列占位 + 错误弹窗。
 // 业务逻辑在 store（launch/auth/accountUi/avatar/alert），本文件仅做初始化编排。
-import { onMounted } from "vue";
+import { onMounted, ref } from "vue";
 import { FileText } from "@lucide/vue";
+import { invoke } from "@tauri-apps/api/core";
+import { errMsg } from "../utils/error";
 import AlertDialog from "../component/AlertDialog.vue";
 import LaunchProgress from "../component/LaunchProgress.vue";
 import AccountSection from "../component/AccountSection.vue";
@@ -10,6 +12,7 @@ import LaunchSection from "../component/LaunchSection.vue";
 import CapeDialog from "../component/CapeDialog.vue";
 import VersionDetailCard from "../component/VersionDetailCard.vue";
 import { alertState } from "../store/alert";
+import { activePath } from "../store/gameDirs";
 import { renderOfflineAvatar, renderPremiumAvatar } from "../store/avatar";
 import {
   msAccount, username, loadMsAccounts, loadOfflineAccounts, loadLastUsername, ensureLoginListener,
@@ -30,6 +33,21 @@ onMounted(async () => {
   await ensureGameExitListener();
   await loadVersions();
 });
+
+// ── 游戏日志 dialog ──
+const logDialog = ref(false);
+const logText = ref("");
+
+/** 打开游戏日志弹窗：读取当前激活目录（.minecraft）logs 下的日志尾部。 */
+async function openLog() {
+  if (!activePath.value) return;
+  try {
+    logText.value = await invoke<string>("get_game_log", { gameDir: activePath.value });
+  } catch (e) {
+    logText.value = errMsg(e);
+  }
+  logDialog.value = true;
+}
 </script>
 
 <template>
@@ -40,6 +58,7 @@ onMounted(async () => {
         <div v-else key="normal" class="left-normal">
           <AccountSection />
           <LaunchSection />
+          <button class="log-btn" @click="openLog">游戏日志</button>
         </div>
       </Transition>
     </div>
@@ -60,6 +79,13 @@ onMounted(async () => {
       :message="alertState.msg"
       :copyable="alertState.copyable"
     />
+
+    <AlertDialog v-model="logDialog" title="游戏日志" width="lg">
+      <pre class="log-pre">{{ logText }}</pre>
+      <template #actions>
+        <button class="log-close-btn" @click="logDialog = false">关闭</button>
+      </template>
+    </AlertDialog>
 
     <CapeDialog />
   </div>
@@ -140,5 +166,57 @@ onMounted(async () => {
 .right-switch-enter-from,
 .right-switch-leave-to {
   opacity: 0;
+}
+/* 游戏日志按钮（参考 LaunchSection 的 secondary-btn） */
+.log-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 0;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background-color: var(--surface-elevated);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.log-btn:hover {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
+}
+
+/* 游戏日志 dialog：等宽、可滚动内容区 */
+.log-pre {
+  margin: 0;
+  max-height: 55vh;
+  overflow: auto;
+  font-family: Consolas, "Cascadia Code", "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+}
+
+.log-close-btn {
+  padding: 5px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.log-close-btn:hover {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
+  background: var(--color-brand-bg);
 }
 </style>

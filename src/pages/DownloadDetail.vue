@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue"
-import { X, Check, LoaderCircle, RotateCcw, HardDriveDownload } from "@lucide/vue"
+import { X, Check, LoaderCircle, RotateCcw, HardDriveDownload, Pause } from "@lucide/vue"
 import { dlState, TaskItem, interruptedJobs, resumeAllInterrupted, dismissAllInterrupted } from "../store/download"
 import { errMsg } from "../utils/error"
 import { fmtSpeed, fmtEta } from "../utils/format"
@@ -29,6 +29,7 @@ function toggleSteps(taskId: string) {
 function statusChip(task: TaskItem): { text: string; cls: string } {
   if (task.status === "error") return { text: "失败", cls: "err" }
   if (task.status === "pending") return { text: "等待中", cls: "pending" }
+  if (task.status === "paused") return { text: "已暂停", cls: "pending" }
   return { text: "下载中", cls: "running" }
 }
 
@@ -45,6 +46,20 @@ async function handleCancel(task: TaskItem) {
   showToast(`${name} 已取消`)
   // 不自动退出任务中心：与任务完成一致（顶级 tab，停留本页查看状态），
   // 取消后列表空则显示"暂无下载任务"
+}
+
+async function handleResume(task: TaskItem) {
+  try {
+    await dlState.resumePausedTask(task.taskId)
+    showToast(`${task.name || "下载任务"} 已继续下载`)
+  } catch (e) {
+    showToast(`继续失败：${errMsg(String(e))}`)
+  }
+}
+
+async function handleDismissPaused(task: TaskItem) {
+  await dlState.dismissPausedTask(task.taskId)
+  showToast(`${task.name || "下载任务"} 已放弃`)
 }
 </script>
 
@@ -109,9 +124,22 @@ async function handleCancel(task: TaskItem) {
           <div class="tc-hdr">
             <span class="tc-name" :title="task.name">{{ task.name || "下载任务" }}</span>
             <span class="tc-chip" :class="statusChip(task).cls">{{ statusChip(task).text }}</span>
-            <button class="tc-cancel" v-tooltip="'取消并清理'" @click="handleCancel(task)">
-              <X :size="13" />
-            </button>
+            <template v-if="task.status === 'running'">
+              <button class="tc-cancel" v-tooltip="'暂停'" @click="dlState.pauseTask(task.taskId)">
+                <Pause :size="13" />
+              </button>
+              <button class="tc-cancel" v-tooltip="'取消并清理'" @click="handleCancel(task)">
+                <X :size="13" />
+              </button>
+            </template>
+            <template v-else-if="task.status === 'paused'">
+              <button class="tc-cancel" v-tooltip="'继续下载'" @click="handleResume(task)">
+                <RotateCcw :size="13" />
+              </button>
+              <button class="tc-cancel" v-tooltip="'放弃（删除快照）'" @click="handleDismissPaused(task)">
+                <X :size="13" />
+              </button>
+            </template>
           </div>
 
           <!-- 任务级总进度条 -->

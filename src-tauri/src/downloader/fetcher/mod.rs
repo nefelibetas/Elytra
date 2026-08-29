@@ -16,6 +16,7 @@ mod routes;
 #[cfg(test)]
 mod tests;
 
+pub use core::set_speed_limit;
 pub use redirect::{http, reset_http_client};
 
 #[derive(Debug)]

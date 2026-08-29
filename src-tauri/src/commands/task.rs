@@ -48,6 +48,10 @@ fn spawn_task(
 ) -> Result<String, String> {
     let step_names: Vec<&str> = steps.iter().map(|s| s.name.as_str()).collect();
     let tm = task::global();
+    // 每次任务启动同步全局限速（用户改配置后不重启也生效）
+    let cfg: crate::config::downloader::model::DownloaderConfig =
+        persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
+    crate::downloader::fetcher::set_speed_limit(cfg.max_speed);
     let (task_id, cancel, progress) = tm.create(&name, &step_names);
     // 持久化快照（崩溃/重启恢复依据；DB 故障静默）
     task::store::save_snapshot(&task_id, &name, &spec, TaskStatus::Running);
@@ -238,6 +242,19 @@ fn cleanup_file_parts(task: &DownloadFilesTask) {
 #[tauri::command]
 pub fn dismiss_interrupted_task(task_id: String) {
     task::store::remove_snapshot(&task_id);
+}
+
+/// 暂停任务：停下载、保留已下载目录与快照（status=paused），
+/// 供前端显示"继续"（resume_task 重跑快照，已完成文件 sha1 跳过）。
+#[tauri::command]
+pub fn pause_task(task_id: String) -> Result<(), String> {
+    if !task::global().pause(&task_id) {
+        return Err(format!(
+            "任务不存在或已结束
+{task_id}"
+        ));
+    }
+    Ok(())
 }
 
 #[tauri::command]

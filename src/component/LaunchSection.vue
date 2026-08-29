@@ -4,6 +4,7 @@ import { useRouter } from "vue-router";
 import { LayoutGrid } from "@lucide/vue";
 import { isLaunching, doLaunch } from "../store/launch";
 import { selectedVersion } from "../store/selectedVersion";
+import { loServer, loPort, saveLaunchOptions } from "../store/launchOptions";
 
 const router = useRouter();
 
@@ -40,6 +41,27 @@ function goDownload() {
           <LayoutGrid :size="14" />
           <span>版本选择</span>
         </button>
+      </div>
+
+      <div class="server-row">
+        <label class="server-label" for="lo-server">服务器直连</label>
+        <input
+          id="lo-server"
+          v-model="loServer"
+          class="lo-input"
+          type="text"
+          placeholder="服务器地址（可选，直连进服）"
+          @change="saveLaunchOptions"
+        />
+        <input
+          id="lo-port"
+          v-model="loPort"
+          class="lo-input server-port"
+          type="text"
+          inputmode="numeric"
+          placeholder="端口"
+          @change="saveLaunchOptions"
+        />
       </div>
     </div>
   </div>
@@ -131,5 +153,41 @@ function goDownload() {
 .secondary-btn:hover {
   border-color: var(--color-brand);
   color: var(--color-brand);
+}
+
+.server-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.server-label {
+  flex: none;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.lo-input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background-color: var(--surface-input, var(--surface-card));
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.lo-input:hover,
+.lo-input:focus {
+  border-color: var(--color-brand);
+}
+
+.server-port {
+  flex: none;
+  width: 110px;
 }
 </style>

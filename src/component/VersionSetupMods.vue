@@ -20,7 +20,7 @@ import { useSelectable } from "../utils/useSelectable";
 import {
   mods, modsLoading, modsError, modsNetworkError, modsLoadedFor,
   updates, updatesChecked, checkingUpdates, updatesError, updatingFiles,
-  versionLoader, loadVersionLoader, loadMods, checkModUpdates, updateMod, deleteMod,
+  versionLoader, loadVersionLoader, loadMods, checkModUpdates, updateMod, deleteMod, toggleMod,
 } from "../store/versionDetail";
 
 const route = useRoute();
@@ -103,6 +103,16 @@ async function confirmDelete() {
     }
   }
   if (names.length > 0) clear();
+}
+
+/** 禁用单个 mod：调用后端重命名 .jar → .jar.disabled，成功后刷新列表（禁用项被扫描过滤隐藏）。 */
+async function toggleOne(fileName: string) {
+  try {
+    await toggleMod(versionName.value, fileName);
+    showToast(`已禁用 ${fileName}`);
+  } catch (e) {
+    showToast(errMsg(e));
+  }
 }
 
 onMounted(async () => {
@@ -240,6 +250,7 @@ async function openModsFolder() {
                     </span>
                   </template>
                 </div>
+                <button class="vsm-toggle-btn" @click="toggleOne(m.file_name)">禁用</button>
               </div>
             </div>
           </div>
@@ -643,6 +654,30 @@ async function openModsFolder() {
 .vsm-ab-btn.danger:hover:not(:disabled) {
   background: color-mix(in srgb, var(--color-danger) 8%, transparent);
   border-color: var(--color-danger);
+}
+
+/* 行内禁用按钮（Mod 行最右侧；与 act 按钮同款紧凑样式） */
+.vsm-toggle-btn {
+  flex: none;
+  margin-left: 8px;
+  padding: 5px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.vsm-toggle-btn:hover:not(:disabled) {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
+}
+
+.vsm-toggle-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 /* dialog */

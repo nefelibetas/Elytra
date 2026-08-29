@@ -28,7 +28,7 @@ use commands::gamedirs::{
     rename_version_dir, set_active_game_dir,
 };
 use commands::jdk::{auto_scan_jdk, get_jdk_config, save_jdk_config, scan_custom_jdk};
-use commands::launch::{check_launch_env, spawn_game};
+use commands::launch::{check_launch_env, get_game_log, spawn_game};
 use commands::launch_options::{get_launch_options, get_memory_info, save_launch_options};
 use commands::launch_script::export_launch_script;
 use commands::loader::{
@@ -45,13 +45,13 @@ use commands::online::{
 };
 use commands::task::{
     cancel_task, decide_waiting_task, dismiss_interrupted_task, download_files,
-    download_single_file, install_modpack, list_interrupted_tasks, resume_task, scan_missing_files,
-    start_download, submit_install_jdk, submit_missing_download, task_exists,
+    download_single_file, install_modpack, list_interrupted_tasks, pause_task, resume_task,
+    scan_missing_files, start_download, submit_install_jdk, submit_missing_download, task_exists,
 };
 use commands::version::{
     check_mod_updates, delete_mod_file, delete_resource_file, delete_world, export_modpack,
     get_world_icon, identify_mod_file, list_mods_detailed, list_resource_detailed,
-    list_resource_files, list_worlds, update_mod_file,
+    list_resource_files, list_worlds, toggle_mod_file, update_mod_file,
 };
 use commands::version_icon::{
     get_version_icon, get_version_icon_source, reset_version_icon, set_version_icon,
@@ -97,6 +97,7 @@ pub fn run() {
             check_mod_updates,
             update_mod_file,
             delete_mod_file,
+            toggle_mod_file,
             export_modpack,
             get_version_icon,
             get_version_icon_source,
@@ -123,12 +124,14 @@ pub fn run() {
             download_single_file,
             install_modpack,
             cancel_task,
+            pause_task,
             decide_waiting_task,
             task_exists,
             list_interrupted_tasks,
             resume_task,
             dismiss_interrupted_task,
             spawn_game,
+            get_game_log,
             check_launch_env,
             get_memory_info,
             get_launch_options,

@@ -17,7 +17,7 @@ pub use identify::{
     ResourceListResult,
 };
 pub use scan::{scan_dir_files, scan_mod_files, LocalModFile, ScanFilter};
-pub use update::{check_updates, delete_mod_file, update_mod_file, ModUpdate};
+pub use update::{check_updates, delete_mod_file, toggle_mod_file, update_mod_file, ModUpdate};
 
 /// Modrinth API 根地址（识别与更新查询共用）。
 /// sha1 → 项目查询并发上限（Modrinth 限 300 req/min，个人 mods 量级安全）。

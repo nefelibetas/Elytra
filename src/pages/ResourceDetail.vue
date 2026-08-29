@@ -222,14 +222,38 @@ const selectedDepIds = computed(() => {
   return order;
 });
 
+/** 选中版本的 incompatible 冲突项目 ID（去重保序；只读警示，不拦截安装）。 */
+const selectedIncompatIds = computed(() => {
+  const v = versions.value.find(x => x.version_id === selectedVersionId.value);
+  if (!v) return [];
+  const seen = new Set<string>();
+  const order: string[] = [];
+  for (const dep of v.dependencies) {
+    if (dep.relation === "incompatible" && dep.project_id && !seen.has(dep.project_id)) {
+      seen.add(dep.project_id);
+      order.push(dep.project_id);
+    }
+  }
+  return order;
+});
+
+/** 依赖详情已加载项按关系分流（loadDeps 一次性拉取 required + incompatible 并集）。 */
+const requiredIdSet = computed(() => new Set(selectedDepIds.value));
+const incompatIdSet = computed(() => new Set(selectedIncompatIds.value));
+/** 前置依赖（required）详情项。 */
+const requiredItems = computed(() => depItems.value.filter(d => requiredIdSet.value.has(d.id)));
+/** 不兼容冲突详情项（只读警示）。 */
+const incompatItems = computed(() => depItems.value.filter(d => incompatIdSet.value.has(d.id)));
+
 /** 依赖请求序号：每次请求自增，响应返回时与当前值不符即过期（选中版本已切换/返回）→ 丢弃。 */
 let depsSeq = 0;
 
 async function loadDeps() {
   const seq = ++depsSeq;
   const it = item.value;
-  const ids = selectedDepIds.value;
-  if (!it || ids.length === 0) {
+  const reqIds = selectedDepIds.value;
+  const incIds = selectedIncompatIds.value;
+  if (!it || (reqIds.length === 0 && incIds.length === 0)) {
     depItems.value = [];
     depError.value = "";
     return;
@@ -246,7 +270,7 @@ async function loadDeps() {
   loadingDeps.value = true;
   depError.value = "";
   try {
-    const items = await fetchCommunityDetails(it.source, ids);
+    const items = await fetchCommunityDetails(it.source, Array.from(new Set([...reqIds, ...incIds])));
     if (seq !== depsSeq) return; // 过期响应（选中版本已切换/返回）丢弃
     depItems.value = items;
   } catch (e) {
@@ -537,9 +561,14 @@ async function copyName() {
 
           <!-- 右：前置依赖卡片（选中版本且有 required 依赖才出现；宽度展开动画） -->
           <Transition name="mv-side">
-            <div v-if="selectedVersionId && selectedDepIds.length > 0" class="md-card md-deps-card">
+            <div v-if="selectedVersionId && (selectedDepIds.length > 0 || selectedIncompatIds.length > 0)" class="md-card md-deps-card">
               <div class="mv-head">
-                <span class="mv-title">前置依赖<span v-if="!loadingDeps" class="mv-count"> | {{ depItems.length }} 个</span></span>
+                <span class="mv-title">前置依赖<span v-if="!loadingDeps" class="mv-count"> | {{ selectedDepIds.length }} 个</span></span>
+              </div>
+              <div v-if="!loadingDeps && incompatItems.length > 0" class="md-dep-warn">
+                <div class="md-dep-warn-title">不兼容冲突（{{ incompatItems.length }} 个）</div>
+                <div v-for="d in incompatItems" :key="d.id" class="md-dep-warn-item">{{ d.title }}</div>
+                <div class="md-dep-warn-tip">该版本与以上 Mod 不兼容，安装后可能无法正常游戏</div>
               </div>
               <div v-if="loadingDeps" class="md-dep-state">
                 <div class="spinner"></div>
@@ -548,7 +577,7 @@ async function copyName() {
               <div v-else-if="depError" class="md-dep-state err">{{ depError }}</div>
               <div v-else-if="depItems.length === 0" class="md-dep-empty">未找到前置依赖信息</div>
               <div v-else class="md-dep-list">
-                <div v-for="d in depItems" :key="d.id" class="md-dep-item" @click="openResourceDetail(
+                <div v-for="d in requiredItems" :key="d.id" class="md-dep-item" @click="openResourceDetail(
                   depToItem(d),
                   { loader: loaderFilter, gameVersion: gameVersionFilter, selectedVersion: selectedVersionId },
                   { versions, versionError, depItems, depError },
@@ -1090,6 +1119,36 @@ async function copyName() {
 .md-dep-state.err {
   color: var(--color-danger);
   font-size: 12px;
+}
+
+/* 不兼容冲突警示（只读，不拦截安装）：红字警示卡 */
+.md-dep-warn {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-danger);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 35%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--color-danger-bg);
+}
+.md-dep-warn-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-danger);
+}
+.md-dep-warn-item {
+  font-size: 11.5px;
+  color: var(--color-danger);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.md-dep-warn-tip {
+  font-size: 10.5px;
+  color: var(--color-danger);
+  opacity: 0.85;
 }
 .md-dep-state-text {
   font-size: 12px;

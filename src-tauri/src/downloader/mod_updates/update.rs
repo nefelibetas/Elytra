@@ -80,6 +80,31 @@ pub fn delete_mod_file(mods_dir: &Path, file_name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// 切换 mods 目录下单个 mod 文件的启用/禁用状态（Mod 管理禁用按钮）。
+/// 禁用：`name.jar` → `name.jar.disabled`（扫描按扩展名过滤自动隐藏）；启用：反向重命名。
+/// 仅接受纯文件名（防路径穿越），目标不存在报错。返回 true=已禁用，false=已启用。
+pub fn toggle_mod_file(mods_dir: &Path, file_name: &str) -> Result<bool, String> {
+    if file_name.contains('/')
+        || file_name.contains('\\')
+        || file_name.contains("..")
+        || file_name.is_empty()
+    {
+        return Err("非法文件名".to_string());
+    }
+    let path = mods_dir.join(file_name);
+    if path.exists() && file_name.ends_with(".jar") {
+        let disabled = mods_dir.join(format!("{file_name}.disabled"));
+        std::fs::rename(&path, &disabled).map_err(|e| format!("禁用失败\n{e}"))?;
+        return Ok(true);
+    }
+    let disabled = mods_dir.join(format!("{file_name}.disabled"));
+    if disabled.exists() {
+        std::fs::rename(&disabled, &path).map_err(|e| format!("启用失败\n{e}"))?;
+        return Ok(false);
+    }
+    Err(format!("Mod 文件不存在\n{file_name}"))
+}
+
 /// 检查一批本地 mod 是否有可用更新（Modrinth 源）。
 /// 命中项目但无新版本 / 不在 Modrinth 的 mod 不进入结果。
 pub async fn check_updates(

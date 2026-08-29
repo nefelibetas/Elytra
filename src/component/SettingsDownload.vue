@@ -4,8 +4,9 @@
 import { onMounted } from "vue";
 import { ChevronDown } from "@lucide/vue";
 import DropSelect from "./DropSelect.vue";
+import { fmtSpeed } from "../utils/format";
 import {
-  dlFileMode, dlManifestMode, dlCommunityMode, dlConcurrency,
+  dlFileMode, dlManifestMode, dlCommunityMode, dlConcurrency, dlMaxSpeed,
   dlJdkMode, dlNetworkMode, dlTranslateMode,
   dlError, dlShowReleaseOnly,
   sourceModeOptions, communitySourceOptions,
@@ -154,6 +155,21 @@ function onMaster(v: string) {
         @input="saveDownloadConfig"
       />
       <span class="dl-val">{{ dlConcurrency }} / 256</span>
+    </div>
+    <!-- 下载限速：0 = 不限制 -->
+    <div class="dl-row">
+      <span class="dl-label">下载限速</span>
+      <input
+        class="dl-range"
+        type="range"
+        min="0"
+        max="10240"
+        step="256"
+        v-model.number="dlMaxSpeed"
+        :style="{ '--range-pct': (dlMaxSpeed / 10240 * 100) + '%' }"
+        @input="saveDownloadConfig"
+      />
+      <span class="dl-val">{{ dlMaxSpeed === 0 ? '不限' : fmtSpeed(dlMaxSpeed) }}</span>
     </div>
     <!-- Auto（智能）模式：官方源优先 + 镜像降级，并发仅作用于官方源，镜像源固定 8 -->
     <p v-if="dlFileMode === 'auto' && !concurrencyLocked" class="dl-note">

@@ -53,6 +53,7 @@ fn status_str(status: TaskStatus) -> &'static str {
         TaskStatus::Done => "done",
         TaskStatus::Error => "error",
         TaskStatus::Cancelled => "cancelled",
+        TaskStatus::Paused => "paused",
     }
 }
 
@@ -210,7 +211,7 @@ pub fn list_interrupted() -> Vec<InterruptedJob> {
     let rows: Vec<(String, String, i64)> = block_on(async move {
         let rows = sqlx::query(
             "SELECT id, name, updated_at FROM install_jobs
-             WHERE status IN ('running', 'interrupted')
+             WHERE status IN ('running', 'interrupted', 'paused')
              ORDER BY updated_at DESC",
         )
         .fetch_all(pool)

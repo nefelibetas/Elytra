@@ -180,6 +180,35 @@ impl TaskManager {
         }
     }
 
+    /// 暂停任务：设取消标志停下载 + 取走清理路径（保留已下载目录，恢复时文件级
+    /// sha1 幂等只补缺失） + 状态标 Paused + 移除内存注册。DB 快照保留（status=paused），
+    /// 供前端列表/恢复（resume_task 复用崩溃恢复路径重跑快照）。
+    /// 任务线程随后检测到 cancel flag 退出，其 set_cancelled 收尾因注册已移除而 no-op；
+    /// 它仍会 emit 一次 cancelled 事件，前端以 paused 状态为准忽略之。
+    pub fn pause(&self, id: &str) -> bool {
+        let paused = {
+            let mut inner = self.inner.lock();
+            if let Some(h) = inner.tasks.get_mut(id) {
+                h.cancel.store(true, Ordering::SeqCst);
+                // 取走清理路径：暂停不清目录（下载产物保留，恢复只补缺失文件）
+                let _ = h.cleanup_path.take();
+                if let Some(mut p) = h.progress.try_lock() {
+                    p.status = TaskStatus::Paused;
+                }
+                true
+            } else {
+                false
+            }
+        };
+        if paused {
+            // DB 标 paused（快照保留）；不持任何锁
+            store::update_status(id, TaskStatus::Paused);
+            // 移除内存注册（与终态收口一致）；runner 线程随 cancel flag 自然退出
+            self.inner.lock().tasks.remove(id);
+        }
+        paused
+    }
+
     pub fn cancel(&self, id: &str) -> bool {
         let cancelled = {
             let inner = self.inner.lock();

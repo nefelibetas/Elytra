@@ -12,6 +12,8 @@ pub enum TaskStatus {
     Done,
     Error,
     Cancelled,
+    /// 用户暂停（任务从内存移除，快照保留可恢复）。
+    Paused,
 }
 
 /// 步骤状态（进度事件 payload）。

@@ -399,6 +399,28 @@ fn latest_crash_report(dir: &std::path::Path) -> Option<String> {
     latest.map(|(_, p)| p)
 }
 
+/// 读取游戏日志尾部（最多 200 行）：优先启动器捕获日志 elytra-launch.log，
+/// 为空/不存在时回退原版游戏日志 latest.log；两文件均不可读时返回空字符串（不报错）。
+#[tauri::command]
+pub async fn get_game_log(game_dir: String) -> String {
+    let logs_dir = std::path::Path::new(&game_dir).join("logs");
+    let launch_log =
+        std::fs::read_to_string(logs_dir.join("elytra-launch.log")).unwrap_or_default();
+    if !launch_log.trim().is_empty() {
+        return tail_lines(&launch_log);
+    }
+    std::fs::read_to_string(logs_dir.join("latest.log"))
+        .map(|text| tail_lines(&text))
+        .unwrap_or_default()
+}
+
+/// 取文本尾部最多 200 行（lines().rev().take(200) 后反转，保留原顺序）。
+fn tail_lines(text: &str) -> String {
+    let mut lines: Vec<&str> = text.lines().rev().take(200).collect();
+    lines.reverse();
+    lines.join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -481,6 +503,25 @@ mod tests {
         assert_eq!(
             args[gi + 1].replace('\\', "/"),
             "D:/Minecraft/.minecraft/versions/1.18.2"
+        );
+    }
+
+    #[test]
+    fn test_server_direct_args() {
+        // 服务器直连：--server/--port 追加到游戏参数末尾；未配置时不出现
+        let mut cfg = LauncherConfig::default();
+        cfg.server = Some("1.2.3.4".into());
+        cfg.port = Some(25565);
+        let args = build_cmd(&cfg);
+        assert!(args.contains(&"--server".into()));
+        assert!(args.contains(&"1.2.3.4".into()));
+        assert!(args.contains(&"--port".into()));
+        assert!(args.contains(&"25565".into()));
+
+        let args = build_cmd(&LauncherConfig::default());
+        assert!(
+            !args.iter().any(|a| a == "--server" || a == "--port"),
+            "未配置服务器直连不应传 --server/--port: {args:?}"
         );
     }
 

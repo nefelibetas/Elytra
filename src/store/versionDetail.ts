@@ -388,6 +388,14 @@ export async function deleteMod(versionName: string, fileName: string) {
   await loadMods(versionName, true);
 }
 
+/** 禁用单个 mod：后端重命名 .jar → .jar.disabled（扫描按扩展名过滤自动隐藏），
+ *  成功后刷新本地列表并清出更新列表。当前列表不展示禁用项（扫描排除），无启用入口。 */
+export async function toggleMod(versionName: string, fileName: string) {
+  await invoke("toggle_mod_file", { versionName, fileName });
+  updates.value = updates.value.filter(u => u.file_name !== fileName);
+  await loadMods(versionName, true);
+}
+
 // ── 版本切换重置 ──
 
 export function resetVersionDetail() {
