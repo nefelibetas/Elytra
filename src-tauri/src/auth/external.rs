@@ -29,6 +29,9 @@ pub struct ExternalAccount {
     /// 皮肤站登录账号（authenticate 响应 user.username；旧账号为 None）
     #[serde(default)]
     pub site_username: Option<String>,
+    /// 皮肤站名称（元数据探测 GET {api}/api/yggdrasil → meta.serverName；旧账号为 None）
+    #[serde(default)]
+    pub server_name: Option<String>,
     /// Yggdrasil clientToken（refresh 换角色/续期用；旧账号为 None）
     #[serde(default)]
     pub client_token: Option<String>,
@@ -155,6 +158,9 @@ pub async fn login(
         .ok_or("账号没有可用角色（请先在皮肤站创建角色）")?;
     let uuid = profile["id"].as_str().ok_or("角色缺少 id")?.to_string();
     let name = profile["name"].as_str().ok_or("角色缺少 name")?.to_string();
+    // 皮肤站名称（元数据探测；失败不阻塞）
+    let server_name = server_name(&api).await;
+
     // 站点登录账号：优先响应 user.username（部分服务器返回 null），
     // 回退登录输入的账号名（LittleSkin 等支持用户名/邮箱登录，输入即账号标识）
     let site_username = json["user"]["username"]
@@ -187,6 +193,7 @@ pub async fn login(
         name,
         access_token: token,
         site_username,
+        server_name,
         client_token,
         profiles,
     })
@@ -349,6 +356,23 @@ pub async fn switch_role(
     Ok(updated)
 }
 
+/// 探测皮肤站名称：GET {api}/api/yggdrasil → meta.serverName（失败/非标准返回 None，不阻塞登录）。
+pub async fn server_name(api_url: &str) -> Option<String> {
+    let api = api_url.trim().trim_end_matches('/');
+    let url = format!("{api}/api/yggdrasil");
+    let resp = crate::downloader::fetcher::http()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let json: serde_json::Value = resp.json().await.ok()?;
+    json["meta"]["serverName"].as_str().map(str::to_string)
+}
+
 /// 确保 authlib-injector.jar 存在（数据目录）。缺失时从官方/BMCLAPI 镜像拉取
 /// 最新版（latest.json 拿 download_url + sha256 校验）。返回 jar 绝对路径。
 pub async fn ensure_jar() -> Result<std::path::PathBuf, String> {
@@ -440,6 +464,7 @@ mod tests {
             name: name.into(),
             access_token: "at".into(),
             site_username: Some("site".into()),
+            server_name: Some("TestSkin".into()),
             client_token: Some("ct".into()),
             profiles: vec![],
         }

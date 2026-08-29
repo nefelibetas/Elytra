@@ -1,8 +1,9 @@
 # 外置登录（authlib-injector / 自定义皮肤站）规划
 
-> 状态：**已规划未实现**（2026-08 记录）。当前 `AuthMode` 仅 `Offline` / `Online` 两态，
-> 无 authlib-injector `-javaagent` 注入点，无皮肤站 API 集成。
-> 关联：`src-tauri/src/launcher/skin.rs` 注释"配置层已砍，后续由自定义皮肤站登录（外置认证）接管皮肤注入"。
+> 状态：**已实现**（2026-08-30 全量落地）。`AuthMode::External` + authlib-injector 注入、
+> 登录认证（标准 Yggdrasil + Ely.by 分支）、多账号/多角色、jar 双源下载（sha256）、
+> 元数据探测（皮肤站名称）、3D/大头照头像。待实测：真实登录进服显示皮肤。
+> 差异：jar 用下载缓存方案（登录时拉取）而非内置；Blessing Skin 无公共实例未内置（用户自建可加预设）。
 
 ## 背景与必要性
 
