@@ -3,17 +3,18 @@
 // 放普通 <script> 块：<script setup> 不允许 export。
 import { ref } from "vue";
 
-export type ToolsTab = "status" | "motd" | "online";
+export type ToolsTab = "status" | "motd" | "give" | "online";
 
 export const toolsTab = ref<ToolsTab>("status");
 </script>
 
 <script setup lang="ts">
 // 工具页容器：左侧导航 + 各工具编排（业务在组件内，本文件不做工具逻辑）。
-// 工具：服务器状态检测 / MOTD 生成器 / 联机；后续工具（离线皮肤、/give 生成器等）加条目即可。
-import { Server, Type, Link2 } from "@lucide/vue";
+// 工具：服务器状态检测 / MOTD 生成器 / /give 生成器 / 联机；后续工具加条目即可。
+import { Server, Type, Link2, Sword } from "@lucide/vue";
 import ServerStatusTool from "../component/ServerStatusTool.vue";
 import MotdGeneratorTool from "../component/MotdGeneratorTool.vue";
+import GiveGeneratorTool from "../component/GiveGeneratorTool.vue";
 import OnlineTool from "../component/OnlineTool.vue";
 </script>
 
@@ -39,6 +40,14 @@ import OnlineTool from "../component/OnlineTool.vue";
       </button>
       <button
         class="tools-tab"
+        :class="{ active: toolsTab === 'give' }"
+        @click="toolsTab = 'give'"
+      >
+        <Sword :size="16" />
+        /give 生成器
+      </button>
+      <button
+        class="tools-tab"
         :class="{ active: toolsTab === 'online' }"
         @click="toolsTab = 'online'"
       >
@@ -51,6 +60,7 @@ import OnlineTool from "../component/OnlineTool.vue";
       <Transition name="page" mode="out-in">
         <ServerStatusTool v-if="toolsTab === 'status'" key="status" />
         <MotdGeneratorTool v-else-if="toolsTab === 'motd'" key="motd" />
+        <GiveGeneratorTool v-else-if="toolsTab === 'give'" key="give" />
         <OnlineTool v-else key="online" />
       </Transition>
     </div>
