@@ -9,7 +9,7 @@ import {
 import MotdPreview from "./MotdPreview.vue";
 import {
   MC_COLORS, MC_COLOR_KEYS, MC_COLOR_NAMES, MC_STYLES,
-  gradientMotd, escapeServerProperties, visibleLength,
+  gradientMotd, escapeServerProperties, visibleLength, hexToSectionX,
 } from "../utils/motd";
 import {
   loadOnlineConfig, saveAdvertiseMotd, onlineAdvertiseMotd,
@@ -29,13 +29,13 @@ onMounted(() => {
   void loadOnlineConfig();
 });
 
-/** 在光标处（或选区前）插入格式码。 */
-function insertCode(code: string) {
+/** 在光标处（或选区前）插入文本（格式码或完整 §x 序列）。 */
+function insertText(s: string) {
   const ta = taRef.value;
   if (!ta) return;
   const start = ta.selectionStart;
   const end = ta.selectionEnd;
-  const prefix = `§${code}`;
+  const prefix = s;
   if (start !== end) {
     // 有选区：格式码作用于选区（插在选区起点）
     text.value = text.value.slice(0, start) + prefix + text.value.slice(start);
@@ -51,6 +51,18 @@ function insertCode(code: string) {
       ta.selectionStart = ta.selectionEnd = start + prefix.length;
     });
   }
+}
+
+/** 在光标处插入格式码（§c）。 */
+function insertCode(code: string) {
+  insertText(`§${code}`);
+}
+
+/** 自定义颜色（color picker）→ 插入 §x 序列（1.16+）。 */
+function onCustomColor(e: Event) {
+  const v = (e.target as HTMLInputElement).value;
+  const sx = hexToSectionX(v);
+  if (sx) insertText(sx);
 }
 
 /** 清除全部格式码（保留纯文本）。 */
@@ -117,41 +129,52 @@ const charCount = () => visibleLength(text.value);
 
     <!-- 工具栏 -->
     <div class="motd-toolbar">
-      <span class="motd-tool-label">颜色</span>
-      <button
-        v-for="key in MC_COLOR_KEYS"
-        :key="key"
-        class="motd-color"
-        :style="{ backgroundColor: MC_COLORS[key] }"
-        :title="`§${key} ${MC_COLOR_NAMES[key]}`"
-        @click="insertCode(key)"
-      />
-      <span class="motd-divider" />
-      <button class="motd-style" title="粗体 §l" @click="insertCode(MC_STYLES.bold)">
-        <Bold :size="14" />
-      </button>
-      <button class="motd-style" title="斜体 §o" @click="insertCode(MC_STYLES.italic)">
-        <Italic :size="14" />
-      </button>
-      <button class="motd-style" title="下划线 §n" @click="insertCode(MC_STYLES.underline)">
-        <Underline :size="14" />
-      </button>
-      <button class="motd-style" title="删除线 §m" @click="insertCode(MC_STYLES.strikethrough)">
-        <Strikethrough :size="14" />
-      </button>
-      <button class="motd-style" title="乱码 §k（游戏内随机字符）" @click="insertCode(MC_STYLES.obfuscated)">
-        <Sparkles :size="14" />
-      </button>
-      <button class="motd-style" title="重置格式 §r" @click="insertCode(MC_STYLES.reset)">
-        <Eraser :size="14" />
-      </button>
-      <span class="motd-divider" />
-      <!-- 渐变（1.16+ §x） -->
-      <input v-model="gradFrom" type="color" class="motd-grad" title="渐变起色" />
-      <span class="motd-grad-arrow">→</span>
-      <input v-model="gradTo" type="color" class="motd-grad" title="渐变止色" />
-      <button class="tool-btn motd-grad-btn" @click="applyGradient">应用渐变</button>
-      <button class="tool-btn motd-clear-btn" @click="stripCodes">清除格式</button>
+      <div class="motd-toolbar-row">
+        <span class="motd-tool-label">颜色</span>
+        <button
+          v-for="key in MC_COLOR_KEYS"
+          :key="key"
+          class="motd-color"
+          :style="{ backgroundColor: MC_COLORS[key] }"
+          :title="`§${key} ${MC_COLOR_NAMES[key]}`"
+          @click="insertCode(key)"
+        />
+        <input
+          type="color"
+          class="motd-color-custom"
+          title="自定义颜色（§x，需 1.16+）"
+          @input="onCustomColor"
+        />
+      </div>
+      <div class="motd-toolbar-row">
+        <span class="motd-tool-label">样式</span>
+        <button class="motd-style" title="粗体 §l" @click="insertCode(MC_STYLES.bold)">
+          <Bold :size="14" />
+        </button>
+        <button class="motd-style" title="斜体 §o" @click="insertCode(MC_STYLES.italic)">
+          <Italic :size="14" />
+        </button>
+        <button class="motd-style" title="下划线 §n" @click="insertCode(MC_STYLES.underline)">
+          <Underline :size="14" />
+        </button>
+        <button class="motd-style" title="删除线 §m" @click="insertCode(MC_STYLES.strikethrough)">
+          <Strikethrough :size="14" />
+        </button>
+        <button class="motd-style" title="乱码 §k（游戏内随机字符）" @click="insertCode(MC_STYLES.obfuscated)">
+          <Sparkles :size="14" />
+        </button>
+        <button class="motd-style" title="重置格式 §r" @click="insertCode(MC_STYLES.reset)">
+          <Eraser :size="14" />
+        </button>
+        <button class="tool-btn motd-clear-btn" @click="stripCodes">清除格式</button>
+      </div>
+      <div class="motd-toolbar-row">
+        <span class="motd-tool-label">渐变</span>
+        <input v-model="gradFrom" type="color" class="motd-grad" title="渐变起色" />
+        <span class="motd-grad-arrow">→</span>
+        <input v-model="gradTo" type="color" class="motd-grad" title="渐变止色" />
+        <button class="tool-btn motd-grad-btn" @click="applyGradient">应用渐变</button>
+      </div>
     </div>
 
     <!-- 预览 -->
@@ -229,7 +252,7 @@ const charCount = () => visibleLength(text.value);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   outline: none;
-  resize: vertical;
+  resize: none;
   min-height: 72px;
 }
 
@@ -241,22 +264,29 @@ const charCount = () => visibleLength(text.value);
 /* ===== 工具栏 ===== */
 .motd-toolbar {
   display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0 12px;
+}
+
+.motd-toolbar-row {
+  display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 4px;
-  margin: 10px 0 12px;
 }
 
 .motd-tool-label {
   font-size: 11px;
   color: var(--text-tertiary);
   margin-right: 2px;
+  flex: 0 0 auto;
 }
 
 .motd-color {
   width: 18px;
   height: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  border: 1px solid var(--border-strong);
   border-radius: 3px;
   padding: 0;
   cursor: pointer;
@@ -267,11 +297,14 @@ const charCount = () => visibleLength(text.value);
   transform: scale(1.15);
 }
 
-.motd-divider {
-  width: 1px;
-  height: 18px;
-  background: var(--border-default);
-  margin: 0 4px;
+.motd-color-custom {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  background: none;
+  cursor: pointer;
 }
 
 .motd-style {
