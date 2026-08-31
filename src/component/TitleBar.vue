@@ -3,7 +3,7 @@ import { computed } from "vue";
 import { useRoute } from "vue-router";
 
 import { goBack } from "../store/nav";
-import { ArrowLeft, Play, Download, ListChecks, Settings, Minus, X, Feather } from "@lucide/vue";
+import { ArrowLeft, Play, Download, ListChecks, Settings, Minus, X, Feather, Wrench } from "@lucide/vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { detailTitle } from "../store/resourceDetail";
 import { dlState } from "../store/download";
@@ -40,6 +40,7 @@ const items = [
   { path: "/", label: "启动", icon: "play" },
   { path: "/download", label: "资源中心", icon: "download" },
   { path: "/download-detail", label: "任务中心", icon: "list" },
+  { path: "/tools", label: "工具", icon: "tools" },
   { path: "/settings", label: "设置", icon: "settings" },
 ] as const;
 
@@ -87,6 +88,7 @@ function onMouseDown(e: MouseEvent) {
             <Download v-if="item.icon === 'download'" :size="16" />
             <ListChecks v-if="item.icon === 'list'" :size="16" />
             <Settings v-if="item.icon === 'settings'" :size="16" />
+            <Wrench v-if="item.icon === 'tools'" :size="16" />
             <span class="label">{{ item.label }}</span>
             <span
               v-if="item.path === '/download-detail' && activeTasks > 0"

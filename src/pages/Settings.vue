@@ -54,7 +54,7 @@ import { settingsTab } from "../store/settingsTab";
         @click="settingsTab = 'online'"
       >
         <Link2 :size="16" />
-        联机
+        联机设置
       </button>
       <button
         class="stg-tab"

@@ -6,6 +6,7 @@ import { createRouter, createWebHashHistory } from "vue-router";
 import Launch from "../pages/Launch.vue";
 import Download from "../pages/Download.vue";
 import Settings from "../pages/Settings.vue";
+import Tools from "../pages/Tools.vue";
 import DownloadDetail from "../pages/DownloadDetail.vue";
 const ResourceDetail = () => import("../pages/ResourceDetail.vue");
 const VersionSelect = () => import("../pages/VersionSelect.vue");
@@ -27,6 +28,7 @@ const routes = [
   { path: "/", name: "launch", component: Launch },
   { path: ROUTE_DOWNLOAD, name: "download", component: Download },
   { path: "/settings", name: "settings", component: Settings },
+  { path: "/tools", name: "tools", component: Tools },
   { path: "/download-detail", name: "download-detail", component: DownloadDetail },
   { path: ROUTE_RESOURCE_DETAIL, name: "resource-detail", component: ResourceDetail },
   { path: "/version-select", name: "version-select", component: VersionSelect },
@@ -44,6 +46,7 @@ const routeLevel: Record<string, number> = {
   launch: 0,
   download: 0,
   settings: 0,
+  tools: 0,
   "download-detail": 0,
   "resource-detail": 1,
   "version-select": 1,
@@ -52,7 +55,7 @@ const routeLevel: Record<string, number> = {
 };
 
 /** 顶级 tab 顺序（同级切换按此决定左右方向）。 */
-const tabOrder = ["launch", "download", "download-detail", "settings"];
+const tabOrder = ["launch", "download", "download-detail", "tools", "settings"];
 
 router.beforeEach((to, from) => {
   const toLevel = routeLevel[to.name as string] ?? 0;
