@@ -53,6 +53,11 @@ function onKeyDown(e: KeyboardEvent) {
     e.preventDefault();
     return;
   }
+  // 禁止刷新页面：F5 / Ctrl+R（WebView 内刷新会丢失 Tauri IPC 状态）
+  if (e.key === "F5" || (e.ctrlKey && e.key.toUpperCase() === "R")) {
+    e.preventDefault();
+    return;
+  }
   // 禁止 Tab 切换控件焦点
   if (e.key === "Tab") {
     e.preventDefault();

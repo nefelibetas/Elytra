@@ -1,5 +1,6 @@
-// 头像渲染：正版（visage 服务端 3D 头部）+ 离线（哈希决定 Steve/Alex 默认皮肤 2D 头部 / 像素脸回退）。
-// 模块级单例（替代原 composable）：状态在 avatarState，渲染函数直接导出，store/组件均可调用。
+// 头像渲染：正版/第三方/离线统一「本地等距 3D 头部」（Cubatar 式 canvas 渲染：8×8×8 头盒 +
+// 0.5 膨胀帽子层，yaw/pitch 正交投影 + painter 排序 + 六面明暗）；离线用户名无真实账号时回退像素脸。
+// 模块级单例：状态在 avatarState，渲染函数直接导出，store/组件均可调用。
 import { reactive } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { showError } from "./alert";
@@ -33,9 +34,8 @@ let lastOfflineName = "";
 let lastExternalKey = "";
 let avatarTimer: number | undefined;
 
-/** 正版：后端经 visage 3D 渲染服务获取头部图（浏览器无法设置自定义 UA，走后端）。
- * 优先按 Mojang texture ID 渲染——皮肤更换后 ID 即变，visage 按 ID 缓存不会串图；
- * 失败（如 profile 拉取异常）回退 uuid 路径。force 用于主动刷新（上传皮肤后等）。 */
+/** 正版：拉皮肤 PNG + 模型类型（一次 IPC），本地 3D 渲染头部。
+ * force 用于主动刷新（上传皮肤后等）。 */
 export async function renderPremiumAvatar(uuid: string, force = false) {
   if (!uuid) {
     avatarState.premiumAvatar = "";
@@ -48,15 +48,8 @@ export async function renderPremiumAvatar(uuid: string, force = false) {
   }
   lastPremiumUuid = uuid;
   try {
-    let b64: string;
-    try {
-      const tid = await invoke<string>("fetch_texture_id", { uuid });
-      b64 = await invoke<string>("fetch_avatar", { subject: tid });
-    } catch {
-      // 回退：直接按 uuid 渲染
-      b64 = await invoke<string>("fetch_avatar", { subject: uuid });
-    }
-    avatarState.premiumAvatar = `data:image/png;base64,${b64}`;
+    const profile = await invoke<{ skin: string; model: string }>("fetch_account_skin_profile", { uuid });
+    avatarState.premiumAvatar = await renderSkinHead3D(profile.skin).catch(() => "");
     avatarState.avatarError = false;
   } catch (e) {
     console.error("正版头像加载失败:", e);
@@ -87,12 +80,12 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-/** 离线头像：按用户名哈希确定性渲染 Steve/Alex 默认皮肤（与游戏内一致），失败回退像素脸。
- * 一律 2D 头像（游戏内置纹理截取头部，无帽子层）。 */
+/** 离线头像：按用户名哈希确定性渲染 Steve/Alex 默认皮肤（与游戏内一致），失败回退像素脸。 */
 export async function renderOfflineAvatar(name: string) {
   const trimmed = name.trim();
   if (!trimmed) {
     avatarState.offlineAvatar = "";
+    lastOfflineName = "";
     return;
   }
   if (lastOfflineName === trimmed) {
@@ -108,11 +101,11 @@ export async function renderOfflineAvatar(name: string) {
   }
 }
 
-// ── 离线头像缓存（用户名 → Steve/Alex 2D 头部 dataURL；切换回已有用户名秒出，不重复 IO）──
+// ── 离线头像缓存（用户名 → Steve/Alex 3D 头部 dataURL；切换回已有用户名秒出，不重复 IO）──
 // 模块级 reactive：组件重建（路由切换等）不丢缓存，列表与主头像共用同一份。
 export const offlineHeads = reactive<Record<string, string>>({});
 
-/** 渲染离线用户名的 Steve/Alex 默认皮肤 2D 头部（哈希决定模型，与主头像/游戏内一致）。
+/** 渲染离线用户名的 Steve/Alex 默认皮肤 3D 头部（哈希决定模型，与主头像/游戏内一致）。
  * 缓存按用户名复用（仅缓存成功结果，失败不缓存以便之后重试）；失败返回 ""（调用方回退）。 */
 export async function renderOfflineHead(name: string): Promise<string> {
   const trimmed = name.trim();
@@ -122,7 +115,7 @@ export async function renderOfflineHead(name: string): Promise<string> {
   try {
     const skinKind = randomIsAlex(trimmed) ? "alex" : "steve";
     const b64 = await invoke<string>("fetch_default_skin", { skin: skinKind });
-    const head = await renderSkinHead(b64);
+    const head = await renderSkinHead3D(b64);
     offlineHeads[trimmed] = head;
     return head;
   } catch {
@@ -130,39 +123,246 @@ export async function renderOfflineHead(name: string): Promise<string> {
   }
 }
 
-/** 截取皮肤正面头部（8×8 格）放大成 2D 大头像（无帽子层）。 */
-export async function renderSkinHead(b64: string): Promise<string> {  const img = await loadImage(`data:image/png;base64,${b64}`);
-  const grid = Math.floor(img.width / 8); // 64 → 8，128 → 16
-  const canvas = document.createElement("canvas");
-  canvas.width = 68;
-  canvas.height = 68;
-  const ctx = canvas.getContext("2d")!;
-  ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(img, grid, grid, grid, grid, 0, 0, 68, 68);
-  return canvas.toDataURL("image/png");
+// ── 等距 3D 头部渲染（算法移植自 Cubatar IsometricRenderer 的头部部分）──
+// 模型：8×8×8 voxel 头盒（中心 y=4）+ 帽子盒（每侧 +0.5 膨胀，双面渲染——透过透明像素
+// 可见远侧内壁，与游戏内一致）；面按标准皮肤 UV 布局取子图，仿射变换贴到正交投影的
+// 平行四边形上，painter 算法按面中心深度排序，六面按法线方向明暗（顶 1.0 / 前后 0.85 /
+// 左右 0.7 / 底 0.55）。
+
+interface V3 {
+  x: number;
+  y: number;
+  z: number;
 }
 
-/** 3D 头部渲染：前/右/顶三面 + 帽子层 + 底部阴影（Minecraft 皮肤头标准视角）。
- * skin 布局（8px 网格）：头正面 (1,1) 右侧 (2,1) 顶部 (1,0)；帽子同偏移 (5,1)(6,1)(5,0)。
- * 128px（1.8+ 新格式）grid=16，偏移双倍。 */
-export async function renderSkinHead3D(b64: string): Promise<string> {
-  const img = await loadImage(`data:image/png;base64,${b64}`);
-  const g = Math.floor(img.width / 8); // 每格像素（64→8，128→16）
-  const canvas = document.createElement("canvas");
-  canvas.width = 72;
-  canvas.height = 72;
-  const ctx = canvas.getContext("2d")!;
-  ctx.imageSmoothingEnabled = false;
-  // 大头照：头部正面（1,1 格）放大到 64px，居中
-  ctx.drawImage(img, g, g, g, g, 4, 4, 64, 64);
-  // 帽子层（64px 旧格式独立帽子区 5,1；128px 新格式无独立帽，跳过）
-  if (img.width < 100) {
-    ctx.drawImage(img, g * 5, g, g, g, 4, 4, 64, 64);
+const v3 = (x: number, y: number, z: number): V3 => ({ x, y, z });
+
+function rotY(v: V3, rad: number): V3 {
+  const c = Math.cos(rad);
+  const s = Math.sin(rad);
+  return v3(v.x * c + v.z * s, v.y, -v.x * s + v.z * c);
+}
+
+function rotX(v: V3, rad: number): V3 {
+  const c = Math.cos(rad);
+  const s = Math.sin(rad);
+  return v3(v.x, v.y * c - v.z * s, v.y * s + v.z * c);
+}
+
+type Side = "FRONT" | "BACK" | "LEFT" | "RIGHT" | "TOP" | "BOTTOM";
+
+interface FaceSpec {
+  normal: V3;
+  uAxis: V3;
+  vAxis: V3;
+  shade: number;
+}
+
+const FACE_SPECS: Record<Side, FaceSpec> = {
+  FRONT: { normal: v3(0, 0, 1), uAxis: v3(1, 0, 0), vAxis: v3(0, -1, 0), shade: 0.85 },
+  BACK: { normal: v3(0, 0, -1), uAxis: v3(-1, 0, 0), vAxis: v3(0, -1, 0), shade: 0.85 },
+  RIGHT: { normal: v3(1, 0, 0), uAxis: v3(0, 0, -1), vAxis: v3(0, -1, 0), shade: 0.7 },
+  LEFT: { normal: v3(-1, 0, 0), uAxis: v3(0, 0, 1), vAxis: v3(0, -1, 0), shade: 0.7 },
+  TOP: { normal: v3(0, 1, 0), uAxis: v3(1, 0, 0), vAxis: v3(0, 0, 1), shade: 1 },
+  BOTTOM: { normal: v3(0, -1, 0), uAxis: v3(1, 0, 0), vAxis: v3(0, 0, 1), shade: 0.55 },
+};
+
+/** 头/帽子盒子：中心 (cx,cy,cz) voxel，尺寸 w/h/d，UV 原点 (uvX,uvY)，inflate 每侧膨胀。 */
+interface HeadBox {
+  cx: number;
+  cy: number;
+  cz: number;
+  w: number;
+  h: number;
+  d: number;
+  uvX: number;
+  uvY: number;
+  inflate: number;
+  doubleSided: boolean;
+}
+
+/** 切向半尺寸（沿 uAxis），含膨胀。 */
+function halfU(b: HeadBox, s: Side): number {
+  return ((s === "FRONT" || s === "BACK" || s === "TOP" || s === "BOTTOM") ? b.w : b.d) / 2 + b.inflate;
+}
+
+/** 切向半尺寸（沿 vAxis），含膨胀。 */
+function halfV(b: HeadBox, s: Side): number {
+  return ((s === "TOP" || s === "BOTTOM") ? b.d : b.h) / 2 + b.inflate;
+}
+
+/** 法线方向半尺寸，含膨胀。 */
+function halfN(b: HeadBox, s: Side): number {
+  return ((s === "FRONT" || s === "BACK") ? b.d : s === "LEFT" || s === "RIGHT" ? b.w : b.h) / 2 + b.inflate;
+}
+
+/** 标准皮肤 UV 布局（voxel 坐标）：LEFT(d) FRONT(w) RIGHT(d) BACK(w)，TOP 在 FRONT 上，BOTTOM 在 RIGHT 上。 */
+function faceUv(b: HeadBox, s: Side): { x: number; y: number; w: number; h: number } {
+  const u = b.uvX;
+  const v = b.uvY;
+  const w = b.w;
+  const h = b.h;
+  const d = b.d;
+  switch (s) {
+    case "FRONT":
+      return { x: u + d, y: v + d, w, h };
+    case "BACK":
+      return { x: u + d + w + d, y: v + d, w, h };
+    case "RIGHT":
+      return { x: u + d + w, y: v + d, w: d, h };
+    case "LEFT":
+      return { x: u, y: v + d, w: d, h };
+    case "TOP":
+      return { x: u + d, y: v, w, h: d };
+    case "BOTTOM":
+      return { x: u + d + w, y: v, w, h: d };
   }
-  return canvas.toDataURL("image/png");
 }
 
-/** 第三方登录（皮肤站）头像：拉 skin → 2D 大头照渲染。 */
+/** 面角点在 yaw/pitch 旋转 + 正交投影下的坐标（au/bv ∈ {-1,+1} 为面内参数坐标）。
+ * 返回未偏移的投影点；画布偏移由调用方统一计算。 */
+function projectCorner(
+  b: HeadBox,
+  s: Side,
+  au: number,
+  bv: number,
+  yaw: number,
+  pitch: number,
+  ppv: number,
+): V3 {
+  const f = FACE_SPECS[s];
+  const local = v3(
+    b.cx + f.normal.x * halfN(b, s) + f.uAxis.x * au * halfU(b, s) + f.vAxis.x * bv * halfV(b, s),
+    b.cy + f.normal.y * halfN(b, s) + f.uAxis.y * au * halfU(b, s) + f.vAxis.y * bv * halfV(b, s),
+    b.cz + f.normal.z * halfN(b, s) + f.uAxis.z * au * halfU(b, s) + f.vAxis.z * bv * halfV(b, s),
+  );
+  const r = rotX(rotY(local, yaw), pitch);
+  return v3(r.x * ppv, -r.y * ppv, r.z);
+}
+
+/** 面纹理：裁 UV 子图 + 按面明暗（跳过透明像素）。UV 越界返回 null。 */
+function faceTexture(img: HTMLImageElement, scale: number, b: HeadBox, s: Side): HTMLCanvasElement | null {
+  const uv = faceUv(b, s);
+  const sx = Math.round(uv.x * scale);
+  const sy = Math.round(uv.y * scale);
+  const sw = Math.round(uv.w * scale);
+  const sh = Math.round(uv.h * scale);
+  if (sx + sw > img.width || sy + sh > img.height) return null;
+  const crop = document.createElement("canvas");
+  crop.width = sw;
+  crop.height = sh;
+  const c = crop.getContext("2d")!;
+  c.imageSmoothingEnabled = false;
+  c.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+  const shade = FACE_SPECS[s].shade;
+  if (shade >= 1) return crop;
+  const data = c.getImageData(0, 0, sw, sh);
+  const px = data.data;
+  for (let i = 0; i < px.length; i += 4) {
+    if (px[i + 3] === 0) continue;
+    px[i] = (px[i] * shade) | 0;
+    px[i + 1] = (px[i + 1] * shade) | 0;
+    px[i + 2] = (px[i + 2] * shade) | 0;
+  }
+  c.putImageData(data, 0, 0);
+  return crop;
+}
+
+/** 帽子层是否可见：帽子 UV 区（x 32..64 / y 0..16 @64px 布局）存在非透明像素。 */
+function hatHasPixels(img: HTMLImageElement, scale: number): boolean {
+  const x0 = Math.round(32 * scale);
+  const x1 = Math.min(Math.round(64 * scale), img.width);
+  const y1 = Math.min(Math.round(16 * scale), img.height);
+  const tmp = document.createElement("canvas");
+  tmp.width = x1 - x0;
+  tmp.height = y1;
+  const c = tmp.getContext("2d")!;
+  c.drawImage(img, x0, 0, x1 - x0, y1, 0, 0, x1 - x0, y1);
+  const data = c.getImageData(0, 0, x1 - x0, y1).data;
+  for (let i = 3; i < data.length; i += 4) {
+    if (data[i] > 0) return true;
+  }
+    return false;
+}
+
+/** 头部 3D 渲染（Cubatar IsometricRenderer 移植）：8×8×8 头盒 + 0.5 膨胀帽子层（双面），
+ * yaw/pitch 正交投影 + painter 排序 + 六面明暗。默认完全正脸视角 yaw=0° pitch=0°
+ *（仅正面可见，无俯视）；legacy 64×32 皮肤无独立帽子层，自动跳过。
+ * 画布按可见面角点贴合（透明背景，头 8 voxel = 64px），容器用 object-fit 等比适配。 */
+export async function renderSkinHead3D(b64: string, yawDeg = 0, pitchDeg = 0): Promise<string> {
+  const img = await loadImage(`data:image/png;base64,${b64}`);
+  const scale = img.width / 64;
+  const ppv = 8; // 头 8 voxel → 64px
+  const yaw = (yawDeg * Math.PI) / 180;
+  const pitch = (pitchDeg * Math.PI) / 180;
+
+  const head: HeadBox = { cx: 0, cy: 4, cz: 0, w: 8, h: 8, d: 8, uvX: 0, uvY: 0, inflate: 0, doubleSided: false };
+  const boxes: HeadBox[] = [head];
+  if (img.height !== 32 && hatHasPixels(img, scale)) {
+    boxes.push({ cx: 0, cy: 4, cz: 0, w: 8, h: 8, d: 8, uvX: 32, uvY: 0, inflate: 0.5, doubleSided: true });
+  }
+
+  // 收集可见面 quad（投影未偏移）
+  const quads: {
+    tex: HTMLCanvasElement;
+    p00: V3;
+    p10: V3;
+    p01: V3;
+    p11: V3;
+    depth: number;
+  }[] = [];
+  for (const b of boxes) {
+    for (const s of Object.keys(FACE_SPECS) as Side[]) {
+      const nz = rotX(rotY(FACE_SPECS[s].normal, yaw), pitch).z;
+      if (Math.abs(nz) < 1e-6) continue; // 棱边朝相机：退化面
+      if (!b.doubleSided && nz < 0) continue; // 单面：背面不画
+      const tex = faceTexture(img, scale, b, s);
+      if (!tex) continue;
+      const p00 = projectCorner(b, s, -1, -1, yaw, pitch, ppv);
+      const p10 = projectCorner(b, s, 1, -1, yaw, pitch, ppv);
+      const p01 = projectCorner(b, s, -1, 1, yaw, pitch, ppv);
+      const p11 = projectCorner(b, s, 1, 1, yaw, pitch, ppv);
+      quads.push({ tex, p00, p10, p01, p11, depth: (p00.z + p10.z + p01.z + p11.z) / 4 });
+    }
+  }
+  if (quads.length === 0) return "";
+
+  // 画布包围盒：可见面角点的 min/max（贴合内容，无空白）
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const q of quads) {
+    for (const p of [q.p00, q.p10, q.p01, q.p11]) {
+      minX = Math.min(minX, p.x);
+      maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y);
+      maxY = Math.max(maxY, p.y);
+    }
+  }
+  const ox = 1 - minX;
+  const oy = 1 - minY;
+  const out = document.createElement("canvas");
+  out.width = Math.ceil(maxX - minX) + 2;
+  out.height = Math.ceil(maxY - minY) + 2;
+  const ctx = out.getContext("2d")!;
+  ctx.imageSmoothingEnabled = false;
+
+  quads.sort((a, bq) => a.depth - bq.depth); // painter：远的先画
+  for (const q of quads) {
+    // 仿射矩阵（与 Java AffineTransform 同序）：纹理 (0,0)→p00，(w,0)→p10，(0,h)→p01
+    const m00 = (q.p10.x - q.p00.x) / q.tex.width;
+    const m10 = (q.p10.y - q.p00.y) / q.tex.width;
+    const m01 = (q.p01.x - q.p00.x) / q.tex.height;
+    const m11 = (q.p01.y - q.p00.y) / q.tex.height;
+    ctx.setTransform(m00, m10, m01, m11, q.p00.x + ox, q.p00.y + oy);
+    ctx.drawImage(q.tex, 0, 0);
+  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  return out.toDataURL("image/png");
+}
+
+/** 第三方登录（皮肤站）头像：拉 skin + 模型 → 本地 3D 渲染。 */
 export async function renderExternalAvatar(apiUrl: string, uuid: string, force = false) {
   const key = `${apiUrl}|${uuid}`;
   if (!uuid || !apiUrl) {
@@ -173,8 +373,8 @@ export async function renderExternalAvatar(apiUrl: string, uuid: string, force =
   if (!force && lastExternalKey === key) return;
   lastExternalKey = key;
   try {
-    const b64 = await invoke<string>("fetch_external_skin", { apiUrl, uuid });
-    avatarState.externalAvatar = await renderSkinHead3D(b64);
+    const profile = await invoke<{ skin: string; model: string }>("fetch_external_skin_profile", { apiUrl, uuid });
+    avatarState.externalAvatar = await renderSkinHead3D(profile.skin).catch(() => "");
     avatarState.avatarError = false;
   } catch (e) {
     console.error("第三方头像加载失败:", e);
@@ -223,13 +423,13 @@ export function generatePixelFace(name: string): string {
   ctx.fillRect(3, 6, 1, 1);
   ctx.fillRect(4, 6, 1, 1);
 
-  // 放大到 68×68
+  // 放大到 96×96（匹配 96px 头像容器）
   const out = document.createElement("canvas");
-  out.width = 68;
-  out.height = 68;
+  out.width = 96;
+  out.height = 96;
   const octx = out.getContext("2d")!;
   octx.imageSmoothingEnabled = false;
-  octx.drawImage(canvas, 0, 0, 68, 68);
+  octx.drawImage(canvas, 0, 0, 96, 96);
   return out.toDataURL("image/png");
 }
 
@@ -240,18 +440,18 @@ export function scheduleOfflineRender(name: string) {
   avatarTimer = window.setTimeout(() => void renderOfflineAvatar(name), 1337);
 }
 
-// ── 账号列表 2D 头像（sessionserver 皮肤截取头部，按 uuid 模块级缓存）──
+// ── 账号列表 3D 头像（sessionserver 皮肤头部渲染，按 uuid 模块级缓存）──
 
-/** 正版账号 2D 头部缓存（uuid → dataURL；失败也占位空串防重复请求）。 */
+/** 正版账号 3D 头部缓存（uuid → dataURL；失败也占位空串防重复请求）。 */
 export const accountHeads = reactive<Record<string, string>>({});
 
-/** 拉取正版账号皮肤并截取 2D 头部，返回 dataURL；失败（无网络/未设置皮肤）返回 ""（调用方回退图标）。 */
+/** 拉取正版账号皮肤并 3D 渲染头部，返回 dataURL；失败（无网络/未设置皮肤）返回 ""（调用方回退图标）。 */
 export async function renderAccountHead(uuid: string): Promise<string> {
   const cached = accountHeads[uuid];
   if (cached !== undefined) return cached;
   try {
     const b64 = await invoke<string>("fetch_account_skin", { uuid });
-    const head = await renderSkinHead(b64);
+    const head = await renderSkinHead3D(b64);
     accountHeads[uuid] = head;
     return head;
   } catch {
