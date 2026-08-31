@@ -5,6 +5,7 @@ import { ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { Radio, RefreshCw } from "@lucide/vue";
 import MotdPreview from "./MotdPreview.vue";
+import DropSelect, { type SelOption } from "./DropSelect.vue";
 
 /** 服务器状态（镜像 Rust ServerStatus）。 */
 interface ServerStatus {
@@ -22,6 +23,12 @@ type Edition = "" | "java" | "bedrock";
 
 const address = ref("");
 const edition = ref<Edition>("");
+/** 协议选择选项（DropSelect 用）。 */
+const editionOptions: SelOption[] = [
+  { value: "", label: "自动识别" },
+  { value: "java", label: "Java 版" },
+  { value: "bedrock", label: "基岩版" },
+];
 const loading = ref(false);
 const status = ref<ServerStatus | null>(null);
 const error = ref("");
@@ -82,11 +89,13 @@ function editionLabel(): string {
         :disabled="loading"
         @keyup.enter="handlePing"
       />
-      <select v-model="edition" class="ping-select" :disabled="loading">
-        <option value="">自动识别</option>
-        <option value="java">Java 版</option>
-        <option value="bedrock">基岩版</option>
-      </select>
+      <DropSelect
+        :model-value="edition"
+        :options="editionOptions"
+        width="108px"
+        :disabled="loading"
+        @update:model-value="(v: string) => (edition = v as Edition)"
+      />
       <button class="tool-btn ping-btn" :disabled="loading || !address.trim()" @click="handlePing">
         <RefreshCw :size="14" :class="{ spin: loading }" />
         {{ loading ? "检测中…" : "检测" }}
@@ -188,17 +197,6 @@ function editionLabel(): string {
 .ping-input:hover,
 .ping-input:focus {
   border-color: var(--color-brand);
-}
-
-.ping-select {
-  flex: 0 0 auto;
-  padding: 8px 8px;
-  font-size: 13px;
-  color: var(--text-primary);
-  background: var(--surface-page);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  outline: none;
 }
 
 .ping-btn {
