@@ -22,6 +22,8 @@ export interface OnlineSnapshot {
 /** 联机配置（镜像 Rust OnlineConfig）。 */
 export interface OnlineConfig {
   public_nodes: string[];
+  /** 自定义联机广播名（guest 端局域网标签页显示名，支持 § 格式码；null = 自动）。 */
+  advertise_motd: string | null;
 }
 
 export const onlineStatus = ref<OnlineStatus>("idle");
@@ -35,6 +37,8 @@ export const onlineErrorHost = ref("");
 export const onlineErrorGuest = ref("");
 /** 协调服务器列表（每行一个 easytier peer URI，如 tcp://1.2.3.4:11010）。 */
 export const onlinePublicNodes = ref("");
+/** 自定义联机广播名（空 = 自动：用 host 世界名）。 */
+export const onlineAdvertiseMotd = ref("");
 
 function applySnapshot(snap: OnlineSnapshot) {
   onlineStatus.value = snap.status;
@@ -67,6 +71,7 @@ export async function loadOnlineConfig() {
   try {
     const cfg = await invoke<OnlineConfig>("get_online_config");
     onlinePublicNodes.value = (cfg.public_nodes ?? []).join("\n");
+    onlineAdvertiseMotd.value = cfg.advertise_motd ?? "";
   } catch {
     // 查询失败保持默认
   }
@@ -74,11 +79,26 @@ export async function loadOnlineConfig() {
 
 /** 保存协调服务器配置（空 = 仅同网直连）。 */
 export async function saveOnlineConfig() {
+  // 提交完整配置：两个保存入口（协调服务器 / 广播名）互不覆盖对方字段
+  await invoke("save_online_config", { config: buildOnlineConfig() });
+}
+
+/** 保存自定义联机广播名（空 = 恢复自动）。 */
+export async function saveAdvertiseMotd() {
+  await invoke("save_online_config", { config: buildOnlineConfig() });
+}
+
+/** 组装完整 OnlineConfig（public_nodes + advertise_motd）。 */
+function buildOnlineConfig(): OnlineConfig {
   const nodes = onlinePublicNodes.value
     .split("\n")
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
-  await invoke("save_online_config", { config: { public_nodes: nodes } });
+  const motd = onlineAdvertiseMotd.value.trim();
+  return {
+    public_nodes: nodes,
+    advertise_motd: motd.length > 0 ? motd : null,
+  };
 }
 
 /** 开启联机（host）：立即建网进入 waiting；检测到游戏端口后自动转 hosting。 */

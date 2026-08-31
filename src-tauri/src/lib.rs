@@ -8,12 +8,14 @@ mod jdk;
 pub mod launcher;
 pub mod online;
 mod persist;
+mod server_status;
 pub mod task;
 pub mod util;
 
 use commands::account::{
-    cancel_ms_login, disable_cape, external_login, fetch_account_skin, fetch_external_skin, save_external_skin, fetch_avatar, fetch_capes,
-    fetch_default_skin, fetch_texture_id, get_external_accounts,
+    cancel_ms_login, disable_cape, external_login, fetch_account_skin, fetch_account_skin_profile,
+    fetch_external_skin, fetch_external_skin_profile, save_external_skin, fetch_capes,
+    fetch_default_skin, get_external_accounts,
     switch_external_role, refresh_external_account,
     switch_external_account, get_ms_account, get_ms_accounts,
     get_third_party_config, refresh_ms_account, remove_external_account, remove_ms_account,
@@ -48,6 +50,7 @@ use commands::online::{
     get_online_config, online_join, online_start_host, online_status, online_stop,
     save_online_config,
 };
+use commands::server_status::ping_server;
 use commands::task::{
     cancel_task, decide_waiting_task, dismiss_interrupted_task, download_files,
     download_single_file, install_modpack, list_interrupted_tasks, pause_task, resume_task,
@@ -168,10 +171,10 @@ pub fn run() {
             remove_ms_account,
             switch_ms_account,
             refresh_ms_account,
-            fetch_avatar,
-            fetch_texture_id,
             fetch_account_skin,
+            fetch_account_skin_profile,
             fetch_external_skin,
+            fetch_external_skin_profile,
             save_external_skin,
             fetch_default_skin,
             save_skin,
@@ -185,6 +188,7 @@ pub fn run() {
             online_status,
             get_online_config,
             save_online_config,
+            ping_server,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

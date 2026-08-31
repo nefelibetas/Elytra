@@ -134,5 +134,6 @@ npx vue-tsc --noEmit           # 前端全量类型检查（可在项目根直�
 - **OptiFabric 覆盖范围有限**：Fabric/Quilt + OptiFine 依赖 OptiFabric 桥接（CurseForge 渠道，slug `optifabric`）；OptiFabric 维护缓慢（CF 最新 1.14.3，2024-01，仅覆盖至 ~1.20.x），1.21+ 组合会明确报错而非静默失效
 - **待产品决策**：`GcType::Custom` 语义为"不追加 GC 参数（用 JVM 默认）"，前端 label 已注明，行为符合设计
 - **已解决**：`LauncherVisibility` 已删除（前后端同步）；离线皮肤配置层已砍（启动与头像固定随机哈希 Steve/Alex，后续计划接入自定义皮肤站登录）；OptiFine 分场景安装（纯净版 classpath 独立版本 / Forge-like 进 mods / Fabric-like OptiFabric 进 mods，mainClass 统一官方 Main；重定向黑洞黑名单精确放行 `minio.749333.xyz`——bmclapi 下载主存储）
-- **联机遗留**：guest 端 MC 局域网广播名固定 "Elytra 联机"（未传 host 世界名，同网多服务器时可混淆）；跨网联机依赖协调服务器（默认社区节点 `tcp://node.invalid:11010`，easytier 官方公共节点已下线）；MC 26.2 离线账号只能走"局域网发现"路径进入（手动 IP 会报无效会话，广播模拟已绕过）
+- **已解决**：guest 端 MC 局域网广播名参数化（房间码 `#MOTD` 段携带 host 存档名 → guest 广播真实世界名；`OnlineConfig.advertise_motd` 支持自定义广播名，优先级 自定义 > host 世界名 > 默认文案）
+- **联机遗留**：跨网联机依赖协调服务器（默认社区节点 `tcp://node.invalid:11010`，easytier 官方公共节点已下线）；MC 26.2 离线账号只能走"局域网发现"路径进入（手动 IP 会报无效会话，广播模拟已绕过）
 - **备注**：README.md 是完整中文文档（非空）；AGENTS.md 已被 git 跟踪（修改会出现在 git status）

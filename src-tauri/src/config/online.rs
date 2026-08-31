@@ -21,6 +21,10 @@ pub struct OnlineConfig {
     /// 空列表 = 仅同网直连（guest 经房间码直连 host 局域网 IP）。
     #[serde(default)]
     pub public_nodes: Vec<String>,
+    /// 自定义联机广播名（guest 端 MC 局域网标签页显示的名字，支持 § 格式码）。
+    /// None/空 = 自动：用房间码携带的 host 存档名（MOTD），探测不到时回退默认文案。
+    #[serde(default)]
+    pub advertise_motd: Option<String>,
 }
 
 impl OnlineConfig {
@@ -31,6 +35,7 @@ impl OnlineConfig {
             Ok(cfg) => cfg,
             Err(_) => Self {
                 public_nodes: DEFAULT_PUBLIC_NODES.iter().map(|s| s.to_string()).collect(),
+                advertise_motd: None,
             },
         }
     }
