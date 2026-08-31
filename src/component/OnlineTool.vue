@@ -92,6 +92,7 @@ async function copyRoomCode() {
     <div class="online-sec">
       <div class="online-sec-title">作为主机</div>
       <p class="online-desc">点"开启联机"后，游戏里"对局域网开放"即可——启动器自动生成房间码，发给朋友即可加入。</p>
+      <p class="online-desc">联机广播名（guest 端显示的房间名，支持 § 颜色）可在 设置 → 联机设置 中配置，留空自动使用主机世界名。</p>
 
       <div v-if="onlineStatus === 'waiting'" class="online-waiting">
         游戏开放局域网后这里会显示房间码
