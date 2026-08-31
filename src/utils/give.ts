@@ -1,0 +1,545 @@
+// /give 命令生成器：物品数据表 + 双版本语法命令构建。
+//
+// 物品 ID 采用 1.13+ 命名空间格式（扁平化后 ID 是稳定契约，1.13–1.21 通用）；
+// 1.12 及以下的数字 ID 不在支持范围（页面注明）。个别物品在新版本改名
+// （如唱片 record_* → music_disc_*），表内采用最新版本 ID。
+//
+// 两种输出格式（用户手动选择）：
+// - modern：1.20.5+ 组件格式（enchantments={...} / custom_name='"..."' / ...）
+// - legacy：1.13–1.20.4 NBT 格式（Enchantments:[{id,lvl}] / display:{Name} / ...）
+
+/** 物品条目。 */
+export interface GiveItem {
+  /** 物品 ID（1.13+ 命名空间，无 minecraft: 前缀）。 */
+  id: string;
+  /** 中文名。 */
+  name: string;
+  /** 分类 key（GIVE_CATEGORIES）。 */
+  cat: string;
+}
+
+/** 分类定义。 */
+export interface GiveCategory {
+  key: string;
+  label: string;
+}
+
+export const GIVE_CATEGORIES: GiveCategory[] = [
+  { key: "sword", label: "剑" },
+  { key: "tool", label: "工具" },
+  { key: "armor", label: "盔甲" },
+  { key: "food", label: "食物" },
+  { key: "material", label: "材料" },
+  { key: "block", label: "矿物块" },
+  { key: "redstone", label: "红石" },
+  { key: "building", label: "建筑" },
+  { key: "misc", label: "杂项" },
+];
+
+/** 物品数据表（按分类；id 不含 minecraft: 前缀）。 */
+export const GIVE_ITEMS: GiveItem[] = [
+  // ── 剑 ──
+  { id: "wooden_sword", name: "木剑", cat: "sword" },
+  { id: "stone_sword", name: "石剑", cat: "sword" },
+  { id: "iron_sword", name: "铁剑", cat: "sword" },
+  { id: "golden_sword", name: "金剑", cat: "sword" },
+  { id: "diamond_sword", name: "钻石剑", cat: "sword" },
+  { id: "netherite_sword", name: "下界合金剑", cat: "sword" },
+  // ── 工具 ──
+  { id: "wooden_pickaxe", name: "木镐", cat: "tool" },
+  { id: "stone_pickaxe", name: "石镐", cat: "tool" },
+  { id: "iron_pickaxe", name: "铁镐", cat: "tool" },
+  { id: "golden_pickaxe", name: "金镐", cat: "tool" },
+  { id: "diamond_pickaxe", name: "钻石镐", cat: "tool" },
+  { id: "netherite_pickaxe", name: "下界合金镐", cat: "tool" },
+  { id: "wooden_axe", name: "木斧", cat: "tool" },
+  { id: "stone_axe", name: "石斧", cat: "tool" },
+  { id: "iron_axe", name: "铁斧", cat: "tool" },
+  { id: "golden_axe", name: "金斧", cat: "tool" },
+  { id: "diamond_axe", name: "钻石斧", cat: "tool" },
+  { id: "netherite_axe", name: "下界合金斧", cat: "tool" },
+  { id: "wooden_shovel", name: "木锹", cat: "tool" },
+  { id: "stone_shovel", name: "石锹", cat: "tool" },
+  { id: "iron_shovel", name: "铁锹", cat: "tool" },
+  { id: "golden_shovel", name: "金锹", cat: "tool" },
+  { id: "diamond_shovel", name: "钻石锹", cat: "tool" },
+  { id: "netherite_shovel", name: "下界合金锹", cat: "tool" },
+  { id: "wooden_hoe", name: "木锄", cat: "tool" },
+  { id: "stone_hoe", name: "石锄", cat: "tool" },
+  { id: "iron_hoe", name: "铁锄", cat: "tool" },
+  { id: "golden_hoe", name: "金锄", cat: "tool" },
+  { id: "diamond_hoe", name: "钻石锄", cat: "tool" },
+  { id: "netherite_hoe", name: "下界合金锄", cat: "tool" },
+  { id: "bow", name: "弓", cat: "tool" },
+  { id: "crossbow", name: "弩", cat: "tool" },
+  { id: "trident", name: "三叉戟", cat: "tool" },
+  { id: "shield", name: "盾牌", cat: "tool" },
+  { id: "shears", name: "剪刀", cat: "tool" },
+  { id: "fishing_rod", name: "钓鱼竿", cat: "tool" },
+  { id: "flint_and_steel", name: "打火石", cat: "tool" },
+  { id: "brush", name: "刷子", cat: "tool" },
+  { id: "spyglass", name: "望远镜", cat: "tool" },
+  { id: "compass", name: "指南针", cat: "tool" },
+  { id: "recovery_compass", name: "回溯指南针", cat: "tool" },
+  { id: "clock", name: "时钟", cat: "tool" },
+  { id: "bucket", name: "桶", cat: "tool" },
+  { id: "water_bucket", name: "水桶", cat: "tool" },
+  { id: "lava_bucket", name: "熔岩桶", cat: "tool" },
+  { id: "milk_bucket", name: "奶桶", cat: "tool" },
+  { id: "map", name: "地图", cat: "tool" },
+  { id: "name_tag", name: "命名牌", cat: "tool" },
+  { id: "lead", name: "拴绳", cat: "tool" },
+  { id: "bone_meal", name: "骨粉", cat: "tool" },
+  { id: "ender_eye", name: "末影之眼", cat: "tool" },
+  { id: "totem_of_undying", name: "不死图腾", cat: "tool" },
+  { id: "elytra", name: "鞘翅", cat: "tool" },
+  { id: "firework_rocket", name: "烟花火箭", cat: "tool" },
+  { id: "goat_horn", name: "山羊角", cat: "tool" },
+  // ── 盔甲 ──
+  { id: "leather_helmet", name: "皮革帽子", cat: "armor" },
+  { id: "leather_chestplate", name: "皮革外套", cat: "armor" },
+  { id: "leather_leggings", name: "皮革裤子", cat: "armor" },
+  { id: "leather_boots", name: "皮革靴子", cat: "armor" },
+  { id: "chainmail_helmet", name: "锁链头盔", cat: "armor" },
+  { id: "chainmail_chestplate", name: "锁链胸甲", cat: "armor" },
+  { id: "chainmail_leggings", name: "锁链护腿", cat: "armor" },
+  { id: "chainmail_boots", name: "锁链靴子", cat: "armor" },
+  { id: "iron_helmet", name: "铁头盔", cat: "armor" },
+  { id: "iron_chestplate", name: "铁胸甲", cat: "armor" },
+  { id: "iron_leggings", name: "铁护腿", cat: "armor" },
+  { id: "iron_boots", name: "铁靴子", cat: "armor" },
+  { id: "golden_helmet", name: "金头盔", cat: "armor" },
+  { id: "golden_chestplate", name: "金胸甲", cat: "armor" },
+  { id: "golden_leggings", name: "金护腿", cat: "armor" },
+  { id: "golden_boots", name: "金靴子", cat: "armor" },
+  { id: "diamond_helmet", name: "钻石头盔", cat: "armor" },
+  { id: "diamond_chestplate", name: "钻石胸甲", cat: "armor" },
+  { id: "diamond_leggings", name: "钻石护腿", cat: "armor" },
+  { id: "diamond_boots", name: "钻石靴子", cat: "armor" },
+  { id: "netherite_helmet", name: "下界合金头盔", cat: "armor" },
+  { id: "netherite_chestplate", name: "下界合金胸甲", cat: "armor" },
+  { id: "netherite_leggings", name: "下界合金护腿", cat: "armor" },
+  { id: "netherite_boots", name: "下界合金靴子", cat: "armor" },
+  { id: "turtle_helmet", name: "海龟壳", cat: "armor" },
+  // ── 食物 ──
+  { id: "apple", name: "苹果", cat: "food" },
+  { id: "golden_apple", name: "金苹果", cat: "food" },
+  { id: "enchanted_golden_apple", name: "附魔金苹果", cat: "food" },
+  { id: "bread", name: "面包", cat: "food" },
+  { id: "cooked_beef", name: "牛排", cat: "food" },
+  { id: "cooked_porkchop", name: "熟猪排", cat: "food" },
+  { id: "cooked_chicken", name: "熟鸡肉", cat: "food" },
+  { id: "cooked_mutton", name: "熟羊肉", cat: "food" },
+  { id: "cooked_rabbit", name: "熟兔肉", cat: "food" },
+  { id: "cooked_cod", name: "熟鳕鱼", cat: "food" },
+  { id: "cooked_salmon", name: "熟鲑鱼", cat: "food" },
+  { id: "baked_potato", name: "烤马铃薯", cat: "food" },
+  { id: "carrot", name: "胡萝卜", cat: "food" },
+  { id: "golden_carrot", name: "金胡萝卜", cat: "food" },
+  { id: "sweet_berries", name: "甜浆果", cat: "food" },
+  { id: "glow_berries", name: "发光浆果", cat: "food" },
+  { id: "melon_slice", name: "西瓜片", cat: "food" },
+  { id: "pumpkin_pie", name: "南瓜派", cat: "food" },
+  { id: "cookie", name: "曲奇", cat: "food" },
+  { id: "cake", name: "蛋糕", cat: "food" },
+  { id: "honey_bottle", name: "蜂蜜瓶", cat: "food" },
+  { id: "mushroom_stew", name: "蘑菇煲", cat: "food" },
+  { id: "beetroot_soup", name: "甜菜汤", cat: "food" },
+  { id: "chorus_fruit", name: "紫颂果", cat: "food" },
+  { id: "dried_kelp", name: "干海带", cat: "food" },
+  { id: "rabbit_stew", name: "兔肉煲", cat: "food" },
+  // ── 材料 ──
+  { id: "diamond", name: "钻石", cat: "material" },
+  { id: "iron_ingot", name: "铁锭", cat: "material" },
+  { id: "gold_ingot", name: "金锭", cat: "material" },
+  { id: "copper_ingot", name: "铜锭", cat: "material" },
+  { id: "netherite_ingot", name: "下界合金锭", cat: "material" },
+  { id: "emerald", name: "绿宝石", cat: "material" },
+  { id: "lapis_lazuli", name: "青金石", cat: "material" },
+  { id: "redstone", name: "红石粉", cat: "material" },
+  { id: "coal", name: "煤炭", cat: "material" },
+  { id: "charcoal", name: "木炭", cat: "material" },
+  { id: "quartz", name: "下界石英", cat: "material" },
+  { id: "amethyst_shard", name: "紫水晶碎片", cat: "material" },
+  { id: "echo_shard", name: "回响碎片", cat: "material" },
+  { id: "blaze_rod", name: "烈焰棒", cat: "material" },
+  { id: "blaze_powder", name: "烈焰粉", cat: "material" },
+  { id: "ghast_tear", name: "恶魂之泪", cat: "material" },
+  { id: "spider_eye", name: "蜘蛛眼", cat: "material" },
+  { id: "fermented_spider_eye", name: "发酵蛛眼", cat: "material" },
+  { id: "gunpowder", name: "火药", cat: "material" },
+  { id: "string", name: "线", cat: "material" },
+  { id: "feather", name: "羽毛", cat: "material" },
+  { id: "bone", name: "骨头", cat: "material" },
+  { id: "leather", name: "皮革", cat: "material" },
+  { id: "rabbit_hide", name: "兔子皮", cat: "material" },
+  { id: "rabbit_foot", name: "兔子脚", cat: "material" },
+  { id: "ink_sac", name: "墨囊", cat: "material" },
+  { id: "glow_ink_sac", name: "发光墨囊", cat: "material" },
+  { id: "slime_ball", name: "粘液球", cat: "material" },
+  { id: "magma_cream", name: "岩浆膏", cat: "material" },
+  { id: "phantom_membrane", name: "幻翼膜", cat: "material" },
+  { id: "prismarine_shard", name: "海晶碎片", cat: "material" },
+  { id: "prismarine_crystals", name: "海晶砂粒", cat: "material" },
+  { id: "nautilus_shell", name: "鹦鹉螺壳", cat: "material" },
+  { id: "heart_of_the_sea", name: "海洋之心", cat: "material" },
+  { id: "nether_star", name: "下界之星", cat: "material" },
+  { id: "shulker_shell", name: "潜影壳", cat: "material" },
+  { id: "dragon_breath", name: "龙息", cat: "material" },
+  { id: "ender_pearl", name: "末影珍珠", cat: "material" },
+  { id: "paper", name: "纸", cat: "material" },
+  { id: "book", name: "书", cat: "material" },
+  { id: "writable_book", name: "书与笔", cat: "material" },
+  { id: "honeycomb", name: "蜜脾", cat: "material" },
+  { id: "scute", name: "鳞甲", cat: "material" },
+  // ── 矿物块 ──
+  { id: "diamond_block", name: "钻石块", cat: "block" },
+  { id: "iron_block", name: "铁块", cat: "block" },
+  { id: "gold_block", name: "金块", cat: "block" },
+  { id: "copper_block", name: "铜块", cat: "block" },
+  { id: "netherite_block", name: "下界合金块", cat: "block" },
+  { id: "emerald_block", name: "绿宝石块", cat: "block" },
+  { id: "lapis_block", name: "青金石块", cat: "block" },
+  { id: "redstone_block", name: "红石块", cat: "block" },
+  { id: "coal_block", name: "煤炭块", cat: "block" },
+  { id: "quartz_block", name: "石英块", cat: "block" },
+  { id: "amethyst_block", name: "紫水晶块", cat: "block" },
+  { id: "raw_iron_block", name: "粗铁块", cat: "block" },
+  { id: "raw_gold_block", name: "粗金块", cat: "block" },
+  { id: "raw_copper_block", name: "粗铜块", cat: "block" },
+  // ── 红石 ──
+  { id: "redstone_repeater", name: "红石中继器", cat: "redstone" },
+  { id: "redstone_comparator", name: "红石比较器", cat: "redstone" },
+  { id: "piston", name: "活塞", cat: "redstone" },
+  { id: "sticky_piston", name: "粘性活塞", cat: "redstone" },
+  { id: "observer", name: "侦测器", cat: "redstone" },
+  { id: "hopper", name: "漏斗", cat: "redstone" },
+  { id: "dispenser", name: "发射器", cat: "redstone" },
+  { id: "dropper", name: "投掷器", cat: "redstone" },
+  { id: "note_block", name: "音符盒", cat: "redstone" },
+  { id: "lever", name: "拉杆", cat: "redstone" },
+  { id: "redstone_lamp", name: "红石灯", cat: "redstone" },
+  { id: "target", name: "标靶", cat: "redstone" },
+  { id: "slime_block", name: "粘液块", cat: "redstone" },
+  { id: "honey_block", name: "蜜块", cat: "redstone" },
+  { id: "daylight_detector", name: "阳光探测器", cat: "redstone" },
+  { id: "tripwire_hook", name: "绊线钩", cat: "redstone" },
+  { id: "trapped_chest", name: "陷阱箱", cat: "redstone" },
+  { id: "jukebox", name: "唱片机", cat: "redstone" },
+  { id: "sculk_sensor", name: "潜声传感器", cat: "redstone" },
+  { id: "calibrated_sculk_sensor", name: "校定潜声传感器", cat: "redstone" },
+  // ── 建筑 ──
+  { id: "oak_planks", name: "橡木木板", cat: "building" },
+  { id: "spruce_planks", name: "云杉木板", cat: "building" },
+  { id: "birch_planks", name: "白桦木板", cat: "building" },
+  { id: "jungle_planks", name: "丛林木板", cat: "building" },
+  { id: "acacia_planks", name: "金合欢木板", cat: "building" },
+  { id: "dark_oak_planks", name: "深色橡木木板", cat: "building" },
+  { id: "mangrove_planks", name: "红树木板", cat: "building" },
+  { id: "cherry_planks", name: "樱花木板", cat: "building" },
+  { id: "bamboo_planks", name: "竹木板", cat: "building" },
+  { id: "crimson_planks", name: "绯红木板", cat: "building" },
+  { id: "warped_planks", name: "诡异木板", cat: "building" },
+  { id: "stone", name: "石头", cat: "building" },
+  { id: "cobblestone", name: "圆石", cat: "building" },
+  { id: "stone_bricks", name: "石砖", cat: "building" },
+  { id: "mossy_stone_bricks", name: "苔石砖", cat: "building" },
+  { id: "deepslate_bricks", name: "深板岩砖", cat: "building" },
+  { id: "polished_andesite", name: "磨制安山岩", cat: "building" },
+  { id: "granite", name: "花岗岩", cat: "building" },
+  { id: "diorite", name: "闪长岩", cat: "building" },
+  { id: "sandstone", name: "砂岩", cat: "building" },
+  { id: "red_sandstone", name: "红砂岩", cat: "building" },
+  { id: "bricks", name: "红砖块", cat: "building" },
+  { id: "glass", name: "玻璃", cat: "building" },
+  { id: "glass_pane", name: "玻璃板", cat: "building" },
+  { id: "white_wool", name: "白色羊毛", cat: "building" },
+  { id: "black_wool", name: "黑色羊毛", cat: "building" },
+  { id: "white_concrete", name: "白色混凝土", cat: "building" },
+  { id: "black_concrete", name: "黑色混凝土", cat: "building" },
+  { id: "white_terracotta", name: "白色陶瓦", cat: "building" },
+  { id: "oak_log", name: "橡木原木", cat: "building" },
+  { id: "oak_fence", name: "橡木栅栏", cat: "building" },
+  { id: "oak_door", name: "橡木门", cat: "building" },
+  { id: "oak_stairs", name: "橡木楼梯", cat: "building" },
+  { id: "oak_slab", name: "橡木台阶", cat: "building" },
+  { id: "bookshelf", name: "书架", cat: "building" },
+  { id: "enchanting_table", name: "附魔台", cat: "building" },
+  { id: "anvil", name: "铁砧", cat: "building" },
+  { id: "grindstone", name: "砂轮", cat: "building" },
+  { id: "crafting_table", name: "工作台", cat: "building" },
+  { id: "furnace", name: "熔炉", cat: "building" },
+  { id: "blast_furnace", name: "高炉", cat: "building" },
+  { id: "smoker", name: "烟熏炉", cat: "building" },
+  { id: "beacon", name: "信标", cat: "building" },
+  { id: "chest", name: "箱子", cat: "building" },
+  { id: "ender_chest", name: "末影箱", cat: "building" },
+  { id: "barrel", name: "木桶", cat: "building" },
+  { id: "shulker_box", name: "潜影盒", cat: "building" },
+  { id: "ladder", name: "梯子", cat: "building" },
+  { id: "torch", name: "火把", cat: "building" },
+  { id: "lantern", name: "灯笼", cat: "building" },
+  { id: "soul_lantern", name: "灵魂灯笼", cat: "building" },
+  { id: "campfire", name: "营火", cat: "building" },
+  { id: "bed", name: "床", cat: "building" },
+  { id: "respawn_anchor", name: "重生锚", cat: "building" },
+  // ── 杂项 ──
+  { id: "experience_bottle", name: "附魔之瓶", cat: "misc" },
+  { id: "potion", name: "药水", cat: "misc" },
+  { id: "splash_potion", name: "喷溅药水", cat: "misc" },
+  { id: "lingering_potion", name: "滞留药水", cat: "misc" },
+  { id: "tipped_arrow", name: "药水箭", cat: "misc" },
+  { id: "arrow", name: "箭", cat: "misc" },
+  { id: "spectral_arrow", name: "光谱之箭", cat: "misc" },
+  { id: "snowball", name: "雪球", cat: "misc" },
+  { id: "player_head", name: "玩家头颅", cat: "misc" },
+  { id: "zombie_head", name: "僵尸头颅", cat: "misc" },
+  { id: "creeper_head", name: "苦力怕头颅", cat: "misc" },
+  { id: "skeleton_skull", name: "骷髅头颅", cat: "misc" },
+  { id: "wither_skeleton_skull", name: "凋灵骷髅头颅", cat: "misc" },
+  { id: "dragon_head", name: "龙首", cat: "misc" },
+  { id: "music_disc_13", name: "音乐唱片 13", cat: "misc" },
+  { id: "music_disc_cat", name: "音乐唱片 Cat", cat: "misc" },
+  { id: "music_disc_otherside", name: "音乐唱片 Otherside", cat: "misc" },
+  { id: "debug_stick", name: "调试棒", cat: "misc" },
+  { id: "knowledge_book", name: "知识之书", cat: "misc" },
+  { id: "stick", name: "木棍", cat: "misc" },
+  { id: "bowl", name: "碗", cat: "misc" },
+  { id: "flint", name: "燧石", cat: "misc" },
+];
+
+/** 附魔条目。 */
+export interface GiveEnchant {
+  id: string;
+  name: string;
+  max: number;
+}
+
+/** 常用附魔表（1.13+ 命名空间 ID，两代语法共用）。 */
+export const ENCHANTMENTS: GiveEnchant[] = [
+  { id: "sharpness", name: "锋利", max: 5 },
+  { id: "smite", name: "亡灵杀手", max: 5 },
+  { id: "bane_of_arthropods", name: "节肢杀手", max: 5 },
+  { id: "knockback", name: "击退", max: 2 },
+  { id: "fire_aspect", name: "火焰附加", max: 2 },
+  { id: "looting", name: "抢夺", max: 3 },
+  { id: "sweeping_edge", name: "横扫之刃", max: 3 },
+  { id: "efficiency", name: "效率", max: 5 },
+  { id: "silk_touch", name: "精准采集", max: 1 },
+  { id: "fortune", name: "时运", max: 3 },
+  { id: "protection", name: "保护", max: 4 },
+  { id: "fire_protection", name: "火焰保护", max: 4 },
+  { id: "blast_protection", name: "爆炸保护", max: 4 },
+  { id: "projectile_protection", name: "弹射物保护", max: 4 },
+  { id: "respiration", name: "水下呼吸", max: 3 },
+  { id: "aqua_affinity", name: "水下速掘", max: 1 },
+  { id: "thorns", name: "荆棘", max: 3 },
+  { id: "depth_strider", name: "深海探索者", max: 3 },
+  { id: "frost_walker", name: "冰霜行者", max: 2 },
+  { id: "soul_speed", name: "灵魂疾行", max: 3 },
+  { id: "swift_sneak", name: "迅捷潜行", max: 3 },
+  { id: "feather_falling", name: "摔落缓冲", max: 4 },
+  { id: "punch", name: "冲击", max: 2 },
+  { id: "power", name: "力量", max: 5 },
+  { id: "flame", name: "火焰", max: 1 },
+  { id: "infinity", name: "无限", max: 1 },
+  { id: "luck_of_the_sea", name: "海之眷顾", max: 3 },
+  { id: "lure", name: "饵钓", max: 3 },
+  { id: "mending", name: "经验修补", max: 1 },
+  { id: "unbreaking", name: "耐久", max: 3 },
+  { id: "curse_of_binding", name: "绑定诅咒", max: 1 },
+  { id: "curse_of_vanishing", name: "消失诅咒", max: 1 },
+  { id: "multishot", name: "多重射击", max: 1 },
+  { id: "piercing", name: "穿透", max: 4 },
+  { id: "quick_charge", name: "快速装填", max: 3 },
+  { id: "channeling", name: "引雷", max: 1 },
+  { id: "riptide", name: "激流", max: 3 },
+  { id: "loyalty", name: "忠诚", max: 3 },
+  { id: "impaling", name: "穿刺", max: 5 },
+  { id: "density", name: "致密", max: 5 },
+  { id: "breach", name: "破甲", max: 4 },
+  { id: "wind_burst", name: "风爆", max: 3 },
+];
+
+/** 属性条目（amount 为附加量，operation 固定相加）。 */
+export interface GiveAttribute {
+  id: string;
+  name: string;
+}
+
+export const ATTRIBUTES: GiveAttribute[] = [
+  { id: "generic.attack_damage", name: "攻击伤害" },
+  { id: "generic.attack_speed", name: "攻击速度" },
+  { id: "generic.armor", name: "护甲值" },
+  { id: "generic.armor_toughness", name: "护甲韧性" },
+  { id: "generic.max_health", name: "最大生命值" },
+  { id: "generic.movement_speed", name: "移动速度" },
+  { id: "generic.knockback_resistance", name: "击退抗性" },
+  { id: "generic.luck", name: "幸运" },
+  { id: "generic.follow_range", name: "跟随范围" },
+  { id: "generic.scale", name: "体型" },
+  { id: "generic.step_height", name: "步高" },
+  { id: "generic.gravity", name: "重力" },
+  { id: "generic.safe_fall_distance", name: "安全摔落距离" },
+];
+
+/** 输出格式：modern = 1.20.5+ 组件；legacy = 1.13–1.20.4 NBT。 */
+export type GiveFormat = "modern" | "legacy";
+
+export const GIVE_FORMAT_OPTIONS: { value: GiveFormat; label: string }[] = [
+  { value: "modern", label: "1.20.5+（组件格式）" },
+  { value: "legacy", label: "1.13–1.20.4（NBT 格式）" },
+];
+
+/** 附魔条目（用户添加）。 */
+export interface EnchantInput {
+  id: string;
+  level: number;
+}
+
+/** 属性条目（用户添加）。 */
+export interface AttributeInput {
+  id: string;
+  amount: number;
+}
+
+/** 生成器全部选项。 */
+export interface GiveOptions {
+  itemId: string;
+  count: number;
+  /** 颜色前缀（'' = 不染色；"§6" = 16 色；"§x§R§R§G§G§B§B" = 自定义色 1.16+）。 */
+  colorCode: string;
+  customName: string;
+  /** 背景故事（每行一条）。 */
+  lore: string[];
+  unbreakable: boolean;
+  /** 隐藏附加信息框（附魔/属性等）。 */
+  hideTooltip: boolean;
+  enchantments: EnchantInput[];
+  attributes: AttributeInput[];
+}
+
+/** JSON 字符串转义（组件/文本组件值用）。 */
+function jsonStr(s: string): string {
+  return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+/**
+ * 构建 /give 命令。
+ * @param opts 生成选项
+ * @param format 语法格式（modern 组件 / legacy NBT）
+ */
+export function buildGiveCommand(opts: GiveOptions, format: GiveFormat): string {
+  const id = `minecraft:${opts.itemId}`;
+  const count = Math.max(1, Math.min(99, Math.floor(opts.count) || 1));
+  const suffix = format === "modern" ? buildModern(id, opts) : buildLegacy(id, opts);
+  return `/give @p ${suffix} ${count}`;
+}
+
+/** 1.20.5+ 组件格式。 */
+function buildModern(id: string, opts: GiveOptions): string {
+  const parts: string[] = [];
+  if (opts.enchantments.length > 0) {
+    const levels = opts.enchantments
+      .map((e) => `"minecraft:${e.id}":${Math.max(1, Math.min(e.level, 255))}`)
+      .join(",");
+    parts.push(`enchantments={levels:{${levels}}}`);
+  }
+  if (opts.unbreakable) {
+    parts.push("unbreakable={}");
+  }
+  const name = opts.customName.trim() || "";
+  if (name || opts.colorCode) {
+    const display = `${opts.colorCode}${name}`;
+    parts.push(`custom_name='"${jsonStr(display)}"'`);
+  }
+  const lore = opts.lore.map((l) => l.trim()).filter((l) => l.length > 0);
+  if (lore.length > 0) {
+    parts.push(`lore=[${lore.map((l) => `'"${jsonStr(l)}"'`).join(",")}]`);
+  }
+  if (opts.hideTooltip) {
+    parts.push("hide_additional_tooltip={}");
+  }
+  if (opts.attributes.length > 0) {
+    // 1.21+ 属性组件带 minecraft: 前缀
+    const mods = opts.attributes
+      .map((a) => `{type:"minecraft:${a.id}",amount:${a.amount},operation:"add_value"}`)
+      .join(",");
+    parts.push(`attribute_modifiers=[${mods}]`);
+  }
+  return parts.length > 0 ? `${id}[${parts.join(",")}]` : id;
+}
+
+/** 1.13–1.20.4 NBT 格式。 */
+function buildLegacy(id: string, opts: GiveOptions): string {
+  const tags: string[] = [];
+  if (opts.enchantments.length > 0) {
+    const list = opts.enchantments
+      .map((e) => `{id:"minecraft:${e.id}",lvl:${Math.max(1, Math.min(e.level, 255))}}`)
+      .join(",");
+    tags.push(`Enchantments:[${list}]`);
+  }
+  if (opts.unbreakable) {
+    tags.push("Unbreakable:1b");
+  }
+  const name = opts.customName.trim() || "";
+  const lore = opts.lore.map((l) => l.trim()).filter((l) => l.length > 0);
+  if (name || opts.colorCode || lore.length > 0) {
+    const displayParts: string[] = [];
+    if (name || opts.colorCode) {
+      const text = `${opts.colorCode}${name}`;
+      // 颜色用 § 码放 text（客户端渲染 JSON 文本时支持 §）；兼容 color 字段语义
+      displayParts.push(`Name:'{"text":"${jsonStr(text)}"}'`);
+    }
+    if (lore.length > 0) {
+      displayParts.push(`Lore:[${lore.map((l) => `'{"text":"${jsonStr(l)}"}'`).join(",")}]`);
+    }
+    tags.push(`display:{${displayParts.join(",")}}`);
+  }
+  if (opts.hideTooltip) {
+    // 32 = 隐藏附加信息（附魔/属性/耐久）；63 = 全部
+    tags.push("HideFlags:32");
+  }
+  if (opts.attributes.length > 0) {
+    // 1.16+ AttributeModifiers 需要 UUID（相同 UUID 不叠加，随机生成避免覆盖）
+    const mods = opts.attributes
+      .map((a) => {
+        const uuid = crypto.randomUUID();
+        const camel = toCamelCase(a.id);
+        return `{AttributeName:"${camel}",Name:"${camel}",Amount:${a.amount},Operation:0,Slot:"mainhand",UUID:[I;${uuidToIntArray(uuid)}]}`;
+      })
+      .join(",");
+    tags.push(`AttributeModifiers:[${mods}]`);
+  }
+  return tags.length > 0 ? `${id}{${tags.join(",")}}` : id;
+}
+
+/** 属性 ID 转 1.13–1.20.4 NBT 的 camelCase 形式（generic.attack_damage → generic.attackDamage）。 */
+function toCamelCase(id: string): string {
+  // 每段去掉下划线并把下划线后首字母大写（首段 generic 保持原样）
+  return id
+    .split(".")
+    .map((seg) => seg.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase()))
+    .join(".");
+}
+
+/** UUID（hex 字符串）→ NBT [I;] 四段十进制 i32。 */
+function uuidToIntArray(uuid: string): string {
+  const hex = uuid.replace(/-/g, "");
+  const parts: number[] = [];
+  for (let i = 0; i < 4; i++) {
+    const seg = hex.slice(i * 8, i * 8 + 8);
+    parts.push(parseInt(seg, 16) | 0);
+  }
+  return parts.join(",");
+}
+
+/** 按分类 + 关键字过滤物品（关键字匹配 ID/中文名）。 */
+export function filterItems(items: GiveItem[], cat: string, keyword: string): GiveItem[] {
+  const kw = keyword.trim().toLowerCase();
+  return items.filter(
+    (it) =>
+      (cat === "all" || it.cat === cat) &&
+      (kw.length === 0 || it.id.includes(kw) || it.name.toLowerCase().includes(kw)),
+  );
+}
