@@ -234,7 +234,6 @@ function useOfflineName(name: string) {
               v-if="avatarUrl && !avatarState.avatarError"
               :src="avatarUrl"
               alt="avatar"
-              width="52"
               draggable="false"
               @error="avatarState.avatarError = true"
             />
@@ -590,6 +589,7 @@ function useOfflineName(name: string) {
   width: 22px;
   height: 22px;
   border-radius: 4px;
+  object-fit: contain;
   image-rendering: pixelated;
 }
 .ext-role-ph {
@@ -719,15 +719,16 @@ function useOfflineName(name: string) {
 }
 
 .avatar {
-  width: 56px;
-  height: 56px;
+  position: relative;
+  width: 96px;
+  height: 96px;
   border-radius: 0;
   overflow: hidden;
   color: var(--color-brand);
   display: flex;
   align-items: center;
   justify-content: center;
-  /* 占位图标时无背景，与周围一致；图片时由 img 铺满 */
+  /* 占位图标时无背景；方形"头+带肩"头像完整等比显示 */
   background-color: transparent;
 }
 
@@ -737,12 +738,11 @@ function useOfflineName(name: string) {
 }
 
 .avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
   display: block;
   image-rendering: pixelated;
-  flex: none;
 }
 
 .uname {
@@ -914,7 +914,7 @@ function useOfflineName(name: string) {
   flex-shrink: 0;
   width: 20px;
   height: 20px;
-  object-fit: cover;
+  object-fit: contain;
   image-rendering: pixelated;
   display: block;
 }

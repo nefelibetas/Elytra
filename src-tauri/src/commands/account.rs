@@ -86,27 +86,6 @@ pub async fn switch_ms_account(uuid: String) -> Result<MsAccount, String> {
     Ok(refreshed)
 }
 
-/// 通过 visage 3D 渲染服务获取头部头像（正面视角、光照），返回 base64 PNG。
-/// subject 支持 uuid、用户名或 Mojang texture ID（刷新皮肤后传新 texture ID 可绕过服务端缓存）。
-#[tauri::command]
-pub async fn fetch_avatar(subject: String) -> Result<String, String> {
-    let url = format!("https://visage.surgeplay.com/head/{subject}.png");
-    account::fetch_b64(&url, "请求头像服务").await
-}
-
-/// 当前皮肤的 Mojang texture ID（textures.minecraft.net 文件 hash），
-/// 供 visage 按 ID 渲染——上传新皮肤后立即生效，不受服务端 uuid 缓存影响。
-#[tauri::command]
-pub async fn fetch_texture_id(uuid: String) -> Result<String, String> {
-    let textures = mojang::profile_textures(&uuid).await?;
-    let url = textures["textures"]["SKIN"]["url"]
-        .as_str()
-        .ok_or("该账号未设置皮肤")?;
-    crate::util::url_file_name(url)
-        .map(str::to_string)
-        .ok_or_else(|| "皮肤地址格式异常".to_string())
-}
-
 /// 提取游戏内置默认皮肤（经典蓝衬衫 Steve / Alex），返回 base64。
 /// 纹理编译期内置（resources/*.png，源自客户端 jar 的 player/wide/steve.png 与 player/slim/alex.png）——
 /// 不依赖已下载版本：新版 jar 纹理路径已改为 player/wide|slim 子目录，旧扫描逻辑必然失败。
@@ -134,6 +113,31 @@ async fn fetch_skin(uuid: String) -> Result<String, String> {
 #[tauri::command]
 pub async fn fetch_account_skin(uuid: String) -> Result<String, String> {
     fetch_skin(uuid).await
+}
+/// 正版玩家皮肤 + 模型类型（供 3D 头像渲染：一次 IPC 拿全，避免两次网络往返）。
+#[derive(serde::Serialize)]
+pub struct SkinProfile {
+    /// 皮肤 PNG base64（64x32 旧格式或 64x64 新格式）。
+    skin: String,
+    /// 模型类型："classic"（Steve 宽）或 "slim"（Alex 窄）。
+    model: String,
+}
+
+/// 拉取正版玩家皮肤 PNG + 模型类型（slim/classic），一次 IPC 供 3D 头像渲染。
+/// 皮肤 texture 的 metadata.model 为 "slim" 时前端按纤细模型渲染。
+#[tauri::command]
+pub async fn fetch_account_skin_profile(uuid: String) -> Result<SkinProfile, String> {
+    let textures = mojang::profile_textures(&uuid).await?;
+    let skin = textures["textures"]["SKIN"].clone();
+    let url = skin["url"]
+        .as_str()
+        .ok_or("该账号未设置皮肤")?;
+    let b64 = account::fetch_b64(url, "下载皮肤").await?;
+    let model = skin["metadata"]["model"]
+        .as_str()
+        .unwrap_or("classic")
+        .to_string();
+    Ok(SkinProfile { skin: b64, model })
 }
 
 /// 拉取第三方账号（authlib-injector / 皮肤站）的皮肤 PNG（base64，供 3D 头像）。
@@ -180,6 +184,53 @@ pub async fn fetch_external_skin(api_url: String, uuid: String) -> Result<String
         .as_str()
         .ok_or("该账号未设置皮肤")?;
     crate::auth::account::fetch_b64(skin_url, "下载皮肤").await
+}
+/// 拉取第三方账号（authlib-injector / 皮肤站）皮肤 PNG + 模型类型（slim/classic），
+/// 一次 IPC 供 3D 头像渲染。与 fetch_external_skin 解析路径相同，额外返回 metadata.model。
+#[tauri::command]
+pub async fn fetch_external_skin_profile(
+    api_url: String,
+    uuid: String,
+) -> Result<crate::commands::account::SkinProfile, String> {
+    let api = api_url.trim().trim_end_matches('/');
+    if api.is_empty() {
+        return Err("验证服务器地址为空".into());
+    }
+    let is_ely = crate::auth::external::is_ely_by(api);
+    let url = if is_ely {
+        format!("{api}/session/profile/{uuid}")
+    } else {
+        format!("{api}/sessionserver/session/minecraft/profile/{uuid}")
+    };
+    let resp = crate::downloader::fetcher::http()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| format!("请求皮肤失败\n{e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("该账号未设置皮肤\nHTTP {}", resp.status()));
+    }
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("响应解析失败\n{e}"))?;
+    let prop = json["properties"]
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|p| p["value"].as_str())
+        .ok_or("该账号未设置皮肤")?;
+    use base64::Engine;
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(prop)
+        .map_err(|e| format!("皮肤数据解码失败\n{e}"))?;
+    let textures: serde_json::Value = serde_json::from_slice(&decoded)
+        .map_err(|e| format!("皮肤信息解析失败\n{e}"))?;
+    let skin = textures["textures"]["SKIN"].clone();
+    let skin_url = skin["url"].as_str().ok_or("该账号未设置皮肤")?;
+    let b64 = crate::auth::account::fetch_b64(skin_url, "下载皮肤").await?;
+    let model = skin["metadata"]["model"].as_str().unwrap_or("classic").to_string();
+    Ok(crate::commands::account::SkinProfile { skin: b64, model })
 }
 
 
