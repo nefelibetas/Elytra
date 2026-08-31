@@ -231,6 +231,14 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
   return { r: (v >> 16) & 0xff, g: (v >> 8) & 0xff, b: v & 0xff };
 }
 
+/** 十六进制色（#RRGGBB）→ §x 自定义颜色序列（1.16+，§x§R§R§G§G§B§B）。非法输入返回 null。 */
+export function hexToSectionX(hex: string): string | null {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return null;
+  const h = [rgb.r, rgb.g, rgb.b].map((v) => v.toString(16).padStart(2, "0"));
+  return `§x§${h[0][0]}§${h[0][1]}§${h[1][0]}§${h[1][1]}§${h[2][0]}§${h[2][1]}`;
+}
+
 /** server.properties 安全转义：§ → \u00A7（属性文件读取时还原为 §）。 */
 export function escapeServerProperties(motd: string): string {
   return motd.replace(/§/g, "\\u00A7");
