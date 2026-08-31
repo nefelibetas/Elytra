@@ -16,6 +16,8 @@ export interface GiveItem {
   name: string;
   /** 分类 key（GIVE_CATEGORIES）。 */
   cat: string;
+  /** 引入主版本（如 1.16 下界合金；缺省 13）。 */
+  since?: number;
 }
 
 /** 分类定义。 */
@@ -44,32 +46,32 @@ export const GIVE_ITEMS: GiveItem[] = [
   { id: "iron_sword", name: "铁剑", cat: "sword" },
   { id: "golden_sword", name: "金剑", cat: "sword" },
   { id: "diamond_sword", name: "钻石剑", cat: "sword" },
-  { id: "netherite_sword", name: "下界合金剑", cat: "sword" },
+  { id: "netherite_sword", name: "下界合金剑", cat: "sword" , since: 16},
   // ── 工具 ──
   { id: "wooden_pickaxe", name: "木镐", cat: "tool" },
   { id: "stone_pickaxe", name: "石镐", cat: "tool" },
   { id: "iron_pickaxe", name: "铁镐", cat: "tool" },
   { id: "golden_pickaxe", name: "金镐", cat: "tool" },
   { id: "diamond_pickaxe", name: "钻石镐", cat: "tool" },
-  { id: "netherite_pickaxe", name: "下界合金镐", cat: "tool" },
+  { id: "netherite_pickaxe", name: "下界合金镐", cat: "tool" , since: 16},
   { id: "wooden_axe", name: "木斧", cat: "tool" },
   { id: "stone_axe", name: "石斧", cat: "tool" },
   { id: "iron_axe", name: "铁斧", cat: "tool" },
   { id: "golden_axe", name: "金斧", cat: "tool" },
   { id: "diamond_axe", name: "钻石斧", cat: "tool" },
-  { id: "netherite_axe", name: "下界合金斧", cat: "tool" },
+  { id: "netherite_axe", name: "下界合金斧", cat: "tool" , since: 16},
   { id: "wooden_shovel", name: "木锹", cat: "tool" },
   { id: "stone_shovel", name: "石锹", cat: "tool" },
   { id: "iron_shovel", name: "铁锹", cat: "tool" },
   { id: "golden_shovel", name: "金锹", cat: "tool" },
   { id: "diamond_shovel", name: "钻石锹", cat: "tool" },
-  { id: "netherite_shovel", name: "下界合金锹", cat: "tool" },
+  { id: "netherite_shovel", name: "下界合金锹", cat: "tool" , since: 16},
   { id: "wooden_hoe", name: "木锄", cat: "tool" },
   { id: "stone_hoe", name: "石锄", cat: "tool" },
   { id: "iron_hoe", name: "铁锄", cat: "tool" },
   { id: "golden_hoe", name: "金锄", cat: "tool" },
   { id: "diamond_hoe", name: "钻石锄", cat: "tool" },
-  { id: "netherite_hoe", name: "下界合金锄", cat: "tool" },
+  { id: "netherite_hoe", name: "下界合金锄", cat: "tool" , since: 16},
   { id: "bow", name: "弓", cat: "tool" },
   { id: "crossbow", name: "弩", cat: "tool" },
   { id: "trident", name: "三叉戟", cat: "tool" },
@@ -77,10 +79,10 @@ export const GIVE_ITEMS: GiveItem[] = [
   { id: "shears", name: "剪刀", cat: "tool" },
   { id: "fishing_rod", name: "钓鱼竿", cat: "tool" },
   { id: "flint_and_steel", name: "打火石", cat: "tool" },
-  { id: "brush", name: "刷子", cat: "tool" },
-  { id: "spyglass", name: "望远镜", cat: "tool" },
+  { id: "brush", name: "刷子", cat: "tool" , since: 20},
+  { id: "spyglass", name: "望远镜", cat: "tool" , since: 17},
   { id: "compass", name: "指南针", cat: "tool" },
-  { id: "recovery_compass", name: "回溯指南针", cat: "tool" },
+  { id: "recovery_compass", name: "回溯指南针", cat: "tool" , since: 19},
   { id: "clock", name: "时钟", cat: "tool" },
   { id: "bucket", name: "桶", cat: "tool" },
   { id: "water_bucket", name: "水桶", cat: "tool" },
@@ -94,7 +96,7 @@ export const GIVE_ITEMS: GiveItem[] = [
   { id: "totem_of_undying", name: "不死图腾", cat: "tool" },
   { id: "elytra", name: "鞘翅", cat: "tool" },
   { id: "firework_rocket", name: "烟花火箭", cat: "tool" },
-  { id: "goat_horn", name: "山羊角", cat: "tool" },
+  { id: "goat_horn", name: "山羊角", cat: "tool" , since: 19},
   // ── 盔甲 ──
   { id: "leather_helmet", name: "皮革帽子", cat: "armor" },
   { id: "leather_chestplate", name: "皮革外套", cat: "armor" },
@@ -116,10 +118,10 @@ export const GIVE_ITEMS: GiveItem[] = [
   { id: "diamond_chestplate", name: "钻石胸甲", cat: "armor" },
   { id: "diamond_leggings", name: "钻石护腿", cat: "armor" },
   { id: "diamond_boots", name: "钻石靴子", cat: "armor" },
-  { id: "netherite_helmet", name: "下界合金头盔", cat: "armor" },
-  { id: "netherite_chestplate", name: "下界合金胸甲", cat: "armor" },
-  { id: "netherite_leggings", name: "下界合金护腿", cat: "armor" },
-  { id: "netherite_boots", name: "下界合金靴子", cat: "armor" },
+  { id: "netherite_helmet", name: "下界合金头盔", cat: "armor" , since: 16},
+  { id: "netherite_chestplate", name: "下界合金胸甲", cat: "armor" , since: 16},
+  { id: "netherite_leggings", name: "下界合金护腿", cat: "armor" , since: 16},
+  { id: "netherite_boots", name: "下界合金靴子", cat: "armor" , since: 16},
   { id: "turtle_helmet", name: "海龟壳", cat: "armor" },
   // ── 食物 ──
   { id: "apple", name: "苹果", cat: "food" },
@@ -152,16 +154,16 @@ export const GIVE_ITEMS: GiveItem[] = [
   { id: "diamond", name: "钻石", cat: "material" },
   { id: "iron_ingot", name: "铁锭", cat: "material" },
   { id: "gold_ingot", name: "金锭", cat: "material" },
-  { id: "copper_ingot", name: "铜锭", cat: "material" },
-  { id: "netherite_ingot", name: "下界合金锭", cat: "material" },
+  { id: "copper_ingot", name: "铜锭", cat: "material" , since: 17},
+  { id: "netherite_ingot", name: "下界合金锭", cat: "material" , since: 16},
   { id: "emerald", name: "绿宝石", cat: "material" },
   { id: "lapis_lazuli", name: "青金石", cat: "material" },
   { id: "redstone", name: "红石粉", cat: "material" },
   { id: "coal", name: "煤炭", cat: "material" },
   { id: "charcoal", name: "木炭", cat: "material" },
   { id: "quartz", name: "下界石英", cat: "material" },
-  { id: "amethyst_shard", name: "紫水晶碎片", cat: "material" },
-  { id: "echo_shard", name: "回响碎片", cat: "material" },
+  { id: "amethyst_shard", name: "紫水晶碎片", cat: "material" , since: 17},
+  { id: "echo_shard", name: "回响碎片", cat: "material" , since: 19},
   { id: "blaze_rod", name: "烈焰棒", cat: "material" },
   { id: "blaze_powder", name: "烈焰粉", cat: "material" },
   { id: "ghast_tear", name: "恶魂之泪", cat: "material" },
@@ -175,7 +177,7 @@ export const GIVE_ITEMS: GiveItem[] = [
   { id: "rabbit_hide", name: "兔子皮", cat: "material" },
   { id: "rabbit_foot", name: "兔子脚", cat: "material" },
   { id: "ink_sac", name: "墨囊", cat: "material" },
-  { id: "glow_ink_sac", name: "发光墨囊", cat: "material" },
+  { id: "glow_ink_sac", name: "发光墨囊", cat: "material" , since: 17},
   { id: "slime_ball", name: "粘液球", cat: "material" },
   { id: "magma_cream", name: "岩浆膏", cat: "material" },
   { id: "phantom_membrane", name: "幻翼膜", cat: "material" },
@@ -196,17 +198,17 @@ export const GIVE_ITEMS: GiveItem[] = [
   { id: "diamond_block", name: "钻石块", cat: "block" },
   { id: "iron_block", name: "铁块", cat: "block" },
   { id: "gold_block", name: "金块", cat: "block" },
-  { id: "copper_block", name: "铜块", cat: "block" },
-  { id: "netherite_block", name: "下界合金块", cat: "block" },
+  { id: "copper_block", name: "铜块", cat: "block" , since: 17},
+  { id: "netherite_block", name: "下界合金块", cat: "block" , since: 16},
   { id: "emerald_block", name: "绿宝石块", cat: "block" },
   { id: "lapis_block", name: "青金石块", cat: "block" },
   { id: "redstone_block", name: "红石块", cat: "block" },
   { id: "coal_block", name: "煤炭块", cat: "block" },
   { id: "quartz_block", name: "石英块", cat: "block" },
-  { id: "amethyst_block", name: "紫水晶块", cat: "block" },
-  { id: "raw_iron_block", name: "粗铁块", cat: "block" },
-  { id: "raw_gold_block", name: "粗金块", cat: "block" },
-  { id: "raw_copper_block", name: "粗铜块", cat: "block" },
+  { id: "amethyst_block", name: "紫水晶块", cat: "block" , since: 17},
+  { id: "raw_iron_block", name: "粗铁块", cat: "block" , since: 17},
+  { id: "raw_gold_block", name: "粗金块", cat: "block" , since: 17},
+  { id: "raw_copper_block", name: "粗铜块", cat: "block" , since: 17},
   // ── 红石 ──
   { id: "redstone_repeater", name: "红石中继器", cat: "redstone" },
   { id: "redstone_comparator", name: "红石比较器", cat: "redstone" },
@@ -219,15 +221,15 @@ export const GIVE_ITEMS: GiveItem[] = [
   { id: "note_block", name: "音符盒", cat: "redstone" },
   { id: "lever", name: "拉杆", cat: "redstone" },
   { id: "redstone_lamp", name: "红石灯", cat: "redstone" },
-  { id: "target", name: "标靶", cat: "redstone" },
+  { id: "target", name: "标靶", cat: "redstone" , since: 16},
   { id: "slime_block", name: "粘液块", cat: "redstone" },
   { id: "honey_block", name: "蜜块", cat: "redstone" },
   { id: "daylight_detector", name: "阳光探测器", cat: "redstone" },
   { id: "tripwire_hook", name: "绊线钩", cat: "redstone" },
   { id: "trapped_chest", name: "陷阱箱", cat: "redstone" },
   { id: "jukebox", name: "唱片机", cat: "redstone" },
-  { id: "sculk_sensor", name: "潜声传感器", cat: "redstone" },
-  { id: "calibrated_sculk_sensor", name: "校定潜声传感器", cat: "redstone" },
+  { id: "sculk_sensor", name: "潜声传感器", cat: "redstone" , since: 19},
+  { id: "calibrated_sculk_sensor", name: "校定潜声传感器", cat: "redstone" , since: 19},
   // ── 建筑 ──
   { id: "oak_planks", name: "橡木木板", cat: "building" },
   { id: "spruce_planks", name: "云杉木板", cat: "building" },
@@ -235,16 +237,16 @@ export const GIVE_ITEMS: GiveItem[] = [
   { id: "jungle_planks", name: "丛林木板", cat: "building" },
   { id: "acacia_planks", name: "金合欢木板", cat: "building" },
   { id: "dark_oak_planks", name: "深色橡木木板", cat: "building" },
-  { id: "mangrove_planks", name: "红树木板", cat: "building" },
-  { id: "cherry_planks", name: "樱花木板", cat: "building" },
-  { id: "bamboo_planks", name: "竹木板", cat: "building" },
-  { id: "crimson_planks", name: "绯红木板", cat: "building" },
-  { id: "warped_planks", name: "诡异木板", cat: "building" },
+  { id: "mangrove_planks", name: "红树木板", cat: "building" , since: 19},
+  { id: "cherry_planks", name: "樱花木板", cat: "building" , since: 20},
+  { id: "bamboo_planks", name: "竹木板", cat: "building" , since: 20},
+  { id: "crimson_planks", name: "绯红木板", cat: "building" , since: 16},
+  { id: "warped_planks", name: "诡异木板", cat: "building" , since: 16},
   { id: "stone", name: "石头", cat: "building" },
   { id: "cobblestone", name: "圆石", cat: "building" },
   { id: "stone_bricks", name: "石砖", cat: "building" },
   { id: "mossy_stone_bricks", name: "苔石砖", cat: "building" },
-  { id: "deepslate_bricks", name: "深板岩砖", cat: "building" },
+  { id: "deepslate_bricks", name: "深板岩砖", cat: "building" , since: 17},
   { id: "polished_andesite", name: "磨制安山岩", cat: "building" },
   { id: "granite", name: "花岗岩", cat: "building" },
   { id: "diorite", name: "闪长岩", cat: "building" },
@@ -279,10 +281,10 @@ export const GIVE_ITEMS: GiveItem[] = [
   { id: "ladder", name: "梯子", cat: "building" },
   { id: "torch", name: "火把", cat: "building" },
   { id: "lantern", name: "灯笼", cat: "building" },
-  { id: "soul_lantern", name: "灵魂灯笼", cat: "building" },
+  { id: "soul_lantern", name: "灵魂灯笼", cat: "building" , since: 16},
   { id: "campfire", name: "营火", cat: "building" },
   { id: "bed", name: "床", cat: "building" },
-  { id: "respawn_anchor", name: "重生锚", cat: "building" },
+  { id: "respawn_anchor", name: "重生锚", cat: "building" , since: 16},
   // ── 杂项 ──
   { id: "experience_bottle", name: "附魔之瓶", cat: "misc" },
   { id: "potion", name: "药水", cat: "misc" },
@@ -300,7 +302,7 @@ export const GIVE_ITEMS: GiveItem[] = [
   { id: "dragon_head", name: "龙首", cat: "misc" },
   { id: "music_disc_13", name: "音乐唱片 13", cat: "misc" },
   { id: "music_disc_cat", name: "音乐唱片 Cat", cat: "misc" },
-  { id: "music_disc_otherside", name: "音乐唱片 Otherside", cat: "misc" },
+  { id: "music_disc_otherside", name: "音乐唱片 Otherside", cat: "misc" , since: 18},
   { id: "debug_stick", name: "调试棒", cat: "misc" },
   { id: "knowledge_book", name: "知识之书", cat: "misc" },
   { id: "stick", name: "木棍", cat: "misc" },
@@ -313,6 +315,20 @@ export interface GiveEnchant {
   id: string;
   name: string;
   max: number;
+  /** 引入主版本（如 1.21 致密；缺省 13）。 */
+  since?: number;
+}
+
+/** 按命令格式过滤物品版本可用性：legacy = ≤1.20.4；modern = ≤1.21。 */
+export function filterItemsByVersion(items: GiveItem[], format: GiveFormat): GiveItem[] {
+  const max = format === "legacy" ? 20 : 21;
+  return items.filter((i) => (i.since ?? 13) <= max);
+}
+
+/** 按命令格式过滤附魔版本可用性（同 filterItemsByVersion）。 */
+export function filterEnchantsByVersion(enchs: GiveEnchant[], format: GiveFormat): GiveEnchant[] {
+  const max = format === "legacy" ? 20 : 21;
+  return enchs.filter((e) => (e.since ?? 13) <= max);
 }
 
 /** 常用附魔表（1.13+ 命名空间 ID，两代语法共用）。 */
@@ -336,8 +352,8 @@ export const ENCHANTMENTS: GiveEnchant[] = [
   { id: "thorns", name: "荆棘", max: 3 },
   { id: "depth_strider", name: "深海探索者", max: 3 },
   { id: "frost_walker", name: "冰霜行者", max: 2 },
-  { id: "soul_speed", name: "灵魂疾行", max: 3 },
-  { id: "swift_sneak", name: "迅捷潜行", max: 3 },
+  { id: "soul_speed", name: "灵魂疾行", max: 3 , since: 16},
+  { id: "swift_sneak", name: "迅捷潜行", max: 3 , since: 19},
   { id: "feather_falling", name: "摔落缓冲", max: 4 },
   { id: "punch", name: "冲击", max: 2 },
   { id: "power", name: "力量", max: 5 },
@@ -356,9 +372,9 @@ export const ENCHANTMENTS: GiveEnchant[] = [
   { id: "riptide", name: "激流", max: 3 },
   { id: "loyalty", name: "忠诚", max: 3 },
   { id: "impaling", name: "穿刺", max: 5 },
-  { id: "density", name: "致密", max: 5 },
-  { id: "breach", name: "破甲", max: 4 },
-  { id: "wind_burst", name: "风爆", max: 3 },
+  { id: "density", name: "致密", max: 5 , since: 21},
+  { id: "breach", name: "破甲", max: 4 , since: 21},
+  { id: "wind_burst", name: "风爆", max: 3 , since: 21},
 ];
 
 /** 属性条目（amount 为附加量，operation 固定相加）。 */
@@ -404,9 +420,8 @@ export interface AttributeInput {
 }
 
 /** 生成器全部选项。 */
-export interface GiveOptions {
-  itemId: string;
-  count: number;
+/** 物品修饰（名称/颜色/lore/附魔/属性/不可破坏/隐藏）；give 命令与交易物品槽共用。 */
+export interface ItemMods {
   /** 颜色前缀（'' = 不染色；"§6" = 16 色；"§x§R§R§G§G§B§B" = 自定义色 1.16+）。 */
   colorCode: string;
   customName: string;
@@ -418,6 +433,23 @@ export interface GiveOptions {
   enchantments: EnchantInput[];
   attributes: AttributeInput[];
 }
+
+/** 生成器全部选项（give 命令用）。 */
+export interface GiveOptions extends ItemMods {
+  itemId: string;
+  count: number;
+}
+
+/** 空修饰（交易物品不自定义时用）。 */
+export const EMPTY_MODS: ItemMods = {
+  colorCode: "",
+  customName: "",
+  lore: [],
+  unbreakable: false,
+  hideTooltip: false,
+  enchantments: [],
+  attributes: [],
+};
 
 /** JSON 字符串转义（组件/文本组件值用）。 */
 function jsonStr(s: string): string {
@@ -436,59 +468,64 @@ export function buildGiveCommand(opts: GiveOptions, format: GiveFormat): string 
   return `/give @p ${suffix} ${count}`;
 }
 
-/** 1.20.5+ 组件格式。 */
-function buildModern(id: string, opts: GiveOptions): string {
-  const parts: string[] = [];
-  if (opts.enchantments.length > 0) {
-    const levels = opts.enchantments
-      .map((e) => `"minecraft:${e.id}":${Math.max(1, Math.min(e.level, 255))}`)
-      .join(",");
-    parts.push(`enchantments={levels:{${levels}}}`);
-  }
-  if (opts.unbreakable) {
-    parts.push("unbreakable={}");
-  }
-  const name = opts.customName.trim() || "";
-  if (name || opts.colorCode) {
-    const display = `${opts.colorCode}${name}`;
-    parts.push(`custom_name='"${jsonStr(display)}"'`);
-  }
-  const lore = opts.lore.map((l) => l.trim()).filter((l) => l.length > 0);
-  if (lore.length > 0) {
-    parts.push(`lore=[${lore.map((l) => `'"${jsonStr(l)}"'`).join(",")}]`);
-  }
-  if (opts.hideTooltip) {
-    parts.push("hide_additional_tooltip={}");
-  }
-  if (opts.attributes.length > 0) {
-    // 1.21+ 属性组件带 minecraft: 前缀
-    const mods = opts.attributes
-      .map((a) => `{type:"minecraft:${a.id}",amount:${a.amount},operation:"add_value"}`)
-      .join(",");
-    parts.push(`attribute_modifiers=[${mods}]`);
-  }
-  return parts.length > 0 ? `${id}[${parts.join(",")}]` : id;
+/** 1.20.5+ 组件项（key 为 give 简写名，如 enchantments）。 */
+export interface ModernComponent {
+  key: string;
+  value: string;
 }
 
-/** 1.13–1.20.4 NBT 格式。 */
-function buildLegacy(id: string, opts: GiveOptions): string {
+/** 构建 1.20.5+ 组件列表（give 命令与交易物品槽 components 共用）。 */
+export function modernItemComponents(mods: ItemMods): ModernComponent[] {
+  const parts: ModernComponent[] = [];
+  if (mods.enchantments.length > 0) {
+    const levels = mods.enchantments
+      .map((e) => `"minecraft:${e.id}":${clampLevel(e.level)}`)
+      .join(",");
+    parts.push({ key: "enchantments", value: `{levels:{${levels}}}` });
+  }
+  if (mods.unbreakable) {
+    parts.push({ key: "unbreakable", value: "{}" });
+  }
+  const name = mods.customName.trim() || "";
+  if (name || mods.colorCode) {
+    parts.push({ key: "custom_name", value: `'"${jsonStr(`${mods.colorCode}${name}`)}"'` });
+  }
+  const lore = mods.lore.map((l) => l.trim()).filter((l) => l.length > 0);
+  if (lore.length > 0) {
+    parts.push({ key: "lore", value: `[${lore.map((l) => `'"${jsonStr(l)}"'`).join(",")}]` });
+  }
+  if (mods.hideTooltip) {
+    parts.push({ key: "hide_additional_tooltip", value: "{}" });
+  }
+  if (mods.attributes.length > 0) {
+    // 1.21+ 属性组件带 minecraft: 前缀
+    const attrs = mods.attributes
+      .map((a) => `{type:"minecraft:${a.id}",amount:${a.amount},operation:"add_value"}`)
+      .join(",");
+    parts.push({ key: "attribute_modifiers", value: `[${attrs}]` });
+  }
+  return parts;
+}
+
+/** 构建 1.13–1.20.4 NBT 标签列表（give 命令与交易物品槽共用）。 */
+export function legacyItemTags(mods: ItemMods): string[] {
   const tags: string[] = [];
-  if (opts.enchantments.length > 0) {
-    const list = opts.enchantments
-      .map((e) => `{id:"minecraft:${e.id}",lvl:${Math.max(1, Math.min(e.level, 255))}}`)
+  if (mods.enchantments.length > 0) {
+    const list = mods.enchantments
+      .map((e) => `{id:"minecraft:${e.id}",lvl:${clampLevel(e.level)}}`)
       .join(",");
     tags.push(`Enchantments:[${list}]`);
   }
-  if (opts.unbreakable) {
+  if (mods.unbreakable) {
     tags.push("Unbreakable:1b");
   }
-  const name = opts.customName.trim() || "";
-  const lore = opts.lore.map((l) => l.trim()).filter((l) => l.length > 0);
-  if (name || opts.colorCode || lore.length > 0) {
+  const name = mods.customName.trim() || "";
+  const lore = mods.lore.map((l) => l.trim()).filter((l) => l.length > 0);
+  if (name || mods.colorCode || lore.length > 0) {
     const displayParts: string[] = [];
-    if (name || opts.colorCode) {
-      const text = `${opts.colorCode}${name}`;
-      // 颜色用 § 码放 text（客户端渲染 JSON 文本时支持 §）；兼容 color 字段语义
+    if (name || mods.colorCode) {
+      const text = `${mods.colorCode}${name}`;
+      // 颜色用 § 码放 text（客户端渲染 JSON 文本时支持 §）
       displayParts.push(`Name:'{"text":"${jsonStr(text)}"}'`);
     }
     if (lore.length > 0) {
@@ -496,22 +533,62 @@ function buildLegacy(id: string, opts: GiveOptions): string {
     }
     tags.push(`display:{${displayParts.join(",")}}`);
   }
-  if (opts.hideTooltip) {
+  if (mods.hideTooltip) {
     // 32 = 隐藏附加信息（附魔/属性/耐久）；63 = 全部
     tags.push("HideFlags:32");
   }
-  if (opts.attributes.length > 0) {
+  if (mods.attributes.length > 0) {
     // 1.16+ AttributeModifiers 需要 UUID（相同 UUID 不叠加，随机生成避免覆盖）
-    const mods = opts.attributes
+    const attrs = mods.attributes
       .map((a) => {
         const uuid = crypto.randomUUID();
         const camel = toCamelCase(a.id);
         return `{AttributeName:"${camel}",Name:"${camel}",Amount:${a.amount},Operation:0,Slot:"mainhand",UUID:[I;${uuidToIntArray(uuid)}]}`;
       })
       .join(",");
-    tags.push(`AttributeModifiers:[${mods}]`);
+    tags.push(`AttributeModifiers:[${attrs}]`);
   }
+  return tags;
+}
+
+/** 附魔等级 clamp（1–255）。 */
+function clampLevel(level: number): number {
+  return Math.max(1, Math.min(level, 255));
+}
+
+/** 1.20.5+ 组件格式（give 命令）。 */
+function buildModern(id: string, opts: GiveOptions): string {
+  const parts = modernItemComponents(opts).map((c) => `${c.key}=${c.value}`);
+  return parts.length > 0 ? `${id}[${parts.join(",")}]` : id;
+}
+
+/** 1.13–1.20.4 NBT 格式（give 命令）。 */
+function buildLegacy(id: string, opts: GiveOptions): string {
+  const tags = legacyItemTags(opts);
   return tags.length > 0 ? `${id}{${tags.join(",")}}` : id;
+}
+
+/**
+ * 交易物品槽（buy/buyB/sell）：1.20.5+ `{id,count,components:{...}}`；
+ * 1.13–1.20.4 `{id,Count,<NBT 标签>}`。修饰与 give 生成器共用一套构建。
+ */
+export function buildTradeItem(
+  id: string,
+  count: number,
+  mods: ItemMods,
+  format: GiveFormat,
+): string {
+  const c = Math.max(1, Math.min(64, Math.floor(count) || 1));
+  if (format === "modern") {
+    const comps = modernItemComponents(mods);
+    const compsStr = comps.length > 0
+      ? `,components:{${comps.map((p) => `"minecraft:${p.key}":${p.value}`).join(",")}}`
+      : "";
+    return `{id:"minecraft:${id}",count:${c}${compsStr}}`;
+  }
+  const tags = legacyItemTags(mods);
+  const tagsStr = tags.length > 0 ? `,${tags.join(",")}` : "";
+  return `{id:"minecraft:${id}",Count:${c}b${tagsStr}}`;
 }
 
 /** 属性 ID 转 1.13–1.20.4 NBT 的 camelCase 形式（generic.attack_damage → generic.attackDamage）。 */
