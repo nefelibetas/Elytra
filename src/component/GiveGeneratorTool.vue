@@ -8,6 +8,7 @@ import DropSelect, { type SelOption } from "./DropSelect.vue";
 import {
   GIVE_ITEMS, GIVE_CATEGORIES, ENCHANTMENTS, ATTRIBUTES,
   GIVE_FORMAT_OPTIONS, buildGiveCommand, filterItems,
+  filterItemsByVersion, filterEnchantsByVersion,
   type GiveItem, type GiveFormat, type EnchantInput, type AttributeInput,
 } from "../utils/give";
 import { MC_COLORS, MC_COLOR_KEYS, MC_COLOR_NAMES, hexToSectionX } from "../utils/motd";
@@ -30,7 +31,9 @@ const keyword = ref("");
 const selectedItem = ref<GiveItem | null>(null);
 
 /** 过滤后的物品列表。 */
-const items = computed(() => filterItems(GIVE_ITEMS, cat.value, keyword.value));
+const items = computed(() =>
+  filterItems(filterItemsByVersion(GIVE_ITEMS, format.value), cat.value, keyword.value),
+);
 
 function selectItem(it: GiveItem) {
   selectedItem.value = it;
@@ -71,10 +74,12 @@ const enchantments = ref<EnchantInput[]>([]);
 const newEnch = ref("");
 const newEnchLevel = ref(1);
 
-const enchOptions: SelOption[] = ENCHANTMENTS.map((e) => ({
-  value: e.id,
-  label: `${e.name}（最高 ${e.max}）`,
-}));
+const enchOptions = computed<SelOption[]>(() =>
+  filterEnchantsByVersion(ENCHANTMENTS, format.value).map((e) => ({
+    value: e.id,
+    label: `${e.name}（原版最高 ${e.max}）`,
+  })),
+);
 
 function addEnchant() {
   if (!newEnch.value) return;
@@ -82,7 +87,8 @@ function addEnchant() {
   if (!item) return;
   enchantments.value.push({
     id: item.id,
-    level: Math.max(1, Math.min(newEnchLevel.value, item.max)),
+    // give 命令附魔不受原版等级上限限制（clamp 到 255 = NBT byte 上限）
+    level: Math.max(1, Math.min(newEnchLevel.value, 255)),
   });
   newEnch.value = "";
   newEnchLevel.value = 1;
