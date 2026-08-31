@@ -3,18 +3,21 @@
 // 放普通 <script> 块：<script setup> 不允许 export。
 import { ref } from "vue";
 
-export type ToolsTab = "status" | "motd" | "give" | "online";
+export type ToolsTab = "status" | "motd" | "give" | "potion" | "firework" | "villager" | "online";
 
 export const toolsTab = ref<ToolsTab>("status");
 </script>
 
 <script setup lang="ts">
 // 工具页容器：左侧导航 + 各工具编排（业务在组件内，本文件不做工具逻辑）。
-// 工具：服务器状态检测 / MOTD 生成器 / /give 生成器 / 联机；后续工具加条目即可。
-import { Server, Type, Link2, Sword } from "@lucide/vue";
+// 工具：服务器状态 / MOTD / /give / 药水 / 烟花 / 村民交易 / 联机；后续工具加条目即可。
+import { Server, Type, Link2, Sword, FlaskConical, Rocket, Store } from "@lucide/vue";
 import ServerStatusTool from "../component/ServerStatusTool.vue";
 import MotdGeneratorTool from "../component/MotdGeneratorTool.vue";
 import GiveGeneratorTool from "../component/GiveGeneratorTool.vue";
+import PotionGeneratorTool from "../component/PotionGeneratorTool.vue";
+import FireworkGeneratorTool from "../component/FireworkGeneratorTool.vue";
+import VillagerGeneratorTool from "../component/VillagerGeneratorTool.vue";
 import OnlineTool from "../component/OnlineTool.vue";
 </script>
 
@@ -48,6 +51,30 @@ import OnlineTool from "../component/OnlineTool.vue";
       </button>
       <button
         class="tools-tab"
+        :class="{ active: toolsTab === 'potion' }"
+        @click="toolsTab = 'potion'"
+      >
+        <FlaskConical :size="16" />
+        药水
+      </button>
+      <button
+        class="tools-tab"
+        :class="{ active: toolsTab === 'firework' }"
+        @click="toolsTab = 'firework'"
+      >
+        <Rocket :size="16" />
+        烟花
+      </button>
+      <button
+        class="tools-tab"
+        :class="{ active: toolsTab === 'villager' }"
+        @click="toolsTab = 'villager'"
+      >
+        <Store :size="16" />
+        村民交易
+      </button>
+      <button
+        class="tools-tab"
         :class="{ active: toolsTab === 'online' }"
         @click="toolsTab = 'online'"
       >
@@ -61,6 +88,9 @@ import OnlineTool from "../component/OnlineTool.vue";
         <ServerStatusTool v-if="toolsTab === 'status'" key="status" />
         <MotdGeneratorTool v-else-if="toolsTab === 'motd'" key="motd" />
         <GiveGeneratorTool v-else-if="toolsTab === 'give'" key="give" />
+        <PotionGeneratorTool v-else-if="toolsTab === 'potion'" key="potion" />
+        <FireworkGeneratorTool v-else-if="toolsTab === 'firework'" key="firework" />
+        <VillagerGeneratorTool v-else-if="toolsTab === 'villager'" key="villager" />
         <OnlineTool v-else key="online" />
       </Transition>
     </div>
