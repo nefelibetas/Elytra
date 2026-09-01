@@ -1,5 +1,7 @@
 use crate::jdk::model::JdkInfo;
-use crate::util::{exe_dir, java_bin_path};
+use crate::util::java_bin_path;
+#[cfg(target_os = "windows")]
+use crate::util::exe_dir;
 use std::collections::HashSet;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -187,7 +189,8 @@ fn candidate_dirs() -> Vec<String> {
         .collect()
 }
 
-// 从环境变量种获取
+// 从环境变量种获取（仅 Windows/macOS 的 candidate_dirs 使用；Linux 分支内联 std::env::var）
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn env(key: &str) -> Option<String> {
     std::env::var(key).ok()
 }
