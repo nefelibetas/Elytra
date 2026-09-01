@@ -8,6 +8,7 @@
 ///   `http=127.0.0.1:7890;https=127.0.0.1:7891;ftp=...`（分协议，缺项为 None）
 /// 代理连接 URL 统一用 http scheme（Clash 等 mixed 端口为明文 HTTP 代理；
 /// 注册表不表达"到代理的连接是否加密"，默认明文）。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))] // 生产调用仅 Windows；单测全平台跑
 fn parse_proxy_server(raw: &str) -> (Option<String>, Option<String>) {
     let raw = raw.trim();
     let mut http = None;

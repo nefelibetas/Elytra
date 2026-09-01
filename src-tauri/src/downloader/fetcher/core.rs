@@ -404,6 +404,11 @@ async fn fetch_once<F: Fn(u64, u64)>(
     // 调用方在循环内捕获 Checksum 后换下一源重试，全部源失败才最终报错。
     if let Some(sha1) = expected_sha1 {
         if !sha1.is_empty() {
+            // 先 flush 再校验：tokio::fs::File 的 drop 是异步的，立即重新 open 读
+            // 可能读到未落盘的上一次内容（多源轮换写同一 dest 时读到旧数据误判 Checksum）
+            tokio::io::AsyncWriteExt::flush(&mut file)
+                .await
+                .map_err(|e| FetchError::Io(format!("写入文件失败\n{e}")))?;
             drop(file);
             if !crate::downloader::hash::file_sha1_matches(dest, sha1) {
                 let _ = std::fs::remove_file(dest);
