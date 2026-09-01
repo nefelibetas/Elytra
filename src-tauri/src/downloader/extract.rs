@@ -37,12 +37,28 @@ impl Library {
     }
 }
 
+/// 平台 rules 语义的 OS 名（Mojang rules 的 os.name：macOS 为 "osx"）。
 #[cfg(target_os = "windows")]
 pub const TARGET_OS: &str = "windows";
 #[cfg(target_os = "linux")]
 pub const TARGET_OS: &str = "linux";
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 pub const TARGET_OS: &str = "osx";
+
+/// natives 库名中的 OS 段（与 rules 的 os name 不同：Mojang 数据里
+/// rules 用 `"osx"`，但 LWJGL natives 库名后缀用 `"macos"`——两套命名）。
+#[cfg(target_os = "macos")]
+pub const TARGET_NATIVES_OS: &str = "macos";
+#[cfg(not(target_os = "macos"))]
+pub const TARGET_NATIVES_OS: &str = TARGET_OS;
+
+/// natives 库名中的架构段（`-arm64` / `-x86` / 无 = x64）。
+#[cfg(target_arch = "aarch64")]
+pub const TARGET_ARCH: &str = "arm64";
+#[cfg(target_arch = "x86")]
+pub const TARGET_ARCH: &str = "x86";
+#[cfg(all(not(target_arch = "aarch64"), not(target_arch = "x86")))]
+pub const TARGET_ARCH: &str = "x64";
 
 pub fn matches_rules(rules: &[Rule]) -> bool {
     let mut allowed = false;
@@ -87,11 +103,11 @@ fn classifier_artifact<'a>(lib: &'a Library, key: &str) -> Option<&'a Artifact> 
     lib.downloads.as_ref()?.classifiers.as_ref()?.get(key)
 }
 
-/// 新式：判断库名中的 native classifier 是否匹配当前 OS + 架构。
-///
-/// 现代版本中每个架构变体是独立 library，且 rules 只写 `allow windows`，
-/// 需要靠库名后缀区分：`natives-windows`（x64）/ `natives-windows-x86` / `natives-windows-arm64`。
-/// x64 Windows 只接受无架构后缀的 `natives-windows`。
+/// 需要靠库名后缀区分。Mojang 数据实际命名（26.3 实测）：
+///   x64：  `natives-windows` / `natives-linux` / `natives-macos`
+///   arm64：`natives-windows-arm64` / `natives-macos-arm64`（及老版本 linux-arm64）
+///   x86：  `natives-windows-x86`
+/// 注意 macOS 的 natives 库名用 `macos`，而 rules 的 os name 用 `osx`（两套命名）。
 pub fn modern_native_matches(lib_name: &str) -> bool {
     let Some(classifier) = lib_name.rsplit(':').next() else {
         return true;
@@ -99,19 +115,20 @@ pub fn modern_native_matches(lib_name: &str) -> bool {
     let Some(rest) = classifier.strip_prefix("natives-") else {
         return true; // 非 native 库，交给 rules 处理
     };
-    // rest 形如 "windows"、"windows-arm64"、"linux"、"osx-arm64"
+    // rest 形如 "windows"、"windows-arm64"、"linux"、"macos"、"macos-arm64"、"windows-x86"
     let (os_part, arch_part) = match rest.split_once('-') {
         Some((os, arch)) => (os, Some(arch)),
         None => (rest, None),
     };
-    if os_part != TARGET_OS {
+    if os_part != TARGET_NATIVES_OS {
         return false;
     }
-    // Windows x64：只接受无后缀的 natives-windows
-    if TARGET_OS == "windows" {
-        return arch_part.is_none();
+    // 架构精确匹配：arm64 → 只收 `-arm64`；x86 → 只收 `-x86`；x64 → 不收任何后缀
+    match TARGET_ARCH {
+        "arm64" => arch_part == Some("arm64"),
+        "x86" => arch_part == Some("x86"),
+        _ => arch_part.is_none(),
     }
-    arch_part.is_none()
 }
 
 /// 下载所有匹配当前 OS 的 native classifier JAR 到 `libraries/`。
@@ -276,24 +293,34 @@ mod tests {
 
     #[test]
     fn test_modern_native_matches() {
-        // Windows x64：只接受无后缀的 natives-windows
-        assert!(modern_native_matches(
-            "org.lwjgl:lwjgl-freetype:3.4.1:natives-windows"
-        ));
-        assert!(!modern_native_matches(
-            "org.lwjgl:lwjgl-freetype:3.4.1:natives-windows-x86"
-        ));
-        assert!(!modern_native_matches(
-            "org.lwjgl:lwjgl-freetype:3.4.1:natives-windows-arm64"
-        ));
+        // 平台无关：用当前平台常量构造，验证 OS + 架构精确匹配。
+        // 当前 OS 的 x64 natives（无后缀）→ 匹配（若当前是 x64）
+        // 当前 OS 的 arm64/x86 变体 → 仅当前架构匹配
+        let os = TARGET_NATIVES_OS;
+        let mine = format!("org.lwjgl:lwjgl-freetype:3.4.1:natives-{os}");
+        assert_eq!(
+            modern_native_matches(&mine),
+            TARGET_ARCH == "x64",
+            "当前 OS 无后缀 natives 应仅在 x64 匹配"
+        );
 
-        // 非当前 OS
-        assert!(!modern_native_matches(
-            "org.lwjgl:lwjgl-freetype:3.4.1:natives-linux"
-        ));
-        assert!(!modern_native_matches(
-            "org.lwjgl:lwjgl-freetype:3.4.1:natives-macos"
-        ));
+        let mine_arm64 = format!("org.lwjgl:lwjgl-freetype:3.4.1:natives-{os}-arm64");
+        assert_eq!(
+            modern_native_matches(&mine_arm64),
+            TARGET_ARCH == "arm64",
+            "当前 OS arm64 natives 应仅在 arm64 匹配"
+        );
+
+        let mine_x86 = format!("org.lwjgl:lwjgl-freetype:3.4.1:natives-{os}-x86");
+        assert!(!modern_native_matches(&mine_x86), "当前平台不收 x86 变体");
+
+        // 其他 OS 一律不匹配
+        for other in ["windows", "linux", "macos"].into_iter().filter(|o| *o != os) {
+            let lib = format!("org.lwjgl:lwjgl-freetype:3.4.1:natives-{other}");
+            assert!(!modern_native_matches(&lib), "其他 OS 不应匹配: {other}");
+            let lib_arm64 = format!("org.lwjgl:lwjgl-freetype:3.4.1:natives-{other}-arm64");
+            assert!(!modern_native_matches(&lib_arm64), "其他 OS arm64 不应匹配");
+        }
 
         // 普通库（无 natives 后缀）不受影响
         assert!(modern_native_matches("org.lwjgl:lwjgl-freetype:3.4.1"));
@@ -303,6 +330,7 @@ mod tests {
         assert!(modern_native_matches("some-library"));
     }
 
+    #[cfg(target_os = "windows")]
     #[test]
     fn test_legacy_classifier_artifact_windows() {
         use crate::downloader::model::LibraryDownloads;
