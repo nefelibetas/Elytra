@@ -109,7 +109,7 @@ pub fn java_bin_path(home: &Path) -> PathBuf {
 /// - Windows/Linux：exe 旁 `Elytra/`（与历史布局一致）
 /// - macOS：`~/Library/Application Support/Elytra`——current_exe 指向 app bundle 内部
 ///   （`Contents/MacOS/`），写入会破坏签名且 /Applications 下不可写，配置会丢失
-pub fn config_dir() -> std::path::PathBuf {
+pub fn config_dir() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
         if let Some(home) = std::env::var_os("HOME") {
@@ -245,11 +245,6 @@ pub fn default_game_dir_base() -> std::path::PathBuf {
             return std::path::PathBuf::from(home).join("Library/Application Support");
         }
     }
-    #[cfg(target_os = "windows")]
-    {
-        // 便携语义：exe 旁（与历史一致）
-        return exe_dir();
-    }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         // Linux/其他 Unix：exe 旁可写则便携，否则（打包只读）回退用户主目录
@@ -257,7 +252,11 @@ pub fn default_game_dir_base() -> std::path::PathBuf {
             return exe_dir();
         }
     }
+    // Windows：便携语义，exe 旁（与历史一致）
+    #[cfg(target_os = "windows")]
+    return exe_dir();
     // macOS 无 HOME 兜底 / Linux exe 目录不可写：退回用户主目录
+    #[cfg(not(target_os = "windows"))]
     std::env::var_os("HOME")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(exe_dir)
