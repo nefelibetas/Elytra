@@ -12,11 +12,14 @@ use crate::downloader::probe::ProbeResult;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// 本地 HTTP 服务器：每次请求返回固定 body（用于确定性校验失败/成功场景）。
+/// 就绪握手：accept 循环启动后通过 oneshot 通知调用方，杜绝 spawn 未调度时
+/// 请求先行导致的连接竞态（此前偶发 "error sending request" 即此根因）。
 async fn serve(body: Vec<u8>) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
     tokio::spawn(async move {
+        let _ = tx.send(());
         loop {
             let (mut sock, _) = match listener.accept().await {
                 Ok(x) => x,
@@ -37,6 +40,7 @@ async fn serve(body: Vec<u8>) -> String {
             });
         }
     });
+    let _ = rx.await; // 就绪：accept 循环已启动
     format!("http://{addr}/file.jar")
 }
 
@@ -158,16 +162,25 @@ async fn redirect_to_normal_domain_followed() {
     let target = final_url.clone();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
+    // 无限 accept：Auto 模式会先对域做 HEAD 探测（消耗一次连接），正式请求另有
+    // 3 轮重试——只 accept 一次会被探测吃掉导致正式请求连接拒绝（确定性 flaky）。
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
     tokio::spawn(async move {
-        let (mut sock, _) = listener.accept().await.unwrap();
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let mut buf = [0u8; 4096];
-        let _ = sock.read(&mut buf).await;
-        let head = format!(
-            "HTTP/1.1 302 Found\r\nLocation: {target}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-        );
-        let _ = sock.write_all(head.as_bytes()).await;
+        let _ = tx.send(());
+        loop {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                break;
+            };
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let mut buf = [0u8; 4096];
+            let _ = sock.read(&mut buf).await;
+            let head = format!(
+                "HTTP/1.1 302 Found\r\nLocation: {target}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            let _ = sock.write_all(head.as_bytes()).await;
+        }
     });
+    let _ = rx.await;
     let url = format!("http://{addr}/redirect");
     let dest = temp_dest("redirect_normal");
     let res = fetch_verified(&[url], &dest, None::<fn(u64, u64)>, &sha1_hex(&good)).await;
@@ -179,12 +192,17 @@ async fn redirect_to_normal_domain_followed() {
     let _ = std::fs::remove_file(&dest);
 }
 
-/// 主源返回坏内容时应换备用源重试并成功（镜像缓存陈旧场景的核心行为）。
 #[tokio::test]
 async fn fetch_verified_falls_back_to_second_source_on_checksum_mismatch() {
     let good = b"correct-content".to_vec();
     let wrong = serve(b"stale-mirror-content".to_vec()).await;
     let right = serve(good.clone()).await;
+    // 防极端端口碰撞（内核 :0 分配理论极小概率相同）：相同则重建好源
+    let right = if right == wrong {
+        serve(good.clone()).await
+    } else {
+        right
+    };
     let urls = vec![wrong, right];
     let dest = temp_dest("fetch_verified_recover");
 
