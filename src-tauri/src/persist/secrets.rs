@@ -1,13 +1,11 @@
 use parking_lot::Mutex;
 use std::path::PathBuf;
 
-use crate::util::exe_dir;
+use crate::util::config_dir;
 use base64::{engine, Engine};
 
 fn secrets_path() -> PathBuf {
-    exe_dir()
-        .join(crate::constants::CONFIG_DIR)
-        .join("secrets.bin")
+    config_dir().join("secrets.bin")
 }
 
 /// 串行化读写（与 persist 的 PERSIST_LOCK 同语义，避免并发覆盖）。
@@ -113,9 +111,9 @@ fn key_encrypt(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, String> {
     };
     let mut nonce_bytes = [0u8; 12];
     getrandom::getrandom(&mut nonce_bytes).map_err(|e| format!("生成随机数失败\n{e}"))?;
-    let cipher = ChaCha20Poly1305::new(Key::from_slice(key));
+    let cipher = ChaCha20Poly1305::new(&Key::try_from(key.as_slice()).unwrap());
     let ct = cipher
-        .encrypt(Nonce::from_slice(&nonce_bytes), data)
+        .encrypt(&Nonce::try_from(nonce_bytes.as_slice()).unwrap(), data)
         .map_err(|e| format!("加密失败\n{e}"))?;
     let mut out = Vec::with_capacity(MAGIC.len() + nonce_bytes.len() + ct.len());
     out.extend_from_slice(MAGIC);
@@ -137,9 +135,9 @@ fn key_decrypt(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, String> {
         return Err("密文格式异常".into());
     }
     let (nonce, ct) = rest.split_at(12);
-    let cipher = ChaCha20Poly1305::new(Key::from_slice(key));
+    let cipher = ChaCha20Poly1305::new(&Key::try_from(key.as_slice()).unwrap());
     cipher
-        .decrypt(Nonce::from_slice(nonce), ct)
+        .decrypt(&Nonce::try_from(nonce).unwrap(), ct)
         .map_err(|e| format!("解密失败\n{e}"))
 }
 
