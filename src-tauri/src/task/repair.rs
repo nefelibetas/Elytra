@@ -664,6 +664,7 @@ mod tests {
         assert_eq!(steps, vec!["处理 native 库"]);
     }
 
+    #[cfg(target_os = "windows")]
     #[test]
     fn test_count_natives_missing() {
         use crate::downloader::hash::sha1_hex;
