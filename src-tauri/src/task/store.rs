@@ -4,7 +4,8 @@
 //! 不需要 Axolotl 的精确断点续跑。
 //! 快照生命周期：spawn 时写 running → 终态（done/error/cancelled）经 TaskManager::fail/cancel
 //! 收口更新 → 进程崩溃残留 running → 下次启动 task::init() 标记 interrupted → 前端询问恢复。
-//! 库文件：exe 旁 `Elytra/tasks.db`（与 Settings.toml 同目录约定，AGENTS.md 红线：TOML 路径不动）。
+//! 库文件：`config_dir()/tasks.db`（与 Settings.toml 同目录约定；config_dir 平台感知，
+//! Windows/Linux exe 旁 `Elytra/`，macOS `~/Library/Application Support/Elytra/`）。
 
 use std::sync::LazyLock;
 
