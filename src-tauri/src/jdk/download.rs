@@ -71,6 +71,23 @@ fn platform_key() -> &'static str {
             "linux-x64"
         }
     }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        "unsupported"
+    }
+}
+
+/// 当前平台/架构是否受支持的 managed runtime 目标（64 位 x64/arm64）。
+/// 32 位（i686/x86/arm）等罕见架构 Minecraft 生态不支持，明确拒绝而非静默误判为 x64。
+fn is_supported_runtime_target() -> bool {
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    {
+        true
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        false
+    }
 }
 
 /// 统一入口：按 jdk_source_mode 三态选择回退链（见 installer_chain）。
@@ -80,6 +97,9 @@ pub async fn auto_install(
     config: &DownloaderConfig,
     hook: &InstallProgress<'_>,
 ) -> Result<JdkInfo, String> {
+    if !is_supported_runtime_target() {
+        return Err("当前架构不受支持（仅支持 64 位 x64/arm64）".into());
+    }
     let dest_dir = runtime_dir(config, major);
     // 已下载过：直接校验返回（兼容多种安装布局：Mojang 直接含 bin/；
     // Adoptium/Azul 顶层为 jdk-*/、zulu*/ 子目录——递归定位 java 根后再 inspect，
