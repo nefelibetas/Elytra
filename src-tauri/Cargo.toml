@@ -15,6 +15,13 @@ license = "MIT"
 name = "elytra_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[[bin]]
+# 显式小写 bin 名：默认随 package 名（Elytra 大写）会与配置目录
+# exe_dir()/Elytra（config_dir）在 dev 下撞名——cargo 产物文件 vs 配置目录
+# 互删互炸（Is a directory / File exists）。小写 elytra 与配置目录区分。
+name = "elytra"
+path = "src/main.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
