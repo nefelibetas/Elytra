@@ -16,7 +16,7 @@ Elytra Launcher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前�
     └────────────── 返回 Result<T, String> 或裸值  config/（纯数据模型）task/（TaskManager）
 ```
 
-- **后端分层**：`commands/` 只做胶水（读配置 → 调领域函数 → `map_err` 展平 String）；领域逻辑按域归位——下载编排 `task/runner.rs`，启动 `config/launcher/`（`args.rs` 命令构建 / `env.rs` 环境准备 / `skin.rs` 离线皮肤），账号 `auth/`（`microsoft.rs` OAuth / `mojang.rs` 官方 API / `account.rs` 回调与披风 / `model.rs` MsAccount），下载引擎 `downloader/`，纯数据 `config/`；统一持久化 `persist/`（exe 旁 `Elytra/Settings.toml`，TOML 分 section，全局 Mutex 串行化）；任务 `task/` TaskManager 单例（`tauri::async_runtime::spawn` + 事件推送）；联机 `online/`（easytier 内嵌虚拟局域网）；跨域小工具 `util.rs`（纯函数）
+- **后端分层**：`commands/` 只做胶水（读配置 → 调领域函数 → `map_err` 展平 String）；领域逻辑按域归位——下载编排 `task/runner.rs`，启动 `config/launcher/`（`args.rs` 命令构建 / `env.rs` 环境准备 / `skin.rs` 离线皮肤），账号 `auth/`（`microsoft.rs` OAuth / `mojang.rs` 官方 API / `account.rs` 回调与披风 / `model.rs` MsAccount），下载引擎 `downloader/`，纯数据 `config/`；统一持久化 `persist/`（`util::config_dir()` 平台感知：Windows/Linux exe 旁 `Elytra/Settings.toml`，macOS `~/Library/Application Support/Elytra/`，TOML 分 section，全局 Mutex 串行化）；任务 `task/` TaskManager 单例（`tauri::async_runtime::spawn` + 事件推送）；联机 `online/`（easytier 内嵌虚拟局域网）；跨域小工具 `util.rs`（纯函数）
 - **事件推送**：`task/mod.rs` 的 `EMIT_TX`（LazyLock + 独立 `task-progress-emit` 线程 + mpsc）**顺序派发全部事件**（task-progress / task-waiting-user / ms-login-complete / game-exited / game-window-visible / online-state）——`app.emit` 若因 webview 未消费而阻塞只占队列线程，任务线程/进度锁永不碰 IPC（卡死与取消失效的根治）
 - **锁约定**：全后端 `parking_lot`；**统一 inner→progress 锁序**（cancel/list/fail 先 inner 后 progress），调用 `fail()` 前必须 `drop` progress 锁（防重入死锁）；`cancel()` 的 DB 持久化移出锁；DB（sqlite）写统一 2s 超时
 - **配置联动**：`gamedirs::set_active_game_dir` 写 downloader section 的 `minecraft_dir`，launch/downloader 都读该字段
@@ -96,7 +96,7 @@ npx vue-tsc --noEmit           # 前端全量类型检查（可在项目根直�
 | `src-tauri/src/auth/microsoft.rs`       | 微软 OAuth（授权码/refresh/XBL/XSTS/MC login）、回调服务 127.0.0.1:27205                                                                                       |
 | `src-tauri/src/online/session.rs`       | easytier 会话封装：no_tun+smoltcp+KCP 数据面、bind_device=false、enable_kcp_proxy=true（KCP 数据面首选，缺则 smoltcp 传大数中断）、easytier 诊断日志初始化      |
 | `src-tauri/src/online/mc_advertise.rs`  | guest 端 MC 局域网广播模拟（224.0.2.60:4445，绕过 MC 26.2 离线会话校验）                                                                                       |
-| `src-tauri/src/persist/store.rs`        | 配置文件路径 = `current_exe 目录/Elytra/Settings.toml`（非标准配置目录）                                                                                       |
+| `src-tauri/src/persist/store.rs`        | 配置文件路径 = `util::config_dir()/Settings.toml`（Windows/Linux exe 旁 `Elytra/`；macOS `~/Library/Application Support/Elytra/`——app bundle 内部只读且破坏签名，故外置） |
 | `src-tauri/tauri.conf.json`             | 窗口 **840×540**、无边框透明、`beforeDevCommand: pnpm dev`、devUrl :1420                                                                                       |
 | `src-tauri/capabilities/default.json`   | main 窗口权限：core:default + window 控制子集 + opener + dialog                                                                                                |
 | `src/store/download.ts`                 | 下载任务状态机（事件驱动核心）                                                                                                                                 |
@@ -123,7 +123,7 @@ npx vue-tsc --noEmit           # 前端全量类型检查（可在项目根直�
 - **单元测试只测纯函数**：PKCE、URL 组装、启动命令构建（`build_launch_command` + `minimal_version_json()` 助手）、离线皮肤 UUID 算法（与 Java `UUID.hashCode() & 1` 一致性）、内存分配公式、util（URL 文件名/版本目录解析）、maven XML 解析与语义化排序、Mod 双源搜索、修复步骤规划、persist 读写回环、secrets DPAPI、store 快照/恢复、**`store_ops_from_runtime_worker_no_panic`（worker 线程 block_on 回归）**、**`count_assets_all_end_to_end`（真实索引 + 5057 项多线程扫描，网络）**、**`find_java_home_finds_nested_bin`（Azul 布局幂等）**、房间码解析/广播回环（online）
 - **断言风格**：`assert_eq!` 精确值为主（argv 位置、公式值、错误码消息）；行为不变量用 `assert!` + 中文 message
 - **平台隔离**：Windows 专属逻辑（BAT 脚本渲染、DPAPI、注册表代理）用 `#[cfg(target_os = "windows")]`
-- **persist 测试隔离**：测试进程下配置落在 `target/debug/deps/Elytra/Settings.toml`，与正式运行隔离；每个测试先 remove_file 再 save（串行依赖）
+- **persist 测试隔离**：测试进程下配置落在 `target/debug/deps/Elytra/Settings.toml`（config_dir 基于 current_exe 推导，测试进程在 deps/ 下），与正式运行隔离；每个测试先 remove_file 再 save（串行依赖）
 - **安全命令**：`cargo test --lib -- --test-threads=1`（无网络、无大写入）——日常验证用这个；**并行跑会偶发竞争**（persist 共用 Settings.toml + 网络测试抖动），必须串行
 - **危险命令**：`cargo test --test downloader_test -- --ignored`——真实下载最新 snapshot 数百 MB 到 `D:\download_test`，避免
 - **clippy 红线**：`cargo clippy --lib` 保持零代码警告（doc 格式、unneeded return、too_many_arguments 均已清理或显式 allow）
