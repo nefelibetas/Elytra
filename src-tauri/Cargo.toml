@@ -79,7 +79,7 @@ security-framework = "3.7"
 core-foundation = "0.10"
 # Linux Secret Service（org.freedesktop.secrets：GNOME Keyring / KWallet kwalletd5）
 [target.'cfg(target_os = "linux")'.dependencies]
-secret-service = { version = "5.1", default-features = false, features = ["rt-tokio-crypto-rust"] }
+secret-service = { version = "5.1", default-features = false, features = ["rt-tokio-crypto-rustls"] }
 
 [dev-dependencies]
 # 解压/安装流程单测用临时目录（仅测试，不进入产物）
