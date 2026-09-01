@@ -105,6 +105,22 @@ pub fn java_bin_path(home: &Path) -> PathBuf {
     home.join("bin").join(exe)
 }
 
+/// 配置目录（Settings.toml / secrets.bin / tasks.db 的基准）。
+/// - Windows/Linux：exe 旁 `Elytra/`（与历史布局一致）
+/// - macOS：`~/Library/Application Support/Elytra`——current_exe 指向 app bundle 内部
+///   （`Contents/MacOS/`），写入会破坏签名且 /Applications 下不可写，配置会丢失
+pub fn config_dir() -> std::path::PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(home) = std::env::var_os("HOME") {
+            return std::path::PathBuf::from(home)
+                .join("Library/Application Support")
+                .join(crate::constants::CONFIG_DIR);
+        }
+    }
+    exe_dir().join(crate::constants::CONFIG_DIR)
+}
+
 /// 启动器可执行文件所在目录（配置文件与默认游戏目录的基准）。
 pub fn exe_dir() -> PathBuf {
     std::env::current_exe()
@@ -216,6 +232,47 @@ pub fn is_supported_image(bytes: &[u8]) -> bool {
         return true; // webp
     }
     bytes.starts_with(b"GIF8") // gif
+}
+
+/// 默认游戏目录（.minecraft）的基准目录。
+/// - Windows：exe 旁（便携语义，与历史一致）
+/// - macOS：`~/Library/Application Support`——app bundle 内部只读且破坏签名，游戏数据必须外置
+/// - Linux：exe 旁可写则 exe 旁（便携 tar.gz 场景），否则 `~`（deb/AppImage 打包场景，/usr、挂载点只读）
+pub fn default_game_dir_base() -> std::path::PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(home) = std::env::var_os("HOME") {
+            return std::path::PathBuf::from(home).join("Library/Application Support");
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // 便携语义：exe 旁（与历史一致）
+        return exe_dir();
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        // Linux/其他 Unix：exe 旁可写则便携，否则（打包只读）回退用户主目录
+        if exe_dir_is_writable() {
+            return exe_dir();
+        }
+    }
+    // macOS 无 HOME 兜底 / Linux exe 目录不可写：退回用户主目录
+    std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(exe_dir)
+}
+
+/// exe 所在目录是否可写（便携 vs 打包判断，仅 Unix）。
+/// 不实际创建文件：读目录 metadata 的权限位（owner/group/other 任一有写位即视为可写）。
+#[cfg(all(unix, not(target_os = "macos")))]
+fn exe_dir_is_writable() -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = exe_dir();
+    let Ok(meta) = std::fs::metadata(&dir) else {
+        return false;
+    };
+    meta.is_dir() && meta.permissions().mode() & 0o222 != 0
 }
 
 #[cfg(test)]

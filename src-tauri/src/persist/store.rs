@@ -1,12 +1,8 @@
 use std::fs;
 use std::path::PathBuf;
 
-use crate::constants::{CONFIG_DIR, SETTINGS_FILE};
-use crate::util::exe_dir;
-
-fn config_dir() -> PathBuf {
-    exe_dir().join(CONFIG_DIR)
-}
+use crate::constants::SETTINGS_FILE;
+use crate::util::config_dir;
 
 fn config_file() -> PathBuf {
     config_dir().join(SETTINGS_FILE)
