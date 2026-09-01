@@ -116,9 +116,39 @@ pub fn system_memory_mb() -> (u64, u64) {
         }
         (total_kb / 1024, avail_kb / 1024)
     }
-    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    {
+        // sysctl hw.memsize（字节）→ 总内存；可用内存取总内存 60% 保守估算
+        // （macOS 无直接的 available sysctl，free+inactive+speculative 组合复杂，
+        // 60% 与 Windows 兜底同保守级别，够自动分配用）
+        let total = sysctl_u64("hw.memsize").map(|b| b / 1024 / 1024).unwrap_or(16384);
+        (total, total * 60 / 100)
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
         (16384, 8192)
+    }
+}
+
+/// macOS：读 sysctl 数值（如 hw.memsize）。
+#[cfg(target_os = "macos")]
+fn sysctl_u64(name: &str) -> Option<u64> {
+    let mut out = 0u64;
+    let mut len = std::mem::size_of::<u64>() as usize;
+    let c_name = std::ffi::CString::new(name).ok()?;
+    let ret = unsafe {
+        libc::sysctlbyname(
+            c_name.as_ptr(),
+            &mut out as *mut u64 as *mut libc::c_void,
+            &mut len,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if ret == 0 {
+        Some(out)
+    } else {
+        None
     }
 }
 
