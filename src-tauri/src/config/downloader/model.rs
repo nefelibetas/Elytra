@@ -277,12 +277,16 @@ impl Default for DownloaderConfig {
 }
 
 impl DownloaderConfig {
-    /// 绝对化的游戏目录（相对路径基于启动器进程 cwd 解析）。
-    /// 启动参数（classpath/natives）与文件操作统一走绝对路径，
-    /// 避免基于不同 cwd 解析出错。
+    /// 绝对化的游戏目录（相对路径基于启动器 exe 目录解析，而非进程 cwd——
+    /// 从任意目录启动 `./elytra` 时 cwd 不同会导致解析错位）。
+    /// 启动参数（classpath/natives）与文件操作统一走绝对路径。
     pub fn minecraft_dir_abs(&self) -> std::path::PathBuf {
-        std::path::absolute(std::path::PathBuf::from(&self.minecraft_dir))
-            .unwrap_or_else(|_| std::path::PathBuf::from(&self.minecraft_dir))
+        let p = std::path::PathBuf::from(&self.minecraft_dir);
+        if p.is_absolute() {
+            p
+        } else {
+            crate::util::exe_dir().join(p)
+        }
     }
 }
 

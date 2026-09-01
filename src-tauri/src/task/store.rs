@@ -15,7 +15,7 @@ use sqlx::{Row, SqlitePool};
 use crate::task::model::{DownloadFilesTask, DownloadTask};
 use crate::task::TaskStatus;
 use crate::util::block_on;
-use crate::util::exe_dir;
+use crate::util::config_dir;
 
 /// 任务恢复凭证：重建任务所需的最小信息（各任务一）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,9 +68,7 @@ pub struct InterruptedJob {
 }
 
 fn db_path() -> std::path::PathBuf {
-    exe_dir()
-        .join(crate::constants::CONFIG_DIR)
-        .join("tasks.db")
+    config_dir().join("tasks.db")
 }
 
 /// 同步执行异步 DB 操作（复用 util::block_on；任务级低频操作，阻塞毫秒级可接受）。
