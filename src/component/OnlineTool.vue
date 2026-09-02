@@ -3,13 +3,13 @@
 // 配置（协调服务器、广播名）在"设置 → 联机设置"；此处只管会话操作。
 // 顺序自由：host 可先开联机（等待态），再在游戏里"对局域网开放"；
 // 检测到游戏端口后自动生成完整房间码。
-// 同网直连：host 局域网 IP 自动编入房间码（@IP 段），guest 解析后直连 host；
+// Scaffolding 协议：host 开房间（房间码 U/XXXX-XXXX-XXXX-XXXX），guest 加入；
 // 跨网联机需在设置里配置协调服务器。
 // 会话模式：host 正版登录开局域网 → 服务器验证会话，朋友需正版；离线 host → 任意可进。
 import { onMounted, ref } from "vue";
 import { Copy, Link2, Unplug } from "@lucide/vue";
 import {
-  onlineStatus, onlineRoomCode, onlineLocalPort,
+  onlineStatus, onlineRoomCode, onlineLocalPort, onlinePlayers,
   onlineErrorHost, onlineErrorGuest,
   startHost, joinRoom, stopOnline, loadOnlineStatus, ensureOnlineListen,
 } from "../store/online";
@@ -92,7 +92,7 @@ async function copyRoomCode() {
     <div class="online-sec">
       <div class="online-sec-title">作为主机</div>
       <p class="online-desc">点"开启联机"后，游戏里"对局域网开放"即可——启动器自动生成房间码，发给朋友即可加入。</p>
-      <p class="online-desc">联机广播名（guest 端显示的房间名，支持 § 颜色）可在 设置 → 联机设置 中配置，留空自动使用主机世界名。</p>
+      <p class="online-desc">联机昵称与广播名可在 设置 → 联机设置 中配置（昵称显示给其他玩家，广播名是 guest 端看到的房间名）。</p>
 
       <div v-if="onlineStatus === 'waiting'" class="online-waiting">
         游戏开放局域网后这里会显示房间码
@@ -143,7 +143,7 @@ async function copyRoomCode() {
         <input
           v-model="roomCodeInput"
           class="online-input"
-          placeholder="U/XXXX-XXXX-XXXX-XXXX:端口"
+          placeholder="U/XXXX-XXXX-XXXX-XXXX"
           :disabled="onlineStatus !== 'idle'"
           @keyup.enter="handleJoin"
         />
@@ -175,6 +175,18 @@ async function copyRoomCode() {
           {{ busy ? "加入中..." : "加入联机" }}
         </button>
       </div>
+    </div>
+
+    <!-- 玩家列表 -->
+    <div v-if="onlinePlayers.length > 0" class="online-sec">
+      <div class="online-sec-title">玩家（{{ onlinePlayers.length }}）</div>
+      <ul class="online-players">
+        <li v-for="p in onlinePlayers" :key="p.machine_id" class="online-player">
+          <span class="online-player-dot" :class="p.kind === 'HOST' ? 'host' : 'guest'" />
+          <span class="online-player-name">{{ p.name }}</span>
+          <span class="online-player-tag">{{ p.kind === "HOST" ? "主机" : p.kind === "LOCAL" ? "我" : "房客" }}</span>
+        </li>
+      </ul>
     </div>
   </div>
 </template>
@@ -350,5 +362,47 @@ async function copyRoomCode() {
   border-radius: var(--radius-sm);
   white-space: pre-wrap;
   word-break: break-all;
+}
+.online-players {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.online-player {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background-color: color-mix(in srgb, var(--surface-default) 60%, transparent);
+}
+.online-player-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--text-tertiary);
+}
+.online-player-dot.host {
+  background-color: var(--color-brand);
+}
+.online-player-dot.guest {
+  background-color: var(--text-secondary);
+}
+.online-player-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.online-player-tag {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-tertiary);
 }
 </style>

@@ -5,8 +5,8 @@
 import { onMounted, ref } from "vue";
 import { Save, ExternalLink } from "@lucide/vue";
 import {
-  onlinePublicNodes, onlineAdvertiseMotd,
-  loadOnlineConfig, saveOnlineConfig, saveAdvertiseMotd,
+  onlinePublicNodes, onlineAdvertiseMotd, onlineNickname,
+  loadOnlineConfig, saveOnlineConfig, saveAdvertiseMotd, saveNickname,
 } from "../store/online";
 import { showToast } from "../utils/toast";
 import { errMsg } from "../utils/error";
@@ -19,6 +19,8 @@ onMounted(() => {
 const savingConfig = ref(false);
 /** 广播名保存中。 */
 const savingMotd = ref(false);
+/** 昵称保存中。 */
+const savingNickname = ref(false);
 
 async function handleSaveConfig() {
   savingConfig.value = true;
@@ -43,6 +45,18 @@ async function handleSaveMotd() {
     savingMotd.value = false;
   }
 }
+
+async function handleSaveNickname() {
+  savingNickname.value = true;
+  try {
+    await saveNickname();
+    showToast("联机昵称已保存");
+  } catch (e) {
+    showToast(errMsg(e));
+  } finally {
+    savingNickname.value = false;
+  }
+}
 </script>
 
 <template>
@@ -57,7 +71,7 @@ async function handleSaveMotd() {
     <!-- 协调服务器（跨网联机） -->
     <div class="online-sec">
       <div class="online-sec-title">协调服务器（跨网联机）</div>
-      <p class="online-desc">跨网联机需连同一个协调服务器才能互相发现。默认内置社区节点，也可填自己的地址（每行一个，如 <span class="online-mono">tcp://1.2.3.4:11010</span>），留空仅支持同一局域网。</p>
+      <p class="online-desc">跨网联机需连同一个协调服务器才能互相发现。默认内置社区节点（含陶瓦 Terracotta 同款节点，与其他 Scaffolding 客户端互通），也可填自己的地址（每行一个，如 <span class="online-mono">tcp://1.2.3.4:11010</span>），留空仅支持同一局域网。</p>
       <a
         class="online-link"
         href="https://easytier.cn"
@@ -94,6 +108,23 @@ async function handleSaveMotd() {
         <button class="online-btn" :disabled="savingMotd" @click="handleSaveMotd">
           <Save :size="14" />
           {{ savingMotd ? "保存中..." : "保存" }}
+        </button>
+      </div>
+    </div>
+
+    <!-- 联机昵称 -->
+    <div class="online-sec">
+      <div class="online-sec-title">联机昵称（可选）</div>
+      <p class="online-desc">联机时向其他玩家展示的名字（Scaffolding 协议 <span class="online-mono">c:player_ping</span> 的 name 字段）。留空 = 系统用户名。</p>
+      <input
+        v-model="onlineNickname"
+        class="online-input"
+        placeholder="留空使用系统用户名"
+      />
+      <div class="online-actions">
+        <button class="online-btn" :disabled="savingNickname" @click="handleSaveNickname">
+          <Save :size="14" />
+          {{ savingNickname ? "保存中..." : "保存" }}
         </button>
       </div>
     </div>
