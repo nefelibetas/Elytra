@@ -5,6 +5,7 @@ import { computed, ref } from "vue";
 import { Copy, Plus, Trash2, SlidersHorizontal } from "@lucide/vue";
 import { reactive } from "vue";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
+import CheckToggle from "../common/CheckToggle.vue";
 import ItemSearchInput from "./ItemSearchInput.vue";
 import ModsEditor, { type ModsForm } from "./ModsEditor.vue";
 import {
@@ -233,10 +234,7 @@ async function copyCommand() {
       <div class="nb-row">
         <span class="nb-label">次数上限</span>
         <input v-model.number="maxUses" type="number" class="nb-num" min="1" max="9999" />
-        <label class="nb-check">
-          <input v-model="rewardExp" type="checkbox" />
-          奖励经验
-        </label>
+        <CheckToggle v-model="rewardExp" :size="14">奖励经验</CheckToggle>
         <button class="tool-btn nb-add-btn" @click="addTrade">
           <Plus :size="14" />
           添加交易
@@ -380,19 +378,6 @@ async function copyCommand() {
 .nb-mini-btn.active {
   color: var(--color-brand);
   border-color: var(--color-brand);
-}
-
-.nb-check {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 12.5px;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.nb-check input {
-  accent-color: var(--color-brand);
 }
 
 .nb-error {

@@ -3,7 +3,8 @@
 import { computed, ref } from "vue";
 import type { Component } from "vue";
 import { useRoute } from "vue-router";
-import { Puzzle, Map, Palette, Sun, Database, Upload, ImagePlus, RefreshCw, FileText, Server } from "@lucide/vue";
+import { Puzzle, Map, Palette, Sun, Database, Upload, ImagePlus, FileText, Server } from "@lucide/vue";
+import SideNav from "../component/common/SideNav.vue";
 import VersionSetupMisc from "../component/version-setup/VersionSetupMisc.vue";
 import VersionSetupLogs from "../component/version-setup/VersionSetupLogs.vue";
 import VersionSetupServer from "../component/version-setup/VersionSetupServer.vue";
@@ -67,172 +68,51 @@ const REFRESHERS: Record<TabKey, () => void> = {
 
 <template>
   <div class="vs">
-    <!-- 左侧导航（标题栏由窗口 TitleBar 提供） -->
-    <div class="vs-left">
-      <div class="vs-nav-list">
-        <div
-          v-for="t in tabs"
-          :key="t.key"
-          class="vs-nav-item"
-          :class="{ active: activeTab === t.key }"
-          @click="activeTab = t.key"
-        >
-          <component :is="t.icon" :size="15" />
-          <span>{{ t.label }}</span>
-          <button
-            v-if="t.key !== 'export'"
-            type="button"
-            class="vs-nav-refresh"
-            v-tooltip="'刷新'"
-            @click.stop="REFRESHERS[t.key]()"
-          >
-            <RefreshCw :size="12" />
-          </button>
-        </div>
-      </div>
-    </div>
+    <SideNav
+      v-model="activeTab"
+      :tabs="tabs"
+      :width="240"
+      refreshable
+      internal-scroll
+      :no-refresh-keys="['export']"
+      @refresh="REFRESHERS[$event as TabKey]()"
+    >
+      <!-- 右侧：当前 tab 内容（切换淡入淡出） -->
+      <VersionSetupMods v-if="activeTab === 'mods'" key="mods" />
 
-    <!-- 右侧：当前 tab 内容（切换淡入淡出） -->
-    <div class="vs-right">
-      <Transition name="vs-switch" mode="out-in">
-        <VersionSetupMods v-if="activeTab === 'mods'" key="mods" />
+      <VersionSetupSaves v-else-if="activeTab === 'saves'" key="saves" />
 
-        <VersionSetupSaves v-else-if="activeTab === 'saves'" key="saves" />
+      <VersionSetupResource
+        v-else-if="activeTab === 'resourcepacks'"
+        key="resourcepacks"
+        kind="resourcepacks"
+      />
 
-        <VersionSetupResource
-          v-else-if="activeTab === 'resourcepacks'"
-          key="resourcepacks"
-          kind="resourcepacks"
-        />
+      <VersionSetupResource
+        v-else-if="activeTab === 'shaderpacks'"
+        key="shaderpacks"
+        kind="shaderpacks"
+      />
 
-        <VersionSetupResource
-          v-else-if="activeTab === 'shaderpacks'"
-          key="shaderpacks"
-          kind="shaderpacks"
-        />
+      <VersionSetupResource
+        v-else-if="activeTab === 'datapacks'"
+        key="datapacks"
+        kind="datapacks"
+      />
 
-        <VersionSetupResource
-          v-else-if="activeTab === 'datapacks'"
-          key="datapacks"
-          kind="datapacks"
-        />
+      <VersionSetupExport v-else-if="activeTab === 'export'" key="export" />
 
-        <VersionSetupExport v-else-if="activeTab === 'export'" key="export" />
+      <VersionSetupLogs v-else-if="activeTab === 'logs'" key="logs" />
 
-        <VersionSetupLogs v-else-if="activeTab === 'logs'" key="logs" />
+      <VersionSetupServer v-else-if="activeTab === 'server'" key="server" />
 
-        <VersionSetupServer v-else-if="activeTab === 'server'" key="server" />
-
-        <VersionSetupMisc v-else key="misc" />
-      </Transition>
-    </div>
+      <VersionSetupMisc v-else key="misc" />
+    </SideNav>
   </div>
 </template>
 
 <style scoped>
 .vs {
-  display: flex;
   height: 100%;
-}
-
-/* ===== 左侧导航 ===== */
-.vs-left {
-  flex: 0 0 240px;
-  min-width: 220px;
-  background-color: var(--surface-elevated);
-  border-right: 1px solid var(--border-default);
-  padding: 16px 12px;
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-
-.vs-nav-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.vs-nav-item {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 10px;
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all 0.12s;
-  user-select: none;
-}
-
-/* hover 显示的刷新按钮（切 Tab 缓存命中后手动刷新入口） */
-.vs-nav-refresh {
-  flex: none;
-  margin-left: auto;
-  width: 22px;
-  height: 22px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s, color 0.15s, background 0.15s;
-}
-
-.vs-nav-item:hover .vs-nav-refresh,
-.vs-nav-refresh:focus-visible {
-  opacity: 1;
-}
-
-.vs-nav-refresh:hover {
-  color: var(--color-brand);
-  background: var(--color-brand-bg);
-}
-
-.vs-nav-item:hover {
-  background: var(--surface-hover);
-  color: var(--text-primary);
-}
-
-.vs-nav-item.active {
-  background: var(--color-brand-bg);
-  color: var(--color-brand);
-  font-weight: 600;
-}
-
-/* ===== 右侧 ===== */
-.vs-right {
-  flex: 1;
-  min-width: 0;
-  padding: 20px 24px;
-  overflow: hidden;
-  /* 子组件根 flex:1 占满剩余空间，列表滚动在卡片内部 */
-  display: flex;
-  flex-direction: column;
-  background: var(--surface-page);
-}
-
-/* tab 内容切换动画 */
-.vs-switch-enter-active,
-.vs-switch-leave-active {
-  transition: opacity 0.15s ease, transform 0.15s ease;
-}
-
-.vs-switch-enter-from {
-  opacity: 0;
-  transform: translateY(6px);
-}
-
-.vs-switch-leave-to {
-  opacity: 0;
-  transform: translateY(-6px);
 }
 </style>

@@ -172,64 +172,6 @@ input[type="number"] {
   gap: 10px;
 }
 
-.lo-check {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--text-primary);
-  cursor: pointer;
-  user-select: none;
-}
-
-/* checkbox / radio：appearance:none 自定义，消除 UA 默认深色部件
-   （accent-color 只染高亮不染勾号/外圈，浅色主题下暴露黑勾黑圈） */
-.lo-check input[type="checkbox"],
-.lo-check input[type="radio"] {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 15px;
-  height: 15px;
-  flex: none;
-  margin: 0;
-  border: 1.5px solid var(--text-tertiary);
-  cursor: pointer;
-  display: inline-block;
-  position: relative;
-  transition: border-color 0.15s, background 0.15s;
-}
-
-.lo-check input[type="checkbox"] { border-radius: 4px; }
-.lo-check input[type="radio"] { border-radius: 50%; }
-
-.lo-check input[type="checkbox"]:hover,
-.lo-check input[type="radio"]:hover {
-  border-color: var(--color-brand);
-}
-
-.lo-check input[type="checkbox"]:checked {
-  background: var(--color-brand);
-  border-color: var(--color-brand);
-}
-
-/* 白色勾号（纯 CSS 旋转边框） */
-.lo-check input[type="checkbox"]:checked::after {
-  content: "";
-  position: absolute;
-  left: 4px;
-  top: 1px;
-  width: 4px;
-  height: 8px;
-  border: solid var(--text-inverse);
-  border-width: 0 2px 2px 0;
-  transform: rotate(45deg);
-}
-
-.lo-check input[type="radio"]:checked {
-  border-color: var(--color-brand);
-  background: radial-gradient(circle, var(--color-brand) 0 45%, transparent 55%);
-}
-
 /* ===== 自定义 range 滑块（品牌色轨道 + 填充 + 滑块；消除 UA 黑色轨道） =====
    填充比例由组件通过 style="--range-pct: N%" 提供 */
 input[type="range"] {

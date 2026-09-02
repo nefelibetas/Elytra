@@ -4,6 +4,7 @@
 import { computed, ref } from "vue";
 import { Copy, Plus, Trash2 } from "@lucide/vue";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
+import CheckToggle from "../common/CheckToggle.vue";
 import {
   POTION_EFFECTS, POTION_BASES, POTION_ITEM_KINDS,
   buildPotionCommand, rgbToInt, filterEffectsByVersion,
@@ -183,14 +184,7 @@ async function copyCommand() {
     <div class="nb-sec">
       <div class="nb-row">
         <span class="nb-label">液体颜色</span>
-        <label class="nb-check">
-          <input
-            type="checkbox"
-            :checked="customColor !== null"
-            @change="toggleCustomColor"
-          />
-          自定义
-        </label>
+        <CheckToggle :model-value="customColor !== null" :size="14" @change="toggleCustomColor">自定义</CheckToggle>
         <input
           v-if="customColor !== null"
           type="color"
@@ -371,19 +365,6 @@ async function copyCommand() {
 .nb-tag-x:hover {
   color: var(--text-danger, #e5484d);
   background-color: var(--surface-hover);
-}
-
-.nb-check {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 12.5px;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.nb-check input {
-  accent-color: var(--color-brand);
 }
 
 .nb-hint {

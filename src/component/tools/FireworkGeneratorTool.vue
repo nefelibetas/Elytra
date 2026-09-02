@@ -4,6 +4,7 @@
 import { computed, ref } from "vue";
 import { Copy, Plus, Trash2 } from "@lucide/vue";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
+import CheckToggle from "../common/CheckToggle.vue";
 import {
   FIREWORK_SHAPES, buildFireworkCommand, rgbToInt,
   type FireworkExplosion,
@@ -171,14 +172,8 @@ async function copyCommand() {
         <span v-if="newFades.length === 0" class="nb-hint">可选</span>
       </div>
       <div class="nb-row">
-        <label class="nb-check">
-          <input v-model="newTrail" type="checkbox" />
-          拖尾（钻石轨迹）
-        </label>
-        <label class="nb-check">
-          <input v-model="newTwinkle" type="checkbox" />
-          闪烁（萤石粉效果）
-        </label>
+        <CheckToggle v-model="newTrail" :size="14">拖尾（钻石轨迹）</CheckToggle>
+        <CheckToggle v-model="newTwinkle" :size="14">闪烁（萤石粉效果）</CheckToggle>
         <button class="tool-btn nb-add-btn" :disabled="newColors.length === 0" @click="addExplosion">
           <Plus :size="14" />
           添加爆炸
@@ -290,19 +285,6 @@ async function copyCommand() {
   font-size: 12px;
   padding: 4px 10px;
   margin-left: auto;
-}
-
-.nb-check {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 12.5px;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.nb-check input {
-  accent-color: var(--color-brand);
 }
 
 .nb-color {

@@ -4,6 +4,7 @@
 import { onMounted } from "vue";
 import { ChevronDown } from "@lucide/vue";
 import DropSelect from "../common/DropSelect.vue";
+import CheckToggle from "../common/CheckToggle.vue";
 import { fmtSpeed } from "../../utils/format";
 import {
   dlFileMode, dlManifestMode, dlCommunityMode, dlConcurrency, dlMaxSpeed,
@@ -135,10 +136,7 @@ function onMaster(v: string) {
 
     <!-- 社区资源版本过滤：快照/预发布/候选等非正式版本（默认开启过滤） -->
     <div class="dl-row">
-      <label class="lo-check">
-        <input v-model="dlShowReleaseOnly" type="checkbox" @change="saveDownloadConfig" />
-        <span>社区资源仅显示正式版（过滤快照/预发布版本）</span>
-      </label>
+      <CheckToggle v-model="dlShowReleaseOnly" @change="saveDownloadConfig">社区资源仅显示正式版（过滤快照/预发布版本）</CheckToggle>
     </div>
 
     <!-- 最大线程数：官方源并发（仅镜像模式由镜像源固定 8，隐藏该行——无操作意义） -->
