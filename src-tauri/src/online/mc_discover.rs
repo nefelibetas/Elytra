@@ -75,16 +75,6 @@ impl MinecraftScanner {
     pub fn get_port(&self) -> Option<u16> {
         self.entries.lock().iter().map(|(p, _, _)| *p).next()
     }
-
-    /// 当前监测到的存档名（MOTD，空串 = 载荷无 MOTD 段）。
-    pub fn get_motd(&self) -> String {
-        self.entries
-            .lock()
-            .iter()
-            .map(|(_, m, _)| m.clone())
-            .next()
-            .unwrap_or_default()
-    }
 }
 
 impl Drop for MinecraftScanner {
