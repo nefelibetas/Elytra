@@ -1,11 +1,10 @@
-//! 联机链路诊断（复现：host 开联机 + 本地测试服务器，guest 加入后经
-//! 虚拟网 + 端口转发连接 host 本地服务器）。走真实生产代码
+//! 联机链路诊断（Scaffolding 协议模型）：host 开联机 + 本地 echo 服务器，
+//! guest 加入后经虚拟网数据面连接 host。走真实生产代码
 //! `EasyTierSession::start`（与 UI 联机同一路径，含 easytier 日志初始化）。
 //!
-//! 真实场景链路：
-//!   guest 游戏 → 127.0.0.1:guest_local_port（guest OS 监听）
-//!   → data plane（KCP/smoltcp）→ 虚拟网 10.144.144.1:entry_port
-//!   → host OS 监听 0.0.0.0:entry_port → 127.0.0.1:mc_port（本地游戏）
+//! 链路（no_tun + smoltcp 全数据面）：
+//!   guest data_plane_tcp_connect(host虚拟IP:scaffold_port) → 信息协议
+//!   guest data_plane_tcp_connect(host虚拟IP:game_port)  → 游戏流量（proxy NAT）
 //!
 //! 已知坑（session.rs 文档同款）：
 //! - bind_device=false：缺则 Windows 10049 连不上
@@ -15,7 +14,7 @@
 //! 运行：cd src-tauri && cargo test --test online_diag -- --nocapture --test-threads=1
 
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 use std::time::Duration;
 
 use elytra_lib::online::{create_room, EasyTierSession, SessionConfig, SessionRole};
@@ -58,15 +57,16 @@ fn free_port() -> u16 {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn host_guest_tcp_roundtrip() {
+async fn host_guest_scaffolding_roundtrip() {
     let mc_port = free_port();
-    let entry_port = free_port();
-    let guest_local_port = free_port();
-    eprintln!("== 端口：mc={mc_port} entry={entry_port} guest_local={guest_local_port}");
+    let scaffold_port = free_port();
+    eprintln!(
+        "== 端口：mc={mc_port} scaffold={scaffold_port}"
+    );
     spawn_echo_server(mc_port);
 
-    // 同一房间：host 建（带入口端口），guest 复用同一凭据
-    let room = create_room().with_port(entry_port);
+    // 同一房间：host 建，guest 解析同一凭据
+    let room = create_room();
 
     // host：无外部 peers（不连公共节点），自建网等待 guest 直连
     let host_cfg = SessionConfig {
@@ -75,28 +75,86 @@ async fn host_guest_tcp_roundtrip() {
         local_port: None,
         mc_port: Some(mc_port),
         public_nodes: Vec::new(),
+        scaffold_port: Some(scaffold_port),
     };
     let host = EasyTierSession::start(host_cfg).await.expect("host 启动");
-    eprintln!("== host 实例已启动（生产路径）");
-
-    // 裸 std TCP 探测：host 的 11010 listener 是否真的在 OS 层监听
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    eprintln!("== 探测 0：裸 connect 127.0.0.1:11010");
-    match std::net::TcpStream::connect_timeout(
-        &"127.0.0.1:11010".parse().unwrap(),
-        Duration::from_secs(2),
-    ) {
-        Ok(_) => eprintln!("== 探测 0 OK：host 11010 OS 监听可达"),
-        Err(e) => eprintln!("== 探测 0 失败：host 11010 不可达: {e}"),
+    // host 侧起信息服务器（OS 监听 scaffold_port，proxy NAT 直连）——模拟 start_host
+    // 协议 handler：c:ping 回显 / c:server_port 返回入口端口 / 玩家表
+    {
+        let port = scaffold_port;
+        let entry = mc_port;
+        std::thread::spawn(move || {
+            let listener = TcpListener::bind(("0.0.0.0", port)).expect("bind info server");
+            eprintln!("== host 信息服务器 OS 监听 0.0.0.0:{port}");
+            for stream in listener.incoming() {
+                match stream {
+                    Ok(mut stream) => {
+                        let entry = entry;
+                        std::thread::spawn(move || {
+                            use std::io::{Read, Write};
+                            loop {
+                                let mut kind_len = [0u8; 1];
+                                if stream.read_exact(&mut kind_len).is_err() {
+                                    return;
+                                }
+                                let mut kind = vec![0u8; kind_len[0] as usize];
+                                if stream.read_exact(&mut kind).is_err() {
+                                    return;
+                                }
+                                let mut body_len = [0u8; 4];
+                                if stream.read_exact(&mut body_len).is_err() {
+                                    return;
+                                }
+                                let body_len = u32::from_be_bytes(body_len) as usize;
+                                let mut body = vec![0u8; body_len];
+                                if stream.read_exact(&mut body).is_err() {
+                                    return;
+                                }
+                                let kind = String::from_utf8_lossy(&kind);
+                                let (status, resp_body): (u8, Vec<u8>) = match kind.as_ref() {
+                                    "c:ping" => (0, body),
+                                    "c:server_port" => (0, entry.to_be_bytes().to_vec()),
+                                    "c:player_ping" => (0, vec![]),
+                                    "c:player_profiles_list" => (
+                                        0,
+                                        br#"[{"name":"host","machine_id":"m0","vendor":"test","kind":"HOST"},{"name":"tester","machine_id":"m1","vendor":"test","kind":"GUEST"}]"#.to_vec(),
+                                    ),
+                                    _ => (255, b"not implemented".to_vec()),
+                                };
+                                if stream.write_all(&[status]).is_err() {
+                                    return;
+                                }
+                                if stream.write_all(&(resp_body.len() as u32).to_be_bytes()).is_err() {
+                                    return;
+                                }
+                                if stream.write_all(&resp_body).is_err() {
+                                    return;
+                                }
+                                if stream.flush().is_err() {
+                                    return;
+                                }
+                            }
+                        });
+                    }
+                    Err(e) => eprintln!("== host 信息服务器 accept 失败: {e}"),
+                }
+            }
+        });
     }
+    // 游戏端口由 echo 服务器直接监听（proxy NAT 直连 127.0.0.1:mc_port），无需 host 代理
+    eprintln!("== host 信息服务器已启动（OS 监听，proxy NAT 直连）");
+
+    // guest：直连 host 的监听端口 11010（127.0.0.1 模拟同网直连 host 局域网 IP）
+    eprintln!("== host 实例已启动（生产路径）");
 
     // guest：直连 host 的监听端口 11010（127.0.0.1 模拟同网直连 host 局域网 IP）
     let guest_cfg = SessionConfig {
         role: SessionRole::Guest,
         room: room.clone(),
-        local_port: Some(guest_local_port),
+        local_port: None,
         mc_port: None,
         public_nodes: vec!["tcp://127.0.0.1:11010".to_string()],
+        scaffold_port: None,
     };
     let guest = EasyTierSession::start(guest_cfg).await.expect("guest 启动");
     eprintln!("== guest 实例已启动（生产路径）");
@@ -105,54 +163,129 @@ async fn host_guest_tcp_roundtrip() {
     eprintln!("== 等待 peer 互发现…");
     tokio::time::sleep(Duration::from_secs(8)).await;
 
-    // 1) host 本地直连测试：OS 监听入口端口 → 转发到本地 echo
-    eprintln!("== 测试 1：host 本机直连 127.0.0.1:{entry_port}");
-    let t1 = tokio::time::timeout(Duration::from_secs(5), async {
-        let mut s = TcpStream::connect(("127.0.0.1", entry_port)).unwrap();
-        s.write_all(b"t1").unwrap();
-        let mut buf = [0u8; 2];
-        s.read_exact(&mut buf).unwrap();
-        assert_eq!(&buf, b"t1");
-    })
-    .await;
-    match t1 {
-        Ok(_) => eprintln!("== 测试 1 OK：host 转发链路通"),
-        Err(_) => eprintln!("== 测试 1 失败：host 转发链路不通（入口端口未监听或转发失败）"),
+    // 1) guest 路由表发现中心（hostname 前缀匹配）
+    eprintln!("== 测试 1：guest 发现 Scaffolding 中心");
+    let routes = guest.route_snapshots().await;
+    let mut center: Option<(Ipv4Addr, u16)> = None;
+    for r in &routes {
+        eprintln!(
+            "   route: peer={} hostname={:?} ip={:?}",
+            r.peer_id,
+            r.hostname,
+            r.ipv4_addr()
+        );
+        if let Some(port_str) = r.hostname.strip_prefix("scaffolding-mc-server-") {
+            if let Ok(port) = port_str.parse::<u16>() {
+                if let Some(ip) = r.ipv4_addr() {
+                    center = Some((ip, port));
+                }
+            }
+        }
     }
+    let (center_ip, center_port) = center.expect("应发现中心（hostname scaffolding-mc-server-*）");
+    assert_eq!(center_port, scaffold_port, "中心端口应为 host 的 scaffold_port");
+    eprintln!("== 测试 1 OK：中心 = {center_ip}:{center_port}");
 
-    // 2) guest → host 经虚拟网（小数据）
-    eprintln!("== 测试 2：guest 连 127.0.0.1:{guest_local_port}");
+    // 2) 信息协议：guest 数据面连中心 scaffold_port → c:ping 回显 + c:server_port
+    eprintln!("== 测试 2：信息协议（c:ping + c:server_port）");
+    let center_addr = SocketAddr::from((center_ip, center_port));
     let t2 = tokio::time::timeout(Duration::from_secs(20), async {
-        let mut s = TcpStream::connect(("127.0.0.1", guest_local_port)).unwrap();
-        s.write_all(b"t2").unwrap();
-        let mut buf = [0u8; 2];
-        s.read_exact(&mut buf).unwrap();
-        assert_eq!(&buf, b"t2");
+        // 数据面请求助手（内联）
+        async fn req(
+            s: &mut (impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin),
+            kind: (&str, &str),
+            body: &[u8],
+        ) -> std::io::Result<(u8, Vec<u8>)> {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let kind_str = format!("{}:{}", kind.0, kind.1);
+            s.write_all(&[kind_str.len() as u8]).await?;
+            s.write_all(kind_str.as_bytes()).await?;
+            s.write_all(&(body.len() as u32).to_be_bytes()).await?;
+            s.write_all(body).await?;
+            s.flush().await?;
+            let mut status = [0u8; 1];
+            s.read_exact(&mut status).await?;
+            let mut len = [0u8; 4];
+            s.read_exact(&mut len).await?;
+            let len = u32::from_be_bytes(len) as usize;
+            let mut resp = vec![0u8; len];
+            s.read_exact(&mut resp).await?;
+            Ok((status[0], resp))
+        }
+        let mut s = guest
+            .data_plane_tcp_connect(center_addr, Duration::from_secs(10))
+            .await
+            .expect("数据面连中心");
+        let (status, echo) = req(&mut s, ("c", "ping"), b"probe").await.unwrap();
+        assert_eq!(status, 0);
+        assert_eq!(echo, b"probe", "c:ping 应回显");
+        let (status, port_body) = req(&mut s, ("c", "server_port"), b"").await.unwrap();
+        assert_eq!(status, 0, "host 已检测到游戏端口（mc_port 已配）");
+        assert_eq!(port_body.len(), 2);
+        let server_port = u16::from_be_bytes([port_body[0], port_body[1]]);
+        assert_eq!(server_port, mc_port, "c:server_port 应返回游戏端口");
+        let (status, _) = req(
+            &mut s,
+            ("c", "player_ping"),
+            br#"{"name":"tester","machine_id":"m1","vendor":"test"}"#,
+        )
+        .await
+        .unwrap();
+        assert_eq!(status, 0);
+        let (status, profiles) = req(&mut s, ("c", "player_profiles_list"), b"").await.unwrap();
+        assert_eq!(status, 0);
+        let profiles: serde_json::Value = serde_json::from_slice(&profiles).unwrap();
+        assert_eq!(profiles.as_array().unwrap().len(), 2, "host + 1 guest");
     })
     .await;
     match t2 {
-        Ok(_) => eprintln!("== 测试 2 OK：guest → 虚拟网 → host → echo 全链路通"),
-        Err(_) => eprintln!("== 测试 2 失败：guest → host 虚拟网链路不通"),
+        Ok(_) => eprintln!("== 测试 2 OK：信息协议全通"),
+        Err(e) => eprintln!("== 测试 2 失败: {e}"),
     }
 
-    // 3) 大数据传输（模拟 MC 登录配置同步 registry；smoltcp 数据面曾在此中断，
+    // 3) 游戏流量：guest 数据面连 centerIP:entry_port（应用层代理 → 本机 echo）
+    eprintln!("== 测试 3：guest 数据面 → host 游戏端口 → echo");
+    let game_addr = SocketAddr::from((center_ip, mc_port));
+    let t3 = tokio::time::timeout(Duration::from_secs(20), async {
+        let mut s = guest
+            .data_plane_tcp_connect(game_addr, Duration::from_secs(10))
+            .await
+            .expect("数据面连接 entry");
+        // 数据面 stream 实现 AsyncRead/Write：用 tokio 读写
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        s.write_all(b"t3").await.unwrap();
+        let mut buf = [0u8; 2];
+        s.read_exact(&mut buf).await.unwrap();
+        assert_eq!(&buf, b"t3");
+    })
+    .await;
+    match t3 {
+        Ok(_) => eprintln!("== 测试 3 OK：guest → 虚拟网 → host 代理 → echo 全链路通"),
+        Err(e) => eprintln!("== 测试 3 失败：guest → host 链路不通: {e}"),
+    }
+
+    // 4) 大数据传输（模拟 MC 登录配置同步 registry；smoltcp 数据面曾在此中断，
     //    kcp feature + enable_kcp_proxy 后数据面走 KCP 应稳定）
-    eprintln!("== 测试 3：guest → host 传输 5MB（模拟 MC registry 同步）");
-    let t3 = tokio::time::timeout(Duration::from_secs(60), async {
-        let mut s = TcpStream::connect(("127.0.0.1", guest_local_port)).unwrap();
+    eprintln!("== 测试 4：guest → host 游戏端口 5MB（模拟 MC registry 同步）");
+    let t4 = tokio::time::timeout(Duration::from_secs(60), async {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut s = guest
+            .data_plane_tcp_connect(game_addr, Duration::from_secs(10))
+            .await
+            .expect("数据面连接 entry");
         let chunk = vec![0x5au8; 8192];
         let total = 5 * 1024 * 1024;
         let mut written = 0usize;
         while written < total {
             let n = (total - written).min(chunk.len());
-            s.write_all(&chunk[..n]).unwrap();
+            s.write_all(&chunk[..n]).await.unwrap();
             written += n;
         }
-        s.flush().unwrap();
+        s.flush().await.unwrap();
         let mut read_back = 0usize;
         let mut buf = [0u8; 8192];
         while read_back < total {
-            let n = s.read(&mut buf).unwrap();
+            let n = s.read(&mut buf).await.unwrap();
             assert!(n > 0, "大数据传输中断（read 返回 0）");
             assert!(buf[..n].iter().all(|&b| b == 0x5a), "数据损坏");
             read_back += n;
@@ -160,18 +293,18 @@ async fn host_guest_tcp_roundtrip() {
         assert_eq!(read_back, total, "回读字节数不符");
     })
     .await;
-    match t3 {
-        Ok(_) => eprintln!("== 测试 3 OK：5MB 大数据传输完整（数据面正常）"),
-        Err(e) => eprintln!("== 测试 3 失败：大数据传输中断: {e}"),
+    match t4 {
+        Ok(_) => eprintln!("== 测试 4 OK：5MB 大数据传输完整（数据面正常）"),
+        Err(e) => eprintln!("== 测试 4 失败：大数据传输中断: {e}"),
     }
 
-    // 4) easytier 日志落盘验证（文件懒创建：首条日志事件才建）
+    // 5) easytier 日志落盘验证（文件懒创建：首条日志事件才建）
     tokio::time::sleep(Duration::from_secs(1)).await;
     let log_path = elytra_lib::util::exe_dir()
         .join(elytra_lib::constants::CONFIG_DIR)
         .join("online-easytier.log");
     eprintln!(
-        "== 测试 4：easytier 日志 = {log_path:?} exists={}",
+        "== 测试 5：easytier 日志 = {log_path:?} exists={}",
         log_path.exists()
     );
     assert!(
