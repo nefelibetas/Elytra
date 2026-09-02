@@ -2,8 +2,8 @@
 import { onMounted, onUnmounted, ref } from "vue";
 import { initNavHistory, goBack, goForward } from "./store/nav";
 import { useRouter } from "vue-router";
-import TitleBar from "./component/TitleBar.vue";
-import AlertDialog from "./component/AlertDialog.vue";
+import TitleBar from "./component/common/TitleBar.vue";
+import AlertDialog from "./component/common/AlertDialog.vue";
 import { dlState, ensureListen, checkInterrupted, waitingUser, decideWaitingTask, type TaskKind } from "./store/download";
 import { startMemoryMonitor } from "./store/memory";
 import { setSelected } from "./store/selectedVersion";

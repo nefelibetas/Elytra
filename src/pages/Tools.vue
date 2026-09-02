@@ -12,13 +12,13 @@ export const toolsTab = ref<ToolsTab>("status");
 // 工具页容器：左侧导航 + 各工具编排（业务在组件内，本文件不做工具逻辑）。
 // 工具：服务器状态 / MOTD / /give / 药水 / 烟花 / 村民交易 / 联机；后续工具加条目即可。
 import { Server, Type, Link2, Sword, FlaskConical, Rocket, Store } from "@lucide/vue";
-import ServerStatusTool from "../component/ServerStatusTool.vue";
-import MotdGeneratorTool from "../component/MotdGeneratorTool.vue";
-import GiveGeneratorTool from "../component/GiveGeneratorTool.vue";
-import PotionGeneratorTool from "../component/PotionGeneratorTool.vue";
-import FireworkGeneratorTool from "../component/FireworkGeneratorTool.vue";
-import VillagerGeneratorTool from "../component/VillagerGeneratorTool.vue";
-import OnlineTool from "../component/OnlineTool.vue";
+import ServerStatusTool from "../component/tools/ServerStatusTool.vue";
+import MotdGeneratorTool from "../component/tools/MotdGeneratorTool.vue";
+import GiveGeneratorTool from "../component/tools/GiveGeneratorTool.vue";
+import PotionGeneratorTool from "../component/tools/PotionGeneratorTool.vue";
+import FireworkGeneratorTool from "../component/tools/FireworkGeneratorTool.vue";
+import VillagerGeneratorTool from "../component/tools/VillagerGeneratorTool.vue";
+import OnlineTool from "../component/tools/OnlineTool.vue";
 </script>
 
 <template>

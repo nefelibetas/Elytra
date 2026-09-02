@@ -3,12 +3,12 @@
 // 业务逻辑在 store（launch/auth/accountUi/avatar/alert），本文件仅做初始化编排。
 import { onMounted } from "vue";
 import { FileText } from "@lucide/vue";
-import AlertDialog from "../component/AlertDialog.vue";
-import LaunchProgress from "../component/LaunchProgress.vue";
-import AccountSection from "../component/AccountSection.vue";
-import LaunchSection from "../component/LaunchSection.vue";
-import CapeDialog from "../component/CapeDialog.vue";
-import VersionDetailCard from "../component/VersionDetailCard.vue";
+import AlertDialog from "../component/common/AlertDialog.vue";
+import LaunchProgress from "../component/launch/LaunchProgress.vue";
+import AccountSection from "../component/launch/AccountSection.vue";
+import LaunchSection from "../component/launch/LaunchSection.vue";
+import CapeDialog from "../component/launch/CapeDialog.vue";
+import VersionDetailCard from "../component/launch/VersionDetailCard.vue";
 import { alertState } from "../store/alert";
 import { renderOfflineAvatar, renderPremiumAvatar } from "../store/avatar";
 import {
