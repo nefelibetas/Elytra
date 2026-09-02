@@ -73,6 +73,16 @@ function onChange(e: Event) {
   opacity: 0.5;
 }
 
+/* 原生 input 隐藏（保留可访问性：可聚焦/键盘可操作），视觉完全由 .ck-box 呈现 */
+.ck input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  pointer-events: none;
+}
+
 /* 视觉框：完全自定义，不依赖 UA 部件 */
 .ck-box {
   flex: none;

@@ -67,6 +67,8 @@ watch(externalAccount, () => {
 export function setAuthMode(mode: AuthMode) {
   authMode.value = mode;
   localStorage.setItem(AUTH_MODE_KEY, mode);
+  // 模式切换清掉失败标记（premium 失败后切离线/第三方不该被挡住）
+  avatarState.avatarError = false;
 }
 
 export async function loadMsAccount() {

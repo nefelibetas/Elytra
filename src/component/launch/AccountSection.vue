@@ -9,11 +9,10 @@ import {
   saveOfflineAccount, removeOfflineAccount,
   externalAccount, loadExternalAccounts, switchExternalRole, refreshExternalAccount,
 } from "../../store/auth";
-import { avatarState, scheduleOfflineRender, renderAccountHead, renderOfflineHead, accountHeads, offlineHeads } from "../../store/avatar";
+import { avatarState, scheduleOfflineRender, renderAccountHead, renderOfflineHead, accountHeads, offlineHeads, renderSkinHead3D, renderExternalAvatar, renderPremiumAvatar } from "../../store/avatar";
 import { accountUi } from "../../store/accountUi";
 import { showToast } from "../../utils/toast";
 import { invoke } from "@tauri-apps/api/core";
-import { renderSkinHead3D, renderExternalAvatar } from "../../store/avatar";
 import { showError } from "../../store/alert";
 import { settingsTab } from "../../store/settingsTab";
 import { useRouter } from "vue-router";
@@ -29,6 +28,16 @@ const avatarUrl = computed(() =>
       ? avatarState.externalAvatar
       : avatarState.offlineAvatar,
 );
+
+/** 头像加载失败后手动重试（force 绕过去重缓存）。 */
+function retryAvatar() {
+  avatarState.avatarError = false;
+  if (authMode.value === "premium") {
+    void renderPremiumAvatar(msAccount.value?.uuid ?? "", true);
+  } else if (authMode.value === "thirdparty") {
+    void renderExternalAvatar(externalAccount.value?.api_url ?? "", externalAccount.value?.uuid ?? "", true);
+  }
+}
 
 /** 用户名输入防抖 1.337s 后刷新离线头像 */
 watch(username, (v) => scheduleOfflineRender(v));
@@ -238,6 +247,15 @@ function useOfflineName(name: string) {
               @error="avatarState.avatarError = true"
             />
             <UserRound v-else :size="34" />
+            <!-- 头像加载失败（网络原因）→ hover 显示刷新重试 -->
+            <button
+              v-if="avatarState.avatarError && authMode !== 'offline'"
+              class="avatar-retry"
+              title="重新加载头像"
+              @click="retryAvatar"
+            >
+              <RefreshCw :size="14" />
+            </button>
           </div>
           <div v-if="authMode === 'premium'" class="uname" :class="{ 'uname-empty': !msAccount }">
             {{ msAccount?.name || '未登录' }}
@@ -743,6 +761,35 @@ function useOfflineName(name: string) {
   object-fit: contain;
   display: block;
   image-rendering: pixelated;
+}
+
+/* 头像加载失败：右下角刷新重试按钮（hover 头像区显示） */
+.avatar-retry {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-default);
+  border-radius: 50%;
+  background: var(--surface-card);
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.avatar:hover .avatar-retry,
+.avatar-retry:focus-visible {
+  opacity: 1;
+}
+
+.avatar-retry:hover {
+  color: var(--color-brand);
+  border-color: var(--color-brand);
 }
 
 .uname {

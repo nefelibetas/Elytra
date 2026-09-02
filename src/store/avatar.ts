@@ -3,7 +3,6 @@
 // 模块级单例：状态在 avatarState，渲染函数直接导出，store/组件均可调用。
 import { reactive } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { showError } from "./alert";
 
 /** FNV-1a 哈希（与 Rust 侧 config/launcher/skin.rs hash_name 一致）。 */
 function hashName(name: string): number {
@@ -52,11 +51,11 @@ export async function renderPremiumAvatar(uuid: string, force = false) {
     avatarState.premiumAvatar = await renderSkinHead3D(profile.skin).catch(() => "");
     avatarState.avatarError = false;
   } catch (e) {
+    // 装饰性资源：静默降级（UI 回退占位图标），不弹 dialog——网络恢复后用户可点刷新重试
     console.error("正版头像加载失败:", e);
     avatarState.premiumAvatar = "";
     lastPremiumUuid = ""; // 失败允许下次重试
     avatarState.avatarError = true;
-    showError(`正版头像加载失败：${String(e)}`, true);
   }
 }
 
