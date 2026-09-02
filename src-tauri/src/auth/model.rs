@@ -22,10 +22,7 @@ pub struct MsAccount {
 
 /// 读取全部正版账号（登录时间升序，末尾 = 当前账号）。无账号返回空列表。
 pub fn read_all() -> Vec<MsAccount> {
-    match crate::persist::secrets::read_secret(constants::SECT_MS_ACCOUNTS) {
-        Some(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
-        None => vec![],
-    }
+    crate::persist::secrets::read_json_list(constants::SECT_MS_ACCOUNTS)
 }
 
 /// 读取当前正版账号（列表最后一个，即最近登录/切换的）。无则 None。
@@ -38,19 +35,14 @@ pub fn save(account: &MsAccount) -> Result<(), String> {
     let mut list = read_all();
     list.retain(|a| a.uuid != account.uuid);
     list.push(account.clone());
-    let bytes = serde_json::to_vec(&list).map_err(|e| format!("序列化数据失败\n{e}"))?;
-    crate::persist::secrets::save_secret(constants::SECT_MS_ACCOUNTS, &bytes)
+    crate::persist::secrets::save_json_list(constants::SECT_MS_ACCOUNTS, &list)
 }
 
 /// 移除指定 uuid 的正版账号（连同其长期 refresh_token）。列表清空时删除存储键。
 pub fn remove(uuid: &str) -> Result<(), String> {
     let mut list = read_all();
     list.retain(|a| a.uuid != uuid);
-    if list.is_empty() {
-        return crate::persist::secrets::remove_secret(constants::SECT_MS_ACCOUNTS);
-    }
-    let bytes = serde_json::to_vec(&list).map_err(|e| format!("序列化数据失败\n{e}"))?;
-    crate::persist::secrets::save_secret(constants::SECT_MS_ACCOUNTS, &bytes)
+    crate::persist::secrets::save_json_list(constants::SECT_MS_ACCOUNTS, &list)
 }
 
 #[cfg(test)]

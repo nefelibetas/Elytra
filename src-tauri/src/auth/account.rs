@@ -250,14 +250,9 @@ pub async fn upload_skin(access_token: &str, file_path: &str, variant: &str) -> 
         .await
         .map_err(|e| format!("上传皮肤失败\n{e}"))?;
     if !resp.status().is_success() {
-        // 官方 API 错误体是 {"path":…,"errorMessage":…}
         let status = resp.status();
         let body: serde_json::Value = resp.json().await.unwrap_or_default();
-        let msg = body["errorMessage"]
-            .as_str()
-            .map(str::to_string)
-            .unwrap_or_else(|| format!("HTTP {status}"));
-        return Err(format!("上传皮肤失败\n{msg}"));
+        return Err(format!("上传皮肤失败\n{}", crate::auth::microsoft::extract_api_error(&body, status)));
     }
     Ok(())
 }

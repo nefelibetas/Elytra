@@ -139,6 +139,32 @@ pub fn fnv1a64(data: &str) -> u64 {
     h
 }
 
+/// 简单文件名/目录名判定（防路径穿越）：仅接受无路径分隔符、无 `..` 段的非空名。
+/// 供版本/存档/资源/图标等「读路径由调用方拼接」的命令前置校验统一使用。
+pub fn is_simple_name(name: &str) -> bool {
+    !name.is_empty() && !name.contains(['/', '\\']) && !name.contains("..")
+}
+
+/// 目录条目枚举（文件或子目录，取决于 want_dir）：返回 (名称, 字节大小, 修改时间秒)。
+/// 目录不存在/不可读返回空 Vec（调用方多为列表类命令，静默空列表语义）。
+pub fn dir_entries(dir: &std::path::Path, want_dir: bool) -> Vec<(String, u64, u64)> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter(|e| e.path().is_dir() == want_dir)
+        .filter_map(|e| {
+            let meta = e.metadata().ok()?;
+            Some((
+                e.file_name().to_string_lossy().to_string(),
+                meta.len(),
+                modified_secs(&meta),
+            ))
+        })
+        .collect()
+}
+
 /// 文件/目录名净化：Windows 非法字符（`<>:"/\|?*`）与控制字符替换 `_`，
 /// 去首尾空白与尾点；结果为空或命中 Windows 保留名（CON/NUL/COM1…）时回退 `fallback`。
 pub fn sanitize_fs_name(name: &str, fallback: &str) -> String {

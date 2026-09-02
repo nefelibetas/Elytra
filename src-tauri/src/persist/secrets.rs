@@ -33,7 +33,6 @@ pub fn read_secret(key: &str) -> Option<Vec<u8>> {
     decrypt_bytes(&encrypted).ok()
 }
 
-/// 删除一条敏感数据。
 pub fn remove_secret(key: &str) -> Result<(), String> {
     let _guard = SECRETS_LOCK.lock();
     let mut map = load_map();
@@ -42,6 +41,22 @@ pub fn remove_secret(key: &str) -> Result<(), String> {
     } else {
         Ok(())
     }
+}
+
+/// 读取加密存储的 JSON 列表（无条目/解密失败回空列表）。
+pub fn read_json_list<T: serde::de::DeserializeOwned>(key: &str) -> Vec<T> {
+    read_secret(key)
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+/// 保存 JSON 列表到加密存储；空列表删除条目（语义：清空即无记录）。
+pub fn save_json_list<T: serde::Serialize>(key: &str, list: &[T]) -> Result<(), String> {
+    if list.is_empty() {
+        return remove_secret(key);
+    }
+    let bytes = serde_json::to_vec(list).map_err(|e| format!("序列化数据失败\n{e}"))?;
+    save_secret(key, &bytes)
 }
 
 fn load_map() -> std::collections::HashMap<String, String> {

@@ -2,6 +2,10 @@
 //! 按网络模式（Direct 直连 / Auto·System 应用系统代理）应用到 `ClientBuilder`。
 //! 自 `fetcher.rs` 拆出：代理检测与下载路由/重试无关，独立成文件便于测试与演进。
 
+use crate::config::downloader::model::{DownloaderConfig, NetworkMode};
+use crate::constants;
+use crate::persist;
+
 /// 解析 Windows 注册表 ProxyServer 值 → (http 代理, https 代理)。
 /// 支持两种格式：
 ///   `127.0.0.1:7890`（全协议统一）
@@ -137,19 +141,16 @@ fn linux_gsettings_proxy_urls() -> (Option<String>, Option<String>) {
 }
 
 /// 当前网络代理模式（persist 配置；缺省 Auto）。
-fn current_network_mode() -> crate::config::downloader::model::NetworkMode {
-    crate::persist::read::<crate::config::downloader::model::DownloaderConfig>(
-        crate::constants::SECT_DOWNLOADER,
-    )
-    .map(|c| c.network_mode)
-    .unwrap_or_default()
+fn current_network_mode() -> NetworkMode {
+    persist::read::<DownloaderConfig>(constants::SECT_DOWNLOADER)
+        .map(|c| c.network_mode)
+        .unwrap_or_default()
 }
 
 /// 按网络模式给 ClientBuilder 应用代理：
 /// - Direct：不应用（强制直连；TUN 模式由网络层接管，无需应用层配置）
 /// - Auto / System：检测系统代理并应用（无代理时保持直连）
 pub(crate) fn apply_system_proxy(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
-    use crate::config::downloader::model::NetworkMode;
     match current_network_mode() {
         NetworkMode::Direct => builder,
         NetworkMode::Auto | NetworkMode::System => {
@@ -228,7 +229,6 @@ mod tests {
     /// （网络测试；direct 模式或无代理环境跳过）。
     #[tokio::test]
     async fn global_client_uses_system_proxy_when_enabled() {
-        use crate::config::downloader::model::NetworkMode;
         if current_network_mode() == NetworkMode::Direct {
             return;
         }

@@ -111,6 +111,53 @@ where
     Err(last_err)
 }
 
+/// 多候选 JSON POST：与 get_json_multi 同语义（主源 5s 降级、404 不换源），
+/// 但以 POST + JSON body 请求（Modrinth /v2/version_files 批量 sha1 查询用）。
+pub(crate) async fn post_json_multi<F>(
+    urls: &[String],
+    body: &serde_json::Value,
+    mut build: F,
+    first_timeout_secs: u64,
+    rest_timeout_secs: u64,
+) -> Result<serde_json::Value, String>
+where
+    F: FnMut(&str) -> reqwest::RequestBuilder,
+{
+    let mut last_err = String::new();
+    for (i, url) in urls.iter().enumerate() {
+        let resp = match build(url)
+            .json(body)
+            .timeout(std::time::Duration::from_secs(
+                if i == 0 && urls.len() > 1 {
+                    first_timeout_secs
+                } else {
+                    rest_timeout_secs
+                },
+            ))
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                last_err = format!("请求失败\n{e}");
+                continue;
+            }
+        };
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(format!("请求失败\nHTTP {}", resp.status()));
+        }
+        if !resp.status().is_success() {
+            last_err = format!("请求失败\nHTTP {}", resp.status());
+            continue;
+        }
+        return resp
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|e| format!("响应解析失败\n{e}"));
+    }
+    Err(last_err)
+}
+
 /// 解析 MC 版本号为数值段（"1.21.1" → [1,21,1]）；含非数字段（snapshot 如 "24w14a"）返回 None。
 fn parse_game_version(v: &str) -> Option<Vec<u64>> {
     v.split('.').map(|seg| seg.parse::<u64>().ok()).collect()

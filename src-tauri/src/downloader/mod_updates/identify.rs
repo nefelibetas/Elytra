@@ -13,6 +13,7 @@ use super::QUERY_CONCURRENCY;
 use crate::downloader::community;
 use crate::downloader::community::{api_routes, get_json_multi, ApiPlatform};
 use crate::downloader::hash::sha1_hex;
+use crate::downloader::fetcher;
 
 /// 本地 mod 详细列表项：Modrinth 命中时带项目元数据（图标/标题/描述/下载量/当前版本），
 /// 未命中或网络失败时仅本地信息（其余字段 None）。
@@ -64,7 +65,7 @@ async fn identify_mod(dir: PathBuf, file_name: String) -> Result<Option<(String,
         &format!("/v2/version_file/{sha1}?algorithm=sha1"),
     );
     match get_json_multi(&urls, |u| {
-        crate::downloader::fetcher::http().get(u.to_string())
+        fetcher::http().get(u.to_string())
     })
     .await
     {

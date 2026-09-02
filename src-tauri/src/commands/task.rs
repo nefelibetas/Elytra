@@ -5,6 +5,7 @@ use tauri::AppHandle;
 
 use crate::config::downloader::model::DownloaderConfig;
 use crate::constants;
+use crate::downloader::fetcher;
 use crate::downloader::modpack::{ModpackRequest, PackSource};
 use crate::persist;
 use crate::task::{
@@ -49,9 +50,9 @@ fn spawn_task(
     let step_names: Vec<&str> = steps.iter().map(|s| s.name.as_str()).collect();
     let tm = task::global();
     // 每次任务启动同步全局限速（用户改配置后不重启也生效）
-    let cfg: crate::config::downloader::model::DownloaderConfig =
+    let cfg: DownloaderConfig =
         persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
-    crate::downloader::fetcher::set_speed_limit(cfg.max_speed);
+    fetcher::set_speed_limit(cfg.max_speed);
     let (task_id, cancel, progress) = tm.create(&name, &step_names);
     // 持久化快照（崩溃/重启恢复依据；DB 故障静默）
     task::store::save_snapshot(&task_id, &name, &spec, TaskStatus::Running);

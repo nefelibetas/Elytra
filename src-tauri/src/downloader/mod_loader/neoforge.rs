@@ -7,6 +7,7 @@ use std::sync::Arc;
 use super::forge::{download_and_extract, resolve_java, wait_for_vanilla_client};
 use super::LoaderHook;
 use crate::config::downloader::model::DownloaderConfig;
+use crate::downloader::fetcher;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn install_neoforge(
@@ -80,7 +81,7 @@ pub(super) async fn download_neoforge_universal(
         .iter()
         .map(|s| s.mirror_url(&format!("https://maven.neoforged.net/releases/{rel}")))
         .collect();
-    crate::downloader::fetcher::fetch_fallback(&urls, &dest, None::<fn(u64, u64)>)
+    fetcher::fetch_fallback(&urls, &dest, None::<fn(u64, u64)>)
         .await
         .map_err(|e| format!("下载 NeoForge universal 失败\n{e}"))?;
     Ok(())
@@ -154,7 +155,7 @@ pub(super) async fn extract_neoforge_client(
             .iter()
             .map(|s| s.mirror_url(&format!("https://maven.neoforged.net/releases/{tool_path}")))
             .collect();
-        crate::downloader::fetcher::fetch_fallback(&urls, &tool_dest, None::<fn(u64, u64)>)
+        fetcher::fetch_fallback(&urls, &tool_dest, None::<fn(u64, u64)>)
             .await
             .map_err(|e| format!("下载 installertools 工具失败\n{e}"))?;
     }

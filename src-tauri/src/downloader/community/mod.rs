@@ -17,10 +17,13 @@ mod translation;
 
 use serde::Serialize;
 
+use crate::downloader::endpoints::CommunityEndpoints;
+use crate::downloader::fetcher;
+
 // ── 对外路径保持原样（commands / mod_updates / modpack / mod_loader 依赖这些名字）──
 
 /// JSON 查询通道（mod_updates 复用）。
-pub(crate) use shared::{api_routes, api_urls, get_json_multi, ApiPlatform};
+pub(crate) use shared::{api_routes, api_urls, get_json_multi, post_json_multi, ApiPlatform};
 
 /// CurseForge 批量文件换链（modpack.rs 整合包安装复用）。
 pub(crate) use curseforge::curseforge_files;
@@ -209,39 +212,9 @@ pub async fn modrinth_version_files(hashes: &[String]) -> Result<serde_json::Val
         return Ok(serde_json::json!({}));
     }
     let body = serde_json::json!({"hashes": hashes, "algorithm": "sha1"});
-    let official = format!(
-        "{}/v2/version_files",
-        crate::downloader::endpoints::CommunityEndpoints::MODRINTH_API_BASE
-    );
-    let mirror = format!(
-        "{}/v2/version_files",
-        crate::downloader::endpoints::CommunityEndpoints::MODRINTH_MIRROR_BASE
-    );
-    let mut last_err = String::new();
-    for (i, url) in [official, mirror].into_iter().enumerate() {
-        let timeout = if i == 0 {
-            std::time::Duration::from_secs(5) // 官方过慢即降级镜像
-        } else {
-            std::time::Duration::from_secs(10)
-        };
-        let resp = match crate::downloader::fetcher::http()
-            .post(&url)
-            .json(&body)
-            .timeout(timeout)
-            .send()
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                last_err = format!("请求失败\n{e}");
-                continue;
-            }
-        };
-        if !resp.status().is_success() {
-            last_err = format!("HTTP {}", resp.status());
-            continue;
-        }
-        return resp.json().await.map_err(|e| format!("响应解析失败\n{e}"));
-    }
-    Err(last_err)
+    let urls = [
+        format!("{}/v2/version_files", CommunityEndpoints::MODRINTH_API_BASE),
+        format!("{}/v2/version_files", CommunityEndpoints::MODRINTH_MIRROR_BASE),
+    ];
+    post_json_multi(&urls, &body, |u| fetcher::http().post(u), 5, 10).await
 }

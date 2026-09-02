@@ -13,6 +13,11 @@ pub use forge::install_forge;
 pub use neoforge::install_neoforge;
 pub use optifine::{install_optifine, OptifineMode};
 
+use crate::config::downloader::model::DownloaderConfig;
+use crate::downloader::hash::file_sha1_matches;
+use crate::downloader::progress::ProgressCounters;
+use crate::task::LoaderKind;
+
 fn maven_path(name: &str) -> String {
     let parts: Vec<&str> = name.split(':').collect();
     if parts.len() < 3 {
@@ -169,7 +174,7 @@ pub(crate) fn expand_inheritance(
 ///   部分写入的残留不会误判）。
 pub(crate) fn processor_outputs_are_current(outputs: &[(&std::path::Path, Option<&str>)]) -> bool {
     outputs.iter().all(|(p, sha1)| match sha1 {
-        Some(h) => crate::downloader::hash::file_sha1_matches(p, h),
+        Some(h) => file_sha1_matches(p, h),
         None => p.metadata().map(|m| m.len() >= 1_000_000).unwrap_or(false),
     })
 }
@@ -235,18 +240,17 @@ pub type LoaderHook<'a> = &'a (dyn Fn(LoaderEvent) + Send + Sync);
 /// `cancel` 仅 Forge/NeoForge 使用（installer 式需 kill 子进程），Fabric/Quilt 忽略。
 #[allow(clippy::too_many_arguments)]
 pub async fn install_loader(
-    kind: crate::task::LoaderKind,
+    kind: LoaderKind,
     mc_version: &str,
     loader_version: &str,
     dir_name: &str,
     vdir: &std::path::Path,
     parent_text: &str,
-    config: &crate::config::downloader::model::DownloaderConfig,
-    counters: &crate::downloader::progress::ProgressCounters,
+    config: &DownloaderConfig,
+    counters: &ProgressCounters,
     cancel: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
     hook: Option<LoaderHook<'_>>,
 ) -> Result<(), String> {
-    use crate::task::LoaderKind;
     // Fabric/Quilt 不接受 cancel——传 None 时借一个永不置位的静态令牌兜底
     static NO_CANCEL_ARC: std::sync::LazyLock<std::sync::Arc<std::sync::atomic::AtomicBool>> =
         std::sync::LazyLock::new(|| std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));

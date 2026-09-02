@@ -43,7 +43,7 @@ async fn latest_version(
     )
     .ok()?;
     let data = get_json_multi(&urls, |u| {
-        crate::downloader::fetcher::http().get(u.to_string())
+        fetcher::http().get(u.to_string())
     })
     .await
     .ok()?;
@@ -65,11 +65,7 @@ async fn latest_version(
 /// 删除 mods 目录下的单个 mod 文件（Mod 管理删除按钮）。
 /// 仅接受纯文件名（防路径穿越），不存在报错。
 pub fn delete_mod_file(mods_dir: &Path, file_name: &str) -> Result<(), String> {
-    if file_name.contains('/')
-        || file_name.contains('\\')
-        || file_name.contains("..")
-        || file_name.is_empty()
-    {
+    if !crate::util::is_simple_name(file_name) {
         return Err("非法文件名".to_string());
     }
     let path = mods_dir.join(file_name);
@@ -84,11 +80,7 @@ pub fn delete_mod_file(mods_dir: &Path, file_name: &str) -> Result<(), String> {
 /// 禁用：`name.jar` → `name.jar.disabled`（扫描按扩展名过滤自动隐藏）；启用：反向重命名。
 /// 仅接受纯文件名（防路径穿越），目标不存在报错。返回 true=已禁用，false=已启用。
 pub fn toggle_mod_file(mods_dir: &Path, file_name: &str) -> Result<bool, String> {
-    if file_name.contains('/')
-        || file_name.contains('\\')
-        || file_name.contains("..")
-        || file_name.is_empty()
-    {
+    if !crate::util::is_simple_name(file_name) {
         return Err("非法文件名".to_string());
     }
     let path = mods_dir.join(file_name);
@@ -132,7 +124,7 @@ pub async fn check_updates(
                 &format!("/v2/version_file/{sha1}?algorithm=sha1"),
             );
             let cur = get_json_multi(&urls, |u| {
-                crate::downloader::fetcher::http().get(u.to_string())
+                fetcher::http().get(u.to_string())
             })
             .await
             .ok()?;
@@ -199,7 +191,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[test]
     fn toggle_mod_file_disables_and_enables() {
         let dir = tempfile::tempdir().unwrap();
         let jar = dir.path().join("a.jar");
@@ -234,6 +225,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn delete_mod_file_removes_and_guards() {
         let dir = tempfile::tempdir().unwrap();
         let jar = dir.path().join("a.jar");
