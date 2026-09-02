@@ -4,13 +4,13 @@ import { computed, ref } from "vue";
 import type { Component } from "vue";
 import { useRoute } from "vue-router";
 import { Puzzle, Map, Palette, Sun, Database, Upload, ImagePlus, RefreshCw, FileText, Server } from "@lucide/vue";
-import VersionSetupMisc from "../component/VersionSetupMisc.vue";
-import VersionSetupLogs from "../component/VersionSetupLogs.vue";
-import VersionSetupServer from "../component/VersionSetupServer.vue";
-import VersionSetupExport from "../component/VersionSetupExport.vue";
-import VersionSetupMods from "../component/VersionSetupMods.vue";
-import VersionSetupSaves from "../component/VersionSetupSaves.vue";
-import VersionSetupResource from "../component/VersionSetupResource.vue";
+import VersionSetupMisc from "../component/version-setup/VersionSetupMisc.vue";
+import VersionSetupLogs from "../component/version-setup/VersionSetupLogs.vue";
+import VersionSetupServer from "../component/version-setup/VersionSetupServer.vue";
+import VersionSetupExport from "../component/version-setup/VersionSetupExport.vue";
+import VersionSetupMods from "../component/version-setup/VersionSetupMods.vue";
+import VersionSetupSaves from "../component/version-setup/VersionSetupSaves.vue";
+import VersionSetupResource from "../component/version-setup/VersionSetupResource.vue";
 import {
   loadMods, loadModsQuick,
   loadWorlds, loadResourceDetailed, loadResourceQuick,

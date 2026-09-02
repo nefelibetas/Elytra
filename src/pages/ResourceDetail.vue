@@ -16,7 +16,7 @@ import {
 } from "../store/communitySearch";
 import { registerTaskName, type DownloadFileKind } from "../store/download";
 import { fmtCount, fmtSize, fmtModDate } from "../utils/format";
-import IconImage from "../component/IconImage.vue";
+import IconImage from "../component/common/IconImage.vue";
 
 const item = computed(() => resourceDetail.item);
 

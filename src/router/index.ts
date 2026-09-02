@@ -11,7 +11,7 @@ import DownloadDetail from "../pages/DownloadDetail.vue";
 const ResourceDetail = () => import("../pages/ResourceDetail.vue");
 const VersionSelect = () => import("../pages/VersionSelect.vue");
 const VersionSetup = () => import("../pages/VersionSetup.vue");
-const CustomThemeEditor = () => import("../component/CustomThemeEditor.vue");
+const CustomThemeEditor = () => import("../pages/CustomThemeEditor.vue");
 
 declare module "vue-router" {
   interface RouteMeta {

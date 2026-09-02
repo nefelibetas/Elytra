@@ -5,7 +5,7 @@ import { dlState, TaskItem, interruptedJobs, resumeAllInterrupted, dismissAllInt
 import { errMsg } from "../utils/error"
 import { fmtSpeed, fmtEta } from "../utils/format"
 import { showToast } from "../utils/toast"
-import ScrollTopFab from "../component/ScrollTopFab.vue"
+import ScrollTopFab from "../component/common/ScrollTopFab.vue"
 
 /** 批量文件任务步骤可能很多，默认折叠到前 N 个。 */
 const MAX_VISIBLE_STEPS = 8

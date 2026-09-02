@@ -1,14 +1,14 @@
 <script setup lang="ts">
 // 设置页容器：导航 + 各 tab 内容编排（业务在 store/组件，本文件不做配置逻辑）
 import { SlidersHorizontal, Download, Palette, Link2, FileText, KeyRound } from "@lucide/vue";
-import SettingsLaunchOptions from "../component/SettingsLaunchOptions.vue";
-import SettingsJdk from "../component/SettingsJdk.vue";
-import SettingsThirdParty from "../component/SettingsThirdParty.vue";
-import SettingsDownload from "../component/SettingsDownload.vue";
-import SettingsAppearance from "../component/SettingsAppearance.vue";
-import SettingsOnline from "../component/SettingsOnline.vue";
-import SettingsLog from "../component/SettingsLog.vue";
-import ScrollTopFab from "../component/ScrollTopFab.vue";
+import SettingsLaunchOptions from "../component/settings/SettingsLaunchOptions.vue";
+import SettingsJdk from "../component/settings/SettingsJdk.vue";
+import SettingsThirdParty from "../component/settings/SettingsThirdParty.vue";
+import SettingsDownload from "../component/settings/SettingsDownload.vue";
+import SettingsAppearance from "../component/settings/SettingsAppearance.vue";
+import SettingsOnline from "../component/settings/SettingsOnline.vue";
+import SettingsLog from "../component/settings/SettingsLog.vue";
+import ScrollTopFab from "../component/common/ScrollTopFab.vue";
 import { settingsTab } from "../store/settingsTab";
 </script>
 
