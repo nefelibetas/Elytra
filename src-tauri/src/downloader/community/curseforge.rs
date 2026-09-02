@@ -1,6 +1,6 @@
 //! CurseForge 平台实现（需要 x-api-key）：搜索 / 版本列表 / 详情 / 批量文件换链。
 
-use super::shared::{api_routes, api_urls, get_json_multi, version_range, ApiPlatform};
+use super::shared::{api_routes, api_urls, get_json_multi, post_json_multi, version_range, ApiPlatform};
 use super::{
     CommunityDependency, CommunityDependencyItem, CommunitySearchPage, CommunitySearchResult,
     CommunityVersion,
@@ -112,33 +112,10 @@ const CF_BATCH_TIMEOUT_SECS: u64 = 30;
 pub(crate) async fn curseforge_files(file_ids: &[i64]) -> Result<Vec<serde_json::Value>, String> {
     let key = constants::CURSEFORGE_API_KEY
         .ok_or_else(|| "未配置 CurseForge API Key（项目根 .env 的 ELYTRA_CURSEFORGE_API_KEY），无法使用 CurseForge 来源".to_string())?;
-    let mut last_err = String::new();
-    for url in api_routes(ApiPlatform::CurseForge, "/mods/files") {
-        let resp = fetcher::http()
-            .post(&url)
-            .header("x-api-key", key)
-            .json(&serde_json::json!({ "fileIds": file_ids }))
-            .timeout(std::time::Duration::from_secs(CF_BATCH_TIMEOUT_SECS))
-            .send()
-            .await;
-        let resp = match resp {
-            Ok(r) => r,
-            Err(e) => {
-                last_err = format!("请求失败\n{}", e);
-                continue;
-            }
-        };
-        if !resp.status().is_success() {
-            last_err = format!("请求失败\nHTTP {}", resp.status());
-            continue;
-        }
-        let body: serde_json::Value = match resp.json().await {
-            Ok(b) => b,
-            Err(e) => return Err(format!("解析 JSON 失败\n{}", e)),
-        };
-        return Ok(body["data"].as_array().cloned().unwrap_or_default());
-    }
-    Err(last_err)
+    let body = serde_json::json!({ "fileIds": file_ids });
+    let urls = api_routes(ApiPlatform::CurseForge, "/mods/files");
+    let json = post_json_multi(&urls, &body, |u| fetcher::http().post(u).header("x-api-key", key), CF_BATCH_TIMEOUT_SECS, CF_BATCH_TIMEOUT_SECS).await?;
+    Ok(json["data"].as_array().cloned().unwrap_or_default())
 }
 
 pub(super) async fn search_curseforge(

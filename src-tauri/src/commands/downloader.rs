@@ -4,6 +4,7 @@ use crate::downloader::manifest;
 use crate::downloader::model::VersionManifest;
 use crate::downloader::resolve_version_dir;
 use crate::persist;
+use crate::downloader::fetcher;
 
 #[tauri::command]
 pub async fn get_version_list() -> Result<VersionManifest, String> {
@@ -24,9 +25,9 @@ pub fn save_downloader_config(config: DownloaderConfig) -> Result<(), String> {
     // client 的代理配置在构建时固定，LazyLock 单例不重建则切换不生效
     // （探测与下载全链路共用 http()，行为必须跟随用户设置）。
     // 全局限速同步（0 = 不限）
-    crate::downloader::fetcher::set_speed_limit(config.max_speed);
+    fetcher::set_speed_limit(config.max_speed);
     if old.network_mode != config.network_mode {
-        crate::downloader::fetcher::reset_http_client();
+        fetcher::reset_http_client();
     }
     Ok(())
 }

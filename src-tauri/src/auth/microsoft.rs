@@ -258,7 +258,7 @@ async fn post_oauth_json(
     if !status.is_success() {
         return Err(MsError::Http(format!(
             "{fail_label}({status})\n{}",
-            extract_api_error(&json)
+            extract_api_error(&json, status)
         )));
     }
     Ok(json)
@@ -337,16 +337,17 @@ async fn authenticate_xsts(
     Ok((token.to_string(), xuid))
 }
 
-/// 从错误 JSON 里提取可读的 errorMessage/error/path。
-fn extract_api_error(json: &serde_json::Value) -> String {
+/// 从错误 JSON 里提取可读的 errorMessage/error/path（微软官方 API 共用）。
+pub(crate) fn extract_api_error(json: &serde_json::Value, status: reqwest::StatusCode) -> String {
     let msg = json
         .get("errorMessage")
         .or_else(|| json.get("error"))
         .and_then(|v| v.as_str())
-        .unwrap_or("unknown");
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("HTTP {status}"));
     let path = json.get("path").and_then(|v| v.as_str()).unwrap_or("");
     if path.is_empty() {
-        msg.to_string()
+        msg
     } else {
         format!("{msg} ({path})")
     }

@@ -51,23 +51,9 @@ pub fn list_worlds(version_name: String) -> Vec<WorldInfo> {
         return Vec::new();
     };
     let saves = vdir.join("saves");
-    let Ok(entries) = std::fs::read_dir(&saves) else {
-        return Vec::new();
-    };
-    let mut worlds: Vec<WorldInfo> = entries
-        .flatten()
-        .filter_map(|e| {
-            let path = e.path();
-            if !path.is_dir() {
-                return None;
-            }
-            let name = e.file_name().to_string_lossy().to_string();
-            let meta = e.metadata().ok()?;
-            Some(WorldInfo {
-                name,
-                last_modified: crate::util::modified_secs(&meta),
-            })
-        })
+    let mut worlds: Vec<WorldInfo> = crate::util::dir_entries(&saves, true)
+        .into_iter()
+        .map(|(name, _, last_modified)| WorldInfo { name, last_modified })
         .collect();
     worlds.sort_by_key(|w| std::cmp::Reverse(w.last_modified));
     worlds
@@ -81,7 +67,7 @@ const MAX_WORLD_ICON_BYTES: u64 = 512 * 1024;
 /// `world_name` 仅接受简单目录名，防路径穿越。
 #[tauri::command]
 pub fn get_world_icon(version_name: String, world_name: String) -> Option<crate::util::IconData> {
-    if world_name.contains('/') || world_name.contains('\\') || world_name.contains("..") {
+    if !crate::util::is_simple_name(&world_name) {
         return None;
     }
     let vdir = version_dir(&version_name).ok()?;
@@ -105,20 +91,9 @@ pub fn list_resource_files(version_name: String, kind: String) -> Vec<ResourceFi
         return Vec::new();
     };
     let dir = vdir.join(&kind);
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return Vec::new();
-    };
-    let mut files: Vec<ResourceFile> = entries
-        .flatten()
-        .filter(|e| e.path().is_file())
-        .filter_map(|e| {
-            let meta = e.metadata().ok()?;
-            Some(ResourceFile {
-                name: e.file_name().to_string_lossy().to_string(),
-                size: meta.len(),
-                last_modified: crate::util::modified_secs(&meta),
-            })
-        })
+    let mut files: Vec<ResourceFile> = crate::util::dir_entries(&dir, false)
+        .into_iter()
+        .map(|(name, size, last_modified)| ResourceFile { name, size, last_modified })
         .collect();
     files.sort_by(|a, b| a.name.cmp(&b.name));
     files
@@ -154,7 +129,7 @@ pub fn delete_resource_file(
     if !matches!(kind.as_str(), "resourcepacks" | "datapacks" | "shaderpacks") {
         return Err("未知资源类型".to_string());
     }
-    if file_name.contains('/') || file_name.contains('\\') || file_name.contains("..") {
+    if !crate::util::is_simple_name(&file_name) {
         return Err("非法文件名".to_string());
     }
     let vdir = version_dir(&version_name)?;
@@ -169,7 +144,7 @@ pub fn delete_resource_file(
 /// `world_name` 仅接受简单目录名（防路径穿越）；大目录删除走 tokio（内部 spawn_blocking）。
 #[tauri::command]
 pub async fn delete_world(version_name: String, world_name: String) -> Result<(), String> {
-    if world_name.contains('/') || world_name.contains('\\') || world_name.contains("..") {
+    if !crate::util::is_simple_name(&world_name) {
         return Err("非法目录名".to_string());
     }
     let vdir = version_dir(&version_name)?;
@@ -199,7 +174,7 @@ pub async fn identify_mod_file(
     version_name: String,
     file_name: String,
 ) -> Result<Option<ModFileDetail>, String> {
-    if file_name.contains('/') || file_name.contains('\\') || file_name.contains("..") {
+    if !crate::util::is_simple_name(&file_name) {
         return Err("非法文件名".into());
     }
     let vdir = version_dir(&version_name)?;

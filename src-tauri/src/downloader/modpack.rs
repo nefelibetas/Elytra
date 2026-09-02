@@ -381,8 +381,7 @@ pub fn assemble_plan(
 
     // overrides 目录检测（重新开一次 zip：函数保持无借用纠缠，便于单测）
     let has_overrides = {
-        let file = std::fs::File::open(zip_path).map_err(|e| format!("打开整合包失败\n{e}"))?;
-        let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取整合包失败\n{e}"))?;
+        let mut archive = crate::downloader::extract::open_zip(zip_path, "整合包")?;
         (0..archive.len()).any(|i| {
             archive
                 .by_index(i)
@@ -434,8 +433,7 @@ pub async fn build_plan(
     request: &ModpackRequest,
     config: &DownloaderConfig,
 ) -> Result<PackPlan, String> {
-    let file = std::fs::File::open(zip_path).map_err(|e| format!("打开整合包失败\n{e}"))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取整合包失败\n{e}"))?;
+    let mut archive = crate::downloader::extract::open_zip(zip_path, "整合包")?;
 
     let (index_text, kind) = read_manifest(&mut archive)?;
     drop(archive);

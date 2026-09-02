@@ -84,7 +84,7 @@ pub(crate) fn prepare_launch(
     // 第三方登录：启动前确保 authlib-injector.jar 存在（注入必需，缺失会启动失败）
     if matches!(auth, AuthMode::External { .. }) {
         let jar = crate::util::exe_dir()
-            .join(crate::constants::CONFIG_DIR)
+            .join(constants::CONFIG_DIR)
             .join(crate::auth::external::AUTHLIB_JAR);
         if !jar.exists() {
             return Err("第三方登录组件缺失\n请重新登录第三方账号以恢复 authlib-injector.jar".into());
@@ -441,7 +441,7 @@ pub async fn get_game_log(game_dir: String, version_name: String) -> String {
 /// 打开启动器日志所在目录（exe 旁 Elytra/，launcher.log 所在地）。
 #[tauri::command]
 pub fn open_launcher_log_dir(app: tauri::AppHandle) -> Result<(), String> {
-    let dir = crate::util::exe_dir().join(crate::constants::CONFIG_DIR);
+    let dir = crate::util::exe_dir().join(constants::CONFIG_DIR);
     super::gamedirs::open_folder(app, dir.to_string_lossy().to_string())
 }
 
@@ -450,7 +450,7 @@ pub fn open_launcher_log_dir(app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn get_launcher_log() -> String {
     let path = crate::util::exe_dir()
-        .join(crate::constants::CONFIG_DIR)
+        .join(constants::CONFIG_DIR)
         .join("launcher.log");
     std::fs::read_to_string(path)
         .map(|text| tail_lines(&text))

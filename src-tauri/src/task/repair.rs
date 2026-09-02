@@ -11,7 +11,10 @@ use tauri::AppHandle;
 
 use crate::config::downloader::model::{DownloadSource, DownloaderConfig};
 use crate::constants;
-use crate::downloader::model::{Library, VersionJson};
+use crate::downloader::fetcher;
+use crate::downloader::hash::file_sha1_matches;
+use crate::downloader::library;
+use crate::downloader::model::{Artifact, Library, VersionJson};
 use crate::persist;
 use crate::task::{self, StepStatus, TaskProgress, TaskStatus};
 
@@ -58,9 +61,8 @@ fn read_version_json(vdir: &Path) -> Result<VersionJson, String> {
 pub fn missing_native_artifacts<'a, 'b>(
     libraries: &'a [Library],
     lib_dir: &'b Path,
-) -> impl Iterator<Item = &'a crate::downloader::model::Artifact> + use<'a, 'b> {
+) -> impl Iterator<Item = &'a Artifact> + use<'a, 'b> {
     use crate::downloader::extract::legacy_classifier_artifact;
-    use crate::downloader::hash::file_sha1_matches;
     libraries.iter().filter_map(move |lib| {
         let artifact = legacy_classifier_artifact(lib)?;
         let dest = lib_dir.join(&artifact.path);
@@ -87,8 +89,6 @@ pub fn natives_missing_bytes(libraries: &[Library], lib_dir: &Path) -> u64 {
 /// 扫描版本缺失文件（client.jar / 支持库 / 资源 / natives），不发起下载。
 /// 支持库与资源按本地 sha1 比对，资源按 assets index 与本地缓存比对（多线程）。
 pub async fn scan_missing(version_dir_name: &str) -> Result<MissingReport, String> {
-    use crate::downloader::library;
-
     let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
     let mc = config.minecraft_dir_abs();
     let vdir = mc.join("versions").join(version_dir_name);
@@ -104,7 +104,7 @@ pub async fn scan_missing(version_dir_name: &str) -> Result<MissingReport, Strin
                 vj.downloads
                     .client
                     .as_ref()
-                    .map(|c| !crate::downloader::hash::file_sha1_matches(&p, &c.sha1))
+                    .map(|c| !file_sha1_matches(&p, &c.sha1))
                     .unwrap_or(false)
             }
         }
@@ -287,7 +287,7 @@ pub async fn run_repair_task(
         bytes: Arc::clone(&bytes_counter),
         ..Default::default() // 占位：repair 分步进度走文件数回退
     };
-    let libs = crate::downloader::library::download_libraries(
+    let libs = library::download_libraries(
         &vj.libraries,
         &lib_dir,
         config.concurrency as usize,
@@ -438,7 +438,7 @@ async fn repair_jar(
                     .downloads
                     .client
                     .as_ref()
-                    .map(|c| !crate::downloader::hash::file_sha1_matches(&bad, &c.sha1))
+                    .map(|c| !file_sha1_matches(&bad, &c.sha1))
                     .unwrap_or(false);
             if bad_jar {
                 let _ = std::fs::remove_file(&bad);
@@ -454,7 +454,7 @@ async fn repair_jar(
             }
             let cb = pc.overwrite_callback();
             // 逐源 sha1 校验下载：镜像 CDN 返回不完整/错误内容自动换源重试
-            crate::downloader::fetcher::fetch_verified(&urls, &jar_path, Some(cb), &c.sha1)
+            fetcher::fetch_verified(&urls, &jar_path, Some(cb), &c.sha1)
                 .await
                 .map_err(|e| vec![e.to_string()])?;
         }
@@ -481,7 +481,7 @@ pub async fn count_assets_all(
     mut on_total: impl FnMut(u32, u64),
     mut on_checked: impl FnMut(u32, u64),
 ) -> Result<(u32, u64), String> {
-    use crate::downloader::hash::file_sha1_matches;
+    use file_sha1_matches;
     let text = crate::downloader::assets::fetch_asset_index(
         config,
         mc_dir,

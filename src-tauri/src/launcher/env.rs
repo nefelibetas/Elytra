@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use crate::config::downloader::model::DownloaderConfig;
 use crate::constants;
+use crate::downloader::hash::sha1_hex;
 use crate::downloader::model::VersionJson;
 use crate::jdk::model::{JdkConfig, JdkInfo, JdkSelection};
 use crate::launcher::args::{find_file_in_dir, find_version_json};
@@ -197,9 +198,7 @@ pub fn pre_launch_check(
         }
         Ok(index_bytes) => {
             // 索引 sha1 校验（version_json 提供期望值时；空则跳过校验，仅确认可解析）
-            if !index_sha1.is_empty()
-                && crate::downloader::hash::sha1_hex(&index_bytes) != index_sha1
-            {
+            if !index_sha1.is_empty() && sha1_hex(&index_bytes) != index_sha1 {
                 missing.push(format!(
                     "资源索引校验失败（sha1 不匹配，文件已损坏）: {}",
                     index_path.display()
@@ -446,8 +445,6 @@ mod tests {
     /// 覆盖此前"仅检查索引文件存在"导致镜像坏内容/缺失对象漏检的场景。
     #[test]
     fn pre_launch_check_detects_asset_corruption() {
-        use crate::downloader::hash::sha1_hex;
-
         let tmp = std::env::temp_dir().join(format!("elytra_assetchk_{}", std::process::id()));
         let mc = &tmp;
         let vdir = mc.join("versions/1.20.1");

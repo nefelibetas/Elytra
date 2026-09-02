@@ -971,20 +971,12 @@ fn extract_member(
     let mut entry = archive
         .by_name(name)
         .map_err(|e| format!("读取包内资源失败\n{e}"))?;
-    if let Some(parent) = out.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败\n{e}"))?;
-    }
-    let mut writer =
-        std::fs::File::create(out).map_err(|e| format!("写出失败\n{e}\n{}", out.display()))?;
-    std::io::copy(&mut entry, &mut writer)
-        .map_err(|e| format!("解压失败\n{e}\n{}", out.display()))?;
-    Ok(())
+    crate::downloader::extract::extract_entry_to(&mut entry, out)
 }
 
 /// 解压 overrides/ 到版本目录根（词法穿越防护对齐 jdk safe_runtime_path）。
 fn extract_overrides(ov: &OverridesRef, vdir: &Path) -> Result<(), String> {
-    let file = std::fs::File::open(&ov.zip_path).map_err(|e| format!("打开整合包缓存失败\n{e}"))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取整合包缓存失败\n{e}"))?;
+    let mut archive = crate::downloader::extract::open_zip(std::path::Path::new(&ov.zip_path), "整合包缓存")?;
     for i in 0..archive.len() {
         let mut entry = archive
             .by_index(i)
@@ -1000,20 +992,14 @@ fn extract_overrides(ov: &OverridesRef, vdir: &Path) -> Result<(), String> {
         if let Some(parent) = out.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败\n{e}"))?;
         }
-        let mut writer =
-            std::fs::File::create(&out).map_err(|e| format!("写出失败\n{e}\n{}", out.display()))?;
-        std::io::copy(&mut entry, &mut writer)
-            .map_err(|e| format!("解压失败\n{e}\n{}", out.display()))?;
+        crate::downloader::extract::extract_entry_to(&mut entry, &out)?;
     }
     Ok(())
 }
 
 /// overrides 解压总量（未压缩字节，进度基线用；读不到按 0）。
 fn sum_override_bytes(ov: &OverridesRef) -> u64 {
-    let Ok(file) = std::fs::File::open(&ov.zip_path) else {
-        return 0;
-    };
-    let Ok(mut archive) = zip::ZipArchive::new(file) else {
+    let Ok(mut archive) = crate::downloader::extract::open_zip(std::path::Path::new(&ov.zip_path), "整合包缓存") else {
         return 0;
     };
     let mut total = 0u64;

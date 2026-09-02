@@ -196,7 +196,17 @@ pub async fn process_natives(
 }
 
 /// 把单个 ZIP 条目解压到目标文件（ModLoader installer 流程共用）。
+/// 打开 ZIP 归档（统一错误文案）。整合包/地图/压缩包读取共用。
+pub fn open_zip(path: &Path, err_prefix: &str) -> Result<zip::ZipArchive<std::fs::File>, String> {
+    let file = std::fs::File::open(path).map_err(|e| format!("打开{err_prefix}失败\n{e}"))?;
+    zip::ZipArchive::new(file).map_err(|e| format!("读取{err_prefix}失败\n{e}"))
+}
+/// 把 ZIP 条目解压到目标文件（父目录自动创建）。
+/// ModLoader installer 解 jar、整合包单成员解压共用。
 pub fn extract_entry_to(entry: &mut zip::read::ZipFile, dest: &Path) -> Result<(), String> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败\n{e}"))?;
+    }
     let mut out = std::fs::File::create(dest).map_err(|e| format!("创建文件失败\n{}", e))?;
     std::io::copy(entry, &mut out).map_err(|e| format!("解压失败\n{}", e))?;
     Ok(())

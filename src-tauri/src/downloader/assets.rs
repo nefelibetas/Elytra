@@ -7,7 +7,7 @@ use tokio::sync::Semaphore;
 
 use super::hash::file_sha1_matches;
 use super::reuse::{classify_local_artifact, copy_verified_local, LocalRuntimeSource};
-use crate::config::downloader::model::DownloaderConfig;
+use crate::config::downloader::model::{DownloaderConfig, DownloadSource};
 use crate::downloader::fetcher;
 use crate::downloader::progress::ProgressCounters;
 
@@ -88,10 +88,10 @@ pub async fn download_assets(
     config: &DownloaderConfig,
     concurrency: usize,
     reuse: Option<LocalRuntimeSource>,
-    pc: &crate::downloader::progress::ProgressCounters,
+    pc: &ProgressCounters,
     cancel: Option<&Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(), Vec<String>> {
-    let sources: Vec<&crate::config::downloader::model::DownloadSource> =
+    let sources: Vec<&DownloadSource> =
         config.file_sources_list();
     let mc_dir = config.minecraft_dir_abs();
 

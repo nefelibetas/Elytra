@@ -100,8 +100,16 @@ pub fn fetch_default_skin(skin: String) -> Result<String, String> {
     Ok(base64::engine::general_purpose::STANDARD.encode(data))
 }
 
-/// 通过官方 API 拉取指定 uuid 的皮肤 PNG，返回 base64（供 save_skin 保存用）。
-async fn fetch_skin(uuid: String) -> Result<String, String> {
+/// 拉取指定 uuid 的皮肤 PNG（base64，头像用）：官方 sessionserver 失败自动回退
+/// minotar——装饰性资源（账号列表 2D 头像）不硬依赖官方直连。
+async fn fetch_skin_for_avatar(uuid: String) -> Result<String, String> {
+    let (url, _model) = mojang::skin_profile_with_fallback(&uuid).await?;
+    account::fetch_b64(&url, "下载皮肤").await
+}
+
+/// 拉取指定 uuid 的皮肤 PNG（base64，保存用）：仅官方直连，失败如实报错
+/// （用户主动保存到本地，不应静默从第三方源取）。
+async fn fetch_skin_official(uuid: String) -> Result<String, String> {
     let textures = mojang::profile_textures(&uuid).await?;
     let skin_url = textures["textures"]["SKIN"]["url"]
         .as_str()
@@ -112,7 +120,7 @@ async fn fetch_skin(uuid: String) -> Result<String, String> {
 /// 拉取指定 uuid 正版玩家的皮肤 PNG（base64，供账号列表 2D 头像，前端截取头部）。
 #[tauri::command]
 pub async fn fetch_account_skin(uuid: String) -> Result<String, String> {
-    fetch_skin(uuid).await
+    fetch_skin_for_avatar(uuid).await
 }
 /// 正版玩家皮肤 + 模型类型（供 3D 头像渲染：一次 IPC 拿全，避免两次网络往返）。
 #[derive(serde::Serialize)]
@@ -125,139 +133,56 @@ pub struct SkinProfile {
 
 /// 拉取正版玩家皮肤 PNG + 模型类型（slim/classic），一次 IPC 供 3D 头像渲染。
 /// 皮肤 texture 的 metadata.model 为 "slim" 时前端按纤细模型渲染。
+/// 官方 sessionserver 直连失败（无代理被墙等）自动回退 minotar（装饰性资源不硬依赖官方）。
 #[tauri::command]
 pub async fn fetch_account_skin_profile(uuid: String) -> Result<SkinProfile, String> {
-    let textures = mojang::profile_textures(&uuid).await?;
-    let skin = textures["textures"]["SKIN"].clone();
-    let url = skin["url"]
-        .as_str()
-        .ok_or("该账号未设置皮肤")?;
-    let b64 = account::fetch_b64(url, "下载皮肤").await?;
-    let model = skin["metadata"]["model"]
-        .as_str()
-        .unwrap_or("classic")
-        .to_string();
+    let (url, model) = mojang::skin_profile_with_fallback(&uuid).await?;
+    let b64 = account::fetch_b64(&url, "下载皮肤").await?;
     Ok(SkinProfile { skin: b64, model })
 }
 
 /// 拉取第三方账号（authlib-injector / 皮肤站）的皮肤 PNG（base64，供 3D 头像）。
-/// 标准 Yggdrasil：GET {api}/sessionserver/session/minecraft/profile/{uuid} → properties[0].value
-/// （base64 JSON 含 textures.skin.url）；Ely.by 非标准路径 /session/profile/{uuid}。
 #[tauri::command]
 pub async fn fetch_external_skin(api_url: String, uuid: String) -> Result<String, String> {
-    let api = api_url.trim().trim_end_matches('/');
-    if api.is_empty() {
-        return Err("验证服务器地址为空".into());
-    }
-    let is_ely = crate::auth::external::is_ely_by(api);
-    let url = if is_ely {
-        format!("{api}/session/profile/{uuid}")
-    } else {
-        format!("{api}/sessionserver/session/minecraft/profile/{uuid}")
-    };
-    let resp = crate::downloader::fetcher::http()
-        .get(&url)
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .map_err(|e| format!("请求皮肤失败\n{e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("该账号未设置皮肤\nHTTP {}", resp.status()));
-    }
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("响应解析失败\n{e}"))?;
-    // properties[0].value = base64 的 {textures:{SKIN:{url}}}（标准格式）
-    let prop = json["properties"]
-        .as_array()
-        .and_then(|a| a.first())
-        .and_then(|p| p["value"].as_str())
-        .ok_or("该账号未设置皮肤")?;
-    use base64::Engine;
-    let decoded = base64::engine::general_purpose::STANDARD
-        .decode(prop)
-        .map_err(|e| format!("皮肤数据解码失败\n{e}"))?;
-    let textures: serde_json::Value = serde_json::from_slice(&decoded)
-        .map_err(|e| format!("皮肤信息解析失败\n{e}"))?;
-    let skin_url = textures["textures"]["SKIN"]["url"]
-        .as_str()
-        .ok_or("该账号未设置皮肤")?;
-    crate::auth::account::fetch_b64(skin_url, "下载皮肤").await
+    let (url, _model) = crate::auth::external::external_skin_info(&api_url, &uuid).await?;
+    account::fetch_b64(&url, "下载皮肤").await
 }
 /// 拉取第三方账号（authlib-injector / 皮肤站）皮肤 PNG + 模型类型（slim/classic），
-/// 一次 IPC 供 3D 头像渲染。与 fetch_external_skin 解析路径相同，额外返回 metadata.model。
+/// 一次 IPC 供 3D 头像渲染。
 #[tauri::command]
 pub async fn fetch_external_skin_profile(
     api_url: String,
     uuid: String,
 ) -> Result<crate::commands::account::SkinProfile, String> {
-    let api = api_url.trim().trim_end_matches('/');
-    if api.is_empty() {
-        return Err("验证服务器地址为空".into());
-    }
-    let is_ely = crate::auth::external::is_ely_by(api);
-    let url = if is_ely {
-        format!("{api}/session/profile/{uuid}")
-    } else {
-        format!("{api}/sessionserver/session/minecraft/profile/{uuid}")
-    };
-    let resp = crate::downloader::fetcher::http()
-        .get(&url)
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .map_err(|e| format!("请求皮肤失败\n{e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("该账号未设置皮肤\nHTTP {}", resp.status()));
-    }
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("响应解析失败\n{e}"))?;
-    let prop = json["properties"]
-        .as_array()
-        .and_then(|a| a.first())
-        .and_then(|p| p["value"].as_str())
-        .ok_or("该账号未设置皮肤")?;
-    use base64::Engine;
-    let decoded = base64::engine::general_purpose::STANDARD
-        .decode(prop)
-        .map_err(|e| format!("皮肤数据解码失败\n{e}"))?;
-    let textures: serde_json::Value = serde_json::from_slice(&decoded)
-        .map_err(|e| format!("皮肤信息解析失败\n{e}"))?;
-    let skin = textures["textures"]["SKIN"].clone();
-    let skin_url = skin["url"].as_str().ok_or("该账号未设置皮肤")?;
-    let b64 = crate::auth::account::fetch_b64(skin_url, "下载皮肤").await?;
-    let model = skin["metadata"]["model"].as_str().unwrap_or("classic").to_string();
+    let (url, model) = crate::auth::external::external_skin_info(&api_url, &uuid).await?;
+    let b64 = account::fetch_b64(&url, "下载皮肤").await?;
     Ok(crate::commands::account::SkinProfile { skin: b64, model })
 }
 
+
+/// base64 皮肤字节 → 写文件（两个保存命令共用尾段）。
+async fn write_b64_file(b64: &str, path: &str) -> Result<(), String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| format!("皮肤数据解码失败\n{e}"))?;
+    tokio::fs::write(path, bytes)
+        .await
+        .map_err(|e| format!("写入文件失败\n{e}"))
+}
 
 /// 第三方账号皮肤下载：拉 skin.png → 写指定路径（base64 解出）。
 #[tauri::command]
 pub async fn save_external_skin(api_url: String, uuid: String, path: String) -> Result<(), String> {
     let b64 = fetch_external_skin(api_url, uuid).await?;
-    use base64::Engine;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(&b64)
-        .map_err(|e| format!("皮肤数据解码失败\n{e}"))?;
-    tokio::fs::write(&path, bytes)
-        .await
-        .map_err(|e| format!("写入文件失败\n{e}"))
+    write_b64_file(&b64, &path).await
 }
 
 /// 把当前皮肤保存到用户指定路径。
 #[tauri::command]
 pub async fn save_skin(uuid: String, path: String) -> Result<(), String> {
-    use base64::Engine;
-    let b64 = fetch_skin(uuid).await?;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(&b64)
-        .map_err(|e| format!("皮肤数据解码失败\n{e}"))?;
-    tokio::fs::write(&path, bytes)
-        .await
-        .map_err(|e| format!("写入文件失败\n{e}"))
+    let b64 = fetch_skin_official(uuid).await?;
+    write_b64_file(&b64, &path).await
 }
 
 /// 上传本地皮肤到官方账号（POST multipart: variant=CLASSIC + file）。

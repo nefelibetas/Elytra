@@ -5,6 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::constants;
+use crate::downloader::fetcher;
 
 /// authlib-injector jar 文件名（数据目录 = exe 旁 Elytra/）。
 pub const AUTHLIB_JAR: &str = "authlib-injector.jar";
@@ -14,6 +15,16 @@ pub const AUTHLIB_JAR: &str = "authlib-injector.jar";
 pub fn is_ely_by(api_url: &str) -> bool {
     api_url.contains("ely.by")
 }
+
+/// 从 Yggdrasil 错误响应文本提取可读信息：错误体常见 {"error": ..., "errorMessage": ...}；
+/// 非 JSON/无 errorMessage 回退 HTTP 状态码。
+fn extract_yggdrasil_error(text: &str, status: reqwest::StatusCode) -> String {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|v| v["errorMessage"].as_str().map(str::to_string))
+        .unwrap_or_else(|| format!("HTTP {status}"))
+}
+
 
 /// 第三方账号（含验证服务器地址与短期 access_token）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,10 +60,7 @@ pub struct ExternalProfile {
 
 /// 读取全部第三方账号（登录时间升序，末尾 = 当前账号）。无账号返回空列表。
 pub fn read_all() -> Vec<ExternalAccount> {
-    match crate::persist::secrets::read_secret(constants::SECT_EXTERNAL_ACCOUNTS) {
-        Some(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
-        None => vec![],
-    }
+    crate::persist::secrets::read_json_list(constants::SECT_EXTERNAL_ACCOUNTS)
 }
 
 /// 读取当前第三方账号（列表最后一个，即最近登录/切换的）。无则 None。
@@ -65,8 +73,7 @@ pub fn save(account: &ExternalAccount) -> Result<(), String> {
     let mut list = read_all();
     list.retain(|a| !(a.uuid == account.uuid && a.api_url == account.api_url));
     list.push(account.clone());
-    let bytes = serde_json::to_vec(&list).map_err(|e| format!("序列化数据失败\n{e}"))?;
-    crate::persist::secrets::save_secret(constants::SECT_EXTERNAL_ACCOUNTS, &bytes)
+    crate::persist::secrets::save_json_list(constants::SECT_EXTERNAL_ACCOUNTS, &list)
 }
 
 /// 切换当前账号：从列表移除再重加（置末尾 = 启用）。
@@ -77,19 +84,14 @@ pub fn switch(api_url: &str, uuid: &str) -> Result<(), String> {
     };
     let acc = list.remove(idx);
     list.push(acc);
-    let bytes = serde_json::to_vec(&list).map_err(|e| format!("序列化数据失败\n{e}"))?;
-    crate::persist::secrets::save_secret(constants::SECT_EXTERNAL_ACCOUNTS, &bytes)
+    crate::persist::secrets::save_json_list(constants::SECT_EXTERNAL_ACCOUNTS, &list)
 }
 
 /// 移除指定账号（api_url + uuid 定位）。列表清空时删除存储键。
 pub fn remove(api_url: &str, uuid: &str) -> Result<(), String> {
     let mut list = read_all();
     list.retain(|a| !(a.api_url == api_url && a.uuid == uuid));
-    if list.is_empty() {
-        return crate::persist::secrets::remove_secret(constants::SECT_EXTERNAL_ACCOUNTS);
-    }
-    let bytes = serde_json::to_vec(&list).map_err(|e| format!("序列化数据失败\n{e}"))?;
-    crate::persist::secrets::save_secret(constants::SECT_EXTERNAL_ACCOUNTS, &bytes)
+    crate::persist::secrets::save_json_list(constants::SECT_EXTERNAL_ACCOUNTS, &list)
 }
 
 /// 登录：POST {api}/authserver/authenticate（Yggdrasil 协议）→ accessToken + profile。
@@ -120,7 +122,7 @@ pub async fn login(
         "requestUser": true,
         "clientToken": client_token,
     });
-    let resp = crate::downloader::fetcher::http()
+    let resp = fetcher::http()
         .post(&url)
         .json(&body)
         .timeout(std::time::Duration::from_secs(15))
@@ -130,11 +132,7 @@ pub async fn login(
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
-        // 皮肤站错误体常见 {"error": "...", "errorMessage": "..."}
-        let msg = serde_json::from_str::<serde_json::Value>(&text)
-            .ok()
-            .and_then(|v| v["errorMessage"].as_str().map(str::to_string))
-            .unwrap_or_else(|| format!("HTTP {status}"));
+        let msg = extract_yggdrasil_error(&text, status);
         return Err(format!("登录失败\n{msg}"));
     }
     let json: serde_json::Value = resp
@@ -223,7 +221,7 @@ pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccoun
         "clientToken": client_token,
         "requestUser": true,
     });
-    let resp = crate::downloader::fetcher::http()
+    let resp = fetcher::http()
         .post(&url)
         .json(&body)
         .timeout(std::time::Duration::from_secs(15))
@@ -233,10 +231,7 @@ pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccoun
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
-        let msg = serde_json::from_str::<serde_json::Value>(&text)
-            .ok()
-            .and_then(|v| v["errorMessage"].as_str().map(str::to_string))
-            .unwrap_or_else(|| format!("HTTP {status}"));
+        let msg = extract_yggdrasil_error(&text, status);
         // 401/ForbiddenOperationException = token 失效（密码改/账号删）→ 提示重新登录
         return Err(format!("登录凭据已失效，请重新登录\n{msg}"));
     }
@@ -284,8 +279,7 @@ pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccoun
     list[idx].profiles = profiles;
     let updated = list.remove(idx);
     list.push(updated.clone());
-    let bytes = serde_json::to_vec(&list).map_err(|e| format!("序列化数据失败\n{e}"))?;
-    crate::persist::secrets::save_secret(constants::SECT_EXTERNAL_ACCOUNTS, &bytes)?;
+    crate::persist::secrets::save_json_list(constants::SECT_EXTERNAL_ACCOUNTS, &list)?;
     Ok(updated)
 }
 
@@ -320,7 +314,7 @@ pub async fn switch_role(
         "selectedProfile": { "id": profile_id, "name": profile_name },
         "requestUser": true,
     });
-    let resp = crate::downloader::fetcher::http()
+    let resp = fetcher::http()
         .post(&url)
         .json(&body)
         .timeout(std::time::Duration::from_secs(15))
@@ -330,10 +324,7 @@ pub async fn switch_role(
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
-        let msg = serde_json::from_str::<serde_json::Value>(&text)
-            .ok()
-            .and_then(|v| v["errorMessage"].as_str().map(str::to_string))
-            .unwrap_or_else(|| format!("HTTP {status}"));
+        let msg = extract_yggdrasil_error(&text, status);
         return Err(format!("切换角色失败\n{msg}"));
     }
     let json: serde_json::Value = resp
@@ -351,16 +342,67 @@ pub async fn switch_role(
     // 保持启用（置末尾）
     let updated = list.remove(idx);
     list.push(updated.clone());
-    let bytes = serde_json::to_vec(&list).map_err(|e| format!("序列化数据失败\n{e}"))?;
-    crate::persist::secrets::save_secret(constants::SECT_EXTERNAL_ACCOUNTS, &bytes)?;
+    crate::persist::secrets::save_json_list(constants::SECT_EXTERNAL_ACCOUNTS, &list)?;
     Ok(updated)
+}
+
+/// 拉取第三方账号皮肤 URL + 模型类型（slim/classic）。
+/// 标准 Yggdrasil：GET {api}/sessionserver/session/minecraft/profile/{uuid} →
+/// properties[0].value（base64 JSON 含 textures.skin.url）；Ely.by 非标准路径
+/// /session/profile/{uuid}。命令层两个皮肤命令共用（消除整段重复），
+/// 各自再按需下载 base64 / 附带模型。
+pub async fn external_skin_info(api_url: &str, uuid: &str) -> Result<(String, String), String> {
+    let api = api_url.trim().trim_end_matches('/');
+    if api.is_empty() {
+        return Err("验证服务器地址为空".into());
+    }
+    let url = if is_ely_by(api) {
+        format!("{api}/session/profile/{uuid}")
+    } else {
+        format!("{api}/sessionserver/session/minecraft/profile/{uuid}")
+    };
+    let resp = fetcher::http()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| format!("请求皮肤失败\n{e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("该账号未设置皮肤\nHTTP {}", resp.status()));
+    }
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("响应解析失败\n{e}"))?;
+    // properties[0].value = base64 的 {textures:{SKIN:{url}}}（标准格式）
+    let prop = json["properties"]
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|p| p["value"].as_str())
+        .ok_or("该账号未设置皮肤")?;
+    use base64::Engine;
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(prop)
+        .map_err(|e| format!("皮肤数据解码失败\n{e}"))?;
+    let textures: serde_json::Value = serde_json::from_slice(&decoded)
+        .map_err(|e| format!("皮肤信息解析失败\n{e}"))?;
+    let skin = textures["textures"]["SKIN"].clone();
+    let skin_url = skin["url"]
+        .as_str()
+        .ok_or("该账号未设置皮肤")?
+        .to_string();
+    let model = skin["metadata"]["model"]
+        .as_str()
+        .unwrap_or("classic")
+        .to_string();
+    Ok((skin_url, model))
 }
 
 /// 探测皮肤站名称：GET {api}/api/yggdrasil → meta.serverName（失败/非标准返回 None，不阻塞登录）。
 pub async fn server_name(api_url: &str) -> Option<String> {
     let api = api_url.trim().trim_end_matches('/');
     let url = format!("{api}/api/yggdrasil");
-    let resp = crate::downloader::fetcher::http()
+    let resp = fetcher::http()
         .get(&url)
         .timeout(std::time::Duration::from_secs(5))
         .send()
@@ -387,7 +429,7 @@ pub async fn ensure_jar() -> Result<std::path::PathBuf, String> {
     let mirror = "https://bmclapi2.bangbang93.com/mirrors/authlib-injector/artifact/latest.json";
     let mut last_err = String::new();
     for url in [official, mirror] {
-        match crate::downloader::fetcher::http()
+        match fetcher::http()
             .get(url)
             .timeout(std::time::Duration::from_secs(10))
             .send()
@@ -409,7 +451,7 @@ pub async fn ensure_jar() -> Result<std::path::PathBuf, String> {
                 }
                 // 下载 jar（先临时文件再改名，失败不残留）
                 let tmp = path.with_file_name(format!("{AUTHLIB_JAR}.part"));
-                if let Err(e) = crate::downloader::fetcher::fetch_verified(
+                if let Err(e) = fetcher::fetch_verified(
                     &[dl.to_string()],
                     &tmp,
                     None::<fn(u64, u64)>,

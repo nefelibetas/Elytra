@@ -45,3 +45,25 @@ pub async fn profile_textures(uuid: &str) -> Result<serde_json::Value, String> {
         .map_err(|e| format!("皮肤数据解码失败\n{e}"))?;
     serde_json::from_slice(&decoded).map_err(|e| format!("皮肤数据解析失败\n{e}"))
 }
+
+/// 拉取正版玩家皮肤（含模型类型），官方 sessionserver 失败时回退 minotar
+/// （国内可直连的第三方皮肤源，实测稳定；无 model 信息 → "classic"）。
+/// 仅头像渲染路径使用——装饰性资源，直连失败不该让头像永久缺失；
+/// 主动操作（保存皮肤到本地）仍走官方直连（fetch_skin），失败需如实报错。
+/// 返回 (皮肤 PNG URL, 模型类型)。
+pub async fn skin_profile_with_fallback(uuid: &str) -> Result<(String, String), String> {
+    match profile_textures(uuid).await {
+        Ok(t) => {
+            let skin = &t["textures"]["SKIN"];
+            let url = skin["url"]
+                .as_str()
+                .ok_or("该账号未设置皮肤")?;
+            let model = skin["metadata"]["model"].as_str().unwrap_or("classic");
+            Ok((url.to_string(), model.to_string()))
+        }
+        Err(_) => Ok((
+            format!("https://minotar.net/skin/{uuid}"),
+            "classic".to_string(),
+        )),
+    }
+}
