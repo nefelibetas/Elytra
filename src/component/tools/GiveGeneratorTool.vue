@@ -5,6 +5,7 @@
 import { computed, ref } from "vue";
 import { Copy, Plus, Trash2, Search } from "@lucide/vue";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
+import CheckToggle from "../common/CheckToggle.vue";
 import {
   GIVE_ITEMS, GIVE_CATEGORIES, ENCHANTMENTS, ATTRIBUTES,
   GIVE_FORMAT_OPTIONS, buildGiveCommand, filterItems,
@@ -263,14 +264,8 @@ async function copyCommand() {
           ></textarea>
         </div>
         <div class="give-checks">
-          <label class="give-check">
-            <input v-model="unbreakable" type="checkbox" />
-            破坏无效
-          </label>
-          <label class="give-check">
-            <input v-model="hideTooltip" type="checkbox" />
-            隐藏信息框
-          </label>
+          <CheckToggle v-model="unbreakable" :size="14">破坏无效</CheckToggle>
+          <CheckToggle v-model="hideTooltip" :size="14">隐藏信息框</CheckToggle>
         </div>
       </div>
 
@@ -593,19 +588,6 @@ async function copyCommand() {
   display: flex;
   gap: 16px;
   padding: 2px 0;
-}
-
-.give-check {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12.5px;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.give-check input {
-  accent-color: var(--color-brand);
 }
 
 /* ===== 附魔/属性标签 ===== */

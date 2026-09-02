@@ -3,6 +3,7 @@
 import { onMounted } from "vue";
 import { memState } from "../../store/memory";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
+import CheckToggle from "../common/CheckToggle.vue";
 import {
   loWindowTitle, loPriority, loWinMode, loWinW, loWinH, loGameLang,
   loMemMode, loMemMb, loMinMem, loMemOptimize, loVerifySsl, launchError,
@@ -113,10 +114,7 @@ const winsizeOptions: SelOption[] = [
       </div>
 
       <div class="lo-row">
-        <label class="lo-check">
-          <input v-model="loVerifySsl" type="checkbox" @change="saveLaunchOptions" />
-          <span>在正版登录时验证 SSL 证书</span>
-        </label>
+        <CheckToggle v-model="loVerifySsl" @change="saveLaunchOptions">在正版登录时验证 SSL 证书</CheckToggle>
       </div>
     </div>
     <div v-if="launchError" class="err">{{ launchError }}</div>
@@ -129,16 +127,10 @@ const winsizeOptions: SelOption[] = [
     </div>
     <div class="launch-opts">
       <div class="lo-row">
-        <label class="lo-check">
-          <input type="radio" value="Auto" v-model="loMemMode" @change="saveLaunchOptions" />
-          <span>自动配置</span>
-        </label>
+        <CheckToggle type="radio" value="Auto" v-model="loMemMode" @change="saveLaunchOptions">自动配置</CheckToggle>
       </div>
       <div class="lo-row">
-        <label class="lo-check">
-          <input type="radio" value="Custom" v-model="loMemMode" @change="saveLaunchOptions" />
-          <span>自定义</span>
-        </label>
+        <CheckToggle type="radio" value="Custom" v-model="loMemMode" @change="saveLaunchOptions">自定义</CheckToggle>
         <input
           v-model.number="loMemMb"
           class="mem-slider"
@@ -154,10 +146,7 @@ const winsizeOptions: SelOption[] = [
         <span class="mem-slider-val" :class="{ disabled: loMemMode !== 'Custom' }">{{ fmtGb(loMemMb) }}</span>
       </div>
       <div class="lo-row">
-        <label class="lo-check">
-          <input :checked="loMinMem !== null" type="checkbox" :disabled="loMemMode !== 'Custom'" @change="toggleMinMem" />
-          <span :class="{ dim: loMemMode !== 'Custom' }">最小内存（-Xms）</span>
-        </label>
+        <CheckToggle :model-value="loMinMem !== null" :disabled="loMemMode !== 'Custom'" :dim="loMemMode !== 'Custom'" @change="toggleMinMem">最小内存（-Xms）</CheckToggle>
         <input
           v-if="loMinMem !== null"
           v-model.number="loMinMem"
@@ -173,10 +162,7 @@ const winsizeOptions: SelOption[] = [
         <span v-if="loMinMem !== null" class="mem-slider-val" :class="{ disabled: loMemMode !== 'Custom' }">{{ loMinMem }} MB</span>
       </div>
       <div class="lo-row">
-        <label class="lo-check">
-          <input v-model="loMemOptimize" type="checkbox" @change="saveLaunchOptions" />
-          <span>启动游戏前进行内存优化</span>
-        </label>
+        <CheckToggle v-model="loMemOptimize" @change="saveLaunchOptions">启动游戏前进行内存优化</CheckToggle>
       </div>
       <div class="mem-status">
         <div class="mem-bar-labels">

@@ -15,6 +15,7 @@ import {
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 import LoadingSpinner from "../common/LoadingSpinner.vue";
+import CheckToggle from "../common/CheckToggle.vue";
 
 onMounted(loadConfig);
 
@@ -170,18 +171,9 @@ function onJdkPick(value: string) {
       </div>
 
       <div class="lo-checks">
-        <label class="lo-check">
-          <input v-model="loDisableWrapper" type="checkbox" @change="saveLaunchOptions" />
-          <span>禁用 Java Launch Wrapper</span>
-        </label>
-        <label class="lo-check">
-          <input v-model="loDisableAgent" type="checkbox" @change="saveLaunchOptions" />
-          <span>禁用 LWJGL Unsafe Agent</span>
-        </label>
-        <label class="lo-check">
-          <input v-model="loHighGpu" type="checkbox" @change="saveLaunchOptions" />
-          <span>使用高性能显卡</span>
-        </label>
+        <CheckToggle v-model="loDisableWrapper" @change="saveLaunchOptions">禁用 Java Launch Wrapper</CheckToggle>
+        <CheckToggle v-model="loDisableAgent" @change="saveLaunchOptions">禁用 LWJGL Unsafe Agent</CheckToggle>
+        <CheckToggle v-model="loHighGpu" @change="saveLaunchOptions">使用高性能显卡</CheckToggle>
       </div>
     </div>
   </div>
