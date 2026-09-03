@@ -271,14 +271,14 @@ struct HostedPackFile {
 /// 返回 (files[] 条目, 需从 overrides 排除的文件名集合)。
 /// 网络失败/匹配不到：文件留在 overrides 物理打包（离线降级，静默）。
 async fn resolve_hosted_mods(
-    vdir: &std::path::Path,
+    vdir: &Path,
 ) -> (Vec<HostedPackFile>, std::collections::HashSet<String>) {
     let mods_dir = vdir.join("mods");
     let Ok(rd) = std::fs::read_dir(&mods_dir) else {
         return (Vec::new(), std::collections::HashSet::new());
     };
     // 压缩/资源类文件（与 PCL2 导出集合一致：jar/zip/rar/disabled/old）
-    let mut candidates: Vec<std::path::PathBuf> = rd
+    let mut candidates: Vec<PathBuf> = rd
         .flatten()
         .map(|e| e.path())
         .filter(|p| {
@@ -294,7 +294,7 @@ async fn resolve_hosted_mods(
     }
     // 算 sha1（文件小，顺序读即可）
     let mut sha1s: Vec<String> = Vec::with_capacity(candidates.len());
-    let mut kept: Vec<(std::path::PathBuf, Vec<u8>, String)> = Vec::with_capacity(candidates.len());
+    let mut kept: Vec<(PathBuf, Vec<u8>, String)> = Vec::with_capacity(candidates.len());
     for path in candidates.drain(..) {
         let Ok(data) = std::fs::read(&path) else {
             continue;

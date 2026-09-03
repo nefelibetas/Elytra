@@ -84,7 +84,7 @@ pub async fn run_install_jdk(
         let cur_total = cur_total.clone();
         async move {
             let mut tick = tokio::time::interval(std::time::Duration::from_millis(150));
-            let mut sampler = crate::task::progress::SpeedSampler::new();
+            let mut sampler = task::progress::SpeedSampler::new();
             loop {
                 tick.tick().await;
                 // 终态（done/error/cancelled）由任务侧收口发出，心跳随之自退出

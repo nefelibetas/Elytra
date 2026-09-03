@@ -252,7 +252,7 @@ pub async fn upload_skin(access_token: &str, file_path: &str, variant: &str) -> 
     if !resp.status().is_success() {
         let status = resp.status();
         let body: serde_json::Value = resp.json().await.unwrap_or_default();
-        return Err(format!("上传皮肤失败\n{}", crate::auth::microsoft::extract_api_error(&body, status)));
+        return Err(format!("上传皮肤失败\n{}", microsoft::extract_api_error(&body, status)));
     }
     Ok(())
 }

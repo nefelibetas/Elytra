@@ -82,7 +82,7 @@ pub fn system_memory_mb() -> (u64, u64) {
             fn GlobalMemoryStatusEx(lp_buffer: *mut MEMORYSTATUSEX) -> BOOL;
         }
         let mut status = MEMORYSTATUSEX {
-            dw_length: std::mem::size_of::<MEMORYSTATUSEX>() as DWORD,
+            dw_length: size_of::<MEMORYSTATUSEX>() as DWORD,
             dw_memory_load: 0,
             ull_total_phys: 0,
             ull_avail_phys: 0,
