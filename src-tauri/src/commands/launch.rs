@@ -440,7 +440,7 @@ pub async fn get_game_log(game_dir: String, version_name: String) -> String {
 
 /// 打开启动器日志所在目录（exe 旁 Elytra/，launcher.log 所在地）。
 #[tauri::command]
-pub fn open_launcher_log_dir(app: tauri::AppHandle) -> Result<(), String> {
+pub fn open_launcher_log_dir(app: AppHandle) -> Result<(), String> {
     let dir = crate::util::exe_dir().join(constants::CONFIG_DIR);
     super::gamedirs::open_folder(app, dir.to_string_lossy().to_string())
 }

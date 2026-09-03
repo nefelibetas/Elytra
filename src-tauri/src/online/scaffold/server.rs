@@ -112,7 +112,6 @@ fn handle_connection(mut stream: TcpStream, handlers: &Handlers) -> io::Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{Cursor, Read, Write};
 
     #[test]
     fn dispatch_unknown_returns_255() {

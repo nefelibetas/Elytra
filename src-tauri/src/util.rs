@@ -147,7 +147,7 @@ pub fn is_simple_name(name: &str) -> bool {
 
 /// 目录条目枚举（文件或子目录，取决于 want_dir）：返回 (名称, 字节大小, 修改时间秒)。
 /// 目录不存在/不可读返回空 Vec（调用方多为列表类命令，静默空列表语义）。
-pub fn dir_entries(dir: &std::path::Path, want_dir: bool) -> Vec<(String, u64, u64)> {
+pub fn dir_entries(dir: &Path, want_dir: bool) -> Vec<(String, u64, u64)> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -264,7 +264,7 @@ pub fn is_supported_image(bytes: &[u8]) -> bool {
 /// - Windows：exe 旁（便携语义，与历史一致）
 /// - macOS：`~/Library/Application Support`——app bundle 内部只读且破坏签名，游戏数据必须外置
 /// - Linux：exe 旁可写则 exe 旁（便携 tar.gz 场景），否则 `~`（deb/AppImage 打包场景，/usr、挂载点只读）
-pub fn default_game_dir_base() -> std::path::PathBuf {
+pub fn default_game_dir_base() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
         if let Some(home) = std::env::var_os("HOME") {

@@ -153,10 +153,10 @@ pub async fn fetch_external_skin(api_url: String, uuid: String) -> Result<String
 pub async fn fetch_external_skin_profile(
     api_url: String,
     uuid: String,
-) -> Result<crate::commands::account::SkinProfile, String> {
+) -> Result<SkinProfile, String> {
     let (url, model) = crate::auth::external::external_skin_info(&api_url, &uuid).await?;
     let b64 = account::fetch_b64(&url, "下载皮肤").await?;
-    Ok(crate::commands::account::SkinProfile { skin: b64, model })
+    Ok(SkinProfile { skin: b64, model })
 }
 
 

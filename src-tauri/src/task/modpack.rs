@@ -976,7 +976,7 @@ fn extract_member(
 
 /// 解压 overrides/ 到版本目录根（词法穿越防护对齐 jdk safe_runtime_path）。
 fn extract_overrides(ov: &OverridesRef, vdir: &Path) -> Result<(), String> {
-    let mut archive = crate::downloader::extract::open_zip(std::path::Path::new(&ov.zip_path), "整合包缓存")?;
+    let mut archive = crate::downloader::extract::open_zip(Path::new(&ov.zip_path), "整合包缓存")?;
     for i in 0..archive.len() {
         let mut entry = archive
             .by_index(i)
@@ -999,7 +999,7 @@ fn extract_overrides(ov: &OverridesRef, vdir: &Path) -> Result<(), String> {
 
 /// overrides 解压总量（未压缩字节，进度基线用；读不到按 0）。
 fn sum_override_bytes(ov: &OverridesRef) -> u64 {
-    let Ok(mut archive) = crate::downloader::extract::open_zip(std::path::Path::new(&ov.zip_path), "整合包缓存") else {
+    let Ok(mut archive) = crate::downloader::extract::open_zip(Path::new(&ov.zip_path), "整合包缓存") else {
         return 0;
     };
     let mut total = 0u64;

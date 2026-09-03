@@ -57,7 +57,7 @@ async fn fetch_cancelled_returns_immediately() {
     let body = vec![b'x'; 256 * 1024];
     let url = serve(body).await;
     let dest = temp_dest("fetch_cancelled");
-    let cancel = Arc::new(std::sync::atomic::AtomicBool::new(true)); // 预置已取消
+    let cancel = Arc::new(AtomicBool::new(true)); // 预置已取消
 
     let t0 = std::time::Instant::now();
     let res = fetch_verified_c(&[url], &dest, None::<fn(u64, u64)>, "", Some(&cancel)).await;

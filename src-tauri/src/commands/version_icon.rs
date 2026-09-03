@@ -26,7 +26,7 @@ fn version_icon_path(vdir: &Path) -> Option<PathBuf> {
 
 /// 校验版本目录名：仅接受简单目录名，防路径穿越。
 fn ensure_simple_dir_name(name: &str) -> Result<(), String> {
-    if !crate::util::is_simple_name(name) {
+    if !util::is_simple_name(name) {
         return Err(format!("版本目录名不合法\n{name}"));
     }
     Ok(())

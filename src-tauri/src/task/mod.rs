@@ -503,16 +503,16 @@ mod tests {
     fn remove_persists_terminal_status_to_snapshot() {
         let tm = Arc::new(TaskManager::default());
         let (task_id, _cancel, progress) = tm.create("测试任务", &["步骤"]);
-        super::store::save_snapshot(
+        store::save_snapshot(
             &task_id,
             "测试任务",
-            &super::store::JobSpec::Repair {
+            &store::JobSpec::Repair {
                 version_dir_name: "26.2".into(),
             },
             TaskStatus::Running,
         );
         assert!(
-            super::store::list_interrupted()
+            store::list_interrupted()
                 .iter()
                 .any(|j| j.id == task_id),
             "running 快照应出现在中断列表"
@@ -522,11 +522,11 @@ mod tests {
         tm.remove(&task_id);
         assert!(!tm.exists(&task_id), "remove 应移除内存注册");
         assert!(
-            !super::store::list_interrupted()
+            !store::list_interrupted()
                 .iter()
                 .any(|j| j.id == task_id),
             "完成后快照应写回终态，不得被列为中断任务"
         );
-        super::store::remove_snapshot(&task_id);
+        store::remove_snapshot(&task_id);
     }
 }
