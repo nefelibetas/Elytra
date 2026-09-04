@@ -268,7 +268,7 @@ pub fn default_game_dir_base() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
         if let Some(home) = std::env::var_os("HOME") {
-            return std::path::PathBuf::from(home).join("Library/Application Support");
+            return PathBuf::from(home).join("Library/Application Support");
         }
     }
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -284,7 +284,7 @@ pub fn default_game_dir_base() -> PathBuf {
     // macOS 无 HOME 兜底 / Linux exe 目录不可写：退回用户主目录
     #[cfg(not(target_os = "windows"))]
     std::env::var_os("HOME")
-        .map(std::path::PathBuf::from)
+        .map(PathBuf::from)
         .unwrap_or_else(exe_dir)
 }
 
