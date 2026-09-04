@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
-import { initNavHistory, goBack, goForward } from "./store/nav";
 import { useRouter } from "vue-router";
+import { initNavHistory, goBack, goForward } from "./store/nav";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import TitleBar from "./component/common/TitleBar.vue";
 import AlertDialog from "./component/common/AlertDialog.vue";
 import { dlState, ensureListen, checkInterrupted, waitingUser, decideWaitingTask, type TaskKind } from "./store/download";
@@ -10,6 +11,11 @@ import { setSelected } from "./store/selectedVersion";
 import { toastState, showToast } from "./utils/toast";
 
 const router = useRouter();
+
+/** 独立窗口分流：地图编辑器窗口（label=map-editor）是独立 WebView，
+ *  不共享主窗口的下载监听/导航栈/快捷键语义，也不渲染主窗口 TitleBar。
+ *  该窗口自带精简 chrome（MapEditor.vue 内部实现）。 */
+const isStandaloneWindow = getCurrentWindow().label !== "main";
 
 /** 下载失败错误 dialog（body 只放短提示，完整错误由复制按钮带走）。 */
 const errorDialog = ref(false);
@@ -112,6 +118,12 @@ function onContextMenu(e: MouseEvent) {
 }
 
 onMounted(() => {
+  if (isStandaloneWindow) {
+    // 独立窗口（地图编辑器）：只做右键拦截，其余主窗口语义（下载监听/
+    // 导航栈/ESC 回主页/hash pin/内存监控）全部不适用
+    document.addEventListener("contextmenu", onContextMenu);
+    return;
+  }
   pinnedHash = location.hash || "#/";
   router.afterEach(() => {
     pinnedHash = location.hash || "#/";
@@ -134,6 +146,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener("contextmenu", onContextMenu);
+  if (isStandaloneWindow) return;
   document.removeEventListener("keydown", onKeyDown);
   document.removeEventListener("mousedown", onSideButton, true);
   document.removeEventListener("mouseup", onSideButton, true);
@@ -141,10 +154,18 @@ onUnmounted(() => {
   document.removeEventListener("pointerup", onSideButton, true);
   window.removeEventListener("popstate", onPopState);
 });
+
 </script>
 
 <template>
-  <div class="app-layout">
+  <!-- 独立窗口（地图编辑器）：无主窗口 chrome，页面自带精简标题栏与布局 -->
+  <div v-if="isStandaloneWindow" class="app-layout standalone">
+    <main class="main-content">
+      <router-view />
+    </main>
+  </div>
+  <!-- 主窗口：TitleBar + 路由动画 + 全局弹层 -->
+  <div v-else class="app-layout">
     <TitleBar />
     <main class="main-content">
       <router-view v-slot="{ Component, route }">
@@ -442,6 +463,13 @@ input, textarea {
   overflow-x: hidden;
   scrollbar-gutter: stable;
   background-color: var(--surface-page);
+}
+
+/* 独立窗口（地图编辑器）：无 TitleBar，画布区占满窗口且禁滚动
+   （地图交互自管缩放/平移，容器滚动会吞掉拖拽手势） */
+.app-layout.standalone .main-content {
+  overflow: hidden;
+  scrollbar-gutter: auto;
 }
 
 /* 窗口边缘加深覆盖层：色相随主题切换（--edge-line / --edge-shade）。

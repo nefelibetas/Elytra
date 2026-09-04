@@ -10,10 +10,13 @@
     "core:window:allow-start-dragging",
     "core:window:allow-hide",
     "core:window:allow-show",
-    "core:window:allow-unminimize",
     "opener:default",
     "dialog:default",
     "dialog:allow-open",
-    "dialog:allow-save"
+    "dialog:allow-save",
+    "core:webview:allow-create-webview-window",
+    "core:webview:allow-set-webview-focus",
+    "core:event:allow-emit-to",
+    "core:event:allow-listen"
   ]
 }

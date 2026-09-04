@@ -3,12 +3,13 @@
 // 多选交互：点击 item 选中，底部 action 栏全选/取消 + 批量删除。
 import { computed, ref, onMounted } from "vue";
 import { useRoute } from "vue-router";
-import { Folder, Trash2, Map } from "@lucide/vue";
+import { Folder, Trash2, Map, MapPinned } from "@lucide/vue";
 import { invoke } from "@tauri-apps/api/core";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 import { fmtUnix } from "../../utils/format";
 import { useSelectable } from "../../utils/useSelectable";
+import { openMapEditorWindow } from "../../store/mapEditor";
 import IconImage from "../common/IconImage.vue";
 import AlertDialog from "../common/AlertDialog.vue";
 import LoadingSpinner from "../common/LoadingSpinner.vue";
@@ -75,6 +76,15 @@ onMounted(async () => {
   }
 });
 
+/** 打开地图编辑器窗口（独立 WebView；初始定位到该存档）。 */
+async function openMapEditor(version: string, world: string) {
+  try {
+    await openMapEditorWindow(version, world);
+  } catch (e) {
+    showToast(errMsg(e));
+  }
+}
+
 /** 打开存档文件夹（目录不存在先创建）。 */
 async function openFolder() {
   try {
@@ -129,6 +139,9 @@ async function openFolder() {
                   <span class="vss-local-name">{{ w.name }}</span>
                   <span class="vss-local-meta">最后游玩 {{ fmtUnix(w.last_modified) }}</span>
                 </span>
+                <button class="vss-map-edit" :title="`地图编辑 ${w.name}`" @click.stop="openMapEditor(versionName, w.name)">
+                  <MapPinned :size="14" />
+                </button>
               </div>
             </div>
           </div>
@@ -307,6 +320,34 @@ async function openFolder() {
 .vss-local-meta {
   font-size: 11px;
   color: var(--text-tertiary);
+}
+
+/* 地图编辑按钮：默认隐藏，item hover 滑入；click.stop 防误触多选 */
+.vss-map-edit {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateX(4px);
+  transition: opacity 0.15s, transform 0.15s, background 0.1s, color 0.1s;
+}
+
+.vss-item-body:hover .vss-map-edit {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.vss-map-edit:hover {
+  background: var(--surface-hover);
+  color: var(--color-brand);
 }
 
 /* 底部 action 栏：选中 ≥1 时滑出，固定列表卡底部 */

@@ -396,6 +396,33 @@ mod tests_icon {
         assert_eq!(to_base64(b"foo"), "Zm9v");
         assert_eq!(to_base64(b"foobar"), "Zm9vYmFy");
     }
+
+    #[test]
+    fn infer_loader_variants() {
+        assert_eq!(
+            infer_loader_from_json(
+                r#"{"mainClass":"net.fabricmc.loader.impl.launch.knot.KnotClient"}"#
+            ),
+            "fabric"
+        );
+        assert_eq!(
+            infer_loader_from_json(r#"{"libraries":[{"name":"net.minecraftforge:forge:47.1.0"}]}"#),
+            "forge"
+        );
+        assert_eq!(
+            infer_loader_from_json(r#"{"libraries":[{"name":"net.neoforged:neoforge:21.0.0"}]}"#),
+            "neoforge"
+        );
+        // neoforged 含 forge 子串：neoforge 必须在 forge 前匹配
+        assert_eq!(
+            infer_loader_from_json(r#"{"mainClass":"net.neoforged.bootstrap.BootstrapLauncher"}"#),
+            "neoforge"
+        );
+        assert_eq!(
+            infer_loader_from_json(r#"{"mainClass":"net.minecraft.client.main.Main"}"#),
+            "vanilla"
+        );
+    }
 }
 
 /// 图标 IPC 载荷：mime 由魔数嗅探，data 为 base64。
@@ -461,4 +488,21 @@ pub fn init_file_logging() {
         }
     }
     std::mem::forget(file);
+}
+
+/// 从版本 json 文本推断 loader（轻量字符串检查，无需完整解析）：
+/// 特征名匹配优先级 fabric → neoforge → forge → optifine（neoforge 在 forge 前，
+/// 避免 "neoforged" 子串误匹配）；无特征视为原版。
+pub fn infer_loader_from_json(text: &str) -> String {
+    if text.contains("net.fabricmc") {
+        "fabric".into()
+    } else if text.contains("net.neoforged") {
+        "neoforge".into()
+    } else if text.contains("net.minecraftforge") {
+        "forge".into()
+    } else if text.contains("optifine") {
+        "optifine".into()
+    } else {
+        "vanilla".into()
+    }
 }

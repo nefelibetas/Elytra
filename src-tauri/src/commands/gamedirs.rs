@@ -1,7 +1,7 @@
 use crate::config::game_dirs::{default_dir, exe_dir_name, GameDir, GameDirsConfig};
 use crate::constants;
 
-fn read_dirs() -> Vec<GameDir> {
+pub(crate) fn read_dirs() -> Vec<GameDir> {
     let cfg: GameDirsConfig = crate::persist::read(constants::SECT_GAME_DIRS).unwrap_or_default();
     if cfg.dirs.is_empty() {
         // 首次使用（或全部删除后）：生成默认目录（exe 同级 .minecraft）并持久化
