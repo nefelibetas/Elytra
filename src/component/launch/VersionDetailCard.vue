@@ -3,7 +3,7 @@
 // 业务在 store/versionDetail；重命名/修复/打开文件夹为本地编排。
 import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { Pencil, Folder, FolderOpen, CloudDownload, Puzzle, Map, Settings2, Palette, Database, Sun, ImagePlus } from "@lucide/vue";
+import { Pencil, Folder, FolderOpen, CloudDownload, Puzzle, Map, MapPinned, Settings2, Palette, Database, Sun, ImagePlus } from "@lucide/vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import { fmtUnix } from "../../utils/format";
 import { invoke } from "@tauri-apps/api/core";
@@ -25,6 +25,7 @@ import ErrorState from "../common/ErrorState.vue";
 import { dlState } from "../../store/download";
 import { dlTranslateMode } from "../../store/downloaderConfig";
 import { selectedVersion, setSelected } from "../../store/selectedVersion";
+import { openMapEditorWindow } from "../../store/mapEditor";
 import {
   worlds, worldsLoading, worldsError, worldIcons, loadWorldIcon,
   mods, modsLoading, modsError, modsNetworkError,
@@ -35,6 +36,15 @@ import {
 } from "../../store/versionDetail";
 
 const versionName = computed(() => selectedVersion.value);
+
+/** 打开地图编辑器窗口（独立 WebView；初始定位到该存档）。 */
+async function openMapEditor(version: string, world: string) {
+	try {
+		await openMapEditorWindow(version, world);
+	} catch (e) {
+		showToast(errMsg(e));
+	}
+}
 const info = computed(() => classifyVersion(versionName.value));
 /** loader 判定：后端 json 特征推断优先（PCL2 等目录名无标记实例也能识别），目录名分类兜底。
  *  与版本选择页（gameDirs.ts）同规则，保证两处图标一致。 */
@@ -353,6 +363,9 @@ async function confirmRename() {
               <span class="vdc-row-name">{{ w.name }}</span>
               <span class="vdc-row-meta">最后游玩 {{ fmtUnix(w.last_modified) }}</span>
             </div>
+            <button class="vdc-world-edit" :title="`地图编辑 ${w.name}`" @click.stop="openMapEditor(versionName, w.name)">
+              <MapPinned :size="14" />
+            </button>
           </div>
         </div>
         </div>
@@ -660,6 +673,34 @@ async function confirmRename() {
 /* 世界行：真实缩略图（icon.png）或 Map 占位；缩略图圆角卡片 */
 .vdc-world-row {
   padding: 6px 16px;
+}
+
+/* 地图编辑按钮：默认隐藏，行 hover 滑入 */
+.vdc-world-edit {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateX(4px);
+  transition: opacity 0.15s, transform 0.15s, background 0.1s, color 0.1s;
+}
+
+.vdc-world-row:hover .vdc-world-edit {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.vdc-world-edit:hover {
+  background: var(--surface-hover);
+  color: var(--color-brand);
 }
 
 .vdc-world-thumb {

@@ -12,6 +12,7 @@ const ResourceDetail = () => import("../pages/ResourceDetail.vue");
 const VersionSelect = () => import("../pages/VersionSelect.vue");
 const VersionSetup = () => import("../pages/VersionSetup.vue");
 const CustomThemeEditor = () => import("../pages/CustomThemeEditor.vue");
+const MapEditor = () => import("../pages/MapEditor.vue");
 
 declare module "vue-router" {
   interface RouteMeta {
@@ -34,6 +35,7 @@ const routes = [
   { path: "/version-select", name: "version-select", component: VersionSelect },
   { path: "/version-setup", name: "version-setup", component: VersionSetup },
   { path: "/custom-theme", name: "custom-theme", component: CustomThemeEditor },
+  { path: "/map-editor", name: "map-editor", component: MapEditor },
 ];
 
 const router = createRouter({
@@ -41,7 +43,6 @@ const router = createRouter({
   routes,
 });
 
-/** 页面层级：0 = 顶级 tab，1 = 一级详情，2 = 二级详情（动画方向按层级进出）。 */
 const routeLevel: Record<string, number> = {
   launch: 0,
   download: 0,
@@ -52,6 +53,8 @@ const routeLevel: Record<string, number> = {
   "version-select": 1,
   "custom-theme": 1,
   "version-setup": 2,
+  // 独立窗口页面：不与主窗口路由互跳，等级独立（无动画耦合）
+  "map-editor": 0,
 };
 
 /** 顶级 tab 顺序（同级切换按此决定左右方向）。 */
