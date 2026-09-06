@@ -39,7 +39,7 @@ const realQueued = new Map<string, { rx: number; rz: number; mtime: number }>();
 const realFails = new Map<string, number>();
 const realCooldown = new Map<string, number>();
 
-/** 地图瓦片错误收集：console + window.__mapTileErrors（远程诊断用，上限 100）。 */
+/** 错误收集：console + window.__mapTileErrors（远程诊断用，上限 100）。 */
 function reportMapError(msg: string, detail?: unknown) {
 	console.error("[MapCanvas]", msg, detail ?? "");
 	try {
@@ -50,6 +50,20 @@ function reportMapError(msg: string, detail?: unknown) {
 	} catch {
 		// 记录失败不影响主流程
 	}
+}
+
+/** invoke 二进制载荷归一为 PNG Blob：tauri ipc::Response 经 invoke 到达 JS 时
+ *  大载荷走二进制通道（ArrayBuffer），小载荷退化为 JSON 数字数组（实测
+ *  预测瓦片 ~12KB 必走数组）——直接 `new Blob([arr])` 会被字符串化导致
+ *  image decode failed，统一转 Uint8Array 再入 Blob。 */
+function pngBlob(payload: unknown): Blob {
+	const u8: Uint8Array = payload instanceof ArrayBuffer
+		? new Uint8Array(payload)
+		: Array.isArray(payload)
+			? Uint8Array.from(payload as number[])
+			: new Uint8Array(payload as ArrayBufferLike);
+	// TS6 TypedArray 泛型：显式以 ArrayBuffer 视图包装满足 BlobPart
+	return new Blob([new Uint8Array(u8.buffer as ArrayBuffer)], { type: "image/png" });
 }
 /** 预测瓦片（未探索区）：key = "worldPath|rx,rz"（跨世界切换防串图）。 */
 const predTiles = new Map<string, HTMLImageElement>();
@@ -313,7 +327,7 @@ function startRealTile(rx: number, rz: number, mtime: number) {
 		style: props.style,
 	})
 		.then(buf => {
-			const blob = new Blob([buf], { type: "image/png" });
+			const blob = pngBlob(buf);
 			const url = URL.createObjectURL(blob);
 			const img = new Image();
 			img.onload = () => {
@@ -360,7 +374,8 @@ function requestPredTile(rx: number, rz: number) {
 		}
 		invalidate();
 	};
-	const watchdog = window.setTimeout(() => done("timeout", "no settle in 40s"), 40000);
+	// 兜底：冷算（debug 后端渲染可达 40~60s/张）不应触发误报超时；90s 兜底
+	const watchdog = window.setTimeout(() => done("timeout", "no settle in 90s"), 90000);
 	invoke<ArrayBuffer>("get_prediction_tile", {
 		worldPath: props.worldPath,
 		dimension: props.dimension,
@@ -368,7 +383,7 @@ function requestPredTile(rx: number, rz: number) {
 		rz,
 	})
 		.then(buf => {
-			const blob = new Blob([buf], { type: "image/png" });
+			const blob = pngBlob(buf);
 			const url = URL.createObjectURL(blob);
 			const img = new Image();
 			img.onload = () => {
