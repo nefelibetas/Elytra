@@ -32,6 +32,12 @@ fn short_hash(s: &str) -> String {
 /// v3：部分生成 chunk 也开始渲染（此前整块留空）——行为变更必须升版。
 const TILE_CACHE_FORMAT: &str = "v3-partial-render";
 
+/// 种子模式预测瓦片缓存键（无存档：世界路径位置由种子代替；种子变化自动失效）。
+pub fn seed_prediction_cache_key(seed: i64, rx: i32, rz: i32) -> PathBuf {
+    let key = format!("biomepred-v2-terrain|seed:{seed}|{rx}|{rz}|t1");
+    mapcache_dir().join(format!("{}.png", short_hash(&key)))
+}
+
 /// 瓦片缓存键：格式版本 + 世界路径 + 维度 + region 坐标 + 样式 + region mtime。
 /// region 文件经 domain 维度解析定位（26.x 与旧布局一致）——与列表/渲染同源，
 /// 否则 26.x 布局下列表有 region 而缓存键在旧路径查不到文件返回 None。

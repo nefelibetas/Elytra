@@ -166,6 +166,73 @@ pub async fn get_prediction_tile(
     Ok(tauri::ipc::Response::new(png))
 }
 
+/// 种子模式预测瓦片：无存档依赖，直接以种子渲染（26.x 参数族水域语义）。
+/// 种子为十进制 i64 字符串（数值种子可超 2^53，禁止经 JS Number 中转丢精度）。
+/// 缓存键含种子；渲染在 spawn_blocking（与存档版同管线）。
+#[tauri::command]
+pub async fn get_prediction_tile_seed(
+    seed: String,
+    rx: i32,
+    rz: i32,
+) -> Result<tauri::ipc::Response, String> {
+    let seed = parse_i64_seed(&seed)?;
+    let cache_path = crate::map::tile_cache::seed_prediction_cache_key(seed, rx, rz);
+    if let Some(png) = crate::map::tile_cache::read_cached_tile(&cache_path) {
+        return Ok(tauri::ipc::Response::new(png));
+    }
+    let png = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        let png = render_seed_prediction_png(seed, rx, rz)?;
+        crate::map::tile_cache::write_tile(&cache_path, &png)?;
+        Ok(png)
+    })
+    .await
+    .map_err(|e| format!("预测任务异常\n{e}"))??;
+    Ok(tauri::ipc::Response::new(png))
+}
+
+/// 种子悬停载荷：群系预测 + 水面标记（block 恒 null → 前端走"预测区"语义）。
+#[derive(serde::Serialize)]
+pub struct SeedBlockInfo {
+    pub block: Option<String>,
+    pub biome: Option<String>,
+    pub water: bool,
+}
+
+/// 种子模式悬停：直接以种子查询（不依赖存档/region）。
+#[tauri::command]
+pub fn get_seed_map_block(seed: String, x: i32, z: i32) -> Result<SeedBlockInfo, String> {
+    let seed = parse_i64_seed(&seed)?;
+    let pred = crate::map::biomegen::world::shared_predictor(seed, false);
+    let qx = x.div_euclid(4);
+    let qz = z.div_euclid(4);
+    let id = pred.predict_cell(qx, qz, 16);
+    let table = crate::map::biomegen::overworld_26();
+    let biome = ((id as usize) < table.names.len()).then(|| table.names[id as usize].to_string());
+    // 水标依赖地形引擎；引擎缺陷（内嵌数据）时仅丢水标不丢群系
+    let water = crate::map::biomegen::terrain::solver::shared_terrain(seed)
+        .map(|eng| eng.water_class(x as f64, z as f64).is_some())
+        .unwrap_or(false);
+    Ok(SeedBlockInfo {
+        block: None,
+        biome,
+        water,
+    })
+}
+
+/// 十进制 i64 种子解析（前端保证十进制形态；非数字种子在前端转 Java 哈希）。
+fn parse_i64_seed(seed: &str) -> Result<i64, String> {
+    seed.trim()
+        .parse::<i64>()
+        .map_err(|_| "种子无效\n仅支持十进制整数种子（i64 范围）".to_string())
+}
+
+/// 种子渲染共用：26.x 参数族（DataVersion ≥ 4790 校准）固定走水域分层管线。
+fn render_seed_prediction_png(seed: i64, rx: i32, rz: i32) -> Result<Vec<u8>, String> {
+    let pred = crate::map::biomegen::world::shared_predictor(seed, false);
+    let eng = crate::map::biomegen::terrain::solver::shared_terrain(seed)?;
+    crate::map::biomegen::png_tile::render_region_prediction_terrain(&pred, Some(&eng), rx, rz)
+}
+
 /// 地形 final_density 语义按 26.1.2（DataVersion 4790，实测校准存档）参数族校准。
 /// 旧参数族（如 1.20.1 = 3465）仅输出群系色底图，避免 26.x 密度树误画水域；
 /// 未来更高版本沿用同族参数时继续生效（若 Mojang 改地形结构需重校准此值）。
