@@ -177,17 +177,17 @@ export async function openMapEditorWindow(version: string, world: string) {
 	});
 }
 
-/** 种子查看器：直开地图编辑器种子模式（无存档依赖；现有窗口先关再开避免模式串扰）。
- *  入口方（主窗口任意 UI）可直接调用；种子支持十进制或 Java 哈希语义，见编辑器内解析。 */
+/** 种子查看器窗口（label=seed-map，独立于地图编辑器；预测/种子功能剥离后的住所）。
+ *  无存档依赖：种子字符串直接深链开图。 */
 export async function openSeedMapWindow(seed: string) {
-	const existing = await WebviewWindow.getByLabel("map-editor");
+	const existing = await WebviewWindow.getByLabel("seed-map");
 	if (existing) {
 		await existing.destroy();
 		await delay(120);
 	}
-	new WebviewWindow("map-editor", {
-		url: `index.html#/map-editor?mode=seed&seed=${encodeURIComponent(seed)}`,
-		title: `种子查看器 - Elytra 地图`,
+	new WebviewWindow("seed-map", {
+		url: `index.html#/seed-map?seed=${encodeURIComponent(seed)}`,
+		title: "种子查看器 - Elytra 地图",
 		width: 1100,
 		height: 700,
 		minWidth: 900,
