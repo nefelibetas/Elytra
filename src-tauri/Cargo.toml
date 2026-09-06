@@ -73,13 +73,10 @@ network-interface = "2"
 # NBT serde（fastnbt）+ chunk 结构与渲染（fastanvil，render feature 传递 image/tar/serde_json）+
 # 瓦片 PNG 编码（png，0.18）
 mca = { version = "2.1", default-features = false }
-fastnbt = "2.6"
-fastanvil = "0.32"
 png = "0.18"
 # fastanvil 的 render feature 依赖 image 0.23 但 default-features=false（无 png codec），
 # 其 load_rendered_palette 要解 grass/foliage 色图 PNG——这里跨 crate 显式开启 png feature
 # （Cargo feature 联动按并集解析）
-image = { version = "0.23", default-features = false, features = ["png"] }
 # Java LZ4Block 格式（1.21.5+ 自定义压缩 lz4_java_wrc / byte-4 LZ4 共用此格式）：
 # mca/fastanvil 均内置，但我们的 CustomDecompression 兜底要直接使用故显式声明
 lz4-java-wrc = "0.2"
