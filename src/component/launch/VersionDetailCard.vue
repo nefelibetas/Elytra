@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 主页右侧版本卡片：单卡片，Tab 切换存档 / Mod 内容 + 打开存档按钮 + 底部（游戏文件夹 / 修复）。
 // 业务在 store/versionDetail；重命名/修复/打开文件夹为本地编排。
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { Pencil, Folder, FolderOpen, CloudDownload, Puzzle, Map, MapPinned, Settings2, Palette, Database, Sun, ImagePlus } from "@lucide/vue";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -27,11 +27,12 @@ import { dlTranslateMode } from "../../store/downloaderConfig";
 import { selectedVersion, setSelected } from "../../store/selectedVersion";
 import { openMapEditorWindow } from "../../store/mapEditor";
 import {
-  worlds, worldsLoading, worldsError, worldIcons, loadWorldIcon,
+  worlds, worldsLoading, worldsError, worldIcons,
   mods, modsLoading, modsError, modsNetworkError,
   resourceRefs,
   isModLoaderVersion, versionLoader,
   resetVersionDetail, loadVersionLoader, loadWorlds, loadMods, loadModsQuick, loadResourceLists,
+  startWorldsLivePolling, stopWorldsLivePolling,
   type ResourceKind,
 } from "../../store/versionDetail";
 
@@ -137,11 +138,6 @@ watch(tabs, t => {
   if (!t.includes(tab.value)) tab.value = "worlds";
 });
 
-// 存档列表就绪后懒加载各世界缩略图（本地读取，缺失保持 Map 占位）。
-watch(worlds, list => {
-  for (const w of list) void loadWorldIcon(versionName.value, w.name);
-});
-
 /** 当前 tab 对应的"打开文件夹"参数与 tooltip 文案。 */
 const folderMeta = computed(() => {
   switch (tab.value) {
@@ -195,12 +191,15 @@ watch(
     resetVersionDetail();
     void loadVersionLoader(nv);
     void loadWorlds(nv);
+    startWorldsLivePolling(nv);
     void loadModsQuick(nv);
     void loadMods(nv);
     loadResourceLists(nv);
   },
   { immediate: true },
 );
+
+onBeforeUnmount(() => stopWorldsLivePolling());
 
 // ── 打开文件夹（目录不存在先创建；后端 ensure_game_folder 支持 version/saves/mods/资源目录）──
 async function openFolder(kind: "saves" | "version" | "mods" | "resourcepacks" | "datapacks" | "shaderpacks") {

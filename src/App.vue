@@ -8,6 +8,7 @@ import AlertDialog from "./component/common/AlertDialog.vue";
 import { dlState, ensureListen, checkInterrupted, waitingUser, decideWaitingTask, type TaskKind } from "./store/download";
 import { startMemoryMonitor } from "./store/memory";
 import { setSelected } from "./store/selectedVersion";
+import { mainCloseCascadesToMapEditor } from "./store/mapEditor";
 import { toastState, showToast } from "./utils/toast";
 
 const router = useRouter();
@@ -138,6 +139,8 @@ onMounted(() => {
   document.addEventListener("pointerup", onSideButton, true);
   window.addEventListener("popstate", onPopState);
   ensureListen();
+  // 主窗口关闭时连带关闭地图编辑器（子窗口与主进程同生命周期）
+  mainCloseCascadesToMapEditor();
   // 崩溃/重启恢复检查：拉取上次未完成的任务（DownloadDetail 横幅询问恢复）
   void checkInterrupted();
   // 应用启动即持续监听系统内存（设置页/启动页共用）

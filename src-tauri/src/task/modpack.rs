@@ -239,86 +239,166 @@ pub async fn run_install(
     );
 
     // ── A1：获取包体（幂等：本地缓存 sha1 命中直接跳过）──
-    let mut pack_bytes_est = 0u64;
-    if let PackSource::Online { url, sha1, size } = &request.source {
-        set_phase(
-            app,
-            progress,
-            Some(TaskStatus::Running),
-            "下载整合包",
-            0,
-            StepStatus::Running,
-        );
-        pack_bytes_est = *size;
-        a_est.store(*size, Ordering::Relaxed);
-        // 强校验优先；清单未提供 sha1 时降级为体积弱校验——与 fetch_verified_c
-        // 空 sha1 跳过网络校验的信任模型一致，恢复场景不再整包重下
-        let cached = zip_path.is_file()
-            && match (sha1.is_empty(), *size) {
-                (false, _) => crate::downloader::hash::file_sha1_matches(&zip_path, sha1),
-                (true, s) if s > 0 => std::fs::metadata(&zip_path).map(|m| m.len()).ok() == Some(s),
-                _ => false,
-            };
-        if !cached {
-            // 下载字节经回调累加进临时心跳（绝对值 → swap 求增量）
-            let dl_cb = {
-                let a_bytes = Arc::clone(&a_bytes);
-                let last = Arc::new(AtomicU64::new(0));
-                move |d: u64, _t: u64| {
-                    let prev = last.swap(d, Ordering::Relaxed);
-                    a_bytes.fetch_add(d.saturating_sub(prev), Ordering::Relaxed);
-                }
-            };
-            let urls = crate::util::community_download_urls(url).await;
-            if let Err(e) =
-                fetcher::fetch_verified_c(&urls, &zip_path, Some(dl_cb), sha1, Some(cancel)).await
-            {
-                return fail_or_cancel(app, progress, cancel, format!("下载整合包失败\n{e}"), None);
-            }
-            pack_bytes_est = std::fs::metadata(&zip_path)
-                .map(|m| m.len())
-                .unwrap_or(*size);
-        }
-        step_done(app, progress, 0);
-        a_bytes.store(pack_bytes_est, Ordering::Relaxed);
-    }
+    let pack_bytes_est = match phase_fetch_pack(
+        app,
+        cancel,
+        progress,
+        request,
+        &zip_path,
+        &a_bytes,
+        &a_est,
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => return fail_or_cancel(app, progress, cancel, e, None),
+    };
     if cancelled(cancel) {
         set_cancelled(app, progress);
         return false;
     }
-    if pack_bytes_est == 0 {
-        pack_bytes_est = std::fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0);
-    }
+    let pack_bytes_est = if pack_bytes_est == 0 {
+        std::fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0)
+    } else {
+        pack_bytes_est
+    };
 
     // ── A2：解析清单并生成计划 ──
     let parse_idx = usize::from(online);
-    set_phase(
+    let plan = match phase_parse_plan(
         app,
+        cancel,
         progress,
-        Some(TaskStatus::Running),
-        "解析整合包",
+        &zip_path,
+        request,
+        &config,
         parse_idx,
-        StepStatus::Running,
-    );
-    let plan = match race_cancel(cancel, build_plan(&zip_path, request, &config)).await {
+    )
+    .await
+    {
         Ok(p) => p,
         Err(e) => return fail_or_cancel(app, progress, cancel, e, None),
     };
-    if let Err(e) = write_plan(&plan_path_for(request), &plan) {
-        return fail_or_cancel(
-            app,
-            progress,
-            cancel,
-            format!("写入安装计划失败\n{e}"),
-            None,
-        );
-    }
-    step_done(app, progress, parse_idx);
     // A 段结束：停临时心跳，正式 Counters/心跳在下方接管（est 补齐内容部分）
     a_heartbeat.abort();
     let a_done = parse_idx + 1; // A 段已完成步骤数
 
     // ── 重建完整步骤表（B 段本体 + C 段内容）──
+    let (full_names, idx, content_est) = build_step_plan(request, &plan);
+    replace_steps(app, progress, &full_names, a_done);
+    let c = Counters::new(full_names.len() as u32, pack_bytes_est + content_est);
+    set_total(app, progress, c.total_steps, 0);
+
+    // 心跳：150ms 共享心跳刷新计数/速度/ETA（est_total_bytes 用 c.est_bytes，
+    // 版本清单获取后仍可运行中增长）；进度百分比由 update_progress 按
+    // completed_files/total_files（即完成步骤数）计算。收尾前 abort。
+    let emit_handle = spawn_heartbeat(
+        app,
+        progress,
+        HeartbeatStats {
+            done_files: Arc::clone(&c.done_steps),
+            total_files: c.total_steps,
+            bytes: Arc::clone(&c.bytes),
+            est_total_bytes: Arc::clone(&c.est_bytes),
+        },
+    );
+
+    // ── 目标目录：预指定名保证解析期/安装期一致 ──
+    let (vdir, vdir_existed_before) = prepare_version_dir(progress, &config, request, &plan);
+    let lib_dir = config.minecraft_dir_abs().join("libraries");
+    let reuse_root = LocalRuntimeSource::discover(&vdir);
+
+    // ── A3：项目图标持久化（装饰性内容：缺失/下载失败静默跳过，不阻塞安装）──
+    if let Some(icon) = request.icon_url.as_deref().filter(|s| !s.trim().is_empty()) {
+        let dest = vdir.join("pack-icon.png");
+        if !dest.exists() {
+            // 空 sha1 跳过校验；取消感知；MCIM 双源回退对 cdn.modrinth.com 适用
+            let urls = crate::util::community_download_urls(icon).await;
+            let _ =
+                fetcher::fetch_verified_c(&urls, &dest, None::<fn(u64, u64)>, "", Some(cancel))
+                    .await;
+        }
+    }
+    let sources: Vec<DownloadSource> = config.file_sources_list().into_iter().cloned().collect();
+
+    let mut run = PackInstall {
+        app,
+        cancel,
+        progress,
+        config: &config,
+        plan: &plan,
+        sources,
+        c,
+        emit: emit_handle,
+        idx,
+        vdir,
+        vdir_existed_before,
+        lib_dir,
+        reuse_root,
+        parent_text: String::new(),
+        restricted: plan.restricted.clone(),
+        pending: Vec::new(),
+        version_json: None,
+    };
+
+    // ── B1：版本清单（唯一硬前置）──
+    if let Err(e) = run.b_manifest().await {
+        return run.fail(e);
+    }
+    // ── B2：client.jar ──
+    if let Err(e) = run.b_client_jar().await {
+        return run.fail(e);
+    }
+    // ── B3/B4/B5：依赖库 / 资源 / 原生库（领域函数内部 sha1 跳过已有文件；
+    //     内部并发由 config.concurrency 驱动，字节进共享计数）──
+    if let Err(e) = run.b_vanilla_content().await {
+        return run.fail(e);
+    }
+    // ── B6：ModLoader（钩子推进 配置/文件 两步）──
+    if let Err(e) = run.b_loader().await {
+        return run.fail(e);
+    }
+    // ── C0：包内资源复用 ──
+    if let Err(e) = run.c0_bundled_reuse() {
+        return run.fail(e);
+    }
+    // ── C1：内容文件并发下载 ──
+    if let Err(e) = run.c1_download_files().await {
+        return run.fail(e);
+    }
+    // ── C2：overrides 解压 ──
+    if let Err(e) = run.c2_overrides().await {
+        return run.fail(e);
+    }
+    run.emit.abort();
+
+    // ── 受限文件收口：其余内容已全部就位，明确列出需手动下载的文件 ──
+    if !run.restricted.is_empty() {
+        return run.fail(restricted_notice(&run.restricted));
+    }
+
+    finish_ok(app, progress, "完成");
+    true
+}
+
+/// 步骤索引表（步骤表两段式重写后，各阶段在完整列表中的下标）。
+struct StepIndex {
+    i_json: usize,
+    i_jar: usize,
+    i_libs: usize,
+    i_asst: usize,
+    i_nat: usize,
+    /// ModLoader 钩子推进的两步（无 loader 时 None）
+    i_cfg: Option<usize>,
+    i_lbs: Option<usize>,
+    /// 内容文件下载起始下标
+    content_start: usize,
+    i_overrides: Option<usize>,
+}
+
+/// 重建完整步骤表：B 段本体 + loader 两步（可选）+ 内容文件逐步 + overrides（可选）。
+/// 返回（全量步骤名，索引表，内容阶段字节估算）。
+fn build_step_plan(request: &ModpackRequest, plan: &PackPlan) -> (Vec<String>, StepIndex, u64) {
     let mut names: Vec<String> = vec![
         "版本清单".into(),
         "游戏主文件".into(),
@@ -356,38 +436,40 @@ pub async fn run_install(
         .map(|s| s.to_string())
         .collect();
     full_names.extend(names.iter().cloned());
-    replace_steps(app, progress, &full_names, a_done);
-
-    // 总字节估算（版本清单获取后补齐 B 段部分）
     let content_bytes: u64 = plan.files.iter().map(|f| f.size).sum();
     let override_bytes = plan.overrides.as_ref().map(sum_override_bytes).unwrap_or(0);
-    let c = Counters::new(
-        full_names.len() as u32,
-        pack_bytes_est + content_bytes + override_bytes,
-    );
-    set_total(app, progress, c.total_steps, 0);
-
-    // 心跳：150ms 共享心跳刷新计数/速度/ETA（est_total_bytes 用 c.est_bytes，
-    // 版本清单获取后仍可运行中增长）；进度百分比由 update_progress 按
-    // completed_files/total_files（即完成步骤数）计算。收尾前 abort。
-    let emit_handle = spawn_heartbeat(
-        app,
-        progress,
-        HeartbeatStats {
-            done_files: Arc::clone(&c.done_steps),
-            total_files: c.total_steps,
-            bytes: Arc::clone(&c.bytes),
-            est_total_bytes: Arc::clone(&c.est_bytes),
+    (
+        full_names,
+        StepIndex {
+            i_json,
+            i_jar,
+            i_libs,
+            i_asst,
+            i_nat,
+            i_cfg,
+            i_lbs,
+            content_start,
+            i_overrides,
         },
-    );
-    // ── 目标目录：预指定名保证解析期/安装期一致 ──
+        content_bytes + override_bytes,
+    )
+}
+
+/// 目标目录：预指定名保证解析期/安装期一致。写版本身份标记（重装/更新
+/// 同名整合包时据此复用目录，内容 sha1 幂等跳过生效）；本次新建目录注册
+/// 取消时整删（对齐 run_task）。
+fn prepare_version_dir(
+    progress: &Arc<Mutex<TaskProgress>>,
+    config: &DownloaderConfig,
+    request: &ModpackRequest,
+    plan: &PackPlan,
+) -> (PathBuf, bool) {
     let vdir = config
         .minecraft_dir_abs()
         .join("versions")
         .join(&plan.version_dir_name);
     let vdir_existed_before = vdir.exists();
     std::fs::create_dir_all(&vdir).ok();
-    // 版本身份标记：重装/更新同名整合包时据此复用目录（内容 sha1 幂等跳过生效）
     let _ = std::fs::write(
         vdir.join("elytra-pack.json"),
         serde_json::json!({ "cache_key": cache_key(request) }).to_string(),
@@ -397,219 +479,207 @@ pub async fn run_install(
         let tid = progress.lock().task_id.clone();
         global().set_cleanup_path(&tid, vdir.clone());
     }
-    let cleanup = (vdir.as_path(), vdir_existed_before);
-    let lib_dir = config.minecraft_dir_abs().join("libraries");
-    let reuse_root = LocalRuntimeSource::discover(&vdir);
+    (vdir, vdir_existed_before)
+}
 
-    // ── A3：项目图标持久化（装饰性内容：缺失/下载失败静默跳过，不阻塞安装）──
-    if let Some(icon) = request.icon_url.as_deref().filter(|s| !s.trim().is_empty()) {
-        let dest = vdir.join("pack-icon.png");
-        if !dest.exists() {
-            // 空 sha1 跳过校验；取消感知；MCIM 双源回退对 cdn.modrinth.com 适用
-            let urls = crate::util::community_download_urls(icon).await;
-            let _ = fetcher::fetch_verified_c(&urls, &dest, None::<fn(u64, u64)>, "", Some(cancel))
-                .await;
-        }
+/// B/C 段各阶段的共享状态包（A 段完成后一次性装配，阶段间按序推进）。
+struct PackInstall<'a> {
+    app: &'a AppHandle,
+    cancel: &'a Arc<AtomicBool>,
+    progress: &'a Arc<Mutex<TaskProgress>>,
+    config: &'a DownloaderConfig,
+    plan: &'a PackPlan,
+    sources: Vec<DownloadSource>,
+    c: Counters,
+    /// 正式心跳（每个失败收口与最终收口前 abort）
+    emit: tauri::async_runtime::JoinHandle<()>,
+    idx: StepIndex,
+    vdir: PathBuf,
+    vdir_existed_before: bool,
+    lib_dir: PathBuf,
+    reuse_root: Option<LocalRuntimeSource>,
+    /// B1 版本清单原文（loader 安装需透传给 installer）
+    parent_text: String,
+    /// B1 解析出的版本清单（B2–B5 消费）
+    version_json: Option<VersionJson>,
+    /// 剩余受限文件（CurseForge 禁三方分发，C0 就地解决一部分）
+    restricted: Vec<String>,
+    /// C0 后待下载的（步骤索引，文件）
+    pending: Vec<(usize, &'a PackFile)>,
+}
+
+impl<'a> PackInstall<'a> {
+    /// 失败收口：停心跳 → fail_or_cancel（本次新建的版本目录随失败整删）。
+    fn fail(&self, msg: String) -> bool {
+        self.emit.abort();
+        fail_or_cancel(
+            self.app,
+            self.progress,
+            self.cancel,
+            msg,
+            Some((self.vdir.as_path(), self.vdir_existed_before)),
+        )
     }
-    let sources: Vec<DownloadSource> = config.file_sources_list().into_iter().cloned().collect();
-    let src_refs: Vec<&DownloadSource> = sources.iter().collect();
 
-    // ── B1：版本清单（唯一硬前置）──
-    set_phase(app, progress, None, "版本清单", i_json, StepStatus::Running);
-    let parent_text = match race_cancel(
-        cancel,
-        crate::downloader::version::fetch_version_json_text(&plan.version_url, &config),
-    )
-    .await
-    {
-        Ok(t) => t,
-        Err(e) => {
-            emit_handle.abort();
-            return fail_or_cancel(
-                app,
-                progress,
-                cancel,
-                format!("拉取版本清单失败\n{e}"),
-                Some(cleanup),
-            );
+    fn vj(&self) -> &VersionJson {
+        self.version_json
+            .as_ref()
+            .expect("阶段顺序不变量：B1 先于 B2–B5")
+    }
+
+    /// B1：版本清单（唯一硬前置）。补齐 B 段总量估算；无 loader 时写原版 JSON。
+    async fn b_manifest(&mut self) -> Result<(), String> {
+        set_phase(
+            self.app,
+            self.progress,
+            None,
+            "版本清单",
+            self.idx.i_json,
+            StepStatus::Running,
+        );
+        let parent_text = match race_cancel(
+            self.cancel,
+            crate::downloader::version::fetch_version_json_text(&self.plan.version_url, self.config),
+        )
+        .await
+        {
+            Ok(t) => t,
+            Err(e) => return Err(format!("拉取版本清单失败\n{e}")),
+        };
+        let vj: VersionJson =
+            serde_json::from_str(&parent_text).map_err(|e| format!("解析版本清单失败\n{e}"))?;
+        // 补齐 B 段总量估算：client + 库 + 资源索引声明总量
+        let lib_est: u64 = vj
+            .libraries
+            .iter()
+            .filter_map(|l| l.downloads.as_ref().and_then(|d| d.artifact.as_ref()))
+            .map(|a| a.size)
+            .sum();
+        self.c.est_bytes.fetch_add(
+            vj.downloads.client.as_ref().map(|cl| cl.size).unwrap_or(0)
+                + lib_est
+                + vj.asset_index.total_size,
+            Ordering::Relaxed,
+        );
+        // 无 loader 时写原版 JSON（loader 模式由 installer 写合并 JSON）。
+        // 写盘失败必须报错：假成功会让版本缺 json、启动时报"未找到版本 JSON"。
+        if self.plan.loader.is_none() {
+            let json =
+                serde_json::to_string_pretty(&vj).map_err(|e| format!("序列化版本 JSON 失败\n{e}"))?;
+            let jp = self.vdir.join(format!("{}.json", self.plan.version_dir_name));
+            std::fs::write(&jp, &json).map_err(|e| format!("写入版本 JSON 失败\n{e}"))?;
         }
-    };
-    let vj: VersionJson = match serde_json::from_str(&parent_text) {
-        Ok(v) => v,
-        Err(e) => {
-            emit_handle.abort();
-            return fail_or_cancel(
-                app,
-                progress,
-                cancel,
-                format!("解析版本清单失败\n{e}"),
-                Some(cleanup),
-            );
+        finish_step(self.app, self.progress, self.idx.i_json, &self.c);
+        if cancelled(self.cancel) {
+            return Err(String::new());
         }
-    };
-    // 补齐 B 段总量估算：client + 库 + 资源索引声明总量
-    let lib_est: u64 = vj
-        .libraries
-        .iter()
-        .filter_map(|l| l.downloads.as_ref().and_then(|d| d.artifact.as_ref()))
-        .map(|a| a.size)
-        .sum();
-    c.est_bytes.fetch_add(
-        vj.downloads.client.as_ref().map(|cl| cl.size).unwrap_or(0)
-            + lib_est
-            + vj.asset_index.total_size,
-        Ordering::Relaxed,
-    );
-    // 无 loader 时写原版 JSON（loader 模式由 installer 写合并 JSON）。
-    // 写盘失败必须报错：假成功会让版本缺 json、启动时报"未找到版本 JSON"。
-    if plan.loader.is_none() {
-        let json =
-            serde_json::to_string_pretty(&vj).map_err(|e| format!("序列化版本 JSON 失败\n{e}"));
-        match json {
-            Ok(json) => {
-                let jp = vdir.join(format!("{}.json", plan.version_dir_name));
-                if let Err(e) = std::fs::write(&jp, &json) {
-                    emit_handle.abort();
-                    return fail_or_cancel(
-                        app,
-                        progress,
-                        cancel,
-                        format!("写入版本 JSON 失败\n{e}"),
-                        Some(cleanup),
-                    );
+        self.parent_text = parent_text;
+        self.version_json = Some(vj);
+        Ok(())
+    }
+
+    /// B2：client.jar（sha1 幂等跳过）。
+    async fn b_client_jar(&self) -> Result<(), String> {
+        set_phase(
+            self.app,
+            self.progress,
+            None,
+            "游戏主文件",
+            self.idx.i_jar,
+            StepStatus::Running,
+        );
+        let vj = self.vj();
+        if let Some(cl) = &vj.downloads.client {
+            let jar_path = self.vdir.join(format!("{}.jar", self.plan.version_dir_name));
+            let fresh =
+                !(jar_path.exists() && crate::downloader::hash::file_sha1_matches(&jar_path, &cl.sha1));
+            if fresh {
+                let urls: Vec<String> = self
+                    .sources
+                    .iter()
+                    .map(|src| src.mirror_url(&cl.url))
+                    .collect();
+                if let Err(e) = fetcher::fetch_verified_c(
+                    &urls,
+                    &jar_path,
+                    None::<fn(u64, u64)>,
+                    &cl.sha1,
+                    Some(self.cancel),
+                )
+                .await
+                {
+                    return Err(format!("下载游戏主文件失败\n{e}"));
                 }
-            }
-            Err(e) => {
-                emit_handle.abort();
-                return fail_or_cancel(app, progress, cancel, e, Some(cleanup));
+                self.c.bytes.fetch_add(cl.size, Ordering::Relaxed);
             }
         }
-    }
-    finish_step(app, progress, i_json, &c);
-    if cancelled(cancel) {
-        emit_handle.abort();
-        return fail_or_cancel(app, progress, cancel, String::new(), Some(cleanup));
-    }
-
-    // ── B2：client.jar ──
-    set_phase(
-        app,
-        progress,
-        None,
-        "游戏主文件",
-        i_jar,
-        StepStatus::Running,
-    );
-    if let Some(cl) = &vj.downloads.client {
-        let jar_path = vdir.join(format!("{}.jar", plan.version_dir_name));
-        let fresh =
-            !(jar_path.exists() && crate::downloader::hash::file_sha1_matches(&jar_path, &cl.sha1));
-        if fresh {
-            let urls: Vec<String> = sources.iter().map(|src| src.mirror_url(&cl.url)).collect();
-            if let Err(e) = fetcher::fetch_verified_c(
-                &urls,
-                &jar_path,
-                None::<fn(u64, u64)>,
-                &cl.sha1,
-                Some(cancel),
-            )
-            .await
-            {
-                emit_handle.abort();
-                return fail_or_cancel(
-                    app,
-                    progress,
-                    cancel,
-                    format!("下载游戏主文件失败\n{e}"),
-                    Some(cleanup),
-                );
-            }
-            c.bytes.fetch_add(cl.size, Ordering::Relaxed);
+        finish_step(self.app, self.progress, self.idx.i_jar, &self.c);
+        if cancelled(self.cancel) {
+            return Err(String::new());
         }
-    }
-    finish_step(app, progress, i_jar, &c);
-    if cancelled(cancel) {
-        emit_handle.abort();
-        return fail_or_cancel(app, progress, cancel, String::new(), Some(cleanup));
+        Ok(())
     }
 
-    // ── B3/B4/B5：依赖库 / 资源 / 原生库（领域函数内部 sha1 跳过已有文件；
-    //     内部并发由 config.concurrency 驱动，字节进共享计数）──
-    set_phase(app, progress, None, "依赖库", i_libs, StepStatus::Running);
-    if let Err(e) = crate::downloader::library::download_libraries(
-        &vj.libraries,
-        &lib_dir,
-        config.concurrency as usize,
-        &src_refs,
-        reuse_root.clone(),
-        &c.counter(),
-        Some(cancel),
-    )
-    .await
-    {
-        emit_handle.abort();
-        return fail_or_cancel(
-            app,
-            progress,
-            cancel,
-            format!("下载依赖库失败\n{}", e.join("; ")),
-            Some(cleanup),
-        );
+    /// B3/B4/B5：依赖库 → 资源文件 → 原生库。
+    async fn b_vanilla_content(&self) -> Result<(), String> {
+        let src_refs: Vec<&DownloadSource> = self.sources.iter().collect();
+        let vj = self.vj();
+
+        set_phase(self.app, self.progress, None, "依赖库", self.idx.i_libs, StepStatus::Running);
+        if let Err(e) = crate::downloader::library::download_libraries(
+            &vj.libraries,
+            &self.lib_dir,
+            self.config.concurrency as usize,
+            &src_refs,
+            self.reuse_root.clone(),
+            &self.c.counter(),
+            Some(self.cancel),
+        )
+        .await
+        {
+            return Err(format!("下载依赖库失败\n{}", e.join("; ")));
+        }
+        finish_step(self.app, self.progress, self.idx.i_libs, &self.c);
+
+        set_phase(self.app, self.progress, None, "资源文件", self.idx.i_asst, StepStatus::Running);
+        if let Err(e) = crate::downloader::assets::download_assets(
+            &vj.asset_index.url,
+            &vj.asset_index.id,
+            &vj.asset_index.sha1,
+            self.config,
+            self.config.concurrency as usize,
+            self.reuse_root.clone(),
+            &self.c.counter(),
+            Some(self.cancel),
+        )
+        .await
+        {
+            return Err(format!("下载资源文件失败\n{}", e.join("; ")));
+        }
+        finish_step(self.app, self.progress, self.idx.i_asst, &self.c);
+
+        set_phase(self.app, self.progress, None, "原生库", self.idx.i_nat, StepStatus::Running);
+        if let Err(e) = crate::downloader::extract::process_natives(
+            &vj.libraries,
+            &self.lib_dir,
+            &src_refs,
+            &self.c.counter(),
+            Some(self.cancel),
+        )
+        .await
+        {
+            return Err(format!("处理原生库失败\n{}", e.join("; ")));
+        }
+        finish_step(self.app, self.progress, self.idx.i_nat, &self.c);
+        Ok(())
     }
-    finish_step(app, progress, i_libs, &c);
 
-    set_phase(app, progress, None, "资源文件", i_asst, StepStatus::Running);
-    if let Err(e) = crate::downloader::assets::download_assets(
-        &vj.asset_index.url,
-        &vj.asset_index.id,
-        &vj.asset_index.sha1,
-        &config,
-        config.concurrency as usize,
-        reuse_root.clone(),
-        &c.counter(),
-        Some(cancel),
-    )
-    .await
-    {
-        emit_handle.abort();
-        return fail_or_cancel(
-            app,
-            progress,
-            cancel,
-            format!("下载资源文件失败\n{}", e.join("; ")),
-            Some(cleanup),
-        );
-    }
-    finish_step(app, progress, i_asst, &c);
-
-    set_phase(app, progress, None, "原生库", i_nat, StepStatus::Running);
-    if let Err(e) = crate::downloader::extract::process_natives(
-        &vj.libraries,
-        &lib_dir,
-        &src_refs,
-        &c.counter(),
-        Some(cancel),
-    )
-    .await
-    {
-        emit_handle.abort();
-        return fail_or_cancel(
-            app,
-            progress,
-            cancel,
-            format!("处理原生库失败\n{}", e.join("; ")),
-            Some(cleanup),
-        );
-    }
-    finish_step(app, progress, i_nat, &c);
-
-    // ── B6：ModLoader（钩子推进 配置/文件 两步）──
-    if let Some(loader) = &plan.loader {
-        let i_cfg_ref = i_cfg;
-        let i_lbs_ref = i_lbs;
-
-        // 钩子只置内存标志；步骤推进由下方轮询循环完成（钩子非 async，
-        // 不能触碰 progress 锁；install_* 借用外部状态，与主循环同作用域轮询）。
+    /// B6：ModLoader 安装。钩子只置内存标志；步骤推进由轮询循环完成
+    /// （钩子非 async，不能触碰 progress 锁；install_* 借用外部状态）。
+    async fn b_loader(&self) -> Result<(), String> {
+        let Some(loader) = &self.plan.loader else {
+            return Ok(());
+        };
         use crate::downloader::mod_loader::{self, LoaderEvent};
         let cfg_flag = AtomicBool::new(false);
         let lbs_flag = AtomicBool::new(false);
@@ -617,17 +687,17 @@ pub async fn run_install(
             LoaderEvent::ConfigDone => cfg_flag.store(true, Ordering::Relaxed),
             LoaderEvent::LibsDone => lbs_flag.store(true, Ordering::Relaxed),
         };
-        let counters = c.counter();
+        let counters = self.c.counter();
         let install_fut = async {
             match loader.kind {
                 crate::task::LoaderKind::Fabric => {
                     mod_loader::install_fabric(
-                        &plan.mc_version,
+                        &self.plan.mc_version,
                         &loader.version,
-                        &plan.version_dir_name,
-                        &vdir,
-                        &parent_text,
-                        &config,
+                        &self.plan.version_dir_name,
+                        &self.vdir,
+                        &self.parent_text,
+                        self.config,
                         &counters,
                         Some(&hook),
                     )
@@ -635,12 +705,12 @@ pub async fn run_install(
                 }
                 crate::task::LoaderKind::Quilt => {
                     mod_loader::install_quilt(
-                        &plan.mc_version,
+                        &self.plan.mc_version,
                         &loader.version,
-                        &plan.version_dir_name,
-                        &vdir,
-                        &parent_text,
-                        &config,
+                        &self.plan.version_dir_name,
+                        &self.vdir,
+                        &self.parent_text,
+                        self.config,
                         &counters,
                         Some(&hook),
                     )
@@ -648,14 +718,14 @@ pub async fn run_install(
                 }
                 crate::task::LoaderKind::Forge => {
                     mod_loader::install_forge(
-                        &plan.mc_version,
+                        &self.plan.mc_version,
                         &loader.version,
-                        &plan.version_dir_name,
-                        &vdir,
-                        &parent_text,
-                        &config,
+                        &self.plan.version_dir_name,
+                        &self.vdir,
+                        &self.parent_text,
+                        self.config,
                         &counters,
-                        cancel,
+                        self.cancel,
                         Some(&hook),
                     )
                     .await
@@ -663,12 +733,12 @@ pub async fn run_install(
                 crate::task::LoaderKind::NeoForge => {
                     mod_loader::install_neoforge(
                         &loader.version,
-                        &plan.version_dir_name,
-                        &vdir,
-                        &parent_text,
-                        &config,
+                        &self.plan.version_dir_name,
+                        &self.vdir,
+                        &self.parent_text,
+                        self.config,
                         &counters,
-                        cancel,
+                        self.cancel,
                         Some(&hook),
                     )
                     .await
@@ -683,44 +753,35 @@ pub async fn run_install(
                 biased;
                 _ = tokio::time::sleep(Duration::from_millis(200)) => {
                     if !cfg_marked && cfg_flag.load(Ordering::Relaxed) {
-                        if let Some(idx) = i_cfg_ref { finish_step(app, progress, idx, &c); cfg_marked = true; }
+                        if let Some(idx) = self.idx.i_cfg { finish_step(self.app, self.progress, idx, &self.c); cfg_marked = true; }
                     }
                     if !lbs_marked && lbs_flag.load(Ordering::Relaxed) {
-                        if let Some(idx) = i_lbs_ref { finish_step(app, progress, idx, &c); lbs_marked = true; }
+                        if let Some(idx) = self.idx.i_lbs { finish_step(self.app, self.progress, idx, &self.c); lbs_marked = true; }
                     }
                 }
                 res = &mut install_fut => {
                     // 收尾：确保两步都标记（安装器可能不发 LibsDone 之外的事件序）
-                    if !cfg_marked { if let Some(idx) = i_cfg_ref { finish_step(app, progress, idx, &c); } }
-                    if !lbs_marked { if let Some(idx) = i_lbs_ref { finish_step(app, progress, idx, &c); } }
+                    if !cfg_marked { if let Some(idx) = self.idx.i_cfg { finish_step(self.app, self.progress, idx, &self.c); } }
+                    if !lbs_marked { if let Some(idx) = self.idx.i_lbs { finish_step(self.app, self.progress, idx, &self.c); } }
                     if let Err(e) = res {
-                        emit_handle.abort();
-                        return fail_or_cancel(app, progress, cancel, format!("ModLoader 安装失败\n{e}"), Some(cleanup));
+                        return Err(format!("ModLoader 安装失败\n{e}"));
                     }
                     break;
                 }
             }
             // 取消不在此处提前 return：install_fut 内部轮询同一 cancel 令牌，
             // 会杀掉 installer 子进程并自行返回 Err，随后由上方 Err 分支
-            // 经 fail_or_cancel 走取消收口——中途 drop future 会遗留孤儿 JVM 进程
+            // 经 fail 收口——中途 drop future 会遗留孤儿 JVM 进程
         }
+        Ok(())
     }
 
-    // ── C0：包内资源复用 ──
-    // 部分整合包会把 mod 物理捆绑在 overrides/ 内（常见于作者关闭 CurseForge
-    // 第三方分发的场景）。清单内文件先与包内同名条目做 sha1 对比：一致则直接
-    // 解包免下载；受限文件若已捆绑 → 就地落盘并从提示清单移除。
-    let mut restricted = plan.restricted.clone();
-    let mut pending: Vec<(usize, &PackFile)> = Vec::new();
-    // C0 内部错误统一走此收口（run_install 返回 bool，不能用 ?）
-    macro_rules! bail {
-        ($e:expr) => {{
-            emit_handle.abort();
-            return fail_or_cancel(app, progress, cancel, $e, Some(cleanup));
-        }};
-    }
-    {
-        let mut pack_zip = plan.overrides.as_ref().and_then(|ov| {
+    /// C0：包内资源复用。部分整合包把 mod 物理捆绑在 overrides/ 内（常见于
+    /// 作者关闭 CurseForge 第三方分发的场景）。清单内文件先与包内同名条目做
+    /// sha1 对比：一致则直接解包免下载；受限文件若已捆绑 → 就地落盘并从
+    /// 提示清单移除。
+    fn c0_bundled_reuse(&mut self) -> Result<(), String> {
+        let mut pack_zip = self.plan.overrides.as_ref().and_then(|ov| {
             std::fs::File::open(&ov.zip_path)
                 .ok()
                 .and_then(|f| zip::ZipArchive::new(f).ok())
@@ -736,8 +797,8 @@ pub async fn run_install(
             None => std::collections::HashMap::new(),
         };
 
-        for (i, f) in plan.files.iter().enumerate() {
-            let step_idx = content_start + i;
+        for (i, f) in self.plan.files.iter().enumerate() {
+            let step_idx = self.idx.content_start + i;
             let bundled = index.get(&f.path).and_then(|member| {
                 let ar = pack_zip.as_mut()?;
                 match (&f.sha1, member_sha1(ar, member)) {
@@ -751,35 +812,30 @@ pub async fn run_install(
             match bundled {
                 Some(member) => {
                     set_phase(
-                        app,
-                        progress,
+                        self.app,
+                        self.progress,
                         None,
                         &format!("取自整合包 {}", f.path),
                         step_idx,
                         StepStatus::Running,
                     );
-                    let rel_path = match safe_rel_path(&f.path) {
-                        Ok(rel) => rel,
-                        Err(e) => bail!(e),
-                    };
-                    let dest = vdir.join(&rel_path);
+                    let rel_path = safe_rel_path(&f.path)?;
+                    let dest = self.vdir.join(&rel_path);
                     let res = match pack_zip.as_mut() {
                         Some(ar) => extract_member(ar, &member, &dest),
                         None => Ok(()),
                     };
-                    if let Err(e) = res {
-                        bail!(format!("释放包内资源失败\n{e}"));
-                    }
-                    c.est_bytes.fetch_sub(f.size, Ordering::Relaxed);
-                    finish_step(app, progress, step_idx, &c);
+                    res.map_err(|e| format!("释放包内资源失败\n{e}"))?;
+                    self.c.est_bytes.fetch_sub(f.size, Ordering::Relaxed);
+                    finish_step(self.app, self.progress, step_idx, &self.c);
                 }
-                None => pending.push((step_idx, f)),
+                None => self.pending.push((step_idx, f)),
             }
         }
 
         // 受限文件就地解决：捆绑副本按声明路径落盘（内容来自包作者本人）
-        if !restricted.is_empty() && !index.is_empty() {
-            for name in restricted.clone() {
+        if !self.restricted.is_empty() && !index.is_empty() {
+            for name in self.restricted.clone() {
                 let candidate = format!("mods/{name}");
                 let Some(member) = index.get(&candidate) else {
                     continue;
@@ -787,173 +843,227 @@ pub async fn run_install(
                 let Ok(rel) = safe_rel_path(&name) else {
                     continue;
                 };
-                let dest = vdir.join("mods").join(rel);
+                let dest = self.vdir.join("mods").join(rel);
                 if let Some(ar) = pack_zip.as_mut() {
-                    if let Err(e) = extract_member(ar, member, &dest) {
-                        bail!(e);
-                    }
-                    restricted.retain(|r| *r != name);
+                    extract_member(ar, member, &dest)?;
+                    self.restricted.retain(|r| *r != name);
                 }
             }
         }
+        Ok(())
     }
 
-    // ── C1：内容文件并发下载 ──
-    let concurrency = (config.concurrency as usize).clamp(1, 8);
-    for chunk in pending.chunks(concurrency) {
-        if cancelled(cancel) {
-            emit_handle.abort();
-            return fail_or_cancel(app, progress, cancel, String::new(), Some(cleanup));
-        }
-        let mut set = tokio::task::JoinSet::new();
-        for entry in chunk.iter() {
-            let idx = entry.0;
-            let f: &PackFile = entry.1;
-            let rel_path = match safe_rel_path(&f.path) {
-                Ok(rel) => rel,
-                Err(e) => {
-                    emit_handle.abort();
-                    return fail_or_cancel(app, progress, cancel, e, Some(cleanup));
-                }
-            };
-            let dest = vdir.join(&rel_path);
-            let tmp = dest.with_file_name(format!(
-                "{}.elytra-part",
-                dest.file_name().unwrap_or_default().to_string_lossy()
-            ));
-            if let Some(parent) = dest.parent() {
-                if let Err(e) = std::fs::create_dir_all(parent) {
-                    emit_handle.abort();
-                    return fail_or_cancel(
-                        app,
-                        progress,
-                        cancel,
-                        format!("创建目录失败\n{e}\n{}", parent.display()),
-                        Some(cleanup),
-                    );
-                }
+    /// C1：内容文件并发下载（分批 JoinSet，字节进共享计数，sha1 校验 + 落盘）。
+    async fn c1_download_files(&self) -> Result<(), String> {
+        let concurrency = (self.config.concurrency as usize).clamp(1, 8);
+        for chunk in self.pending.chunks(concurrency) {
+            if cancelled(self.cancel) {
+                return Err(String::new());
             }
-            set_phase(
-                app,
-                progress,
-                None,
-                &format!("下载 {}", f.path),
-                idx,
-                StepStatus::Running,
-            );
-            let f_url = f.url.clone();
-            let sha1 = f.sha1.clone();
-            let label = f.path.clone();
-            let cancel = cancel.clone();
-            let bytes = c.bytes.clone();
-            let size = f.size;
-            set.spawn(async move {
-                let urls = crate::util::community_download_urls(&f_url).await;
-                // 幂等：目标已存在且校验命中 → 跳过（恢复场景零重下）。
-                // sha1 缺失时降级为体积匹配（信任模型同上）
-                let hit = dest.is_file()
-                    && if !sha1.is_empty() {
-                        crate::downloader::hash::file_sha1_matches(&dest, &sha1)
-                    } else {
-                        size > 0 && std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0) == size
+            let mut set = tokio::task::JoinSet::new();
+            for entry in chunk.iter() {
+                let idx = entry.0;
+                let f: &PackFile = entry.1;
+                let rel_path = safe_rel_path(&f.path)?;
+                let dest = self.vdir.join(&rel_path);
+                let tmp = dest.with_file_name(format!(
+                    "{}.elytra-part",
+                    dest.file_name().unwrap_or_default().to_string_lossy()
+                ));
+                if let Some(parent) = dest.parent() {
+                    if let Err(e) = std::fs::create_dir_all(parent) {
+                        return Err(format!("创建目录失败\n{e}\n{}", parent.display()));
+                    }
+                }
+                set_phase(
+                    self.app,
+                    self.progress,
+                    None,
+                    &format!("下载 {}", f.path),
+                    idx,
+                    StepStatus::Running,
+                );
+                let f_url = f.url.clone();
+                let sha1 = f.sha1.clone();
+                let label = f.path.clone();
+                let cancel = Arc::clone(self.cancel);
+                let bytes = self.c.bytes.clone();
+                let size = f.size;
+                set.spawn(async move {
+                    let urls = crate::util::community_download_urls(&f_url).await;
+                    // 幂等：目标已存在且校验命中 → 跳过（恢复场景零重下）。
+                    // sha1 缺失时降级为体积匹配（信任模型同上）
+                    let hit = dest.is_file()
+                        && if !sha1.is_empty() {
+                            crate::downloader::hash::file_sha1_matches(&dest, &sha1)
+                        } else {
+                            size > 0 && std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0) == size
+                        };
+                    if hit {
+                        return Ok((idx, 0u64));
+                    }
+                    if cancelled(&cancel) {
+                        return Ok((idx, 0u64));
+                    }
+                    // 字节回调走共享工厂（本地水位 + 增量累加进任务总字节）。
+                    // step_bytes 无消费者（本任务进度百分比由步骤数公式驱动），计数被丢弃；
+                    // 无需知道落盘字节数，故无需保留 worker 本地水位。
+                    let counters = ProgressCounters {
+                        files: Arc::new(AtomicU32::new(0)),
+                        bytes,
+                        step_bytes: Arc::new(AtomicU64::new(0)),
+                        step_total: Arc::new(AtomicU64::new(0)),
                     };
-                if hit {
-                    return Ok((idx, 0u64));
-                }
-                if cancelled(&cancel) {
-                    return Ok((idx, 0u64));
-                }
-                // 字节回调走共享工厂（本地水位 + 增量累加进任务总字节）。
-                // step_bytes 无消费者（本任务进度百分比由步骤数公式驱动），计数被丢弃；
-                // 无需知道落盘字节数，故无需保留 worker 本地水位。
-                let counters = ProgressCounters {
-                    files: Arc::new(AtomicU32::new(0)),
-                    bytes,
-                    step_bytes: Arc::new(AtomicU64::new(0)),
-                    step_total: Arc::new(AtomicU64::new(0)),
-                };
-                let cb = counters.byte_callback();
-                let result =
-                    fetcher::fetch_verified_c(&urls, &tmp, Some(cb), &sha1, Some(&cancel)).await;
-                match result {
-                    Ok(_) => {
-                        std::fs::rename(&tmp, &dest)
-                            .map_err(|e| (idx, format!("落盘失败\n{e}\n{}", dest.display())))?;
-                        Ok((idx, 0u64))
+                    let cb = counters.byte_callback();
+                    let result =
+                        fetcher::fetch_verified_c(&urls, &tmp, Some(cb), &sha1, Some(&cancel)).await;
+                    match result {
+                        Ok(_) => {
+                            std::fs::rename(&tmp, &dest)
+                                .map_err(|e| (idx, format!("落盘失败\n{e}\n{}", dest.display())))?;
+                            Ok((idx, 0u64))
+                        }
+                        Err(e) => {
+                            let _ = std::fs::remove_file(&tmp);
+                            Err((idx, format!("下载 {label} 失败\n{e}")))
+                        }
                     }
-                    Err(e) => {
-                        let _ = std::fs::remove_file(&tmp);
-                        Err((idx, format!("下载 {label} 失败\n{e}")))
+                });
+            }
+            while let Some(joined) = set.join_next().await {
+                match joined {
+                    Ok(Ok((idx, _))) => {
+                        finish_step(self.app, self.progress, idx, &self.c);
                     }
-                }
-            });
-        }
-        while let Some(joined) = set.join_next().await {
-            match joined {
-                Ok(Ok((idx, _))) => {
-                    finish_step(app, progress, idx, &c);
-                }
-                Ok(Err((_, msg))) => {
-                    emit_handle.abort();
-                    return fail_or_cancel(app, progress, cancel, msg, Some(cleanup));
-                }
-                Err(e) => {
-                    emit_handle.abort();
-                    return fail_or_cancel(
-                        app,
-                        progress,
-                        cancel,
-                        format!("下载工作线程异常\n{e}"),
-                        Some(cleanup),
-                    );
+                    Ok(Err((_, msg))) => return Err(msg),
+                    Err(e) => return Err(format!("下载工作线程异常\n{e}")),
                 }
             }
         }
+        Ok(())
     }
 
-    // ── C2：overrides 解压 ──
-    if let (Some(ov), Some(idx)) = (&plan.overrides, i_overrides) {
+    /// C2：overrides 解压到版本目录（spawn_blocking 跑同步 zip IO）。
+    async fn c2_overrides(&self) -> Result<(), String> {
+        let (Some(ov), Some(idx)) = (&self.plan.overrides, self.idx.i_overrides) else {
+            return Ok(());
+        };
         set_phase(
-            app,
-            progress,
+            self.app,
+            self.progress,
             None,
             "解压覆盖文件",
             idx,
             StepStatus::Running,
         );
         let ov = ov.clone();
-        let vd = vdir.clone();
-        if let Err(e) = race_cancel(cancel, async move {
+        let vd = self.vdir.clone();
+        race_cancel(self.cancel, async move {
             tokio::task::spawn_blocking(move || extract_overrides(&ov, &vd))
                 .await
                 .map_err(|e| format!("解压工作线程异常\n{e}"))?
         })
-        .await
-        {
-            emit_handle.abort();
-            return fail_or_cancel(app, progress, cancel, e, Some(cleanup));
-        }
-        finish_step(app, progress, idx, &c);
+        .await?;
+        finish_step(self.app, self.progress, idx, &self.c);
+        Ok(())
     }
-    emit_handle.abort();
+}
 
-    // ── 受限文件收口：其余内容已全部就位，明确列出需手动下载的文件 ──
-    if !restricted.is_empty() {
-        let mut msg = format!(
-            "已安装完成，但 {} 个文件因 CurseForge 作者关闭第三方分发无法自动下载（需手动从官网下载后放入 mods 目录）：",
-            restricted.len()
+/// A1：获取包体（在线源：下载 + sha1 强校验，缓存命中幂等跳过；本地源直取）。
+/// 返回包体字节数估算（累计进 A 段临时心跳）。
+#[allow(clippy::too_many_arguments)]
+async fn phase_fetch_pack(
+    app: &AppHandle,
+    cancel: &Arc<AtomicBool>,
+    progress: &Arc<Mutex<TaskProgress>>,
+    request: &ModpackRequest,
+    zip_path: &Path,
+    a_bytes: &Arc<AtomicU64>,
+    a_est: &Arc<AtomicU64>,
+) -> Result<u64, String> {
+    let mut pack_bytes_est = 0u64;
+    if let PackSource::Online { url, sha1, size } = &request.source {
+        set_phase(
+            app,
+            progress,
+            Some(TaskStatus::Running),
+            "下载整合包",
+            0,
+            StepStatus::Running,
         );
-        for name in restricted.iter().take(20) {
-            msg.push_str(&format!("\n· {name}"));
+        pack_bytes_est = *size;
+        a_est.store(*size, Ordering::Relaxed);
+        // 强校验优先；清单未提供 sha1 时降级为体积弱校验——与 fetch_verified_c
+        // 空 sha1 跳过网络校验的信任模型一致，恢复场景不再整包重下
+        let cached = zip_path.is_file()
+            && match (sha1.is_empty(), *size) {
+                (false, _) => crate::downloader::hash::file_sha1_matches(zip_path, sha1),
+                (true, s) if s > 0 => std::fs::metadata(zip_path).map(|m| m.len()).ok() == Some(s),
+                _ => false,
+            };
+        if !cached {
+            // 下载字节经回调累加进临时心跳（绝对值 → swap 求增量）
+            let dl_cb = {
+                let a_bytes = Arc::clone(a_bytes);
+                let last = Arc::new(AtomicU64::new(0));
+                move |d: u64, _t: u64| {
+                    let prev = last.swap(d, Ordering::Relaxed);
+                    a_bytes.fetch_add(d.saturating_sub(prev), Ordering::Relaxed);
+                }
+            };
+            let urls = crate::util::community_download_urls(url).await;
+            if let Err(e) =
+                fetcher::fetch_verified_c(&urls, zip_path, Some(dl_cb), sha1, Some(cancel)).await
+            {
+                return Err(format!("下载整合包失败\n{e}"));
+            }
+            pack_bytes_est = std::fs::metadata(zip_path).map(|m| m.len()).unwrap_or(*size);
         }
-        if restricted.len() > 20 {
-            msg.push_str(&format!("\n…等共 {} 个", restricted.len()));
-        }
-        return fail_or_cancel(app, progress, cancel, msg, Some(cleanup));
+        step_done(app, progress, 0);
+        a_bytes.store(pack_bytes_est, Ordering::Relaxed);
     }
+    Ok(pack_bytes_est)
+}
 
-    finish_ok(app, progress, "完成");
-    true
+/// A2：解析清单并生成计划（写入计划 JSON 供恢复/展示）。
+async fn phase_parse_plan(
+    app: &AppHandle,
+    cancel: &Arc<AtomicBool>,
+    progress: &Arc<Mutex<TaskProgress>>,
+    zip_path: &Path,
+    request: &ModpackRequest,
+    config: &DownloaderConfig,
+    parse_idx: usize,
+) -> Result<PackPlan, String> {
+    set_phase(
+        app,
+        progress,
+        Some(TaskStatus::Running),
+        "解析整合包",
+        parse_idx,
+        StepStatus::Running,
+    );
+    let plan = race_cancel(cancel, build_plan(zip_path, request, config)).await?;
+    if let Err(e) = write_plan(&plan_path_for(request), &plan) {
+        return Err(format!("写入安装计划失败\n{e}"));
+    }
+    step_done(app, progress, parse_idx);
+    Ok(plan)
+}
+
+/// 受限文件收口提示：其余内容已全部就位，列出需手动下载的文件。
+fn restricted_notice(restricted: &[String]) -> String {
+    let mut msg = format!(
+        "已安装完成，但 {} 个文件因 CurseForge 作者关闭第三方分发无法自动下载（需手动从官网下载后放入 mods 目录）：",
+        restricted.len()
+    );
+    for name in restricted.iter().take(20) {
+        msg.push_str(&format!("\n· {name}"));
+    }
+    if restricted.len() > 20 {
+        msg.push_str(&format!("\n…等共 {} 个", restricted.len()));
+    }
+    msg
 }
 
 /// zip 成员流式 sha1（None=读取失败）。用于包内捆绑资源与清单声明的比对。

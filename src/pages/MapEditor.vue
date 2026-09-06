@@ -3,14 +3,14 @@
 // 独立 WebView 数据自治：初始选中经 URL query 传入，树/图标自行 invoke 拉取；
 // 标题栏自绘（无边框窗口），窗口创建与聚焦在 store/mapEditor.ts 编排。
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { ChevronDown, ChevronRight, Folder, Map, Minus, X, RefreshCw, AlertCircle } from "@lucide/vue";
+import { ChevronRight, Folder, FolderOpen, Map, Minus, X, RefreshCw, AlertCircle } from "@lucide/vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { LOADER_TITLES } from "../utils/versionMeta";
 import { fmtUnix } from "../utils/format";
 import {
 	mapTree, treeLoading, treeError, selected, expanded,
-	toggleExpand, loadTree, initFromQuery, applySelection, selectedWorldPath, syncWindowTitle,
+	toggleExpand, loadTree, pollTree, initFromQuery, applySelection, selectedWorldPath, syncWindowTitle,
 } from "../store/mapEditor";
 import { showToast } from "../utils/toast";
 import MapCanvas from "../component/map/MapCanvas.vue";
@@ -49,6 +49,8 @@ const DIMENSIONS = [
 	{ key: "DIM1", label: "末地" },
 ] as const;
 const sliceY = ref<number | null>(null);
+/** 预测层开关（仅主世界生效；dimension 切换时自动隐藏但保留选择）。 */
+const predictOn = ref(false);
 /** 当前样式串：topdown 或 slice@Y（滑杆拖动即切切片模式）。 */
 const style = computed(() => (sliceY.value === null ? "topdown" : `slice@${sliceY.value}`));
 function setTopDown() {
@@ -103,16 +105,20 @@ onMounted(async () => {
 	initFromQuery();
 	applySelection();
 	prefetchIcons();
+
+	// 存档实时性轮询：游戏边玩边建/删存档时树自动更新（本地 readdir，廉价；
+	// 窗口不可见时跳过）。选中存档被删除时 pollTree 会清空选中。
+	const poll = window.setInterval(() => {
+		if (document.visibilityState !== "visible") return;
+		void pollTree().then(prefetchIcons);
+	}, 3000);
+	onUnmounted(() => clearInterval(poll));
 });
 
-/** 刷新树（保留选中与展开状态）。 */
+/** 刷新树（手动按钮；与轮询同路径：保留选中与展开，选中已删除则清空）。 */
 async function refreshTree() {
-	const keep = { ...selected };
-	await loadTree();
-	selected.dirPath = keep.dirPath;
-	selected.version = keep.version;
-	selected.world = keep.world;
-	applySelection();
+	await pollTree();
+	prefetchIcons();
 }
 
 /** 打开存档所在文件夹（复用主窗口 open_folder 后端命令）。 */
@@ -130,11 +136,11 @@ async function openWorldFolder() {
 	<div class="me">
 		<!-- 自绘标题栏（精简版：标题居左，最小化/关闭居右） -->
 		<div class="me-titlebar" @mousedown="onTitleBarMouseDown">
-			<Map :size="14" class="me-tb-icon" />
+			<Map :size="17" class="me-tb-icon" />
 			<span class="me-tb-title">{{ selected.world || "Elytra 地图" }}</span>
 			<div class="me-tb-actions">
-				<button class="me-tb-btn" title="最小化" @click="minimize"><Minus :size="14" /></button>
-				<button class="me-tb-btn me-tb-close" title="关闭" @click="closeWindow"><X :size="14" /></button>
+				<button class="me-tb-btn" title="最小化" @click="minimize"><Minus :size="16" /></button>
+				<button class="me-tb-btn me-tb-close" title="关闭" @click="closeWindow"><X :size="16" /></button>
 			</div>
 		</div>
 
@@ -144,7 +150,7 @@ async function openWorldFolder() {
 				<div class="me-side-head">
 					<span class="me-side-title">存档</span>
 					<button class="me-side-refresh" title="刷新" @click="refreshTree">
-						<RefreshCw :size="13" :class="{ spinning: treeLoading }" />
+						<RefreshCw :size="15" :class="{ spinning: treeLoading }" />
 					</button>
 				</div>
 
@@ -158,20 +164,35 @@ async function openWorldFolder() {
 
 				<div v-else class="me-tree">
 					<template v-for="dir in mapTree" :key="dir.path">
-						<!-- 1 级：游戏目录 -->
-						<button class="me-node me-dir" @click="toggleExpand(dirKey(dir.path))">
-							<ChevronDown v-if="expanded[dirKey(dir.path)]" :size="13" class="me-caret" />
-							<ChevronRight v-else :size="13" class="me-caret" />
-							<Folder :size="14" class="me-dir-icon" />
+						<!-- 1 级：游戏目录（箭头常驻，展开时旋转 90° + 文件夹开/合） -->
+						<button
+							class="me-node me-dir"
+							:class="{ expanded: expanded[dirKey(dir.path)] }"
+							@click="toggleExpand(dirKey(dir.path))"
+						>
+							<ChevronRight
+								:size="15"
+								class="me-caret"
+								:class="{ open: expanded[dirKey(dir.path)] }"
+							/>
+							<FolderOpen v-if="expanded[dirKey(dir.path)]" :size="16" class="me-dir-icon" />
+							<Folder v-else :size="16" class="me-dir-icon" />
 							<span class="me-node-name">{{ dir.name }}</span>
 						</button>
 
 						<template v-if="expanded[dirKey(dir.path)]">
 							<template v-for="ver in dir.versions" :key="dir.path + '|' + ver.name">
-								<!-- 2 级：版本 -->
-								<button class="me-node me-ver" @click="toggleExpand(verKey(dir.path, ver.name))">
-									<ChevronDown v-if="expanded[verKey(dir.path, ver.name)]" :size="12" class="me-caret" />
-									<ChevronRight v-else :size="12" class="me-caret" />
+								<!-- 2 级：版本（箭头常驻旋转；无存档展开后无内容行） -->
+								<button
+									class="me-node me-ver"
+									:class="{ expanded: expanded[verKey(dir.path, ver.name)] }"
+									@click="toggleExpand(verKey(dir.path, ver.name))"
+								>
+									<ChevronRight
+										:size="13"
+										class="me-caret"
+										:class="{ open: expanded[verKey(dir.path, ver.name)] }"
+									/>
 									<span class="me-node-name">{{ ver.name }}</span>
 									<span v-if="LOADER_TITLES[ver.loader]" class="me-ver-badge">{{ LOADER_TITLES[ver.loader] }}</span>
 								</button>
@@ -191,14 +212,12 @@ async function openWorldFolder() {
 											class="me-world-thumb"
 											alt=""
 										/>
-										<Map v-else :size="13" class="me-world-icon" />
+										<Map v-else :size="14" class="me-world-icon" />
 										<span class="me-node-name">{{ w.name }}</span>
 										<span class="me-world-meta">{{ fmtUnix(w.last_modified) }}</span>
 									</div>
-									<div v-if="ver.worlds.length === 0" class="me-leaf-empty">无存档</div>
 								</template>
 							</template>
-							<div v-if="dir.versions.length === 0" class="me-leaf-empty">无版本</div>
 						</template>
 					</template>
 				</div>
@@ -237,9 +256,25 @@ async function openWorldFolder() {
 							/>
 							<span v-if="sliceY !== null" class="me-y-label">Y={{ sliceY }}</span>
 						</div>
+						<div class="me-style-group">
+							<button
+								class="me-dim-btn"
+								:class="{ active: predictOn && dimension === '' && sliceY === null }"
+								:disabled="dimension !== '' || sliceY !== null"
+								title="未探索区生物群系预测（仅主世界表层；切片/下界等维度不可用；含 mod 世界时可能不准）"
+								@click="predictOn = !predictOn"
+							>
+								预测
+							</button>
+						</div>
 					</div>
 					<div class="me-canvas-holder">
-						<MapCanvas :world-path="worldPath" :dimension="dimension" :style="style" />
+						<MapCanvas
+							:world-path="worldPath"
+							:dimension="dimension"
+							:style="style"
+							:show-prediction="dimension === '' && predictOn"
+						/>
 					</div>
 					<div class="me-canvas-statusbar">
 						<span class="me-status-path" :title="worldPath">{{ worldPath }}</span>
@@ -265,41 +300,43 @@ async function openWorldFolder() {
 	height: 100vh;
 	background-color: var(--surface-page);
 	color: var(--text-primary);
+	font-size: 13px; /* 基础字号：地图编辑器整体偏小，统一抬升一档 */
 	overflow: hidden;
 }
 
-/* ── 标题栏 ── */
+/* ── 标题栏（更高的点击区 + 大一号图标）── */
 .me-titlebar {
 	display: flex;
 	align-items: center;
-	gap: 8px;
-	height: 32px;
-	padding: 0 8px 0 12px;
+	gap: 10px;
+	height: 40px;
+	padding: 0 6px 0 14px;
 	background-color: var(--surface-card);
+	border-bottom: 1px solid var(--surface-border, rgba(128, 128, 128, 0.25));
 	user-select: none;
 	flex-shrink: 0;
 }
 
 .me-tb-icon { color: var(--color-brand); }
 .me-tb-title {
-	font-size: 12px;
-	font-weight: 600;
+	font-size: 14px;
+	font-weight: 700;
 	flex: 1;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
-.me-tb-actions { display: flex; gap: 2px; }
+.me-tb-actions { display: flex; gap: 4px; }
 
 .me-tb-btn {
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	width: 28px;
-	height: 24px;
+	width: 34px;
+	height: 28px;
 	border: none;
-	border-radius: 4px;
+	border-radius: 5px;
 	background: transparent;
 	color: var(--text-secondary);
 	cursor: pointer;
@@ -316,13 +353,13 @@ async function openWorldFolder() {
 	min-height: 0;
 }
 
-/* ── 左侧树 ── */
+/* ── 左侧树（独立区：标题带与列表区背景分层）── */
 .me-side {
-	width: 240px;
+	width: 250px;
 	flex-shrink: 0;
 	display: flex;
 	flex-direction: column;
-	border-right: 1px solid var(--surface-border, rgba(128, 128, 128, 0.2));
+	border-right: 1px solid var(--surface-border, rgba(128, 128, 128, 0.28));
 	background-color: var(--surface-card);
 }
 
@@ -330,22 +367,25 @@ async function openWorldFolder() {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	padding: 10px 12px 6px;
+	padding: 10px 12px;
+	background-color: var(--surface-page);
+	border-bottom: 1px solid var(--surface-border, rgba(128, 128, 128, 0.22));
+	flex-shrink: 0;
 }
 
 .me-side-title {
-	font-size: 11px;
-	font-weight: 600;
+	font-size: 12px;
+	font-weight: 700;
 	color: var(--text-tertiary);
-	letter-spacing: 0.05em;
+	letter-spacing: 0.08em;
 }
 
 .me-side-refresh {
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	width: 22px;
-	height: 22px;
+	width: 24px;
+	height: 24px;
 	border: none;
 	border-radius: 4px;
 	background: transparent;
@@ -361,20 +401,19 @@ async function openWorldFolder() {
 .me-tree {
 	flex: 1;
 	overflow-y: auto;
-	padding: 4px 6px 10px;
+	padding: 6px 8px 12px;
 }
 
 .me-tree-loading,
-.me-tree-empty,
-.me-leaf-empty {
-	padding: 8px 12px;
-	font-size: 11px;
+.me-tree-empty {
+	padding: 10px 12px;
+	font-size: 12.5px;
 	color: var(--text-tertiary);
 }
 
 .me-tree-err {
-	padding: 8px 12px;
-	font-size: 11px;
+	padding: 10px 12px;
+	font-size: 12.5px;
 	color: var(--text-danger, #e05555);
 	display: flex;
 	flex-direction: column;
@@ -389,8 +428,8 @@ async function openWorldFolder() {
 	background: transparent;
 	color: var(--text-secondary);
 	border-radius: 4px;
-	font-size: 11px;
-	padding: 3px 10px;
+	font-size: 12px;
+	padding: 4px 12px;
 	cursor: pointer;
 }
 
@@ -399,28 +438,52 @@ async function openWorldFolder() {
 .me-node {
 	display: flex;
 	align-items: center;
-	gap: 5px;
+	gap: 6px;
 	width: 100%;
 	border: none;
 	background: transparent;
 	color: inherit;
 	text-align: left;
 	cursor: pointer;
-	border-radius: 5px;
+	border-radius: 6px;
 	transition: background 0.1s;
 	user-select: none;
 }
 
 .me-node:hover { background-color: var(--surface-hover); }
 
-.me-dir { padding: 5px 6px; font-size: 12px; font-weight: 600; }
-.me-ver { padding: 4px 6px 4px 20px; font-size: 12px; }
-.me-world { padding: 5px 6px 5px 34px; font-size: 12px; }
+/* 游戏文件夹：分组标签卡（浅底圆角，无游离边线），组间距自然分隔 */
+.me-dir {
+	padding: 8px 10px;
+	font-size: 13px;
+	font-weight: 700;
+	margin-top: 12px;
+	background-color: color-mix(in srgb, var(--surface-hover) 55%, transparent);
+	color: var(--text-primary);
+}
+
+.me-dir:first-child { margin-top: 0; }
+
+.me-dir:hover {
+	background-color: color-mix(in srgb, var(--surface-hover) 85%, transparent);
+}
+
+.me-ver { padding: 6px 8px 6px 24px; font-size: 12.5px; font-weight: 500; }
+.me-world { padding: 6px 8px 6px 38px; font-size: 12.5px; }
 
 .me-node.active { background-color: var(--color-brand); color: #fff; }
 .me-node.active .me-world-meta { color: rgba(255, 255, 255, 0.75); }
+.me-dir.active { background-color: color-mix(in srgb, var(--color-brand) 18%, transparent); }
 
-.me-caret { flex-shrink: 0; color: var(--text-tertiary); }
+.me-caret {
+	flex-shrink: 0;
+	color: var(--text-tertiary);
+	transition: transform 0.15s ease;
+}
+
+/* VS Code 式：展开时箭头旋转 90°（收起态为指向右） */
+.me-caret.open { transform: rotate(90deg); }
+
 .me-dir-icon { flex-shrink: 0; color: var(--color-brand); }
 .me-world-icon { flex-shrink: 0; color: var(--text-tertiary); }
 .me-node.active .me-world-icon { color: rgba(255, 255, 255, 0.8); }
@@ -434,32 +497,38 @@ async function openWorldFolder() {
 }
 
 .me-ver-badge {
-	font-size: 10px;
-	padding: 1px 5px;
-	border-radius: 3px;
+	font-size: 11.5px;
+	padding: 1px 7px;
+	border-radius: 4px;
 	background-color: var(--surface-hover);
 	color: var(--text-tertiary);
 	flex-shrink: 0;
 }
 
 .me-world-thumb {
-	width: 16px;
-	height: 16px;
+	width: 18px;
+	height: 18px;
 	border-radius: 3px;
 	flex-shrink: 0;
 	object-fit: cover;
 }
 
-/* ── 阶段 A：画布工具栏 ── */
+/* ── 右侧工具栏（独立功能区：底边分隔加粗）── */
 .me-toolbar {
 	display: flex;
 	align-items: center;
 	gap: 12px;
-	padding: 6px 10px;
-	border-bottom: 1px solid var(--surface-border, rgba(128, 128, 128, 0.2));
+	padding: 8px 12px;
+	border-bottom: 1px solid var(--surface-border, rgba(128, 128, 128, 0.25));
 	background-color: var(--surface-card);
 	flex-shrink: 0;
 	flex-wrap: wrap;
+}
+
+/* 工具栏内部小分区（维度 / 样式 / 滑杆）间隔更清晰 */
+.me-style-group {
+	padding-left: 12px;
+	border-left: 1px solid var(--surface-border, rgba(128, 128, 128, 0.2));
 }
 
 .me-dim-group,
@@ -473,9 +542,9 @@ async function openWorldFolder() {
 	border: none;
 	background: transparent;
 	color: var(--text-secondary);
-	font-size: 11px;
-	padding: 3px 10px;
-	border-radius: 4px;
+	font-size: 12.5px;
+	padding: 4px 12px;
+	border-radius: 5px;
 	cursor: pointer;
 	transition: background 0.1s, color 0.1s;
 }
@@ -484,14 +553,14 @@ async function openWorldFolder() {
 .me-dim-btn.active { background-color: var(--color-brand); color: #fff; }
 
 .me-y-slider {
-	width: 140px;
+	width: 150px;
 	accent-color: var(--color-brand);
 }
 
 .me-y-label {
-	font-size: 11px;
+	font-size: 12.5px;
 	color: var(--text-secondary);
-	min-width: 52px;
+	min-width: 56px;
 	font-variant-numeric: tabular-nums;
 }
 
@@ -502,7 +571,7 @@ async function openWorldFolder() {
 }
 
 .me-world-meta {
-	font-size: 10px;
+	font-size: 11px;
 	color: var(--text-tertiary);
 	flex-shrink: 0;
 }
@@ -528,18 +597,18 @@ async function openWorldFolder() {
 	color: var(--text-tertiary);
 }
 
-.me-canvas-empty p { font-size: 13px; margin: 0; }
+.me-canvas-empty p { font-size: 14px; margin: 0; }
 
-.me-ph-title { font-size: 15px; font-weight: 600; color: var(--text-primary); margin: 0; }
-.me-ph-meta { font-size: 12px; margin: 0; }
-.me-ph-hint { font-size: 11px; opacity: 0.7; margin: 0; }
+.me-ph-title { font-size: 16px; font-weight: 600; color: var(--text-primary); margin: 0; }
+.me-ph-meta { font-size: 13px; margin: 0; }
+.me-ph-hint { font-size: 12px; opacity: 0.7; margin: 0; }
 
 .me-canvas-statusbar {
 	display: flex;
 	align-items: center;
 	gap: 10px;
-	padding: 6px 12px;
-	border-top: 1px solid var(--surface-border, rgba(128, 128, 128, 0.2));
+	padding: 7px 12px;
+	border-top: 1px solid var(--surface-border, rgba(128, 128, 128, 0.25));
 	background-color: var(--surface-card);
 	flex-shrink: 0;
 }
@@ -547,7 +616,7 @@ async function openWorldFolder() {
 .me-status-path {
 	flex: 1;
 	min-width: 0;
-	font-size: 11px;
+	font-size: 12px;
 	color: var(--text-tertiary);
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -563,9 +632,9 @@ async function openWorldFolder() {
 	border: none;
 	background: transparent;
 	color: var(--text-secondary);
-	font-size: 11px;
+	font-size: 12px;
 	cursor: pointer;
-	padding: 3px 8px;
+	padding: 4px 10px;
 	border-radius: 4px;
 	transition: background 0.1s;
 }
