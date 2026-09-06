@@ -2,21 +2,15 @@
 import { onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { initNavHistory, goBack, goForward } from "./store/nav";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import TitleBar from "./component/common/TitleBar.vue";
 import AlertDialog from "./component/common/AlertDialog.vue";
 import { dlState, ensureListen, checkInterrupted, waitingUser, decideWaitingTask, type TaskKind } from "./store/download";
 import { startMemoryMonitor } from "./store/memory";
 import { setSelected } from "./store/selectedVersion";
-import { mainCloseCascadesToMapEditor } from "./store/mapEditor";
 import { toastState, showToast } from "./utils/toast";
 
 const router = useRouter();
 
-/** 独立窗口分流：地图编辑器窗口（label=map-editor）是独立 WebView，
- *  不共享主窗口的下载监听/导航栈/快捷键语义，也不渲染主窗口 TitleBar。
- *  该窗口自带精简 chrome（MapEditor.vue 内部实现）。 */
-const isStandaloneWindow = getCurrentWindow().label !== "main";
 
 /** 下载失败错误 dialog（body 只放短提示，完整错误由复制按钮带走）。 */
 const errorDialog = ref(false);
@@ -119,13 +113,7 @@ function onContextMenu(e: MouseEvent) {
 }
 
 onMounted(() => {
-  if (isStandaloneWindow) {
-    // 独立窗口（地图编辑器）：只做右键拦截，其余主窗口语义（下载监听/
-    // 导航栈/ESC 回主页/hash pin/内存监控）全部不适用
-    document.addEventListener("contextmenu", onContextMenu);
-    return;
-  }
-  pinnedHash = location.hash || "#/";
+    pinnedHash = location.hash || "#/";
   router.afterEach(() => {
     pinnedHash = location.hash || "#/";
   });
@@ -139,8 +127,6 @@ onMounted(() => {
   document.addEventListener("pointerup", onSideButton, true);
   window.addEventListener("popstate", onPopState);
   ensureListen();
-  // 主窗口关闭时连带关闭地图编辑器（子窗口与主进程同生命周期）
-  mainCloseCascadesToMapEditor();
   // 崩溃/重启恢复检查：拉取上次未完成的任务（DownloadDetail 横幅询问恢复）
   void checkInterrupted();
   // 应用启动即持续监听系统内存（设置页/启动页共用）
@@ -149,7 +135,6 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener("contextmenu", onContextMenu);
-  if (isStandaloneWindow) return;
   document.removeEventListener("keydown", onKeyDown);
   document.removeEventListener("mousedown", onSideButton, true);
   document.removeEventListener("mouseup", onSideButton, true);
@@ -161,12 +146,6 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <!-- 独立窗口（地图编辑器）：无主窗口 chrome，页面自带精简标题栏与布局 -->
-  <div v-if="isStandaloneWindow" class="app-layout standalone">
-    <main class="main-content">
-      <router-view />
-    </main>
-  </div>
   <!-- 主窗口：TitleBar + 路由动画 + 全局弹层 -->
   <div v-else class="app-layout">
     <TitleBar />
@@ -466,13 +445,6 @@ input, textarea {
   overflow-x: hidden;
   scrollbar-gutter: stable;
   background-color: var(--surface-page);
-}
-
-/* 独立窗口（地图编辑器）：无 TitleBar，画布区占满窗口且禁滚动
-   （地图交互自管缩放/平移，容器滚动会吞掉拖拽手势） */
-.app-layout.standalone .main-content {
-  overflow: hidden;
-  scrollbar-gutter: auto;
 }
 
 /* 窗口边缘加深覆盖层：色相随主题切换（--edge-line / --edge-shade）。

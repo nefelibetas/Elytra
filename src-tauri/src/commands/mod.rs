@@ -4,8 +4,6 @@ pub mod downloader;
 pub mod gamedirs;
 pub mod jdk;
 pub mod launch;
-pub mod map;
-pub mod map_editor;
 pub mod launch_options;
 pub mod launch_script;
 pub mod loader;
