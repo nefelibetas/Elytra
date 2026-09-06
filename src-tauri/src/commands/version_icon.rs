@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::commands::version::version_dir;
+use crate::downloader::version::version_dir_path as version_dir;
 use crate::util;
 
 /// 版本图标读取上限（平台 logo / 用户图片一般 <256KB，留余量）。

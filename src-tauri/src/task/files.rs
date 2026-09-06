@@ -13,7 +13,7 @@ use crate::constants;
 use crate::downloader::fetcher;
 use crate::persist;
 use crate::task::model::{DownloadFileItem, DownloadFileKind, DownloadFilesTask};
-use crate::task::{self, StepStatus, TaskProgress, TaskStatus, WaitingDecision};
+use crate::task::{self, StepStatus, TaskProgress, TaskSpec, TaskStatus, WaitingDecision};
 
 use super::progress::{
     cancelled, set_cancelled, set_error, set_phase, spawn_heartbeat, step_done, HeartbeatStats,
@@ -446,6 +446,61 @@ pub async fn run_files_task(
         let task_id = p.task_id.clone();
         drop(p); // 先释放 progress 锁再 remove（remove 内部读 progress，防重入死锁）
         task::global().remove(&task_id);
+    }
+}
+
+/// 批量文件下载任务的注册 + spawn（单文件是批量特例，统一走这里）。
+pub(crate) fn spawn_files_task(app: AppHandle, task: DownloadFilesTask) -> Result<String, String> {
+    // 前端传入的 version_dir_name 是已安装版本的实际目录名（get_installed_versions
+    // 返回目录名，含冲突追加的 _{n}），直接校验目录存在即可；
+    // mod / 资源包 / 数据包 / 光影包严格落盘到版本隔离目录 versions/{目录}/{kind_dir}/{filename}。
+    let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
+    let dir = config
+        .minecraft_dir_abs()
+        .join("versions")
+        .join(&task.version_dir_name);
+    if !dir.is_dir() {
+        return Err(format!(
+            "目标版本目录不存在（请先在版本选择页选择已安装的版本）\n版本目录: {}",
+            dir.display()
+        ));
+    }
+    task.validate()?;
+    super::spawn_task(
+        app,
+        task.name(),
+        task.steps(),
+        crate::task::store::JobSpec::Files(task.clone()),
+        move |a, cancel, progress| {
+            tauri::async_runtime::spawn(async move {
+                run_files_task(a, &cancel, &progress, &task).await;
+            });
+        },
+    )
+}
+
+/// 删除批量文件任务的全部 .elytra-part 残留（恢复社区资源下载前调用）。
+/// worlds 任务清理 `saves/.elytra-worlds/` 临时区（含半截 zip/unpack），替代按 kind_dir 的清理。
+pub(crate) fn cleanup_file_parts(task: &DownloadFilesTask) {
+    let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
+    let mc = config.minecraft_dir_abs();
+    for f in &task.files {
+        if f.kind == DownloadFileKind::World {
+            let stage = mc
+                .join("versions")
+                .join(&task.version_dir_name)
+                .join("saves")
+                .join(".elytra-worlds");
+            let _ = std::fs::remove_dir_all(&stage);
+            continue;
+        }
+        let dest = mc
+            .join("versions")
+            .join(&task.version_dir_name)
+            .join(f.kind.kind_dir())
+            .join(&f.filename);
+        let tmp = dest.with_file_name(format!("{}.elytra-part", f.filename));
+        let _ = std::fs::remove_file(tmp);
     }
 }
 

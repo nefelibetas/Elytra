@@ -2,14 +2,12 @@
 //! 目录定位复用 gamedirs 的"当前激活游戏目录 + versions/{name}"约定；
 //! 更新检查/下载的领域逻辑在 downloader/mod_updates/；版本图标命令在 commands/version_icon.rs。
 
-use std::path::{Path, PathBuf};
-
 use serde::Serialize;
 
-use crate::commands::gamedirs::get_active_game_dir;
 use crate::downloader::mod_updates::{
     self, ModFileDetail, ModListResult, ModUpdate, ResourceListResult,
 };
+use crate::downloader::version::version_dir_path as version_dir;
 
 /// 本地存档信息（saves 目录子目录扫描结果）。
 #[derive(Debug, Clone, Serialize)]
@@ -31,19 +29,7 @@ pub struct ResourceFile {
     pub last_modified: u64,
 }
 
-/// 版本目录绝对路径（versions/{name}）。目录不存在时返回错误（与 ensure_game_folder 语义区分：
-/// 内容是"读"操作，不该静默创建）。
-/// pub(crate)：版本图标命令（version_icon.rs）共用同一目录定位约定。
-pub(crate) fn version_dir(version_name: &str) -> Result<PathBuf, String> {
-    let active = get_active_game_dir();
-    let dir = Path::new(&active.path).join("versions").join(version_name);
-    if !dir.exists() {
-        return Err(format!("版本目录不存在\n{}", dir.display()));
-    }
-    Ok(dir)
-}
-
-/// 列出版本下的本地存档（saves 子目录，按最后修改时间倒序；无 saves 目录返回空列表）。
+/// 本地存档信息（saves 目录子目录扫描结果）。
 #[tauri::command]
 pub fn list_worlds(version_name: String) -> Vec<WorldInfo> {
     let Ok(vdir) = version_dir(&version_name) else {
@@ -272,7 +258,6 @@ pub async fn export_modpack(version_name: String, save_path: String) -> Result<(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::io::Read;
 
     #[test]

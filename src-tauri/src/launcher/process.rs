@@ -232,3 +232,97 @@ pub fn read_game_log(mc_dir: &Path, version_name: &str) -> String {
         .map(|text| crate::util::tail_lines(&text))
         .unwrap_or_default()
 }
+
+// ── 启动装配（spawn_game / export_launch_script 共用前置）──
+
+/// 按启动模式构造认证（online/external/offline），第三方账号的 api_url 从当前账号读。
+pub fn build_auth(
+    auth_mode: &str,
+    username: &str,
+    access_token: &str,
+    uuid: &str,
+    xuid: &str,
+) -> crate::launcher::model::AuthMode {
+    use crate::launcher::model::AuthMode;
+    match auth_mode {
+        "online" => AuthMode::Online {
+            username: username.to_string(),
+            access_token: access_token.to_string(),
+            uuid: uuid.to_string(),
+            xuid: xuid.to_string(),
+        },
+        "external" => {
+            // 第三方登录：账号从 secrets 读（uuid/name/token/api_url 一致），
+            // 前端传 username/uuid/token；api_url 从当前第三方账号取
+            let api_url = crate::auth::external::read()
+                .map(|a| a.api_url)
+                .unwrap_or_default();
+            AuthMode::External {
+                username: username.to_string(),
+                access_token: access_token.to_string(),
+                uuid: uuid.to_string(),
+                api_url,
+            }
+        }
+        _ => AuthMode::Offline {
+            username: username.to_string(),
+            uuid: String::new(), // 由 apply_offline_skin 按离线皮肤设置填充
+        },
+    }
+}
+
+/// 正版模式 xuid 缺失时从 Minecraft access token（JWT）解析兜底
+/// （XSTS 的 xid 字段部分账号缺失，旧配置也可能未保存 xuid）。
+pub fn fill_missing_xuid(auth: &mut crate::launcher::model::AuthMode) {
+    use crate::launcher::model::AuthMode;
+    if let AuthMode::Online {
+        xuid, access_token, ..
+    } = auth
+    {
+        if xuid.is_empty() {
+            *xuid = crate::auth::microsoft::extract_xuid_from_jwt(access_token);
+        }
+    }
+}
+
+/// 启动类命令（launch_game / export_launch_script / spawn_game）共享的前置：
+/// 构造账号（补 xuid）→ 加载配置与版本 JSON。
+#[allow(clippy::type_complexity)]
+pub fn prepare_launch(
+    version_dir_name: &str,
+    auth_mode: &str,
+    username: &str,
+    access_token: &str,
+    uuid: &str,
+    xuid: &str,
+) -> Result<
+    (
+        crate::launcher::model::AuthMode,
+        PathBuf,
+        crate::downloader::model::VersionJson,
+        PathBuf,
+        crate::launcher::model::LauncherConfig,
+        u32,
+    ),
+    String,
+> {
+    let mut auth = build_auth(auth_mode, username, access_token, uuid, xuid);
+    fill_missing_xuid(&mut auth);
+    let (java_path, version_json, mc_dir, launcher_config, java_major) =
+        crate::launcher::env::load_launch_config(version_dir_name)?;
+    // 第三方登录：启动前确保 authlib-injector.jar 存在（注入必需，缺失会启动失败）
+    if matches!(auth, crate::launcher::model::AuthMode::External { .. }) {
+        let jar = crate::util::config_dir().join(crate::auth::external::AUTHLIB_JAR);
+        if !jar.exists() {
+            return Err("第三方登录组件缺失\n请重新登录第三方账号以恢复 authlib-injector.jar".into());
+        }
+    }
+    Ok((
+        auth,
+        java_path,
+        version_json,
+        mc_dir,
+        launcher_config,
+        java_major,
+    ))
+}
