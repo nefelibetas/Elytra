@@ -2,7 +2,6 @@
 //! 目录定位复用 gamedirs 的"当前激活游戏目录 + versions/{name}"约定；
 //! 更新检查/下载的领域逻辑在 downloader/mod_updates/；版本图标命令在 commands/version_icon.rs。
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -183,18 +182,17 @@ pub async fn identify_mod_file(
 }
 
 /// 检查 mods 目录下的 mod 是否有更新（仅 Modrinth 源，命中不到的项目跳过）。
-/// `mc_version` / `loader` 由前端从版本目录名解析传入（fabric/forge/neoforge/quilt）。
+/// `mc_version` / `loader` 由后端从版本目录 json 权威解析（目录名只作兜底）——
+/// 前端不再传入解析结果，防改名/伪标记目录把垃圾版本号发给 Modrinth。
 #[tauri::command]
-pub async fn check_mod_updates(
-    version_name: String,
-    mc_version: String,
-    loader: String,
-) -> Result<Vec<ModUpdate>, String> {
+pub async fn check_mod_updates(version_name: String) -> Result<Vec<ModUpdate>, String> {
     let vdir = version_dir(&version_name)?;
     let files = mod_updates::scan_mod_files(&vdir.join("mods"));
     if files.is_empty() {
         return Ok(Vec::new());
     }
+    let (mc_version, loader, _) =
+        crate::downloader::modpack::resolve_version_meta(&vdir, &version_name);
     Ok(mod_updates::check_updates(&vdir.join("mods"), &files, &mc_version, &loader).await)
 }
 
@@ -257,219 +255,19 @@ pub fn toggle_mod_file(version_name: String, file_name: String) -> Result<bool, 
 
 /// 导出整合包：把版本目录下的 mods/config/shaderpacks/resourcepacks 打进 zip
 /// （顶层同名目录 + manifest.json 元数据）。目录缺失自动跳过；打包走 spawn_blocking 防阻塞。
-/// jar 等已压缩内容用 Stored（不二次压缩，速度优先）。
-/// mrpack files[] 条目（Modrinth 在线分发元数据）。
-#[derive(serde::Serialize)]
-struct HostedPackFile {
-    path: String,
-    hashes: serde_json::Value,
-    downloads: Vec<String>,
-    file_size: u64,
-}
-
-/// 扫描 mods/ 下压缩类文件 → sha1 → Modrinth version_files 匹配 →
-/// 返回 (files[] 条目, 需从 overrides 排除的文件名集合)。
-/// 网络失败/匹配不到：文件留在 overrides 物理打包（离线降级，静默）。
-async fn resolve_hosted_mods(
-    vdir: &Path,
-) -> (Vec<HostedPackFile>, std::collections::HashSet<String>) {
-    let mods_dir = vdir.join("mods");
-    let Ok(rd) = std::fs::read_dir(&mods_dir) else {
-        return (Vec::new(), std::collections::HashSet::new());
-    };
-    // 压缩/资源类文件（与 PCL2 导出集合一致：jar/zip/rar/disabled/old）
-    let mut candidates: Vec<PathBuf> = rd
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| {
-            p.is_file()
-                && matches!(
-                    p.extension().and_then(|x| x.to_str()),
-                    Some("jar" | "zip" | "rar" | "disabled" | "old")
-                )
-        })
-        .collect();
-    if candidates.is_empty() {
-        return (Vec::new(), std::collections::HashSet::new());
-    }
-    // 算 sha1（文件小，顺序读即可）
-    let mut sha1s: Vec<String> = Vec::with_capacity(candidates.len());
-    let mut kept: Vec<(PathBuf, Vec<u8>, String)> = Vec::with_capacity(candidates.len());
-    for path in candidates.drain(..) {
-        let Ok(data) = std::fs::read(&path) else {
-            continue;
-        };
-        let sha1 = crate::downloader::hash::sha1_hex(&data);
-        kept.push((path, data, sha1.clone()));
-        sha1s.push(sha1);
-    }
-    if kept.is_empty() {
-        return (Vec::new(), std::collections::HashSet::new());
-    }
-    // Modrinth 批量匹配
-    let raw = match crate::downloader::community::modrinth_version_files(&sha1s).await {
-        Ok(v) => v,
-        Err(_) => return (Vec::new(), std::collections::HashSet::new()), // 离线降级
-    };
-    let mut hosted = Vec::new();
-    let mut names = std::collections::HashSet::new();
-    for (path, data, sha1) in kept {
-        let Some(hit) = raw.get(&sha1) else { continue };
-        let Some(files) = hit.get("files").and_then(|f| f.as_array()) else {
-            continue;
-        };
-        let Some(first) = files.first() else { continue };
-        let Some(url) = first.get("url").and_then(|u| u.as_str()) else {
-            continue;
-        };
-        let fname = path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-        hosted.push(HostedPackFile {
-            path: format!("mods/{fname}"),
-            hashes: serde_json::json!({
-                "sha1": sha1,
-                "sha512": crate::downloader::hash::sha512_hex(&data),
-            }),
-            downloads: vec![url.to_string()],
-            file_size: data.len() as u64,
-        });
-        names.insert(fname);
-    }
-    (hosted, names)
-}
-
+/// 领域逻辑（hash 匹配/打包/权威元数据解析）在 downloader/modpack.rs。
 #[tauri::command]
 pub async fn export_modpack(version_name: String, save_path: String) -> Result<(), String> {
     let vdir = version_dir(&version_name)?;
     let name = version_name.clone();
     // Modrinth hash 匹配（对齐 PCL2 导出）：能匹配的 mod 走 files[]（在线分发，
     // 包内不物理携带）；匹配不到/网络失败的全量物理打包进 overrides。
-    let (hosted, hosted_names) = resolve_hosted_mods(&vdir).await;
+    let (hosted, hosted_names) = crate::downloader::modpack::resolve_hosted_mods(&vdir).await;
     tokio::task::spawn_blocking(move || {
-        pack_modpack(&vdir, &name, &save_path, &hosted, &hosted_names)
+        crate::downloader::modpack::pack_modpack(&vdir, &name, &save_path, &hosted, &hosted_names)
     })
     .await
     .map_err(|e| format!("打包任务失败\n{e}"))?
-}
-
-/// 导出标准 MRPACK 整合包（Modrinth 格式 v1）：所有内容物理打包进 `overrides/`，
-/// `modrinth.index.json` 声明版本与 loader 依赖、`files` 留空（离线可用，任意
-/// 支持 mrpack 的启动器导入均解压 overrides 即用）。存档（saves）不打包。
-fn pack_modpack(
-    vdir: &Path,
-    version_name: &str,
-    save_path: &str,
-    hosted: &[HostedPackFile],
-    hosted_names: &std::collections::HashSet<String>,
-) -> Result<(), String> {
-    // 收集存在的顶层目录（数据包 1.13+ 有 datapacks 目录，一并导出）
-    let subdirs: Vec<&str> = [
-        "mods",
-        "config",
-        "shaderpacks",
-        "resourcepacks",
-        "datapacks",
-    ]
-    .iter()
-    .copied()
-    .filter(|d| vdir.join(d).is_dir())
-    .collect();
-
-    let file = std::fs::File::create(save_path).map_err(|e| format!("创建文件失败\n{e}"))?;
-    let mut writer = zip::ZipWriter::new(file);
-    // mrpack 惯例 Deflated（Stored 只适合已压缩文件；config/资源包收益明显）
-    let opts = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
-
-    let mc_version = crate::util::mc_version_from_dir(version_name);
-    let mut dependencies = serde_json::Map::new();
-    dependencies.insert("minecraft".into(), serde_json::json!(mc_version));
-    // loader 依赖键与导入侧 modrinth_loader 一致：fabric-loader / quilt-loader / forge / neoforge
-    if let Some((key, ver)) = crate::util::loader_from_dir(version_name) {
-        let dep_key = match key {
-            "fabric" => "fabric-loader",
-            "quilt" => "quilt-loader",
-            "forge" | "neoforge" => key,
-            _ => "",
-        };
-        if !dep_key.is_empty() {
-            dependencies.insert(dep_key.into(), serde_json::json!(ver));
-        }
-    }
-
-    let manifest = serde_json::json!({
-        "formatVersion": 1,
-        "game": "minecraft",
-        "versionId": mc_version,
-        "name": version_name,
-        "summary": "",
-        "files": hosted,
-        "dependencies": dependencies,
-    });
-    let content = serde_json::to_vec_pretty(&manifest).map_err(|e| format!("序列化失败\n{e}"))?;
-    writer
-        .start_file("modrinth.index.json", opts)
-        .map_err(|e| format!("写入清单失败\n{e}"))?;
-    writer
-        .write_all(&content)
-        .map_err(|e| format!("写入清单失败\n{e}"))?;
-
-    for sub in subdirs {
-        // hosted mod（在线分发）不物理打包进 overrides
-        let skip = if sub == "mods" {
-            Some(hosted_names)
-        } else {
-            None
-        };
-        add_dir_to_zip(
-            &mut writer,
-            &vdir.join(sub),
-            &format!("overrides/{sub}"),
-            opts,
-            skip,
-        )?;
-    }
-    writer.finish().map_err(|e| format!("写入 zip 失败\n{e}"))?;
-    Ok(())
-}
-
-/// 递归把目录内容写入 zip（保留相对路径；目录本身也记录条目，zip 空目录才可保留）。
-fn add_dir_to_zip(
-    writer: &mut zip::ZipWriter<std::fs::File>,
-    dir: &Path,
-    prefix: &str,
-    opts: zip::write::SimpleFileOptions,
-    skip_files: Option<&std::collections::HashSet<String>>,
-) -> Result<(), String> {
-    writer
-        .add_directory(format!("{prefix}/"), opts)
-        .map_err(|err| format!("写入目录失败\n{err}"))?;
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Ok(());
-    };
-    for e in entries.flatten() {
-        let path = e.path();
-        let name = format!("{}/{}", prefix, e.file_name().to_string_lossy());
-        // 顶层 hosted 文件跳过（mrpack files[] 在线分发，不物理打包）
-        if path.is_file()
-            && skip_files
-                .is_some_and(|set| set.contains(&e.file_name().to_string_lossy().to_string()))
-        {
-            continue;
-        }
-        if path.is_dir() {
-            add_dir_to_zip(writer, &path, &name, opts, None)?;
-        } else if path.is_file() {
-            let mut f = std::fs::File::open(&path).map_err(|err| format!("打开文件失败\n{err}"))?;
-            writer
-                .start_file(name, opts)
-                .map_err(|err| format!("写入文件失败\n{err}"))?;
-            std::io::copy(&mut f, writer).map_err(|err| format!("写入文件失败\n{err}"))?;
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -487,7 +285,7 @@ mod tests {
         // config 目录不存在 → 打包时跳过
         let out = tempfile::tempdir().unwrap();
         let zip_path = out.path().join("pack.zip");
-        pack_modpack(
+        crate::downloader::modpack::pack_modpack(
             vdir.path(),
             "1.20.1-fabric-1.0",
             zip_path.to_str().unwrap(),
@@ -542,7 +340,7 @@ mod tests {
         let vdir = tempfile::tempdir().unwrap(); // 无任何内容目录
         let out = tempfile::tempdir().unwrap();
         let zip_path = out.path().join("pack.zip");
-        pack_modpack(
+        crate::downloader::modpack::pack_modpack(
             vdir.path(),
             "1.20.1",
             zip_path.to_str().unwrap(),
@@ -557,5 +355,51 @@ mod tests {
             .map(|i| archive.by_index(i).unwrap().name().to_string())
             .collect();
         assert_eq!(names, vec!["modrinth.index.json"]);
+    }
+
+    /// json 权威解析：改名 vanilla 目录（[abcd] 里是官方 json，id 即真版本）。
+    #[test]
+    fn resolve_version_meta_prefers_vanilla_json_id_over_dir_name() {
+        let vdir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            vdir.path().join("[abcd].json"),
+            r#"{"id":"1.21.1","mainClass":"net.minecraft.client.main.Main","type":"release"}"#,
+        )
+        .unwrap();
+        let (mc, kind, ver) = crate::downloader::modpack::resolve_version_meta(vdir.path(), "[abcd]");
+        assert_eq!(mc, "1.21.1", "json.id 应纠正目录名垃圾");
+        assert_eq!(kind, "vanilla");
+        assert_eq!(ver, None);
+    }
+
+    /// 大写 loader 标记目录（PCL2 风格）+ fabric profile json：版本号经 json 同 kind 确认。
+    #[test]
+    fn resolve_version_meta_uppercase_dir_marker_with_fabric_json() {
+        let vdir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            vdir.path().join("1.20.1-Fabric-0.14.22.json"),
+            r#"{"id":"1.20.1-fabric-0.14.22","inheritsFrom":"1.20.1","mainClass":"net.fabricmc.loader.impl.launch.knot.KnotClient"}"#,
+        )
+        .unwrap();
+        let (mc, kind, ver) =
+            crate::downloader::modpack::resolve_version_meta(vdir.path(), "1.20.1-Fabric-0.14.22");
+        assert_eq!(mc, "1.20.1", "inheritsFrom 优先");
+        assert_eq!(kind, "fabric");
+        assert_eq!(ver.as_deref(), Some("0.14.22"));
+    }
+
+    /// 目录名伪标记与 json 冲突：kind 以 json 为准，版本号拒绝目录名（防注入错版本）。
+    #[test]
+    fn resolve_version_meta_json_wins_over_fake_dir_marker() {
+        let vdir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            vdir.path().join("X-forge-99.json"),
+            r#"{"id":"1.21.1","inheritsFrom":"1.21.1","mainClass":"net.fabricmc.loader.impl.launch.knot.KnotClient"}"#,
+        )
+        .unwrap();
+        let (mc, kind, ver) = crate::downloader::modpack::resolve_version_meta(vdir.path(), "X-forge-99");
+        assert_eq!(mc, "1.21.1");
+        assert_eq!(kind, "fabric", "json 特征应压掉目录名伪标记");
+        assert_eq!(ver, None, "forge 标记与 fabric json 冲突 → 版本号省略而非写假值");
     }
 }

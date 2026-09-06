@@ -35,11 +35,9 @@ use crate::task::progress::{
 };
 use crate::task::{global, update_and_emit, StepInfo, StepStatus, TaskProgress, TaskStatus};
 
-/// 包体缓存目录（exe 旁 Elytra/modpacks/，与 Settings.toml 同根约定）。
+/// 包体缓存目录（config_dir()/modpacks，与 Settings.toml 同根）。
 fn cache_dir() -> PathBuf {
-    crate::util::exe_dir()
-        .join(constants::CONFIG_DIR)
-        .join("modpacks")
+    crate::util::config_dir().join("modpacks")
 }
 
 /// 包体缓存路径（.mrpack/.zip 按来源扩展名）。

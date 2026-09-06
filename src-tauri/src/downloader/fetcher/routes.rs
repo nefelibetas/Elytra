@@ -7,7 +7,7 @@ use parking_lot::Mutex;
 
 use crate::config::downloader::model::{DownloadSourceMode, DownloaderConfig, ResourceClass};
 use crate::constants::SECT_DOWNLOADER;
-use crate::downloader::model::MIRROR_ROUTES;
+use crate::downloader::endpoints::MIRROR_ROUTES;
 
 /// 真镜像源判定（路由排序/镜像候选用，不含"官方 maven 限流"语义）：
 /// 仅 BMCLAPI / MCIM 域。is_mirror_url 承担限流职责（含官方不稳 maven），
@@ -98,7 +98,7 @@ pub(super) fn record_route_failure(url: &str) {
 /// 当前文件下载源模式（Auto 时启用健康度路由；路由层兜底读全局配置）。
 pub(super) fn source_mode() -> DownloadSourceMode {
     crate::persist::read::<DownloaderConfig>(SECT_DOWNLOADER)
-        .map(|c| c.file_source_mode)
+        .map(|c| c.game_source_mode)
         .unwrap_or_default()
 }
 
@@ -153,7 +153,7 @@ pub(super) fn resolve_download_routes(
                 )
             });
         }
-        DownloadSourceMode::OfficialOnly | DownloadSourceMode::ChinaOnly => {
+        DownloadSourceMode::OfficialOnly | DownloadSourceMode::MirrorOnly => {
             // 单选：保持调用方源顺序（镜像候选由调用方按模式生成，无健康度竞争）
         }
     }

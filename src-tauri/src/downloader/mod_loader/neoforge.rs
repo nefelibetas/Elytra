@@ -22,7 +22,7 @@ pub async fn install_neoforge(
 ) -> Result<(), String> {
     let source = config.file_primary_source().ok_or("no active source")?;
     // 安装程序也走多源回退：官方 maven 对国内网络不稳（连接重置/超时），
-    // 按 file_source_mode 的完整源顺序各构造一个 URL，fetch_fallback 依次尝试
+    // 按 game_source_mode 的完整源顺序各构造一个 URL，fetch_fallback 依次尝试
     let installer_urls: Vec<String> = config
         .file_sources_list()
         .iter()
@@ -79,7 +79,13 @@ pub(super) async fn download_neoforge_universal(
         config.file_sources_list();
     let urls: Vec<String> = sources
         .iter()
-        .map(|s| s.mirror_url(&format!("https://maven.neoforged.net/releases/{rel}")))
+        .map(|s| {
+            s.mirror_url(&format!(
+                "{}/releases/{}",
+                crate::downloader::endpoints::NEOFORGE_MAVEN,
+                rel
+            ))
+        })
         .collect();
     fetcher::fetch_fallback(&urls, &dest, None::<fn(u64, u64)>)
         .await
@@ -153,7 +159,13 @@ pub(super) async fn extract_neoforge_client(
             config.file_sources_list();
         let urls: Vec<String> = sources
             .iter()
-            .map(|s| s.mirror_url(&format!("https://maven.neoforged.net/releases/{tool_path}")))
+            .map(|s| {
+                s.mirror_url(&format!(
+                    "{}/releases/{}",
+                    crate::downloader::endpoints::NEOFORGE_MAVEN,
+                    tool_path
+                ))
+            })
             .collect();
         fetcher::fetch_fallback(&urls, &tool_dest, None::<fn(u64, u64)>)
             .await

@@ -40,7 +40,7 @@ static EASYTIER_LOG_INIT: std::sync::Once = std::sync::Once::new();
 pub(crate) fn init_easytier_logging() {
     EASYTIER_LOG_INIT.call_once(|| {
         use easytier::common::config::{ConsoleLoggerConfig, FileLoggerConfig, LoggingConfig};
-        let dir = crate::util::exe_dir().join(crate::constants::CONFIG_DIR);
+        let dir = crate::util::config_dir();
         let _ = std::fs::create_dir_all(&dir);
         let cfg = LoggingConfig {
             file_logger: Some(FileLoggerConfig {

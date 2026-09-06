@@ -60,7 +60,7 @@ pub async fn fetch_asset_index(
     eprintln!("[assets] 无有效缓存，走网络 fetch_with_fallback");
     let text = config
         .fetch_with_fallback(
-            config.file_source_mode,
+            config.game_source_mode,
             crate::downloader::source::CacheBehaviour::DefaultTtl,
             |s| s.mirror_url(index_url),
         )

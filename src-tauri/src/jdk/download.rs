@@ -3,7 +3,7 @@
 //!   计算有效吞吐量（含代理场景的真实表现），最快优先；不可达源排在最后兜底。
 //!   解决 HEAD 探测通过但大文件下载卡死的"探测欺骗"问题。
 //! - officialOnly：仅 Mojang 官方 → Azul（固定链，不探测）。
-//! - chinaOnly：Mojang（走文件源镜像）→ Adoptium 仅 TUNA（固定链，不探测）。
+//! - mirrorOnly：Mojang（走文件源镜像）→ Adoptium 仅 TUNA（固定链，不探测）。
 //!
 //! 下载目录：`{minecraft_dir}/runtime/{platform}/{version}/`，完成后经
 //! `scanner::inspect` 校验版本并注册进 persist 的 jdk section（discovered_jdks）。
@@ -113,14 +113,14 @@ pub async fn auto_install(
     }
 
     // Auto（智能）模式：下载前并发速率探测各源，最快优先安装；
-    // OfficialOnly/ChinaOnly 单选语义不变（固定链，不探测）。
+    // OfficialOnly/MirrorOnly 单选语义不变（固定链，不探测）。
     let chain: Vec<(JdkInstaller, &'static str)> = match config.jdk_source_mode {
         JdkSourceMode::Auto => build_speed_chain(major, config).await,
         JdkSourceMode::OfficialOnly => vec![
             (JdkInstaller::Mojang, "官方源"),
             (JdkInstaller::Azul, "Azul 源"),
         ],
-        JdkSourceMode::ChinaOnly => vec![
+        JdkSourceMode::MirrorOnly => vec![
             (JdkInstaller::Mojang, "官方源"),
             (JdkInstaller::Adoptium { tuna_only: true }, "国内镜像源"),
         ],
@@ -139,7 +139,7 @@ pub async fn auto_install(
 enum JdkInstaller {
     /// Mojang 官方 runtime（manifest 获取与文件下载跟随文件源模式走镜像）
     Mojang,
-    /// Adoptium：TUNA 镜像优先；`tuna_only`（chinaOnly）时官方 link 不参与下载候选
+    /// Adoptium：TUNA 镜像优先；`tuna_only`（mirrorOnly）时官方 link 不参与下载候选
     Adoptium { tuna_only: bool },
     /// Azul Zulu（包级 sha256）
     Azul,
@@ -161,11 +161,11 @@ async fn run_installer(
 }
 
 /// 各源模式的回退链（纯安装器列表，不含标签）；Auto 模式探测后使用此函数获取
-/// 待排序候选，fixed_chain（officialOnly/ChinaOnly）直接使用返回结果。
+/// 待排序候选，fixed_chain（officialOnly/MirrorOnly）直接使用返回结果。
 fn installer_chain(mode: JdkSourceMode) -> Vec<JdkInstaller> {
     match mode {
         JdkSourceMode::OfficialOnly => vec![JdkInstaller::Mojang, JdkInstaller::Azul],
-        JdkSourceMode::ChinaOnly => vec![
+        JdkSourceMode::MirrorOnly => vec![
             JdkInstaller::Mojang,
             JdkInstaller::Adoptium { tuna_only: true },
         ],
@@ -484,7 +484,7 @@ async fn install_mojang_runtime(
     // 1. 拉取 all.json（多源回退 + TTL 缓存：BMCLAPI 镜像 piston-meta）
     let all_text = config
         .fetch_with_fallback(
-            config.file_source_mode,
+            config.game_source_mode,
             crate::downloader::source::CacheBehaviour::DefaultTtl,
             |s| s.mirror_url(JdkEndpoints::RUNTIME_ALL_JSON),
         )
@@ -612,7 +612,7 @@ async fn install_mojang_runtime(
 /// Adoptium（Eclipse Temurin）回退：官方 API 查最新 GA 包（含 sha256 checksum）→
 /// TUNA 清华镜像优先下载（国内带宽）、404/失败回退官方 link → sha256 校验 →
 /// 解压（zip/tar.gz）→ inspect。
-/// `tuna_only`（chinaOnly 模式）：下载候选仅 TUNA，官方 link 不参与——
+/// `tuna_only`（mirrorOnly 模式）：下载候选仅 TUNA，官方 link 不参与——
 /// 元数据仍走官方 API（TUNA 只镜像文件、不提供 checksum，属不可绕过的例外）。
 async fn install_adoptium_runtime(
     major: u32,
@@ -1008,10 +1008,10 @@ mod tests {
     fn installer_chain_matches_source_mode() {
         assert_eq!(installer_chain(JdkSourceMode::Auto).len(), 3);
         assert_eq!(installer_chain(JdkSourceMode::OfficialOnly).len(), 2);
-        assert_eq!(installer_chain(JdkSourceMode::ChinaOnly).len(), 2);
-        // ChinaOnly 的 Adoptium 必须 tuna_only（官方 link 不参与下载候选）
+        assert_eq!(installer_chain(JdkSourceMode::MirrorOnly).len(), 2);
+        // MirrorOnly 的 Adoptium 必须 tuna_only（官方 link 不参与下载候选）
         assert!(matches!(
-            installer_chain(JdkSourceMode::ChinaOnly)[1],
+            installer_chain(JdkSourceMode::MirrorOnly)[1],
             JdkInstaller::Adoptium { tuna_only: true }
         ));
     }

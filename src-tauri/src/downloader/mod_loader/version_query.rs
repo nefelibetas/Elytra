@@ -41,7 +41,7 @@ async fn fetch_versions<T: serde::de::DeserializeOwned>(
 ) -> Result<Vec<T>, String> {
     let cfg = config();
     cfg.fetch_json_with_fallback::<Vec<T>>(
-        cfg.file_source_mode,
+        cfg.game_source_mode,
         crate::downloader::source::CacheBehaviour::DefaultTtl,
         make_url,
     )
@@ -55,7 +55,7 @@ async fn fetch_maven_versions(
     let cfg = config();
     let xml = cfg
         .fetch_with_fallback(
-            cfg.file_source_mode,
+            cfg.game_source_mode,
             crate::downloader::source::CacheBehaviour::DefaultTtl,
             make_url,
         )
@@ -212,7 +212,7 @@ pub struct FabricApiVersion {
 /// Fabric API 版本列表（Modrinth 官方 vs MCIM 镜像，按 community_source_mode 选源；
 /// 主源过慢 5s 即降级备用源）。
 ///
-/// 不复用 `DownloaderConfig::fetch_json_with_fallback`：该助手按 `file_source_mode`
+/// 不复用 `DownloaderConfig::fetch_json_with_fallback`：该助手按 `game_source_mode`
 /// 在 sources（Mojang/BMCLAPI 文件源）上路由，URL 由 `DownloadSource` 模板派生；
 /// 而 Fabric API 走社区源——选源依据是 `community_source_mode`，URL 是固定的
 /// Modrinth/MCIM 域前缀拼接，与文件源的源集和模式字段都不同构，故保留手写双源回退。
@@ -232,7 +232,7 @@ pub async fn fabric_api_versions(mc_version: &str) -> Result<Vec<FabricApiVersio
     );
     let urls = match cfg.community_source_mode {
         DownloadSourceMode::OfficialOnly => vec![official],
-        DownloadSourceMode::ChinaOnly => vec![china],
+        DownloadSourceMode::MirrorOnly => vec![china],
         // Auto：官方优先，过慢（5s）降级镜像（自适应语义同元数据请求）
         DownloadSourceMode::Auto => vec![official, china],
     };

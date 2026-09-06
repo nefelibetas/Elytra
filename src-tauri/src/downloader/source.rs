@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use crate::config::downloader::model::{DownloadSource, DownloadSourceMode, DownloaderConfig};
+use crate::downloader::endpoints::MIRROR_ROUTES;
 use crate::downloader::fetcher::http;
-use crate::downloader::model::MIRROR_ROUTES;
 
 /// 元数据请求的缓存/网络行为（离线模式 strict cache-only 的语义载体）：
 /// - `DefaultTtl`：缓存优先（TTL 内命中直接返回），未命中发网络并写缓存——默认行为；
@@ -23,10 +23,11 @@ pub enum CacheBehaviour {
 }
 
 impl DownloadSource {
-    /// 镜像 URL 重写：仅中国镜像源（manifest_url 含 bmclapi）生效，
-    /// 把官方域 URL 按 MIRROR_ROUTES（单一表，见 downloader/model.rs）重写到 BMCLAPI 镜像前缀。
+    /// 镜像 URL 重写：仅镜像源模板生效（manifest_url 即 endpoints::BMCLAPI），
+    /// 把官方域 URL 按 MIRROR_ROUTES（单一表，见 downloader/endpoints.rs）
+    /// 重写到 BMCLAPI 镜像前缀。
     pub fn mirror_url(&self, original: &str) -> String {
-        if !self.manifest_url.contains("bmclapi") {
+        if self.manifest_url != crate::downloader::endpoints::BMCLAPI {
             return original.to_string();
         }
         for (domain, replacement) in MIRROR_ROUTES {
@@ -46,22 +47,22 @@ impl DownloaderConfig {
     pub(crate) fn sources_in_order(&self, mode: DownloadSourceMode) -> Vec<&DownloadSource> {
         match mode {
             DownloadSourceMode::OfficialOnly => vec![&self.sources[0]],
-            DownloadSourceMode::ChinaOnly => vec![&self.sources[1]],
+            DownloadSourceMode::MirrorOnly => vec![&self.sources[1]],
             DownloadSourceMode::Auto => vec![&self.sources[0], &self.sources[1]],
         }
     }
 
-    /// 文件下载主源（按 file_source_mode 选择），文件下载失败不会跨源回退。
+    /// 文件下载主源（按 game_source_mode 选择），文件下载失败不会跨源回退。
     pub fn file_primary_source(&self) -> Option<&DownloadSource> {
-        match self.file_source_mode {
+        match self.game_source_mode {
             DownloadSourceMode::OfficialOnly | DownloadSourceMode::Auto => self.sources.first(),
-            DownloadSourceMode::ChinaOnly => self.sources.last(),
+            DownloadSourceMode::MirrorOnly => self.sources.last(),
         }
     }
 
-    /// 文件下载按 file_source_mode 的完整源顺序（含备用源，用于过慢降级）。
+    /// 文件下载按 game_source_mode 的完整源顺序（含备用源，用于过慢降级）。
     pub fn file_sources_list(&self) -> Vec<&DownloadSource> {
-        self.sources_in_order(self.file_source_mode)
+        self.sources_in_order(self.game_source_mode)
     }
 
     /// 优先模式下主源判慢时限（秒）：超时即降级到备用源。

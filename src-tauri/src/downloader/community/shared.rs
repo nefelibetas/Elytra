@@ -44,7 +44,7 @@ pub(crate) fn api_routes(platform: ApiPlatform, path: &str) -> Vec<String> {
         crate::persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
     match cfg.community_source_mode {
         DownloadSourceMode::OfficialOnly => vec![official],
-        DownloadSourceMode::ChinaOnly => vec![mirror],
+        DownloadSourceMode::MirrorOnly => vec![mirror],
         DownloadSourceMode::Auto => vec![official, mirror],
     }
 }

@@ -26,7 +26,7 @@ pub async fn install_forge(
 ) -> Result<(), String> {
     let source = config.file_primary_source().ok_or("no active source")?;
     // 安装程序也走多源回退：官方 maven 对国内网络不稳（连接重置/超时），
-    // 按 file_source_mode 的完整源顺序各构造一个 URL，fetch_fallback 依次尝试
+    // 按 game_source_mode 的完整源顺序各构造一个 URL，fetch_fallback 依次尝试
     let installer_urls: Vec<String> = config
         .file_sources_list()
         .iter()
@@ -320,7 +320,13 @@ async fn extract_forge_client_lzma(
         }
         let urls: Vec<String> = sources
             .iter()
-            .map(|s| s.mirror_url(&format!("https://maven.minecraftforge.net/{maven_path}")))
+            .map(|s| {
+                s.mirror_url(&format!(
+                    "{}/{}",
+                    crate::downloader::endpoints::FORGE_MAVEN,
+                    maven_path
+                ))
+            })
             .collect();
         fetcher::fetch_fallback(&urls, &tool_dest, None::<fn(u64, u64)>)
             .await
@@ -565,7 +571,11 @@ async fn resolve_jar(
             };
             // Forge 构件在 maven.minecraftforge.net（source.maven_url 是 Mojang 库源，不适用）；
             // 镜像源经 mirror_url 重写到 BMCLAPI /maven/
-            let jar_url = source.mirror_url(&format!("https://maven.minecraftforge.net/{path}"));
+            let jar_url = source.mirror_url(&format!(
+                "{}/{}",
+                crate::downloader::endpoints::FORGE_MAVEN,
+                path
+            ));
             // maven 直下失败不再静默：原因随 Ok(Some(..)) 上交（本策略命中后
             // 原实现即直接返回、不落后续策略，此处仅把吞掉的错误显式化）
             return match fetcher::fetch(&jar_url, jar_path, None::<fn(u64, u64)>).await {

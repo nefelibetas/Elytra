@@ -83,9 +83,7 @@ pub(crate) fn prepare_launch(
     // 第三方登录：启动前确保 authlib-injector.jar 存在（注入必需，缺失会启动失败）
     // 第三方登录：启动前确保 authlib-injector.jar 存在（注入必需，缺失会启动失败）
     if matches!(auth, AuthMode::External { .. }) {
-        let jar = crate::util::exe_dir()
-            .join(constants::CONFIG_DIR)
-            .join(crate::auth::external::AUTHLIB_JAR);
+        let jar = crate::util::config_dir().join(crate::auth::external::AUTHLIB_JAR);
         if !jar.exists() {
             return Err("第三方登录组件缺失\n请重新登录第三方账号以恢复 authlib-injector.jar".into());
         }
@@ -100,76 +98,7 @@ pub(crate) fn prepare_launch(
     ))
 }
 
-/// 启动前完整性与 natives 准备（check_launch_env 与 spawn_game 共用）。
-fn verify_env(
-    version_json: &VersionJson,
-    mc_dir: &std::path::Path,
-    version_dir_name: &str,
-) -> Result<(), String> {
-    env::pre_launch_check(version_json, mc_dir, version_dir_name)?;
-    let natives_dir = mc_dir
-        .join("natives")
-        .join(crate::launcher::args::mc_version_of(version_dir_name));
-    crate::launcher::args::ensure_old_style_natives(
-        version_json,
-        &mc_dir.join("libraries"),
-        &natives_dir,
-    )?;
-    Ok(())
-}
-
-// ── 进程管理 ───────────────────────────────────────
-
-/// 读取子进程输出并追加写入日志文件，直到 EOF 或出错。
-fn drain_to_file(reader: &mut impl std::io::Read, path: &std::path::Path, is_stderr: bool) {
-    use std::io::Write;
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .ok();
-    let mut buf = [0u8; 4096];
-    loop {
-        match reader.read(&mut buf) {
-            Ok(0) | Err(_) => break,
-            Ok(n) => {
-                if let Some(f) = &mut file {
-                    if is_stderr {
-                        let _ = f.write_all(b"[stderr] ");
-                    }
-                    let _ = f.write_all(&buf[..n]);
-                    let _ = f.write_all(b"\n");
-                }
-            }
-        }
-    }
-}
-
-/// 执行启动前命令（Windows: cmd /C；其他平台: sh -c）。失败时返回错误。
-fn run_pre_launch_command(command: &str) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    let status = {
-        use std::os::windows::process::CommandExt;
-        let mut cmd = std::process::Command::new("cmd");
-        cmd.args(["/C", command]);
-        cmd.creation_flags(0x08000000);
-        cmd.status().map_err(|e| format!("启动进程失败\n{e}"))?
-    };
-    #[cfg(not(target_os = "windows"))]
-    let status = std::process::Command::new("sh")
-        .args(["-c", command])
-        .status()
-        .map_err(|e| format!("启动进程失败\n{e}"))?;
-
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("退出码 {}", status.code().unwrap_or(-1)))
-    }
-}
+// ── 进程管理（实现下沉 launcher/process.rs）────────────────────
 
 // ── Tauri Commands ──────────────────────────────────
 
@@ -181,7 +110,7 @@ pub async fn check_launch_env(version_dir_name: String) -> Result<String, String
         env::load_launch_config(&version_dir_name)?;
 
     // 游戏完整性 + 旧式 natives 解压准备
-    verify_env(&version_json, &mc_dir, &version_dir_name)?;
+    crate::launcher::process::ensure_game_ready(&version_json, &mc_dir, &version_dir_name)?;
 
     let java_env = crate::persist::read::<JdkConfig>(constants::SECT_JDK)
         .ok()
@@ -214,7 +143,7 @@ pub async fn spawn_game(
     skin::apply_offline_skin(&mut auth);
 
     // 启动前完整性检测 + 旧式 natives 解压准备
-    verify_env(&version_json, &mc_dir, &version_dir_name)?;
+    crate::launcher::process::ensure_game_ready(&version_json, &mc_dir, &version_dir_name)?;
 
     // 离线皮肤：构造 --user-properties 参数（1.19.2 以下版本生效；Alex 注入 slim 纹理，Steve 默认）
     let user_properties = skin::build_user_properties(&auth);
@@ -238,7 +167,7 @@ pub async fn spawn_game(
 
     // 启动前执行命令（非空时运行；失败则中止启动）
     if !launcher_config.pre_launch_cmd.trim().is_empty() {
-        run_pre_launch_command(&launcher_config.pre_launch_cmd)
+        crate::launcher::process::run_pre_launch_command(&launcher_config.pre_launch_cmd)
             .map_err(|e| format!("启动前命令执行失败\n{e}"))?;
     }
 
@@ -251,7 +180,8 @@ pub async fn spawn_game(
     platform::apply_gpu_preference(launcher_config.use_high_performance_gpu);
 
     // 启动子进程：cwd = 版本隔离的 gameDir，与官方启动器一致——
-    // 游戏相对路径行为正确，crash-reports/logs 落在版本目录而非启动器目录
+    // 游戏相对路径行为正确，crash-reports/logs 落在版本目录而非启动器目录。
+    // spawn 的 Windows Job Object 脱钩重试逻辑在 launcher/process.rs（域层）。
     let game_dir = mc_dir.join("versions").join(&version_dir_name);
     let mut command = std::process::Command::new(&cmd.args[0]);
     command
@@ -260,37 +190,9 @@ pub async fn spawn_game(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .stdin(std::process::Stdio::null());
-    #[cfg(target_os = "windows")]
-    let mut child = {
-        use std::os::windows::process::CommandExt;
-        // 游戏进程应与启动器生命周期解耦，否则关闭启动器（或其终端）会连游戏一起关闭：
-        // 游戏作为启动器的子进程，会自动加入启动器所在的 Job Object
-        // （如 VS Code 终端建的 KILL_ON_JOB_CLOSE job），job 关闭时游戏被连带杀死。
-        // 用 CREATE_BREAKAWAY_FROM_JOB 让游戏脱离该 job；
-        // 但宿主 job 不允许 breakaway 时，带该标志的 CreateProcess 会直接失败
-        // ERROR_ACCESS_DENIED(5)（实测复现），此时回退为不带该标志重试——
-        // 游戏留在 job 中（关终端仍会被连带关闭，Windows 硬限制），但能正常启动。
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
-        let mut flags = CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB;
-        loop {
-            command.creation_flags(flags);
-            match command.spawn() {
-                Ok(c) => break c,
-                Err(e) if e.raw_os_error() == Some(5) && flags & CREATE_BREAKAWAY_FROM_JOB != 0 => {
-                    flags &= !CREATE_BREAKAWAY_FROM_JOB; // 最多重试一次
-                }
-                Err(e) => return Err(format!("启动游戏失败\n{e}")),
-            }
-        }
-    };
-    #[cfg(not(target_os = "windows"))]
-    let mut child = command
-        .spawn()
-        .map_err(|e| format!("启动游戏失败\n{}", e))?;
+    let mut child = crate::launcher::process::spawn_game_child(&mut command)?;
 
     let pid = child.id();
-
     // 进程优先级（Windows: SetPriorityClass；进程刚启动即设置）
     platform::set_process_priority(pid, launcher_config.process_priority);
 
@@ -298,150 +200,57 @@ pub async fn spawn_game(
     let log_path = mc_dir.join("logs").join("elytra-launch.log");
     if let Some(mut so) = child.stdout.take() {
         let lp = log_path.clone();
-        std::thread::spawn(move || drain_to_file(&mut so, &lp, false));
+        std::thread::spawn(move || crate::launcher::process::drain_output(&mut so, &lp, false));
     }
     if let Some(mut se) = child.stderr.take() {
         let lp = log_path.clone();
-        std::thread::spawn(move || drain_to_file(&mut se, &lp, true));
+        std::thread::spawn(move || crate::launcher::process::drain_output(&mut se, &lp, true));
     }
 
-    // 后台线程：轮询游戏主窗口出现（可见后推送 game-window-visible）并等待进程退出。
-    // 合一循环：try_wait 非阻塞查退出，窗口轮询独立，进程退出后推送 game-exited 结束。
-    let app_handle = app.clone();
-    let version_label = version_dir_name.clone();
+    // 后台监听线程（合一循环：窗口可见轮询 + 退出等待）由 launcher/process.rs 承载；
+    // 此处仅注入事件派发——队列线程派发（与 task-progress 同机制），
+    // 游戏监听线程不因 webview 未消费而阻塞。
+    let app_window = app.clone();
+    let app_exit = app.clone();
+    let label_window = version_dir_name.clone();
+    let label_exit = version_dir_name.clone();
     let crash_dir = game_dir.join("crash-reports");
-    std::thread::spawn(move || {
-        let mut window_notified = false;
-        loop {
-            // 进程已退出：推送退出事件（含崩溃报告）并结束
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    // 退出码随事件送出：前端据此区分正常退出与崩溃（非 0 → 错误级提示）
-                    let exit_code = status.code();
-                    // 崩溃时定位最新 crash report 文件，随事件交给前端展示
-                    let crash_report = if !matches!(exit_code, Some(0)) {
-                        latest_crash_report(&crash_dir)
-                    } else {
-                        None
-                    };
-                    // 队列线程派发（与 task-progress 同机制）：游戏监听线程不因 webview 未消费而阻塞
-                    crate::task::emit_event(
-                        &app_handle,
-                        crate::events::GAME_EXITED,
-                        (pid, version_label, exit_code, crash_report),
-                    );
-                    return;
-                }
-                Ok(None) => {}
-                Err(_) => {
-                    // try_wait 失败（状态查询异常）：按未知退出处理，避免线程永久挂起
-                    crate::task::emit_event(
-                        &app_handle,
-                        crate::events::GAME_EXITED,
-                        (pid, version_label, None::<i32>, None::<String>),
-                    );
-                    return;
-                }
-            }
-            // 主窗口尚未可见：轮询一次（Windows EnumWindows 按 pid 匹配可见顶层窗口）
-            if !window_notified && process_has_visible_window(pid) {
-                window_notified = true;
-                crate::task::emit_event(
-                    &app_handle,
-                    crate::events::GAME_WINDOW_VISIBLE,
-                    (pid, version_label.clone()),
-                );
-            }
-            std::thread::sleep(std::time::Duration::from_millis(300));
-        }
-    });
+    crate::launcher::process::watch_game_process(
+        child,
+        pid,
+        crash_dir,
+        300,
+        move || {
+            crate::task::emit_event(
+                &app_window,
+                crate::events::GAME_WINDOW_VISIBLE,
+                (pid, label_window.clone()),
+            );
+        },
+        move |exit_code, crash_report| {
+            // 退出码随事件送出：前端据此区分正常退出与崩溃（非 0 → 错误级提示）
+            crate::task::emit_event(
+                &app_exit,
+                crate::events::GAME_EXITED,
+                (pid, label_exit, exit_code, crash_report),
+            );
+        },
+    );
 
     Ok(pid)
 }
 
-/// 该进程是否存在可见顶层窗口（Minecraft 主窗口）。
-/// Windows: EnumWindows 按 pid 匹配 + IsWindowVisible 判定；
-/// 其他平台无此能力，直接视为可见（保持旧行为，前端另有 90s 超时兜底）。
-#[cfg(target_os = "windows")]
-fn process_has_visible_window(pid: u32) -> bool {
-    use std::ffi::c_void;
-
-    extern "system" {
-        fn EnumWindows(
-            lp_enum_func: unsafe extern "system" fn(*mut c_void, isize) -> i32,
-            l_param: isize,
-        ) -> i32;
-        fn GetWindowThreadProcessId(h_wnd: *mut c_void, lpdw_process_id: *mut u32) -> u32;
-        fn IsWindowVisible(h_wnd: *mut c_void) -> i32;
-    }
-
-    #[repr(C)]
-    struct Search {
-        pid: u32,
-        found: bool,
-    }
-
-    unsafe extern "system" fn enum_proc(hwnd: *mut c_void, lparam: isize) -> i32 {
-        let s = &mut *(lparam as *mut Search);
-        let mut wpid: u32 = 0;
-        GetWindowThreadProcessId(hwnd, &mut wpid);
-        if wpid == s.pid && IsWindowVisible(hwnd) != 0 {
-            s.found = true;
-            0 // 停止枚举
-        } else {
-            1 // 继续
-        }
-    }
-
-    let mut search = Search { pid, found: false };
-    unsafe {
-        EnumWindows(enum_proc, &mut search as *mut Search as isize);
-    }
-    search.found
-}
-
-#[cfg(not(target_os = "windows"))]
-fn process_has_visible_window(_pid: u32) -> bool {
-    true
-}
-
-/// 返回目录下最新的 `crash-*.txt` 文件路径（崩溃报告）。
-fn latest_crash_report(dir: &std::path::Path) -> Option<String> {
-    use std::time::SystemTime;
-    let mut latest: Option<(SystemTime, String)> = None;
-    for entry in std::fs::read_dir(dir).ok()?.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("txt") {
-            continue;
-        }
-        let modified = path.metadata().ok()?.modified().ok()?;
-        if latest.as_ref().is_none_or(|(t, _)| modified > *t) {
-            latest = Some((modified, path.display().to_string()));
-        }
-    }
-    latest.map(|(_, p)| p)
-}
-
-/// 读取游戏日志尾部（最多 200 行）：优先版本目录 logs/latest.log（游戏自身日志，
-/// 游戏 cwd 是版本目录，latest.log/crash-reports 都落在那里），
-/// 为空/不存在时回退启动器捕获日志 <game_dir>/logs/elytra-launch.log；均不可读返回空串。
+/// 读取游戏日志尾部（最多 200 行）：优先版本目录 logs/latest.log，为空回退
+/// 启动器捕获日志 <game_dir>/logs/elytra-launch.log；读取逻辑在 launcher/process.rs。
 #[tauri::command]
 pub async fn get_game_log(game_dir: String, version_name: String) -> String {
-    let mc = std::path::Path::new(&game_dir);
-    let version_logs = mc.join("versions").join(&version_name).join("logs");
-    let game_log = std::fs::read_to_string(version_logs.join("latest.log")).unwrap_or_default();
-    if !game_log.trim().is_empty() {
-        return tail_lines(&game_log);
-    }
-    std::fs::read_to_string(mc.join("logs").join("elytra-launch.log"))
-        .map(|text| tail_lines(&text))
-        .unwrap_or_default()
+    crate::launcher::process::read_game_log(std::path::Path::new(&game_dir), &version_name)
 }
 
 /// 打开启动器日志所在目录（exe 旁 Elytra/，launcher.log 所在地）。
 #[tauri::command]
 pub fn open_launcher_log_dir(app: AppHandle) -> Result<(), String> {
-    let dir = crate::util::exe_dir().join(constants::CONFIG_DIR);
+    let dir = crate::util::config_dir();
     super::gamedirs::open_folder(app, dir.to_string_lossy().to_string())
 }
 
@@ -449,19 +258,10 @@ pub fn open_launcher_log_dir(app: AppHandle) -> Result<(), String> {
 /// 文件不存在/不可读返回空字符串（不报错）。
 #[tauri::command]
 pub async fn get_launcher_log() -> String {
-    let path = crate::util::exe_dir()
-        .join(constants::CONFIG_DIR)
-        .join("launcher.log");
+    let path = crate::util::config_dir().join("launcher.log");
     std::fs::read_to_string(path)
-        .map(|text| tail_lines(&text))
+        .map(|text| crate::util::tail_lines(&text))
         .unwrap_or_default()
-}
-
-/// 取文本尾部最多 200 行（lines().rev().take(200) 后反转，保留原顺序）。
-fn tail_lines(text: &str) -> String {
-    let mut lines: Vec<&str> = text.lines().rev().take(200).collect();
-    lines.reverse();
-    lines.join("\n")
 }
 
 #[cfg(test)]

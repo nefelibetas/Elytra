@@ -6,7 +6,7 @@ import { useConfigSection } from "../utils/useConfigSection";
 export const sourceModeOptions = [
   { value: "auto", label: "智能模式", desc: "程序自动判断更快源：按资源类型与健康度自动选源，官方过慢自动降级镜像" },
   { value: "officialOnly", label: "官方源", desc: "仅使用官方源，不自动回退" },
-  { value: "chinaOnly", label: "国内镜像源", desc: "仅使用国内镜像源，不自动回退" },
+  { value: "mirrorOnly", label: "仅镜像源", desc: "仅使用 BMCLAPI 国内镜像，不自动回退" },
 ];
 
 // 网络代理模式：auto 自动检测系统代理（Windows 注册表 / Linux 环境变量或 gsettings）；
@@ -21,16 +21,16 @@ export const networkModeOptions = [
 export const communitySourceOptions = [
   { value: "auto", label: "智能模式", desc: "优先Modrinth/CurseForge官方，加载缓慢时自动使用MCIM镜像站" },
   { value: "officialOnly", label: "仅Modrinth/CurseForge", desc: "仅使用Modrinth/CurseForge官方" },
-  { value: "chinaOnly", label: "仅MCIM镜像", desc: "仅使用MCIM镜像站" },
+  { value: "mirrorOnly", label: "仅镜像源", desc: "仅使用 MCIM 镜像站，不自动回退" },
 ];
 
 // JDK（managed runtime）下载源三态：auto 并发速率探测三源（Mojang / Adoptium / Azul）
-// 最快优先、不可达兜底；officialOnly 固定 Mojang → Azul；chinaOnly 固定
+// 最快优先、不可达兜底；officialOnly 固定 Mojang → Azul；mirrorOnly 固定
 // Mojang（文件走文件源镜像）→ Adoptium 仅 TUNA（元数据例外走官方 API）。
 export const jdkSourceOptions = [
   { value: "auto", label: "智能测速", desc: "Mojang / Adoptium / Azul 三源并发测速，最快者优先下载，不可达源自动兜底" },
   { value: "officialOnly", label: "仅官方源", desc: "仅使用 Mojang 官方与 Azul，不启用国内镜像" },
-  { value: "chinaOnly", label: "仅国内镜像", desc: "Mojang 走文件源镜像，Adoptium 仅从清华 TUNA 下载（元数据例外走官方 API）" },
+  { value: "mirrorOnly", label: "仅镜像源", desc: "Mojang 走文件源镜像，Adoptium 仅从清华 TUNA 下载（元数据例外走官方 API）" },
 ];
 
 // 社区搜索结果翻译显示模式（默认仅中文；en 模式后端跳过翻译请求）
@@ -41,8 +41,7 @@ export const translateDisplayOptions = [
 ];
 
 interface DownloaderConfig {
-  file_source_mode: string;
-  manifest_source_mode: string;
+  game_source_mode?: string;
   community_source_mode?: string;
   network_mode?: string;
   concurrency: number;
@@ -56,8 +55,7 @@ interface DownloaderConfig {
 const section = useConfigSection();
 export const dlError = section.error;
 
-export const dlFileMode = ref("auto");
-export const dlManifestMode = ref("auto");
+export const dlGameMode = ref("auto");
 export const dlCommunityMode = ref("auto");
 export const dlJdkMode = ref("auto");
 export const dlConcurrency = ref(64);
@@ -66,16 +64,16 @@ export const dlMaxSpeed = ref(0); // bytes/s，0 = 不限
 // 官方源不限流、镜像源（BMCLAPI）30 并发即触发 429，镜像请求恒为 8 并发
 export const MIRROR_CONCURRENCY = 8;
 // 仅镜像模式下并发数由镜像源规定，输入锁定（智能/官方模式并发给官方源配置）
-export const concurrencyLocked = computed(() => dlFileMode.value === "chinaOnly");
+export const concurrencyLocked = computed(() => dlGameMode.value === "mirrorOnly");
 /** 细分源明细折叠区显隐（与主开关下拉解耦；DropSelect 自管开合）。 */
 export const dlDetailOpen = ref(false);
 /**
- * 下载源主开关：四细分（文件/版本列表/社区/JDK）是否一致时显示统一值，
- * 不一致显示 "custom"。默认收起，展开可见四个细分各自独立设置。
- * 纯前端聚合，不改后端四个独立字段。
+ * 下载源主开关：三细分（游戏/社区/JDK）是否一致时显示统一值，
+ * 不一致显示 "custom"。默认收起，展开可见三个细分各自独立设置。
+ * 纯前端聚合，不改后端三个独立字段。
  */
-export type SourceMasterValue = "auto" | "officialOnly" | "chinaOnly" | "custom";
-const sourceModes = [dlFileMode, dlManifestMode, dlCommunityMode, dlJdkMode];
+export type SourceMasterValue = "auto" | "officialOnly" | "mirrorOnly" | "custom";
+const sourceModes = [dlGameMode, dlCommunityMode, dlJdkMode];
 export const dlSourceMaster = computed<SourceMasterValue>(() => {
   const first = sourceModes[0].value;
   if (sourceModes.every((m) => m.value === first)) return first as SourceMasterValue;
@@ -85,8 +83,7 @@ export const dlSourceMaster = computed<SourceMasterValue>(() => {
 /** 主开关联动：设统一值同步四个细分（custom 不经此函数，由细分修改自然聚合）。 */
 export function setSourceMaster(v: SourceMasterValue) {
   if (v === "custom") return;
-  dlFileMode.value = v;
-  dlManifestMode.value = v;
+  dlGameMode.value = v;
   dlCommunityMode.value = v;
   dlJdkMode.value = v;
   void saveDownloadConfig();
@@ -102,9 +99,8 @@ export async function loadDownloadConfig() {
     const cfg = await invoke<DownloaderConfig>("get_downloader_config");
     // 旧配置 preferOfficial/preferChina 后端已迁移为 auto；此处兜底归一
     const normalize = (v?: string) =>
-      v === "officialOnly" || v === "chinaOnly" ? v : "auto";
-    dlFileMode.value = normalize(cfg.file_source_mode);
-    dlManifestMode.value = normalize(cfg.manifest_source_mode);
+      v === "officialOnly" || v === "mirrorOnly" ? v : "auto";
+    dlGameMode.value = normalize(cfg.game_source_mode);
     dlCommunityMode.value = normalize(cfg.community_source_mode);
     dlJdkMode.value = normalize(cfg.jdk_source_mode);
     // 网络代理模式（旧配置无此字段 → 自动检测）
@@ -130,8 +126,7 @@ export async function saveDownloadConfig() {
   await section.run(async () => {
     await invoke("save_downloader_config", {
       config: {
-        file_source_mode: dlFileMode.value,
-        manifest_source_mode: dlManifestMode.value,
+        game_source_mode: dlGameMode.value,
         community_source_mode: dlCommunityMode.value,
         jdk_source_mode: dlJdkMode.value,
         network_mode: dlNetworkMode.value,
@@ -145,8 +140,8 @@ export async function saveDownloadConfig() {
   });
 }
 
-export function setFileMode(v: string) {
-  dlFileMode.value = v;
+export function setGameMode(v: string) {
+  dlGameMode.value = v;
   void saveDownloadConfig();
 }
 
@@ -156,14 +151,9 @@ export function setCommunityMode(v: string) {
 }
 
 export function setJdkMode(v: string) {
-  if (v === "auto" || v === "officialOnly" || v === "chinaOnly") {
+  if (v === "auto" || v === "officialOnly" || v === "mirrorOnly") {
     dlJdkMode.value = v;
   }
-  void saveDownloadConfig();
-}
-
-export function setManifestMode(v: string) {
-  dlManifestMode.value = v;
   void saveDownloadConfig();
 }
 
