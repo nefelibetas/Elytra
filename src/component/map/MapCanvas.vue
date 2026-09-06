@@ -9,7 +9,7 @@ import { biomeLabel, blockLabel } from "../../utils/blockNames";
 import LoadingSpinner from "../common/LoadingSpinner.vue";
 
 const props = defineProps<{
-	/** 世界根目录（含 level.dat）。 */
+	/** 世界根目录（含 level.dat）。种子模式可为空串。 */
 	worldPath: string;
 	/** 维度目录名：'' 主世界 / DIM-1 / DIM1。 */
 	dimension: string;
@@ -17,15 +17,26 @@ const props = defineProps<{
 	style: string;
 	/** 预测未探索区（仅主世界 vanilla 语义；region 缺失槽位用预测瓦片补齐）。 */
 	showPrediction?: boolean;
+	/** 种子查看模式：无存档，预测层常开（26.x 参数族水域语义），任意坐标漫游。 */
+	seedMode?: boolean;
+	/** 种子查看模式的种子（seedMode 时必传；十进制 i64 字符串，超 2^53 不丢精度）。 */
+	seed?: string;
+	/** 初始缩放（种子模式开图默认 0.25 一屏多看几个 region；默认 1.0）。 */
+	initScale?: number;
 }>();
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 const wrapRef = ref<HTMLDivElement | null>(null);
 
 /** 相机：中心点（世界方块坐标）+ 缩放（px/方块）。×1.00 ⇔ 1 方块 = 1px。 */
-const cam = ref({ cx: 0, cz: 0, scale: 1.0 });
+const cam = ref({ cx: 0, cz: 0, scale: props.initScale ?? 1.0 });
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 8;
+
+/** 预测瓦片键前缀：种子模式用种子隔离（同种子跨世界一致），否则世界路径。 */
+const keyPrefix = computed(() =>
+	props.seedMode ? `seed:${props.seed ?? ""}` : props.worldPath,
+);
 
 /** 已加载瓦片：key = "rx,rz" → HTMLImageElement。 */
 const tiles = ref<Map<string, HTMLImageElement>>(new Map());
@@ -65,12 +76,16 @@ function pngBlob(payload: unknown): Blob {
 	// TS6 TypedArray 泛型：显式以 ArrayBuffer 视图包装满足 BlobPart
 	return new Blob([new Uint8Array(u8.buffer as ArrayBuffer)], { type: "image/png" });
 }
-/** 预测瓦片（未探索区）：key = "worldPath|rx,rz"（跨世界切换防串图）。 */
+/** 预测瓦片（未探索区/种子模式）：key = "<前缀>|rx,rz"（跨世界/种子切换防串图）。 */
 const predTiles = new Map<string, HTMLImageElement>();
 /** 预测瓦片在途集合。 */
 const predLoading = new Set<string>();
-/** 预测瓦片最大并发（1：工作线程半核跑，避免 CPU 长期打满）。 */
-const PRED_MAX_INFLIGHT = 1;
+/** 预测瓦片最大并发（2：工作线程半核跑 ×2 槽，兼顾 CPU 与漫游吞吐）。 */
+const PRED_MAX_INFLIGHT = 2;
+/** 预测瓦片内存上限（LRU 淘汰最旧；远距漫游防无限增长）。 */
+const PRED_TILE_MAX = 160;
+/** 预测瓦片加载顺序（FIFO ≈ LRU 近似）。 */
+const predOrder: string[] = [];
 /** 当前在途预测请求数。 */
 let predInFlight = 0;
 /** 以已加载 region 为界的外扩光环半径（region 单位）。3 ≈ 1536 格：
@@ -153,12 +168,12 @@ function draw() {
 		live.add(`${r.x},${r.z}`);
 		if (r.full) fullKeys.add(`${r.x},${r.z}`);
 	}
-	// 预测层：画预测底图。加载策略 = 有界光环（距已加载区 ≤PRED_HALO 逐环填充，
-	// 更外层视口内懒加载）。真实槽位规则：满 region 跳过（无空洞）；**未满 region
-	// 也画预测垫底** —— 已生成 chunk 的真实瓦片不透明地盖在预测上，洞即预测。
-	if (props.showPrediction && props.dimension === "") {
-		// 视口外扩 1 region 作为预取边距：光环内槽位未进屏即开算，
-		// 平移进入时已就绪（1.0 倍率下贴边连续平移不露白）
+	// 预测层：画预测底图。种子模式恒开（无真实区，整图即预测）；
+	// 存档模式 = 有界光环（距已加载区 ≤PRED_HALO 逐环填充）+ 视口懒加载。
+	// 真实槽位规则：满 region 跳过（无空洞）；**未满 region 也画预测垫底**——
+	// 已生成 chunk 的真实瓦片不透明地盖在预测上，洞即预测。
+	if ((props.showPrediction || props.seedMode) && props.dimension === "") {
+		// 视口外扩 1 region 作为预取边距：平移进入时已就绪（1.0 倍率贴边不露白）
 		const r0x = Math.floor(minX / 512) - 1;
 		const r1x = Math.floor(maxX / 512) + 1;
 		const r0z = Math.floor(minZ / 512) - 1;
@@ -168,55 +183,56 @@ function draw() {
 		const v0z = Math.floor(minZ / 512);
 		const v1z = Math.floor(maxZ / 512);
 		const spanOk = (r1x - r0x + 1) * (r1z - r0z + 1) <= 4096;
-		let budget = PRED_MAX_INFLIGHT - predInFlight;
-		const halo: { rx: number; rz: number; d: number; d2: number }[] = [];
-		const lazy: { rx: number; rz: number; d2: number }[] = [];
+		// 候选：视口内（含边距环）永远优先，杜绝光环槽饿死远区漫游；
+		// 光环预取其次，按中心就近
+		const cand: { rx: number; rz: number; d2: number; pin: boolean; halo: boolean }[] = [];
 		for (let rx = r0x; rx <= r1x; rx++) {
 			for (let rz = r0z; rz <= r1z; rz++) {
 				const slotKey = `${rx},${rz}`;
 				if (live.has(slotKey) && fullKeys.has(slotKey)) continue;
 				const ox = rx * 512, oz = rz * 512;
-				const pkey = `${props.worldPath}|${slotKey}`;
+				const pkey = `${keyPrefix.value}|${slotKey}`;
 				const img = predTiles.get(pkey);
 				if (img) {
 					ctx.imageSmoothingEnabled = scale < 1;
 					ctx.drawImage(img, toScreenX(ox), toScreenY(oz), size, size);
 					continue;
 				}
-				if (!spanOk || budget <= 0) continue;
+				if (!spanOk) continue;
+				const inView = rx >= v0x && rx <= v1x && rz >= v0z && rz <= v1z;
 				const d2 = (ox + 256 - cx) * (ox + 256 - cx) + (oz + 256 - cz) * (oz + 256 - cz);
-				const d = distToReal(rx, rz);
-				if (d <= PRED_HALO) {
-					halo.push({ rx, rz, d, d2 });
-				} else if (rx >= v0x && rx <= v1x && rz >= v0z && rz <= v1z) {
-					// 光环外：仅视口内才懒加载
-					lazy.push({ rx, rz, d2 });
-				}
+				cand.push({ rx, rz, d2, pin: inView, halo: distToReal(rx, rz) <= PRED_HALO });
 			}
 		}
-		// 光环内：距离近的先填（逐环外扩观感）；光环外懒加载按中心就近
-		halo.sort((a, b) => a.d - b.d || a.d2 - b.d2);
-		lazy.sort((a, b) => a.d2 - b.d2);
-		for (const s of [...halo, ...lazy]) {
+		cand.sort((a, b) => {
+			if (a.pin !== b.pin) return a.pin ? -1 : 1;
+			if (a.halo !== b.halo) return a.halo ? -1 : 1;
+			return a.d2 - b.d2;
+		});
+		let budget = PRED_MAX_INFLIGHT - predInFlight;
+		for (const s of cand) {
 			if (budget <= 0) break;
 			if (predLoading.has(`${s.rx},${s.rz}`)) continue;
 			requestPredTile(s.rx, s.rz);
 			budget--;
 		}
 	}
-	for (const r of regions.value) {
-		const ox = r.x * 512, oz = r.z * 512; // region 原点（世界方块）
-		if (ox + 512 < minX || ox > maxX || oz + 512 < minZ || oz > maxZ) continue;
-		const key = `${r.x},${r.z}`;
-		const img = tiles.value.get(key);
-		if (!img) {
-			requestTile(r.x, r.z, r.mtime);
-			drawPendingRegion(ctx, toScreenX(ox), toScreenY(oz), size);
-			continue;
+	// 真实瓦片：种子模式无存档 region，跳过
+	if (!props.seedMode) {
+		for (const r of regions.value) {
+			const ox = r.x * 512, oz = r.z * 512; // region 原点（世界方块）
+			if (ox + 512 < minX || ox > maxX || oz + 512 < minZ || oz > maxZ) continue;
+			const key = `${r.x},${r.z}`;
+			const img = tiles.value.get(key);
+			if (!img) {
+				requestTile(r.x, r.z, r.mtime);
+				drawPendingRegion(ctx, toScreenX(ox), toScreenY(oz), size);
+				continue;
+			}
+			ctx.imageSmoothingEnabled = scale < 1;
+			ctx.drawImage(img, toScreenX(ox), toScreenY(oz), size, size);
+			firstTileShown = true;
 		}
-		ctx.imageSmoothingEnabled = scale < 1;
-		ctx.drawImage(img, toScreenX(ox), toScreenY(oz), size, size);
-		firstTileShown = true;
 	}
 	// 整体加载态：首块瓦片落地前保持等待覆盖层；落地后即便还有瓦片在途
 	// 也转为就绪——剩余瓦片渐进浮现（避免慢瓦片拖住整屏 loading）
@@ -358,7 +374,7 @@ function startRealTile(rx: number, rz: number, mtime: number) {
  *  与真实瓦片同款 settle 保证 + 超时兜底。 */
 function requestPredTile(rx: number, rz: number) {
 	const slotKey = `${rx},${rz}`;
-	const pkey = `${props.worldPath}|${slotKey}`;
+	const pkey = `${keyPrefix.value}|${slotKey}`;
 	if (predLoading.has(slotKey) || predTiles.has(pkey)) return;
 	predLoading.add(slotKey);
 	predInFlight++;
@@ -376,12 +392,15 @@ function requestPredTile(rx: number, rz: number) {
 	};
 	// 兜底：冷算（debug 后端渲染可达 40~60s/张）不应触发误报超时；90s 兜底
 	const watchdog = window.setTimeout(() => done("timeout", "no settle in 90s"), 90000);
-	invoke<ArrayBuffer>("get_prediction_tile", {
-		worldPath: props.worldPath,
-		dimension: props.dimension,
-		rx,
-		rz,
-	})
+	const payload = props.seedMode
+		? invoke<ArrayBuffer>("get_prediction_tile_seed", { seed: props.seed, rx, rz })
+		: invoke<ArrayBuffer>("get_prediction_tile", {
+				worldPath: props.worldPath,
+				dimension: props.dimension,
+				rx,
+				rz,
+			});
+	payload
 		.then(buf => {
 			const blob = pngBlob(buf);
 			const url = URL.createObjectURL(blob);
@@ -391,6 +410,16 @@ function requestPredTile(rx: number, rz: number) {
 					const prev = predTiles.get(pkey);
 					if (prev) URL.revokeObjectURL(prev.src);
 					predTiles.set(pkey, img);
+					// LRU：越界时淘汰最旧（漫游远方不炸内存）
+					predOrder.push(pkey);
+					while (predOrder.length > PRED_TILE_MAX) {
+						const oldKey = predOrder.shift();
+						if (oldKey && predTiles.has(oldKey)) {
+							const old = predTiles.get(oldKey);
+							if (old) URL.revokeObjectURL(old.src);
+							predTiles.delete(oldKey);
+						}
+					}
 				} catch (e) {
 					done("err", e);
 					return;
@@ -532,7 +561,7 @@ function onWheel(e: WheelEvent) {
 	invalidate();
 }
 
-// ── 存档/维度/样式变化：清缓存重定位（轮询居中标记同步复位）──
+// ── 存档/维度/样式/种子变化：清缓存重定位（轮询居中标记同步复位）──
 function resetForWorld() {
 	for (const img of tiles.value.values()) URL.revokeObjectURL(img.src);
 	tiles.value.clear();
@@ -542,9 +571,10 @@ function resetForWorld() {
 	realInFlight = 0;
 	realFails.clear();
 	realCooldown.clear();
-	// 仅清非当前世界的预测瓦片（同世界复用缓存图片；维度切换世界路径不变）
+	predOrder.length = 0;
+	// 前缀变化（世界/种子切换）全清；同前缀预测瓦片复用（维度切换不动主世界底图）
 	for (const [k, img] of [...predTiles]) {
-		if (!k.startsWith(`${props.worldPath}|`)) {
+		if (!k.startsWith(`${keyPrefix.value}|`)) {
 			URL.revokeObjectURL(img.src);
 			predTiles.delete(k);
 			predLoading.delete(k.slice(k.indexOf("|") + 1));
@@ -552,12 +582,21 @@ function resetForWorld() {
 	}
 	centered = false;
 	firstTileShown = false;
+	if (props.seedMode) {
+		// 种子模式：无 region 轮询，画布直接就绪（瓦片按需浮现）
+		regions.value = [];
+		viewState.value = "ready";
+		cam.value.cx = 0;
+		cam.value.cz = 0;
+		cam.value.scale = props.initScale ?? 1.0;
+		return;
+	}
 	viewState.value = "loading";
 	void refreshRegions();
 }
 
 watch(
-	() => [props.worldPath, props.dimension, props.style],
+	() => [props.worldPath, props.dimension, props.style, props.seedMode, props.seed],
 	() => resetForWorld(),
 );
 
@@ -565,10 +604,12 @@ onMounted(() => {
 	resetForWorld();
 	raf = requestAnimationFrame(loop);
 	// 存档实时性轮询：游戏运行中新建/更新的 region 自动出图（不可见时跳过）
-	pollTimer = window.setInterval(() => {
-		if (document.visibilityState !== "visible") return;
-		void refreshRegions();
-	}, 3000);
+	if (!props.seedMode) {
+		pollTimer = window.setInterval(() => {
+			if (document.visibilityState !== "visible") return;
+			void refreshRegions();
+		}, 3000);
+	}
 });
 
 
@@ -600,30 +641,44 @@ function maybeFetchBlock(x: number, z: number) {
 	hoverFetching = true;
 	hoverBlock.value = null;
 	hoverBiome.value = null;
-	// 切片模式带当前 Y 层：方块与群系都按该层精确探测
-	const sliceY = props.style.startsWith("slice@") ? Number(props.style.slice(6)) : null;
-	invoke<{ block: string | null; biome: string | null } | null>("get_map_block", {
-		worldPath: props.worldPath,
-		dimension: props.dimension,
-		x,
-		z,
-		...(sliceY !== null && !Number.isNaN(sliceY) ? { y: sliceY } : {}),
-	})
-		.then(info => {
-			// 只展示最新悬停位置的结果（快速扫过时丢弃过期响应）
-			if (lastHover.valid && lastHover.x === x && lastHover.z === z) {
-				// 真实数据缺失时的预测回退：block=null 且 biome=Some → 预测群系。
-				// 明确标注"预测区"，避免把"水陆未精画"误读为渲染错误
-				// （预测仅到 4×4 群系单元粒度，群系内的湖/湾/浅水无法体现）。
-				const isPrediction = !info?.block && !!info?.biome;
-				hoverBlock.value = isPrediction
-					? "预测区"
-					: info?.block
-						? blockLabel(info.block)
-						: "未知方块";
-				hoverBiome.value = info?.biome ? biomeLabel(info.biome) : null;
+	const req: Promise<unknown> = props.seedMode
+		? invoke<{ block: null; biome: string | null; water: boolean }>("get_seed_map_block", {
+				seed: props.seed,
+				x,
+				z,
+			})
+		: invoke<{ block: string | null; biome: string | null } | null>("get_map_block", {
+				worldPath: props.worldPath,
+				dimension: props.dimension,
+				x,
+				z,
+				...(props.style.startsWith("slice@")
+					? { y: Number(props.style.slice(6)) }
+					: {}),
+			});
+	req.then((raw: unknown) => {
+		// 只展示最新悬停位置的结果（快速扫过时丢弃过期响应）
+		if (lastHover.valid && lastHover.x === x && lastHover.z === z) {
+			if (props.seedMode) {
+				const info = raw as { biome: string | null; water: boolean };
+				// 种子模式整图都是预测：水面单独标注（湖/湾在陆地群系内也可见）
+				hoverBlock.value = info.water ? "预测区 · 水面" : "预测区";
+				hoverBiome.value = info.biome ? biomeLabel(info.biome) : null;
+				return;
 			}
-		})
+			const info = raw as { block: string | null; biome: string | null } | null;
+			// 真实数据缺失时的预测回退：block=null 且 biome=Some → 预测群系。
+			// 明确标注"预测区"，避免把"水陆未精画"误读为渲染错误
+			// （预测仅到 4×4 群系单元粒度，群系内的湖/湾/浅水无法体现）。
+			const isPrediction = !info?.block && !!info?.biome;
+			hoverBlock.value = isPrediction
+				? "预测区"
+				: info?.block
+					? blockLabel(info.block)
+					: "未知方块";
+			hoverBiome.value = info?.biome ? biomeLabel(info.biome) : null;
+		}
+	})
 		.catch(() => {
 			if (lastHover.valid && lastHover.x === x && lastHover.z === z) {
 				hoverBlock.value = "未知方块";

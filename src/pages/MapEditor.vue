@@ -38,8 +38,66 @@ function selectWorld(dirPath: string, version: string, world: string) {
 	syncWindowTitle();
 }
 
+/** 窗口标题跟随模式：种子模式显示种子号。 */
+function windowTitleForMode() {
+	if (mode.value === "seed" && seedReady.value) {
+		void appWindow.setTitle(`种子 ${seedViewSeed.value} · Elytra 地图`);
+	} else if (mode.value === "save") {
+		syncWindowTitle();
+	}
+}
+
+/** 查看器模式：存档（三级树选世界）或种子（无存档直开）。 */
+const mode = ref<"save" | "seed">("save");
+/** 种子输入框文本（数字或 Java 字符串哈希均可）。 */
+const seedInput = ref("");
+/** 已应用生效的种子（十进制 i64 字符串，可为超 2^53 大数；null = 未开图）。 */
+const seedViewSeed = ref<string | null>(null);
+/** 种子模式地图可用 = 已解析种子。 */
+const seedReady = computed(() => seedViewSeed.value !== null);
+
+/** Java String.hashCode（32 位有符号）——MC 对非数字种子串的哈希规则。 */
+function javaSeedHash(text: string): number {
+	let h = 0;
+	for (let i = 0; i < text.length; i++) {
+		h = (h * 31 + text.charCodeAt(i)) | 0;
+	}
+	return h;
+}
+
+/** 解析种子输入 → 十进制 i64 字符串：数字原样（不做 Number 中转，防丢精度），
+ *  非数字走 Java 哈希。 */
+function parseSeedText(text: string): string | null {
+	const t = text.trim();
+	if (!t) return null;
+	if (/^-?\d+$/.test(t)) return t;
+	return String(javaSeedHash(t));
+}
+
+/** 应用种子并开图（切种子模式）。 */
+function openSeedMap() {
+	const seed = parseSeedText(seedInput.value);
+	if (seed === null) {
+		showToast(seedInput.value.trim() ? "种子无效" : "请输入种子");
+		return;
+	}
+	mode.value = "seed";
+	seedViewSeed.value = seed;
+	dimension.value = "";
+	sliceY.value = null;
+	windowTitleForMode();
+}
+
+/** 切回存档模式。 */
+function openSaveMode() {
+	mode.value = "save";
+	windowTitleForMode();
+}
+
 const hasSelection = computed(() => Boolean(selected.world));
 const worldPath = computed(() => selectedWorldPath() ?? "");
+/** 画布显示条件：种子模式看种子地图，否则看选中存档。 */
+const showCanvas = computed(() => (mode.value === "seed" ? seedReady.value : hasSelection.value));
 
 // ── 查看器状态：维度 + 渲染样式 ──
 const dimension = ref("");
@@ -101,6 +159,16 @@ onMounted(async () => {
 	);
 	onUnmounted(unlisten);
 
+	// 深链：mode=seed&seed=…（种子查看器直开，不依赖存档树）
+	const query = new URLSearchParams(location.hash.split("?")[1] ?? "");
+	if (query.get("mode") === "seed") {
+		seedInput.value = query.get("seed") ?? "";
+		await loadTree();
+		openSeedMap();
+		windowTitleForMode();
+		return;
+	}
+
 	await loadTree();
 	initFromQuery();
 	applySelection();
@@ -137,7 +205,11 @@ async function openWorldFolder() {
 		<!-- 自绘标题栏（精简版：标题居左，最小化/关闭居右） -->
 		<div class="me-titlebar" @mousedown="onTitleBarMouseDown">
 			<Map :size="17" class="me-tb-icon" />
-			<span class="me-tb-title">{{ selected.world || "Elytra 地图" }}</span>
+			<span class="me-tb-title">{{
+				mode === "seed" && seedViewSeed !== null
+					? `种子 ${seedViewSeed}`
+					: selected.world || "Elytra 地图"
+			}}</span>
 			<div class="me-tb-actions">
 				<button class="me-tb-btn" title="最小化" @click="minimize"><Minus :size="16" /></button>
 				<button class="me-tb-btn me-tb-close" title="关闭" @click="closeWindow"><X :size="16" /></button>
@@ -145,88 +217,120 @@ async function openWorldFolder() {
 		</div>
 
 		<div class="me-body">
-			<!-- 左侧：三级树 -->
+			<!-- 左侧：模式切换 + 存档三级树 / 种子输入 -->
 			<aside class="me-side">
-				<div class="me-side-head">
-					<span class="me-side-title">存档</span>
-					<button class="me-side-refresh" title="刷新" @click="refreshTree">
-						<RefreshCw :size="15" :class="{ spinning: treeLoading }" />
+				<div class="me-mode-tabs">
+					<button class="me-mode-tab" :class="{ active: mode === 'save' }" @click="openSaveMode">
+						存档
+					</button>
+					<button class="me-mode-tab" :class="{ active: mode === 'seed' }" @click="mode = 'seed'">
+						种子地图
 					</button>
 				</div>
 
-				<AlertCircle v-if="treeError" :size="22" class="me-tree-err-icon" />
-				<div v-if="treeError" class="me-tree-err">
-					{{ treeError }}
-					<button class="me-tree-retry" @click="loadTree">重试</button>
-				</div>
-				<div v-else-if="treeLoading && mapTree.length === 0" class="me-tree-loading">加载存档树…</div>
-				<div v-else-if="mapTree.length === 0" class="me-tree-empty">未配置游戏目录</div>
-
-				<div v-else class="me-tree">
-					<template v-for="dir in mapTree" :key="dir.path">
-						<!-- 1 级：游戏目录（箭头常驻，展开时旋转 90° + 文件夹开/合） -->
-						<button
-							class="me-node me-dir"
-							:class="{ expanded: expanded[dirKey(dir.path)] }"
-							@click="toggleExpand(dirKey(dir.path))"
-						>
-							<ChevronRight
-								:size="15"
-								class="me-caret"
-								:class="{ open: expanded[dirKey(dir.path)] }"
-							/>
-							<FolderOpen v-if="expanded[dirKey(dir.path)]" :size="16" class="me-dir-icon" />
-							<Folder v-else :size="16" class="me-dir-icon" />
-							<span class="me-node-name">{{ dir.name }}</span>
+				<template v-if="mode === 'save'">
+					<div class="me-side-head">
+						<span class="me-side-title">存档</span>
+						<button class="me-side-refresh" title="刷新" @click="refreshTree">
+							<RefreshCw :size="15" :class="{ spinning: treeLoading }" />
 						</button>
+					</div>
 
-						<template v-if="expanded[dirKey(dir.path)]">
-							<template v-for="ver in dir.versions" :key="dir.path + '|' + ver.name">
-								<!-- 2 级：版本（箭头常驻旋转；无存档展开后无内容行） -->
-								<button
-									class="me-node me-ver"
-									:class="{ expanded: expanded[verKey(dir.path, ver.name)] }"
-									@click="toggleExpand(verKey(dir.path, ver.name))"
-								>
-									<ChevronRight
-										:size="13"
-										class="me-caret"
-										:class="{ open: expanded[verKey(dir.path, ver.name)] }"
-									/>
-									<span class="me-node-name">{{ ver.name }}</span>
-									<span v-if="LOADER_TITLES[ver.loader]" class="me-ver-badge">{{ LOADER_TITLES[ver.loader] }}</span>
-								</button>
+					<AlertCircle v-if="treeError" :size="22" class="me-tree-err-icon" />
+					<div v-if="treeError" class="me-tree-err">
+						{{ treeError }}
+						<button class="me-tree-retry" @click="loadTree">重试</button>
+					</div>
+					<div v-else-if="treeLoading && mapTree.length === 0" class="me-tree-loading">加载存档树…</div>
+					<div v-else-if="mapTree.length === 0" class="me-tree-empty">未配置游戏目录</div>
 
-								<template v-if="expanded[verKey(dir.path, ver.name)]">
-									<!-- 3 级：存档 -->
-									<div
-										v-for="w in ver.worlds"
-										:key="dir.path + '|' + ver.name + '|' + w.name"
-										class="me-node me-world"
-										:class="{ active: selected.dirPath === dir.path && selected.version === ver.name && selected.world === w.name }"
-										@click="selectWorld(dir.path, ver.name, w.name)"
+					<div v-else class="me-tree">
+						<template v-for="dir in mapTree" :key="dir.path">
+							<!-- 1 级：游戏目录（箭头常驻，展开时旋转 90° + 文件夹开/合） -->
+							<button
+								class="me-node me-dir"
+								:class="{ expanded: expanded[dirKey(dir.path)] }"
+								@click="toggleExpand(dirKey(dir.path))"
+							>
+								<ChevronRight
+									:size="15"
+									class="me-caret"
+									:class="{ open: expanded[dirKey(dir.path)] }"
+								/>
+								<FolderOpen v-if="expanded[dirKey(dir.path)]" :size="16" class="me-dir-icon" />
+								<Folder v-else :size="16" class="me-dir-icon" />
+								<span class="me-node-name">{{ dir.name }}</span>
+							</button>
+
+							<template v-if="expanded[dirKey(dir.path)]">
+								<template v-for="ver in dir.versions" :key="dir.path + '|' + ver.name">
+									<!-- 2 级：版本（箭头常驻旋转；无存档展开后无内容行） -->
+									<button
+										class="me-node me-ver"
+										:class="{ expanded: expanded[verKey(dir.path, ver.name)] }"
+										@click="toggleExpand(verKey(dir.path, ver.name))"
 									>
-										<img
-											v-if="worldIcons[`${dir.path}|${ver.name}|${w.name}`]"
-											:src="worldIcons[`${dir.path}|${ver.name}|${w.name}`]"
-											class="me-world-thumb"
-											alt=""
+										<ChevronRight
+											:size="13"
+											class="me-caret"
+											:class="{ open: expanded[verKey(dir.path, ver.name)] }"
 										/>
-										<Map v-else :size="14" class="me-world-icon" />
-										<span class="me-node-name">{{ w.name }}</span>
-										<span class="me-world-meta">{{ fmtUnix(w.last_modified) }}</span>
-									</div>
+										<span class="me-node-name">{{ ver.name }}</span>
+										<span v-if="LOADER_TITLES[ver.loader]" class="me-ver-badge">{{ LOADER_TITLES[ver.loader] }}</span>
+									</button>
+
+									<template v-if="expanded[verKey(dir.path, ver.name)]">
+										<!-- 3 级：存档 -->
+										<div
+											v-for="w in ver.worlds"
+											:key="dir.path + '|' + ver.name + '|' + w.name"
+											class="me-node me-world"
+											:class="{ active: selected.dirPath === dir.path && selected.version === ver.name && selected.world === w.name }"
+											@click="selectWorld(dir.path, ver.name, w.name)"
+										>
+											<img
+												v-if="worldIcons[`${dir.path}|${ver.name}|${w.name}`]"
+												:src="worldIcons[`${dir.path}|${ver.name}|${w.name}`]"
+												class="me-world-thumb"
+												alt=""
+											/>
+											<Map v-else :size="14" class="me-world-icon" />
+											<span class="me-node-name">{{ w.name }}</span>
+											<span class="me-world-meta">{{ fmtUnix(w.last_modified) }}</span>
+										</div>
+									</template>
 								</template>
 							</template>
 						</template>
-					</template>
+					</div>
+				</template>
+
+				<div v-else class="me-seed-panel">
+					<p class="me-seed-hint">输入种子直接查看未生成世界的地图（无需存档）</p>
+					<input
+						v-model="seedInput"
+						class="me-seed-input"
+						placeholder="数字种子，或任意字符串（Java 哈希）"
+						spellcheck="false"
+						@keyup.enter="openSeedMap"
+					/>
+					<button class="me-seed-open" :disabled="!seedInput.trim()" @click="openSeedMap">
+						查看
+					</button>
+					<div v-if="seedReady" class="me-seed-active">
+						已开图：种子 <b>{{ seedViewSeed }}</b>
+					</div>
+					<p class="me-seed-meta">
+						26.x 参数族（26.1.2 校准）· 主世界表层<br />
+						群系 + 水陆预测；平移 / 滚轮可漫游任意坐标
+					</p>
 				</div>
 			</aside>
 
-			<!-- 右侧：地图画布（阶段 A：瓦片渲染已接入） -->
+			<!-- 右侧：地图画布（真实瓦片 / 种子预测共用） -->
 			<section class="me-canvas-wrap">
-				<template v-if="hasSelection">
-					<div class="me-toolbar">
+				<template v-if="showCanvas">
+					<div v-if="mode === 'save'" class="me-toolbar">
 						<div class="me-dim-group">
 							<button
 								v-for="d in DIMENSIONS"
@@ -268,24 +372,35 @@ async function openWorldFolder() {
 							</button>
 						</div>
 					</div>
+					<div v-else class="me-toolbar me-toolbar-seed">
+						<span class="me-seed-mode-note">种子模式 · 26.x 参数族 · 主世界表层（预测）</span>
+					</div>
 					<div class="me-canvas-holder">
 						<MapCanvas
-							:world-path="worldPath"
-							:dimension="dimension"
-							:style="style"
-							:show-prediction="dimension === '' && predictOn"
+							:world-path="mode === 'seed' ? '' : worldPath"
+							:dimension="mode === 'seed' ? '' : dimension"
+							:style="mode === 'seed' ? 'topdown' : style"
+							:show-prediction="mode === 'save' && dimension === '' && predictOn"
+							:seed-mode="mode === 'seed'"
+							:seed="seedViewSeed ?? ''"
+							:init-scale="0.25"
 						/>
 					</div>
-					<div class="me-canvas-statusbar">
+					<div v-if="mode === 'save'" class="me-canvas-statusbar">
 						<span class="me-status-path" :title="worldPath">{{ worldPath }}</span>
 						<button class="me-status-btn" @click="openWorldFolder">
 							打开存档文件夹
 						</button>
 					</div>
+					<div v-else class="me-canvas-statusbar">
+						<span class="me-status-path">
+							种子 {{ seedViewSeed }} — 预测瓦片缓存于本机，漫游即取
+						</span>
+					</div>
 				</template>
 				<div v-else class="me-canvas-empty">
 					<Map :size="44" :stroke-width="1.2" opacity="0.35" />
-					<p>在左侧选择一个存档开始查看</p>
+					<p>{{ mode === "seed" ? "输入种子后开始查看" : "在左侧选择一个存档开始查看" }}</p>
 				</div>
 			</section>
 
@@ -640,4 +755,83 @@ async function openWorldFolder() {
 }
 
 .me-status-btn:hover { background-color: var(--surface-hover); color: var(--text-primary); }
+
+/* ── 模式切换（存档 / 种子地图）── */
+.me-mode-tabs {
+	display: flex;
+	gap: 6px;
+	padding: 10px 12px 8px;
+	border-bottom: 1px solid var(--surface-border, rgba(128, 128, 128, 0.25));
+	flex-shrink: 0;
+}
+
+.me-mode-tab {
+	flex: 1;
+	padding: 6px 0;
+	border-radius: 6px;
+	font-size: 12px;
+	border: 1px solid transparent;
+	background: transparent;
+	color: var(--text-secondary);
+	cursor: pointer;
+	transition: background 0.15s, color 0.15s;
+}
+
+.me-mode-tab:hover { background: var(--surface-hover); color: var(--text-primary); }
+.me-mode-tab.active {
+	background: color-mix(in srgb, var(--color-brand) 18%, transparent);
+	color: var(--color-brand);
+	border-color: color-mix(in srgb, var(--color-brand) 45%, transparent);
+}
+
+/* ── 种子面板 ── */
+.me-seed-panel { padding: 14px 12px; display: flex; flex-direction: column; gap: 10px; }
+
+.me-seed-hint { font-size: 12px; line-height: 1.6; color: var(--text-secondary); }
+
+.me-seed-input {
+	width: 100%;
+	box-sizing: border-box;
+	padding: 8px 10px;
+	border-radius: 6px;
+	font-size: 13px;
+	background: var(--surface-input, var(--surface-card));
+	border: 1px solid var(--surface-border, rgba(128, 128, 128, 0.35));
+	color: var(--text-primary);
+	outline: none;
+}
+
+.me-seed-input:focus { border-color: var(--color-brand); }
+
+.me-seed-open {
+	padding: 8px 0;
+	border-radius: 6px;
+	font-size: 13px;
+	border: 1px solid var(--surface-border, rgba(128, 128, 128, 0.35));
+	background: color-mix(in srgb, var(--color-brand) 14%, transparent);
+	color: var(--color-brand);
+	cursor: pointer;
+}
+
+.me-seed-open:disabled { opacity: 0.45; cursor: default; }
+
+.me-seed-active {
+	font-size: 12px;
+	color: var(--text-secondary);
+	padding: 8px 10px;
+	border-radius: 6px;
+	background: color-mix(in srgb, var(--surface-card) 70%, transparent);
+	word-break: break-all;
+}
+
+.me-seed-active b { color: var(--text-primary); }
+
+.me-seed-meta {
+	font-size: 11px;
+	line-height: 1.7;
+	color: var(--text-tertiary);
+}
+
+.me-toolbar-seed { display: flex; align-items: center; }
+.me-seed-mode-note { font-size: 12px; color: var(--text-tertiary); }
 </style>
