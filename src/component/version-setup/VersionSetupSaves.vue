@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 版本设置-存档管理 tab：标题卡（打开存档文件夹）+ 列表卡（世界缩略图 + 名称 + 最后游玩）。
 // 多选交互：点击 item 选中，底部 action 栏全选/取消 + 批量删除。
-import { computed, ref, onMounted } from "vue";
+import { computed, ref, onMounted, onUnmounted } from "vue";
 import { useRoute } from "vue-router";
 import { Folder, Trash2, Map, MapPinned } from "@lucide/vue";
 import { invoke } from "@tauri-apps/api/core";
@@ -17,7 +17,7 @@ import EmptyState from "../common/EmptyState.vue";
 import ErrorState from "../common/ErrorState.vue";
 import {
   worlds, worldsLoading, worldsError, worldIcons, worldsLoadedFor,
-  loadWorlds, loadWorldIcon,
+  loadWorlds, startWorldsLivePolling, stopWorldsLivePolling,
 } from "../../store/versionDetail";
 
 const route = useRoute();
@@ -62,7 +62,6 @@ async function confirmDelete() {
   }
   if (names.length > 0) {
     await loadWorlds(versionName.value);
-    for (const w of worlds.value) void loadWorldIcon(versionName.value, w.name);
     clear();
   }
 }
@@ -72,9 +71,12 @@ onMounted(async () => {
   // 缓存命中（切 Tab 回来/刚从主页进入）不重新加载，避免 loading 闪烁
   if (worldsLoadedFor.value !== versionName.value) {
     await loadWorlds(versionName.value);
-    for (const w of worlds.value) void loadWorldIcon(versionName.value, w.name);
   }
+  // 存档实时性轮询：游戏运行中新建/删除存档自动反映（缩略图由 store 级 watch 补载）
+  startWorldsLivePolling(versionName.value);
 });
+
+onUnmounted(() => stopWorldsLivePolling());
 
 /** 打开地图编辑器窗口（独立 WebView；初始定位到该存档）。 */
 async function openMapEditor(version: string, world: string) {

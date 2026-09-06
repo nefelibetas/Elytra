@@ -1,6 +1,6 @@
 // 主页版本卡片 store：存档/Mod 列表加载、Mod 更新检查与更新执行。
 // 卡片组件 import 本模块单例；版本切换时 reset 后重新加载。
-import { ref, computed, reactive, type Ref } from "vue";
+import { ref, computed, reactive, watch, type Ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { showToast } from "../utils/toast";
 import { errMsg } from "../utils/error";
@@ -90,6 +90,50 @@ export async function loadWorlds(versionName: string) {
     worldsLoading.value = false;
   }
 }
+
+// ── 存档列表实时性（游戏运行中新建/删除存档自动反映，无需切版本或手动刷新）──
+
+let worldsPollTimer: number | null = null;
+let worldsPollVersion = "";
+
+/** 静默刷新：不置 loading（列表不闪烁）；内容与当前一致时不更新（避免无谓重渲染）。
+ *  失败静默——保留旧列表，下轮轮询自愈。 */
+async function refreshWorldsSilent(versionName: string) {
+	try {
+		const list = await invoke<WorldInfo[]>("list_worlds", { versionName });
+		if (JSON.stringify(list) === JSON.stringify(worlds.value)) return;
+		worlds.value = list;
+		worldsLoadedFor.value = versionName;
+	} catch {
+		// 静默失败：保留旧列表
+	}
+}
+
+/** 开始存档轮询（可见页面组件挂载期间调用；切版本/重复调用幂等）。 */
+export function startWorldsLivePolling(versionName: string) {
+	if (worldsPollTimer !== null && worldsPollVersion === versionName) return;
+	stopWorldsLivePolling();
+	worldsPollVersion = versionName;
+	worldsPollTimer = window.setInterval(() => {
+		if (document.visibilityState !== "visible" || worldsLoading.value) return;
+		void refreshWorldsSilent(versionName);
+	}, 3000);
+}
+
+export function stopWorldsLivePolling() {
+	if (worldsPollTimer !== null) {
+		clearInterval(worldsPollTimer);
+		worldsPollTimer = null;
+	}
+	worldsPollVersion = "";
+}
+
+/** 存档列表变化后懒加载新增项缩略图（store 级单次注册；轮询新增的存档同样生效）。 */
+watch(worlds, list => {
+	const v = worldsLoadedFor.value;
+	if (!v) return;
+	for (const w of list) void loadWorldIcon(v, w.name);
+});
 
 // ── 世界缩略图（saves/<world>/icon.png 懒加载缓存）──
 

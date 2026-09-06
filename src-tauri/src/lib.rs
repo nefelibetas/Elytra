@@ -24,7 +24,7 @@ use commands::account::{
     upload_skin_file,
 };
 use commands::community::{get_community_details, get_community_versions, search_community};
-use commands::map::{get_map_tile, list_map_regions};
+use commands::map::{get_map_block, get_map_tile, get_prediction_tile, list_map_regions};
 use commands::map_editor::{get_map_tree, get_map_world_icon};
 use commands::downloader::{
     get_downloader_config, get_installed_versions, get_version_list, resolve_version_name,
@@ -141,6 +141,8 @@ pub fn run() {
             get_map_world_icon,
             list_map_regions,
             get_map_tile,
+            get_map_block,
+            get_prediction_tile,
             download_single_file,
             install_modpack,
             cancel_task,

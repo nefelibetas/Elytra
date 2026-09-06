@@ -27,7 +27,14 @@ fn short_hash(s: &str) -> String {
     format!("{:016x}", h.finish())
 }
 
-/// 瓦片缓存键：世界路径 + 维度 + region 坐标 + 样式 + region mtime。
+/// 缓存格式版本：渲染管线/调色板升级时 +1（旧格式瓦片自动失效重渲染，
+/// 淘汰由容量治理兜底）。曾踩坑：换调色板后旧瓦片仍命中缓存。
+/// v3：部分生成 chunk 也开始渲染（此前整块留空）——行为变更必须升版。
+const TILE_CACHE_FORMAT: &str = "v3-partial-render";
+
+/// 瓦片缓存键：格式版本 + 世界路径 + 维度 + region 坐标 + 样式 + region mtime。
+/// region 文件经 domain 维度解析定位（26.x 与旧布局一致）——与列表/渲染同源，
+/// 否则 26.x 布局下列表有 region 而缓存键在旧路径查不到文件返回 None。
 /// 返回 None 仅当 region 文件不存在（世界未生成该 region）。
 pub fn tile_cache_key(
     world_path: &Path,
@@ -36,7 +43,9 @@ pub fn tile_cache_key(
     rz: i32,
     style_key: &str,
 ) -> Option<PathBuf> {
-    let region_file = world_path.join(dimension).join("region").join(format!("r.{rx}.{rz}.mca"));
+    let region_file = super::region_io::dimension_dir(world_path, dimension)
+        .join("region")
+        .join(format!("r.{rx}.{rz}.mca"));
     let meta = std::fs::metadata(&region_file).ok()?;
     let mtime = meta
         .modified()
@@ -45,7 +54,7 @@ pub fn tile_cache_key(
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let key = format!(
-        "{}|{dimension}|{rx}|{rz}|{style_key}|{mtime}",
+        "{TILE_CACHE_FORMAT}|{}|{dimension}|{rx}|{rz}|{style_key}|{mtime}",
         world_path.to_string_lossy()
     );
     Some(mapcache_dir().join(format!("{}.png", short_hash(&key))))
@@ -140,4 +149,22 @@ mod tests {
         assert_eq!(read_cached_tile(&path), Some(b"PNGDATA".to_vec()));
         std::fs::remove_dir_all(&dir).ok();
     }
+}
+
+/// 预测瓦片缓存键：世界 + 种子 + region + 是否地形版（预测不依赖 region
+/// mtime；种子变化自动失效）。v2：地形水域（含盖层判水 + 水深分层）加入
+/// 渲染——行为变更必须升版；terrain 开关分流 26.x 与旧参数族两条渲染路径。
+pub fn prediction_cache_key(
+    world_path: &Path,
+    seed: i64,
+    rx: i32,
+    rz: i32,
+    terrain: bool,
+) -> PathBuf {
+    let key = format!(
+        "biomepred-v2-terrain|{world_path}|{seed}|{rx}|{rz}|{}",
+        if terrain { "t1" } else { "t0" },
+        world_path = world_path.to_string_lossy()
+    );
+    mapcache_dir().join(format!("{}.png", short_hash(&key)))
 }
