@@ -1,102 +1,18 @@
-//! 启动命令（游戏进程 spawn 与窗口可见轮询、启动环境校验）。
-//! 启动脚本导出在 commands/launch_script.rs，启动选项在 commands/launch_options.rs，
-//! 离线账号历史在 commands/offline_account.rs；
-//! 环境准备在 config/launcher/env.rs，离线皮肤在 config/launcher/skin.rs，命令构建在 config/launcher/args.rs，
-//! 平台调节（GPU/内存/优先级）在 config/launcher/platform.rs。
+//! 启动命令（薄胶水）：装配与进程管理在 launcher/process.rs、命令构建 launcher/args.rs、
+//! 环境准备 launcher/env.rs、离线皮肤 launcher/skin.rs、平台调节 launcher/platform.rs；
+//! 启动脚本导出在 commands/launch_script.rs（渲染在 launcher/script.rs）、
+//! 启动选项在 commands/launch_options.rs、离线账号历史在 commands/offline_account.rs。
 
-use std::path::PathBuf;
 use tauri::AppHandle;
 
 use crate::constants;
-use crate::downloader::model::VersionJson;
 use crate::jdk::model::JdkConfig;
 use crate::launcher::args::build_launch_command;
 use crate::launcher::env;
-use crate::launcher::model::{AuthMode, LauncherConfig};
 use crate::launcher::platform;
 use crate::launcher::skin;
 
-// ── 账号构造（启动前置）────────────────────────────
-
-fn build_auth(
-    auth_mode: &str,
-    username: &str,
-    access_token: &str,
-    uuid: &str,
-    xuid: &str,
-) -> AuthMode {
-    match auth_mode {
-        "online" => AuthMode::Online {
-            username: username.to_string(),
-            access_token: access_token.to_string(),
-            uuid: uuid.to_string(),
-            xuid: xuid.to_string(),
-        },
-        "external" => {
-            // 第三方登录：账号从 secrets 读（uuid/name/token/api_url 一致），
-            // 前端传 username/uuid/token；api_url 从当前第三方账号取
-            let api_url = crate::auth::external::read()
-                .map(|a| a.api_url)
-                .unwrap_or_default();
-            AuthMode::External {
-                username: username.to_string(),
-                access_token: access_token.to_string(),
-                uuid: uuid.to_string(),
-                api_url,
-            }
-        }
-        _ => AuthMode::Offline {
-            username: username.to_string(),
-            uuid: String::new(), // 由 apply_offline_skin 按离线皮肤设置填充
-        },
-    }
-}
-
-/// 正版模式 xuid 缺失时从 Minecraft access token（JWT）解析兜底
-/// （XSTS 的 xid 字段部分账号缺失，旧配置也可能未保存 xuid）。
-fn fill_missing_xuid(auth: &mut AuthMode) {
-    if let AuthMode::Online {
-        xuid, access_token, ..
-    } = auth
-    {
-        if xuid.is_empty() {
-            *xuid = crate::auth::microsoft::extract_xuid_from_jwt(access_token);
-        }
-    }
-}
-
-/// 三个启动类命令（launch_game / export_launch_script / spawn_game）共享的前置：
-/// 构造账号（补 xuid）→ 加载配置与版本 JSON。
-#[allow(clippy::type_complexity)]
-pub(crate) fn prepare_launch(
-    version_dir_name: &str,
-    auth_mode: &str,
-    username: &str,
-    access_token: &str,
-    uuid: &str,
-    xuid: &str,
-) -> Result<(AuthMode, PathBuf, VersionJson, PathBuf, LauncherConfig, u32), String> {
-    let mut auth = build_auth(auth_mode, username, access_token, uuid, xuid);
-    fill_missing_xuid(&mut auth);
-    let (java_path, version_json, mc_dir, launcher_config, java_major) =
-        env::load_launch_config(version_dir_name)?;
-    // 第三方登录：启动前确保 authlib-injector.jar 存在（注入必需，缺失会启动失败）
-    // 第三方登录：启动前确保 authlib-injector.jar 存在（注入必需，缺失会启动失败）
-    if matches!(auth, AuthMode::External { .. }) {
-        let jar = crate::util::config_dir().join(crate::auth::external::AUTHLIB_JAR);
-        if !jar.exists() {
-            return Err("第三方登录组件缺失\n请重新登录第三方账号以恢复 authlib-injector.jar".into());
-        }
-    }
-    Ok((
-        auth,
-        java_path,
-        version_json,
-        mc_dir,
-        launcher_config,
-        java_major,
-    ))
-}
+// ── 启动装配（build_auth / fill_missing_xuid / prepare_launch 已下沉 launcher/process.rs）──
 
 // ── 进程管理（实现下沉 launcher/process.rs）────────────────────
 
@@ -130,14 +46,15 @@ pub async fn spawn_game(
     uuid: String,
     xuid: String,
 ) -> Result<u32, String> {
-    let (mut auth, java_path, version_json, mc_dir, launcher_config, java_major) = prepare_launch(
-        &version_dir_name,
-        &auth_mode,
-        &username,
-        &access_token,
-        &uuid,
-        &xuid,
-    )?;
+    let (mut auth, java_path, version_json, mc_dir, launcher_config, java_major) =
+        crate::launcher::process::prepare_launch(
+            &version_dir_name,
+            &auth_mode,
+            &username,
+            &access_token,
+            &uuid,
+            &xuid,
+        )?;
 
     // 离线皮肤（PCL 机制）：固定随机（用户名哈希决定 Steve/Alex），UUID 匹配模型
     skin::apply_offline_skin(&mut auth);
@@ -267,7 +184,8 @@ pub async fn get_launcher_log() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::launcher::model::MemoryMode;
+    use crate::downloader::model::VersionJson;
+    use crate::launcher::model::{AuthMode, LauncherConfig, MemoryMode};
 
     /// 构造一个最小可用的版本 JSON（旧格式 minecraftArguments，保底参数路径）。
     fn minimal_version_json() -> VersionJson {

@@ -1,7 +1,7 @@
 use crate::config::game_dirs::{default_dir, GameDir, GameDirsConfig};
 use crate::constants;
 
-pub(crate) fn read_dirs() -> Vec<GameDir> {
+fn read_dirs() -> Vec<GameDir> {
     let cfg: GameDirsConfig = crate::persist::read(constants::SECT_GAME_DIRS).unwrap_or_default();
     if cfg.dirs.is_empty() {
         // 首次使用（或全部删除后）：生成默认目录（exe 同级 .minecraft）并持久化
@@ -102,7 +102,7 @@ pub fn get_active_game_dir() -> GameDir {
         .unwrap_or_else(default_dir)
 }
 
-/// 重命名版本文件夹（versions/{old} → versions/{new}）。
+/// 重命名版本文件夹（versions/{old} → versions/{new}；实际操作在 downloader/version.rs）。
 #[tauri::command]
 pub fn rename_version_dir(version_name: String, new_name: String) -> Result<(), String> {
     let new_name = new_name.trim().to_string();
@@ -112,17 +112,7 @@ pub fn rename_version_dir(version_name: String, new_name: String) -> Result<(), 
     if new_name == version_name {
         return Err("新名称与当前名称相同".to_string());
     }
-    let active = get_active_game_dir();
-    let versions_dir = std::path::Path::new(&active.path).join("versions");
-    let from = versions_dir.join(&version_name);
-    let to = versions_dir.join(&new_name);
-    if !from.exists() {
-        return Err(format!("版本「{version_name}」不存在"));
-    }
-    if to.exists() {
-        return Err(format!("版本「{new_name}」已存在"));
-    }
-    std::fs::rename(&from, &to).map_err(|e| format!("重命名失败\n{e}"))
+    crate::downloader::version::rename_version_dir(&version_name, &new_name)
 }
 
 /// 用系统文件管理器打开指定目录（tauri-plugin-opener Rust 侧 API，不受 JS scope 限制；
@@ -177,36 +167,15 @@ pub fn auto_activate_version() -> Result<AutoActivate, String> {
 
 /// 确保版本对应文件夹存在（不存在则创建），返回其绝对路径（快捷方式按钮用）。
 /// 版本隔离：游戏运行时 gameDir = versions/{name}，存档/mod 实际都位于版本目录下。
+/// 实际操作在 downloader/version.rs。
 #[tauri::command]
 pub fn ensure_game_folder(kind: String, version_name: String) -> Result<String, String> {
-    let active = get_active_game_dir();
-    let base = std::path::Path::new(&active.path);
-    let sub = match kind.as_str() {
-        "version" => format!("versions/{version_name}"),
-        "saves" => format!("versions/{version_name}/saves"),
-        "mods" => format!("versions/{version_name}/mods"),
-        "resourcepacks" => format!("versions/{version_name}/resourcepacks"),
-        "datapacks" => format!("versions/{version_name}/datapacks"),
-        "shaderpacks" => format!("versions/{version_name}/shaderpacks"),
-        _ => return Err("未知文件夹类型".to_string()),
-    };
-    let dir = base.join(sub);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("创建目录失败\n{e}"))?;
-    Ok(dir.to_string_lossy().to_string())
+    crate::downloader::version::ensure_kind_folder(&kind, &version_name)
 }
 
-/// 删除版本文件夹（递归删除 versions/{name}）。
-/// 大目录删除耗时，用 tokio::fs（内部 spawn_blocking）避免阻塞主线程。
+/// 删除版本文件夹（递归删除 versions/{name}；实际操作在 downloader/version.rs，
+/// 大目录删除耗时，命令保持 async 走 tokio::fs 的 spawn_blocking）。
 #[tauri::command]
 pub async fn delete_version_dir(version_name: String) -> Result<(), String> {
-    let active = get_active_game_dir();
-    let dir = std::path::Path::new(&active.path)
-        .join("versions")
-        .join(&version_name);
-    if !dir.exists() {
-        return Err(format!("版本「{version_name}」不存在"));
-    }
-    tokio::fs::remove_dir_all(&dir)
-        .await
-        .map_err(|e| format!("删除失败\n{e}"))
+    crate::downloader::version::delete_version_dir(&version_name).await
 }

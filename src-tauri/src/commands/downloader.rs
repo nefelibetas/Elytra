@@ -32,40 +32,10 @@ pub fn save_downloader_config(config: DownloaderConfig) -> Result<(), String> {
     Ok(())
 }
 
-/// 已安装版本信息（get_installed_versions 返回项）。
-#[derive(serde::Serialize)]
-pub struct InstalledVersionInfo {
-    pub name: String,
-    /// 从版本 json 推断的 loader（fabric/forge/neoforge/optifine/vanilla）；
-    /// json 读取失败（非版本目录）时为空串
-    pub loader: String,
-}
-
+/// 已安装版本列表（枚举/loader 推断在 downloader/version.rs）。
 #[tauri::command]
-pub fn get_installed_versions() -> Result<Vec<InstalledVersionInfo>, String> {
-    let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
-    let versions_dir = config.minecraft_dir_abs().join("versions");
-    if !versions_dir.exists() {
-        return Ok(vec![]);
-    }
-    let mut items: Vec<InstalledVersionInfo> = std::fs::read_dir(&versions_dir)
-        .map_err(|e| format!("读取版本目录失败\n{}", e))?
-        .filter_map(|entry| {
-            let entry = entry.ok()?;
-            if !entry.file_type().ok()?.is_dir() {
-                return None;
-            }
-            let name = entry.file_name().to_string_lossy().to_string();
-            // 从版本 json 推断 loader（PCL2 实例目录名可能无 loader 标记）
-            let loader = crate::launcher::args::find_version_json(&entry.path(), &name)
-                .and_then(|p| std::fs::read_to_string(p).ok())
-                .map(|t| crate::util::infer_loader_from_json(&t))
-                .unwrap_or_default();
-            Some(InstalledVersionInfo { name, loader })
-        })
-        .collect();
-    items.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(items)
+pub fn get_installed_versions() -> Result<Vec<crate::downloader::version::InstalledVersionInfo>, String> {
+    crate::downloader::version::list_installed()
 }
 
 #[tauri::command]
