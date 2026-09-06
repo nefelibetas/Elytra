@@ -2,53 +2,6 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-/// BMCLAPI 镜像路由表（双表合一）：官方域 → BMCLAPI 镜像前缀。
-///
-/// 此前为两张同构表：`fetcher.rs` 的 MIRROR_ROUTES（路由层镜像候选生成，
-/// 全量 10 条）与 `source.rs` 的 REWRITE_RULES（`DownloadSource::mirror_url`
-/// 重写，前 8 条子集）。现合并为本单一表，两个消费方均引用此处；
-/// 行序即匹配优先序（各域互不重叠，first-match 与全量收集语义一致）。
-/// 相比原 REWRITE_RULES 的差异行逐条注明：
-/// - `maven.fabricmc.net`：REWRITE_RULES 原无。Fabric 库构件此前仅经
-///   fetcher 路由层生成镜像候选；合并后 `mirror_url` 同步获得该重写
-///   （现有调用方均不传 fabric 库 URL，纯超集保全集）。
-/// - `meta.fabricmc.net` → `/fabric-meta`：REWRITE_RULES 原无。fabric 版本
-///   清单镜像（quilt 无镜像，保持直连官方）；同上，仅路由层原先可用。
-pub(crate) const MIRROR_ROUTES: &[(&str, &str)] = &[
-    (
-        "resources.download.minecraft.net",
-        "https://bmclapi2.bangbang93.com/assets",
-    ),
-    (
-        "libraries.minecraft.net",
-        "https://bmclapi2.bangbang93.com/libraries",
-    ),
-    ("piston-meta.mojang.com", "https://bmclapi2.bangbang93.com"),
-    ("piston-data.mojang.com", "https://bmclapi2.bangbang93.com"),
-    ("launcher.mojang.com", "https://bmclapi2.bangbang93.com"),
-    ("launchermeta.mojang.com", "https://bmclapi2.bangbang93.com"),
-    // ModLoader 官方 maven 对高并发不友好（实测 20 并发即有连接失败），
-    // BMCLAPI 完整镜像 maven.neoforged.net / maven.minecraftforge.net（302 实测可用）。
-    // 仅做备用：官方源仍优先，镜像源兜底，避免整批库下载失败。
-    (
-        "maven.neoforged.net",
-        "https://bmclapi2.bangbang93.com/maven",
-    ),
-    (
-        "maven.minecraftforge.net",
-        "https://bmclapi2.bangbang93.com/maven",
-    ),
-    (
-        "maven.fabricmc.net",
-        "https://bmclapi2.bangbang93.com/maven",
-    ),
-    // fabric 版本清单镜像（quilt 无镜像，保持直连官方）
-    (
-        "meta.fabricmc.net",
-        "https://bmclapi2.bangbang93.com/fabric-meta",
-    ),
-];
-
 /// 版本清单
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

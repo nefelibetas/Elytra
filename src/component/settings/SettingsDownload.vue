@@ -7,7 +7,7 @@ import DropSelect from "../common/DropSelect.vue";
 import CheckToggle from "../common/CheckToggle.vue";
 import { fmtSpeed } from "../../utils/format";
 import {
-  dlFileMode, dlManifestMode, dlCommunityMode, dlConcurrency, dlMaxSpeed,
+  dlGameMode, dlCommunityMode, dlConcurrency, dlMaxSpeed,
   dlJdkMode, dlNetworkMode, dlTranslateMode,
   dlError, dlShowReleaseOnly,
   sourceModeOptions, communitySourceOptions,
@@ -15,7 +15,7 @@ import {
   networkModeOptions,
   translateDisplayOptions,
   concurrencyLocked,
-  saveDownloadConfig, setFileMode, setCommunityMode, setJdkMode, setManifestMode, setNetworkMode,
+  saveDownloadConfig, setGameMode, setCommunityMode, setJdkMode, setNetworkMode,
   setTranslateMode, loadDownloadConfig,
   dlSourceMaster, dlDetailOpen, setSourceMaster,
 } from "../../store/downloaderConfig";
@@ -36,7 +36,7 @@ function onMaster(v: string) {
       <div class="stg-card-sub">游戏文件、版本列表、社区资源与 JDK 的下载来源与线程数</div>
     </div>
 
-    <!-- 下载源（主开关）：四细分统一切换；明细区可展开单独调整 -->
+    <!-- 下载源（主开关）：三细分统一切换；明细区可展开单独调整 -->
     <div class="dl-row">
       <span class="dl-label">下载源</span>
       <div class="dl-field">
@@ -57,29 +57,17 @@ function onMaster(v: string) {
       </button>
     </div>
 
-    <!-- 细分源设置：独立折叠区，四类各自独立 -->
+    <!-- 细分源设置：独立折叠区，三类各自独立 -->
     <Transition name="expand">
       <div v-if="dlDetailOpen" class="dl-source-detail">
-        <!-- 文件下载源 -->
+        <!-- 游戏下载源：版本列表/版本 json/资源/库/ModLoader 构件/JDK runtime 统一走此源 -->
         <div class="dl-row">
-          <span class="dl-label">文件下载源</span>
+          <span class="dl-label">游戏下载源</span>
           <div class="dl-field">
             <DropSelect
-              :model-value="dlFileMode"
+              :model-value="dlGameMode"
               :options="sourceModeOptions"
-              @update:model-value="setFileMode"
-            />
-          </div>
-        </div>
-
-        <!-- 版本列表源 -->
-        <div class="dl-row">
-          <span class="dl-label">版本列表源</span>
-          <div class="dl-field">
-            <DropSelect
-              :model-value="dlManifestMode"
-              :options="sourceModeOptions"
-              @update:model-value="setManifestMode"
+              @update:model-value="setGameMode"
             />
           </div>
         </div>
@@ -96,7 +84,7 @@ function onMaster(v: string) {
           </div>
         </div>
 
-        <!-- JDK 下载源：auto 并发测速三源最快优先；officialOnly 固定 Mojang → Azul；chinaOnly 固定 Mojang（镜像）→ Adoptium 仅 TUNA -->
+        <!-- JDK 下载源：auto 并发测速三源最快优先；officialOnly 固定 Mojang → Azul；mirrorOnly 固定 Mojang（镜像）→ Adoptium 仅 TUNA -->
         <div class="dl-row">
           <span class="dl-label">JDK 下载源</span>
           <div class="dl-field">
@@ -170,7 +158,7 @@ function onMaster(v: string) {
       <span class="dl-val">{{ dlMaxSpeed === 0 ? '不限' : fmtSpeed(dlMaxSpeed) }}</span>
     </div>
     <!-- Auto（智能）模式：官方源优先 + 镜像降级，并发仅作用于官方源，镜像源固定 8 -->
-    <p v-if="dlFileMode === 'auto' && !concurrencyLocked" class="dl-note">
+    <p v-if="dlGameMode === 'auto' && !concurrencyLocked" class="dl-note">
       该并发仅对官方源生效，镜像源固定 8 线程
     </p>
 

@@ -9,7 +9,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { fmtCount, fmtSize } from "../../utils/format";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
-import { classifyVersion } from "../../utils/versionClassify";
 import { dlTranslateMode } from "../../store/downloaderConfig";
 import IconImage from "../common/IconImage.vue";
 import AlertDialog from "../common/AlertDialog.vue";
@@ -20,7 +19,7 @@ import { useSelectable } from "../../utils/useSelectable";
 import {
   mods, modsLoading, modsError, modsNetworkError, modsLoadedFor,
   updates, updatesChecked, checkingUpdates, updatesError, updatingFiles,
-  versionLoader, loadVersionLoader, loadMods, checkModUpdates, updateMod, deleteMod, toggleMod,
+  loadVersionLoader, loadMods, checkModUpdates, updateMod, deleteMod, toggleMod,
 } from "../../store/versionDetail";
 
 const route = useRoute();
@@ -125,12 +124,7 @@ onMounted(async () => {
 });
 
 async function doCheckUpdates() {
-  const info = classifyVersion(versionName.value);
-  await checkModUpdates(
-    versionName.value,
-    info.mcVersion,
-    versionLoader.value || info.category,
-  );
+  await checkModUpdates(versionName.value);
   if (updatesError.value) {
     showToast(errMsg(updatesError.value));
   } else if (!updates.value.length) {

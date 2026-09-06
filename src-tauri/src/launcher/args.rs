@@ -421,9 +421,7 @@ pub fn build_launch_command(
     // 第三方登录（authlib-injector）：javaagent 注入 + client side
     // （jar 登录时下载到数据目录；缺失由启动前置检查拦截）
     if let AuthMode::External { api_url, .. } = auth {
-        let jar = crate::util::exe_dir()
-            .join(constants::CONFIG_DIR)
-            .join(crate::auth::external::AUTHLIB_JAR);
+        let jar = crate::util::config_dir().join(crate::auth::external::AUTHLIB_JAR);
         // Ely.by 用 authlib-injector 内置别名；其余标准站传完整 URL
         let server = if crate::auth::external::is_ely_by(api_url) {
             "ely.by".to_string()

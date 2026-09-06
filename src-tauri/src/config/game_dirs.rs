@@ -1,4 +1,4 @@
-use crate::util::{default_game_dir_base, exe_dir};
+use crate::util::default_game_dir_base;
 use serde::{Deserialize, Serialize};
 
 /// 一个游戏目录（.minecraft 文件夹）
@@ -15,16 +15,8 @@ pub struct GameDirsConfig {
     pub dirs: Vec<GameDir>,
 }
 
-/// 启动器 exe 所在文件夹名（旧版默认项命名，用于迁移）。
-pub fn exe_dir_name() -> String {
-    exe_dir()
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default()
-}
-
 /// 默认目录：title 固定「当前文件夹」，指向平台感知的默认基准下的 .minecraft
-/// （Windows/Linux 便携：exe 旁；macOS / Linux 打包：用户目录）
+/// （Windows 便携：exe 旁；macOS/Linux：应用数据目录，见 util::default_game_dir_base）
 pub fn default_dir() -> GameDir {
     let path = default_game_dir_base()
         .join(".minecraft")

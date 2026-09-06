@@ -10,7 +10,7 @@ pub async fn fetch_version_json_text(
 ) -> Result<String, String> {
     config
         .fetch_with_fallback(
-            config.file_source_mode,
+            config.game_source_mode,
             crate::downloader::source::CacheBehaviour::DefaultTtl,
             |s| s.mirror_url(version_url),
         )

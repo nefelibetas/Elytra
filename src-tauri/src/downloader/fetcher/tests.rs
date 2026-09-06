@@ -356,7 +356,7 @@ fn resolve_routes_dedupes_and_appends_mirror_candidate() {
     assert_eq!(routes2.len(), 2);
 }
 
-/// 单选模式（OfficialOnly/ChinaOnly）保持调用方顺序（无健康度竞争）。
+/// 单选模式（OfficialOnly/MirrorOnly）保持调用方顺序（无健康度竞争）。
 #[test]
 fn resolve_routes_single_mode_keeps_order() {
     // OfficialOnly：调用方传官方 URL → 保持（自动追加镜像候选，顺序官方在前）
@@ -367,13 +367,13 @@ fn resolve_routes_single_mode_keeps_order() {
         "OfficialOnly 官方先行，实际: {}",
         routes[0].url
     );
-    // ChinaOnly：调用方只传镜像 URL → 保持单一镜像
+    // MirrorOnly：调用方只传镜像 URL → 保持单一镜像
     let mirror = vec!["https://bmclapi2.bangbang93.com/libraries/com/x/y.jar".to_string()];
-    let routes2 = resolve_download_routes(&mirror, DownloadSourceMode::ChinaOnly);
-    assert_eq!(routes2.len(), 1, "ChinaOnly 单源不追加候选");
+    let routes2 = resolve_download_routes(&mirror, DownloadSourceMode::MirrorOnly);
+    assert_eq!(routes2.len(), 1, "MirrorOnly 单源不追加候选");
     assert!(
         routes2[0].is_mirror,
-        "ChinaOnly 保持镜像，实际: {}",
+        "MirrorOnly 保持镜像，实际: {}",
         routes2[0].url
     );
 }

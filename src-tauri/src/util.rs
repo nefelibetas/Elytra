@@ -47,41 +47,59 @@ pub fn url_file_name(url: &str) -> Option<&str> {
     url.rsplit('/').next().filter(|s| !s.is_empty())
 }
 
-/// 从版本目录名提取 MC 版本（与前端 utils/versionClassify 一致）：
-/// 找 `-{loader_key}-` 标记取标记前部分；无标记（vanilla）取整个目录名；
-/// 冲突重命名 `{id}_n` 后缀一并剥离（`26.2-forge-65.1.0_1` → `26.2`）。
-/// natives 目录按 MC 版本共享——同一 MC 的 vanilla/ModLoader 版本 native 库一致。
-pub fn mc_version_from_dir(dir_name: &str) -> &str {
-    const LOADER_KEYS: &[&str] = &["fabric", "forge", "neoforge", "quilt", "optifine"];
-    // 冲突重命名 {id}_n 后缀（与前端 classifyVersion 的 /_\d+$/ 等价）
-    let base = dir_name.split('_').next().unwrap_or(dir_name);
-    for key in LOADER_KEYS {
-        let marker = format!("-{key}-");
-        if let Some(idx) = base.find(&marker) {
-            if idx > 0 {
-                return &base[..idx];
-            }
+/// loader 标记 key 列表与顺序（与前端 utils/versionClassify 的 LOADER_KEYS 一致；
+/// 各标记互不重叠，顺序不影响结果，仅保持同一事实源）。
+const LOADER_KEYS: &[&str] = &["neoforge", "forge", "fabric", "quilt", "optifine"];
+
+/// 冲突重命名 `{id}_n` 后缀剥离（与前端 classifyVersion 的 /_\d+$/ 语义一致）：
+/// 只剥**尾部**一段 `_<数字>`（`26.2-forge-65.1.0_1` → `26.2-forge-65.1.0`；
+/// `x_1_2` → `x_1`；`x_` 不剥）。
+fn strip_conflict_suffix(name: &str) -> &str {
+    if let Some(i) = name.rfind('_') {
+        let tail = &name[i + 1..];
+        if !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit()) {
+            return &name[..i];
         }
     }
-    base
+    name
 }
 
-/// 从版本目录名解析 ModLoader：(loader_key, loader_version)。
-/// `26.2-fabric-0.16.9` → Some(("fabric", "0.16.9"))；vanilla → None；
-/// 冲突重命名 `_n` 后缀先剥离。optifine 也识别（导出 mrpack 时忽略——mrpack
-/// dependencies 无 OptiFine 标准键，文件本体已在 overrides 里）。
-pub fn loader_from_dir(dir_name: &str) -> Option<(&str, &str)> {
-    const LOADER_KEYS: &[&str] = &["fabric", "forge", "neoforge", "quilt", "optifine"];
-    let base = dir_name.split('_').next().unwrap_or(dir_name);
+/// 大小写不敏感查找 `-{key}-` loader 标记（标记前必须还有内容，idx > 0）。
+/// ASCII 小写化不改变字节长度，返回的 idx 可直接回用于原串切片。
+fn find_loader_marker(base: &str) -> Option<(usize, &'static str)> {
+    let lower = base.to_ascii_lowercase();
     for key in LOADER_KEYS {
         let marker = format!("-{key}-");
-        if let Some(idx) = base.find(&marker) {
+        if let Some(idx) = lower.find(&marker) {
             if idx > 0 {
-                return Some((key, &base[idx + marker.len()..]));
+                return Some((idx, key));
             }
         }
     }
     None
+}
+
+/// 从版本目录名提取 MC 版本（与前端 utils/versionClassify 同规则）：
+/// 找 `-{loader_key}-` 标记（大小写不敏感）取标记前部分；无标记（vanilla）取整个目录名；
+/// 冲突重命名 `_n` 后缀按尾部 `_数字` 剥离一次。
+/// **仅限展示与本地键**（natives 共享目录等）；对外表达真实 MC 版本应从版本目录内
+/// json 解析（见 commands/version.rs::resolve_version_meta），目录名解析只是兜底。
+pub fn mc_version_from_dir(dir_name: &str) -> &str {
+    let base = strip_conflict_suffix(dir_name);
+    match find_loader_marker(base) {
+        Some((idx, _)) => &base[..idx],
+        None => base,
+    }
+}
+
+/// 从版本目录名解析 ModLoader：(loader_key, loader_version)。
+/// `26.2-fabric-0.16.9` → Some(("fabric", "0.16.9"))；vanilla → None；
+/// 标记匹配大小写不敏感（PCL2 等外部目录名可能大写）。optifine 也识别
+/// （导出 mrpack 时忽略——dependencies 无 OptiFine 标准键，文件本体已在 overrides 里）。
+pub fn loader_from_dir(dir_name: &str) -> Option<(&str, &str)> {
+    let base = strip_conflict_suffix(dir_name);
+    let (idx, key) = find_loader_marker(base)?;
+    Some((key, &base[idx + key.len() + 2..]))
 }
 
 /// 从版本字符串解析主版本号。
@@ -105,28 +123,87 @@ pub fn java_bin_path(home: &Path) -> PathBuf {
     home.join("bin").join(exe)
 }
 
-/// 配置目录（Settings.toml / secrets.bin / tasks.db 的基准）。
-/// - Windows/Linux：exe 旁 `Elytra/`（与历史布局一致）
+/// 配置目录（Settings.toml / secrets.bin / tasks.db / 日志的基准）。
+/// - Windows：exe 旁 `Elytra/`（便携语义，与历史布局一致）
 /// - macOS：`~/Library/Application Support/Elytra`——current_exe 指向 app bundle 内部
-///   （`Contents/MacOS/`），写入会破坏签名且 /Applications 下不可写，配置会丢失
+///   （`Contents/MacOS/`），写入会破坏签名且 /Applications 下不可写，配置必须外置
+/// - Linux：`$XDG_DATA_HOME/Elytra`（缺省 `~/.local/share/Elytra`）——exe 位置由
+///   包管理器/挂载器决定（/usr 只读、AppImage 挂载点每次不同），数据一律走用户目录
+/// - dev/cargo test 进程（exe 位于 cargo target 下）走 exe 旁：测试隔离 + dev 行为不变
 pub fn config_dir() -> PathBuf {
-    #[cfg(target_os = "macos")]
+    #[cfg(not(target_os = "windows"))]
     {
-        if let Some(home) = std::env::var_os("HOME") {
-            return std::path::PathBuf::from(home)
-                .join("Library/Application Support")
-                .join(crate::constants::CONFIG_DIR);
+        if is_dev_runtime() {
+            return exe_dir().join(crate::constants::CONFIG_DIR);
+        }
+        if let Some(root) = platform_data_root() {
+            return root.join(crate::constants::CONFIG_DIR);
         }
     }
     exe_dir().join(crate::constants::CONFIG_DIR)
 }
 
-/// 启动器可执行文件所在目录（配置文件与默认游戏目录的基准）。
+/// 平台用户数据根目录（macOS/Linux，config 与默认游戏目录的共同基准）。
+/// - macOS：`~/Library/Application Support`
+/// - Linux：`$XDG_DATA_HOME` 非空用之，否则 `~/.local/share`（XDG Base Directory）
+#[cfg(target_os = "macos")]
+fn platform_data_root() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .map(|h| PathBuf::from(h).join("Library/Application Support"))
+}
+
+/// 平台用户数据根目录（macOS/Linux，config 与默认游戏目录的共同基准）。
+#[cfg(all(unix, not(target_os = "macos")))]
+fn platform_data_root() -> Option<PathBuf> {
+    if let Some(x) = std::env::var_os("XDG_DATA_HOME") {
+        if !x.is_empty() {
+            return Some(PathBuf::from(x));
+        }
+    }
+    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share"))
+}
+
+/// exe 是否位于 cargo target/debug|release 下（dev 与 cargo test 进程）。
+/// 此类进程配置走 exe 旁：单元测试进程在 `target/debug/deps/` 下，配置天然落在
+/// 该隔离区（不污染真实用户数据目录），`pnpm tauri dev` 行为也与历史一致。
+#[cfg(not(target_os = "windows"))]
+fn is_dev_runtime() -> bool {
+    std::env::current_exe()
+        .ok()
+        .map(|p| path_under_cargo_target(&p))
+        .unwrap_or(false)
+}
+
+/// 路径是否形如 `…/target/{debug|release}/…`（纯函数，便于单测）。
+#[cfg(any(not(target_os = "windows"), test))]
+fn path_under_cargo_target(p: &Path) -> bool {
+    let comps: Vec<&str> = p
+        .components()
+        .filter_map(|c| c.as_os_str().to_str())
+        .collect();
+    comps.windows(2).any(|w| {
+        w[0] == "target" && matches!(w[1], "debug" | "release")
+    })
+}
+
+/// 启动器可执行文件所在目录。Windows 便携语义锚点（exe 旁数据/游戏目录）；
+/// macOS/Linux 的数据布局不依赖 exe 位置（见 config_dir / default_game_dir_base）。
 pub fn exe_dir() -> PathBuf {
     std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .or_else(|| {
+            // current_exe 解析失败（极端环境）：回退用户主目录，不依赖进程 cwd
+            std::env::var_os("HOME").map(PathBuf::from)
+        })
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// 取文本尾部最多 200 行（lines().rev().take(200) 后反转，保留原顺序）。
+pub fn tail_lines(text: &str) -> String {
+    let mut lines: Vec<&str> = text.lines().rev().take(200).collect();
+    lines.reverse();
+    lines.join("\n")
 }
 
 /// FNV-1a 64 位散列（跨进程稳定，非加密）：离线皮肤哈希 / 缓存键派生共用。
@@ -208,7 +285,7 @@ pub fn unique_child_dir(parent: &Path, base: &str) -> String {
 }
 
 /// 社区文件下载候选：Modrinth 官方 CDN → MCIM 换域名镜像。
-/// 按 community_source_mode 组织：OfficialOnly 仅官方 / ChinaOnly 仅镜像 /
+/// 按 community_source_mode 组织：OfficialOnly 仅官方 / MirrorOnly 仅镜像 /
 /// Auto 下载前探测两源 TTFB（downloader/probe.rs，TTL 10min），快者优先、
 /// 慢者兜底（探测失败不剔除，仅排序——下载期另有重试降级）。
 /// 非 cdn.modrinth.com URL 仅返回官方一源。社区资源文件下载统一经此构造多源。
@@ -226,7 +303,7 @@ pub async fn community_download_urls(url: &str) -> Vec<String> {
         crate::persist::read(crate::constants::SECT_DOWNLOADER).unwrap_or_default();
     match cfg.community_source_mode {
         DownloadSourceMode::OfficialOnly => vec![official],
-        DownloadSourceMode::ChinaOnly => vec![mirrored],
+        DownloadSourceMode::MirrorOnly => vec![mirrored],
         DownloadSourceMode::Auto => {
             let o = crate::downloader::probe::probe_url(&official).await;
             let m = crate::downloader::probe::probe_url(&mirrored).await;
@@ -262,42 +339,25 @@ pub fn is_supported_image(bytes: &[u8]) -> bool {
 
 /// 默认游戏目录（.minecraft）的基准目录。
 /// - Windows：exe 旁（便携语义，与历史一致）
-/// - macOS：`~/Library/Application Support`——app bundle 内部只读且破坏签名，游戏数据必须外置
-/// - Linux：exe 旁可写则 exe 旁（便携 tar.gz 场景），否则 `~`（deb/AppImage 打包场景，/usr、挂载点只读）
+/// - macOS/Linux：应用数据目录（`<数据根>/Elytra`）——默认 .minecraft 由启动器自持，
+///   与官方/其它启动器默认位置隔离；需要共享的目录在游戏目录列表里显式添加
 pub fn default_game_dir_base() -> PathBuf {
-    #[cfg(target_os = "macos")]
-    {
-        if let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home).join("Library/Application Support");
-        }
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        // Linux/其他 Unix：exe 旁可写则便携，否则（打包只读）回退用户主目录
-        if exe_dir_is_writable() {
-            return exe_dir();
-        }
-    }
-    // Windows：便携语义，exe 旁（与历史一致）
     #[cfg(target_os = "windows")]
     return exe_dir();
-    // macOS 无 HOME 兜底 / Linux exe 目录不可写：退回用户主目录
+    // macOS/Linux：dev/cargo test 进程走 exe 旁（与 config_dir 同规则，测试隔离）；
+    // 发布形态 = 应用数据目录（默认游戏目录 = <数据根>/Elytra/.minecraft）
     #[cfg(not(target_os = "windows"))]
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(exe_dir)
-}
-
-/// exe 所在目录是否可写（便携 vs 打包判断，仅 Unix）。
-/// 不实际创建文件：读目录 metadata 的权限位（owner/group/other 任一有写位即视为可写）。
-#[cfg(all(unix, not(target_os = "macos")))]
-fn exe_dir_is_writable() -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    let dir = exe_dir();
-    let Ok(meta) = std::fs::metadata(&dir) else {
-        return false;
-    };
-    meta.is_dir() && meta.permissions().mode() & 0o222 != 0
+    {
+        if is_dev_runtime() {
+            exe_dir()
+        } else if let Some(root) = platform_data_root() {
+            root.join(crate::constants::CONFIG_DIR)
+        } else if let Some(home) = std::env::var_os("HOME") {
+            PathBuf::from(home)
+        } else {
+            exe_dir()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -326,6 +386,36 @@ mod tests {
         assert_eq!(mc_version_from_dir("1.18.2-fabric-0.16.11"), "1.18.2");
         assert_eq!(mc_version_from_dir("1.12.2"), "1.12.2");
         assert_eq!(mc_version_from_dir("26.2-forge-65.1.0_1"), "26.2");
+        // 与前端 classifyVersion 对齐：标记大小写不敏感（PCL2 等外部目录名大写）
+        assert_eq!(mc_version_from_dir("1.20.1-Fabric-0.14.22"), "1.20.1");
+        assert_eq!(mc_version_from_dir("1.20.1-FABRIC-0.14.22"), "1.20.1");
+        // 尾部 `_数字` 只剥一段（与前端 /_\d+$/ 一致）
+        assert_eq!(mc_version_from_dir("1.20.1_1_2"), "1.20.1_1");
+        // 任意名无标记：整串兜底（vanilla 语义，仅供展示/本地键）
+        assert_eq!(mc_version_from_dir("[abcd]"), "[abcd]");
+        assert_eq!(mc_version_from_dir("我的整合包-fabric-1.0"), "我的整合包");
+    }
+
+    /// loader 解析与前端同规则（大小写不敏感 + 尾部冲突后缀）；解析器本身信任目录名，
+    /// 对外真实语义由版本 json 权威层兜底（commands/version.rs::resolve_version_meta）。
+    #[test]
+    fn loader_from_dir_parity_forms() {
+        assert_eq!(
+            loader_from_dir("26.2-fabric-0.16.9"),
+            Some(("fabric", "0.16.9"))
+        );
+        assert_eq!(
+            loader_from_dir("1.20.1-Fabric-0.14.22"),
+            Some(("fabric", "0.14.22"))
+        );
+        assert_eq!(
+            loader_from_dir("26.2-forge-65.1.0_1"),
+            Some(("forge", "65.1.0"))
+        );
+        assert_eq!(loader_from_dir("26.2"), None);
+        assert_eq!(loader_from_dir("[abcd]"), None);
+        // 伪标记示例：解析器原样给出，json 权威层会覆盖为真实 loader
+        assert_eq!(loader_from_dir("X-fabric-Y"), Some(("fabric", "Y")));
     }
 
     #[test]
@@ -348,6 +438,25 @@ mod tests {
         assert!(!prefer_mirror(false, 0, 400));
         // 镜像更慢 → 官方
         assert!(!prefer_mirror(true, 500, 100));
+    }
+
+    /// cargo 产物路径判定：target/{debug|release} 段命中（deps 测试进程在 debug 下）。
+    #[test]
+    fn path_under_cargo_target_detects_dev_runtime() {
+        assert!(path_under_cargo_target(Path::new(
+            "src-tauri/target/debug/Elytra.exe"
+        )));
+        assert!(path_under_cargo_target(Path::new(
+            "src-tauri/target/debug/deps/Elytra-abc.exe"
+        )));
+        assert!(path_under_cargo_target(Path::new(
+            "home/u/elytra/target/release/elytra"
+        )));
+        assert!(!path_under_cargo_target(Path::new("/usr/bin/elytra")));
+        assert!(!path_under_cargo_target(Path::new("target/debuggy/x")));
+        assert!(!path_under_cargo_target(Path::new(
+            "/tmp/.mount_elytraX/usr/bin/elytra"
+        )));
     }
 }
 
@@ -450,9 +559,7 @@ pub fn icon_payload(path: &Path, max_bytes: u64) -> Option<IconData> {
 /// 启动器为 GUI 进程（Windows 无控制台），eprintln 输出无人可见，落盘后设置页可查看。
 /// 注意：file 句柄必须保活（mem::forget），否则 Drop 关闭句柄后被系统复用，重定向失效。
 pub fn init_file_logging() {
-    let path = exe_dir()
-        .join(crate::constants::CONFIG_DIR)
-        .join("launcher.log");
+    let path = crate::util::config_dir().join("launcher.log");
     let Ok(file) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)

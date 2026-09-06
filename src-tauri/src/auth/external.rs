@@ -418,9 +418,7 @@ pub async fn server_name(api_url: &str) -> Option<String> {
 /// 确保 authlib-injector.jar 存在（数据目录）。缺失时从官方/BMCLAPI 镜像拉取
 /// 最新版（latest.json 拿 download_url + sha256 校验）。返回 jar 绝对路径。
 pub async fn ensure_jar() -> Result<std::path::PathBuf, String> {
-    let path = crate::util::exe_dir()
-        .join(constants::CONFIG_DIR)
-        .join(AUTHLIB_JAR);
+    let path = crate::util::config_dir().join(AUTHLIB_JAR);
     if path.exists() {
         return Ok(path);
     }
@@ -493,6 +491,35 @@ pub async fn ensure_jar() -> Result<std::path::PathBuf, String> {
         }
     }
     Err(format!("下载 authlib-injector 失败\n{last_err}"))
+}
+
+/// 预设验证服务器（label 展示名 + value API 地址，第三方登录 UI 预设列表）。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ThirdPartyServer {
+    pub label: String,
+    pub value: String,
+}
+
+/// 第三方登录配置（预设验证服务器列表，label + value）。
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct ThirdPartyConfig {
+    /// 常用验证服务器（皮肤站）预设列表
+    #[serde(default)]
+    pub servers: Vec<ThirdPartyServer>,
+}
+
+/// 默认内置预设（知名 Yggdrasil 兼容站）。
+pub fn default_third_party_servers() -> Vec<ThirdPartyServer> {
+    vec![
+        ThirdPartyServer {
+            label: "LittleSkin".into(),
+            value: "https://littleskin.cn/api/yggdrasil".into(),
+        },
+        ThirdPartyServer {
+            label: "Ely.by".into(),
+            value: "https://authserver.ely.by".into(),
+        },
+    ]
 }
 
 #[cfg(test)]

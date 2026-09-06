@@ -17,7 +17,7 @@ const MACHINE_ID_FILE: &str = "machine-id";
 
 /// 读取（或首次生成）本机 machine_id。
 pub fn get_machine_id() -> String {
-    let dir = crate::util::exe_dir().join(crate::constants::CONFIG_DIR);
+    let dir = crate::util::config_dir();
     let path = dir.join(MACHINE_ID_FILE);
     load_or_create(&path)
 }

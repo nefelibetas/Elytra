@@ -5,4 +5,6 @@ pub mod env;
 pub mod memory;
 pub mod model;
 pub mod platform;
+pub mod process;
+pub mod script;
 pub mod skin;

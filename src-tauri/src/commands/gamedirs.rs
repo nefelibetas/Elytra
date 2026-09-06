@@ -1,4 +1,4 @@
-use crate::config::game_dirs::{default_dir, exe_dir_name, GameDir, GameDirsConfig};
+use crate::config::game_dirs::{default_dir, GameDir, GameDirsConfig};
 use crate::constants;
 
 pub(crate) fn read_dirs() -> Vec<GameDir> {
@@ -14,23 +14,7 @@ pub(crate) fn read_dirs() -> Vec<GameDir> {
         );
         vec![d]
     } else {
-        let mut dirs = cfg.dirs;
-        // 迁移旧默认项：默认路径上仍叫 exe 目录名（用户未重命名过）的项 → 「当前文件夹」
-        let default = default_dir();
-        let old_name = exe_dir_name();
-        if !old_name.is_empty() {
-            if let Some(d) = dirs
-                .iter_mut()
-                .find(|d| d.path == default.path && d.name == old_name)
-            {
-                d.name = "当前文件夹".to_string();
-                let _ = crate::persist::save(
-                    constants::SECT_GAME_DIRS,
-                    &GameDirsConfig { dirs: dirs.clone() },
-                );
-            }
-        }
-        dirs
+        cfg.dirs
     }
 }
 

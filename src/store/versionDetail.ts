@@ -380,15 +380,14 @@ export const updatesError = ref("");
 /** 是否已执行过检查（可更新 tab 空态区分"未检查"与"已是最新"）。 */
 export const updatesChecked = ref(false);
 
-/** 检查更新（仅 ModLoader 版本调用）：结果覆盖 updates；网络失败仅报错不破坏既有列表。 */
-export async function checkModUpdates(versionName: string, mcVersion: string, loader: string) {
+/** 检查更新（仅 ModLoader 版本调用）：mc/loader 由后端从版本 json 权威解析；
+ * 结果覆盖 updates；网络失败仅报错不破坏既有列表。 */
+export async function checkModUpdates(versionName: string) {
   checkingUpdates.value = true;
   updatesError.value = "";
   try {
     updates.value = await invoke<ModUpdate[]>("check_mod_updates", {
       versionName,
-      mcVersion,
-      loader,
     });
     updatesChecked.value = true;
   } catch (e) {
