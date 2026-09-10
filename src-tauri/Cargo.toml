@@ -66,25 +66,11 @@ parking_lot = "0.12"
 #   MC 登录配置同步（registry 数百 KB~数 MB）传输会中断（实测"连接中断"）。
 easytier = { git = "https://github.com/EasyTier/EasyTier", default-features = false, features = ["management", "socks5", "smoltcp", "kcp", "quic", "websocket", "logging", "aes-gcm"] }
 easytier-core = { git = "https://github.com/EasyTier/EasyTier", default-features = false }
-# 联机 LAN IP 检测（online/mod.rs detect_lan_ip）：枚举网卡排除代理 TUN 虚拟段
-# （Clash 198.18.0.0/15 等），UDP connect 在 TUN 模式会拿到虚拟网卡 IP，不可路由
-network-interface = "2"
-# 世界地图（map/）：region 读写（mca，关默认关 rayon——并发统一走项目信号量惯例）+
-# NBT serde（fastnbt）+ chunk 结构与渲染（fastanvil，render feature 传递 image/tar/serde_json）+
-# 瓦片 PNG 编码（png，0.18）
-mca = { version = "2.1", default-features = false }
-png = "0.18"
-# fastanvil 的 render feature 依赖 image 0.23 但 default-features=false（无 png codec），
-# 其 load_rendered_palette 要解 grass/foliage 色图 PNG——这里跨 crate 显式开启 png feature
-# （Cargo feature 联动按并集解析）
-# Java LZ4Block 格式（1.21.5+ 自定义压缩 lz4_java_wrc / byte-4 LZ4 共用此格式）：
-# mca/fastanvil 均内置，但我们的 CustomDecompression 兜底要直接使用故显式声明
-lz4-java-wrc = "0.2"
-# 读 Windows 系统代理（注册表 Internet Settings）：reqwest 默认不读系统代理，
-# 用户开着系统代理（Clash 等）时官方源直连被劫持/黑洞，需显式走代理
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+# 读 Windows 系统代理（注册表 Internet Settings）：reqwest 默认不读系统代理，
+# 用户开着系统代理（Clash 等）时官方源直连会被劫持/黑洞，需显式走代理
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
 # 非 Windows 钥匙串主密钥加密：secrets.bin 每条 value 用主密钥 ChaCha20-Poly1305 加密
