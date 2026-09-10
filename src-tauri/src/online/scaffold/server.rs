@@ -7,10 +7,9 @@
 //! 关键：此服务器监听**本机**端口，guest 经 easytier 虚拟网直连 host 虚拟 IP 的
 //! 该端口（no_tun 模式下由 easytier 数据面路由到 host 本机监听）。
 //!
-//! blocking 版 `start` 是协议服务器的参考实现（对齐 Terracotta），运行时数据面
-//! 驱动在 `crate::online::mod::run_info_server`；本模块的 handler 分发被复用。
-
-#![allow(dead_code)]
+//! `start` 为 host 信息服务器生产入口（`start_host` 调用；OS 监听 + blocking 帧
+//! 读写，对齐参考实现 Terracotta）。guest 数据面（`join` 心跳/协商）不走本模块，
+//! 直接用 codec async API 直连中心。
 
 use std::io;
 use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream};
@@ -106,8 +105,6 @@ fn handle_connection(mut stream: TcpStream, handlers: &Handlers) -> io::Result<(
         codec::write_response(&mut stream, &resp)?;
     }
 }
-
-// —— 供测试用的空实现（避免 io::Error 依赖具体错误） ——
 
 #[cfg(test)]
 mod tests {

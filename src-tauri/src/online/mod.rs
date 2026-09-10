@@ -24,6 +24,7 @@ mod mc_discover;
 mod scaffold;
 mod session;
 
+pub use scaffold::codec;
 pub use scaffold::room::{create_room, parse_room_code, RoomCredential};
 pub use scaffold::profiles::{Profile, ProfileKind};
 pub use session::{EasyTierSession, RouteSnapshot, SessionConfig, SessionRole};

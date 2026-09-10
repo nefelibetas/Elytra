@@ -17,7 +17,7 @@ use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 use std::time::Duration;
 
-use elytra_lib::online::{create_room, EasyTierSession, SessionConfig, SessionRole};
+use elytra_lib::online::{codec, create_room, EasyTierSession, SessionConfig, SessionRole};
 
 /// 本地 echo 服务器：接受连接、回显收到的字节（模拟 MC 服务器）。
 fn spawn_echo_server(mc_port: u16) {
@@ -90,49 +90,29 @@ async fn host_guest_scaffolding_roundtrip() {
                 match stream {
                     Ok(mut stream) => {
                         let entry = entry;
-                        std::thread::spawn(move || {
-                            use std::io::{Read, Write};
-                            loop {
-                                let mut kind_len = [0u8; 1];
-                                if stream.read_exact(&mut kind_len).is_err() {
-                                    return;
+                        std::thread::spawn(move || loop {
+                            // 帧编解码走生产 codec（协议单一来源）；响应逻辑模拟对端
+                            // 实现，不复用生产 handler，保住跨实现互操作验证价值。
+                            let req = match codec::read_request(&mut stream) {
+                                Ok(req) => req,
+                                Err(_) => return,
+                            };
+                            let resp = match req.kind().as_str() {
+                                "c:ping" => codec::Response::ok(req.body),
+                                "c:server_port" => {
+                                    codec::Response::ok(entry.to_be_bytes().to_vec())
                                 }
-                                let mut kind = vec![0u8; kind_len[0] as usize];
-                                if stream.read_exact(&mut kind).is_err() {
-                                    return;
-                                }
-                                let mut body_len = [0u8; 4];
-                                if stream.read_exact(&mut body_len).is_err() {
-                                    return;
-                                }
-                                let body_len = u32::from_be_bytes(body_len) as usize;
-                                let mut body = vec![0u8; body_len];
-                                if stream.read_exact(&mut body).is_err() {
-                                    return;
-                                }
-                                let kind = String::from_utf8_lossy(&kind);
-                                let (status, resp_body): (u8, Vec<u8>) = match kind.as_ref() {
-                                    "c:ping" => (0, body),
-                                    "c:server_port" => (0, entry.to_be_bytes().to_vec()),
-                                    "c:player_ping" => (0, vec![]),
-                                    "c:player_profiles_list" => (
-                                        0,
-                                        br#"[{"name":"host","machine_id":"m0","vendor":"test","kind":"HOST"},{"name":"tester","machine_id":"m1","vendor":"test","kind":"GUEST"}]"#.to_vec(),
-                                    ),
-                                    _ => (255, b"not implemented".to_vec()),
-                                };
-                                if stream.write_all(&[status]).is_err() {
-                                    return;
-                                }
-                                if stream.write_all(&(resp_body.len() as u32).to_be_bytes()).is_err() {
-                                    return;
-                                }
-                                if stream.write_all(&resp_body).is_err() {
-                                    return;
-                                }
-                                if stream.flush().is_err() {
-                                    return;
-                                }
+                                "c:player_ping" => codec::Response::ok(Vec::new()),
+                                "c:player_profiles_list" => codec::Response::ok(
+                                    br#"[{"name":"host","machine_id":"m0","vendor":"test","kind":"HOST"},{"name":"tester","machine_id":"m1","vendor":"test","kind":"GUEST"}]"#.to_vec(),
+                                ),
+                                _ => codec::Response::fail(
+                                    codec::STATUS_UNKNOWN_ERROR,
+                                    b"not implemented".to_vec(),
+                                ),
+                            };
+                            if codec::write_response(&mut stream, &resp).is_err() {
+                                return;
                             }
                         });
                     }
@@ -190,51 +170,38 @@ async fn host_guest_scaffolding_roundtrip() {
     eprintln!("== 测试 2：信息协议（c:ping + c:server_port）");
     let center_addr = SocketAddr::from((center_ip, center_port));
     let t2 = tokio::time::timeout(Duration::from_secs(20), async {
-        // 数据面请求助手（内联）
+        // 数据面请求助手：帧读写走生产 codec async API
         async fn req(
             s: &mut (impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin),
             kind: (&str, &str),
             body: &[u8],
-        ) -> std::io::Result<(u8, Vec<u8>)> {
-            use tokio::io::{AsyncReadExt, AsyncWriteExt};
-            let kind_str = format!("{}:{}", kind.0, kind.1);
-            s.write_all(&[kind_str.len() as u8]).await?;
-            s.write_all(kind_str.as_bytes()).await?;
-            s.write_all(&(body.len() as u32).to_be_bytes()).await?;
-            s.write_all(body).await?;
-            s.flush().await?;
-            let mut status = [0u8; 1];
-            s.read_exact(&mut status).await?;
-            let mut len = [0u8; 4];
-            s.read_exact(&mut len).await?;
-            let len = u32::from_be_bytes(len) as usize;
-            let mut resp = vec![0u8; len];
-            s.read_exact(&mut resp).await?;
-            Ok((status[0], resp))
+        ) -> std::io::Result<codec::Response> {
+            codec::write_request_async(s, kind.0, kind.1, body).await?;
+            codec::read_response_async(s).await
         }
         let mut s = guest
             .data_plane_tcp_connect(center_addr, Duration::from_secs(10))
             .await
             .expect("数据面连中心");
-        let (status, echo) = req(&mut s, ("c", "ping"), b"probe").await.unwrap();
-        assert_eq!(status, 0);
-        assert_eq!(echo, b"probe", "c:ping 应回显");
-        let (status, port_body) = req(&mut s, ("c", "server_port"), b"").await.unwrap();
-        assert_eq!(status, 0, "host 已检测到游戏端口（mc_port 已配）");
-        assert_eq!(port_body.len(), 2);
-        let server_port = u16::from_be_bytes([port_body[0], port_body[1]]);
+        let resp = req(&mut s, ("c", "ping"), b"probe").await.unwrap();
+        assert_eq!(resp.status, 0);
+        assert_eq!(resp.body, b"probe", "c:ping 应回显");
+        let resp = req(&mut s, ("c", "server_port"), b"").await.unwrap();
+        assert_eq!(resp.status, 0, "host 已检测到游戏端口（mc_port 已配）");
+        assert_eq!(resp.body.len(), 2);
+        let server_port = u16::from_be_bytes([resp.body[0], resp.body[1]]);
         assert_eq!(server_port, mc_port, "c:server_port 应返回游戏端口");
-        let (status, _) = req(
+        let resp = req(
             &mut s,
             ("c", "player_ping"),
             br#"{"name":"tester","machine_id":"m1","vendor":"test"}"#,
         )
         .await
         .unwrap();
-        assert_eq!(status, 0);
-        let (status, profiles) = req(&mut s, ("c", "player_profiles_list"), b"").await.unwrap();
-        assert_eq!(status, 0);
-        let profiles: serde_json::Value = serde_json::from_slice(&profiles).unwrap();
+        assert_eq!(resp.status, 0);
+        let resp = req(&mut s, ("c", "player_profiles_list"), b"").await.unwrap();
+        assert_eq!(resp.status, 0);
+        let profiles: serde_json::Value = serde_json::from_slice(&resp.body).unwrap();
         assert_eq!(profiles.as_array().unwrap().len(), 2, "host + 1 guest");
     })
     .await;

@@ -6,15 +6,11 @@
 //! 状态：0 = 成功；[32, 64) = 协议定义错误；255 = 未知错误（响应体 UTF8 详情）。
 //! 类型：`{namespace}:{value}`，namespace/value 仅小写字母、下划线、数字 ASCII。
 //!
-//! blocking 版本（`read_request`/`write_request`/`read_response`/`write_response`）
-//! 主要供测试与本地转发场景使用；运行时走 async 版本。
-
-#![allow(dead_code)]
+//! blocking 版本供 OS 监听服务器（`super::server`）与集成测试（`online_diag`）使用；
+//! 运行时数据面（guest 心跳/协商）走 async 版本。两版本帧格式一致，测试据此
+//! 验证跨实现互操作。
 
 use std::io::{self, Read, Write};
-
-/// 标准协议命名空间（community）。
-pub const NS_COMMUNITY: &str = "c";
 
 /// 响应状态：成功。
 pub const STATUS_OK: u8 = 0;
@@ -55,10 +51,6 @@ impl Response {
             status,
             body,
         }
-    }
-    /// 是否成功。
-    pub fn is_ok(&self) -> bool {
-        self.status == STATUS_OK
     }
 }
 

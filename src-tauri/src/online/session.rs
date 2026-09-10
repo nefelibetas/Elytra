@@ -149,18 +149,6 @@ impl EasyTierSession {
             .map_err(|e| format!("数据面连接失败\n{e}"))
     }
 
-    /// 数据面 TCP 监听（host 起 Scaffolding 信息服务器用，监听在虚拟 IP 上）。
-    pub async fn data_plane_tcp_bind(
-        &self,
-        port: u16,
-        timeout: Duration,
-    ) -> Result<easytier_core::gateway::DataPlaneTcpListener, String> {
-        self.instance
-            .data_plane_tcp_bind(port, timeout)
-            .await
-            .map_err(|e| format!("数据面监听失败\n{e}"))
-    }
-
     /// 路由快照（guest 发现中心：匹配 hostname 前缀得虚拟 IP + 端口）。
     /// 返回自建轻量结构（避开 easytier proto 私有模块），字段与协议相关部分对应。
     pub async fn route_snapshots(&self) -> Vec<RouteSnapshot> {
