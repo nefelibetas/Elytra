@@ -147,7 +147,7 @@ onUnmounted(() => {
 
 <template>
   <!-- 主窗口：TitleBar + 路由动画 + 全局弹层 -->
-  <div v-else class="app-layout">
+  <div class="app-layout">
     <TitleBar />
     <main class="main-content">
       <router-view v-slot="{ Component, route }">
