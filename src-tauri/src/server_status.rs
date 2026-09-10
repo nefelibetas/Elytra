@@ -631,7 +631,7 @@ mod tests {
         let addr = socket.local_addr().unwrap();
         let server = tokio::spawn(async move {
             let mut buf = [0u8; 64];
-            let (n, peer) = socket.recv_from(&mut buf).await.unwrap();
+            let (_, peer) = socket.recv_from(&mut buf).await.unwrap();
             assert_eq!(buf[0], RAKNET_PING_ID, "收到 UNCONNECTED_PING");
             assert_eq!(&buf[9..25], &RAKNET_MAGIC, "magic 校验");
             let time = &buf[1..9];

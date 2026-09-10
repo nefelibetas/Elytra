@@ -180,7 +180,7 @@ mod tests {
         unsafe {
             bad.as_bytes_mut()[2] = new;
         }
-        if parse_room_value(&bad) % 7 != 0 {
+        if !parse_room_value(&bad).is_multiple_of(7) {
             assert!(parse_room_code(&bad).is_none(), "模 7 校验应拒绝: {bad}");
         }
     }
