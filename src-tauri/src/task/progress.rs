@@ -1,11 +1,11 @@
 // ── 进度上报基础设施：EmitLoop 主循环 + 收尾心跳 + set_* 状态助手 ──
 // 三个任务（run_task / run_files_task / run_repair_task）共用，唯一依赖方向：任务主体 → 本模块。
 
-use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use parking_lot::Mutex;
 use tauri::AppHandle;
 
 use super::{emit, global, update_and_emit, StepStatus, TaskProgress, TaskStatus};
@@ -503,8 +503,6 @@ pub fn spawn_heartbeat(
     progress: &Arc<Mutex<TaskProgress>>,
     stats: HeartbeatStats,
 ) -> tauri::async_runtime::JoinHandle<()> {
-    use std::time::Duration;
-
     let done_files = stats.done_files;
     let bytes = stats.bytes;
     let est = stats.est_total_bytes;

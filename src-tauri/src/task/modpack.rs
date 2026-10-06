@@ -19,21 +19,26 @@ use std::time::Duration;
 use parking_lot::Mutex;
 use tauri::AppHandle;
 
-use crate::config::downloader::model::{DownloadSource, DownloaderConfig};
+use crate::config::downloader::{DownloadSource, DownloaderConfig};
 use crate::constants;
 use crate::downloader::fetcher;
-use crate::downloader::model::VersionJson;
-use crate::downloader::modpack::{
-    build_plan, cache_key, safe_rel_path, ModpackRequest, OverridesRef, PackFile, PackPlan,
-    PackSource,
-};
+use crate::downloader::hash;
 use crate::downloader::progress::ProgressCounters;
 use crate::downloader::reuse::LocalRuntimeSource;
+use crate::game::loader::{self, LoaderEvent};
+use crate::game::modpack::{
+    build_plan, cache_key, ModpackRequest, OverridesRef, PackFile, PackPlan, PackSource,
+};
+use crate::game::resource::assets::AssetIndexRef;
+use crate::game::resource::{assets, extract, library};
+use crate::game::version::meta;
+use crate::game::version::model::VersionJson;
 use crate::task::progress::{
     cancelled, set_cancelled, set_error, set_phase, set_total, spawn_heartbeat, step_done,
     HeartbeatStats,
 };
 use crate::task::{global, update_and_emit, StepInfo, StepStatus, TaskProgress, TaskStatus};
+use crate::util::safe_relative_path;
 
 /// 包体缓存目录（config_dir()/modpacks，与 Settings.toml 同根）。
 fn cache_dir() -> PathBuf {
@@ -237,20 +242,11 @@ pub async fn run_install(
     );
 
     // ── A1：获取包体（幂等：本地缓存 sha1 命中直接跳过）──
-    let pack_bytes_est = match phase_fetch_pack(
-        app,
-        cancel,
-        progress,
-        request,
-        &zip_path,
-        &a_bytes,
-        &a_est,
-    )
-    .await
-    {
-        Ok(v) => v,
-        Err(e) => return fail_or_cancel(app, progress, cancel, e, None),
-    };
+    let pack_bytes_est =
+        match phase_fetch_pack(app, cancel, progress, request, &zip_path, &a_bytes, &a_est).await {
+            Ok(v) => v,
+            Err(e) => return fail_or_cancel(app, progress, cancel, e, None),
+        };
     if cancelled(cancel) {
         set_cancelled(app, progress);
         return false;
@@ -264,13 +260,7 @@ pub async fn run_install(
     // ── A2：解析清单并生成计划 ──
     let parse_idx = usize::from(online);
     let plan = match phase_parse_plan(
-        app,
-        cancel,
-        progress,
-        &zip_path,
-        request,
-        &config,
-        parse_idx,
+        app, cancel, progress, &zip_path, request, &config, parse_idx,
     )
     .await
     {
@@ -312,9 +302,8 @@ pub async fn run_install(
         if !dest.exists() {
             // 空 sha1 跳过校验；取消感知；MCIM 双源回退对 cdn.modrinth.com 适用
             let urls = crate::util::community_download_urls(icon).await;
-            let _ =
-                fetcher::fetch_verified_c(&urls, &dest, None::<fn(u64, u64)>, "", Some(cancel))
-                    .await;
+            let _ = fetcher::fetch_verified_c(&urls, &dest, None::<fn(u64, u64)>, "", Some(cancel))
+                .await;
         }
     }
     let sources: Vec<DownloadSource> = config.file_sources_list().into_iter().cloned().collect();
@@ -468,10 +457,13 @@ fn prepare_version_dir(
         .join(&plan.version_dir_name);
     let vdir_existed_before = vdir.exists();
     std::fs::create_dir_all(&vdir).ok();
-    let _ = std::fs::write(
+    if let Err(e) = std::fs::write(
         vdir.join("elytra-pack.json"),
         serde_json::json!({ "cache_key": cache_key(request) }).to_string(),
-    );
+    ) {
+        // 标记写失败 → 复用检测（find_reusable_pack_dir）对该目录失效，需可诊断
+        eprintln!("[modpack] 包身份标记写入失败（复用检测将失效）: {e}");
+    }
     if !vdir_existed_before {
         // 取消时整删本次新建的版本目录（对齐 run_task）
         let tid = progress.lock().task_id.clone();
@@ -537,7 +529,10 @@ impl<'a> PackInstall<'a> {
         );
         let parent_text = match race_cancel(
             self.cancel,
-            crate::downloader::version::fetch_version_json_text(&self.plan.version_url, self.config),
+            meta::fetch_version_json_text(
+                &self.plan.version_url,
+                self.config,
+            ),
         )
         .await
         {
@@ -562,9 +557,11 @@ impl<'a> PackInstall<'a> {
         // 无 loader 时写原版 JSON（loader 模式由 installer 写合并 JSON）。
         // 写盘失败必须报错：假成功会让版本缺 json、启动时报"未找到版本 JSON"。
         if self.plan.loader.is_none() {
-            let json =
-                serde_json::to_string_pretty(&vj).map_err(|e| format!("序列化版本 JSON 失败\n{e}"))?;
-            let jp = self.vdir.join(format!("{}.json", self.plan.version_dir_name));
+            let json = serde_json::to_string_pretty(&vj)
+                .map_err(|e| format!("序列化版本 JSON 失败\n{e}"))?;
+            let jp = self
+                .vdir
+                .join(format!("{}.json", self.plan.version_dir_name));
             std::fs::write(&jp, &json).map_err(|e| format!("写入版本 JSON 失败\n{e}"))?;
         }
         finish_step(self.app, self.progress, self.idx.i_json, &self.c);
@@ -588,9 +585,11 @@ impl<'a> PackInstall<'a> {
         );
         let vj = self.vj();
         if let Some(cl) = &vj.downloads.client {
-            let jar_path = self.vdir.join(format!("{}.jar", self.plan.version_dir_name));
-            let fresh =
-                !(jar_path.exists() && crate::downloader::hash::file_sha1_matches(&jar_path, &cl.sha1));
+            let jar_path = self
+                .vdir
+                .join(format!("{}.jar", self.plan.version_dir_name));
+            let fresh = !(jar_path.exists()
+                && hash::file_sha1_matches(&jar_path, &cl.sha1));
             if fresh {
                 let urls: Vec<String> = self
                     .sources
@@ -623,8 +622,15 @@ impl<'a> PackInstall<'a> {
         let src_refs: Vec<&DownloadSource> = self.sources.iter().collect();
         let vj = self.vj();
 
-        set_phase(self.app, self.progress, None, "依赖库", self.idx.i_libs, StepStatus::Running);
-        if let Err(e) = crate::downloader::library::download_libraries(
+        set_phase(
+            self.app,
+            self.progress,
+            None,
+            "依赖库",
+            self.idx.i_libs,
+            StepStatus::Running,
+        );
+        if let Err(e) = library::download_libraries(
             &vj.libraries,
             &self.lib_dir,
             self.config.concurrency as usize,
@@ -639,11 +645,20 @@ impl<'a> PackInstall<'a> {
         }
         finish_step(self.app, self.progress, self.idx.i_libs, &self.c);
 
-        set_phase(self.app, self.progress, None, "资源文件", self.idx.i_asst, StepStatus::Running);
-        if let Err(e) = crate::downloader::assets::download_assets(
-            &vj.asset_index.url,
-            &vj.asset_index.id,
-            &vj.asset_index.sha1,
+        set_phase(
+            self.app,
+            self.progress,
+            None,
+            "资源文件",
+            self.idx.i_asst,
+            StepStatus::Running,
+        );
+        if let Err(e) = assets::download_assets(
+            AssetIndexRef {
+                url: &vj.asset_index.url,
+                id: Some(&vj.asset_index.id),
+                sha1: Some(&vj.asset_index.sha1),
+            },
             self.config,
             self.config.concurrency as usize,
             self.reuse_root.clone(),
@@ -656,8 +671,15 @@ impl<'a> PackInstall<'a> {
         }
         finish_step(self.app, self.progress, self.idx.i_asst, &self.c);
 
-        set_phase(self.app, self.progress, None, "原生库", self.idx.i_nat, StepStatus::Running);
-        if let Err(e) = crate::downloader::extract::process_natives(
+        set_phase(
+            self.app,
+            self.progress,
+            None,
+            "原生库",
+            self.idx.i_nat,
+            StepStatus::Running,
+        );
+        if let Err(e) = extract::process_natives(
             &vj.libraries,
             &self.lib_dir,
             &src_refs,
@@ -678,7 +700,6 @@ impl<'a> PackInstall<'a> {
         let Some(loader) = &self.plan.loader else {
             return Ok(());
         };
-        use crate::downloader::mod_loader::{self, LoaderEvent};
         let cfg_flag = AtomicBool::new(false);
         let lbs_flag = AtomicBool::new(false);
         let hook = |ev: LoaderEvent| match ev {
@@ -686,63 +707,22 @@ impl<'a> PackInstall<'a> {
             LoaderEvent::LibsDone => lbs_flag.store(true, Ordering::Relaxed),
         };
         let counters = self.c.counter();
-        let install_fut = async {
-            match loader.kind {
-                crate::task::LoaderKind::Fabric => {
-                    mod_loader::install_fabric(
-                        &self.plan.mc_version,
-                        &loader.version,
-                        &self.plan.version_dir_name,
-                        &self.vdir,
-                        &self.parent_text,
-                        self.config,
-                        &counters,
-                        Some(&hook),
-                    )
-                    .await
-                }
-                crate::task::LoaderKind::Quilt => {
-                    mod_loader::install_quilt(
-                        &self.plan.mc_version,
-                        &loader.version,
-                        &self.plan.version_dir_name,
-                        &self.vdir,
-                        &self.parent_text,
-                        self.config,
-                        &counters,
-                        Some(&hook),
-                    )
-                    .await
-                }
-                crate::task::LoaderKind::Forge => {
-                    mod_loader::install_forge(
-                        &self.plan.mc_version,
-                        &loader.version,
-                        &self.plan.version_dir_name,
-                        &self.vdir,
-                        &self.parent_text,
-                        self.config,
-                        &counters,
-                        self.cancel,
-                        Some(&hook),
-                    )
-                    .await
-                }
-                crate::task::LoaderKind::NeoForge => {
-                    mod_loader::install_neoforge(
-                        &loader.version,
-                        &self.plan.version_dir_name,
-                        &self.vdir,
-                        &self.parent_text,
-                        self.config,
-                        &counters,
-                        self.cancel,
-                        Some(&hook),
-                    )
-                    .await
-                }
-            }
-        };
+        let install_fut = loader::install_loader(
+            loader.kind,
+            &self.plan.mc_version,
+            &loader.version,
+            loader::VersionTarget {
+                dir_name: &self.plan.version_dir_name,
+                vdir: &self.vdir,
+            },
+            &self.parent_text,
+            loader::InstallCtx {
+                config: self.config,
+                pc: &counters,
+                cancel: self.cancel,
+                hook: Some(&hook),
+            },
+        );
         let mut install_fut = Box::pin(install_fut);
         let mut cfg_marked = false;
         let mut lbs_marked = false;
@@ -817,7 +797,7 @@ impl<'a> PackInstall<'a> {
                         step_idx,
                         StepStatus::Running,
                     );
-                    let rel_path = safe_rel_path(&f.path)?;
+                    let rel_path = safe_relative_path(&f.path)?;
                     let dest = self.vdir.join(&rel_path);
                     let res = match pack_zip.as_mut() {
                         Some(ar) => extract_member(ar, &member, &dest),
@@ -838,7 +818,7 @@ impl<'a> PackInstall<'a> {
                 let Some(member) = index.get(&candidate) else {
                     continue;
                 };
-                let Ok(rel) = safe_rel_path(&name) else {
+                let Ok(rel) = safe_relative_path(&name) else {
                     continue;
                 };
                 let dest = self.vdir.join("mods").join(rel);
@@ -862,7 +842,7 @@ impl<'a> PackInstall<'a> {
             for entry in chunk.iter() {
                 let idx = entry.0;
                 let f: &PackFile = entry.1;
-                let rel_path = safe_rel_path(&f.path)?;
+                let rel_path = safe_relative_path(&f.path)?;
                 let dest = self.vdir.join(&rel_path);
                 let tmp = dest.with_file_name(format!(
                     "{}.elytra-part",
@@ -893,9 +873,10 @@ impl<'a> PackInstall<'a> {
                     // sha1 缺失时降级为体积匹配（信任模型同上）
                     let hit = dest.is_file()
                         && if !sha1.is_empty() {
-                            crate::downloader::hash::file_sha1_matches(&dest, &sha1)
+                            hash::file_sha1_matches(&dest, &sha1)
                         } else {
-                            size > 0 && std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0) == size
+                            size > 0
+                                && std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0) == size
                         };
                     if hit {
                         return Ok((idx, 0u64));
@@ -914,7 +895,8 @@ impl<'a> PackInstall<'a> {
                     };
                     let cb = counters.byte_callback();
                     let result =
-                        fetcher::fetch_verified_c(&urls, &tmp, Some(cb), &sha1, Some(&cancel)).await;
+                        fetcher::fetch_verified_c(&urls, &tmp, Some(cb), &sha1, Some(&cancel))
+                            .await;
                     match result {
                         Ok(_) => {
                             std::fs::rename(&tmp, &dest)
@@ -969,7 +951,6 @@ impl<'a> PackInstall<'a> {
 
 /// A1：获取包体（在线源：下载 + sha1 强校验，缓存命中幂等跳过；本地源直取）。
 /// 返回包体字节数估算（累计进 A 段临时心跳）。
-#[allow(clippy::too_many_arguments)]
 async fn phase_fetch_pack(
     app: &AppHandle,
     cancel: &Arc<AtomicBool>,
@@ -995,7 +976,7 @@ async fn phase_fetch_pack(
         // 空 sha1 跳过网络校验的信任模型一致，恢复场景不再整包重下
         let cached = zip_path.is_file()
             && match (sha1.is_empty(), *size) {
-                (false, _) => crate::downloader::hash::file_sha1_matches(zip_path, sha1),
+                (false, _) => hash::file_sha1_matches(zip_path, sha1),
                 (true, s) if s > 0 => std::fs::metadata(zip_path).map(|m| m.len()).ok() == Some(s),
                 _ => false,
             };
@@ -1015,7 +996,9 @@ async fn phase_fetch_pack(
             {
                 return Err(format!("下载整合包失败\n{e}"));
             }
-            pack_bytes_est = std::fs::metadata(zip_path).map(|m| m.len()).unwrap_or(*size);
+            pack_bytes_est = std::fs::metadata(zip_path)
+                .map(|m| m.len())
+                .unwrap_or(*size);
         }
         step_done(app, progress, 0);
         a_bytes.store(pack_bytes_est, Ordering::Relaxed);
@@ -1067,7 +1050,7 @@ fn restricted_notice(restricted: &[String]) -> String {
 /// zip 成员流式 sha1（None=读取失败）。用于包内捆绑资源与清单声明的比对。
 fn member_sha1(archive: &mut zip::ZipArchive<std::fs::File>, name: &str) -> Option<String> {
     let mut entry = archive.by_name(name).ok()?;
-    crate::downloader::hash::reader_sha1_hex(&mut entry)
+    hash::reader_sha1_hex(&mut entry)
 }
 
 /// 解压单个 zip 成员到目标路径（词法穿越防护；父目录自动创建）。
@@ -1079,12 +1062,12 @@ fn extract_member(
     let mut entry = archive
         .by_name(name)
         .map_err(|e| format!("读取包内资源失败\n{e}"))?;
-    crate::downloader::extract::extract_entry_to(&mut entry, out)
+    extract::extract_entry_to(&mut entry, out)
 }
 
 /// 解压 overrides/ 到版本目录根（词法穿越防护对齐 jdk safe_runtime_path）。
 fn extract_overrides(ov: &OverridesRef, vdir: &Path) -> Result<(), String> {
-    let mut archive = crate::downloader::extract::open_zip(Path::new(&ov.zip_path), "整合包缓存")?;
+    let mut archive = extract::open_zip(Path::new(&ov.zip_path), "整合包缓存")?;
     for i in 0..archive.len() {
         let mut entry = archive
             .by_index(i)
@@ -1092,7 +1075,7 @@ fn extract_overrides(ov: &OverridesRef, vdir: &Path) -> Result<(), String> {
         let Some(rel) = override_rel(entry.name(), &ov.prefix) else {
             continue;
         };
-        let out = vdir.join(safe_rel_path(rel)?);
+        let out = vdir.join(safe_relative_path(rel)?);
         if entry.is_dir() {
             std::fs::create_dir_all(&out).map_err(|e| format!("创建目录失败\n{e}"))?;
             continue;
@@ -1100,14 +1083,16 @@ fn extract_overrides(ov: &OverridesRef, vdir: &Path) -> Result<(), String> {
         if let Some(parent) = out.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败\n{e}"))?;
         }
-        crate::downloader::extract::extract_entry_to(&mut entry, &out)?;
+        extract::extract_entry_to(&mut entry, &out)?;
     }
     Ok(())
 }
 
 /// overrides 解压总量（未压缩字节，进度基线用；读不到按 0）。
 fn sum_override_bytes(ov: &OverridesRef) -> u64 {
-    let Ok(mut archive) = crate::downloader::extract::open_zip(Path::new(&ov.zip_path), "整合包缓存") else {
+    let Ok(mut archive) =
+        extract::open_zip(Path::new(&ov.zip_path), "整合包缓存")
+    else {
         return 0;
     };
     let mut total = 0u64;
@@ -1234,7 +1219,7 @@ mod tests {
         write_test_zip(&zip_path, "modrinth.index.json"); // overrides/mods/a.jar
         let mut ar = zip::ZipArchive::new(std::fs::File::open(&zip_path).unwrap()).unwrap();
 
-        let expected = crate::downloader::hash::sha1_hex(b"jar-bytes");
+        let expected = hash::sha1_hex(b"jar-bytes");
         assert_eq!(
             member_sha1(&mut ar, "overrides/mods/a.jar").as_deref(),
             Some(expected.as_str())

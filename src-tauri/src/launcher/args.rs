@@ -1,13 +1,14 @@
 use std::path::{Path, PathBuf};
 
+use crate::auth::external::{AUTHLIB_JAR, is_ely_by};
 use crate::constants;
-use crate::downloader::extract::{
-    legacy_classifier_artifact, matches_rules, modern_native_matches, modern_natives_key,
-    NativesKind,
+use crate::game::resource::extract::{
+    extract_jar, legacy_classifier_artifact, matches_rules, modern_native_matches,
+    modern_natives_key, NativesKind, TARGET_OS,
 };
-use crate::downloader::model::VersionJson;
+use crate::game::version::model::VersionJson;
 use crate::launcher::memory;
-use crate::launcher::model::{AuthMode, LauncherConfig, MemoryMode};
+use crate::launcher::model::{AuthMode, LauncherConfig, MemoryMode, WindowSize};
 
 // ── 启动协议常量（集中维护，防拼写错误导致静默失败）──
 
@@ -161,17 +162,27 @@ fn substitute<'a>(template: &str, ctx: &TemplateContext<'a>) -> String {
     s
 }
 
-#[allow(clippy::too_many_arguments)]
-fn substitute_jvm(
-    template: &str,
-    natives_dir: &str,
-    lib_dir: &str,
-    classpath: &str,
-    classpath_sep: &str,
-    version_name: &str,
-    launcher_name: &str,
-    launcher_version: &str,
-) -> String {
+/// JVM 参数模板的占位符替换输入。
+struct JvmSubst<'a> {
+    natives_dir: &'a str,
+    lib_dir: &'a str,
+    classpath: &'a str,
+    classpath_sep: &'a str,
+    version_name: &'a str,
+    launcher_name: &'a str,
+    launcher_version: &'a str,
+}
+
+fn substitute_jvm(template: &str, sub: &JvmSubst<'_>) -> String {
+    let JvmSubst {
+        natives_dir,
+        lib_dir,
+        classpath,
+        classpath_sep,
+        version_name,
+        launcher_name,
+        launcher_version,
+    } = *sub;
     let mut s = template.to_string();
     s = s.replace(PLACEHOLDER_NATIVES_DIRECTORY, natives_dir);
     s = s.replace(PLACEHOLDER_LIBRARY_DIRECTORY, lib_dir);
@@ -214,7 +225,7 @@ fn match_rules_json(rules: &[serde_json::Value], has_custom_resolution: bool) ->
             .and_then(|o| o.get("name"))
             .and_then(|n| n.as_str());
         let os_match = match os_name {
-            Some(n) => n == crate::downloader::extract::TARGET_OS,
+            Some(n) => n == TARGET_OS,
             None => true,
         };
         let feat_match = match rule.get("features") {
@@ -263,27 +274,36 @@ fn extract_args(args: &[serde_json::Value], has_custom_resolution: bool) -> Vec<
 
 // ── 核心构建函数 ──────────────────────────────────────
 
+/// 启动命令构建的调用方输入（除 java 路径与版本 JSON 外的全部参数）。
+pub struct LaunchRequest<'a> {
+    pub version_dir_name: &'a str,
+    pub mc_dir: &'a Path,
+    pub config: &'a LauncherConfig,
+    pub auth: &'a AuthMode,
+    pub java_major_version: u32,
+    pub user_properties: &'a str,
+}
+
 /// 构建完整的 Minecraft 启动命令。
 ///
 /// 参数说明：
 /// - `java_path`: JDK 的 java.exe 路径
 /// - `version_json`: 已解析的版本 JSON
-/// - `version_dir_name`: 版本目录名（如 "1.20.1-fabric-0.15.11"）
-/// - `mc_dir`: .minecraft 目录
-/// - `config`: 启动器用户配置
-/// - `auth`: 认证模式（离线/在线）
-/// - `java_major_version`: JDK 主版本号（用于 JDK 22+ 的特殊 flag）
-#[allow(clippy::too_many_arguments)]
+/// - `req`: 其余调用方输入（版本目录名 / .minecraft 目录 / 用户配置 / 认证模式 /
+///   JDK 主版本号 / user properties）
 pub fn build_launch_command(
     java_path: &Path,
     version_json: &VersionJson,
-    version_dir_name: &str,
-    mc_dir: &Path,
-    config: &LauncherConfig,
-    auth: &AuthMode,
-    java_major_version: u32,
-    user_properties: &str,
+    req: &LaunchRequest<'_>,
 ) -> LaunchCommand {
+    let LaunchRequest {
+        version_dir_name,
+        mc_dir,
+        config,
+        auth,
+        java_major_version,
+        user_properties,
+    } = *req;
     // ── 路径 ──
     // natives 目录按 MC 版本共享（同 MC 的 vanilla/ModLoader 版本 native 库一致，
     // 避免每个版本在 natives/<版本id>/ 各解压一份 LWJGL 运行时产物，约 16MB/份）
@@ -295,9 +315,9 @@ pub fn build_launch_command(
     let game_directory = version_dir.clone();
     // 窗口大小：默认不传 --width/--height（has_custom_resolution feature 为 false）
     let (resolution_width, resolution_height, has_custom_resolution) = match config.window_size {
-        crate::launcher::model::WindowSize::Custom(w, h) => (w, h, true),
+        WindowSize::Custom(w, h) => (w, h, true),
         // 占位值仅供模板替换兜底（带 feature 的参数组已被过滤）
-        crate::launcher::model::WindowSize::Default => {
+        WindowSize::Default => {
             (DEFAULT_RESOLUTION_WIDTH, DEFAULT_RESOLUTION_HEIGHT, false)
         }
     };
@@ -325,16 +345,16 @@ pub fn build_launch_command(
         .join(classpath_sep);
 
     // ── JVM 参数（preamble / system props / tuning 三段）──
-    let (jvm_preamble, system_props, jvm_tuning) = collect_jvm_args(
+    let (jvm_preamble, system_props, jvm_tuning) = collect_jvm_args(&JvmArgs {
         version_json,
-        &natives_dir,
-        &lib_dir,
-        &classpath_str,
+        natives_dir: &natives_dir,
+        lib_dir: &lib_dir,
+        classpath_str: &classpath_str,
         java_major_version,
         config,
-        &version_dir,
+        version_dir: &version_dir,
         has_custom_resolution,
-    );
+    });
 
     // ── 主类 ──
     let mut main_class = version_json.main_class.clone();
@@ -421,9 +441,9 @@ pub fn build_launch_command(
     // 第三方登录（authlib-injector）：javaagent 注入 + client side
     // （jar 登录时下载到数据目录；缺失由启动前置检查拦截）
     if let AuthMode::External { api_url, .. } = auth {
-        let jar = crate::util::config_dir().join(crate::auth::external::AUTHLIB_JAR);
+        let jar = crate::util::config_dir().join(AUTHLIB_JAR);
         // Ely.by 用 authlib-injector 内置别名；其余标准站传完整 URL
-        let server = if crate::auth::external::is_ely_by(api_url) {
+        let server = if is_ely_by(api_url) {
             "ely.by".to_string()
         } else {
             api_url.clone()
@@ -626,9 +646,7 @@ pub fn ensure_old_style_natives(
             errors.push(format!("native JAR 缺失: {}", artifact.path));
             continue;
         }
-        if let Err(e) =
-            crate::downloader::extract::extract_jar(&jar, natives_dir, lib.extract.as_ref())
-        {
+        if let Err(e) = extract_jar(&jar, natives_dir, lib.extract.as_ref()) {
             errors.push(format!("{}: {}", lib.name, e));
         }
     }
@@ -703,21 +721,33 @@ pub fn find_version_json(dir: &Path, dir_name: &str) -> Option<PathBuf> {
         })
 }
 
+/// JVM 参数三段组装输入。
+struct JvmArgs<'a> {
+    version_json: &'a VersionJson,
+    natives_dir: &'a Path,
+    lib_dir: &'a Path,
+    classpath_str: &'a str,
+    java_major_version: u32,
+    config: &'a LauncherConfig,
+    version_dir: &'a Path,
+    has_custom_resolution: bool,
+}
+
 /// 组装 JVM 参数三段：
 /// - preamble：-cp 之前（版本 JSON 参数 + JDK 22+ 兼容标志）
 /// - system_props：-D 类（natives/品牌/编码/代理/窗口标题/语言）
 /// - tuning：-cp 之后、mainClass 之前（内存/GC/用户自定义）
-#[allow(clippy::too_many_arguments)]
-fn collect_jvm_args(
-    version_json: &VersionJson,
-    natives_dir: &Path,
-    lib_dir: &Path,
-    classpath_str: &str,
-    java_major_version: u32,
-    config: &LauncherConfig,
-    version_dir: &Path,
-    has_custom_resolution: bool,
-) -> (Vec<String>, Vec<String>, Vec<String>) {
+fn collect_jvm_args(req: &JvmArgs<'_>) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let JvmArgs {
+        version_json,
+        natives_dir,
+        lib_dir,
+        classpath_str,
+        java_major_version,
+        config,
+        version_dir,
+        has_custom_resolution,
+    } = *req;
     let mut jvm_preamble: Vec<String> = Vec::new(); // -cp 之前
     let mut system_props: Vec<String> = Vec::new(); // -D 类
     let mut jvm_tuning: Vec<String> = Vec::new(); // -cp 之后、mainClass 之前
@@ -735,13 +765,15 @@ fn collect_jvm_args(
             }
             let substituted = substitute_jvm(
                 &arg,
-                &natives_dir.to_string_lossy(),
-                &lib_dir.to_string_lossy(),
-                classpath_str,
-                classpath_sep,
-                &version_json.id,
-                constants::LAUNCHER_BRAND,
-                constants::APP_VERSION,
+                &JvmSubst {
+                    natives_dir: &natives_dir.to_string_lossy(),
+                    lib_dir: &lib_dir.to_string_lossy(),
+                    classpath: classpath_str,
+                    classpath_sep,
+                    version_name: &version_json.id,
+                    launcher_name: constants::LAUNCHER_BRAND,
+                    launcher_version: constants::APP_VERSION,
+                },
             );
             // 跳过 -Xmx / -Xms（内存由我们统一设置）
             if substituted.starts_with(PREFIX_XMX) || substituted.starts_with(PREFIX_XMS) {

@@ -1,17 +1,25 @@
+use tauri_plugin_opener::OpenerExt;
+
+use crate::config::downloader::DownloaderConfig;
 use crate::config::game_dirs::{default_dir, GameDir, GameDirsConfig};
 use crate::constants;
+use crate::game::version::dir;
+use crate::persist;
 
 fn read_dirs() -> Vec<GameDir> {
-    let cfg: GameDirsConfig = crate::persist::read(constants::SECT_GAME_DIRS).unwrap_or_default();
+    let cfg: GameDirsConfig = persist::read(constants::SECT_GAME_DIRS).unwrap_or_default();
     if cfg.dirs.is_empty() {
         // 首次使用（或全部删除后）：生成默认目录（exe 同级 .minecraft）并持久化
         let d = default_dir();
-        let _ = crate::persist::save(
+        if let Err(e) = persist::save(
             constants::SECT_GAME_DIRS,
             &GameDirsConfig {
                 dirs: vec![d.clone()],
             },
-        );
+        ) {
+            // 写盘失败时仍返回内存目录，但下次启动会重复生成 —— 需可诊断
+            eprintln!("[gamedirs] 默认游戏目录持久化失败: {e}");
+        }
         vec![d]
     } else {
         cfg.dirs
@@ -19,7 +27,7 @@ fn read_dirs() -> Vec<GameDir> {
 }
 
 fn save_dirs(dirs: Vec<GameDir>) -> Result<Vec<GameDir>, String> {
-    crate::persist::save(
+    persist::save(
         constants::SECT_GAME_DIRS,
         &GameDirsConfig { dirs: dirs.clone() },
     )
@@ -85,17 +93,15 @@ pub fn remove_game_dir(path: String) -> Result<Vec<GameDir>, String> {
 /// 设置当前激活的游戏目录（同步到 downloader 配置的 minecraft_dir，版本列表跟随切换）。
 #[tauri::command]
 pub fn set_active_game_dir(path: String) -> Result<(), String> {
-    let mut cfg: crate::config::downloader::model::DownloaderConfig =
-        crate::persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
+    let mut cfg: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
     cfg.minecraft_dir = path;
-    crate::persist::save(constants::SECT_DOWNLOADER, &cfg).map_err(|e| format!("保存配置失败\n{e}"))
+    persist::save(constants::SECT_DOWNLOADER, &cfg).map_err(|e| format!("保存配置失败\n{e}"))
 }
 
 /// 当前激活的游戏目录（同步于 downloader 配置的 minecraft_dir）。
 #[tauri::command]
 pub fn get_active_game_dir() -> GameDir {
-    let cfg: crate::config::downloader::model::DownloaderConfig =
-        crate::persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
+    let cfg: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
     let dirs = read_dirs();
     dirs.into_iter()
         .find(|d| d.path == cfg.minecraft_dir)
@@ -112,7 +118,7 @@ pub fn rename_version_dir(version_name: String, new_name: String) -> Result<(), 
     if new_name == version_name {
         return Err("新名称与当前名称相同".to_string());
     }
-    crate::downloader::version::rename_version_dir(&version_name, &new_name)
+    dir::rename_version_dir(&version_name, &new_name)
 }
 
 /// 用系统文件管理器打开指定目录（tauri-plugin-opener Rust 侧 API，不受 JS scope 限制；
@@ -122,7 +128,6 @@ pub fn open_folder(app: tauri::AppHandle, path: String) -> Result<(), String> {
     if !std::path::Path::new(&path).exists() {
         return Err(format!("目录不存在\n{path}"));
     }
-    use tauri_plugin_opener::OpenerExt;
     app.opener()
         .open_path(path, None::<&str>)
         .map_err(|e| format!("打开文件夹失败\n{e}"))
@@ -170,12 +175,12 @@ pub fn auto_activate_version() -> Result<AutoActivate, String> {
 /// 实际操作在 downloader/version.rs。
 #[tauri::command]
 pub fn ensure_game_folder(kind: String, version_name: String) -> Result<String, String> {
-    crate::downloader::version::ensure_kind_folder(&kind, &version_name)
+    dir::ensure_kind_folder(&kind, &version_name)
 }
 
 /// 删除版本文件夹（递归删除 versions/{name}；实际操作在 downloader/version.rs，
 /// 大目录删除耗时，命令保持 async 走 tokio::fs 的 spawn_blocking）。
 #[tauri::command]
 pub async fn delete_version_dir(version_name: String) -> Result<(), String> {
-    crate::downloader::version::delete_version_dir(&version_name).await
+    dir::delete_version_dir(&version_name).await
 }

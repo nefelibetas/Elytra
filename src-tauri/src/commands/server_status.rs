@@ -1,9 +1,7 @@
 //! 服务器状态检测命令（薄胶水）：探测 Java/基岩版 Minecraft 服务器的在线状态。
 //! 协议实现在 crate::server_status（SLP / RakNet），此处仅解析参数 + 错误展平。
 
-use crate::server_status::{
-    self, BEDROCK_DEFAULT_PORT, JAVA_DEFAULT_PORT, ServerStatus,
-};
+use crate::server_status::{self, ServerStatus, BEDROCK_DEFAULT_PORT, JAVA_DEFAULT_PORT};
 
 /// 探测服务器状态。
 ///

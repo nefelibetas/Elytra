@@ -4,10 +4,12 @@
 
 use serde::Serialize;
 
-use crate::downloader::mod_updates::{
+use crate::game::modpack::{pack_modpack, resolve_hosted_mods, resolve_version_meta};
+use crate::game::updates::{
     self, ModFileDetail, ModListResult, ModUpdate, ResourceListResult,
 };
-use crate::downloader::version::version_dir_path as version_dir;
+use crate::game::version::dir::version_dir_path;
+use crate::util;
 
 /// 本地存档信息（saves 目录子目录扫描结果）。
 #[derive(Debug, Clone, Serialize)]
@@ -32,13 +34,16 @@ pub struct ResourceFile {
 /// 本地存档信息（saves 目录子目录扫描结果）。
 #[tauri::command]
 pub fn list_worlds(version_name: String) -> Vec<WorldInfo> {
-    let Ok(vdir) = version_dir(&version_name) else {
+    let Ok(vdir) = version_dir_path(&version_name) else {
         return Vec::new();
     };
     let saves = vdir.join("saves");
-    let mut worlds: Vec<WorldInfo> = crate::util::dir_entries(&saves, true)
+    let mut worlds: Vec<WorldInfo> = util::dir_entries(&saves, true)
         .into_iter()
-        .map(|(name, _, last_modified)| WorldInfo { name, last_modified })
+        .map(|(name, _, last_modified)| WorldInfo {
+            name,
+            last_modified,
+        })
         .collect();
     worlds.sort_by_key(|w| std::cmp::Reverse(w.last_modified));
     worlds
@@ -51,12 +56,12 @@ const MAX_WORLD_ICON_BYTES: u64 = 512 * 1024;
 /// 缺失/超限/损坏返回 None（不报错，前端回退 Map 占位）。
 /// `world_name` 仅接受简单目录名，防路径穿越。
 #[tauri::command]
-pub fn get_world_icon(version_name: String, world_name: String) -> Option<crate::util::IconData> {
-    if !crate::util::is_simple_name(&world_name) {
+pub fn get_world_icon(version_name: String, world_name: String) -> Option<util::IconData> {
+    if !util::is_simple_name(&world_name) {
         return None;
     }
-    let vdir = version_dir(&version_name).ok()?;
-    crate::util::icon_payload(
+    let vdir = version_dir_path(&version_name).ok()?;
+    util::icon_payload(
         &vdir.join("saves").join(&world_name).join("icon.png"),
         MAX_WORLD_ICON_BYTES,
     )
@@ -72,13 +77,17 @@ pub fn list_resource_files(version_name: String, kind: String) -> Vec<ResourceFi
     ) {
         return Vec::new();
     }
-    let Ok(vdir) = version_dir(&version_name) else {
+    let Ok(vdir) = version_dir_path(&version_name) else {
         return Vec::new();
     };
     let dir = vdir.join(&kind);
-    let mut files: Vec<ResourceFile> = crate::util::dir_entries(&dir, false)
+    let mut files: Vec<ResourceFile> = util::dir_entries(&dir, false)
         .into_iter()
-        .map(|(name, size, last_modified)| ResourceFile { name, size, last_modified })
+        .map(|(name, size, last_modified)| ResourceFile {
+            name,
+            size,
+            last_modified,
+        })
         .collect();
     files.sort_by(|a, b| a.name.cmp(&b.name));
     files
@@ -99,8 +108,8 @@ pub async fn list_resource_detailed(
             network_error: false,
         });
     }
-    let vdir = version_dir(&version_name)?;
-    Ok(mod_updates::list_dir_detailed(&vdir.join(&kind), mod_updates::ScanFilter::Zip).await)
+    let vdir = version_dir_path(&version_name)?;
+    Ok(updates::list_dir_detailed(&vdir.join(&kind), updates::ScanFilter::Zip).await)
 }
 
 /// 删除资源目录（材质包/数据包/光影包）下的单个文件。
@@ -114,10 +123,10 @@ pub fn delete_resource_file(
     if !matches!(kind.as_str(), "resourcepacks" | "datapacks" | "shaderpacks") {
         return Err("未知资源类型".to_string());
     }
-    if !crate::util::is_simple_name(&file_name) {
+    if !util::is_simple_name(&file_name) {
         return Err("非法文件名".to_string());
     }
-    let vdir = version_dir(&version_name)?;
+    let vdir = version_dir_path(&version_name)?;
     let path = vdir.join(&kind).join(&file_name);
     if !path.is_file() {
         return Err(format!("文件不存在\n{}", file_name));
@@ -129,10 +138,10 @@ pub fn delete_resource_file(
 /// `world_name` 仅接受简单目录名（防路径穿越）；大目录删除走 tokio（内部 spawn_blocking）。
 #[tauri::command]
 pub async fn delete_world(version_name: String, world_name: String) -> Result<(), String> {
-    if !crate::util::is_simple_name(&world_name) {
+    if !util::is_simple_name(&world_name) {
         return Err("非法目录名".to_string());
     }
-    let vdir = version_dir(&version_name)?;
+    let vdir = version_dir_path(&version_name)?;
     let path = vdir.join("saves").join(&world_name);
     if !path.is_dir() {
         return Err(format!("存档不存在\n{}", world_name));
@@ -146,8 +155,8 @@ pub async fn delete_world(version_name: String, world_name: String) -> Result<()
 /// 兼容旧入口；前端现走逐文件增量识别（identify_mod_file）。
 #[tauri::command]
 pub async fn list_mods_detailed(version_name: String) -> Result<ModListResult, String> {
-    let vdir = version_dir(&version_name)?;
-    Ok(mod_updates::list_mods_detailed(&vdir.join("mods")).await)
+    let vdir = version_dir_path(&version_name)?;
+    Ok(updates::list_mods_detailed(&vdir.join("mods")).await)
 }
 
 /// 增量识别单个 mod 文件：sha1 → Modrinth 元数据。
@@ -162,8 +171,8 @@ pub async fn identify_mod_file(
     if !crate::util::is_simple_name(&file_name) {
         return Err("非法文件名".into());
     }
-    let vdir = version_dir(&version_name)?;
-    let f = mod_updates::identify_one_file(&vdir.join("mods"), &file_name).await;
+    let vdir = version_dir_path(&version_name)?;
+    let f = updates::identify_one_file(&vdir.join("mods"), &file_name).await;
     Ok(f)
 }
 
@@ -172,14 +181,14 @@ pub async fn identify_mod_file(
 /// 前端不再传入解析结果，防改名/伪标记目录把垃圾版本号发给 Modrinth。
 #[tauri::command]
 pub async fn check_mod_updates(version_name: String) -> Result<Vec<ModUpdate>, String> {
-    let vdir = version_dir(&version_name)?;
-    let files = mod_updates::scan_mod_files(&vdir.join("mods"));
+    let vdir = version_dir_path(&version_name)?;
+    let files = updates::scan_mod_files(&vdir.join("mods"));
     if files.is_empty() {
         return Ok(Vec::new());
     }
     let (mc_version, loader, _) =
-        crate::downloader::modpack::resolve_version_meta(&vdir, &version_name);
-    Ok(mod_updates::check_updates(&vdir.join("mods"), &files, &mc_version, &loader).await)
+        resolve_version_meta(&vdir, &version_name);
+    Ok(updates::check_updates(&vdir.join("mods"), &files, &mc_version, &loader).await)
 }
 
 /// 更新单个 mod：下载新版本 jar 并替换 mods 目录中的旧文件。
@@ -190,8 +199,8 @@ pub async fn update_mod_file(
     file_url: String,
     file_sha1: String,
 ) -> Result<(), String> {
-    let vdir = version_dir(&version_name)?;
-    mod_updates::update_mod_file(&vdir.join("mods"), &file_name, &file_url, &file_sha1).await
+    let vdir = version_dir_path(&version_name)?;
+    updates::update_mod_file(&vdir.join("mods"), &file_name, &file_url, &file_sha1).await
 }
 
 /// 版本级服务器直连配置（快速进服 --server/--port，per-version 存储）。
@@ -228,15 +237,15 @@ pub fn save_version_server(
 /// 删除 mods 目录下的单个 mod 文件。
 #[tauri::command]
 pub fn delete_mod_file(version_name: String, file_name: String) -> Result<(), String> {
-    let vdir = version_dir(&version_name)?;
-    mod_updates::delete_mod_file(&vdir.join("mods"), &file_name)
+    let vdir = version_dir_path(&version_name)?;
+    updates::delete_mod_file(&vdir.join("mods"), &file_name)
 }
 
 /// 切换 mods 目录下单个 mod 文件的启用/禁用状态（重命名 .jar → .jar.disabled，扫描自动隐藏）。
 #[tauri::command]
 pub fn toggle_mod_file(version_name: String, file_name: String) -> Result<bool, String> {
-    let vdir = version_dir(&version_name)?;
-    mod_updates::toggle_mod_file(&vdir.join("mods"), &file_name)
+    let vdir = version_dir_path(&version_name)?;
+    updates::toggle_mod_file(&vdir.join("mods"), &file_name)
 }
 
 /// 导出整合包：把版本目录下的 mods/config/shaderpacks/resourcepacks 打进 zip
@@ -244,13 +253,13 @@ pub fn toggle_mod_file(version_name: String, file_name: String) -> Result<bool, 
 /// 领域逻辑（hash 匹配/打包/权威元数据解析）在 downloader/modpack.rs。
 #[tauri::command]
 pub async fn export_modpack(version_name: String, save_path: String) -> Result<(), String> {
-    let vdir = version_dir(&version_name)?;
+    let vdir = version_dir_path(&version_name)?;
     let name = version_name.clone();
     // Modrinth hash 匹配（对齐 PCL2 导出）：能匹配的 mod 走 files[]（在线分发，
     // 包内不物理携带）；匹配不到/网络失败的全量物理打包进 overrides。
-    let (hosted, hosted_names) = crate::downloader::modpack::resolve_hosted_mods(&vdir).await;
+    let (hosted, hosted_names) = resolve_hosted_mods(&vdir).await;
     tokio::task::spawn_blocking(move || {
-        crate::downloader::modpack::pack_modpack(&vdir, &name, &save_path, &hosted, &hosted_names)
+        pack_modpack(&vdir, &name, &save_path, &hosted, &hosted_names)
     })
     .await
     .map_err(|e| format!("打包任务失败\n{e}"))?
@@ -258,6 +267,8 @@ pub async fn export_modpack(version_name: String, save_path: String) -> Result<(
 
 #[cfg(test)]
 mod tests {
+    use crate::game::modpack::pack_modpack;
+    use crate::game::modpack::resolve_version_meta;
     use std::io::Read;
 
     #[test]
@@ -270,7 +281,7 @@ mod tests {
         // config 目录不存在 → 打包时跳过
         let out = tempfile::tempdir().unwrap();
         let zip_path = out.path().join("pack.zip");
-        crate::downloader::modpack::pack_modpack(
+        pack_modpack(
             vdir.path(),
             "1.20.1-fabric-1.0",
             zip_path.to_str().unwrap(),
@@ -325,7 +336,7 @@ mod tests {
         let vdir = tempfile::tempdir().unwrap(); // 无任何内容目录
         let out = tempfile::tempdir().unwrap();
         let zip_path = out.path().join("pack.zip");
-        crate::downloader::modpack::pack_modpack(
+        pack_modpack(
             vdir.path(),
             "1.20.1",
             zip_path.to_str().unwrap(),
@@ -351,7 +362,7 @@ mod tests {
             r#"{"id":"1.21.1","mainClass":"net.minecraft.client.main.Main","type":"release"}"#,
         )
         .unwrap();
-        let (mc, kind, ver) = crate::downloader::modpack::resolve_version_meta(vdir.path(), "[abcd]");
+        let (mc, kind, ver) = resolve_version_meta(vdir.path(), "[abcd]");
         assert_eq!(mc, "1.21.1", "json.id 应纠正目录名垃圾");
         assert_eq!(kind, "vanilla");
         assert_eq!(ver, None);
@@ -366,8 +377,7 @@ mod tests {
             r#"{"id":"1.20.1-fabric-0.14.22","inheritsFrom":"1.20.1","mainClass":"net.fabricmc.loader.impl.launch.knot.KnotClient"}"#,
         )
         .unwrap();
-        let (mc, kind, ver) =
-            crate::downloader::modpack::resolve_version_meta(vdir.path(), "1.20.1-Fabric-0.14.22");
+        let (mc, kind, ver) = resolve_version_meta(vdir.path(), "1.20.1-Fabric-0.14.22");
         assert_eq!(mc, "1.20.1", "inheritsFrom 优先");
         assert_eq!(kind, "fabric");
         assert_eq!(ver.as_deref(), Some("0.14.22"));
@@ -382,9 +392,12 @@ mod tests {
             r#"{"id":"1.21.1","inheritsFrom":"1.21.1","mainClass":"net.fabricmc.loader.impl.launch.knot.KnotClient"}"#,
         )
         .unwrap();
-        let (mc, kind, ver) = crate::downloader::modpack::resolve_version_meta(vdir.path(), "X-forge-99");
+        let (mc, kind, ver) = resolve_version_meta(vdir.path(), "X-forge-99");
         assert_eq!(mc, "1.21.1");
         assert_eq!(kind, "fabric", "json 特征应压掉目录名伪标记");
-        assert_eq!(ver, None, "forge 标记与 fabric json 冲突 → 版本号省略而非写假值");
+        assert_eq!(
+            ver, None,
+            "forge 标记与 fabric json 冲突 → 版本号省略而非写假值"
+        );
     }
 }

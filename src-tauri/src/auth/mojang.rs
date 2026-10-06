@@ -2,6 +2,8 @@
 //! 供 commands/account.rs（正版皮肤保存与账号列表头像）共用，
 //! 消除 name→UUID 与 textures property 拉取的多处重复实现。
 
+use base64::Engine;
+
 use crate::downloader::fetcher::http;
 
 /// 拉取 textures property 的 value（base64 payload，非签名版）。
@@ -38,7 +40,6 @@ pub async fn texture_value(uuid: &str) -> Result<String, String> {
 
 /// 拉取角色纹理并解码（base64 NBT → JSON），含 textures/SKIN、textures/CAPE 等字段。
 pub async fn profile_textures(uuid: &str) -> Result<serde_json::Value, String> {
-    use base64::Engine;
     let value_b64 = texture_value(uuid).await?;
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(value_b64)
@@ -55,9 +56,7 @@ pub async fn skin_profile_with_fallback(uuid: &str) -> Result<(String, String), 
     match profile_textures(uuid).await {
         Ok(t) => {
             let skin = &t["textures"]["SKIN"];
-            let url = skin["url"]
-                .as_str()
-                .ok_or("该账号未设置皮肤")?;
+            let url = skin["url"].as_str().ok_or("该账号未设置皮肤")?;
             let model = skin["metadata"]["model"].as_str().unwrap_or("classic");
             Ok((url.to_string(), model.to_string()))
         }

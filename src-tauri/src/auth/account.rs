@@ -1,14 +1,15 @@
 //! 账号域服务：登录回调处理、远程资源下载（base64）。
 //! 命令层（commands/account.rs）只做薄封装，协议在 microsoft.rs，API 在 mojang.rs。
 
-use std::time::Duration;
+use crate::auth;
+use crate::constants;
+use crate::events;
+use crate::task;
 
 use base64::Engine;
-use tauri::AppHandle;
-
-use crate::auth::microsoft::{self, Pkce};
-use crate::auth::model::MsAccount;
-use crate::constants::UA_MOJANG_API;
+use std::collections::HashMap;
+use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// 等待浏览器回调的超时（5 分钟）。
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(300);
@@ -16,7 +17,7 @@ const CALLBACK_TIMEOUT: Duration = Duration::from_secs(300);
 /// 统一 HTTP 客户端（Elytra UA + 可配超时；visage 等外部服务要求自定义 UA）。
 fn http_client(timeout_secs: u64) -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
-        .user_agent(UA_MOJANG_API)
+        .user_agent(constants::UA_MOJANG_API)
         .timeout(Duration::from_secs(timeout_secs))
         .build()
         .map_err(|e| format!("初始化客户端失败\n{e}"))
@@ -42,10 +43,10 @@ pub async fn fetch_b64(url: &str, err_prefix: &str) -> Result<String, String> {
 /// 启动 Microsoft 登录的浏览器回调等待（含超时），完成后端口自动释放。
 /// 结果经 `ms-login-complete` 事件推送。
 pub async fn wait_callback(
-    app: AppHandle,
+    app: tauri::AppHandle,
     listener: tokio::net::TcpListener,
     state: &str,
-    pkce: &Pkce,
+    pkce: &auth::microsoft::Pkce,
 ) {
     match tokio::time::timeout(CALLBACK_TIMEOUT, listener.accept()).await {
         Ok(Ok((stream, _))) => {
@@ -64,10 +65,9 @@ pub async fn wait_callback(
 async fn handle_callback(
     mut stream: tokio::net::TcpStream,
     state: &str,
-    pkce: &Pkce,
-    app: &AppHandle,
+    pkce: &auth::microsoft::Pkce,
+    app: &tauri::AppHandle,
 ) {
-    use tokio::io::AsyncReadExt;
     // 从流中最多读取4096字节
     let mut buf = [0u8; 4096];
     let read = match stream.read(&mut buf).await {
@@ -88,7 +88,7 @@ async fn handle_callback(
         .and_then(|p| p.split('?').nth(1))
         .unwrap_or("");
 
-    let params: std::collections::HashMap<String, String> = query
+    let params: HashMap<String, String> = query
         .split('&')
         .filter_map(|pair| {
             let mut it = pair.splitn(2, '=');
@@ -106,9 +106,9 @@ async fn handle_callback(
         if cb_state != state {
             (false, None, Some("state 校验失败，请重新登录".into()), 403)
         } else if let Some(code) = code {
-            match microsoft::login_with_code(&code, &pkce.verifier).await {
+            match auth::microsoft::login_with_code(&code, &pkce.verifier).await {
                 Ok(account) => {
-                    let _ = crate::auth::model::save(&account);
+                    let _ = auth::model::save(&account);
                     (true, Some(account), None, 200)
                 }
                 Err(e) => (false, None, Some(e.to_string()), 500),
@@ -123,15 +123,15 @@ async fn handle_callback(
 }
 
 fn emit_result(
-    app: &AppHandle,
+    app: &tauri::AppHandle,
     ok: bool,
-    account: Option<MsAccount>,
+    account: Option<auth::model::MsAccount>,
     error: Option<String>,
 ) -> Result<(), tauri::Error> {
     // 队列线程派发：回调服务线程不因 webview 未消费而阻塞（与 task-progress 同机制）
-    crate::task::emit_event(
+    task::emit_event(
         app,
-        crate::events::MS_LOGIN_COMPLETE,
+        events::MS_LOGIN_COMPLETE,
         serde_json::json!({ "ok": ok, "account": account, "error": error }),
     );
     Ok(())
@@ -139,7 +139,6 @@ fn emit_result(
 
 /// 返回一个简单的浏览器可见页面。
 async fn respond(mut stream: tokio::net::TcpStream, status: u16, ok: bool) -> std::io::Result<()> {
-    use tokio::io::AsyncWriteExt;
     let body = if ok {
         "<!DOCTYPE html><html lang=\"zh\"><meta charset=\"utf-8\"><body style=\"font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:90vh;color:#059669;\"><h2>登录成功，可以关闭此窗口回到启动器</h2></body></html>"
     } else {
@@ -252,7 +251,10 @@ pub async fn upload_skin(access_token: &str, file_path: &str, variant: &str) -> 
     if !resp.status().is_success() {
         let status = resp.status();
         let body: serde_json::Value = resp.json().await.unwrap_or_default();
-        return Err(format!("上传皮肤失败\n{}", microsoft::extract_api_error(&body, status)));
+        return Err(format!(
+            "上传皮肤失败\n{}",
+            auth::microsoft::extract_api_error(&body, status)
+        ));
     }
     Ok(())
 }

@@ -1,4 +1,8 @@
-use crate::auth::model::MsAccount;
+use crate::auth;
+use crate::constants;
+use crate::launcher;
+use crate::persist;
+
 use base64::Engine;
 use serde_json::json;
 use sha2::Digest;
@@ -10,7 +14,7 @@ pub const REDIRECT_URI: &str = "http://localhost:27205";
 /// 微软 OAuth 客户端 ID（构建时从 .env 注入，见 constants::MS_CLIENT_ID）。
 /// 缺失（未配置 .env / 未重编译）时返回 NotConfigured。
 fn ms_client_id() -> Result<&'static str, MsError> {
-    crate::constants::MS_CLIENT_ID.ok_or(MsError::NotConfigured)
+    constants::MS_CLIENT_ID.ok_or(MsError::NotConfigured)
 }
 
 // ── 端点 ─────────────────────────────────────────────────────────
@@ -408,7 +412,7 @@ async fn minecraft_profile(
 async fn complete_after_ms_token(
     client: &reqwest::Client,
     tokens: &MsTokens,
-) -> Result<MsAccount, MsError> {
+) -> Result<auth::model::MsAccount, MsError> {
     let (xbl_token, uhs) = authenticate_xbl(client, &tokens.access_token).await?;
     let (xsts_token, xuid) = authenticate_xsts(client, &xbl_token).await?;
     let mc_token = minecraft_login(client, &uhs, &xsts_token).await?;
@@ -424,7 +428,7 @@ async fn complete_after_ms_token(
         .map(|d| d.as_secs())
         .unwrap_or(0)
         + tokens.expires_in;
-    Ok(MsAccount {
+    Ok(auth::model::MsAccount {
         uuid,
         name,
         access_token: mc_token,
@@ -457,11 +461,9 @@ pub fn extract_xuid_from_jwt(token: &str) -> String {
 
 /// 构建正版登录专用 HTTP client；按「启动选项-正版登录时验证 SSL 证书」配置决定是否校验证书。
 fn build_auth_client() -> reqwest::Client {
-    let verify = crate::persist::read::<crate::launcher::model::LauncherConfig>(
-        crate::constants::SECT_LAUNCHER,
-    )
-    .map(|c| c.verify_ssl)
-    .unwrap_or(false);
+    let verify = persist::read::<launcher::model::LauncherConfig>(constants::SECT_LAUNCHER)
+        .map(|c| c.verify_ssl)
+        .unwrap_or(false);
     reqwest::Client::builder()
         .danger_accept_invalid_certs(!verify)
         .build()
@@ -469,14 +471,19 @@ fn build_auth_client() -> reqwest::Client {
 }
 
 /// 授权码 → 完整登录。
-pub async fn login_with_code(code: &str, verifier: &str) -> Result<MsAccount, MsError> {
+pub async fn login_with_code(
+    code: &str,
+    verifier: &str,
+) -> Result<auth::model::MsAccount, MsError> {
     let client = build_auth_client();
     let tokens = exchange_code(&client, code, verifier).await?;
     complete_after_ms_token(&client, &tokens).await
 }
 
 /// refresh_token → 刷新并重新拉取完整账号。
-pub async fn refresh_login(account: &MsAccount) -> Result<MsAccount, MsError> {
+pub async fn refresh_login(
+    account: &auth::model::MsAccount,
+) -> Result<auth::model::MsAccount, MsError> {
     let client = build_auth_client();
     let tokens = refresh_ms(&client, &account.refresh_token).await?;
     complete_after_ms_token(&client, &tokens).await

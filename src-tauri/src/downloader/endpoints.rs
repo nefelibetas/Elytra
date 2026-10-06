@@ -1,22 +1,16 @@
-//! 下载源端点统一收口：全部程序内建网络拓扑（官方域名 / 镜像地址 / URL 模板）的
+//! 下载源端点统一收口：程序内建网络拓扑（官方域名 / 镜像地址 / URL 模板）的
 //! **单一事实源**——社区资源（Modrinth/CurseForge + MCIM 镜像）、JDK 下载源、
-//! Mojang/BMCLAPI 文件源模板与镜像路由表。此前散落在 community/shared.rs、
-//! translation.rs、util.rs、mod_loader/version_query.rs、jdk/download.rs、
-//! config/downloader/model.rs（official()/china() 内联 URL）与 downloader/model.rs
-//! （MIRROR_ROUTES）多处，改动需逐一同步；现全部集中于本模块，**一处一个**。
+//! Mojang/BMCLAPI 文件源模板与镜像路由表，全在本模块，一处一个。
 //!
-//! 这些是程序内建的网络拓扑（官方域名 / 镜像地址），非用户偏好，
-//! 故保持编译期常量、**不持久化、不进设置页**（Settings.toml 仅存模式三态，
-//! `sources` 字段已 skip 序列化）；镜像失效/换域属运营事件，随版本发布更新即可。
-//! 若未来要做用户可自定义镜像，应整体做成"自定义源编辑器"
-//! （对齐 `DownloadSource.sources`），而非逐块开小口。
+//! 这些是内建网络拓扑而非用户偏好，故保持编译期常量、不持久化、不进设置页
+//! （Settings.toml 仅存模式三态）；镜像失效/换域属运营事件，随版本发布更新。
 //!
 //! 相关但**不在本模块**（各有归属，勿迁入）：
 //! - 镜像/限流域名判定：`fetcher/core.rs::is_mirror_url` 与
 //!   `fetcher/routes.rs::is_mirror_domain`（结构性规则，非 URL 拓扑）；
 //! - 各调用点拼接的业务路径片段（如 `/mc/game/version_manifest_v2.json`）。
 
-use crate::config::downloader::model::DownloadSource;
+use crate::config::downloader::DownloadSource;
 
 // ── Mojang 官方文件源（版本清单 / 资源 / 库 / ModLoader 官方端点）──
 
@@ -128,18 +122,9 @@ pub fn mirror_source() -> DownloadSource {
 
 /// BMCLAPI 镜像路由表：官方域 → BMCLAPI 镜像前缀。
 ///
-/// 此前为两张同构表：`fetcher.rs` 的 MIRROR_ROUTES（路由层镜像候选生成，
-/// 全量 10 条）与 `source.rs` 的 REWRITE_RULES（`DownloadSource::mirror_url`
-/// 重写，前 8 条子集）。现合并为本单一表，两个消费方均引用此处；
-/// 行序即匹配优先序（各域互不重叠，first-match 与全量收集语义一致）。
-/// 替换前缀引用本模块 BMCLAPI_* 常量，与 mirror_source() 模板同一事实源。
-///
-/// 相比原 REWRITE_RULES 的差异行逐条注明：
-/// - `maven.fabricmc.net`：REWRITE_RULES 原无。Fabric 库构件此前仅经
-///   fetcher 路由层生成镜像候选；合并后 `mirror_url` 同步获得该重写
-///   （现有调用方均不传 fabric 库 URL，纯超集保全集）。
-/// - `meta.fabricmc.net` → `/fabric-meta`：REWRITE_RULES 原无。fabric 版本
-///   清单镜像（quilt 无镜像，保持直连官方）；同上，仅路由层原先可用。
+/// 单一事实源：路由层镜像候选生成与 `DownloadSource::mirror_url` 重写共用本表；
+/// 行序即匹配优先序（各域互不重叠，first-match 与全量收集语义一致）；
+/// 替换前缀引用本模块 BMCLAPI_* 常量。
 pub(crate) const MIRROR_ROUTES: &[(&str, &str)] = &[
     ("resources.download.minecraft.net", BMCLAPI_ASSETS),
     ("libraries.minecraft.net", BMCLAPI_LIBRARIES),

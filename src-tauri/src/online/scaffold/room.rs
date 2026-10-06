@@ -23,18 +23,19 @@ const ALPHABET: &[u8] = b"0123456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const NETWORK_PREFIX: &str = "scaffolding-mc-";
 
 /// 生成新房间码（密码学随机 → 模 7 对齐）。
-pub fn create_room() -> RoomCredential {
+/// 随机源不可用时返回错误：失败静默会让 bytes 全零，房间码与网络密钥退化为可预测值。
+pub fn create_room() -> Result<RoomCredential, String> {
     // 随机 16 字符 base34 值，减到能被 7 整除（保证校验通过）。
     let mut bytes = [0u8; 16];
-    let _ = getrandom(&mut bytes);
+    getrandom(&mut bytes).map_err(|e| format!("系统随机源不可用\n{e}"))?;
     let value = u128::from_be_bytes(bytes) % 34u128.pow(CODE_CHARS as u32);
     let value = value - value % 7;
     let (code, network_name, network_secret) = from_value(value);
-    RoomCredential {
+    Ok(RoomCredential {
         code,
         network_name,
         network_secret,
-    }
+    })
 }
 
 /// 解析房间码文本。非法格式 / 校验失败 / 非 `U/` 前缀 → None。
@@ -130,7 +131,7 @@ mod tests {
 
     #[test]
     fn generated_code_parses_roundtrip() {
-        let room = create_room();
+        let room = create_room().unwrap();
         let parsed = parse_room_code(&room.code).expect("生成的房间码应可解析");
         assert_eq!(parsed.code, room.code, "重编码应一致");
         assert_eq!(parsed.network_name, room.network_name);
@@ -139,7 +140,7 @@ mod tests {
 
     #[test]
     fn code_format_is_valid() {
-        let room = create_room();
+        let room = create_room().unwrap();
         let body = room.code.strip_prefix("U/").unwrap();
         assert_eq!(body.len(), CODE_CHARS + 3, "4 段 × 4 字符 + 3 分隔符");
         let segs: Vec<&str> = body.split('-').collect();
@@ -159,7 +160,7 @@ mod tests {
     #[test]
     fn modulus_seven_check() {
         // 协议校验：整串 base34 小端序读值 % 7 == 0
-        let room = create_room();
+        let room = create_room().unwrap();
         let value = parse_code_value(&room.code).unwrap();
         assert_eq!(value % 7, 0, "房间码值应能被 7 整除");
     }
@@ -173,7 +174,7 @@ mod tests {
         assert!(parse_room_code("U/ABCD-EFGH-JKMN-PQRS:123").is_none(), "不允许附加段");
         assert!(parse_room_code("U/ABCD-EFGH-JKMN-PQ^S").is_none(), "非法字符");
         // 构造一个模 7 不为 0 的码：取合法码把首字符替换（大概率破坏校验）
-        let mut bad = create_room().code;
+        let mut bad = create_room().unwrap().code;
         let first = bad.as_bytes()[2];
         let new = if first == b'0' { b'1' } else { b'0' };
         // 替换后若仍合法则跳过（极小概率），否则应拒绝
@@ -187,7 +188,7 @@ mod tests {
 
     #[test]
     fn ambiguous_char_tolerance() {
-        let room = create_room();
+        let room = create_room().unwrap();
         // I→1、O→0 容错：替换后应仍能解析（若原码含这些字符）
         let tolerant = room.code.replace('O', "0").replace('I', "1");
         if tolerant != room.code {
@@ -198,7 +199,7 @@ mod tests {
 
     #[test]
     fn lower_case_accepted() {
-        let room = create_room();
+        let room = create_room().unwrap();
         let lower = room.code.to_ascii_lowercase();
         let parsed = parse_room_code(&lower).expect("小写应可解析");
         assert_eq!(parsed.code, room.code);

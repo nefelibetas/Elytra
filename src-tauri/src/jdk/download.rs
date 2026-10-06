@@ -8,21 +8,25 @@
 //! 下载目录：`{minecraft_dir}/runtime/{platform}/{version}/`，完成后经
 //! `scanner::inspect` 校验版本并注册进 persist 的 jdk section（discovered_jdks）。
 
+use std::collections::HashMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::LazyLock;
+use std::time::{Duration, Instant};
 
-use crate::config::downloader::model::{DownloaderConfig, JdkSourceMode};
+use futures_util::StreamExt as _;
+use parking_lot::Mutex;
+use sha2::Digest as _;
+
+use crate::config::downloader::{DownloaderConfig, JdkSourceMode};
 use crate::downloader::endpoints::JdkEndpoints;
 use crate::downloader::fetcher::{self, http};
 use crate::downloader::probe::probe_url;
+use crate::game::version::source::CacheBehaviour;
 use crate::jdk::model::JdkInfo;
 use crate::jdk::scanner;
-use crate::util::{java_bin_path, parse_java_major};
-use futures_util::StreamExt;
-use parking_lot::Mutex;
-use std::collections::HashMap;
-use std::sync::LazyLock;
-use std::time::{Duration, Instant};
+use crate::util::{java_bin_path, parse_java_major, safe_relative_path};
 
 /// 安装进度钩子（任务侧传入；均可为空，纯函数调用方直接不传）。
 pub struct InstallProgress<'a> {
@@ -455,22 +459,6 @@ pub(crate) fn runtime_dir(config: &DownloaderConfig, major: u32) -> PathBuf {
         .join(format!("java-{major}"))
 }
 
-/// 词法路径穿越防护：manifest/zip 条目路径必须为相对路径且不含 `..` 段
-/// （manifest 来自网络，防恶意/篡改条目写出 runtime 根）。
-pub(crate) fn safe_runtime_path(root: &Path, entry: &str) -> Result<PathBuf, String> {
-    let entry = entry.trim();
-    if entry.is_empty() || entry.starts_with('/') || entry.starts_with('\\') {
-        return Err(format!("非法 runtime 文件路径\n{entry:?}"));
-    }
-    if entry
-        .split(['/', '\\'])
-        .any(|seg| seg == ".." || seg.is_empty())
-    {
-        return Err(format!("runtime 文件路径含非法段\n{entry:?}"));
-    }
-    Ok(root.join(entry))
-}
-
 /// 下载并安装 Mojang 官方 runtime。
 async fn install_mojang_runtime(
     major: u32,
@@ -485,7 +473,7 @@ async fn install_mojang_runtime(
     let all_text = config
         .fetch_with_fallback(
             config.game_source_mode,
-            crate::downloader::source::CacheBehaviour::DefaultTtl,
+            CacheBehaviour::DefaultTtl,
             |s| s.mirror_url(JdkEndpoints::RUNTIME_ALL_JSON),
         )
         .await
@@ -559,7 +547,7 @@ async fn install_mojang_runtime(
     }
     for (path, meta) in files {
         let ftype = meta["type"].as_str().unwrap_or("file");
-        let dest = safe_runtime_path(&dest_root, path)?;
+        let dest = dest_root.join(safe_relative_path(path)?);
         match ftype {
             "directory" => {
                 std::fs::create_dir_all(&dest).map_err(|e| format!("创建目录失败\n{e}"))?;
@@ -773,7 +761,7 @@ fn extract_zip(package: &Path, dest_root: &Path) -> Result<(), String> {
             .by_index(i)
             .map_err(|e| format!("读取条目失败\n{e}"))?;
         let name = entry.name().to_string();
-        let out = safe_runtime_path(dest_root, &name)?;
+        let out = dest_root.join(safe_relative_path(&name)?);
         if entry.is_dir() {
             std::fs::create_dir_all(&out).ok();
             continue;
@@ -808,7 +796,7 @@ fn extract_tar_gz(package: &Path, dest_root: &Path) -> Result<(), String> {
         while let Some(stripped) = name.strip_prefix("./") {
             name = stripped.to_string();
         }
-        let out = safe_runtime_path(dest_root, &name)?;
+        let out = dest_root.join(safe_relative_path(&name)?);
         if entry.header().entry_type().is_dir() {
             std::fs::create_dir_all(&out).ok();
             continue;
@@ -955,8 +943,6 @@ fn delta_callback<'a>(on_bytes: Option<&'a (dyn Fn(u64) + Send + Sync)>) -> impl
 /// Azul zip 包可达数百 MB，整文件读内存只为算哈希不划算。任一读取失败返回空串
 /// （fail-closed：与期望值必不相等 → 校验失败，语义同旧整读实现）。
 fn file_sha256(path: &Path) -> String {
-    use sha2::Digest;
-    use std::io::Read;
     let Ok(file) = std::fs::File::open(path) else {
         return String::new();
     };
@@ -989,18 +975,6 @@ mod tests {
         assert_eq!(component_for_major(25), Some("java-runtime-epsilon"));
         assert_eq!(component_for_major(11), None);
         assert_eq!(component_for_major(9), None);
-    }
-
-    #[test]
-    fn safe_runtime_path_rejects_traversal() {
-        let root = Path::new("C:/minecraft/runtime");
-        assert!(safe_runtime_path(root, "bin/java.exe").is_ok());
-        assert!(safe_runtime_path(root, "legal/README.txt").is_ok());
-        assert!(safe_runtime_path(root, "../evil.exe").is_err());
-        assert!(safe_runtime_path(root, "bin/../../evil").is_err());
-        assert!(safe_runtime_path(root, "/abs/path").is_err());
-        assert!(safe_runtime_path(root, "\\abs\\path").is_err());
-        assert!(safe_runtime_path(root, "").is_err());
     }
 
     /// 三态配置对应正确回退链长度与类型（顺序敏感：错误按链序拼接）。

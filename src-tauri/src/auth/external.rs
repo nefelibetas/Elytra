@@ -2,10 +2,14 @@
 //! 账号经 persist::secrets 加密存储（仿 MsAccount）；登录调
 //! `POST {api}/authserver/authenticate`；启动前确保 authlib-injector.jar 存在。
 
+use base64::Engine;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sha2::Digest;
 
 use crate::constants;
-use crate::downloader::fetcher;
+use crate::downloader;
+use crate::persist;
 
 /// authlib-injector jar 文件名（数据目录 = exe 旁 Elytra/）。
 pub const AUTHLIB_JAR: &str = "authlib-injector.jar";
@@ -19,12 +23,11 @@ pub fn is_ely_by(api_url: &str) -> bool {
 /// 从 Yggdrasil 错误响应文本提取可读信息：错误体常见 {"error": ..., "errorMessage": ...}；
 /// 非 JSON/无 errorMessage 回退 HTTP 状态码。
 fn extract_yggdrasil_error(text: &str, status: reqwest::StatusCode) -> String {
-    serde_json::from_str::<serde_json::Value>(text)
+    serde_json::from_str::<Value>(text)
         .ok()
         .and_then(|v| v["errorMessage"].as_str().map(str::to_string))
         .unwrap_or_else(|| format!("HTTP {status}"))
 }
-
 
 /// 第三方账号（含验证服务器地址与短期 access_token）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,7 +63,7 @@ pub struct ExternalProfile {
 
 /// 读取全部第三方账号（登录时间升序，末尾 = 当前账号）。无账号返回空列表。
 pub fn read_all() -> Vec<ExternalAccount> {
-    crate::persist::secrets::read_json_list(constants::SECT_EXTERNAL_ACCOUNTS)
+    persist::secrets::read_json_list(constants::SECT_EXTERNAL_ACCOUNTS)
 }
 
 /// 读取当前第三方账号（列表最后一个，即最近登录/切换的）。无则 None。
@@ -73,25 +76,28 @@ pub fn save(account: &ExternalAccount) -> Result<(), String> {
     let mut list = read_all();
     list.retain(|a| !(a.uuid == account.uuid && a.api_url == account.api_url));
     list.push(account.clone());
-    crate::persist::secrets::save_json_list(constants::SECT_EXTERNAL_ACCOUNTS, &list)
+    persist::secrets::save_json_list(constants::SECT_EXTERNAL_ACCOUNTS, &list)
 }
 
 /// 切换当前账号：从列表移除再重加（置末尾 = 启用）。
 pub fn switch(api_url: &str, uuid: &str) -> Result<(), String> {
     let mut list = read_all();
-    let Some(idx) = list.iter().position(|a| a.api_url == api_url && a.uuid == uuid) else {
+    let Some(idx) = list
+        .iter()
+        .position(|a| a.api_url == api_url && a.uuid == uuid)
+    else {
         return Err(format!("账号不存在\n{api_url} {uuid}"));
     };
     let acc = list.remove(idx);
     list.push(acc);
-    crate::persist::secrets::save_json_list(constants::SECT_EXTERNAL_ACCOUNTS, &list)
+    persist::secrets::save_json_list(constants::SECT_EXTERNAL_ACCOUNTS, &list)
 }
 
 /// 移除指定账号（api_url + uuid 定位）。列表清空时删除存储键。
 pub fn remove(api_url: &str, uuid: &str) -> Result<(), String> {
     let mut list = read_all();
     list.retain(|a| !(a.api_url == api_url && a.uuid == uuid));
-    crate::persist::secrets::save_json_list(constants::SECT_EXTERNAL_ACCOUNTS, &list)
+    persist::secrets::save_json_list(constants::SECT_EXTERNAL_ACCOUNTS, &list)
 }
 
 /// 登录：POST {api}/authserver/authenticate（Yggdrasil 协议）→ accessToken + profile。
@@ -122,7 +128,7 @@ pub async fn login(
         "requestUser": true,
         "clientToken": client_token,
     });
-    let resp = fetcher::http()
+    let resp = downloader::fetcher::http()
         .post(&url)
         .json(&body)
         .timeout(std::time::Duration::from_secs(15))
@@ -181,10 +187,12 @@ pub async fn login(
                 .collect()
         })
         .filter(|list: &Vec<ExternalProfile>| !list.is_empty())
-        .unwrap_or_else(|| vec![ExternalProfile {
-            id: uuid.clone(),
-            name: name.clone(),
-        }]);
+        .unwrap_or_else(|| {
+            vec![ExternalProfile {
+                id: uuid.clone(),
+                name: name.clone(),
+            }]
+        });
     Ok(ExternalAccount {
         api_url: api,
         uuid,
@@ -201,7 +209,10 @@ pub async fn login(
 /// 覆盖极端场景：皮肤站增删角色（availableProfiles 变化）、当前角色被删/改名（selectedProfile 变化）。
 pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccount, String> {
     let mut list = read_all();
-    let Some(idx) = list.iter().position(|a| a.api_url == api_url && a.uuid == uuid) else {
+    let Some(idx) = list
+        .iter()
+        .position(|a| a.api_url == api_url && a.uuid == uuid)
+    else {
         return Err(format!("账号不存在\n{api_url} {uuid}"));
     };
     let acc = list[idx].clone();
@@ -221,7 +232,7 @@ pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccoun
         "clientToken": client_token,
         "requestUser": true,
     });
-    let resp = fetcher::http()
+    let resp = downloader::fetcher::http()
         .post(&url)
         .json(&body)
         .timeout(std::time::Duration::from_secs(15))
@@ -279,7 +290,7 @@ pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccoun
     list[idx].profiles = profiles;
     let updated = list.remove(idx);
     list.push(updated.clone());
-    crate::persist::secrets::save_json_list(constants::SECT_EXTERNAL_ACCOUNTS, &list)?;
+    persist::secrets::save_json_list(constants::SECT_EXTERNAL_ACCOUNTS, &list)?;
     Ok(updated)
 }
 
@@ -292,7 +303,10 @@ pub async fn switch_role(
     profile_name: &str,
 ) -> Result<ExternalAccount, String> {
     let mut list = read_all();
-    let Some(idx) = list.iter().position(|a| a.api_url == api_url && a.uuid == uuid) else {
+    let Some(idx) = list
+        .iter()
+        .position(|a| a.api_url == api_url && a.uuid == uuid)
+    else {
         return Err(format!("账号不存在\n{api_url} {uuid}"));
     };
     let acc = list[idx].clone();
@@ -314,7 +328,7 @@ pub async fn switch_role(
         "selectedProfile": { "id": profile_id, "name": profile_name },
         "requestUser": true,
     });
-    let resp = fetcher::http()
+    let resp = downloader::fetcher::http()
         .post(&url)
         .json(&body)
         .timeout(std::time::Duration::from_secs(15))
@@ -342,7 +356,7 @@ pub async fn switch_role(
     // 保持启用（置末尾）
     let updated = list.remove(idx);
     list.push(updated.clone());
-    crate::persist::secrets::save_json_list(constants::SECT_EXTERNAL_ACCOUNTS, &list)?;
+    persist::secrets::save_json_list(constants::SECT_EXTERNAL_ACCOUNTS, &list)?;
     Ok(updated)
 }
 
@@ -361,7 +375,7 @@ pub async fn external_skin_info(api_url: &str, uuid: &str) -> Result<(String, St
     } else {
         format!("{api}/sessionserver/session/minecraft/profile/{uuid}")
     };
-    let resp = fetcher::http()
+    let resp = downloader::fetcher::http()
         .get(&url)
         .timeout(std::time::Duration::from_secs(10))
         .send()
@@ -380,17 +394,13 @@ pub async fn external_skin_info(api_url: &str, uuid: &str) -> Result<(String, St
         .and_then(|a| a.first())
         .and_then(|p| p["value"].as_str())
         .ok_or("该账号未设置皮肤")?;
-    use base64::Engine;
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(prop)
         .map_err(|e| format!("皮肤数据解码失败\n{e}"))?;
-    let textures: serde_json::Value = serde_json::from_slice(&decoded)
-        .map_err(|e| format!("皮肤信息解析失败\n{e}"))?;
+    let textures: serde_json::Value =
+        serde_json::from_slice(&decoded).map_err(|e| format!("皮肤信息解析失败\n{e}"))?;
     let skin = textures["textures"]["SKIN"].clone();
-    let skin_url = skin["url"]
-        .as_str()
-        .ok_or("该账号未设置皮肤")?
-        .to_string();
+    let skin_url = skin["url"].as_str().ok_or("该账号未设置皮肤")?.to_string();
     let model = skin["metadata"]["model"]
         .as_str()
         .unwrap_or("classic")
@@ -402,7 +412,7 @@ pub async fn external_skin_info(api_url: &str, uuid: &str) -> Result<(String, St
 pub async fn server_name(api_url: &str) -> Option<String> {
     let api = api_url.trim().trim_end_matches('/');
     let url = format!("{api}/api/yggdrasil");
-    let resp = fetcher::http()
+    let resp = downloader::fetcher::http()
         .get(&url)
         .timeout(std::time::Duration::from_secs(5))
         .send()
@@ -427,7 +437,7 @@ pub async fn ensure_jar() -> Result<std::path::PathBuf, String> {
     let mirror = "https://bmclapi2.bangbang93.com/mirrors/authlib-injector/artifact/latest.json";
     let mut last_err = String::new();
     for url in [official, mirror] {
-        match fetcher::http()
+        match downloader::fetcher::http()
             .get(url)
             .timeout(std::time::Duration::from_secs(10))
             .send()
@@ -449,7 +459,7 @@ pub async fn ensure_jar() -> Result<std::path::PathBuf, String> {
                 }
                 // 下载 jar（先临时文件再改名，失败不残留）
                 let tmp = path.with_file_name(format!("{AUTHLIB_JAR}.part"));
-                if let Err(e) = fetcher::fetch_verified(
+                if let Err(e) = downloader::fetcher::fetch_verified(
                     &[dl.to_string()],
                     &tmp,
                     None::<fn(u64, u64)>,
@@ -471,7 +481,6 @@ pub async fn ensure_jar() -> Result<std::path::PathBuf, String> {
                         }
                     };
                     let actual: String = {
-                        use sha2::Digest;
                         sha2::Sha256::digest(&data)
                             .iter()
                             .map(|b| format!("{b:02x}"))
@@ -540,7 +549,7 @@ mod tests {
     }
 
     fn cleanup() {
-        crate::persist::secrets::remove_secret(constants::SECT_EXTERNAL_ACCOUNTS).ok();
+        persist::secrets::remove_secret(constants::SECT_EXTERNAL_ACCOUNTS).ok();
     }
 
     /// 多账号：同服务器同 uuid upsert；不同服务器同 uuid 并存（不同站可同角色）。

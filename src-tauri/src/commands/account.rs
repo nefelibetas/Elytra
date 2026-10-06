@@ -1,11 +1,16 @@
 //! 账号与皮肤命令（薄胶水层）：逻辑在 auth/（microsoft=协议、mojang=API、account=服务）。
 
+use base64::Engine;
 use tauri::AppHandle;
+use tauri_plugin_opener::OpenerExt;
 
 use crate::auth::account;
-use crate::auth::microsoft::{self, CALLBACK_PORT};
-use crate::auth::model::MsAccount;
+use crate::auth::external;
+use crate::auth::microsoft;
+use crate::auth::model;
 use crate::auth::mojang;
+use crate::constants;
+use crate::persist;
 
 /// 当前进行中的登录回调等待任务（取消登录时 abort 以释放回调端口；完成后残留无害，下次启动覆盖）。
 static LOGIN_TASK: std::sync::LazyLock<parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>>> =
@@ -23,9 +28,9 @@ pub async fn start_ms_login(app: AppHandle) -> Result<String, String> {
     let state = microsoft::generate_state().map_err(|e| e.to_string())?;
     let pkce = microsoft::generate_pkce().map_err(|e| e.to_string())?;
 
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", CALLBACK_PORT))
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", microsoft::CALLBACK_PORT))
         .await
-        .map_err(|e| format!("回调端口 {CALLBACK_PORT} 被占用\n{e}"))?;
+        .map_err(|e| format!("回调端口 {} 被占用\n{e}", microsoft::CALLBACK_PORT))?;
 
     let auth_url = microsoft::build_auth_url(&state, &pkce).map_err(|e| e.to_string())?;
 
@@ -37,7 +42,6 @@ pub async fn start_ms_login(app: AppHandle) -> Result<String, String> {
     *LOGIN_TASK.lock() = Some(handle);
 
     // 打开系统浏览器
-    use tauri_plugin_opener::OpenerExt;
     app.opener()
         .open_url(auth_url.clone(), None::<&str>)
         .map_err(|e| format!("打开浏览器失败\n{e}"))?;
@@ -55,34 +59,34 @@ pub fn cancel_ms_login() {
 
 /// 读取已保存的正版账号（无则 None）。
 #[tauri::command]
-pub fn get_ms_account() -> Option<MsAccount> {
-    crate::auth::model::read()
+pub fn get_ms_account() -> Option<model::MsAccount> {
+    model::read()
 }
 
 /// 读取全部已保存的正版账号（登录时间升序，末尾为当前账号）。
 #[tauri::command]
-pub fn get_ms_accounts() -> Vec<MsAccount> {
-    crate::auth::model::read_all()
+pub fn get_ms_accounts() -> Vec<model::MsAccount> {
+    model::read_all()
 }
 
 /// 移除指定 uuid 的正版账号（连同其长期 refresh_token）。删除当前账号后自动回退到上一账号。
 #[tauri::command]
 pub fn remove_ms_account(uuid: String) -> Result<(), String> {
-    crate::auth::model::remove(&uuid)
+    model::remove(&uuid)
 }
 
 /// 切换当前正版账号：按 uuid 找到账号，refresh_token 静默刷新后置为当前。
 /// refresh_token 失效时返回错误（该账号需重新走 OAuth 登录）。
 #[tauri::command]
-pub async fn switch_ms_account(uuid: String) -> Result<MsAccount, String> {
-    let account = crate::auth::model::read_all()
+pub async fn switch_ms_account(uuid: String) -> Result<model::MsAccount, String> {
+    let account = model::read_all()
         .into_iter()
         .find(|a| a.uuid == uuid)
         .ok_or("该账号不在列表中，请重新登录")?;
     let refreshed = microsoft::refresh_login(&account)
         .await
         .map_err(|e| e.to_string())?;
-    crate::auth::model::save(&refreshed)?;
+    model::save(&refreshed)?;
     Ok(refreshed)
 }
 
@@ -91,7 +95,6 @@ pub async fn switch_ms_account(uuid: String) -> Result<MsAccount, String> {
 /// 不依赖已下载版本：新版 jar 纹理路径已改为 player/wide|slim 子目录，旧扫描逻辑必然失败。
 #[tauri::command]
 pub fn fetch_default_skin(skin: String) -> Result<String, String> {
-    use base64::Engine;
     let data: &[u8] = match skin.as_str() {
         "steve" => include_bytes!("../../resources/steve.png"),
         "alex" => include_bytes!("../../resources/alex.png"),
@@ -122,6 +125,7 @@ async fn fetch_skin_official(uuid: String) -> Result<String, String> {
 pub async fn fetch_account_skin(uuid: String) -> Result<String, String> {
     fetch_skin_for_avatar(uuid).await
 }
+
 /// 正版玩家皮肤 + 模型类型（供 3D 头像渲染：一次 IPC 拿全，避免两次网络往返）。
 #[derive(serde::Serialize)]
 pub struct SkinProfile {
@@ -144,9 +148,10 @@ pub async fn fetch_account_skin_profile(uuid: String) -> Result<SkinProfile, Str
 /// 拉取第三方账号（authlib-injector / 皮肤站）的皮肤 PNG（base64，供 3D 头像）。
 #[tauri::command]
 pub async fn fetch_external_skin(api_url: String, uuid: String) -> Result<String, String> {
-    let (url, _model) = crate::auth::external::external_skin_info(&api_url, &uuid).await?;
+    let (url, _model) = external::external_skin_info(&api_url, &uuid).await?;
     account::fetch_b64(&url, "下载皮肤").await
 }
+
 /// 拉取第三方账号（authlib-injector / 皮肤站）皮肤 PNG + 模型类型（slim/classic），
 /// 一次 IPC 供 3D 头像渲染。
 #[tauri::command]
@@ -154,15 +159,13 @@ pub async fn fetch_external_skin_profile(
     api_url: String,
     uuid: String,
 ) -> Result<SkinProfile, String> {
-    let (url, model) = crate::auth::external::external_skin_info(&api_url, &uuid).await?;
+    let (url, model) = external::external_skin_info(&api_url, &uuid).await?;
     let b64 = account::fetch_b64(&url, "下载皮肤").await?;
     Ok(SkinProfile { skin: b64, model })
 }
 
-
 /// base64 皮肤字节 → 写文件（两个保存命令共用尾段）。
 async fn write_b64_file(b64: &str, path: &str) -> Result<(), String> {
-    use base64::Engine;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(b64)
         .map_err(|e| format!("皮肤数据解码失败\n{e}"))?;
@@ -221,12 +224,12 @@ pub async fn disable_cape(access_token: String) -> Result<(), String> {
 
 /// 刷新正版账号（静默，refresh_token 失效时返回错误）。
 #[tauri::command]
-pub async fn refresh_ms_account() -> Result<MsAccount, String> {
-    let account = crate::auth::model::read().ok_or("未登录 Microsoft 账号")?;
+pub async fn refresh_ms_account() -> Result<model::MsAccount, String> {
+    let account = model::read().ok_or("未登录 Microsoft 账号")?;
     let refreshed = microsoft::refresh_login(&account)
         .await
         .map_err(|e| e.to_string())?;
-    crate::auth::model::save(&refreshed)?;
+    model::save(&refreshed)?;
     Ok(refreshed)
 }
 
@@ -238,11 +241,11 @@ pub async fn external_login(
     api_url: String,
     username: String,
     password: String,
-) -> Result<crate::auth::external::ExternalAccount, String> {
-    let acc = crate::auth::external::login(&api_url, &username, &password).await?;
-    crate::auth::external::save(&acc)?;
+) -> Result<external::ExternalAccount, String> {
+    let acc = external::login(&api_url, &username, &password).await?;
+    external::save(&acc)?;
     // 登录成功即确保 authlib-injector.jar 就绪（启动注入用）；失败不阻塞登录
-    if let Err(e) = crate::auth::external::ensure_jar().await {
+    if let Err(e) = external::ensure_jar().await {
         eprintln!("[external] authlib-injector 下载失败: {e}");
     }
     Ok(acc)
@@ -250,14 +253,14 @@ pub async fn external_login(
 
 /// 第三方账号列表。
 #[tauri::command]
-pub fn get_external_accounts() -> Vec<crate::auth::external::ExternalAccount> {
-    crate::auth::external::read_all()
+pub fn get_external_accounts() -> Vec<external::ExternalAccount> {
+    external::read_all()
 }
 
 /// 切换当前第三方账号（置为列表末尾 = 启用）。
 #[tauri::command]
 pub fn switch_external_account(api_url: String, uuid: String) -> Result<(), String> {
-    crate::auth::external::switch(&api_url, &uuid)
+    external::switch(&api_url, &uuid)
 }
 
 /// 刷新第三方账号（refresh：新 token + 最新角色列表 + 角色变化同步）。
@@ -265,8 +268,8 @@ pub fn switch_external_account(api_url: String, uuid: String) -> Result<(), Stri
 pub async fn refresh_external_account(
     api_url: String,
     uuid: String,
-) -> Result<crate::auth::external::ExternalAccount, String> {
-    crate::auth::external::refresh_account(&api_url, &uuid).await
+) -> Result<external::ExternalAccount, String> {
+    external::refresh_account(&api_url, &uuid).await
 }
 
 /// 切换第三方账号角色（refresh + selectedProfile，无密码）。
@@ -276,25 +279,25 @@ pub async fn switch_external_role(
     uuid: String,
     profile_id: String,
     profile_name: String,
-) -> Result<crate::auth::external::ExternalAccount, String> {
-    crate::auth::external::switch_role(&api_url, &uuid, &profile_id, &profile_name).await
+) -> Result<external::ExternalAccount, String> {
+    external::switch_role(&api_url, &uuid, &profile_id, &profile_name).await
 }
 
 /// 移除第三方账号（api_url + uuid 定位）。
 #[tauri::command]
 pub fn remove_external_account(api_url: String, uuid: String) -> Result<(), String> {
-    crate::auth::external::remove(&api_url, &uuid)
+    external::remove(&api_url, &uuid)
 }
 
 /// 读取第三方配置（无配置回默认内置预设）。
 /// 模型与默认值在 auth/external.rs（命令层薄胶水）。
 #[tauri::command]
-pub fn get_third_party_config() -> crate::auth::external::ThirdPartyConfig {
-    let cfg: crate::auth::external::ThirdPartyConfig =
-        crate::persist::read(crate::constants::SECT_THIRD_PARTY).unwrap_or_default();
+pub fn get_third_party_config() -> external::ThirdPartyConfig {
+    let cfg: external::ThirdPartyConfig =
+        persist::read(constants::SECT_THIRD_PARTY).unwrap_or_default();
     if cfg.servers.is_empty() {
-        return crate::auth::external::ThirdPartyConfig {
-            servers: crate::auth::external::default_third_party_servers(),
+        return external::ThirdPartyConfig {
+            servers: external::default_third_party_servers(),
         };
     }
     cfg
@@ -302,7 +305,6 @@ pub fn get_third_party_config() -> crate::auth::external::ThirdPartyConfig {
 
 /// 保存第三方配置（预设列表）。
 #[tauri::command]
-pub fn save_third_party_config(config: crate::auth::external::ThirdPartyConfig) -> Result<(), String> {
-    crate::persist::save(crate::constants::SECT_THIRD_PARTY, &config)
-        .map_err(|e| format!("保存失败\n{e}"))
+pub fn save_third_party_config(config: external::ThirdPartyConfig) -> Result<(), String> {
+    persist::save(constants::SECT_THIRD_PARTY, &config).map_err(|e| format!("保存失败\n{e}"))
 }

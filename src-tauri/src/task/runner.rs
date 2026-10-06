@@ -6,21 +6,29 @@ use std::sync::Arc;
 
 use tauri::AppHandle;
 
-use crate::config::downloader::model::{DownloadSource, DownloaderConfig};
+use crate::config::downloader::{DownloadSource, DownloaderConfig};
 use crate::constants;
 use crate::downloader::fetcher;
-use crate::downloader::mod_loader;
-use crate::downloader::model::VersionJson;
-use crate::downloader::progress::ProgressCounters;
+use crate::downloader::path_lock::PathLock;
+use crate::downloader::{progress, reuse};
+use crate::game::loader;
+use crate::game::resource::{assets, extract, library};
+use crate::game::resource::assets::AssetIndexRef;
+use crate::game::version::model::VersionJson;
+use crate::game::version::dir::resolve_version_dir;
+use crate::game::version::meta;
 use crate::persist;
-use crate::task::progress::{
-    cancelled, set_cancelled, set_completed, set_error, set_phase, set_total, step_done, EmitLoop,
-};
-use crate::task::repair::{count_assets_all, count_natives_missing};
 use crate::task::{
-    self, DownloadTask, StepInfo, StepKind, StepSpec, StepStatus, TaskProgress, TaskSpec,
-    TaskStatus,
+    self,
+    progress::{
+        cancelled, set_cancelled, set_completed, set_error, set_phase, set_total, step_done,
+        EmitLoop,
+    },
+    repair::{count_assets_all, count_natives_missing},
+    runner::progress::ProgressCounters,
+    DownloadTask, StepInfo, StepKind, StepSpec, StepStatus, TaskProgress, TaskSpec, TaskStatus,
 };
+use crate::util;
 
 /// 完整下载任务主体：version json → client.jar / libraries / assets → natives → ModLoader/OptiFine → Fabric API。
 /// 任务配置（含 ModLoader 选择）由命令层校验后经 DownloadTask 传入。
@@ -53,14 +61,14 @@ pub async fn run_task(
     // .minecraft 根（HMCL/PCL2/官方启动器迁移用户已有数百 MB 文件），
     // 命中后 libraries/assets/client jar 先走 size+sha1 校验的本地复制，免全量重下。
     // 全新 .minecraft（无 libraries/）探测为 None，行为与现状一致。
-    let reuse_root = crate::downloader::reuse::LocalRuntimeSource::discover(&vdir);
+    let reuse_root = reuse::LocalRuntimeSource::discover(&vdir);
     // 任务开始前该版本目录是否已存在：
     // - 全新下载（目录不存在）→ 下载失败时整删残缺目录，免手动清理
     // - 补全文件（目录已存在，如重下缺失库/修复）→ 失败不删，保留已有版本
     let vdir_existed_before = vdir.exists();
 
     // 同版本互斥：路径被其他任务占用时拒绝，避免并发互相覆盖/清理
-    let _lock = match task::PathLock::try_acquire(task::global(), &vdir) {
+    let _lock = match PathLock::try_acquire(&vdir) {
         Some(l) => l,
         None => {
             return set_error(
@@ -124,9 +132,12 @@ pub async fn run_task(
     // 才登记清理——补全已有版本时取消不删，避免误删用户已有文件
     // （与下方失败路径 `if !vdir_existed_before { remove_dir_all }` 语义一致）。
     if !vdir_existed_before {
-        // try_lock 失败（并发 cancel 持锁）时放弃登记，不 panic——与终态收口风格一致
-        if let Some(p) = progress.try_lock() {
-            task::global().set_cleanup_path(&p.task_id, vdir.clone());
+        // try_lock 失败（并发 cancel 持锁）时放弃登记，不 panic——与终态收口风格一致。
+        // 先取 task_id 释放 progress 守卫再调 set_cleanup_path（后者取 inner 锁），
+        // 否则构成 progress→inner 反向锁序（ABBA）。
+        let cleanup_task_id = progress.try_lock().map(|p| p.task_id.clone());
+        if let Some(task_id) = cleanup_task_id {
+            task::global().set_cleanup_path(&task_id, vdir.clone());
         }
     }
 
@@ -134,7 +145,16 @@ pub async fn run_task(
     eprintln!("[task] 阶段B: 本地扫描开始");
     let lib_dir = mc.join("libraries");
     let scan = match init_local_scan(
-        &app, progress, &vj, &config, &mc, &lib_dir, &mut specs, cancel,
+        &app,
+        progress,
+        ScanInput {
+            vj: &vj,
+            config: &config,
+            mc: &mc,
+            lib_dir: &lib_dir,
+        },
+        &mut specs,
+        cancel,
     )
     .await
     {
@@ -273,20 +293,10 @@ pub async fn run_task(
             // 失败降级网络下载（与 libraries/assets 一致，不致命）
             let client_rel = format!("versions/{}/{}.jar", dir_name, dir_name);
             if let Some(src) = reuse_root.as_ref().and_then(|r| {
-                crate::downloader::reuse::classify_local_artifact(
-                    r,
-                    &client_rel,
-                    Some(c.size),
-                    Some(&c.sha1),
-                )
+                reuse::classify_local_artifact(r, &client_rel, Some(c.size), Some(&c.sha1))
             }) {
-                if let Err(e) = crate::downloader::reuse::copy_verified_local(
-                    &src,
-                    &jar_path,
-                    c.size,
-                    Some(cb.clone()),
-                )
-                .await
+                if let Err(e) =
+                    reuse::copy_verified_local(&src, &jar_path, c.size, Some(cb.clone())).await
                 {
                     let urls: Vec<String> =
                         sources.iter().map(|src| src.mirror_url(&c.url)).collect();
@@ -311,7 +321,7 @@ pub async fn run_task(
     };
 
     let libs = async {
-        crate::downloader::library::download_libraries(
+        library::download_libraries(
             &vj.libraries,
             &lib_dir,
             config.concurrency as usize,
@@ -333,10 +343,12 @@ pub async fn run_task(
     };
 
     let asst = async {
-        crate::downloader::assets::download_assets(
-            &vj.asset_index.url,
-            &vj.asset_index.id,
-            &vj.asset_index.sha1,
+        assets::download_assets(
+            AssetIndexRef {
+                url: &vj.asset_index.url,
+                id: Some(&vj.asset_index.id),
+                sha1: Some(&vj.asset_index.sha1),
+            },
             &config,
             config.concurrency as usize,
             reuse_root.clone(),
@@ -356,7 +368,7 @@ pub async fn run_task(
     };
 
     let natives = async {
-        crate::downloader::extract::process_natives(
+        extract::process_natives(
             &vj.libraries,
             &lib_dir,
             &src_refs,
@@ -378,37 +390,41 @@ pub async fn run_task(
     let loader_dl = async {
         if let Some(loader) = loader {
             // 阶段钩子：安装内部在对应事件点推进 LoaderConfig/LoaderLibs 两步
-            let hook = |ev: mod_loader::LoaderEvent| match ev {
-                mod_loader::LoaderEvent::ConfigDone => {
+            let hook = |ev: loader::LoaderEvent| match ev {
+                loader::LoaderEvent::ConfigDone => {
                     if let Some(i) = i_cfg {
                         step_done(&app, progress, i);
                     }
                     cfg_done.store(true, Ordering::Relaxed);
                 }
-                mod_loader::LoaderEvent::LibsDone => {
+                loader::LoaderEvent::LibsDone => {
                     if let Some(i) = i_lbs {
                         step_done(&app, progress, i);
                     }
                     libs_done.store(true, Ordering::Relaxed);
                 }
             };
-            let result = mod_loader::install_loader(
+            let result = loader::install_loader(
                 loader.kind,
                 mc_version,
                 &loader.version,
-                &dir_name,
-                &vdir,
-                &parent_text,
-                &config,
-                &ProgressCounters {
-                    bytes: Arc::clone(&bytes_counter),
-                    step_bytes: Arc::clone(&loader_libs_step_bytes),
-                    step_total: Arc::clone(&loader_libs_step_total),
-                    ..Default::default()
+                loader::VersionTarget {
+                    dir_name: &dir_name,
+                    vdir: &vdir,
                 },
-                // Forge/NeoForge（installer 式）用于 kill 子进程；Fabric/Quilt 内部忽略
-                Some(cancel),
-                Some(&hook),
+                &parent_text,
+                loader::InstallCtx {
+                    config: &config,
+                    pc: &ProgressCounters {
+                        bytes: Arc::clone(&bytes_counter),
+                        step_bytes: Arc::clone(&loader_libs_step_bytes),
+                        step_total: Arc::clone(&loader_libs_step_total),
+                        ..Default::default()
+                    },
+                    // Forge/NeoForge（installer 式）用于 kill 子进程；Fabric/Quilt 内部忽略
+                    cancel,
+                    hook: Some(&hook),
+                },
             )
             .await;
             if let Err(e) = result {
@@ -427,27 +443,33 @@ pub async fn run_task(
             let mode = match loader {
                 Some(l) => match l.kind {
                     task::LoaderKind::Fabric | task::LoaderKind::Quilt => {
-                        mod_loader::OptifineMode::FabricLike
+                        loader::OptifineMode::FabricLike
                     }
                     task::LoaderKind::Forge | task::LoaderKind::NeoForge => {
-                        mod_loader::OptifineMode::ForgeLike
+                        loader::OptifineMode::ForgeLike
                     }
                 },
-                None => mod_loader::OptifineMode::Vanilla,
+                None => loader::OptifineMode::Vanilla,
             };
-            if let Err(e) = mod_loader::install_optifine(
+            if let Err(e) = loader::install_optifine(
                 mc_version,
                 of,
                 "HD_U",
-                &dir_name,
-                &vdir,
-                &config,
+                loader::VersionTarget {
+                    dir_name: &dir_name,
+                    vdir: &vdir,
+                },
                 mode,
-                &ProgressCounters {
-                    bytes: Arc::clone(&bytes_counter),
-                    step_bytes: Arc::clone(&optifine_step_bytes),
-                    step_total: Arc::clone(&optifine_step_total),
-                    ..Default::default()
+                loader::InstallCtx {
+                    config: &config,
+                    pc: &ProgressCounters {
+                        bytes: Arc::clone(&bytes_counter),
+                        step_bytes: Arc::clone(&optifine_step_bytes),
+                        step_total: Arc::clone(&optifine_step_total),
+                        ..Default::default()
+                    },
+                    cancel,
+                    hook: None,
                 },
             )
             .await
@@ -467,7 +489,7 @@ pub async fn run_task(
             let url = api.url.as_str();
             // URL 最后一段做 percent-decode（文件名中的 `+` 被编码为 %2B）
             let filename = percent_encoding::percent_decode_str(
-                crate::util::url_file_name(url).unwrap_or("fabric-api.jar"),
+                util::url_file_name(url).unwrap_or("fabric-api.jar"),
             )
             .decode_utf8_lossy()
             .into_owned();
@@ -480,7 +502,7 @@ pub async fn run_task(
             // 注意：fabric-api 只发布在 Modrinth/GitHub，maven.fabricmc.net 及其
             // 镜像（BMCLAPI /maven）上没有该构件，此前追加的 BMCLAPI maven 候选
             // 永远 404，只会污染"所有源均失败"的错误信息，已移除。
-            let urls = crate::util::community_download_urls(url).await;
+            let urls = util::community_download_urls(url).await;
             // 字节级进度：增量累加进 bytes_counter（EmitLoop 显示速度）与 Fabric API 步骤计数
             let progress_cb = ProgressCounters {
                 bytes: Arc::clone(&bytes_counter),
@@ -550,7 +572,7 @@ async fn fetch_version_json(
     version_url: &str,
     config: &DownloaderConfig,
 ) -> Result<(VersionJson, String), String> {
-    let text = crate::downloader::version::fetch_version_json_text(version_url, config).await?;
+    let text = meta::fetch_version_json_text(version_url, config).await?;
     let vj: VersionJson =
         serde_json::from_str(&text).map_err(|e| format!("解析 version json 失败\n{}", e))?;
     Ok((vj, text))
@@ -584,7 +606,7 @@ fn resolve_target_dir(task: &DownloadTask, mc: &std::path::Path) -> TargetDir {
             vdir: mc.join("versions").join(&dir_name),
         };
     }
-    let (name, p) = crate::downloader::resolve_version_dir(mc, &task.version_id);
+    let (name, p) = resolve_version_dir(mc, &task.version_id);
     TargetDir {
         dir_name: name,
         vdir: p,
@@ -617,29 +639,38 @@ struct LocalScan {
     initial_bytes: u64,
 }
 
+/// 本地扫描的数据输入（与任务句柄参数分开传）。
+struct ScanInput<'a> {
+    vj: &'a VersionJson,
+    config: &'a DownloaderConfig,
+    mc: &'a std::path::Path,
+    lib_dir: &'a std::path::Path,
+}
+
 /// 阶段 B：检测本地已有文件（库/jar/natives 快查 + 资产清单 fetch + 多线程 sha1），
 /// 重建步骤列表（零缺失维度过滤），并给出总进度基线（先全量总数后覆盖，避免 UI 死等）。
 /// 期间实时上报检测进度；资产清单 fetch 失败返回 Err（调用方 set_error）。
 /// `cancel`：扫描轮询取消（count_assets_all 内部检查），任务被取消时返回
 /// Err("任务已取消")，调用方转 set_cancelled。
-/// 8 个参数均为语义必要（阶段 B 的完整输入输出契约），不合并。
-#[allow(clippy::too_many_arguments)]
 async fn init_local_scan(
     app: &AppHandle,
     progress: &Arc<Mutex<TaskProgress>>,
-    vj: &VersionJson,
-    config: &DownloaderConfig,
-    mc: &std::path::Path,
-    lib_dir: &std::path::Path,
+    scan: ScanInput<'_>,
     specs: &mut Vec<StepSpec>,
     cancel: &Arc<AtomicBool>,
 ) -> Result<LocalScan, String> {
+    let ScanInput {
+        vj,
+        config,
+        mc,
+        lib_dir,
+    } = scan;
     eprintln!("[task]   B1: 库/natives 统计");
-    let lib_total_all = crate::downloader::library::count_total(&vj.libraries) as u32;
-    let lib_pending = crate::downloader::library::count_pending(&vj.libraries, lib_dir) as u32;
+    let lib_total_all = library::count_total(&vj.libraries) as u32;
+    let lib_pending = library::count_pending(&vj.libraries, lib_dir) as u32;
     let lib_existing = lib_total_all - lib_pending;
-    let lib_total_bytes = crate::downloader::library::total_lib_bytes(&vj.libraries);
-    let lib_existing_bytes = crate::downloader::library::existing_lib_bytes(&vj.libraries, lib_dir);
+    let lib_total_bytes = library::total_lib_bytes(&vj.libraries);
+    let lib_existing_bytes = library::existing_lib_bytes(&vj.libraries, lib_dir);
 
     let jar_total = if vj.downloads.client.is_some() {
         1u32
@@ -658,9 +689,11 @@ async fn init_local_scan(
     task::update_and_emit(app, progress, |p| p.current_phase = "获取资源清单".into());
     eprintln!("[task]   B2: fetch asset index ({})", vj.asset_index.url);
     let (asst_pending, asst_pending_bytes) = count_assets_all(
-        &vj.asset_index.url,
-        Some(&vj.asset_index.id),
-        Some(&vj.asset_index.sha1),
+        AssetIndexRef {
+            url: &vj.asset_index.url,
+            id: Some(&vj.asset_index.id),
+            sha1: Some(&vj.asset_index.sha1),
+        },
         config,
         mc,
         Some(cancel),
@@ -765,4 +798,3 @@ async fn init_local_scan(
 }
 
 // JDK 安装任务已拆分至 task/jdk.rs；此处 re-export 兼容 commands/task.rs 的 runner:: 调用方。
-pub use super::jdk::run_install_jdk;
