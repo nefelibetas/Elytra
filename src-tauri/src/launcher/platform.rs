@@ -1,7 +1,7 @@
 // ── 平台级运行调节：GPU 偏好 / 内存优化 / 进程优先级 ──
 // 纯逻辑无命令依赖，由 spawn_game 在启动前后调用。
 
-use crate::launcher::model::ProcessPriority;
+use crate::launcher::model::{ProcessPriority, ProcessPriority as P};
 
 /// 设置 Windows DirectX 用户 GPU 偏好（HKCU\Software\Microsoft\DirectX\UserGpuPreferences）。
 /// 开启：java.exe → GpuPreference=2;（高性能独显）；关闭：删除该项。
@@ -150,8 +150,6 @@ pub fn optimize_launcher_memory() {
 
 /// 设置游戏进程优先级（Windows: SetPriorityClass；Linux: setpriority nice 值）。
 pub fn set_process_priority(pid: u32, priority: ProcessPriority) {
-    use crate::launcher::model::ProcessPriority as P;
-
     #[cfg(target_os = "windows")]
     {
         let class = match priority {

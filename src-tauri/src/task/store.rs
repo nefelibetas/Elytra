@@ -8,15 +8,15 @@
 //! Windows/Linux exe 旁 `Elytra/`，macOS `~/Library/Application Support/Elytra/`）。
 
 use std::sync::LazyLock;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
 
-use crate::task::model::{DownloadFilesTask, DownloadTask};
 use crate::task::TaskStatus;
-use crate::util::block_on;
-use crate::util::config_dir;
+use crate::task::model::{DownloadFilesTask, DownloadTask, ModpackInstallSpec};
+use crate::util::{block_on, config_dir};
 
 /// 任务恢复凭证：重建任务所需的最小信息（各任务一）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,7 +30,7 @@ pub enum JobSpec {
     /// JDK 安装（下载缺失 Java 运行时）
     InstallJdk { major: u32 },
     /// 整合包安装（单卡片全流程；恢复 = 重跑整卡，各环节幂等）
-    ModpackInstall(crate::task::model::ModpackInstallSpec),
+    ModpackInstall(ModpackInstallSpec),
 }
 
 impl JobSpec {
@@ -75,14 +75,21 @@ fn db_path() -> std::path::PathBuf {
 /// 同步执行异步 DB 操作（复用 util::block_on；任务级低频操作，阻塞毫秒级可接受）。
 /// 注意：block_on 内不得再嵌套 block_on——tokio 禁止"runtime 内启动 runtime"。
 fn pool() -> Result<&'static SqlitePool, String> {
-    POOL.as_ref().map_err(|e| e.clone())
+    POOL.as_ref().map_err(|e| {
+        // 池初始化失败是环境/权限问题，留痕一次即可（后续每次调用不再刷屏）；
+        // 控制流不变：DB 不可用不影响任务执行，只是快照/崩溃恢复停用。
+        static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            eprintln!("[task-store] 任务快照数据库不可用，进度快照与崩溃恢复停用: {e}");
+        }
+        e.clone()
+    })
 }
 
 static POOL: LazyLock<Result<SqlitePool, String>> = LazyLock::new(|| {
     let path = db_path();
     block_on(async {
         // 直接以路径连接（Windows 绝对路径用 URL 形式会被误拆 host/盘符）
-        use sqlx::sqlite::SqliteConnectOptions;
         let opts = SqliteConnectOptions::new()
             .filename(&path)
             .create_if_missing(true)
@@ -116,7 +123,6 @@ static POOL: LazyLock<Result<SqlitePool, String>> = LazyLock::new(|| {
 });
 
 fn now() -> i64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)

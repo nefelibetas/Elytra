@@ -6,11 +6,16 @@
 use tauri::AppHandle;
 
 use crate::constants;
+use crate::events;
 use crate::jdk::model::JdkConfig;
-use crate::launcher::args::build_launch_command;
+use crate::launcher::args::{build_launch_command, LaunchRequest};
 use crate::launcher::env;
 use crate::launcher::platform;
+use crate::launcher::process;
 use crate::launcher::skin;
+use crate::persist;
+use crate::task;
+use crate::util;
 
 // ── 启动装配（build_auth / fill_missing_xuid / prepare_launch 已下沉 launcher/process.rs）──
 
@@ -26,9 +31,9 @@ pub async fn check_launch_env(version_dir_name: String) -> Result<String, String
         env::load_launch_config(&version_dir_name)?;
 
     // 游戏完整性 + 旧式 natives 解压准备
-    crate::launcher::process::ensure_game_ready(&version_json, &mc_dir, &version_dir_name)?;
+    process::ensure_game_ready(&version_json, &mc_dir, &version_dir_name)?;
 
-    let java_env = crate::persist::read::<JdkConfig>(constants::SECT_JDK)
+    let java_env = persist::read::<JdkConfig>(constants::SECT_JDK)
         .ok()
         .and_then(|c| env::selected_jdk_version(&c))
         .unwrap_or_else(|| "自动选择".into());
@@ -47,7 +52,7 @@ pub async fn spawn_game(
     xuid: String,
 ) -> Result<u32, String> {
     let (mut auth, java_path, version_json, mc_dir, launcher_config, java_major) =
-        crate::launcher::process::prepare_launch(
+        process::prepare_launch(
             &version_dir_name,
             &auth_mode,
             &username,
@@ -60,7 +65,7 @@ pub async fn spawn_game(
     skin::apply_offline_skin(&mut auth);
 
     // 启动前完整性检测 + 旧式 natives 解压准备
-    crate::launcher::process::ensure_game_ready(&version_json, &mc_dir, &version_dir_name)?;
+    process::ensure_game_ready(&version_json, &mc_dir, &version_dir_name)?;
 
     // 离线皮肤：构造 --user-properties 参数（1.19.2 以下版本生效；Alex 注入 slim 纹理，Steve 默认）
     let user_properties = skin::build_user_properties(&auth);
@@ -74,17 +79,19 @@ pub async fn spawn_game(
     let cmd = build_launch_command(
         &java_path,
         &version_json,
-        &version_dir_name,
-        &mc_dir,
-        &launcher_config,
-        &auth,
-        java_major,
-        &user_properties,
+        &LaunchRequest {
+            version_dir_name: &version_dir_name,
+            mc_dir: &mc_dir,
+            config: &launcher_config,
+            auth: &auth,
+            java_major_version: java_major,
+            user_properties: &user_properties,
+        },
     );
 
     // 启动前执行命令（非空时运行；失败则中止启动）
     if !launcher_config.pre_launch_cmd.trim().is_empty() {
-        crate::launcher::process::run_pre_launch_command(&launcher_config.pre_launch_cmd)
+        process::run_pre_launch_command(&launcher_config.pre_launch_cmd)
             .map_err(|e| format!("启动前命令执行失败\n{e}"))?;
     }
 
@@ -107,7 +114,7 @@ pub async fn spawn_game(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .stdin(std::process::Stdio::null());
-    let mut child = crate::launcher::process::spawn_game_child(&mut command)?;
+    let mut child = process::spawn_game_child(&mut command)?;
 
     let pid = child.id();
     // 进程优先级（Windows: SetPriorityClass；进程刚启动即设置）
@@ -117,11 +124,11 @@ pub async fn spawn_game(
     let log_path = mc_dir.join("logs").join("elytra-launch.log");
     if let Some(mut so) = child.stdout.take() {
         let lp = log_path.clone();
-        std::thread::spawn(move || crate::launcher::process::drain_output(&mut so, &lp, false));
+        std::thread::spawn(move || process::drain_output(&mut so, &lp, false));
     }
     if let Some(mut se) = child.stderr.take() {
         let lp = log_path.clone();
-        std::thread::spawn(move || crate::launcher::process::drain_output(&mut se, &lp, true));
+        std::thread::spawn(move || process::drain_output(&mut se, &lp, true));
     }
 
     // 后台监听线程（合一循环：窗口可见轮询 + 退出等待）由 launcher/process.rs 承载；
@@ -132,23 +139,23 @@ pub async fn spawn_game(
     let label_window = version_dir_name.clone();
     let label_exit = version_dir_name.clone();
     let crash_dir = game_dir.join("crash-reports");
-    crate::launcher::process::watch_game_process(
+    process::watch_game_process(
         child,
         pid,
         crash_dir,
         300,
         move || {
-            crate::task::emit_event(
+            task::emit_event(
                 &app_window,
-                crate::events::GAME_WINDOW_VISIBLE,
+                events::GAME_WINDOW_VISIBLE,
                 (pid, label_window.clone()),
             );
         },
         move |exit_code, crash_report| {
             // 退出码随事件送出：前端据此区分正常退出与崩溃（非 0 → 错误级提示）
-            crate::task::emit_event(
+            task::emit_event(
                 &app_exit,
-                crate::events::GAME_EXITED,
+                events::GAME_EXITED,
                 (pid, label_exit, exit_code, crash_report),
             );
         },
@@ -161,13 +168,13 @@ pub async fn spawn_game(
 /// 启动器捕获日志 <game_dir>/logs/elytra-launch.log；读取逻辑在 launcher/process.rs。
 #[tauri::command]
 pub async fn get_game_log(game_dir: String, version_name: String) -> String {
-    crate::launcher::process::read_game_log(std::path::Path::new(&game_dir), &version_name)
+    process::read_game_log(std::path::Path::new(&game_dir), &version_name)
 }
 
 /// 打开启动器日志所在目录（exe 旁 Elytra/，launcher.log 所在地）。
 #[tauri::command]
 pub fn open_launcher_log_dir(app: AppHandle) -> Result<(), String> {
-    let dir = crate::util::config_dir();
+    let dir = util::config_dir();
     super::gamedirs::open_folder(app, dir.to_string_lossy().to_string())
 }
 
@@ -175,17 +182,17 @@ pub fn open_launcher_log_dir(app: AppHandle) -> Result<(), String> {
 /// 文件不存在/不可读返回空字符串（不报错）。
 #[tauri::command]
 pub async fn get_launcher_log() -> String {
-    let path = crate::util::config_dir().join("launcher.log");
+    let path = util::config_dir().join("launcher.log");
     std::fs::read_to_string(path)
-        .map(|text| crate::util::tail_lines(&text))
+        .map(|text| util::tail_lines(&text))
         .unwrap_or_default()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::downloader::model::VersionJson;
-    use crate::launcher::model::{AuthMode, LauncherConfig, MemoryMode};
+    use crate::game::version::model::VersionJson;
+    use crate::launcher::model::{AuthMode, LauncherConfig, MemoryMode, WindowSize};
 
     /// 构造一个最小可用的版本 JSON（旧格式 minecraftArguments，保底参数路径）。
     fn minimal_version_json() -> VersionJson {
@@ -223,15 +230,17 @@ mod tests {
         let cmd = build_launch_command(
             std::path::Path::new("C:/java/bin/java.exe"),
             &vj,
-            "1.18.2",
-            std::path::Path::new("D:/Minecraft/.minecraft"),
-            config,
-            &AuthMode::Offline {
-                username: "tester".into(),
-                uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+            &LaunchRequest {
+                version_dir_name: "1.18.2",
+                mc_dir: std::path::Path::new("D:/Minecraft/.minecraft"),
+                config,
+                auth: &AuthMode::Offline {
+                    username: "tester".into(),
+                    uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+                },
+                java_major_version: 17,
+                user_properties: "",
             },
-            17,
-            "",
         );
         cmd.args
     }
@@ -248,7 +257,7 @@ mod tests {
     #[test]
     fn test_window_size_custom_passes_width_height() {
         let mut cfg = LauncherConfig::default();
-        cfg.window_size = crate::launcher::model::WindowSize::Custom(1920, 1080);
+        cfg.window_size = WindowSize::Custom(1920, 1080);
         let args = build_cmd(&cfg);
         assert!(args.contains(&"--width".into()));
         assert!(args.contains(&"1920".into()));
@@ -295,15 +304,17 @@ mod tests {
         let cmd = build_launch_command(
             std::path::Path::new("C:/java/bin/java.exe"),
             &vj,
-            "1.18.2",
-            std::path::Path::new("D:/Minecraft/.minecraft"),
-            &cfg,
-            &AuthMode::Offline {
-                username: "tester".into(),
-                uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+            &LaunchRequest {
+                version_dir_name: "1.18.2",
+                mc_dir: std::path::Path::new("D:/Minecraft/.minecraft"),
+                config: &cfg,
+                auth: &AuthMode::Offline {
+                    username: "tester".into(),
+                    uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+                },
+                java_major_version: 17,
+                user_properties: props,
             },
-            17,
-            props,
         );
         let joined = cmd.args.join(" ");
         assert!(
@@ -335,15 +346,17 @@ mod tests {
         let cmd = build_launch_command(
             std::path::Path::new("C:/java/bin/java.exe"),
             &vj,
-            "1.18.2",
-            std::path::Path::new("D:/Minecraft/.minecraft"),
-            &cfg,
-            &AuthMode::Offline {
-                username: "tester".into(),
-                uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+            &LaunchRequest {
+                version_dir_name: "1.18.2",
+                mc_dir: std::path::Path::new("D:/Minecraft/.minecraft"),
+                config: &cfg,
+                auth: &AuthMode::Offline {
+                    username: "tester".into(),
+                    uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+                },
+                java_major_version: 17,
+                user_properties: props,
             },
-            17,
-            props,
         );
         let joined = cmd.args.join(" ");
         assert!(joined.contains(props), "应注入 user properties: {joined}");
@@ -387,15 +400,17 @@ mod tests {
         let args = build_launch_command(
             std::path::Path::new("C:/java/bin/java.exe"),
             &vj,
-            "1.8.9",
-            std::path::Path::new("D:/Minecraft/.minecraft"),
-            &cfg,
-            &AuthMode::Offline {
-                username: "t".into(),
-                uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+            &LaunchRequest {
+                version_dir_name: "1.8.9",
+                mc_dir: std::path::Path::new("D:/Minecraft/.minecraft"),
+                config: &cfg,
+                auth: &AuthMode::Offline {
+                    username: "t".into(),
+                    uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+                },
+                java_major_version: 8,
+                user_properties: "",
             },
-            8,
-            "",
         )
         .args;
         // 默认：主类为 launchwrapper
@@ -407,15 +422,17 @@ mod tests {
         let args = build_launch_command(
             std::path::Path::new("C:/java/bin/java.exe"),
             &vj,
-            "1.8.9",
-            std::path::Path::new("D:/Minecraft/.minecraft"),
-            &cfg,
-            &AuthMode::Offline {
-                username: "t".into(),
-                uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+            &LaunchRequest {
+                version_dir_name: "1.8.9",
+                mc_dir: std::path::Path::new("D:/Minecraft/.minecraft"),
+                config: &cfg,
+                auth: &AuthMode::Offline {
+                    username: "t".into(),
+                    uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+                },
+                java_major_version: 8,
+                user_properties: "",
             },
-            8,
-            "",
         )
         .args;
         assert!(args.contains(&"net.minecraft.client.main.Main".to_string()));
@@ -463,15 +480,17 @@ mod tests {
         let args = build_launch_command(
             std::path::Path::new("C:/java/bin/java.exe"),
             &vj,
-            "1.18.2",
-            &tmp,
-            &cfg,
-            &AuthMode::Offline {
-                username: "t".into(),
-                uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+            &LaunchRequest {
+                version_dir_name: "1.18.2",
+                mc_dir: &tmp,
+                config: &cfg,
+                auth: &AuthMode::Offline {
+                    username: "t".into(),
+                    uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+                },
+                java_major_version: 17,
+                user_properties: "",
             },
-            17,
-            "",
         )
         .args;
         let cp_idx = args

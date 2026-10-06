@@ -2,22 +2,25 @@
 // scan_missing 被命令层调用；run_repair_task 为补全任务主体。
 // count_natives_missing / count_assets_all 为"缺失统计"共享助手，run_task 亦复用。
 
-use parking_lot::Mutex;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
+use parking_lot::Mutex;
 use tauri::AppHandle;
 
-use crate::config::downloader::model::{DownloadSource, DownloaderConfig};
+use crate::config::downloader::{DownloadSource, DownloaderConfig};
 use crate::constants;
 use crate::downloader::fetcher;
 use crate::downloader::hash::file_sha1_matches;
-use crate::downloader::library;
-use crate::downloader::model::{Artifact, Library, VersionJson};
+use crate::downloader::progress;
+use crate::game::resource::assets::AssetIndexRef;
+use crate::game::resource::{assets, extract, library};
+use crate::game::version::model::{Artifact, Library, VersionJson};
+use crate::launcher;
 use crate::persist;
 use crate::task::{self, StepStatus, TaskProgress, TaskStatus};
-
+use crate::util::sha1_sub_dir;
 use super::progress::{
     cancelled, set_cancelled, set_completed, set_error, set_phase, set_total, spawn_tail_loop,
     step_done, EmitLoop,
@@ -40,7 +43,7 @@ pub struct MissingReport {
 /// 原版目录可能被重命名过、loader 目录的 json 是 installer 合成的，只能删除重装。
 fn read_version_json(vdir: &Path) -> Result<VersionJson, String> {
     let dir_name = vdir.file_name().and_then(|s| s.to_str()).unwrap_or("");
-    let vj_path = crate::launcher::args::find_version_json(vdir, dir_name).ok_or_else(|| {
+    let vj_path = launcher::args::find_version_json(vdir, dir_name).ok_or_else(|| {
         format!(
             "版本 JSON 缺失\n目录 {} 下未找到版本 JSON 文件，无法修复，请删除该版本后重新下载安装",
             vdir.display()
@@ -62,9 +65,8 @@ pub fn missing_native_artifacts<'a, 'b>(
     libraries: &'a [Library],
     lib_dir: &'b Path,
 ) -> impl Iterator<Item = &'a Artifact> + use<'a, 'b> {
-    use crate::downloader::extract::legacy_classifier_artifact;
     libraries.iter().filter_map(move |lib| {
-        let artifact = legacy_classifier_artifact(lib)?;
+        let artifact = extract::legacy_classifier_artifact(lib)?;
         let dest = lib_dir.join(&artifact.path);
         if dest.exists() && file_sha1_matches(&dest, &artifact.sha1) {
             None
@@ -95,7 +97,7 @@ pub async fn scan_missing(version_dir_name: &str) -> Result<MissingReport, Strin
     let vj = read_version_json(&vdir)?;
 
     // 1. client.jar（扫描目录内实际 jar；0 字节或 sha1 不匹配视为缺失/损坏）
-    let jar_missing = match crate::launcher::args::find_file_in_dir(&vdir, "jar") {
+    let jar_missing = match launcher::args::find_file_in_dir(&vdir, "jar") {
         Some(p) => {
             let len_zero = p.metadata().map(|m| m.len() == 0).unwrap_or(true);
             if len_zero {
@@ -121,9 +123,11 @@ pub async fn scan_missing(version_dir_name: &str) -> Result<MissingReport, Strin
     // 4. 资源（sha1 比对本地缓存，多线程；带 index id/sha1 走本地缓存，避免重复拉取；
     //    拉取/解析失败显式报错，不再静默视为"完整"）
     let (asst_pending, _) = count_assets_all(
-        &vj.asset_index.url,
-        Some(&vj.asset_index.id),
-        Some(&vj.asset_index.sha1),
+        AssetIndexRef {
+            url: &vj.asset_index.url,
+            id: Some(&vj.asset_index.id),
+            sha1: Some(&vj.asset_index.sha1),
+        },
         &config,
         &mc,
         None,
@@ -273,7 +277,7 @@ pub async fn run_repair_task(
     }
     .spawn();
 
-    let pc_jar = crate::downloader::progress::ProgressCounters {
+    let pc_jar = progress::ProgressCounters {
         files: Arc::clone(&jar_counter),
         bytes: Arc::clone(&jar_bytes),
         step_total: Arc::clone(&jar_total),
@@ -282,7 +286,7 @@ pub async fn run_repair_task(
     let jar = repair_jar(&vj, &vdir, version_dir_name, jar_missing, &sources, &pc_jar);
 
     let lib_dir = mc.join("libraries");
-    let pc_lib = crate::downloader::progress::ProgressCounters {
+    let pc_lib = progress::ProgressCounters {
         files: Arc::clone(&lib_counter),
         bytes: Arc::clone(&bytes_counter),
         ..Default::default() // 占位：repair 分步进度走文件数回退
@@ -297,15 +301,17 @@ pub async fn run_repair_task(
         Some(cancel),
     );
 
-    let pc_asst = crate::downloader::progress::ProgressCounters {
+    let pc_asst = progress::ProgressCounters {
         files: Arc::clone(&asst_counter),
         bytes: Arc::clone(&bytes_counter),
         ..Default::default() // 占位：repair 分步进度走文件数回退
     };
-    let asst = crate::downloader::assets::download_assets(
-        &vj.asset_index.url,
-        &vj.asset_index.id,
-        &vj.asset_index.sha1,
+    let asst = assets::download_assets(
+        AssetIndexRef {
+            url: &vj.asset_index.url,
+            id: Some(&vj.asset_index.id),
+            sha1: Some(&vj.asset_index.sha1),
+        },
         &config,
         config.concurrency as usize,
         None, // 同上：修复任务不走复用
@@ -352,11 +358,11 @@ pub async fn run_repair_task(
             i,
             StepStatus::Running,
         );
-        if let Err(errors) = crate::downloader::extract::process_natives(
+        if let Err(errors) = extract::process_natives(
             &vj.libraries,
             &lib_dir,
             &src_refs,
-            &crate::downloader::progress::ProgressCounters {
+            &progress::ProgressCounters {
                 files: Arc::clone(&lib_counter),
                 bytes: Arc::clone(&bytes_counter),
                 ..Default::default() // 占位：repair 分步进度走文件数回退
@@ -428,11 +434,11 @@ async fn repair_jar(
     version_dir_name: &str,
     jar_missing: bool,
     sources: &[DownloadSource],
-    pc: &crate::downloader::progress::ProgressCounters,
+    pc: &progress::ProgressCounters,
 ) -> Result<(), Vec<String>> {
     if jar_missing {
         // 清理目录内损坏（0 字节或 sha1 不匹配）的 jar，避免与下载目标并存
-        if let Some(bad) = crate::launcher::args::find_file_in_dir(vdir, "jar") {
+        if let Some(bad) = launcher::args::find_file_in_dir(vdir, "jar") {
             let bad_jar = bad.metadata().map(|m| m.len() == 0).unwrap_or(true)
                 || vj
                     .downloads
@@ -469,27 +475,22 @@ async fn repair_jar(
 /// `cancel` 非空时扫描期间轮询：任务被取消立即退出（返回 Err("任务已取消")，
 /// 调用方转 set_cancelled）——否则 sha1 扫描阶段无取消检查，取消 flag 无人处理。
 /// B2 资产清单检测：拉取/缓存资源索引 → 解析 → 多线程 sha1 扫描本地 objects。
-/// 8 个参数均为语义必要（URL/校验/配置/目录/取消/两个进度回调），不合并。
-#[allow(clippy::too_many_arguments)]
+/// index 聚合 URL/id/sha1（AssetIndexRef），其余参数均为语义必要（配置/目录/取消/两个进度回调），不合并。
 pub async fn count_assets_all(
-    asset_index_url: &str,
-    index_id: Option<&str>,
-    index_sha1: Option<&str>,
+    index: AssetIndexRef<'_>,
     config: &DownloaderConfig,
     mc_dir: &Path,
     cancel: Option<&AtomicBool>,
     mut on_total: impl FnMut(u32, u64),
     mut on_checked: impl FnMut(u32, u64),
 ) -> Result<(u32, u64), String> {
-    use file_sha1_matches;
-    let text = crate::downloader::assets::fetch_asset_index(
-        config,
-        mc_dir,
-        asset_index_url,
-        index_id,
-        index_sha1,
-    )
-    .await?;
+    let AssetIndexRef {
+        url: asset_index_url,
+        id: index_id,
+        sha1: index_sha1,
+    } = index;
+    let text =
+        assets::fetch_asset_index(config, mc_dir, asset_index_url, index_id, index_sha1).await?;
     eprintln!("[assets] 索引文本: {}B", text.len());
     let idx: serde_json::Value =
         serde_json::from_str(&text).map_err(|e| format!("解析资源索引失败\n{e}"))?;
@@ -508,7 +509,7 @@ pub async fn count_assets_all(
             total_bytes += size;
             items.push((
                 hash.to_string(),
-                objects_dir.join(&hash[..2]).join(hash),
+                objects_dir.join(sha1_sub_dir(hash)).join(hash),
                 size,
             ));
         }
@@ -609,6 +610,10 @@ pub async fn count_assets_all(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::downloader::DownloaderConfig;
+    use crate::downloader::hash::sha1_hex;
+    use crate::game::version::model::{Artifact, Library, LibraryDownloads};
+    use std::collections::HashMap;
 
     #[test]
     fn test_repair_steps_all_missing() {
@@ -667,10 +672,6 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn test_count_natives_missing() {
-        use crate::downloader::hash::sha1_hex;
-        use crate::downloader::model::{Artifact, Library, LibraryDownloads};
-        use std::collections::HashMap;
-
         let tmp = std::env::temp_dir().join(format!("elytra_natives_test_{}", std::process::id()));
         let lib_dir = tmp.join("libraries");
         std::fs::create_dir_all(&lib_dir).unwrap();
@@ -730,7 +731,6 @@ mod tests {
     /// 网络测试（同 fetch_manifest_works 惯例）；开发环境（含系统代理）可达。
     #[tokio::test]
     async fn count_assets_all_end_to_end() {
-        use crate::config::downloader::model::DownloaderConfig;
         let cfg = DownloaderConfig::default();
         let mc = std::env::temp_dir().join(format!("elytra_caa_e2e_{}", std::process::id()));
         let url =
@@ -742,9 +742,11 @@ mod tests {
         let res = tokio::time::timeout(
             std::time::Duration::from_secs(30),
             count_assets_all(
-                url,
-                Some("32"),
-                Some(sha1),
+                AssetIndexRef {
+                    url,
+                    id: Some("32"),
+                    sha1: Some(sha1),
+                },
                 &cfg,
                 &mc,
                 None,

@@ -1,3 +1,5 @@
+/// 离线用户名键
+pub const LAST_OFFLINE_USERNAME: &str = "last_offline_username";
 /// 启动器公开名称
 pub const APP_NAME: &str = "Elytra Launcher";
 /// 公开版本（与 tauri.conf.json 保持一致）

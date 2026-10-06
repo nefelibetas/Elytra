@@ -8,9 +8,11 @@ use std::time::Duration;
 
 use tauri::AppHandle;
 
-use crate::config::downloader::model::DownloaderConfig;
+use crate::config::downloader::DownloaderConfig;
 use crate::constants;
 use crate::downloader::fetcher;
+use crate::downloader::path_lock::PathLock;
+use crate::game::resource::extract::extract_zip_safe;
 use crate::persist;
 use crate::task::model::{DownloadFileItem, DownloadFileKind, DownloadFilesTask};
 use crate::task::{self, StepStatus, TaskProgress, TaskSpec, TaskStatus, WaitingDecision};
@@ -18,6 +20,7 @@ use crate::task::{self, StepStatus, TaskProgress, TaskSpec, TaskStatus, WaitingD
 use super::progress::{
     cancelled, set_cancelled, set_error, set_phase, spawn_heartbeat, step_done, HeartbeatStats,
 };
+use super::TaskCtx;
 
 /// 单文件目标路径（纯函数，供单测）：versions/{version_dir}/{kind_dir}/{filename}。
 fn file_dest(
@@ -47,12 +50,8 @@ struct WaitingUserPayload {
 /// 下载成功调用 `on_success(tmp)` 落盘/安装；失败清理 tmp。
 /// 返回 None = 任务已结束（内部已 set_error/set_cancelled）；Some(()) = 该文件完成
 /// （用户明示跳过时 tmp 已被清理，on_success 落盘会失败——与既有流程报错语义一致）。
-#[allow(clippy::too_many_arguments)] // 上下文参数（app/cancel/progress/task_id）对齐 search_community 先例
 async fn download_with_decision(
-    app: &AppHandle,
-    cancel: &Arc<AtomicBool>,
-    progress: &Arc<Mutex<TaskProgress>>,
-    task_id: &str,
+    ctx: &TaskCtx<'_>,
     filename: &str,
     url: &str,
     tmp: &Path,
@@ -60,6 +59,12 @@ async fn download_with_decision(
     emit_handle: &tauri::async_runtime::JoinHandle<()>,
     on_success: impl FnOnce(&Path) -> Result<(), String>,
 ) -> Option<()> {
+    let TaskCtx {
+        app,
+        cancel,
+        progress,
+        task_id,
+    } = *ctx;
     let mut decided = WaitingDecision::Retry;
     let mut silent_retries = 0u32;
     while decided == WaitingDecision::Retry {
@@ -126,25 +131,27 @@ async fn download_with_decision(
 /// 移动至 versions/{vdir}/saves/{name}（同名冲突 _{n} 后缀）→ 清理临时区。
 /// 版本隔离落盘：MC 启动时版本目录即游戏目录，saves 直接可读。
 /// 返回 None = 任务已结束（内部已 set_error/set_cancelled）；Some(()) = 安装完成。
-#[allow(clippy::too_many_arguments)] // 上下文参数（app/cancel/progress/task_id）对齐 search_community 先例
 async fn install_world(
-    app: &AppHandle,
-    cancel: &Arc<AtomicBool>,
-    progress: &Arc<Mutex<TaskProgress>>,
-    task_id: &str,
+    ctx: &TaskCtx<'_>,
     mc: &Path,
     version_dir: &str,
     f: &DownloadFileItem,
     cb: &(dyn Fn(u64, u64) + Send + Sync),
     emit_handle: &tauri::async_runtime::JoinHandle<()>,
 ) -> Option<()> {
+    let TaskCtx {
+        app,
+        cancel,
+        progress,
+        ..
+    } = *ctx;
     let stage = mc
         .join("versions")
         .join(version_dir)
         .join("saves")
         .join(".elytra-worlds");
     // 锁临时区目录：防并发 worlds 任务互相踩踏（下载/解压/移动全程独占）
-    let _lock = match task::PathLock::try_acquire(task::global(), &stage) {
+    let _lock = match PathLock::try_acquire(&stage) {
         Some(l) => l,
         None => {
             emit_handle.abort();
@@ -171,10 +178,7 @@ async fn install_world(
     // 下载（含静默重试/WaitingForUser，与普通 kind 一致），成功后 rename 到临时区 zip
     let zip_for_rename = zip_path.clone();
     download_with_decision(
-        app,
-        cancel,
-        progress,
-        task_id,
+        ctx,
         &f.filename,
         &f.url,
         &tmp,
@@ -184,7 +188,7 @@ async fn install_world(
     )
     .await?;
     // 解压（zip slip 防护 + 逐条目取消检查）
-    if let Err(e) = crate::downloader::extract::extract_zip_safe(&zip_path, &unpack, cancel) {
+    if let Err(e) = extract_zip_safe(&zip_path, &unpack, cancel) {
         let _ = std::fs::remove_dir_all(&stage);
         emit_handle.abort();
         set_error(app, progress, e);
@@ -283,7 +287,7 @@ pub async fn run_files_task(
     // 全部路径互斥占用：任一被其他任务占用 → 整任务拒绝（可预期，不半途而废）
     let mut _locks = Vec::new();
     for (dest, _) in &items {
-        match task::PathLock::try_acquire(task::global(), dest) {
+        match PathLock::try_acquire(dest) {
             Some(l) => _locks.push(l),
             None => {
                 return set_error(
@@ -387,12 +391,15 @@ pub async fn run_files_task(
         // 下载 + 落盘：普通 kind 下载到 .elytra-part 后 rename 到 kind 目录；
         // 失败重试/WaitingForUser 语义两种 kind 一致（download_with_decision 提取）。
         // None = 任务已结束（内部已 set_error/set_cancelled），直接返回。
+        let ctx = TaskCtx {
+            app: &app,
+            cancel,
+            progress,
+            task_id: &task_id,
+        };
         let placed = if f.kind == DownloadFileKind::World {
             install_world(
-                &app,
-                cancel,
-                progress,
-                &task_id,
+                &ctx,
                 &mc,
                 &task.version_dir_name,
                 f,
@@ -402,10 +409,7 @@ pub async fn run_files_task(
             .await
         } else {
             download_with_decision(
-                &app,
-                cancel,
-                progress,
-                &task_id,
+                &ctx,
                 &f.filename,
                 &f.url,
                 tmp,
@@ -470,7 +474,7 @@ pub(crate) fn spawn_files_task(app: AppHandle, task: DownloadFilesTask) -> Resul
         app,
         task.name(),
         task.steps(),
-        crate::task::store::JobSpec::Files(task.clone()),
+        task::store::JobSpec::Files(task.clone()),
         move |a, cancel, progress| {
             tauri::async_runtime::spawn(async move {
                 run_files_task(a, &cancel, &progress, &task).await;

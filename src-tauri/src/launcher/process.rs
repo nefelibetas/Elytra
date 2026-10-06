@@ -3,7 +3,20 @@
 //! 退出监听与崩溃报告定位。命令层（commands/launch.rs）只做编排与事件派发，
 //! 本模块不依赖 tauri：退出/窗口回调由调用方注入。
 
+#[cfg(target_os = "windows")]
+use std::ffi::c_void;
+use std::io::Write as _;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt as _;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+use crate::auth::external::{AUTHLIB_JAR, read};
+use crate::auth::microsoft::extract_xuid_from_jwt;
+use crate::game::version::model::VersionJson;
+use crate::launcher::args::{ensure_old_style_natives, mc_version_of};
+use crate::launcher::env::{load_launch_config, pre_launch_check};
+use crate::launcher::model::{AuthMode, LauncherConfig};
 
 /// 启动游戏子进程（cwd/stdio 由调用方在 command 上预设）。
 /// Windows：游戏进程应与启动器生命周期解耦，否则关闭启动器（或其终端）会连游戏一起关闭：
@@ -17,7 +30,6 @@ use std::path::{Path, PathBuf};
 pub fn spawn_game_child(
     command: &mut std::process::Command,
 ) -> Result<std::process::Child, String> {
-    use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
     let mut flags = CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB;
@@ -42,7 +54,6 @@ pub fn spawn_game_child(
 
 /// 读取子进程输出并追加写入日志文件，直到 EOF 或出错。
 pub fn drain_output(reader: &mut impl std::io::Read, path: &Path, is_stderr: bool) {
-    use std::io::Write;
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -72,7 +83,6 @@ pub fn drain_output(reader: &mut impl std::io::Read, path: &Path, is_stderr: boo
 pub fn run_pre_launch_command(command: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let status = {
-        use std::os::windows::process::CommandExt;
         let mut cmd = std::process::Command::new("cmd");
         cmd.args(["/C", command]);
         cmd.creation_flags(0x08000000);
@@ -93,15 +103,15 @@ pub fn run_pre_launch_command(command: &str) -> Result<(), String> {
 
 /// 启动前完整性与 natives 准备（check_launch_env 与 spawn_game 共用）。
 pub fn ensure_game_ready(
-    version_json: &crate::downloader::model::VersionJson,
+    version_json: &VersionJson,
     mc_dir: &Path,
     version_dir_name: &str,
 ) -> Result<(), String> {
-    crate::launcher::env::pre_launch_check(version_json, mc_dir, version_dir_name)?;
+    pre_launch_check(version_json, mc_dir, version_dir_name)?;
     let natives_dir = mc_dir
         .join("natives")
-        .join(crate::launcher::args::mc_version_of(version_dir_name));
-    crate::launcher::args::ensure_old_style_natives(
+        .join(mc_version_of(version_dir_name));
+    ensure_old_style_natives(
         version_json,
         &mc_dir.join("libraries"),
         &natives_dir,
@@ -114,8 +124,6 @@ pub fn ensure_game_ready(
 /// 其他平台无此能力，直接视为可见（保持旧行为，前端另有 90s 超时兜底）。
 #[cfg(target_os = "windows")]
 fn process_has_visible_window(pid: u32) -> bool {
-    use std::ffi::c_void;
-
     extern "system" {
         fn EnumWindows(
             lp_enum_func: unsafe extern "system" fn(*mut c_void, isize) -> i32,
@@ -157,7 +165,6 @@ fn process_has_visible_window(_pid: u32) -> bool {
 
 /// 返回目录下最新的 `crash-*.txt` 文件路径（崩溃报告）。
 fn latest_crash_report(dir: &Path) -> Option<String> {
-    use std::time::SystemTime;
     let mut latest: Option<(SystemTime, String)> = None;
     for entry in std::fs::read_dir(dir).ok()?.flatten() {
         let path = entry.path();
@@ -242,8 +249,7 @@ pub fn build_auth(
     access_token: &str,
     uuid: &str,
     xuid: &str,
-) -> crate::launcher::model::AuthMode {
-    use crate::launcher::model::AuthMode;
+) -> AuthMode {
     match auth_mode {
         "online" => AuthMode::Online {
             username: username.to_string(),
@@ -254,7 +260,7 @@ pub fn build_auth(
         "external" => {
             // 第三方登录：账号从 secrets 读（uuid/name/token/api_url 一致），
             // 前端传 username/uuid/token；api_url 从当前第三方账号取
-            let api_url = crate::auth::external::read()
+            let api_url = read()
                 .map(|a| a.api_url)
                 .unwrap_or_default();
             AuthMode::External {
@@ -273,14 +279,13 @@ pub fn build_auth(
 
 /// 正版模式 xuid 缺失时从 Minecraft access token（JWT）解析兜底
 /// （XSTS 的 xid 字段部分账号缺失，旧配置也可能未保存 xuid）。
-pub fn fill_missing_xuid(auth: &mut crate::launcher::model::AuthMode) {
-    use crate::launcher::model::AuthMode;
+pub fn fill_missing_xuid(auth: &mut AuthMode) {
     if let AuthMode::Online {
         xuid, access_token, ..
     } = auth
     {
         if xuid.is_empty() {
-            *xuid = crate::auth::microsoft::extract_xuid_from_jwt(access_token);
+            *xuid = extract_xuid_from_jwt(access_token);
         }
     }
 }
@@ -297,11 +302,11 @@ pub fn prepare_launch(
     xuid: &str,
 ) -> Result<
     (
-        crate::launcher::model::AuthMode,
+        AuthMode,
         PathBuf,
-        crate::downloader::model::VersionJson,
+        VersionJson,
         PathBuf,
-        crate::launcher::model::LauncherConfig,
+        LauncherConfig,
         u32,
     ),
     String,
@@ -309,10 +314,10 @@ pub fn prepare_launch(
     let mut auth = build_auth(auth_mode, username, access_token, uuid, xuid);
     fill_missing_xuid(&mut auth);
     let (java_path, version_json, mc_dir, launcher_config, java_major) =
-        crate::launcher::env::load_launch_config(version_dir_name)?;
+        load_launch_config(version_dir_name)?;
     // 第三方登录：启动前确保 authlib-injector.jar 存在（注入必需，缺失会启动失败）
-    if matches!(auth, crate::launcher::model::AuthMode::External { .. }) {
-        let jar = crate::util::config_dir().join(crate::auth::external::AUTHLIB_JAR);
+    if matches!(auth, AuthMode::External { .. }) {
+        let jar = crate::util::config_dir().join(AUTHLIB_JAR);
         if !jar.exists() {
             return Err("第三方登录组件缺失\n请重新登录第三方账号以恢复 authlib-injector.jar".into());
         }

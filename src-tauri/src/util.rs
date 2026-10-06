@@ -1,8 +1,19 @@
-use std::path::{Path, PathBuf};
-// ── 跨域公共小工具（纯函数，无状态）──
+//! 跨域公共小工具（纯函数，无状态）。
 
 use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+
+use base64::{engine, Engine as _};
+use tokio::runtime::RuntimeFlavor;
+
+#[cfg(target_os = "windows")]
+use std::os::windows::io::AsRawHandle;
+
+use crate::config::downloader::{DownloadSourceMode, DownloaderConfig};
+use crate::constants;
+use crate::downloader;
+use crate::persist;
 
 /// 同步执行异步操作（低频阻塞可接受；secret-service 钥匙串 / task DB 复用）。
 /// 有 tokio 上下文时复用现有 runtime：
@@ -14,7 +25,6 @@ use std::sync::LazyLock;
 /// 无 runtime 上下文（后台线程/独立进程/纯同步测试）时自维护兜底 runtime。
 pub fn block_on<F: Future>(fut: F) -> F::Output {
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        use tokio::runtime::RuntimeFlavor;
         if handle.runtime_flavor() == RuntimeFlavor::MultiThread {
             tokio::task::block_in_place(move || handle.block_on(fut))
         } else {
@@ -45,6 +55,30 @@ pub fn modified_secs(meta: &std::fs::Metadata) -> u64 {
 /// URL 路径最后一段（文件名）：`https://a/b/c.jar` → `Some("c.jar")`；空尾段/空串 → None。
 pub fn url_file_name(url: &str) -> Option<&str> {
     url.rsplit('/').next().filter(|s| !s.is_empty())
+}
+
+/// sha1 前两位（assets/objects 子目录名）。长度不足 2 时回退 `"00"`：
+/// hash 来自远程索引或本地 JSON，裸切片 `&hash[..2]` 在畸形输入下会 panic
+/// （字节切片还可能落在多字节边界）。
+pub fn sha1_sub_dir(hash: &str) -> &str {
+    hash.get(..2).unwrap_or("00")
+}
+
+/// 相对路径安全校验（路径穿越防护）：拒绝空路径、绝对路径、含 `..` 或空段的输入。
+/// 返回校验后的相对路径，调用方自行 `join` 到目标根目录。
+/// 用于整合包清单条目名、zip 成员名、JDK runtime 条目名等**外部输入**的落盘路径。
+pub fn safe_relative_path(rel: &str) -> Result<PathBuf, String> {
+    let rel = rel.trim();
+    if rel.is_empty() || rel.starts_with('/') || rel.starts_with('\\') {
+        return Err(format!("非法文件路径\n{rel:?}"));
+    }
+    if rel
+        .split(['/', '\\'])
+        .any(|seg| seg == ".." || seg.is_empty())
+    {
+        return Err(format!("文件路径含非法段\n{rel:?}"));
+    }
+    Ok(PathBuf::from(rel))
 }
 
 /// loader 标记 key 列表与顺序（与前端 utils/versionClassify 的 LOADER_KEYS 一致；
@@ -134,13 +168,13 @@ pub fn config_dir() -> PathBuf {
     #[cfg(not(target_os = "windows"))]
     {
         if is_dev_runtime() {
-            return exe_dir().join(crate::constants::CONFIG_DIR);
+            return exe_dir().join(constants::CONFIG_DIR);
         }
         if let Some(root) = platform_data_root() {
-            return root.join(crate::constants::CONFIG_DIR);
+            return root.join(constants::CONFIG_DIR);
         }
     }
-    exe_dir().join(crate::constants::CONFIG_DIR)
+    exe_dir().join(constants::CONFIG_DIR)
 }
 
 /// 平台用户数据根目录（macOS/Linux，config 与默认游戏目录的共同基准）。
@@ -148,8 +182,7 @@ pub fn config_dir() -> PathBuf {
 /// - Linux：`$XDG_DATA_HOME` 非空用之，否则 `~/.local/share`（XDG Base Directory）
 #[cfg(target_os = "macos")]
 fn platform_data_root() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .map(|h| PathBuf::from(h).join("Library/Application Support"))
+    std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support"))
 }
 
 /// 平台用户数据根目录（macOS/Linux，config 与默认游戏目录的共同基准）。
@@ -181,9 +214,9 @@ fn path_under_cargo_target(p: &Path) -> bool {
         .components()
         .filter_map(|c| c.as_os_str().to_str())
         .collect();
-    comps.windows(2).any(|w| {
-        w[0] == "target" && matches!(w[1], "debug" | "release")
-    })
+    comps
+        .windows(2)
+        .any(|w| w[0] == "target" && matches!(w[1], "debug" | "release"))
 }
 
 /// 启动器可执行文件所在目录。Windows 便携语义锚点（exe 旁数据/游戏目录）；
@@ -292,21 +325,19 @@ pub fn unique_child_dir(parent: &Path, base: &str) -> String {
 pub async fn community_download_urls(url: &str) -> Vec<String> {
     let official = url.to_string();
     let mirrored = official.replace(
-        crate::downloader::endpoints::CommunityEndpoints::MODRINTH_CDN_BASE,
-        crate::downloader::endpoints::CommunityEndpoints::MODRINTH_CDN_MIRROR_BASE,
+        downloader::endpoints::CommunityEndpoints::MODRINTH_CDN_BASE,
+        downloader::endpoints::CommunityEndpoints::MODRINTH_CDN_MIRROR_BASE,
     );
     if mirrored == official {
         return vec![official];
     }
-    use crate::config::downloader::model::{DownloadSourceMode, DownloaderConfig};
-    let cfg: DownloaderConfig =
-        crate::persist::read(crate::constants::SECT_DOWNLOADER).unwrap_or_default();
+    let cfg: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
     match cfg.community_source_mode {
         DownloadSourceMode::OfficialOnly => vec![official],
         DownloadSourceMode::MirrorOnly => vec![mirrored],
         DownloadSourceMode::Auto => {
-            let o = crate::downloader::probe::probe_url(&official).await;
-            let m = crate::downloader::probe::probe_url(&mirrored).await;
+            let o = downloader::probe::probe_url(&official).await;
+            let m = downloader::probe::probe_url(&mirrored).await;
             if prefer_mirror(m.ok, m.ttfb_ms, o.ttfb_ms) {
                 vec![mirrored, official]
             } else {
@@ -351,7 +382,7 @@ pub fn default_game_dir_base() -> PathBuf {
         if is_dev_runtime() {
             exe_dir()
         } else if let Some(root) = platform_data_root() {
-            root.join(crate::constants::CONFIG_DIR)
+            root.join(constants::CONFIG_DIR)
         } else if let Some(home) = std::env::var_os("HOME") {
             PathBuf::from(home)
         } else {
@@ -372,6 +403,30 @@ mod tests {
         );
         assert_eq!(url_file_name("a/b/"), None);
         assert_eq!(url_file_name(""), None);
+    }
+
+    #[test]
+    fn sha1_sub_dir_never_panics_on_malformed_input() {
+        assert_eq!(sha1_sub_dir("abcdef0123456789"), "ab");
+        // 长度不足与多字节边界都回退 "00"（裸切片会 panic）
+        assert_eq!(sha1_sub_dir(""), "00");
+        assert_eq!(sha1_sub_dir("a"), "00");
+        assert_eq!(sha1_sub_dir("中文"), "00");
+    }
+
+    #[test]
+    fn safe_relative_path_blocks_traversal() {
+        // 合法相对路径：整合包清单条目、zip 成员、JDK runtime 条目
+        assert!(safe_relative_path("mods/a.jar").is_ok());
+        assert!(safe_relative_path("config/nested/b.json").is_ok());
+        assert!(safe_relative_path("bin/java.exe").is_ok());
+        // 绝对路径（两种分隔符）、空路径、`..` 与空段
+        assert!(safe_relative_path("/abs").is_err());
+        assert!(safe_relative_path("\\abs").is_err());
+        assert!(safe_relative_path("").is_err());
+        assert!(safe_relative_path("../evil").is_err());
+        assert!(safe_relative_path("bin/../../evil").is_err());
+        assert!(safe_relative_path("a//b").is_err());
     }
 
     #[test]
@@ -479,7 +534,6 @@ pub fn image_mime(bytes: &[u8]) -> Option<&'static str> {
 
 /// 字节 → base64（图标 IPC 用：JSON 数字数组膨胀 3~5 倍，base64 仅 +33%）。
 pub fn to_base64(bytes: &[u8]) -> String {
-    use base64::{engine, Engine as _};
     engine::general_purpose::STANDARD.encode(bytes)
 }
 
@@ -559,7 +613,7 @@ pub fn icon_payload(path: &Path, max_bytes: u64) -> Option<IconData> {
 /// 启动器为 GUI 进程（Windows 无控制台），eprintln 输出无人可见，落盘后设置页可查看。
 /// 注意：file 句柄必须保活（mem::forget），否则 Drop 关闭句柄后被系统复用，重定向失效。
 pub fn init_file_logging() {
-    let path = crate::util::config_dir().join("launcher.log");
+    let path = config_dir().join("launcher.log");
     let Ok(file) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -569,7 +623,6 @@ pub fn init_file_logging() {
     };
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::io::AsRawHandle;
         let handle = file.as_raw_handle();
         unsafe {
             extern "system" {

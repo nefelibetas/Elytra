@@ -3,6 +3,7 @@ mod commands;
 pub mod config;
 pub mod constants;
 pub mod downloader;
+pub mod game;
 mod events;
 mod jdk;
 pub mod launcher;
@@ -133,7 +134,7 @@ pub fn run() {
             get_community_versions,
             get_community_details,
             start_download,
-            download_files,
+            download_files,
             download_single_file,
             install_modpack,
             cancel_task,

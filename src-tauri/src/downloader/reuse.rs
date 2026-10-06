@@ -4,6 +4,7 @@
 //! size + sha1 双校验后本地复制（绝不盲复制），未命中走网络。
 //! 纯新增模块，不触碰现有下载主路径（library.rs / assets.rs / runner.rs 各自包一层）。
 
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use super::hash::file_sha1_matches_streaming;
@@ -90,7 +91,6 @@ pub async fn copy_verified_local<F: Fn(u64, u64)>(
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败\n{e}"))?;
     }
-    use std::io::{Read, Write};
     let mut src_f = std::fs::File::open(src).map_err(|e| format!("打开本地复用源失败\n{e}"))?;
     let mut dst_f = std::fs::File::create(dest).map_err(|e| format!("创建目标文件失败\n{e}"))?;
     let mut copied: u64 = 0;

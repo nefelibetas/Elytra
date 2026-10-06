@@ -1,29 +1,29 @@
 //! EasyTier 会话封装：库内嵌（非子进程）创建/启动/停止虚拟局域网实例。
 //!
-//! 关键配置：
+//! 关键配置（每项均为实测约束，勿随手改动）：
 //! - **no_tun + use_smoltcp**：纯用户态，无需 wintun 驱动/管理员权限；
-//! - **socks5 feature** 必须启用（easytier `gateway_enabled` 由
-//!   `cfg!(feature="socks5")` 经 `smoltcp` → `proxy-smoltcp-stack` 传递控制），
-//!   否则端口转发不启动；
-//! - **bind_device = false**：easytier 默认 true 会枚举本机 IPv4 预绑定源地址，
-//!   bind 物理 IP 后 connect 回环/局域网目标在 Windows 报 10049（实测复现）；
-//! - **enable_kcp_proxy = true**：port_forward 数据面首选 KCP（PreferKcp），
-//!   由该 flag 控制出站（默认 false）；不开启则回退 smoltcp 用户态 TCP，
-//!   MC 登录配置同步（registry 数百 KB~数 MB）会中断（实测"连接中断"）；
-//! - host 固定虚拟 IP，guest DHCP 拿 IP；
-//! - **Scaffolding 模型**：host 用普通 OS `TcpListener` 监听信息端口/游戏端口，
-//!   guest 数据面直连 `host虚拟IP:端口`，host 的 easytier proxy NAT
-//!   （`tcp_proxy_service`）自动转发到 `127.0.0.1:同端口`——无需 easytier 端口转发；
-//! - **入站白名单**（ACL）：host 须在 `tcp_whitelist` 放开信息端口 + 游戏端口，
-//!   否则 proxy NAT 拒绝（`should_deny_tcp_proxy`）；
-//! - 协调节点：由 OnlineService 显式传入（空 = 不连外部节点，host 自建网 /
-//!   guest 直连 host）。
+//! - **socks5 feature 必须启用**：easytier `gateway_enabled` 由
+//!   `cfg!(feature="socks5")` 决定，缺失则端口转发不启动；
+//! - **bind_device = false**：默认 true 会预绑定本机 IPv4，bind 物理 IP 后
+//!   connect 回环/局域网目标在 Windows 报 10049（实测复现）；
+//! - **enable_kcp_proxy = true**：port_forward 数据面首选 KCP（PreferKcp）；
+//!   不开启则回退 smoltcp 用户态 TCP，MC 登录配置同步（registry 数百 KB~数 MB）
+//!   会中断（实测"连接中断"）；
+//! - host 固定虚拟 IP，guest DHCP 取 IP；
+//! - **Scaffolding 模型**：host 用普通 OS `TcpListener` 监听，guest 数据面直连
+//!   `host虚拟IP:端口`，由 easytier proxy NAT（`tcp_proxy_service`）转发到
+//!   `127.0.0.1:同端口`；host 须在 `tcp_whitelist` 放开信息端口 + 游戏端口，
+//!   否则 proxy NAT 拒绝（`should_deny_tcp_proxy`）。
+//!
+//! 协调节点由 OnlineService 显式传入（空 = 不连外部节点）。
 
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
-use easytier::common::config::{ConfigLoader, TomlConfigLoader};
+use easytier::common::config::{
+    ConfigLoader, ConsoleLoggerConfig, FileLoggerConfig, LoggingConfig, TomlConfigLoader,
+};
 use easytier::instance::factory::{create_native_instance, NativeCoreInstance};
 use easytier_core::config::toml::{NetworkIdentity, PeerConfig};
 
@@ -39,7 +39,6 @@ static EASYTIER_LOG_INIT: std::sync::Once = std::sync::Once::new();
 /// 调用幂等（Once）；失败仅打印 stderr，不影响联机主流程。
 pub(crate) fn init_easytier_logging() {
     EASYTIER_LOG_INIT.call_once(|| {
-        use easytier::common::config::{ConsoleLoggerConfig, FileLoggerConfig, LoggingConfig};
         let dir = crate::util::config_dir();
         let _ = std::fs::create_dir_all(&dir);
         let cfg = LoggingConfig {
@@ -258,7 +257,7 @@ mod tests {
     use super::*;
 
     fn cfg(role: SessionRole, scaffold_port: Option<u16>, mc_port: Option<u16>) -> SessionConfig {
-        let room = crate::online::create_room();
+        let room = crate::online::create_room().unwrap();
         SessionConfig {
             role,
             room,

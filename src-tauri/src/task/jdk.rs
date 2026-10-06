@@ -7,8 +7,10 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use tauri::AppHandle;
 
-use crate::config::downloader::model::DownloaderConfig;
+use crate::config::downloader::DownloaderConfig;
 use crate::constants;
+use crate::downloader::path_lock::PathLock;
+use crate::jdk::download::{auto_install, runtime_dir, InstallProgress};
 use crate::persist;
 use crate::task::progress::{
     cancelled, set_cancelled, set_error, set_phase, set_total, update_progress,
@@ -27,10 +29,10 @@ pub async fn run_install_jdk(
     major: u32,
 ) {
     let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
-    let dest_dir = crate::jdk::download::runtime_dir(&config, major);
+    let dest_dir = runtime_dir(&config, major);
 
     // 同目录互斥：另一任务正安装同 major 时拒绝（可预期，不半途而废）
-    let _lock = match task::PathLock::try_acquire(task::global(), &dest_dir) {
+    let _lock = match PathLock::try_acquire(&dest_dir) {
         Some(l) => l,
         None => {
             return set_error(
@@ -42,9 +44,12 @@ pub async fn run_install_jdk(
     };
 
     // 取消/失败时整删半截 runtime 目录：managed 目录程序专属（可重下），
-    // 半截残留会误导 auto_install 的幂等检查（bin/java.exe 已存在即误判已装）
-    if let Some(p) = progress.try_lock() {
-        task::global().set_cleanup_path(&p.task_id, dest_dir.clone());
+    // 半截残留会误导 auto_install 的幂等检查（bin/java.exe 已存在即误判已装）。
+    // 先取 task_id 释放 progress 守卫再调 set_cleanup_path（后者取 inner 锁），
+    // 否则构成 progress→inner 反向锁序（与 fail/list 的 inner→progress 成 ABBA）。
+    let cleanup_task_id = progress.try_lock().map(|p| p.task_id.clone());
+    if let Some(task_id) = cleanup_task_id {
+        task::global().set_cleanup_path(&task_id, dest_dir.clone());
     }
 
     set_phase(
@@ -123,7 +128,7 @@ pub async fn run_install_jdk(
     });
 
     // 下载 + 安装（按 jdk_source_mode 回退链；取消/失败由 auto_install 返回）
-    let hook = crate::jdk::download::InstallProgress {
+    let hook = InstallProgress {
         cancel: Some(cancel),
         on_total: Some(&{
             let app = app.clone();
@@ -147,7 +152,7 @@ pub async fn run_install_jdk(
             }
         }),
     };
-    let result = crate::jdk::download::auto_install(major, &config, &hook).await;
+    let result = auto_install(major, &config, &hook).await;
 
     if cancelled(cancel) {
         emit_handle.abort();

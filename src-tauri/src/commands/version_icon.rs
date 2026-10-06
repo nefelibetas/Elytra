@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::downloader::version::version_dir_path as version_dir;
+use crate::game::version::dir::version_dir_path;
 use crate::util;
 
 /// 版本图标读取上限（平台 logo / 用户图片一般 <256KB，留余量）。
@@ -36,7 +36,7 @@ fn ensure_simple_dir_name(name: &str) -> Result<(), String> {
 #[tauri::command]
 pub fn get_version_icon(version_dir_name: String) -> Option<util::IconData> {
     ensure_simple_dir_name(&version_dir_name).ok()?;
-    let vdir = version_dir(&version_dir_name).ok()?;
+    let vdir = version_dir_path(&version_dir_name).ok()?;
     util::icon_payload(&version_icon_path(&vdir)?, MAX_PACK_ICON_BYTES)
 }
 
@@ -51,7 +51,7 @@ pub struct VersionIconInfo {
 pub fn get_version_icon_source(version_dir_name: String) -> VersionIconInfo {
     let source = ensure_simple_dir_name(&version_dir_name)
         .ok()
-        .and_then(|_| version_dir(&version_dir_name).ok())
+        .and_then(|_| version_dir_path(&version_dir_name).ok())
         .and_then(|vdir| version_icon_path(&vdir))
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
         .map(|n| {
@@ -84,7 +84,7 @@ pub async fn set_version_icon(version_dir_name: String, source_path: String) -> 
     if !util::is_supported_image(&bytes) {
         return Err("不支持的图片格式（仅支持 png / jpg / webp / gif）".into());
     }
-    let vdir = version_dir(&version_dir_name)?;
+    let vdir = version_dir_path(&version_dir_name)?;
     // 复制为固定文件名（内容格式由魔数决定，前端按嗅探渲染）
     tokio::task::spawn_blocking(move || {
         std::fs::write(vdir.join("version-icon.png"), &bytes)
@@ -99,7 +99,7 @@ pub async fn set_version_icon(version_dir_name: String, source_path: String) -> 
 #[tauri::command]
 pub async fn reset_version_icon(version_dir_name: String) -> Result<(), String> {
     ensure_simple_dir_name(&version_dir_name)?;
-    let vdir = version_dir(&version_dir_name)?;
+    let vdir = version_dir_path(&version_dir_name)?;
     let target = vdir.join("version-icon.png");
     if !target.exists() {
         return Ok(()); // 幂等：本就无自定义图

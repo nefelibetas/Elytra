@@ -3,25 +3,25 @@
 use std::path::Path;
 use tauri::AppHandle;
 
-use crate::downloader::modpack::{ModpackRequest, PackSource};
-use crate::task::{
-    self, modpack, repair, DownloadFileItem, DownloadFileTask, DownloadFilesTask, DownloadTask,
-    TaskStatus,
-};
+use crate::game::modpack::{ModpackRequest, PackSource};
+use crate::task::{self, files, model, modpack, repair, store};
 
 /// 提交完整下载/安装任务：注册到 TaskManager 并后台执行，返回任务 id。
 /// 任务配置（含 ModLoader 选择）统一经 DownloadTask 传入，入口先做信任边界校验。
 /// 注册/spawn/快照统一走 task::spawn_download（任务域）。
 #[tauri::command]
-pub async fn start_download(app: AppHandle, task: DownloadTask) -> Result<String, String> {
-    crate::task::spawn_download(app, task)
+pub async fn start_download(app: AppHandle, task: model::DownloadTask) -> Result<String, String> {
+    task::spawn_download(app, task)
 }
 
 /// 提交批量文件下载任务（多个 mod / 资源包 / 数据包 / 光影包）到下载管理。
 /// 返回任务 id。
 #[tauri::command]
-pub async fn download_files(app: AppHandle, task: DownloadFilesTask) -> Result<String, String> {
-    crate::task::files::spawn_files_task(app, task)
+pub async fn download_files(
+    app: AppHandle,
+    task: model::DownloadFilesTask,
+) -> Result<String, String> {
+    files::spawn_files_task(app, task)
 }
 
 /// 提交单文件下载任务（mod / 资源包 / 数据包 / 光影包）到下载管理。
@@ -30,18 +30,18 @@ pub async fn download_files(app: AppHandle, task: DownloadFilesTask) -> Result<S
 #[tauri::command]
 pub async fn download_single_file(
     app: AppHandle,
-    task: DownloadFileTask,
+    task: model::DownloadFileTask,
 ) -> Result<String, String> {
     task.validate()?;
-    let batch = DownloadFilesTask {
+    let batch = model::DownloadFilesTask {
         version_dir_name: task.version_dir_name,
-        files: vec![DownloadFileItem {
+        files: vec![model::DownloadFileItem {
             kind: task.kind,
             url: task.url,
             filename: task.filename,
         }],
     };
-    crate::task::files::spawn_files_task(app, batch)
+    files::spawn_files_task(app, batch)
 }
 
 /// 扫描版本缺失文件（client.jar / 支持库 / 资源），不发起下载。
@@ -81,44 +81,43 @@ pub async fn submit_missing_download(
 /// 返回任务 id。
 #[tauri::command]
 pub async fn submit_install_jdk(app: AppHandle, major: u32) -> Result<String, String> {
-    crate::task::spawn_install_jdk(app, major)
+    task::spawn_install_jdk(app, major)
 }
 
 /// 列出上次进程退出时未完成的任务（running/interrupted 快照），供前端询问恢复。
 #[tauri::command]
-pub fn list_interrupted_tasks() -> Vec<task::store::InterruptedJob> {
-    task::store::list_interrupted()
+pub fn list_interrupted_tasks() -> Vec<store::InterruptedJob> {
+    store::list_interrupted()
 }
 
 /// 恢复中断任务：读取快照 → 用恢复凭证重新提交（幂等重跑——
 /// 已下载文件 sha1 命中自动跳过，等价从断点继续）→ 返回新任务 id。
 #[tauri::command]
 pub async fn resume_task(app: AppHandle, task_id: String) -> Result<String, String> {
-    use crate::task::store::JobSpec;
-    let (_name, spec) = task::store::load_spec(&task_id).ok_or("任务快照不存在或已过期")?;
+    let (_name, spec) = store::load_spec(&task_id).ok_or("任务快照不存在或已过期")?;
     // 恢复即重跑：旧快照删除，spawn 时写入新快照（新 task_id）
     task::store::remove_snapshot(&task_id);
     match spec {
-        JobSpec::Download(task) => crate::task::spawn_download(app, task),
-        JobSpec::Files(task) => {
+        store::JobSpec::Download(task) => crate::task::spawn_download(app, task),
+        store::JobSpec::Files(task) => {
             // 社区资源无校验数据，恢复 = 重新开始：先清掉上次中断残留的
             // .elytra-part 半截临时文件（陈旧残留可能被占用/校验干扰），
             // 确保重新下载干净起步
-            crate::task::files::cleanup_file_parts(&task);
-            crate::task::files::spawn_files_task(app, task)
+            files::cleanup_file_parts(&task);
+            files::spawn_files_task(app, task)
         }
-        JobSpec::Repair { version_dir_name } => {
+        store::JobSpec::Repair { version_dir_name } => {
             submit_missing_download(app, version_dir_name).await
         }
-        JobSpec::InstallJdk { major } => crate::task::spawn_install_jdk(app, major),
-        JobSpec::ModpackInstall(spec) => install_modpack(app, spec.request).await,
+        store::JobSpec::InstallJdk { major } => crate::task::spawn_install_jdk(app, major),
+        store::JobSpec::ModpackInstall(spec) => install_modpack(app, spec.request).await,
     }
 }
 
 /// 放弃恢复：删除任务快照（后续启动不再提示）。
 #[tauri::command]
 pub fn dismiss_interrupted_task(task_id: String) {
-    task::store::remove_snapshot(&task_id);
+    store::remove_snapshot(&task_id);
 }
 
 /// 暂停任务：停下载、保留已下载目录与快照（status=paused），
@@ -126,10 +125,7 @@ pub fn dismiss_interrupted_task(task_id: String) {
 #[tauri::command]
 pub fn pause_task(task_id: String) -> Result<(), String> {
     if !task::global().pause(&task_id) {
-        return Err(format!(
-            "任务不存在或已结束
-{task_id}"
-        ));
+        return Err(format!("任务不存在或已结束{task_id}"));
     }
     Ok(())
 }
@@ -142,7 +138,7 @@ pub async fn cancel_task(app: AppHandle, task_id: String) -> Result<(), String> 
     if let Some(p) = task::global()
         .list()
         .into_iter()
-        .find(|p| p.task_id == task_id && p.status == TaskStatus::Cancelled)
+        .find(|p| p.task_id == task_id && p.status == model::TaskStatus::Cancelled)
     {
         task::emit(&app, &p);
     }
@@ -153,11 +149,10 @@ pub async fn cancel_task(app: AppHandle, task_id: String) -> Result<(), String> 
 /// 任务未处于等待状态时返回错误（前端弹窗已消失/竞态）。
 #[tauri::command]
 pub fn decide_waiting_task(task_id: String, action: String) -> Result<(), String> {
-    use crate::task::WaitingDecision;
     let decision = match action.as_str() {
-        "skip" => WaitingDecision::Skip,
-        "retry" => WaitingDecision::Retry,
-        "cancel" => WaitingDecision::Cancel,
+        "skip" => task::WaitingDecision::Skip,
+        "retry" => task::WaitingDecision::Retry,
+        "cancel" => task::WaitingDecision::Cancel,
         _ => return Err(format!("未知决策\n{action}")),
     };
     if task::global().decide(&task_id, decision) {
@@ -200,7 +195,7 @@ pub async fn install_modpack(app: AppHandle, request: ModpackRequest) -> Result<
     }
 
     let steps = crate::task::steps_by_names(
-        modpack::initial_steps(&request)
+        task::modpack::initial_steps(&request)
             .into_iter()
             .map(str::to_string)
             .collect(),

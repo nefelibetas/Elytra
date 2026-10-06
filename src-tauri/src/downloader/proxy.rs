@@ -2,7 +2,10 @@
 //! 按网络模式（Direct 直连 / Auto·System 应用系统代理）应用到 `ClientBuilder`。
 //! 自 `fetcher.rs` 拆出：代理检测与下载路由/重试无关，独立成文件便于测试与演进。
 
-use crate::config::downloader::model::{DownloaderConfig, NetworkMode};
+#[cfg(target_os = "windows")]
+use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+
+use crate::config::downloader::{DownloaderConfig, NetworkMode};
 use crate::constants;
 use crate::persist;
 
@@ -52,8 +55,6 @@ fn system_proxy_urls() -> (Option<String>, Option<String>) {
     #[cfg(target_os = "windows")]
     {
         // 1. 注册表（开启"使用代理服务器"时 Clash 等系统代理写这里）
-        use winreg::enums::HKEY_CURRENT_USER;
-        use winreg::RegKey;
         if let Ok(settings) = RegKey::predef(HKEY_CURRENT_USER)
             .open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings")
         {
@@ -177,6 +178,7 @@ pub(crate) fn apply_system_proxy(builder: reqwest::ClientBuilder) -> reqwest::Cl
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::downloader::fetcher::http;
 
     /// Windows 注册表 ProxyServer 值解析：统一格式与分协议格式。
     #[test]
@@ -238,7 +240,7 @@ mod tests {
         }
         let res = tokio::time::timeout(
             std::time::Duration::from_secs(15),
-            crate::downloader::fetcher::http()
+            http()
                 .get("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json")
                 .send(),
         )
