@@ -8,11 +8,11 @@ use super::model::{OnlineSnapshot, OnlineStatus, DEFAULT_SCAFFOLD_PORT, DISCOVER
 use super::scaffold::codec::{Request, Response};
 use super::scaffold::identity::get_machine_id;
 use super::scaffold::profiles::{Profile, ProfileKind, ProfileTable};
-use super::scaffold::room::create_room;
+use super::scaffold::room::{create_room, RoomCredential};
 use super::scaffold::server::{start, Handlers};
 use super::service::{
     emit_snapshot, free_tcp_port, online_player_name, snapshot_inner, vendor_string, HostShared,
-    SERVICE,
+    OnlineServiceInner, SERVICE,
 };
 use super::session::{EasyTierSession, SessionConfig, SessionRole};
 use crate::config::online::OnlineConfig;
@@ -23,6 +23,20 @@ use crate::config::online::OnlineConfig;
 /// 白名单补游戏端口（proxy NAT 直连本机 MC 监听）→ `Hosting`。
 pub async fn start_host(app: &tauri::AppHandle) -> Result<OnlineSnapshot, String> {
     let mut svc = SERVICE.lock().await;
+    let (gen, scaffold_port, room, session) = start_host_session(&mut svc).await?;
+    let (profiles, shared) = start_info_server(scaffold_port);
+    let snap = publish_host_ready(app, &mut svc, session, room, scaffold_port, profiles);
+    drop(svc);
+    spawn_host_discovery(app, Arc::clone(&shared), gen);
+    spawn_host_heartbeat(app, shared, gen);
+    Ok(snap)
+}
+
+/// 阶段一：校验状态、启动扫描器、占信息服务器端口、建虚拟网。
+/// 返回 (generation, scaffold_port, room, session)；锁由调用方持有。
+async fn start_host_session(
+    svc: &mut OnlineServiceInner,
+) -> Result<(u64, u16, RoomCredential, EasyTierSession), String> {
     if svc.session.is_some() {
         return Err("联机已在运行中\n请先停止当前联机会话".to_string());
     }
@@ -52,6 +66,11 @@ pub async fn start_host(app: &tauri::AppHandle) -> Result<OnlineSnapshot, String
         scaffold_port: Some(scaffold_port),
     };
     let s = EasyTierSession::start(cfg).await?;
+    Ok((gen, scaffold_port, room, s))
+}
+
+/// 阶段二：构建房主玩家表 + 起信息服务器。
+fn start_info_server(scaffold_port: u16) -> (ProfileTable, Arc<HostShared>) {
     // host 玩家表：房主
     let host_profile = Profile::new(
         online_player_name(),
@@ -69,128 +88,129 @@ pub async fn start_host(app: &tauri::AppHandle) -> Result<OnlineSnapshot, String
     if let Err(e) = start(handlers, scaffold_port) {
         eprintln!("[online] Scaffolding 信息服务器启动失败: {e}");
     }
+    (profiles, shared)
+}
 
-    svc.session = Some(s);
+/// 阶段三：回写状态为 `Waiting` 并广播快照。
+fn publish_host_ready(
+    app: &tauri::AppHandle,
+    svc: &mut OnlineServiceInner,
+    session: EasyTierSession,
+    room: RoomCredential,
+    scaffold_port: u16,
+    profiles: ProfileTable,
+) -> OnlineSnapshot {
+    svc.session = Some(session);
     svc.status = OnlineStatus::Waiting;
     svc.room = Some(room);
     svc.scaffold_port = Some(scaffold_port);
     svc.profiles = Some(profiles);
-    let snap = snapshot_inner(&svc);
+    let snap = snapshot_inner(svc);
     emit_snapshot(app, &snap);
-    drop(svc);
+    snap
+}
 
-    // 后台发现任务：Waiting → Hosting（游戏端口出现 → 重建实例补白名单）。
-    let app_discover = app.clone();
-    let shared_discover = shared.clone();
+/// 阶段四：后台发现任务：Waiting → Hosting（游戏端口出现 → 重建实例补白名单）。
+fn spawn_host_discovery(app: &tauri::AppHandle, shared: Arc<HostShared>, gen: u64) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        host_discovery_loop(&app, &shared, gen).await;
+    });
+}
+
+/// 后台发现循环：轮询游戏端口，按需重建联机会话。
+async fn host_discovery_loop(app: &tauri::AppHandle, shared: &HostShared, gen: u64) {
+    loop {
+        tokio::time::sleep(DISCOVER_POLL).await;
+        let mut svc = SERVICE.lock().await;
+        if svc.generation != gen {
+            return;
+        }
+        if svc.role() != SessionRole::Host {
+            return;
+        }
+        let mc_port = svc.scanner.as_ref().and_then(|sc| sc.get_port());
+        // Waiting+有端口 → 重建实例补白名单（proxy NAT 直连本机 MC 监听）；
+        // Hosting+端口消失 → 降回 Waiting（重建实例去布白名单）。
+        let sync_target = match (svc.status, mc_port) {
+            (OnlineStatus::Waiting, Some(port)) => Some(Some(port)),
+            (OnlineStatus::Hosting, None) => Some(None),
+            _ => None,
+        };
+        if let Some(port) = sync_target {
+            if !sync_host_session(app, &mut svc, shared, port).await {
+                return;
+            }
+        }
+    }
+}
+
+/// 重建联机会话以匹配当前游戏端口（`None` = 去游戏端口白名单）。
+/// 返回 `false` 表示调用方应结束后台任务。
+async fn sync_host_session(
+    app: &tauri::AppHandle,
+    svc: &mut OnlineServiceInner,
+    shared: &HostShared,
+    mc_port: Option<u16>,
+) -> bool {
+    let Some(old) = svc.session.take() else {
+        return false;
+    };
+    old.stop().await;
+    let Some(room) = svc.room.clone() else {
+        return false;
+    };
+    let cfg = SessionConfig {
+        role: SessionRole::Host,
+        room,
+        local_port: None,
+        mc_port,
+        public_nodes: OnlineConfig::from_persist().public_nodes,
+        scaffold_port: Some(svc.scaffold_port.unwrap_or(0)),
+    };
+    match EasyTierSession::start(cfg).await {
+        Ok(new_s) => {
+            svc.session = Some(new_s);
+            *shared.mc_port.write() = mc_port;
+            svc.status = if mc_port.is_some() {
+                OnlineStatus::Hosting
+            } else {
+                OnlineStatus::Waiting
+            };
+        }
+        Err(e) => {
+            eprintln!("[online] 重建联机会话失败: {e}");
+            svc.status = OnlineStatus::Idle;
+            svc.room = None;
+            svc.scaffold_port = None;
+            svc.scanner = None;
+        }
+    }
+    let snap = snapshot_inner(svc);
+    emit_snapshot(app, &snap);
+    true
+}
+
+/// 阶段五：后台心跳维护任务：剔除超时 guest + 玩家表变化推前端。
+fn spawn_host_heartbeat(app: &tauri::AppHandle, shared: Arc<HostShared>, gen: u64) {
+    let app = app.clone();
     tauri::async_runtime::spawn(async move {
         loop {
-            tokio::time::sleep(DISCOVER_POLL).await;
-            let mut svc = SERVICE.lock().await;
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            let svc = SERVICE.lock().await;
             if svc.generation != gen {
                 return;
             }
-            if svc.role() != SessionRole::Host {
-                return;
-            }
-            let mc_port = svc.scanner.as_ref().and_then(|sc| sc.get_port());
-            match (svc.status, mc_port) {
-                (OnlineStatus::Waiting, Some(port)) => {
-                    // 重建实例：白名单补游戏端口（proxy NAT 直连本机 MC 监听）
-                    let Some(old) = svc.session.take() else {
-                        return;
-                    };
-                    old.stop().await;
-                    let Some(room) = svc.room.clone() else {
-                        return;
-                    };
-                    let cfg = SessionConfig {
-                        role: SessionRole::Host,
-                        room,
-                        local_port: None,
-                        mc_port: Some(port),
-                        public_nodes:
-                            OnlineConfig::from_persist().public_nodes,
-                        scaffold_port: Some(svc.scaffold_port.unwrap_or(0)),
-                    };
-                    match EasyTierSession::start(cfg).await {
-                        Ok(new_s) => {
-                            svc.session = Some(new_s);
-                            *shared_discover.mc_port.write() = Some(port);
-                            svc.status = OnlineStatus::Hosting;
-                        }
-                        Err(e) => {
-                            eprintln!("[online] 重建联机会话失败: {e}");
-                            svc.status = OnlineStatus::Idle;
-                            svc.room = None;
-                            svc.scaffold_port = None;
-                            svc.scanner = None;
-                        }
-                    }
-                    let snap = snapshot_inner(&svc);
-                    emit_snapshot(&app_discover, &snap);
-                }
-                (OnlineStatus::Hosting, None) => {
-                    // 游戏端口消失：降回 Waiting（重建实例去游戏端口白名单）
-                    let Some(old) = svc.session.take() else {
-                        return;
-                    };
-                    old.stop().await;
-                    let Some(room) = svc.room.clone() else {
-                        return;
-                    };
-                    let cfg = SessionConfig {
-                        role: SessionRole::Host,
-                        room,
-                        local_port: None,
-                        mc_port: None,
-                        public_nodes:
-                            OnlineConfig::from_persist().public_nodes,
-                        scaffold_port: Some(svc.scaffold_port.unwrap_or(0)),
-                    };
-                    match EasyTierSession::start(cfg).await {
-                        Ok(new_s) => {
-                            svc.session = Some(new_s);
-                            *shared_discover.mc_port.write() = None;
-                            svc.status = OnlineStatus::Waiting;
-                        }
-                        Err(e) => {
-                            eprintln!("[online] 重建联机会话失败: {e}");
-                            svc.status = OnlineStatus::Idle;
-                            svc.room = None;
-                            svc.scaffold_port = None;
-                            svc.scanner = None;
-                        }
-                    }
-                    let snap = snapshot_inner(&svc);
-                    emit_snapshot(&app_discover, &snap);
-                }
-                _ => {}
+            let changed = {
+                let mut profiles = shared.profiles.lock();
+                profiles.purge_expired()
+            };
+            if changed {
+                let snap = snapshot_inner(&svc);
+                emit_snapshot(&app, &snap);
             }
         }
     });
-    // 后台心跳维护任务：剔除超时 guest + 玩家表变化推前端
-    {
-        let app = app.clone();
-        let shared = shared.clone();
-        tauri::async_runtime::spawn(async move {
-            loop {
-                tokio::time::sleep(Duration::from_secs(2)).await;
-                let svc = SERVICE.lock().await;
-                if svc.generation != gen {
-                    return;
-                }
-                let changed = {
-                    let mut profiles = shared.profiles.lock();
-                    profiles.purge_expired()
-                };
-                if changed {
-                    let snap = snapshot_inner(&svc);
-                    emit_snapshot(&app, &snap);
-                }
-            }
-        });
-    }
-    Ok(snap)
 }
 
 /// 构建 host 信息服务器 handlers（6 个标准协议）。

@@ -631,12 +631,60 @@ pub struct InstallCtx<'a> {
 
 每阶段收口：`cargo check` + `cargo clippy --lib`（零警告）+ `cargo test --lib -- --test-threads=1`。
 
-### 附：文档漂移（本轮新发现，未修改文档）
+---
 
-`AGENTS.md:53` 的「测试红线」与 `README.md:39` / `README-en-US.md:40` 提到的 `download_snapshot_full`（真实下载数百 MB 到 `D:\download_test`）与 `tests/downloader_test.rs`，**在当前代码中均不存在**：
+### 阶段 8：其余长函数拆分（2026-10-07）
 
-- 全仓仅文档提及该符号，源码/grep 无定义；
-- `src-tauri/tests/` 只有 `online_diag.rs`（联机回环集成测试）；
-- `cargo test --lib` 当前唯一的 `ignored` 是 `downloader::fetcher::redirect::tests::bmclapi_optifine_real_download`（本轮迁移时保留的 `#[ignore]` 网络测试）。
+`run_task` 拆完后重扫全仓 >150 行函数，共 11 个（含 `run_task` 自己 192 行）：
 
-影响：`run_task`（下载主流程）**没有任何自动化测试覆盖**——它需要 `tauri::AppHandle`，只能在真实运行时被 `task::spawn_download` 驱动。这条也是「阶段 C 编排拆分」缺少验证手段的原因。
+| 函数 | 行数 | 处理 |
+|---|---|---|
+| `task/repair.rs::run_repair_task` | 230 | 拆 |
+| `online/guest.rs::join` | 198 | 拆 |
+| `task/runner.rs::run_task` | 192 | 已拆（阶段 7） |
+| `task/files.rs::run_files_task` | 188 | 拆 |
+| `launcher/args.rs::build_launch_command` | 181 | 拆 |
+| `game/loader/forge.rs::download_and_extract` | 176 | 拆 |
+| `task/progress.rs::EmitLoop::spawn` | 171 | **不拆**——它本体就是一个采样循环体，切开只会变碎 |
+| `online/host.rs::start_host` | 171 | 拆 |
+| `task/jdk.rs::run_install_jdk` | 164 | 拆 |
+| `task/modpack.rs::run_install` | 152 | 拆 |
+| `game/loader/forge.rs::extract_forge_client_lzma` | 152 | 拆 |
+
+统一手法（沿用 `run_task` 的先例）：抽出阶段函数；参数 >7 时引入私有上下文结构体承载共享引用；
+主函数只保留编排；**零行为变更**（不改逻辑/文案/取消检查点/锁顺序）；不得新增 `too_many_arguments` allow。
+
+**结果**（5 路并行，各代理负责的文件互不重叠）：
+
+| 函数 | 前 | 后 | 新增的辅助单元 |
+|---|---|---|---|
+| `task/repair.rs::run_repair_task` | 230 | 74 | `RepairCtx` / `RepairCounters` / `prepare_repair` / `close_repair_noop` / `spawn_repair_emit_loop` / `repair_downloads` / `repair_natives` |
+| `online/guest.rs::join` | 198 | 18 | `start_join_session` / `connect_center` / `negotiate_guest_session` / `activate_guest_join` / `spawn_guest_sync` / `guest_sync_loop` / `build_guest_profiles` |
+| `task/files.rs::run_files_task` | 188 | 49 | `FilesPlan` / `FilesCounters` / `FilesCtx` / `prepare_files` / `file_progress_callback` / `run_file_steps` / `finish_files` |
+| `launcher/args.rs::build_launch_command` | 181 | 62 | `LaunchPaths` / `resolve_launch_paths` / `build_classpath_string` / `resolve_main_class` / `build_game_args_from_auth` / `push_external_auth_args` / `push_server_args` |
+| `game/loader/forge.rs::download_and_extract` | 176 | 97 | `LoaderFiles` / `fetch_installer` / `read_install_profile` / `read_libraries` / `find_neoforge_universal` / `download_loader_libraries` / `install_neoforge_universal` |
+| `online/host.rs::start_host` | 171 | 11 | `start_host_session` / `start_info_server` / `publish_host_ready` / `spawn_host_discovery` / `host_discovery_loop` / `sync_host_session` / `spawn_host_heartbeat` |
+| `task/jdk.rs::run_install_jdk` | 164 | 48 | `begin_jdk_install` / `JdkCounters` / `spawn_jdk_heartbeat` / `settle_jdk_install` |
+| `task/modpack.rs::run_install` | 152 | 54 | `PackPrep` / `phase_a_fetch_and_parse` / `prepare_pack_install` / `persist_pack_icon` / `phases_bc` / `finish_install` |
+| `game/loader/forge.rs::extract_forge_client_lzma` | 152 | 52 | `TOOL_JARS`（提到模块级）/ `extract_client_lzma` / `download_patch_tools` / `run_patch_tool` |
+
+拆分后全仓 >150 行的函数只剩 `task/runner.rs::run_task`（192，阶段 7 已拆过的编排主体）与
+`task/progress.rs::EmitLoop::spawn`（171，判定不拆）。
+
+**顺带修复的既有问题**（本轮发现，均非本次改动引入）：
+
+1. `tests/online_diag.rs`：`create_room()` 改成返回 `Result` 后测试**未同步** → `cargo test --test online_diag` 
+   一直编译不过（联机集成测试在 AGENTS.md 里被记为「可运行」，实际已失效）。
+2. `cargo clippy --all-targets` 暴露 10 处 `field_reassign_with_default`（`commands/launch.rs` 9 处 +
+   `game/version/source.rs` 1 处，均为测试里的 `let mut cfg = X::default(); cfg.f = v;`）。
+3. 087e4b7 的 `EventSink` 抽象只覆盖了 `runner.rs`；`files.rs` / `repair.rs` / `jdk.rs` / `modpack.rs` 
+   四个执行体仍收 `AppHandle`（靠 blanket impl 编译通过）。本轮 `files.rs` 在拆分中一并迁移
+   （`task::ctx::TaskCtx.app` 类型随之由 `&AppHandle` 改为 `&dyn EventSink`），其余三个保持原签名
+   （函数体内已走 sink，无新增 AppHandle 管道）。
+
+### 附：文档漂移（本轮发现，均已修复）
+
+`AGENTS.md` 的「测试红线」与 `README.md` / `README-en-US.md` 提到的 `download_snapshot_full`（真实下载数百 MB 到 `D:\download_test`）与 `tests/downloader_test.rs`，在当前代码中**均不存在**（全仓仅文档提及；`src-tauri/tests/` 只有 `online_diag.rs`）。
+
+- 已修复：三份文档在「文档校准」提交中同步（改为列真实存在的网络测试）。
+- 后续又发现：`run_task` 当时**没有自动化测试**（它需要 `AppHandle`）。此点也已在「事件出口抽象」提交中解决 —— 现由 `tests/e2e_download.rs` 以真实网络驱动覆盖。

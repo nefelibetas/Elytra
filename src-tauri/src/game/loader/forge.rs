@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use super::neoforge::{download_neoforge_universal, extract_neoforge_client};
-use super::{expand_inheritance, InstallCtx, LoaderEvent, VersionTarget};
+use super::{expand_inheritance, InstallCtx, LoaderEvent, LoaderHook, VersionTarget};
 use crate::config::downloader::{DownloadSource, DownloaderConfig};
 use crate::downloader::endpoints;
 use crate::downloader::fetcher::{self, http};
@@ -60,37 +60,14 @@ pub(super) async fn download_and_extract(
     } = ctx;
     let source = config.file_primary_source().ok_or("no active source")?;
     let mc_dir = config.minecraft_dir_abs();
-    let tmp = mc_dir.join(".elytra").join("tmp");
-    std::fs::create_dir_all(&tmp).map_err(|e| format!("创建临时目录失败\n{}", e))?;
-    let installer_name = installer_urls
-        .first()
-        .and_then(|u| u.rsplit('/').next())
-        .unwrap_or("installer.jar");
-    let installer_path = tmp.join(installer_name);
-    // 字节级进度：step_progress 工厂（增量累加进全局与 LoaderLibs 步骤计数，
-    // total 写入步骤分母）
-    fetcher::fetch_fallback(installer_urls, &installer_path, Some(pc.step_progress()))
-        .await
-        .map_err(|e| format!("下载安装程序失败\n{}", e))?;
-
-    let file =
-        std::fs::File::open(&installer_path).map_err(|e| format!("打开安装程序失败\n{}", e))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取安装程序失败\n{}", e))?;
+    let (mut archive, installer_path) = fetch_installer(installer_urls, &mc_dir, pc).await?;
 
     std::fs::create_dir_all(version_dir).map_err(|e| format!("创建目录失败\n{}", e))?;
     let jar_path = version_dir.join(format!("{}.jar", dir_name));
     let json_path = version_dir.join(format!("{}.json", dir_name));
 
     // Parse install_profile.json if present
-    let profile: Option<serde_json::Value> = (0..archive.len()).find_map(|i| {
-        let mut entry = archive.by_index(i).ok()?;
-        if !entry.name().ends_with("install_profile.json") {
-            return None;
-        }
-        let mut buf = String::new();
-        entry.read_to_string(&mut buf).ok()?;
-        serde_json::from_str(&buf).ok()
-    });
+    let profile = read_install_profile(&mut archive);
 
     // --- version.json ---
     let found_json =
@@ -122,12 +99,7 @@ pub(super) async fn download_and_extract(
     // Forge/NeoForge 26.x 的本体（universal/fancymodloader 等）以 library 形式进 classpath，
     // 安装阶段必须一并下载，否则启动时缺库。
     let lib_dir = mc_dir.join("libraries");
-    let json_text =
-        std::fs::read_to_string(&json_path).map_err(|e| format!("读取 version.json 失败\n{e}"))?;
-    let merged: serde_json::Value =
-        serde_json::from_str(&json_text).map_err(|e| format!("解析 version.json 失败\n{e}"))?;
-    let libraries: Vec<model::Library> =
-        serde_json::from_value(merged["libraries"].clone()).unwrap_or_default();
+    let libraries = read_libraries(&json_path)?;
     // Forge 的 client 合并 jar（79MB）在 installer 的 data/client.lzma（LZMA 压缩）里，
     // version.json 中该库 URL 为空：经官方 binarypatcher 生成（vanilla client + client.lzma），
     // NeoForge 无此文件跳过。
@@ -147,71 +119,158 @@ pub(super) async fn download_and_extract(
     // 误报 "The patched Minecraft jar is missing"。这里仅下载文件到 libraries。
     // 同时运行 installertools PROCESS_MINECRAFT_JAR 生成 minecraft-client-patched
     // （GameLocator 新安装方式优先使用它，避免缺 client-srg.jar 报 corrupted）。
-    if let Some(uni) = profile.as_ref().and_then(|p| {
-        p["libraries"].as_array().and_then(|a| {
-            a.iter().find(|l| {
-                l["name"].as_str().is_some_and(|n| {
-                    n.starts_with("net.neoforged:neoforge:") && n.ends_with(":universal")
-                })
-            })
-        })
-    }) {
-        let neo_version = uni["name"]
-            .as_str()
-            .and_then(|n| n.split(':').nth(2))
-            .unwrap_or("")
-            .to_string();
-        if neo_version.is_empty() {
-            return Err("NeoForge universal 坐标缺少版本号".into());
-        }
-        download_neoforge_universal(uni, &lib_dir, config).await?;
-        // 运行 installertools 生成 patched（前置：等待 vanilla 下载完成）
-        extract_neoforge_client(
-            &mut archive,
-            &lib_dir,
-            &mc_dir,
+    if let Some(uni) = find_neoforge_universal(&profile) {
+        let files = LoaderFiles {
             dir_name,
-            &neo_version,
-            InstallCtx {
-                config,
-                pc,
-                cancel,
-                hook,
-            },
-        )
-        .await?;
-        // 其余库走统一下载（universal 已单独下载，JSON 无其条目 → 不进 classpath）
-        let sources: Vec<&DownloadSource> = config.file_sources_list();
-        library::download_libraries(
-            &libraries,
-            &lib_dir,
-            config.concurrency as usize,
-            &sources,
-            None, // loader 安装内库下载不走复用（run_task 主流程才探测复用根）
-            pc,
-            None, // 安装器内库下载小且少，取消由外层步骤检查兜底
-        )
-        .await
-        .map_err(|e| format!("下载 {} 支持库失败:\n{}", dir_name, e.join("\n")))?;
-        if let Some(h) = hook {
-            h(LoaderEvent::LibsDone);
-        }
+            mc_dir: &mc_dir,
+            lib_dir: &lib_dir,
+            config,
+            cancel,
+        };
+        install_neoforge_universal(uni, &mut archive, &libraries, &files, pc, hook).await?;
         return Ok(());
     }
     // 其余库走统一下载（多源回退 + sha1 校验；URL 为空的库在此被跳过）
+    download_loader_libraries(&libraries, &lib_dir, dir_name, config, pc).await?;
+
+    if let Some(h) = hook {
+        h(LoaderEvent::LibsDone);
+    }
+    Ok(())
+}
+
+/// 安装器解析出的共享文件位置与下载句柄（NeoForge 分支与统一下载阶段共用）。
+#[derive(Clone, Copy)]
+struct LoaderFiles<'a> {
+    dir_name: &'a str,
+    mc_dir: &'a Path,
+    lib_dir: &'a Path,
+    config: &'a DownloaderConfig,
+    cancel: &'a Arc<AtomicBool>,
+}
+
+/// 下载官方 installer.jar 到临时目录并打开为 ZIP。
+async fn fetch_installer(
+    installer_urls: &[String],
+    mc_dir: &Path,
+    pc: &crate::downloader::progress::ProgressCounters,
+) -> Result<(zip::ZipArchive<std::fs::File>, PathBuf), String> {
+    let tmp = mc_dir.join(".elytra").join("tmp");
+    std::fs::create_dir_all(&tmp).map_err(|e| format!("创建临时目录失败\n{}", e))?;
+    let installer_name = installer_urls
+        .first()
+        .and_then(|u| u.rsplit('/').next())
+        .unwrap_or("installer.jar");
+    let installer_path = tmp.join(installer_name);
+    // 字节级进度：step_progress 工厂（增量累加进全局与 LoaderLibs 步骤计数，
+    // total 写入步骤分母）
+    fetcher::fetch_fallback(installer_urls, &installer_path, Some(pc.step_progress()))
+        .await
+        .map_err(|e| format!("下载安装程序失败\n{}", e))?;
+
+    let file =
+        std::fs::File::open(&installer_path).map_err(|e| format!("打开安装程序失败\n{}", e))?;
+    let archive = zip::ZipArchive::new(file).map_err(|e| format!("读取安装程序失败\n{}", e))?;
+    Ok((archive, installer_path))
+}
+
+/// 解析安装器内的 install_profile.json（缺失或解析失败返回 None）。
+fn read_install_profile(archive: &mut zip::ZipArchive<std::fs::File>) -> Option<serde_json::Value> {
+    (0..archive.len()).find_map(|i| {
+        let mut entry = archive.by_index(i).ok()?;
+        if !entry.name().ends_with("install_profile.json") {
+            return None;
+        }
+        let mut buf = String::new();
+        entry.read_to_string(&mut buf).ok()?;
+        serde_json::from_str(&buf).ok()
+    })
+}
+
+/// 读取展开后的 version.json 并取出 libraries 列表（无该字段时为空列表）。
+fn read_libraries(json_path: &Path) -> Result<Vec<model::Library>, String> {
+    let json_text =
+        std::fs::read_to_string(json_path).map_err(|e| format!("读取 version.json 失败\n{e}"))?;
+    let merged: serde_json::Value =
+        serde_json::from_str(&json_text).map_err(|e| format!("解析 version.json 失败\n{e}"))?;
+    Ok(serde_json::from_value(merged["libraries"].clone()).unwrap_or_default())
+}
+
+/// 在 install_profile.libraries 中查找 NeoForge universal 条目。
+fn find_neoforge_universal(profile: &Option<serde_json::Value>) -> Option<&serde_json::Value> {
+    profile.as_ref()?["libraries"].as_array()?.iter().find(|l| {
+        l["name"].as_str().is_some_and(|n| {
+            n.starts_with("net.neoforged:neoforge:") && n.ends_with(":universal")
+        })
+    })
+}
+
+/// 下载展开后 JSON 的全部库（多源回退 + sha1 校验；URL 为空的库在此被跳过）。
+async fn download_loader_libraries(
+    libraries: &[model::Library],
+    lib_dir: &Path,
+    dir_name: &str,
+    config: &DownloaderConfig,
+    pc: &crate::downloader::progress::ProgressCounters,
+) -> Result<(), String> {
     let sources: Vec<&DownloadSource> = config.file_sources_list();
     library::download_libraries(
-        &libraries,
-        &lib_dir,
+        libraries,
+        lib_dir,
         config.concurrency as usize,
         &sources,
-        None, // 同上：loader 安装内库下载不走复用
+        None, // loader 安装内库下载不走复用（run_task 主流程才探测复用根）
         pc,
-        None, // 同上
+        None, // 安装器内库下载小且少，取消由外层步骤检查兜底
     )
     .await
     .map_err(|e| format!("下载 {} 支持库失败:\n{}", dir_name, e.join("\n")))?;
+    Ok(())
+}
 
+/// NeoForge 分支：下载 universal 并运行 installertools 生成 patched client，
+/// 随后下载其余支持库。
+async fn install_neoforge_universal(
+    uni: &serde_json::Value,
+    archive: &mut zip::ZipArchive<std::fs::File>,
+    libraries: &[model::Library],
+    files: &LoaderFiles<'_>,
+    pc: &crate::downloader::progress::ProgressCounters,
+    hook: Option<LoaderHook<'_>>,
+) -> Result<(), String> {
+    let LoaderFiles {
+        dir_name,
+        mc_dir,
+        lib_dir,
+        config,
+        cancel,
+    } = *files;
+    let neo_version = uni["name"]
+        .as_str()
+        .and_then(|n| n.split(':').nth(2))
+        .unwrap_or("")
+        .to_string();
+    if neo_version.is_empty() {
+        return Err("NeoForge universal 坐标缺少版本号".into());
+    }
+    download_neoforge_universal(uni, lib_dir, config).await?;
+    // 运行 installertools 生成 patched（前置：等待 vanilla 下载完成）
+    extract_neoforge_client(
+        archive,
+        lib_dir,
+        mc_dir,
+        dir_name,
+        &neo_version,
+        InstallCtx {
+            config,
+            pc,
+            cancel,
+            hook,
+        },
+    )
+    .await?;
+    // 其余库走统一下载（universal 已单独下载，JSON 无其条目 → 不进 classpath）
+    download_loader_libraries(libraries, lib_dir, dir_name, config, pc).await?;
     if let Some(h) = hook {
         h(LoaderEvent::LibsDone);
     }
@@ -251,29 +310,9 @@ async fn extract_forge_client_lzma(
     }
 
     // 1. 从 installer 提取 data/client.lzma
-    let tmp = mc_dir.join(".elytra").join("tmp");
-    std::fs::create_dir_all(&tmp).map_err(|e| format!("创建临时目录失败\n{e}"))?;
-    let client_lzma = tmp.join("client.lzma");
-    {
-        let mut found = false;
-        for i in 0..archive.len() {
-            let mut entry = archive
-                .by_index(i)
-                .map_err(|e| format!("读取安装程序条目失败\n{e}"))?;
-            if !entry.name().ends_with("client.lzma") {
-                continue;
-            }
-            let mut out =
-                std::fs::File::create(&client_lzma).map_err(|e| format!("创建文件失败\n{e}"))?;
-            std::io::copy(&mut entry, &mut out)
-                .map_err(|e| format!("提取 client.lzma 失败\n{e}"))?;
-            found = true;
-            break;
-        }
-        if !found {
-            return Ok(()); // 无补丁文件（NeoForge 等），跳过
-        }
-    }
+    let Some(client_lzma) = extract_client_lzma(archive, mc_dir)? else {
+        return Ok(()); // 无补丁文件（NeoForge 等），跳过
+    };
 
     // 2. 等待 vanilla client 就绪（runner 的 ClientJar 步骤与之并行，轮询至多 120s）
     // 注意：不能只看大小 >1MB——部分写入的文件也会超过该阈值，zip 损坏会导致工具退出码 1。
@@ -281,35 +320,79 @@ async fn extract_forge_client_lzma(
     let vanilla_jar = wait_for_vanilla_client(mc_dir, dir_name, cancel).await?;
 
     // 3. 下载官方工具（binarypatcher + classpath 依赖，来自 maven.minecraftforge.net）
-    let tools = tmp.join("forge-tools");
-    std::fs::create_dir_all(&tools).map_err(|e| format!("创建目录失败\n{e}"))?;
-    const TOOL_JARS: &[(&str, &str)] = &[
-        (
-            "binarypatcher",
-            "net/minecraftforge/binarypatcher/1.3.4/binarypatcher-1.3.4.jar",
-        ),
-        (
-            "hash-utils",
-            "net/minecraftforge/hash-utils/0.2.3/hash-utils-0.2.3.jar",
-        ),
-        (
-            "srgutils",
-            "net/minecraftforge/srgutils/0.6.6/srgutils-0.6.6.jar",
-        ),
-        (
-            "jopt-simple",
-            "net/sf/jopt-simple/jopt-simple/6.0-alpha-3/jopt-simple-6.0-alpha-3.jar",
-        ),
-        (
-            "lzma-java",
-            "com/github/jponge/lzma-java/1.3/lzma-java-1.3.jar",
-        ),
-        (
-            "javaxdelta",
-            "com/nothome/javaxdelta/2.0.1/javaxdelta-2.0.1.jar",
-        ),
-        ("trove", "trove/trove/1.0.2/trove-1.0.2.jar"),
-    ];
+    let tools = mc_dir.join(".elytra").join("tmp").join("forge-tools");
+    download_patch_tools(config, &tools).await?;
+
+    // 4. 运行 binarypatcher（与 install_profile 的 client 侧 processor 参数一致）。
+    run_patch_tool(&tools, &vanilla_jar, &client_lzma, &dest, cancel).await?;
+
+    // 5. sha1 校验
+    if !hash::file_sha1_matches(&dest, &art.sha1) {
+        let _ = std::fs::remove_file(&dest);
+        return Err("Forge client.jar 生成后 sha1 校验失败".into());
+    }
+    Ok(())
+}
+
+/// 补丁工具集合（binarypatcher + classpath 依赖，来自 maven.minecraftforge.net）。
+const TOOL_JARS: &[(&str, &str)] = &[
+    (
+        "binarypatcher",
+        "net/minecraftforge/binarypatcher/1.3.4/binarypatcher-1.3.4.jar",
+    ),
+    (
+        "hash-utils",
+        "net/minecraftforge/hash-utils/0.2.3/hash-utils-0.2.3.jar",
+    ),
+    (
+        "srgutils",
+        "net/minecraftforge/srgutils/0.6.6/srgutils-0.6.6.jar",
+    ),
+    (
+        "jopt-simple",
+        "net/sf/jopt-simple/jopt-simple/6.0-alpha-3/jopt-simple-6.0-alpha-3.jar",
+    ),
+    (
+        "lzma-java",
+        "com/github/jponge/lzma-java/1.3/lzma-java-1.3.jar",
+    ),
+    (
+        "javaxdelta",
+        "com/nothome/javaxdelta/2.0.1/javaxdelta-2.0.1.jar",
+    ),
+    ("trove", "trove/trove/1.0.2/trove-1.0.2.jar"),
+];
+
+/// 从 installer ZIP 提取 `data/client.lzma` 补丁文件到临时目录。
+/// 安装器中无该文件时返回 `Ok(None)`（NeoForge 等，调用方跳过）。
+fn extract_client_lzma(
+    archive: &mut zip::ZipArchive<std::fs::File>,
+    mc_dir: &Path,
+) -> Result<Option<PathBuf>, String> {
+    let tmp = mc_dir.join(".elytra").join("tmp");
+    std::fs::create_dir_all(&tmp).map_err(|e| format!("创建临时目录失败\n{e}"))?;
+    let client_lzma = tmp.join("client.lzma");
+    let mut found = false;
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| format!("读取安装程序条目失败\n{e}"))?;
+        if !entry.name().ends_with("client.lzma") {
+            continue;
+        }
+        let mut out =
+            std::fs::File::create(&client_lzma).map_err(|e| format!("创建文件失败\n{e}"))?;
+        std::io::copy(&mut entry, &mut out)
+            .map_err(|e| format!("提取 client.lzma 失败\n{e}"))?;
+        found = true;
+        break;
+    }
+    Ok(if found { Some(client_lzma) } else { None })
+}
+
+/// 下载补丁工具 JAR 到 `tools` 目录（已存在的不重复下载）。
+async fn download_patch_tools(config: &DownloaderConfig, tools: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(tools).map_err(|e| format!("创建目录失败\n{e}"))?;
     let sources: Vec<&DownloadSource> = config.file_sources_list();
     for (name, maven_path) in TOOL_JARS {
         let tool_dest = tools.join(format!("{name}.jar"));
@@ -324,9 +407,18 @@ async fn extract_forge_client_lzma(
             .await
             .map_err(|e| format!("下载 {name} 工具失败\n{e}"))?;
     }
+    Ok(())
+}
 
-    // 4. 运行 binarypatcher（与 install_profile 的 client 侧 processor 参数一致）。
-    // 轮询 cancel 标志：用户取消任务时 kill 工具进程，避免"取消后工具仍跑数十秒"。
+/// 运行官方 binarypatcher（与 install_profile 的 client 侧 processor 参数一致）。
+/// 轮询 cancel 标志：用户取消任务时 kill 工具进程，避免"取消后工具仍跑数十秒"。
+async fn run_patch_tool(
+    tools: &Path,
+    vanilla_jar: &Path,
+    client_lzma: &Path,
+    dest: &Path,
+    cancel: &Arc<AtomicBool>,
+) -> Result<(), String> {
     let java = resolve_java()?;
     let sep = if cfg!(windows) { ";" } else { ":" };
     let classpath = TOOL_JARS
@@ -365,12 +457,6 @@ async fn extract_forge_client_lzma(
             output.status.code().unwrap_or(-1),
             tail
         ));
-    }
-
-    // 5. sha1 校验
-    if !hash::file_sha1_matches(&dest, &art.sha1) {
-        let _ = std::fs::remove_file(&dest);
-        return Err("Forge client.jar 生成后 sha1 校验失败".into());
     }
     Ok(())
 }

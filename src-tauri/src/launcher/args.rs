@@ -305,6 +305,77 @@ pub fn build_launch_command(
         user_properties,
     } = *req;
     // ── 路径 ──
+    let paths = resolve_launch_paths(version_dir_name, mc_dir, config);
+
+    // ── Classpath ──
+    let classpath_str = build_classpath_string(
+        version_json,
+        &paths.lib_dir,
+        &paths.client_jar,
+        paths.classpath_sep,
+    );
+
+    // ── JVM 参数（preamble / system props / tuning 三段）──
+    let (jvm_preamble, system_props, jvm_tuning) = collect_jvm_args(&JvmArgs {
+        version_json,
+        natives_dir: &paths.natives_dir,
+        lib_dir: &paths.lib_dir,
+        classpath_str: &classpath_str,
+        java_major_version,
+        config,
+        version_dir: &paths.version_dir,
+        has_custom_resolution: paths.has_custom_resolution,
+    });
+
+    // ── 主类 ──
+    let main_class = resolve_main_class(version_json, config);
+
+    // ── 游戏参数 ──
+    let game_args = build_game_args_from_auth(version_json, auth, user_properties, &paths);
+
+    let mut args = Vec::new();
+    args.push(java_path.to_string_lossy().to_string());
+    args.extend(jvm_preamble);
+    args.extend(system_props);
+    args.push(ARG_CP.to_string());
+    args.push(classpath_str);
+    args.extend(jvm_tuning);
+    // 第三方登录（authlib-injector）：javaagent 注入 + client side
+    // （jar 登录时下载到数据目录；缺失由启动前置检查拦截）
+    push_external_auth_args(&mut args, auth);
+    args.push(main_class);
+    args.extend(game_args);
+    // 服务器直连：快速进服（追加到游戏参数末尾，用户自定义 game_args 之前）
+    push_server_args(&mut args, config);
+
+    LaunchCommand {
+        java_path: java_path.to_path_buf(),
+        args,
+    }
+}
+
+// ── 启动命令阶段函数 ──────────────────────────────────
+
+/// 启动路径解析结果（natives / libraries / assets / 版本目录 / 窗口与平台差异）。
+struct LaunchPaths {
+    natives_dir: PathBuf,
+    lib_dir: PathBuf,
+    assets_dir: PathBuf,
+    version_dir: PathBuf,
+    game_directory: PathBuf,
+    client_jar: PathBuf,
+    classpath_sep: &'static str,
+    resolution_width: u32,
+    resolution_height: u32,
+    has_custom_resolution: bool,
+}
+
+/// 解析启动所需的各种目录：natives / libraries / assets / 版本目录 / client.jar。
+fn resolve_launch_paths(
+    version_dir_name: &str,
+    mc_dir: &Path,
+    config: &LauncherConfig,
+) -> LaunchPaths {
     // natives 目录按 MC 版本共享（同 MC 的 vanilla/ModLoader 版本 native 库一致，
     // 避免每个版本在 natives/<版本id>/ 各解压一份 LWJGL 运行时产物，约 16MB/份）
     let natives_dir = mc_dir.join("natives").join(mc_version_of(version_dir_name));
@@ -329,41 +400,58 @@ pub fn build_launch_command(
     // （与 mod_loader/forge.rs 的处理保持一致）
     let classpath_sep = if cfg!(windows) { ";" } else { ":" };
 
-    // ── Classpath ──
-    let mut classpath = build_classpath(version_json, &lib_dir, &client_jar);
+    LaunchPaths {
+        natives_dir,
+        lib_dir,
+        assets_dir,
+        version_dir,
+        game_directory,
+        client_jar,
+        classpath_sep,
+        resolution_width,
+        resolution_height,
+        has_custom_resolution,
+    }
+}
+
+/// 构建 classpath 字符串：libraries 产物 + PCL2 fabric 兜底，按平台分隔符拼接。
+fn build_classpath_string(
+    version_json: &VersionJson,
+    lib_dir: &Path,
+    client_jar: &Path,
+    classpath_sep: &str,
+) -> String {
+    let mut classpath = build_classpath(version_json, lib_dir, client_jar);
     if version_json.main_class.contains(CLASS_PREFIX_FABRIC)
         && !classpath
             .iter()
             .any(|p| p.to_string_lossy().contains(SUBSTR_FABRIC_LOADER))
     {
-        append_pcl_fabric_libs(&mut classpath, &lib_dir);
+        append_pcl_fabric_libs(&mut classpath, lib_dir);
     }
-    let classpath_str = classpath
+    classpath
         .iter()
         .map(|p| p.to_string_lossy().to_string())
         .collect::<Vec<_>>()
-        .join(classpath_sep);
+        .join(classpath_sep)
+}
 
-    // ── JVM 参数（preamble / system props / tuning 三段）──
-    let (jvm_preamble, system_props, jvm_tuning) = collect_jvm_args(&JvmArgs {
-        version_json,
-        natives_dir: &natives_dir,
-        lib_dir: &lib_dir,
-        classpath_str: &classpath_str,
-        java_major_version,
-        config,
-        version_dir: &version_dir,
-        has_custom_resolution,
-    });
-
-    // ── 主类 ──
+/// 主类：禁用 Java Launch Wrapper 时，老版本（1.6-1.12）的 launchwrapper 直接改用客户端主类绕过。
+fn resolve_main_class(version_json: &VersionJson, config: &LauncherConfig) -> String {
     let mut main_class = version_json.main_class.clone();
-    // 禁用 Java Launch Wrapper：老版本（1.6-1.12）主类为 launchwrapper，直接改用客户端主类绕过
     if config.disable_launch_wrapper && main_class == CLASS_LAUNCHWRAPPER {
         main_class = CLASS_CLIENT_MAIN.to_string();
     }
+    main_class
+}
 
-    // ── 游戏参数 ──
+/// 按认证模式组装游戏参数（新格式数组 / 旧格式模板 / 保底参数）。
+fn build_game_args_from_auth(
+    version_json: &VersionJson,
+    auth: &AuthMode,
+    user_properties: &str,
+    paths: &LaunchPaths,
+) -> Vec<String> {
     // 离线模式 UUID 由离线皮肤设置生成（匹配 Steve/Alex 模型或正版玩家真实 UUID），
     // Token 使用固定占位；在线模式使用真实的微软返回值
     let (auth_user, auth_uuid, auth_token, auth_xuid, user_type) = match auth {
@@ -403,8 +491,8 @@ pub fn build_launch_command(
     let game_ctx = TemplateContext {
         auth_player_name: auth_user,
         version_name: &version_json.id,
-        game_directory: &game_directory.to_string_lossy(),
-        assets_root: &assets_dir.to_string_lossy(),
+        game_directory: &paths.game_directory.to_string_lossy(),
+        assets_root: &paths.assets_dir.to_string_lossy(),
         assets_index_name: &version_json.asset_index.id,
         auth_uuid,
         auth_access_token: auth_token,
@@ -417,29 +505,23 @@ pub fn build_launch_command(
             user_properties
         },
         version_type: &version_json.r#type,
-        resolution_width,
-        resolution_height,
+        resolution_width: paths.resolution_width,
+        resolution_height: paths.resolution_height,
         launcher_name: constants::LAUNCHER_BRAND,
         launcher_version: constants::APP_VERSION,
     };
 
-    // ── 游戏参数（新格式数组 / 旧格式模板 / 保底参数）──
-    let game_args = build_game_args(
+    build_game_args(
         version_json,
         &game_ctx,
-        has_custom_resolution,
+        paths.has_custom_resolution,
         user_properties,
-    );
+    )
+}
 
-    let mut args = Vec::new();
-    args.push(java_path.to_string_lossy().to_string());
-    args.extend(jvm_preamble);
-    args.extend(system_props);
-    args.push(ARG_CP.to_string());
-    args.push(classpath_str);
-    args.extend(jvm_tuning);
-    // 第三方登录（authlib-injector）：javaagent 注入 + client side
-    // （jar 登录时下载到数据目录；缺失由启动前置检查拦截）
+/// 第三方登录（authlib-injector）：javaagent 注入 + client side
+/// （jar 登录时下载到数据目录；缺失由启动前置检查拦截）。
+fn push_external_auth_args(args: &mut Vec<String>, auth: &AuthMode) {
     if let AuthMode::External { api_url, .. } = auth {
         let jar = crate::util::config_dir().join(AUTHLIB_JAR);
         // Ely.by 用 authlib-injector 内置别名；其余标准站传完整 URL
@@ -451,9 +533,10 @@ pub fn build_launch_command(
         args.push(format!("-javaagent:{}={}", jar.display(), server));
         args.push("-Dauthlibinjector.side=client".to_string());
     }
-    args.push(main_class);
-    args.extend(game_args);
-    // 服务器直连：快速进服（追加到游戏参数末尾，用户自定义 game_args 之前）
+}
+
+/// 服务器直连与用户自定义参数（追加到游戏参数末尾，用户自定义 game_args 之前）。
+fn push_server_args(args: &mut Vec<String>, config: &LauncherConfig) {
     if let Some(server) = config.server.as_deref() {
         let server = server.trim();
         if !server.is_empty() {
@@ -466,11 +549,6 @@ pub fn build_launch_command(
         args.push(port.to_string());
     }
     args.extend(config.game_args.iter().cloned());
-
-    LaunchCommand {
-        java_path: java_path.to_path_buf(),
-        args,
-    }
 }
 
 // ── 辅助函数 ──────────────────────────────────────────

@@ -66,7 +66,7 @@ async fn host_guest_scaffolding_roundtrip() {
     spawn_echo_server(mc_port);
 
     // 同一房间：host 建，guest 解析同一凭据
-    let room = create_room();
+    let room = create_room().expect("生成房间码");
 
     // host：无外部 peers（不连公共节点），自建网等待 guest 直连
     let host_cfg = SessionConfig {
