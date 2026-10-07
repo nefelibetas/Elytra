@@ -1,12 +1,12 @@
 // 衣柜 store（模块级 reactive 单例，项目约定无 Pinia）：
 //   左：3D 全身预览帧（复用 avatar.renderSkinFull3D，模块级缓存已渲染帧）
 //   右：皮肤 / 披风 tab（皮肤 = 官方当前 + 本地衣柜 + 自动缓存；披风 = 官方列表）
-// 拖动旋转：pointer 事件累加 yaw/pitch（俯仰限 ±40°），每帧按需重渲（实测 15–37ms）。
+// 拖动旋转：pointer 事件累加 yaw/pitch（俯仰以默认视角为基准限 ±40°），每帧按需重渲（实测 15–37ms）。
 import { reactive } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { authMode, externalAccount, msAccount } from "./auth";
-import { renderPremiumAvatar, renderSkinFull3D } from "./avatar";
+import { DEFAULT_VIEW_PITCH, DEFAULT_VIEW_YAW, renderPremiumAvatar, renderSkinFull3D } from "./avatar";
 import { showError } from "./alert";
 import { showToast } from "../utils/toast";
 
@@ -41,8 +41,11 @@ export interface StudioCape {
 
 /** 每体素像素数：预览画布固定为 20×34 体素（宽 120 / 高 204），随容器等比缩放。 */
 const PPV = 6;
-/** 俯仰角上限（±40°，越界会让模型上下翻转、观察不适）。 */
-const PITCH_LIMIT = 40;
+/** 俯仰角相对默认视角的拖动范围（±40°；越过默认值两侧都能拖，且不会让模型上下翻转）。 */
+const PITCH_RANGE = 40;
+/** 俯仰角拖动下限 / 上限（默认视角上下各 [PITCH_RANGE] 度）。 */
+const PITCH_MIN = DEFAULT_VIEW_PITCH - PITCH_RANGE;
+const PITCH_MAX = DEFAULT_VIEW_PITCH + PITCH_RANGE;
 /** 拖动灵敏度（度/像素）。 */
 const YAW_SENS = 0.6;
 const PITCH_SENS = 0.5;
@@ -79,8 +82,9 @@ export const skinStudio = reactive({
   frame: "",
   rendering: false,
   dragging: false,
-  yaw: 0,
-  pitch: 0,
+  /** 初始视角见 avatar 的 DEFAULT_VIEW_*：3/4 正面 + 微俯，看得到脸与一点头顶 */
+  yaw: DEFAULT_VIEW_YAW,
+  pitch: DEFAULT_VIEW_PITCH,
 
   // ── 账号当前皮肤 ──
   officialSkin: "",
@@ -152,8 +156,8 @@ export const skinStudio = reactive({
 
   /** 页面挂载：并发拉取官方皮肤 / 本地衣柜 / 官方披风，然后渲染首帧。 */
   async load() {
-    this.yaw = 0;
-    this.pitch = 0;
+    this.yaw = DEFAULT_VIEW_YAW;
+    this.pitch = DEFAULT_VIEW_PITCH;
     await Promise.allSettled([this.loadOfficial(), this.loadSkins(), this.loadCapes()]);
     skinToken++;
     this.scheduleRender();
@@ -317,7 +321,7 @@ export const skinStudio = reactive({
   moveDrag(e: PointerEvent) {
     if (!this.dragging) return;
     this.yaw += (e.clientX - lastX) * YAW_SENS;
-    this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, this.pitch + (e.clientY - lastY) * PITCH_SENS));
+    this.pitch = Math.max(PITCH_MIN, Math.min(PITCH_MAX, this.pitch + (e.clientY - lastY) * PITCH_SENS));
     lastX = e.clientX;
     lastY = e.clientY;
     this.scheduleRender();
@@ -335,10 +339,10 @@ export const skinStudio = reactive({
     this.scheduleRender(); // 落定帧此时才写缓存
   },
 
-  /** 重置视角（正面）。 */
+  /** 重置视角（回到默认视角：3/4 正面 + 微俯）。 */
   resetView() {
-    this.yaw = 0;
-    this.pitch = 0;
+    this.yaw = DEFAULT_VIEW_YAW;
+    this.pitch = DEFAULT_VIEW_PITCH;
     this.scheduleRender();
   },
 

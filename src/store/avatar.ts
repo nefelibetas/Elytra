@@ -533,21 +533,28 @@ export async function renderSkinFull3D(
   return renderBoxes(tex, boxes, yawDeg, pitchDeg, ppv, viewport);
 }
 
+/** 皮肤全身预览的默认观察视角（度）：3/4 正面（30°，能看到脸又有一点立体感）
+ *  + 15° 微俯（能看到一点头顶）。全身预览与衣柜缩略图共用，保证两处视角一致。 */
+export const DEFAULT_VIEW_YAW = 30;
+export const DEFAULT_VIEW_PITCH = 15;
+
 /** 动画帧缓存上限（超出按插入顺序淘汰最旧）。 */
 const SKIN_THUMB_CACHE_MAX = 64;
-/** 衣柜 3D 缩略图缓存：key = `S|slim|皮肤base64` → dataURL。
+/** 衣柜 3D 缩略图缓存：key = `S|slim|披风|皮肤base64` → dataURL。
  *  衣柜网格一屏十几张卡，按需重渲会卡；贴图 base64 不变即同一张图，可直接复用。 */
 const skinThumbCache = new Map<string, string>();
 
-/** 衣柜卡片的 3D 侧视缩略图：yaw 30° 呈 3/4 立体感（非纯 90° 侧面），固定 ppv=3（60×102）。
- *  结果按「皮肤 base64 + 模型」模块级缓存，列表滚动 / 重进页面不重渲；
+/** 衣柜卡片的 3D 缩略图：与左侧预览同一视角（[DEFAULT_VIEW_YAW]/[DEFAULT_VIEW_PITCH]，
+ *  3/4 正面 + 微俯 → 看得到脸与一点头顶），固定 ppv=3（60×102）。
+ *  传 `capeB64` 时连同披风一起渲染（与预览同一套渲染参数；正面看不到披风，转到侧面才有）。
+ *  结果按「皮肤 base64 + 模型 + 披风 base64」模块级缓存，列表滚动 / 重进页面不重渲；
  *  渲染失败由调用方回落到平面皮肤图。 */
-export async function renderSkinThumb3D(b64: string, slim = false): Promise<string> {
+export async function renderSkinThumb3D(b64: string, slim = false, capeB64?: string): Promise<string> {
   if (!b64) return "";
-  const key = `S|${slim ? 1 : 0}|${b64}`;
+  const key = `S|${slim ? 1 : 0}|${capeB64 || ""}|${b64}`;
   const hit = skinThumbCache.get(key);
   if (hit !== undefined) return hit;
-  const url = await renderSkinFull3D(b64, slim, 30, 0, 3);
+  const url = await renderSkinFull3D(b64, slim, DEFAULT_VIEW_YAW, DEFAULT_VIEW_PITCH, 3, capeB64);
   if (skinThumbCache.size >= SKIN_THUMB_CACHE_MAX) {
     const oldest = skinThumbCache.keys().next().value;
     if (oldest !== undefined) skinThumbCache.delete(oldest);

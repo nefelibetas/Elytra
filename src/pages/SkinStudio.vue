@@ -1,7 +1,7 @@
 <script setup lang="ts">
-// 衣柜：左 = 3D 全身预览（拖动旋转，能看到披风；左上/右上浮动图层），右 = 皮肤 / 披风 tab。
+// 衣柜：左 = 3D 全身预览（拖动旋转，默认 3/4 正面；左上/右上浮动图层），右 = 皮肤 / 披风 tab。
 // 交互与状态全在 store/skinStudio（模块级单例），本页仅编排布局与缩略图缓存。
-import { computed, onMounted, onUnmounted, reactive, watch } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { Check, Download, Plus, RefreshCw, RotateCcw, Shirt, Wind, X } from "@lucide/vue";
 import AlertDialog from "../component/common/AlertDialog.vue";
 import EmptyState from "../component/common/EmptyState.vue";
@@ -43,9 +43,9 @@ function capeThumb(b64: string) {
   };
 }
 
-/** 卡片 3D 缩略图缓存键 = 皮肤贴图 + 模型：同贴图同模型共用一张，无需失效逻辑。 */
-function thumbKey(b64: string, slim: boolean) {
-  return `${slim ? 1 : 0}|${b64}`;
+/** 卡片 3D 缩略图缓存键 = 皮肤贴图 + 模型 + 披风贴图：三者相同即同一张图，无需失效逻辑。 */
+function thumbKey(b64: string, slim: boolean, cape: string) {
+  return `${slim ? 1 : 0}|${cape}|${b64}`;
 }
 
 /** 卡片 3D 缩略图（键见 thumbKey）→ dataURL；未就绪 / 渲染失败留空串（回落平面图）。 */
@@ -67,30 +67,35 @@ const localEntries = computed<LocalSkin[]>(() => {
   return out;
 });
 
-/** 待渲染的皮肤（官方当前 + 本地条目，须有贴图）——卡片增减 / 换账号时补齐。 */
+/** 卡片缩略图用的披风贴图：账号当前启用（active）的披风——缩略图与左侧大预览用同一套渲染
+ *  参数（同角度、同披风），拖动预览时两处表现一致。 */
+const activeCape = computed(() => skinStudio.capes.find((c) => c.active)?.texture ?? "");
+
+/** 待渲染的皮肤（官方当前 + 本地条目，须有贴图）——卡片增减 / 换账号 / 换披风时补齐。 */
 const thumbReqs = computed(() => {
-  const reqs: { key: string; b64: string; slim: boolean }[] = [];
+  const cape = activeCape.value;
+  const reqs: { key: string; b64: string; slim: boolean; cape: string }[] = [];
   const official = skinStudio.officialSkin;
   const officialSlim = skinStudio.officialModel.toLowerCase() === "slim";
   if (official) {
-    reqs.push({ key: thumbKey(official, officialSlim), b64: official, slim: officialSlim });
+    reqs.push({ key: thumbKey(official, officialSlim, cape), b64: official, slim: officialSlim, cape });
   }
   for (const s of localEntries.value) {
     if (!s.skin) continue;
     const slim = s.variant === "SLIM";
-    reqs.push({ key: thumbKey(s.skin, slim), b64: s.skin, slim });
+    reqs.push({ key: thumbKey(s.skin, slim, cape), b64: s.skin, slim, cape });
   }
   return reqs;
 });
 
-// 渲染器内部同样按「贴图 + 模型」缓存，这里再记一层结果：tab 往返 / 重复皮肤都不重渲。
+// 渲染器内部同样按「贴图 + 模型 + 披风」缓存，这里再记一层结果：tab 往返 / 重复皮肤都不重渲。
 watch(
   thumbReqs,
   (reqs) => {
     for (const r of reqs) {
       if (thumbs[r.key] !== undefined) continue; // 已就绪（含失败标记）
       thumbs[r.key] = ""; // 占位：同一张贴图只提交一次渲染
-      void renderSkinThumb3D(r.b64, r.slim)
+      void renderSkinThumb3D(r.b64, r.slim, r.cape || undefined)
         .then((url) => {
           thumbs[r.key] = url;
         })
@@ -100,15 +105,15 @@ watch(
   { immediate: true },
 );
 
-/** 皮肤卡片（官方当前置首 + 去重后的本地条目；标签均为角标式，不再与名称挤一行）。 */
+/** 皮肤卡片（官方当前置首 + 去重后的本地条目；信息全部走角标，卡片内不再有名称行）。 */
 interface SkinCard {
   key: string;
   /** 皮肤贴图 base64；空串 = 无图（占位方块） */
   skin: string;
   /** 3D 缩略图 dataURL；空串 = 未就绪 / 失败 → 回落平面皮肤图 */
   thumb: string;
-  /** 名称行文案；空串 = 名称行留白（上传来源的本地条目） */
-  label: string;
+  /** 右上角来源角标文案（Mojang / 站点名 / 默认）；空串 = 不显示角标 */
+  source: string;
   /** 皮肤模型：卡片左上角标（CLASSIC / SLIM） */
   variant: string;
   tip: string;
@@ -116,30 +121,32 @@ interface SkinCard {
   local: LocalSkin | null;
 }
 
-/** 本地条目的名称：一律不展示（缓存与上传都不标）——实时卡已按来源标注（Mojang / 站点名），
- *  本地条目只作为「可回切的存档」，名称在 hover 提示里给出足矣。 */
-const LOCAL_CARD_LABEL = "";
-
 const skinCards = computed<SkinCard[]>(() => {
   const cards: SkinCard[] = [];
+  const cape = activeCape.value;
   const official = skinStudio.officialSkin;
   const officialSlim = skinStudio.officialModel.toLowerCase() === "slim";
-  cards.push({
-    key: "official",
-    skin: official,
-    thumb: official ? thumbs[thumbKey(official, officialSlim)] || "" : "",
-    label: officialLabel.value,
-    variant: officialSlim ? "SLIM" : "CLASSIC",
-    tip: "账号当前皮肤",
-    local: null,
-  });
+  // 无实时皮肤（未登录且内置默认皮肤也没取到）时不占一张空卡：否则空态与空卡并存，自相矛盾
+  if (official) {
+    cards.push({
+      key: "official",
+      skin: official,
+      thumb: thumbs[thumbKey(official, officialSlim, cape)] || "",
+      // 来源（Mojang / 站点名 / 默认）只做右上角标：早期放在名称行会被误读成皮肤名
+      source: officialLabel.value,
+      variant: officialSlim ? "SLIM" : "CLASSIC",
+      tip: "账号当前皮肤",
+      local: null,
+    });
+  }
   for (const s of localEntries.value) {
     const slim = s.variant === "SLIM";
     cards.push({
       key: s.id,
       skin: s.skin,
-      thumb: s.skin ? thumbs[thumbKey(s.skin, slim)] || "" : "",
-      label: LOCAL_CARD_LABEL,
+      thumb: s.skin ? thumbs[thumbKey(s.skin, slim, cape)] || "" : "",
+      // 本地条目（自动缓存与上传）不标来源：文件名 / 站点名在 hover 提示里给出即可
+      source: "",
       variant: s.variant,
       tip: s.name,
       local: s,
@@ -148,8 +155,8 @@ const skinCards = computed<SkinCard[]>(() => {
   return cards;
 });
 
-/** 可见的本地条目数（= 去重后的卡片数 − 实时卡）；面板计数与网格内容保持一致。 */
-const visibleSkinCount = computed(() => skinCards.value.length - 1);
+/** 可见的本地条目数（去重后）；面板计数与网格内容保持一致。 */
+const visibleSkinCount = computed(() => localEntries.value.length);
 
 /** 实际高亮的卡片：选中的本地条目被去重隐藏时（与当前皮肤同一张图）改高亮实时卡——
  *  两者本就是这个账号的同一份皮肤，避免出现「选了却看不到选中态」。 */
@@ -163,11 +170,33 @@ const effectiveSelectedKey = computed(() => {
 function removeCard(c: SkinCard) {
   if (c.local) void skinStudio.removeSkin(c.local);
 }
+
+/** 上传皮肤时可选的模型（经典 / 纤细）——两个选项，无默认值。 */
+const MODEL_OPTIONS = [
+  { variant: "CLASSIC", label: "经典模型", sub: "Steve · 4px 宽手臂" },
+  { variant: "SLIM", label: "纤细模型", sub: "Alex · 3px 窄手臂" },
+] as const;
+
+/** 上传弹窗里当前选中的模型；空串 = 还没选（确认按钮不可用，逼出一次明确的点击）。 */
+const pickedModel = ref<"" | "CLASSIC" | "SLIM">("");
+
+// 每次重新打开上传弹窗都清空选择：上一次的选择不作为下一次的默认值。
+watch(
+  () => skinStudio.skinModelDialog,
+  (open) => {
+    if (open) pickedModel.value = "";
+  },
+);
+
+/** 按用户明确选中的模型把待上传文件收进衣柜。 */
+function savePickedSkin() {
+  if (pickedModel.value) void skinStudio.confirmSaveSkin(pickedModel.value);
+}
 </script>
 
 <template>
   <div class="studio">
-    <!-- 左：3D 全身预览（按住拖动旋转；pitch 限 ±40°） -->
+    <!-- 左：3D 全身预览（按住拖动旋转；初始为 3/4 正面微俯，俯仰以初始视角为基准 ±40°） -->
     <div class="stage-col">
       <div
         class="stage"
@@ -283,11 +312,9 @@ function removeCard(c: SkinCard) {
                 <div v-else-if="c.skin" class="thumb" :style="skinThumb(c.skin)"></div>
                 <div v-else class="thumb empty"></div>
               </div>
-              <!-- 皮肤类型角标（叠在缩略图左上，与披风「使用中」同一套角标语言） -->
+              <!-- 信息全用角标：左上 = 皮肤类型，右上 = 来源（本地条目没有来源名，不显示） -->
               <span class="card-tag variant" :class="{ slim: c.variant === 'SLIM' }">{{ c.variant }}</span>
-              <div class="card-name" :title="c.label || undefined">
-                <span v-if="c.label" class="nm">{{ c.label }}</span>
-              </div>
+              <span v-if="c.source" class="card-tag source">{{ c.source }}</span>
               <button
                 v-if="c.local"
                 class="card-del"
@@ -310,7 +337,8 @@ function removeCard(c: SkinCard) {
           </div>
 
           <LoadingSpinner v-if="skinStudio.skinsLoading" text="读取本地衣柜…" />
-          <EmptyState v-else-if="!visibleSkinCount">
+          <!-- 空态只看「有没有实时卡」：账号当前皮肤即使没进本地衣柜也已有卡片，算不得空 -->
+          <EmptyState v-else-if="!visibleSkinCount && !skinStudio.officialSkin">
             <p>衣柜还是空的</p>
             <p>点下方「上传本地皮肤」把皮肤文件收进来</p>
           </EmptyState>
@@ -329,7 +357,6 @@ function removeCard(c: SkinCard) {
               >
                 <div class="thumb cape none"><X :size="18" /></div>
                 <div class="card-name">无披风</div>
-                <span v-if="skinStudio.selectedCapeId === ''" class="card-tag ok">使用中</span>
               </div>
               <div
                 v-for="c in skinStudio.capes"
@@ -343,7 +370,6 @@ function removeCard(c: SkinCard) {
                 <div class="card-name" :title="c.alias || c.id">
                   {{ c.alias || c.id.slice(0, 8) }}
                 </div>
-                <span v-if="c.active" class="card-tag ok">使用中</span>
               </div>
             </div>
 
@@ -369,15 +395,29 @@ function removeCard(c: SkinCard) {
       </footer>
     </div>
 
-    <!-- 上传皮肤前确认模型：CLASSIC（经典 Steve 宽）/ SLIM（纤细 Alex 窄） -->
+    <!-- 上传皮肤前选择模型：经典（Steve 宽）/ 纤细（Alex 窄）。无默认值，必须点一次再确认 -->
     <AlertDialog v-model="skinStudio.skinModelDialog" title="选择皮肤模型">
       <div class="model-desc">
         皮肤将存入本地衣柜；模型不可中途更换（需重新上传），按所选模型预览与应用。
       </div>
+      <div class="model-pick">
+        <button
+          v-for="m in MODEL_OPTIONS"
+          :key="m.variant"
+          class="model-opt"
+          :class="{ on: pickedModel === m.variant }"
+          @click="pickedModel = m.variant"
+        >
+          <span class="model-mark" />
+          <span class="model-name">{{ m.label }}</span>
+          <span class="model-sub">{{ m.sub }}</span>
+        </button>
+      </div>
       <template #actions>
         <button class="dialog-btn" @click="skinStudio.skinModelDialog = false">取消</button>
-        <button class="dialog-btn danger" @click="skinStudio.confirmSaveSkin('CLASSIC')">经典模型（Steve）</button>
-        <button class="dialog-btn" @click="skinStudio.confirmSaveSkin('SLIM')">纤细模型（Alex）</button>
+        <button class="dialog-btn primary" :disabled="!pickedModel" @click="savePickedSkin">
+          确认
+        </button>
       </template>
     </AlertDialog>
   </div>
@@ -635,20 +675,13 @@ function removeCard(c: SkinCard) {
 }
 
 /* 皮肤网格：每行 3 个、最多可见 2 行（再多的在网格内滚动）
-   行高固定 → 各卡缩略图统一加高；minmax(0,1fr) 防内容撑破列宽 */
+   行高固定 → 各卡尺寸一致；minmax(0,1fr) 防内容撑破列宽 */
 .grid.skins {
   --row-h: 186px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   grid-auto-rows: var(--row-h);
   max-height: calc(var(--row-h) * 2 + 12px); /* 2 行 + 行间距 */
   overflow-y: auto;
-}
-
-/* 名称行占固定高度，缩略图吃掉剩余高度 → 有无名称的卡片内部尺寸一致 */
-.grid.skins .card-name {
-  flex: none;
-  height: 16px;
-  line-height: 16px;
 }
 
 .card {
@@ -670,9 +703,12 @@ function removeCard(c: SkinCard) {
   background-color: var(--color-brand-bg);
 }
 
+/* 选中态：用 inset 环而不是外扩 box-shadow——外扩环的圆角半径是「卡片圆角 + 外扩量」，
+   与卡片不同步；且外扩部分会被网格滚动容器在边缘裁掉（左右阴影不对称、边角像被切方）。
+   inset 环的圆角恒等于卡片圆角，也不会被任何父容器裁切。 */
 .card.active {
   border-color: var(--color-brand);
-  box-shadow: 0 0 0 3px var(--color-brand-glow);
+  box-shadow: inset 0 0 0 2px var(--color-brand-glow);
 }
 
 /* 3D 侧视缩略图：撑满卡片内容区（高度由卡片行高决定 → 明显加高，60×102 帧等比缩放不糊）；
@@ -731,7 +767,7 @@ function removeCard(c: SkinCard) {
   color: var(--text-secondary);
 }
 
-/* 名称超出省略（名称行只放来源名，模型改由左上角标呈现） */
+/* 名称超出省略（皮肤卡已无名称行——名称/来源一律走角标；仅上传卡与披风卡还有名称行） */
 .card-name .nm {
   min-width: 0;
   overflow: hidden;
@@ -757,12 +793,13 @@ function removeCard(c: SkinCard) {
   background-color: var(--surface-hover);
 }
 
-.card-tag.ok {
-  color: var(--text-inverse);
-  background-color: var(--color-brand);
+/* 来源角标（皮肤卡右上角）：与左上角类型角标同一套版式，避免把来源读成皮肤名 */
+.card-tag.source {
+  left: auto;
+  right: 5px;
 }
 
-/* 皮肤类型角标（沿用上面披风「使用中」的角标版式）：CLASSIC 中性、SLIM 品牌色 */
+/* 皮肤类型角标：CLASSIC 中性、SLIM 品牌色 */
 .card-tag.variant {
   font-size: 9px;
   letter-spacing: 0.5px;
@@ -839,5 +876,75 @@ function removeCard(c: SkinCard) {
   font-size: 12.5px;
   color: var(--text-secondary);
   line-height: 1.6;
+}
+
+/* 模型选择：两张等权选项卡，默认一张也不选（必须明确点一次才能确认） */
+.model-pick {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.model-opt {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background-color: var(--surface-card);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.model-opt:hover {
+  border-color: var(--color-brand);
+  background-color: var(--color-brand-bg);
+}
+
+.model-opt.on {
+  border-color: var(--color-brand);
+  background-color: var(--color-brand-bg);
+}
+
+/* 单选圆点：未选为空圈，选中为品牌色实心（inset 环留出内圈空隙，三端 WebView 均支持） */
+.model-mark {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  margin-bottom: 2px;
+}
+
+.model-opt.on .model-mark {
+  border-color: var(--color-brand);
+  background-color: var(--color-brand);
+  box-shadow: inset 0 0 0 3px var(--surface-card);
+}
+
+.model-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.model-opt.on .model-name {
+  color: var(--color-brand);
+}
+
+.model-sub {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+/* 还没选模型时「确认」不可用（灰掉，不给出任何默认模型） */
+.dialog-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>
