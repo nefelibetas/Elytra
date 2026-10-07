@@ -4,7 +4,7 @@
 use serde::Serialize;
 
 use super::shared::post_json_multi;
-use super::{curseforge, modrinth};
+use super::{curseforge, modrinth, wiki_entry};
 use super::translation::fetch_translations;
 use crate::downloader::endpoints::CommunityEndpoints;
 use crate::downloader::fetcher;
@@ -100,15 +100,23 @@ pub struct SearchQuery {
 /// 搜索（按来源分派）。`category` 为项目类型（如 shader）或 None（普通 mod）；
 /// `page_size` 每源条数（聚合模式前端传减半值，单源默认 30）；
 /// `translate` 为 true 时对结果批量查 MCIM 中文简介（失败静默降级为英文）。
+///
+/// 中文查询会先经内置百科表反查英文查询词再搜：Modrinth/CurseForge 都只认英文，
+/// 原样把中文发过去只会得到「按热度排的无关结果」（实测搜「实体」返回 3D Maps）。
 pub async fn search_community(
     source: &str,
     q: &SearchQuery,
     translate: bool,
 ) -> Result<CommunitySearchPage, String> {
+    let raw = q.query.trim();
+    // 反查失败（非中文/未命中）时保持原样交给平台，不额外报错
+    let query = wiki_entry::WIKI
+        .query_for_chinese(source, raw)
+        .unwrap_or_else(|| raw.to_string());
     let mut page = match source {
         "modrinth" => {
             modrinth::search_modrinth(
-                q.query.trim(),
+                &query,
                 q.game_version.as_deref(),
                 q.loader.as_deref(),
                 q.category.as_deref(),
@@ -119,7 +127,7 @@ pub async fn search_community(
         }
         "curseforge" => {
             curseforge::search_curseforge(
-                q.query.trim(),
+                &query,
                 q.game_version.as_deref(),
                 q.loader.as_deref(),
                 q.category.as_deref(),
