@@ -6,6 +6,7 @@
 use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 
+use crate::auth::account;
 use crate::constants;
 use crate::events;
 use crate::jdk::model::JdkConfig;
@@ -52,6 +53,14 @@ pub async fn spawn_game(
     uuid: String,
     xuid: String,
 ) -> Result<u32, String> {
+    // 正版（online）模式：改用后端取的有效 token（临近过期自动静默刷新）——
+    // 前端缓存的是登录当时的 token，MC token 仅约 24h 有效，过期后启动会「会话无效」。
+    // 离线（空串）与第三方（authlib-injector 自有 token）沿用调用方传入值。
+    let access_token = if auth_mode == "online" {
+        account::valid_access_token().await?
+    } else {
+        access_token
+    };
     let (mut auth, java_path, version_json, mc_dir, launcher_config, java_major) =
         process::prepare_launch(
             &version_dir_name,

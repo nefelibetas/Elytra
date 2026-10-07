@@ -23,6 +23,34 @@ fn http_client(timeout_secs: u64) -> Result<reqwest::Client, String> {
         .map_err(|e| format!("初始化客户端失败\n{e}"))
 }
 
+/// token 刷新余量（秒）：距过期不足此值就提前刷新，避开「刚好过期」竞态。
+const TOKEN_REFRESH_SKEW_SECS: u64 = 300;
+
+/// 当前 unix 秒（系统时间早于纪元时退化为 0）。
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// 取当前正版账号**可用**的 Minecraft access_token：临近过期时用 refresh_token 静默刷新并回写。
+///
+/// 背景：`MsAccount.expires_at` 此前只在写入时设置、**从未被读取**，于是所有用 token 的功能
+/// （披风 / 皮肤 / 启动）拿到的都可能是已过期的缓存值 —— MC token 只有约 24h 有效期，
+/// 过期后表现为 401，而账号仍在列表里（就是「明明已登录却失败」的假象）。
+pub async fn valid_access_token() -> Result<String, String> {
+    let account = auth::model::read().ok_or_else(|| "尚未登录正版账号".to_string())?;
+    if account.expires_at > unix_now() + TOKEN_REFRESH_SKEW_SECS {
+        return Ok(account.access_token);
+    }
+    let refreshed = auth::microsoft::refresh_login(&account)
+        .await
+        .map_err(|e| format!("登录凭证已过期，自动刷新失败（请重新登录）\n{e}"))?;
+    auth::model::save(&refreshed)?;
+    Ok(refreshed.access_token)
+}
+
 /// 下载远程资源并返回 base64（头像/纹理/皮肤/披风共用）。
 pub async fn fetch_b64(url: &str, err_prefix: &str) -> Result<String, String> {
     let resp = http_client(15)?
