@@ -6,7 +6,7 @@ import { useRoute } from "vue-router";
 import { goBack } from "../store/nav";
 import { Check, RotateCcw } from "@lucide/vue";
 import {
-  THEMES, customThemes, builtinVars,
+  THEMES, customThemes, builtinVars, EDITABLE_VAR_KEYS,
   createCustomTheme, updateCustomTheme, activateCustomTheme,
   type CustomThemeVars, type ThemeId,
 } from "../store/theme";
@@ -51,20 +51,19 @@ watch(
   },
 );
 
-/** 骨架可调部位 → 对应 CSS 变量与标签。 */
-interface PartDef { key: keyof CustomThemeVars; label: string }
-const PARTS: PartDef[] = [
-  { key: "--color-brand", label: "品牌色" },
-  { key: "--text-primary", label: "主文字" },
-  { key: "--text-secondary", label: "次要文字" },
-  { key: "--surface-page", label: "页面底色" },
-  { key: "--surface-hover", label: "悬停底色" },
-  { key: "--border-default", label: "常规边框" },
-  { key: "--border-strong", label: "强调边框" },
-];
-const PART_LABELS: Record<string, string> = Object.fromEntries(
-  PARTS.map((p) => [p.key, p.label]),
-);
+/** 骨架可调部位键（与 store 的可调变量清单同源，单一维护）。 */
+type EditableVarKey = (typeof EDITABLE_VAR_KEYS)[number];
+
+/** 部位标签：Record<EditableVarKey, …> 保证清单新增变量时此处必须补标签。 */
+const PART_LABELS: Record<EditableVarKey, string> = {
+  "--color-brand": "品牌色",
+  "--text-primary": "主文字",
+  "--text-secondary": "次要文字",
+  "--surface-page": "页面底色",
+  "--surface-hover": "悬停底色",
+  "--border-default": "常规边框",
+  "--border-strong": "强调边框",
+};
 
 /** 骨架预览 CSS 变量透传（局部作用域，不污染全局主题）。 */
 const previewStyle = computed(() => {
@@ -111,13 +110,13 @@ function colorMix(hex: string, alphaPct: number): string {
 // ── 调色板状态 ──
 
 /** 当前选中的部位变量。 */
-const activeField = ref<keyof CustomThemeVars | null>(null);
+const activeField = ref<EditableVarKey | null>(null);
 
 /** 调色板开关。 */
 const paletteOpen = ref(false);
 
 /** 点击骨架部位：选中 + 打开调色板。 */
-function pickField(key: keyof CustomThemeVars) {
+function pickField(key: EditableVarKey) {
   activeField.value = key;
   paletteOpen.value = true;
 }

@@ -16,7 +16,7 @@ use crate::auth::microsoft::extract_xuid_from_jwt;
 use crate::game::version::model::VersionJson;
 use crate::launcher::args::{ensure_old_style_natives, mc_version_of};
 use crate::launcher::env::{load_launch_config, pre_launch_check};
-use crate::launcher::model::{AuthMode, LauncherConfig};
+use crate::launcher::model::{AuthMode, LauncherConfig, ProcessPriority};
 
 /// 启动游戏子进程（cwd/stdio 由调用方在 command 上预设）。
 /// Windows：游戏进程应与启动器生命周期解耦，否则关闭启动器（或其终端）会连游戏一起关闭：
@@ -181,6 +181,75 @@ fn latest_crash_report(dir: &Path) -> Option<String> {
         }
     }
     latest.map(|(_, p)| p)
+}
+
+/// 游戏窗口首次可见的轮询间隔（毫秒）。
+const WINDOW_POLL_MS: u64 = 300;
+
+/// `spawn_and_watch` 的装配参数（参数超过 7 个时用上下文结构体，避免 too_many_arguments）。
+pub struct SpawnRequest<'a> {
+    /// 完整启动命令 argv（`args[0]` = java 可执行文件）
+    pub args: &'a [String],
+    /// 版本隔离 gameDir：子进程 cwd（游戏相对路径正确，crash-reports/logs 落在此处）
+    pub game_dir: &'a Path,
+    /// 子进程 stdout/stderr 落盘路径
+    pub log_path: &'a Path,
+    pub process_priority: ProcessPriority,
+}
+
+/// 启动游戏子进程并完成全部接线：cwd/stdio 装配 → spawn（Job Object 脱钩）→
+/// 进程优先级 → stdout/stderr 排空线程 → 后台监听（窗口可见 + 退出）。
+/// 两个事件回调由调用方注入（本域不依赖 tauri 与事件常量），回调首参为子进程 pid，
+/// 使调用方无需在 spawn 前就持有它。返回 pid。
+pub fn spawn_and_watch<W, E>(
+    req: SpawnRequest<'_>,
+    on_window_visible: W,
+    on_exit: E,
+) -> Result<u32, String>
+where
+    W: FnMut(u32) + Send + 'static,
+    E: FnOnce(u32, Option<i32>, Option<String>) + Send + 'static,
+{
+    let SpawnRequest {
+        args,
+        game_dir,
+        log_path,
+        process_priority,
+    } = req;
+    let Some((program, rest)) = args.split_first() else {
+        return Err("启动命令为空\n无法启动游戏".into());
+    };
+    let mut command = std::process::Command::new(program);
+    command
+        .args(rest)
+        .current_dir(game_dir)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .stdin(std::process::Stdio::null());
+    let mut child = spawn_game_child(&mut command)?;
+    let pid = child.id();
+    // 进程刚启动即设置优先级（Windows: SetPriorityClass）
+    crate::launcher::platform::set_process_priority(pid, process_priority);
+    // 捕获子进程 stdout/stderr 写入日志文件（避免 GBK 乱码污染终端，同时保留诊断信息）
+    if let Some(mut so) = child.stdout.take() {
+        let lp = log_path.to_path_buf();
+        std::thread::spawn(move || drain_output(&mut so, &lp, false));
+    }
+    if let Some(mut se) = child.stderr.take() {
+        let lp = log_path.to_path_buf();
+        std::thread::spawn(move || drain_output(&mut se, &lp, true));
+    }
+    let crash_dir = game_dir.join("crash-reports");
+    let mut on_window_visible = on_window_visible;
+    watch_game_process(
+        child,
+        pid,
+        crash_dir,
+        WINDOW_POLL_MS,
+        move || on_window_visible(pid),
+        move |exit_code, crash_report| on_exit(pid, exit_code, crash_report),
+    );
+    Ok(pid)
 }
 
 /// 合一监听循环（后台线程）：try_wait 非阻塞查退出 + 可见窗口轮询；

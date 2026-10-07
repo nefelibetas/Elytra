@@ -3,26 +3,16 @@
 //! 图片格式判定复用 util::is_supported_image 魔数嗅探（与前端 data URL 渲染语义一致）；
 //! 目录名守卫防路径穿越。
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::Serialize;
 
 use crate::game::version::dir::version_dir_path;
+use crate::game::version::icon::{version_icon_path, CUSTOM_ICON_NAME};
 use crate::util;
 
 /// 版本图标读取上限（平台 logo / 用户图片一般 <256KB，留余量）。
 const MAX_PACK_ICON_BYTES: u64 = 1024 * 1024;
-
-/// 图标优先级：用户自定义（version-icon.png）> 整合包项目图（pack-icon.png）。
-fn version_icon_path(vdir: &Path) -> Option<PathBuf> {
-    for name in ["version-icon.png", "pack-icon.png"] {
-        let p = vdir.join(name);
-        if p.is_file() {
-            return Some(p);
-        }
-    }
-    None
-}
 
 /// 校验版本目录名：仅接受简单目录名，防路径穿越。
 fn ensure_simple_dir_name(name: &str) -> Result<(), String> {
@@ -55,7 +45,7 @@ pub fn get_version_icon_source(version_dir_name: String) -> VersionIconInfo {
         .and_then(|vdir| version_icon_path(&vdir))
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
         .map(|n| {
-            if n == "version-icon.png" {
+            if n == CUSTOM_ICON_NAME {
                 "custom"
             } else {
                 "pack"

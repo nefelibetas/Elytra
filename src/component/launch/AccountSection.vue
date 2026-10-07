@@ -867,25 +867,8 @@ function useOfflineName(name: string) {
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
-}
-
-/* expand 动画目标值 = 固定高度（写在 enter-to/leave-from，写在 active 会覆盖 from 态导致无动画） */
-.expand-enter-active,
-.expand-leave-active {
-  transition: max-height 0.2s ease, opacity 0.15s ease;
-  overflow: hidden;
-}
-
-.expand-enter-from,
-.expand-leave-to {
-  max-height: 0;
-  opacity: 0;
-}
-
-.expand-enter-to,
-.expand-leave-from {
-  max-height: 180px;
-  opacity: 1;
+  /* expand 目标高度 = 固定高度（共享骨架见 styles/transitions.css） */
+  --expand-h: 180px;
 }
 
 /* premium hover actions：始终占位（不影响头像/用户名位置），仅切换透明度。

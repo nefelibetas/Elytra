@@ -115,23 +115,13 @@ pub async fn list_resource_detailed(
 /// 删除资源目录（材质包/数据包/光影包）下的单个文件。
 /// `kind` 白名单 + 纯文件名（防路径穿越），文件不存在报错。
 #[tauri::command]
-pub fn delete_resource_file(
+pub async fn delete_resource_file(
     version_name: String,
     kind: String,
     file_name: String,
 ) -> Result<(), String> {
-    if !matches!(kind.as_str(), "resourcepacks" | "datapacks" | "shaderpacks") {
-        return Err("未知资源类型".to_string());
-    }
-    if !util::is_simple_name(&file_name) {
-        return Err("非法文件名".to_string());
-    }
     let vdir = version_dir_path(&version_name)?;
-    let path = vdir.join(&kind).join(&file_name);
-    if !path.is_file() {
-        return Err(format!("文件不存在\n{}", file_name));
-    }
-    std::fs::remove_file(&path).map_err(|e| format!("删除失败\n{e}"))
+    updates::delete_resource_file(&vdir, &kind, &file_name).await
 }
 
 /// 删除整个存档（saves/<world> 目录，递归）。

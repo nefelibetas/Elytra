@@ -195,12 +195,9 @@ const sv = () => vdState.selectedVersion ?? EMPTY_VERSION;
 .dl-btn:active:not(:disabled) { transform: scale(0.97); }
 .dl-done { font-size: 14px; font-weight: 600; color: var(--color-success); text-align: center; padding: 10px 40px; }
 
-/* expand：max-height 目标值必须写在 enter-to/leave-from（写在 active 上会因同特异性覆盖 from 态导致无动画），
-   且目标值与展开区自身 max-height 一致（320px），内容超高时内部滚动不撑出窗口 */
-.det-ld-body { border-top: 1px solid var(--border-default); max-height: 320px; overflow-y: auto; }
-.expand-enter-active, .expand-leave-active { transition: max-height 0.3s ease, opacity 0.25s ease; }
-.expand-enter-from, .expand-leave-to { max-height: 0; opacity: 0; }
-.expand-enter-to, .expand-leave-from { max-height: 320px; opacity: 1; }
+/* expand：目标高度由共享骨架（styles/transitions.css）提供，此处仅注入 --expand-h。
+   与展开区自身 max-height 一致（320px），内容超高时内部滚动不撑出窗口 */
+.det-ld-body { border-top: 1px solid var(--border-default); max-height: 320px; overflow-y: auto; --expand-h: 320px; }
 
 /* loader cards */
 .ld-enter-active, .ld-leave-active { transition: all 0.25s ease; }

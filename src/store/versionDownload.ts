@@ -4,7 +4,7 @@
 import { reactive, computed, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { dlState, registerVersionTarget } from "./download";
-import { CATEGORIES } from "../utils/versionMeta";
+import { CATEGORIES, LOADER_MIN_VERSION } from "../utils/versionMeta";
 import { errMsg } from "../utils/error";
 
 export interface VersionMeta {
@@ -51,11 +51,6 @@ export const loaderIcon: Record<string, string> = Object.fromEntries(
 const loaders: LoaderItem[] = CATEGORIES
   .filter(c => c.key !== "vanilla")
   .map(c => ({ key: c.key, name: c.title, icon: c.icon }));
-
-const loaderMinVersion: Record<string, string> = {
-  forge: "1.1", neoforge: "1.20.2", fabric: "1.14", quilt: "1.14.4",
-  optifine: "1.2.5",
-};
 
 function isMainLoader(key: string) { return key !== "optifine"; }
 
@@ -108,7 +103,7 @@ export const vdState = reactive({
 
   isAprilFools,
   loaderSupported(ld: string, mcVersion: string): boolean {
-    const min = loaderMinVersion[ld];
+    const min = LOADER_MIN_VERSION[ld];
     if (min && !versionGte(mcVersion, min)) return false;
     return true;
   },

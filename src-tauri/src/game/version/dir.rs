@@ -5,6 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::config::downloader::DownloaderConfig;
+use crate::config::game_dirs;
 use crate::launcher::args::find_version_json;
 use crate::persist;
 use crate::util::{infer_loader_from_json, is_simple_name};
@@ -14,6 +15,42 @@ pub fn active_minecraft_dir() -> PathBuf {
     let config: DownloaderConfig =
         persist::read(crate::constants::SECT_DOWNLOADER).unwrap_or_default();
     config.minecraft_dir_abs()
+}
+
+/// 自动激活结果：激活的目录路径 + 该目录下第一个版本名。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AutoActivate {
+    pub dir_path: String,
+    pub version: String,
+}
+
+/// 检测所有已配置的游戏目录，激活第一个存在游戏版本的目录，并返回其第一个版本。
+/// 版本名按字母序取第一个；目录按配置列表顺序检测。
+pub fn auto_activate_first_version() -> Result<AutoActivate, String> {
+    let dirs = game_dirs::ensure_initialized();
+    for d in &dirs {
+        let vdir = Path::new(&d.path).join("versions");
+        if !vdir.is_dir() {
+            continue;
+        }
+        let mut names: Vec<String> = std::fs::read_dir(&vdir)
+            .map_err(|e| format!("读取目录失败\n{e}"))?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        if names.is_empty() {
+            continue;
+        }
+        names.sort();
+        let version = names[0].clone();
+        game_dirs::set_active(&d.path)?;
+        return Ok(AutoActivate {
+            dir_path: d.path.clone(),
+            version,
+        });
+    }
+    Err("所有游戏目录中都没有已安装的版本".to_string())
 }
 
 /// 版本目录绝对路径（versions/{name}）。目录不存在时返回错误（读操作不该静默创建）。

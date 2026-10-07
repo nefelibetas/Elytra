@@ -76,6 +76,28 @@ pub fn delete_mod_file(mods_dir: &Path, file_name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// 删除资源目录（resourcepacks / datapacks / shaderpacks）下的单个文件。
+/// `kind` 白名单 + 纯文件名（防路径穿越），文件不存在报错。
+pub async fn delete_resource_file(
+    version_dir: &Path,
+    kind: &str,
+    file_name: &str,
+) -> Result<(), String> {
+    if !matches!(kind, "resourcepacks" | "datapacks" | "shaderpacks") {
+        return Err("未知资源类型".to_string());
+    }
+    if !crate::util::is_simple_name(file_name) {
+        return Err("非法文件名".to_string());
+    }
+    let path = version_dir.join(kind).join(file_name);
+    if !path.is_file() {
+        return Err(format!("文件不存在\n{file_name}"));
+    }
+    tokio::fs::remove_file(&path)
+        .await
+        .map_err(|e| format!("删除失败\n{e}"))
+}
+
 /// 切换 mods 目录下单个 mod 文件的启用/禁用状态（Mod 管理禁用按钮）。
 /// 禁用：`name.jar` → `name.jar.disabled`（扫描按扩展名过滤自动隐藏）；启用：反向重命名。
 /// 仅接受纯文件名（防路径穿越），目标不存在报错。返回 true=已禁用，false=已启用。

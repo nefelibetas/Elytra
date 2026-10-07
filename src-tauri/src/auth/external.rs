@@ -517,6 +517,19 @@ pub struct ThirdPartyConfig {
     pub servers: Vec<ThirdPartyServer>,
 }
 
+impl ThirdPartyConfig {
+    /// 读取第三方登录配置；无配置或预设列表为空时注入内置默认预设。
+    pub fn load() -> Self {
+        let cfg: Self = persist::read(constants::SECT_THIRD_PARTY).unwrap_or_default();
+        if cfg.servers.is_empty() {
+            return Self {
+                servers: default_third_party_servers(),
+            };
+        }
+        cfg
+    }
+}
+
 /// 默认内置预设（知名 Yggdrasil 兼容站）。
 pub fn default_third_party_servers() -> Vec<ThirdPartyServer> {
     vec![
