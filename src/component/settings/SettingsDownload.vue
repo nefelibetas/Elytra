@@ -215,6 +215,8 @@ function onMaster(v: string) {
   margin-left: 12px;
   padding-left: 14px;
   border-left: 1px solid var(--border-default);
+  /* expand 目标高度（共享骨架见 styles/transitions.css） */
+  --expand-h: 1000px;
 }
 .dl-source-detail .dl-row {
   padding: 6px 0;
@@ -259,20 +261,5 @@ function onMaster(v: string) {
   font-size: 11px;
   color: var(--text-tertiary);
   line-height: 1.5;
-}
-
-/* 细分源区展开/收起动画（max-height 显式目标值保证动画生效） */
-.expand-enter-active,
-.expand-leave-active {
-  transition: max-height 0.25s ease, opacity 0.2s ease;
-}
-.expand-enter-to,
-.expand-leave-from {
-  max-height: 1000px;
-}
-.expand-enter-from,
-.expand-leave-to {
-  max-height: 0;
-  opacity: 0;
 }
 </style>

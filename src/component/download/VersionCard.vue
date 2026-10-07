@@ -10,10 +10,12 @@ const props = defineProps<{
 
 const emit = defineEmits<{ toggle: [] }>();
 
-const bodyHeight = computed(() => {
-  if (!props.expanded) return "0";
-  return Math.min(props.count * 100 + 24, 99999) + "px";
-});
+// 单行 VersionItem 的保守上界高度（px）：padding 10×2 + 内容块。
+// 内容块 = max(32px 图标, ver-id 13px + gap 2 + ver-sub 11px ≈ 38px) ≈ 38px → 实际行高 ≈ 58px。
+// 取 80px 预留折行 / 更大行高的余量；上界偏大只会让过渡略快，不会裁切。
+const ROW_H = 80;
+// 展开目标高度 = 条目数 × 单行上界 + 顶部 1px 分割线与余量。优先保证不裁切（宁可过渡略长）。
+const expandHeight = computed(() => props.count * ROW_H + 24 + "px");
 </script>
 
 <template>
@@ -23,9 +25,12 @@ const bodyHeight = computed(() => {
       <span class="card-count">{{ count }}</span>
       <ChevronDown class="chevron" :size="14" />
     </div>
-    <div class="card-body" :style="{ maxHeight: bodyHeight }">
-      <slot />
-    </div>
+    <!-- v-show 而非 v-if：条目可能很多，保持列表常驻避免反复重建；折叠时 display:none 不参与布局 -->
+    <Transition name="expand">
+      <div v-show="expanded" class="card-body" :style="{ '--expand-h': expandHeight }">
+        <slot />
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -51,8 +56,6 @@ const bodyHeight = computed(() => {
   /* 底部圆角贴合 .card 的 border-radius：列表最后一项 hover 的直角背景
      被 overflow 裁剪时不再"顶着"卡片圆角形成方角 */
   border-radius: 0 0 var(--radius-md) var(--radius-md);
-  transition: max-height 0.3s ease, opacity 0.25s ease;
-  opacity: 1;
 }
 /* 标题与 items 之间的分割线：左右留白 16px */
 .card-body::before {
@@ -61,7 +64,6 @@ const bodyHeight = computed(() => {
   margin: 0 16px;
   border-top: 1px solid var(--border-default);
 }
-.card:not(.open) .card-body { opacity: 0; }
 
 .expandable:hover { box-shadow: var(--shadow-sm); }
 

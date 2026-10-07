@@ -729,3 +729,27 @@ pub struct InstallCtx<'a> {
 | `task/emit.rs::update_and_emit` 的 async 内 `std::thread::sleep(5ms)` 自旋 | 去掉轮询循环：`try_lock` 优先（正常短临界区无变化），失败才退化为 `parking_lot` 阻塞 `lock()` —— 锁释放即唤醒，既不再占死 tokio worker 轮询，也去掉了最多 5ms 的人为延迟；一次性诊断告警保留 | 编译 + `cargo test --lib` 通过 |
 
 影响面说明：`update_and_emit` 有 19 个调用点，全部为同步 `set_*` 系列函数，因此**不能**改为 async（会向上扩散成百处）；阻塞 `lock()` 是本场景的正确选择——临界区只做字段更新 + `clone`，无 IO 无 `await`，不会长等。
+
+---
+
+### 阶段 11：P2 第二批（2026-10-07）
+
+| 批次 | 内容 | 状态 |
+|---|---|---|
+| 前端健壮性 | 7 处非空断言消除（`VanillaDetail` 的 `EMPTY_VERSION` 兜底 / `VanillaList` 的 `&&` 守卫 / `avatar.ts` 抽 `ctx2d` 按契约降级）+ 5 处错误展示改走 `errMsg()` | ✅ 已提交（9167d02） |
+| 前端去重 | `copyCommand`×7 → `utils/clipboard.ts`；`formatOptions`×3 → `GIVE_FORMAT_OPTIONS` 派生；生成器输出等宽块×5 → `styles/tools-shared.css`；`.nb-tag-x`×5 → 公共类；新增 `--font-mono` token（4 套主题） | ✅ 同上 |
+| 后端 | `version_server_{name}`（全仓唯一动态 TOML section）名校验收敛为 `game/version/dir.rs::version_server_section()` + 边界测试 | ✅ 同上 |
+| 命令层下沉 | `commands/version.rs::delete_resource_file` → `game/updates/update.rs`（同步 IO 一并改 async/tokio）；`version_icon` 的 custom>pack 优先级 → `game/version/icon.rs`（+2 测试） | ✅ 已完成 |
+| 命令层下沉 | `commands/launch.rs`：进程装配/stdio 排空/监听接线收成 `launcher/process.rs::spawn_and_watch`（回调带 pid，域层不依赖 tauri）；`get_launcher_log` 同步 fs 改 `tokio::fs`；`open_launcher_log_dir` 不再命令互调 | ✅ 已完成 |
+| 前端 UI | `VersionCard` 展开动画改 `<Transition name="expand">`（目标高度 `count×80px+24px`，80px 取自实测行高 58px 的 1.38 倍）；`.expand-*` 骨架收口到 `styles/transitions.css` | ✅ 已完成 |
+| 前端去重 | `VersionSetup*` 动作栏×3 → `styles/version-setup-shared.css`（保留 attached/boxed 两种真实变体，删 22 个重复规则块） | ✅ 已完成 |
+| 前端去重 | 常量表：`LOADER_MIN_VERSION` 归位 `utils/versionMeta.ts` + `Record<LoaderKey,string>` 强绑定；`PARTS`/`CustomThemeVars` 改 `as const` 清单派生类型；顺带消除 `loadCustoms` 的第三份键清单、给 `LOADER_TITLES`/`LOADER_ICONS` 补键集约束 | ✅ 已完成 |
+| 命令层下沉 | `commands/gamedirs.rs`（`ensure_initialized()` 显式化写盘 + `auto_activate_first_version` 下沉 `game/version/dir.rs`，消除命令调命令）；`get_third_party_config` → `ThirdPartyConfig::load()` | ✅ 已完成 |
+| 命令层下沉 | `commands/offline_account.rs` 5 命令 → `auth/offline.rs`（+2 测试） | ✅ 已完成 |
+
+阶段 11 收口验证：`cargo clippy --all-targets` 零警告、`cargo test --lib` **244 passed**（+4 新测试）、
+`npx vue-tsc --noEmit` 0 错误、`pnpm build` 成功。
+
+**复核时发现但未改（需产品决策或超出本阶段范围）**：
+- `CustomThemeEditor` 的 `--border-default` 标签在模板里没有可点部位（纯死数据，改动前既有）
+- `commands/version.rs::delete_resource_file` 由同步转 async —— Tauri `invoke` 语义不变，但值得在真实窗口回归一次

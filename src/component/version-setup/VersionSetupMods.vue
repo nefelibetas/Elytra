@@ -251,21 +251,21 @@ async function openModsFolder() {
 
       <!-- 底部 action 栏：选中 ≥1 时滑出，全选/取消 + 批量更新/删除 -->
       <Transition name="fade">
-        <div v-if="selecting" class="vsm-actions-bar">
-          <button class="vsm-ab-btn" @click="toggleAll">
+        <div v-if="selecting" class="vs-actions-bar vs-bar-attached">
+          <button class="vs-ab-btn" @click="toggleAll">
             {{ allVisibleSelected ? "取消全选" : "全选" }}
           </button>
-          <button class="vsm-ab-btn" @click="clear">取消</button>
-          <span class="vsm-ab-count">已选 {{ selected.length }} 项</span>
+          <button class="vs-ab-btn" @click="clear">取消</button>
+          <span class="vs-ab-count">已选 {{ selected.length }} 项</span>
           <button
-            class="vsm-ab-btn update"
+            class="vs-ab-btn update"
             :disabled="updatableSelected.length === 0 || updatingFiles.size > 0"
             @click="doBatchUpdate"
           >
             <Upload :size="13" />
             <span>更新（{{ updatableSelected.length }}）</span>
           </button>
-          <button class="vsm-ab-btn danger" @click="doBatchDelete">
+          <button class="vs-ab-btn danger" @click="doBatchDelete">
             <Trash2 :size="13" />
             <span>删除（{{ selected.length }}）</span>
           </button>
@@ -287,6 +287,10 @@ async function openModsFolder() {
     </AlertDialog>
   </div>
 </template>
+
+<style>
+@import "../../styles/version-setup-shared.css";
+</style>
 
 <style scoped>
 .vsm {
@@ -580,74 +584,16 @@ async function openModsFolder() {
   color: var(--text-tertiary);
 }
 
-/* 底部 action 栏：选中 ≥1 时滑出，固定列表卡底部 */
-.vsm-actions-bar {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0 12px 12px;
-  padding: 10px 14px;
-  background: var(--surface-elevated);
-  border-top: 1px solid var(--border-default);
-  box-shadow: var(--shadow-md);
-}
-
-.vsm-ab-count {
-  flex: 1;
-  min-width: 0;
-  font-size: 12px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.vsm-ab-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.vsm-ab-btn:hover:not(:disabled) {
-  border-color: var(--color-brand);
-  color: var(--color-brand);
-}
-
-.vsm-ab-btn:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-.vsm-ab-btn.update {
+/* action 栏公共部分见 styles/version-setup-shared.css；update 态仅 Mods 使用 */
+.vs-ab-btn.update {
   border-color: var(--color-brand);
   background: var(--color-brand-bg);
   color: var(--color-brand);
 }
 
-.vsm-ab-btn.update:hover:not(:disabled) {
+.vs-ab-btn.update:hover:not(:disabled) {
   background: var(--color-brand);
   color: var(--text-inverse);
-}
-
-.vsm-ab-btn.danger {
-  border: 1px solid var(--color-danger);
-  border: 1px solid color-mix(in srgb, var(--color-danger) 40%, transparent);
-  background: transparent;
-  color: var(--color-danger);
-}
-
-.vsm-ab-btn.danger:hover:not(:disabled) {
-  background: var(--color-danger-bg);
-  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
-  border-color: var(--color-danger);
 }
 
 /* 行内禁用按钮（Mod 行最右侧；与 act 按钮同款紧凑样式） */

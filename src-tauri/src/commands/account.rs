@@ -293,14 +293,7 @@ pub fn remove_external_account(api_url: String, uuid: String) -> Result<(), Stri
 /// 模型与默认值在 auth/external.rs（命令层薄胶水）。
 #[tauri::command]
 pub fn get_third_party_config() -> external::ThirdPartyConfig {
-    let cfg: external::ThirdPartyConfig =
-        persist::read(constants::SECT_THIRD_PARTY).unwrap_or_default();
-    if cfg.servers.is_empty() {
-        return external::ThirdPartyConfig {
-            servers: external::default_third_party_servers(),
-        };
-    }
-    cfg
+    external::ThirdPartyConfig::load()
 }
 
 /// 保存第三方配置（预设列表）。

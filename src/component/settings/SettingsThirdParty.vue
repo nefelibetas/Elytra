@@ -267,22 +267,8 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-/* 展开/收起动画（max-height 写在 enter-to/leave-from，勿移 active） */
-.expand-enter-active,
-.expand-leave-active {
-  transition: max-height 0.22s ease, opacity 0.18s ease;
-}
-.expand-enter-from,
-.expand-leave-to {
-  max-height: 0;
-  opacity: 0;
-  overflow: hidden;
-}
-.expand-enter-to,
-.expand-leave-from {
-  max-height: 1000px;
-  overflow: hidden;
+  /* expand 目标高度（共享骨架见 styles/transitions.css） */
+  --expand-h: 1000px;
 }
 
 .tp-current {

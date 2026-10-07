@@ -17,7 +17,24 @@ export const LOADER_KEYS = [
   "optifine",
 ] as const;
 
-export const LOADER_TITLES: Record<string, string> = {
+/** 加载器 key 联合类型。 */
+export type LoaderKey = (typeof LOADER_KEYS)[number];
+
+/** 各加载器支持的最低 MC 版本（下载页据此过滤不可用加载器）。
+ *  `Record<LoaderKey, string>` 约束键集：LOADER_KEYS 增删加载器时此处必须同步（否则类型报错）；
+ *  保留索引签名以支持按任意 string key 查询（非加载器 key → undefined，调用方据此跳过过滤）。 */
+export const LOADER_MIN_VERSION: Record<string, string> & Record<LoaderKey, string> = {
+  neoforge: "1.20.2",
+  forge: "1.1",
+  fabric: "1.14",
+  quilt: "1.14.4",
+  optifine: "1.2.5",
+};
+
+/** 加载器展示键集：LOADER_KEYS 全部 + 原版（分类卡片需要原版条目）。 */
+export type LoaderDisplayKey = LoaderKey | "vanilla";
+
+export const LOADER_TITLES: Record<string, string> & Record<LoaderDisplayKey, string> = {
   vanilla: "原版",
   forge: "Forge",
   neoforge: "NeoForge",
@@ -26,7 +43,7 @@ export const LOADER_TITLES: Record<string, string> = {
   optifine: "OptiFine",
 };
 
-export const LOADER_ICONS: Record<string, string> = {
+export const LOADER_ICONS: Record<string, string> & Record<LoaderDisplayKey, string> = {
   vanilla: grassIcon,
   forge: forgeIcon,
   neoforge: neoForgeIcon,

@@ -19,18 +19,29 @@ export const THEMES: { id: ThemeId; label: string; desc: string; swatch: string[
 /** 自定义主题 id 前缀（与内置主题在 data-theme 与 localStorage 键上区分）。 */
 const CUSTOM_PREFIX = "custom-";
 
-// ── 可编辑的核心色板变量（品牌系 + 文本 + 浅表面 + 边框）──
+// ── 核心色板变量（品牌系 + 文本 + 浅表面 + 边框）──
 // 品牌衍生物（dark/bg/glow/gradient）由品牌主色自动派生，不出现在编辑面板。
-export interface CustomThemeVars {
-  "--color-brand": string;
-  "--text-primary": string;
-  "--text-secondary": string;
-  "--text-tertiary": string;
-  "--surface-page": string;
-  "--surface-hover": string;
-  "--border-default": string;
-  "--border-strong": string;
-}
+/** 可调变量键（顺序 = 编辑器调色板顺序）。增删可调变量只改这一处。 */
+export const EDITABLE_VAR_KEYS = [
+  "--color-brand",
+  "--text-primary",
+  "--text-secondary",
+  "--surface-page",
+  "--surface-hover",
+  "--border-default",
+  "--border-strong",
+] as const;
+
+/** 不可调变量键：骨架预览无对应可点部位，仅随主题复制/持久化。 */
+const HIDDEN_VAR_KEYS = ["--text-tertiary"] as const;
+
+/** 自定义主题变量键（两张清单的并集）。 */
+export type ThemeVarKey =
+  | (typeof EDITABLE_VAR_KEYS)[number]
+  | (typeof HIDDEN_VAR_KEYS)[number];
+
+/** 自定义主题变量值：键集由 ThemeVarKey 派生，与清单保持单一事实源。 */
+export type CustomThemeVars = Record<ThemeVarKey, string>;
 
 export interface CustomTheme {
   id: string;
@@ -113,10 +124,8 @@ function loadCustoms(): Record<string, CustomTheme> {
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, CustomTheme>;
     // 结构校验：仅接受合理的 vars（缺字段的丢弃）
-    const required: (keyof CustomThemeVars)[] = [
-      "--color-brand", "--text-primary", "--text-secondary", "--text-tertiary",
-      "--surface-page", "--surface-hover", "--border-default", "--border-strong",
-    ];
+    // 变量键清单与 CustomThemeVars 同源：新增变量自动纳入校验
+    const required: readonly ThemeVarKey[] = [...EDITABLE_VAR_KEYS, ...HIDDEN_VAR_KEYS];
     const out: Record<string, CustomTheme> = {};
     for (const [id, t] of Object.entries(parsed)) {
       if (!t || typeof t.id !== "string" || typeof t.name !== "string" || typeof t.vars !== "object") continue;

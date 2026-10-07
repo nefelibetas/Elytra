@@ -4,6 +4,7 @@
 //! 启动选项在 commands/launch_options.rs、离线账号历史在 commands/offline_account.rs。
 
 use tauri::AppHandle;
+use tauri_plugin_opener::OpenerExt;
 
 use crate::constants;
 use crate::events;
@@ -106,53 +107,30 @@ pub async fn spawn_game(
 
     // 启动子进程：cwd = 版本隔离的 gameDir，与官方启动器一致——
     // 游戏相对路径行为正确，crash-reports/logs 落在版本目录而非启动器目录。
-    // spawn 的 Windows Job Object 脱钩重试逻辑在 launcher/process.rs（域层）。
-    let game_dir = mc_dir.join("versions").join(&version_dir_name);
-    let mut command = std::process::Command::new(&cmd.args[0]);
-    command
-        .args(&cmd.args[1..])
-        .current_dir(&game_dir)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .stdin(std::process::Stdio::null());
-    let mut child = process::spawn_game_child(&mut command)?;
-
-    let pid = child.id();
-    // 进程优先级（Windows: SetPriorityClass；进程刚启动即设置）
-    platform::set_process_priority(pid, launcher_config.process_priority);
-
-    // 捕获子进程 stdout/stderr 写入日志文件（避免 GBK 乱码污染终端，同时保留诊断信息）
-    let log_path = mc_dir.join("logs").join("elytra-launch.log");
-    if let Some(mut so) = child.stdout.take() {
-        let lp = log_path.clone();
-        std::thread::spawn(move || process::drain_output(&mut so, &lp, false));
-    }
-    if let Some(mut se) = child.stderr.take() {
-        let lp = log_path.clone();
-        std::thread::spawn(move || process::drain_output(&mut se, &lp, true));
-    }
-
-    // 后台监听线程（合一循环：窗口可见轮询 + 退出等待）由 launcher/process.rs 承载；
-    // 此处仅注入事件派发——队列线程派发（与 task-progress 同机制），
+    // 装配（cwd/stdio/优先级/日志排空/后台监听）全在 launcher/process.rs（域层），
+    // 此处只注入事件派发——队列线程派发（与 task-progress 同机制），
     // 游戏监听线程不因 webview 未消费而阻塞。
+    let game_dir = mc_dir.join("versions").join(&version_dir_name);
+    let log_path = mc_dir.join("logs").join("elytra-launch.log");
     let app_window = app.clone();
     let app_exit = app.clone();
     let label_window = version_dir_name.clone();
     let label_exit = version_dir_name.clone();
-    let crash_dir = game_dir.join("crash-reports");
-    process::watch_game_process(
-        child,
-        pid,
-        crash_dir,
-        300,
-        move || {
+    let pid = process::spawn_and_watch(
+        process::SpawnRequest {
+            args: &cmd.args,
+            game_dir: &game_dir,
+            log_path: &log_path,
+            process_priority: launcher_config.process_priority,
+        },
+        move |pid| {
             task::emit_event(
                 &app_window,
                 events::GAME_WINDOW_VISIBLE,
                 (pid, label_window.clone()),
             );
         },
-        move |exit_code, crash_report| {
+        move |pid, exit_code, crash_report| {
             // 退出码随事件送出：前端据此区分正常退出与崩溃（非 0 → 错误级提示）
             task::emit_event(
                 &app_exit,
@@ -160,7 +138,7 @@ pub async fn spawn_game(
                 (pid, label_exit, exit_code, crash_report),
             );
         },
-    );
+    )?;
 
     Ok(pid)
 }
@@ -176,7 +154,14 @@ pub async fn get_game_log(game_dir: String, version_name: String) -> String {
 #[tauri::command]
 pub fn open_launcher_log_dir(app: AppHandle) -> Result<(), String> {
     let dir = util::config_dir();
-    super::gamedirs::open_folder(app, dir.to_string_lossy().to_string())
+    let path = dir.to_string_lossy().to_string();
+    // 与 gamedirs::open_folder 同机制，但直接调 plugin 而非调另一个命令（命令间不互调）
+    if !dir.exists() {
+        return Err(format!("目录不存在\n{path}"));
+    }
+    app.opener()
+        .open_path(path, None::<&str>)
+        .map_err(|e| format!("打开文件夹失败\n{e}"))
 }
 
 /// 读取启动器日志尾部（最多 200 行）：exe 旁 Elytra/launcher.log（stdout/stderr 重定向落盘）。
@@ -184,7 +169,9 @@ pub fn open_launcher_log_dir(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn get_launcher_log() -> String {
     let path = util::config_dir().join("launcher.log");
-    std::fs::read_to_string(path)
+    // 异步读：命令是 async，同步 std::fs 会阻塞 tokio worker（文件不大但没必要）
+    tokio::fs::read_to_string(path)
+        .await
         .map(|text| util::tail_lines(&text))
         .unwrap_or_default()
 }

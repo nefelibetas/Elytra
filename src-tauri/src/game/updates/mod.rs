@@ -17,4 +17,7 @@ pub use identify::{
     ResourceListResult,
 };
 pub use scan::{scan_dir_files, scan_mod_files, LocalModFile, ScanFilter};
-pub use update::{check_updates, delete_mod_file, toggle_mod_file, update_mod_file, ModUpdate};
+pub use update::{
+    check_updates, delete_mod_file, delete_resource_file, toggle_mod_file, update_mod_file,
+    ModUpdate,
+};
