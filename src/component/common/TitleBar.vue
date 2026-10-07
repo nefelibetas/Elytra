@@ -16,7 +16,8 @@ const isDetail = computed(
     route.path === "/resource-detail" ||
     route.path === "/version-select" ||
     route.path === "/version-setup" ||
-    route.path === "/custom-theme",
+    route.path === "/custom-theme" ||
+    route.path === "/skin-studio",
 );
 
 /** 次级页面标题栏文案。 */
@@ -29,6 +30,7 @@ const barTitle = computed(() => {
     // 新建（无 id）与编辑（有 id）区分标题
     return route.query.id ? "编辑自定义外观" : "新建自定义外观";
   }
+  if (route.path === "/skin-studio") return "皮肤衣柜";
   if (route.path === "/resource-detail") {
     // 资源详情：有译名时 "翻译名（原名）"，否则原名
     return detailTitle() || "资源详情";

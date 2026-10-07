@@ -2,7 +2,7 @@
 // 账号区：正版/离线切换 + 用户区（头像/用户名/登录/操作菜单）。
 // 菜单跟随鼠标 Teleport 到 body；window click 关闭菜单（组件挂载周期内注册）。
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
-import { ShieldCheck, User, UserRound, Shirt, Pencil, LogOut, Users, ChevronDown, Link2, RotateCcw, RefreshCw } from "@lucide/vue";
+import { ShieldCheck, User, UserRound, Pencil, LogOut, Users, ChevronDown, Link2, RotateCcw, RefreshCw } from "@lucide/vue";
 import {
   authMode, msAccount, msAccounts, offlineAccounts, username, setAuthMode, msLoginState,
   startMsLogin, cancelMsLogin, switchMsAccount, removeMsAccount,
@@ -18,7 +18,6 @@ import { showError } from "../../store/alert";
 import { settingsTab } from "../../store/settingsTab";
 import { useRouter } from "vue-router";
 import MenuPopover from "../common/MenuPopover.vue";
-import AlertDialog from "../common/AlertDialog.vue";
 
 const router = useRouter();
 
@@ -61,6 +60,11 @@ const closeHandler = () => {
 function goThirdPartyLogin() {
   settingsTab.value = "thirdparty";
   void router.push("/settings");
+}
+/** 点皮肤头像 → 皮肤衣柜（3D 预览 + 皮肤/披风管理）。 */
+function openSkinStudio() {
+  accountUi.closeMenus();
+  void router.push("/skin-studio");
 }
 /** 第三方已登录时的附加操作（多角色切换 / 皮肤下载）。 */
 const showRoles = ref(false);
@@ -251,12 +255,12 @@ function useOfflineName(name: string) {
     <div class="section s-user">
       <div
         class="user-area"
-        :class="{ 'menu-open': accountUi.skinMenu.visible || accountUi.editMenu.visible || accountUi.accountsMenu.visible }"
+        :class="{ 'menu-open': accountUi.editMenu.visible || accountUi.accountsMenu.visible }"
         @mouseenter="onExtEnter"
         @mouseleave="onExtLeave"
       >
         <div class="user-main">
-          <div class="avatar">
+          <div class="avatar clickable" v-tooltip="'皮肤衣柜'" @click="openSkinStudio">
             <img
               v-if="avatarUrl && !avatarState.avatarError"
               :src="avatarUrl"
@@ -270,7 +274,7 @@ function useOfflineName(name: string) {
               v-if="avatarState.avatarError && authMode !== 'offline'"
               class="avatar-retry"
               title="重新加载头像"
-              @click="retryAvatar"
+              @click.stop="retryAvatar"
             >
               <RefreshCw :size="14" />
             </button>
@@ -376,10 +380,6 @@ function useOfflineName(name: string) {
             >
               <Users :size="14" />
             </button>
-            <!-- 衣服：皮肤/披风菜单 -->
-            <button class="icon-btn" v-tooltip="'皮肤与披风'" @click.stop="accountUi.openSkinMenu($event)">
-              <Shirt :size="14" />
-            </button>
             <!-- 编辑：账号信息菜单（修改密码 / 修改玩家名） -->
             <button class="icon-btn" v-tooltip="'编辑信息'" @click.stop="accountUi.openEditMenu($event)">
               <Pencil :size="14" />
@@ -394,20 +394,6 @@ function useOfflineName(name: string) {
             <span>登录微软账号</span>
           </button>
         </div>
-
-        <!-- 皮肤/披风菜单（跟随鼠标，出现在右下方） -->
-        <MenuPopover
-          :visible="accountUi.skinMenu.visible"
-          :x="accountUi.skinMenu.x"
-          :y="accountUi.skinMenu.y"
-        >
-          <div class="menu-item" @click="accountUi.uploadSkin">修改皮肤</div>
-          <div class="menu-item" @click="accountUi.refreshSkin">刷新皮肤</div>
-          <div class="menu-item" @click="accountUi.saveSkin">保存皮肤文件</div>
-          <div class="menu-sep"></div>
-          <div class="menu-item" @click="accountUi.openCapeDialog">修改披风</div>
-          <div class="menu-item" @click="accountUi.refreshCape">刷新披风列表</div>
-        </MenuPopover>
 
         <!-- 编辑信息菜单（修改密码 / 修改玩家名） -->
         <MenuPopover
@@ -464,15 +450,6 @@ function useOfflineName(name: string) {
       </div>
     </div>
 
-    <!-- 上传皮肤前确认模型：CLASSIC（经典 Steve 宽）/ SLIM（纤细 Alex 窄） -->
-    <AlertDialog v-model="accountUi.skinModelDialog" title="选择皮肤模型">
-      <div class="skin-model-desc">上传后将替换当前皮肤，模型不可中途更换（需重新上传）。</div>
-      <template #actions>
-        <button class="dialog-btn" @click="accountUi.skinModelDialog = false">取消</button>
-        <button class="dialog-btn danger" @click="accountUi.confirmUploadSkin('CLASSIC')">经典模型（Steve）</button>
-        <button class="dialog-btn" @click="accountUi.confirmUploadSkin('SLIM')">纤细模型（Alex）</button>
-      </template>
-    </AlertDialog>
   </div>
 </template>
 
@@ -777,6 +754,18 @@ function useOfflineName(name: string) {
 .avatar svg {
   width: 100%;
   height: 100%;
+}
+
+/* 头像即皮肤衣柜入口：hover 品牌色描边提示可点（z-index 盖过 .user-area::before 热区） */
+.avatar.clickable {
+  z-index: 1;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  transition: box-shadow 0.15s;
+}
+
+.avatar.clickable:hover {
+  box-shadow: 0 0 0 3px var(--color-brand-glow);
 }
 
 .avatar img {
@@ -1096,11 +1085,6 @@ function useOfflineName(name: string) {
   border-color: var(--color-brand);
   color: var(--color-brand);
   background-color: var(--color-brand-bg);
-}
-.skin-model-desc {
-  font-size: 12.5px;
-  color: var(--text-secondary);
-  line-height: 1.6;
 }
 
 </style>

@@ -204,9 +204,13 @@ pub struct CapeInfo {
     pub alias: String,
     pub url: String,
     pub active: bool,
+    /// 披风贴图 base64（WebView 无 http 插件，前端无法自行访问 textures.minecraft.net CDN）；
+    /// 下载失败置空串——贴图是装饰性资源，不应让整个列表失败。
+    pub texture: String,
 }
 
-/// 拉取官方披风列表（GET /minecraft/profile，需 Bearer token）。
+/// 拉取官方披风列表（GET /minecraft/profile，需 Bearer token），
+/// 并并发拉取每条披风的贴图 base64（供前端 3D 预览）。
 pub async fn fetch_capes(access_token: &str) -> Result<Vec<CapeInfo>, String> {
     let resp = http_client(15)?
         .get("https://api.minecraftservices.com/minecraft/profile")
@@ -222,15 +226,32 @@ pub async fn fetch_capes(access_token: &str) -> Result<Vec<CapeInfo>, String> {
         .await
         .map_err(|e| format!("解析响应失败\n{e}"))?;
     let capes = json["capes"].as_array().cloned().unwrap_or_default();
-    Ok(capes
+    let mut list: Vec<CapeInfo> = capes
         .iter()
         .map(|c| CapeInfo {
             id: c["id"].as_str().unwrap_or("").to_string(),
             alias: c["alias"].as_str().unwrap_or("").to_string(),
             url: c["url"].as_str().unwrap_or("").to_string(),
             active: c["state"].as_str() == Some("ACTIVE"),
+            texture: String::new(),
         })
-        .collect())
+        .collect();
+
+    // 贴图并发下载（各披风独立，单个失败只影响自身 → 空串）
+    let textures = futures_util::future::join_all(list.iter().map(|c| {
+        let url = c.url.clone();
+        async move {
+            if url.is_empty() {
+                return String::new();
+            }
+            fetch_b64(&url, "下载披风").await.unwrap_or_default()
+        }
+    }))
+    .await;
+    for (cape, texture) in list.iter_mut().zip(textures) {
+        cape.texture = texture;
+    }
+    Ok(list)
 }
 
 /// 切换当前启用的披风（PUT /minecraft/profile/capes/active + JSON capeId）。

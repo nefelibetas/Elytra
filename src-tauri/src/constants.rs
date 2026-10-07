@@ -57,6 +57,8 @@ pub const SECT_OFFLINE_ACCOUNTS: &str = "offline_accounts";
 pub const SECT_GAME_DIRS: &str = "game_dirs";
 /// persist section: 联机配置（协调节点等）
 pub const SECT_ONLINE: &str = "online";
+/// persist section: 本地皮肤收藏索引（PNG 原文存配置目录 `skins/<id>.png`）
+pub const SECT_LOCAL_SKINS: &str = "local_skins";
 
 #[cfg(test)]
 mod tests {
