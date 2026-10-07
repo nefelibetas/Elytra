@@ -8,6 +8,7 @@ import {
   startMsLogin, cancelMsLogin, switchMsAccount, removeMsAccount,
   saveOfflineAccount, removeOfflineAccount,
   externalAccount, loadExternalAccounts, switchExternalRole, refreshExternalAccount,
+  type MsAccountInfo,
 } from "../../store/auth";
 import { avatarState, scheduleOfflineRender, renderAccountHead, renderOfflineHead, accountHeads, offlineHeads, renderSkinHead3D, renderExternalAvatar, renderPremiumAvatar } from "../../store/avatar";
 import { accountUi } from "../../store/accountUi";
@@ -160,6 +161,23 @@ async function ensureOfflineHeads() {
       if (h) offlineHeads[name] = h;
     });
   }
+}
+
+/** 正版 access_token 仅约 24h 有效；过期后各入口会经后端 valid_access_token 自动静默续签。
+ *  这里只把状态摆明：正常时不打扰界面，临近（<5 分钟）或已过期才标警示，
+ *  消除「账号还在列表里、却各个功能失败」的困惑。 */
+function credHint(acc: MsAccountInfo): string {
+  const left = acc.expires_at - Date.now() / 1000;
+  if (left <= 0) return "登录凭证已过期，将在使用时自动续签";
+  const hours = Math.floor(left / 3600);
+  if (hours >= 1) return `凭证有效，约 ${hours} 小时后到期（自动续签）`;
+  const mins = Math.max(1, Math.floor(left / 60));
+  return `凭证有效，约 ${mins} 分钟后到期（自动续签）`;
+}
+
+/** 凭证是否临近过期或已过期（用于显示警示标记）。 */
+function credWarn(acc: MsAccountInfo): boolean {
+  return acc.expires_at - Date.now() / 1000 < 300;
 }
 
 /** 切换正版账号（防止连点；失败 = refresh_token 失效需重登）。 */
@@ -425,7 +443,12 @@ function useOfflineName(name: string) {
                   draggable="false"
                 />
                 <UserRound v-else :size="16" class="acct-icon" />
-                <span class="acct-name">{{ acc.name }}</span>
+                <span class="acct-name" :title="credHint(acc)">{{ acc.name }}</span>
+                <span
+                  v-if="credWarn(acc)"
+                  class="acct-cred-warn"
+                  :title="credHint(acc)"
+                >!</span>
                 <span v-if="acc.uuid === msAccount?.uuid" class="acct-check">✓</span>
                 <button
                   class="acct-del"
@@ -960,6 +983,21 @@ function useOfflineName(name: string) {
 .acct-check {
   color: var(--color-brand);
   font-size: 12px;
+}
+
+/* 凭证临近过期/已过期标记：正版 token 约 24h 有效，过期后会自动续签，仅作提醒不阻断操作 */
+.acct-cred-warn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-danger);
+  color: var(--text-inverse);
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .acct-del {
