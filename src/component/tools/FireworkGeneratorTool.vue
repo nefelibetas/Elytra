@@ -119,10 +119,10 @@ async function copyCommand() {
         />
         <template v-if="itemKind === 'firework_rocket'">
           <span class="nb-label nb-label-short">飞行时长</span>
-          <input v-model.number="flight" type="number" class="nb-num" min="1" max="3" />
+          <input v-model.number="flight" type="number" class="nb-num" min="1" max="3" autocomplete="off" />
         </template>
         <span class="nb-label nb-label-short">数量</span>
-        <input v-model.number="count" type="number" class="nb-num" min="1" max="64" />
+        <input v-model.number="count" type="number" class="nb-num" min="1" max="64" autocomplete="off" />
       </div>
     </div>
 

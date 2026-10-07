@@ -89,6 +89,7 @@ function editionLabel(): string {
         placeholder="服务器地址[:端口]，如 play.example.com 或 1.2.3.4:25565"
         :disabled="loading"
         @keyup.enter="handlePing"
+        autocomplete="off"
       />
       <DropSelect
         :model-value="edition"

@@ -75,6 +75,7 @@ watch(
           class="cs-input"
           v-model="search.query"
           @keydown.enter="search.search()"
+          autocomplete="off"
         />
         <!-- Mod 布局特例：来源与名称同行 -->
         <template v-if="showSource && showLoader">

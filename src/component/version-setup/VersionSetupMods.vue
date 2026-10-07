@@ -154,6 +154,7 @@ async function openModsFolder() {
         class="vsm-search-input"
         type="text"
         placeholder="搜索 Mod…"
+        autocomplete="off"
       />
     </div>
 

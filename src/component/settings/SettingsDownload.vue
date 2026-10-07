@@ -139,6 +139,7 @@ function onMaster(v: string) {
         v-model.number="dlConcurrency"
         :style="{ '--range-pct': (dlConcurrency / 256 * 100) + '%' }"
         @input="saveDownloadConfig"
+        autocomplete="off"
       />
       <span class="dl-val">{{ dlConcurrency }} / 256</span>
     </div>
@@ -154,6 +155,7 @@ function onMaster(v: string) {
         v-model.number="dlMaxSpeed"
         :style="{ '--range-pct': (dlMaxSpeed / 10240 * 100) + '%' }"
         @input="saveDownloadConfig"
+        autocomplete="off"
       />
       <span class="dl-val">{{ dlMaxSpeed === 0 ? '不限' : fmtSpeed(dlMaxSpeed) }}</span>
     </div>

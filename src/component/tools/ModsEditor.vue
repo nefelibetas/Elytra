@@ -62,6 +62,7 @@ function onCustomColor(e: Event) {
         class="nb-input"
         placeholder="留空使用默认名称"
         spellcheck="false"
+        autocomplete="off"
       />
     </div>
     <div class="nb-row">
@@ -81,6 +82,7 @@ function onCustomColor(e: Event) {
         :class="{ active: form.colorCode.startsWith('§x') }"
         title="自定义颜色（§x，需 1.16+）"
         @input="onCustomColor"
+        autocomplete="off"
       />
       <button
         class="me-clear"
@@ -97,7 +99,7 @@ function onCustomColor(e: Event) {
         placeholder="选择附魔"
         @update:model-value="(v: string) => (newEnch = v)"
       />
-      <input v-model.number="newEnchLevel" type="number" class="nb-num" min="1" max="255" />
+      <input v-model.number="newEnchLevel" type="number" class="nb-num" min="1" max="255" autocomplete="off" />
       <button class="tool-btn nb-add-btn" :disabled="!newEnch" @click="addEnchant">
         <Plus :size="14" />
         添加

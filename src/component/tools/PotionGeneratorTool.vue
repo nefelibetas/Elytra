@@ -141,7 +141,7 @@ async function copyCommand() {
           @update:model-value="(v: string) => (potionId = v)"
         />
         <span class="nb-label nb-label-short">数量</span>
-        <input v-model.number="count" type="number" class="nb-num" min="1" max="64" />
+        <input v-model.number="count" type="number" class="nb-num" min="1" max="64" autocomplete="off" />
       </div>
     </div>
 
@@ -157,9 +157,9 @@ async function copyCommand() {
           @update:model-value="(v: string) => (newEffect = v)"
         />
         <span class="nb-label nb-label-short">等级</span>
-        <input v-model.number="newAmp" type="number" class="nb-num" min="0" max="255" />
+        <input v-model.number="newAmp" type="number" class="nb-num" min="0" max="255" autocomplete="off" />
         <span class="nb-label nb-label-short">时长（秒）</span>
-        <input v-model.number="newDurSec" type="number" class="nb-num" min="1" />
+        <input v-model.number="newDurSec" type="number" class="nb-num" min="1" autocomplete="off" />
         <button class="tool-btn nb-add-btn" :disabled="!newEffect" @click="addEffect">
           <Plus :size="14" />
           添加
@@ -186,6 +186,7 @@ async function copyCommand() {
           class="nb-color-pick"
           :value="customColorHex"
           @input="onCustomColor"
+          autocomplete="off"
         />
         <span v-if="customColor === null" class="nb-hint">默认液体颜色</span>
       </div>
@@ -196,6 +197,7 @@ async function copyCommand() {
           class="nb-input"
           placeholder="留空使用默认名称"
           spellcheck="false"
+          autocomplete="off"
         />
       </div>
       <div class="nb-row">
@@ -215,6 +217,7 @@ async function copyCommand() {
           :class="{ active: colorCode.startsWith('§x') }"
           title="自定义颜色（§x，需 1.16+）"
           @input="onCustomNameColor"
+          autocomplete="off"
         />
       </div>
     </div>

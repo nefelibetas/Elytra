@@ -175,7 +175,7 @@ async function copyCommand() {
           @update:model-value="(v: string) => (type = v)"
         />
         <span class="nb-label nb-label-short">等级</span>
-        <input v-model.number="level" type="number" class="nb-num" min="1" max="5" />
+        <input v-model.number="level" type="number" class="nb-num" min="1" max="5" autocomplete="off" />
       </div>
     </div>
 
@@ -186,7 +186,7 @@ async function copyCommand() {
         <span class="nb-label">购买</span>
         <ItemSearchInput v-model="buyId" :extra-ids="['emerald']" placeholder="绿宝石 / emerald" :max-version="format === 'legacy' ? 20 : 21" />
         <span class="nb-label nb-label-short">×</span>
-        <input v-model.number="buyCount" type="number" class="nb-num" min="1" max="64" />
+        <input v-model.number="buyCount" type="number" class="nb-num" min="1" max="64" autocomplete="off" />
         <button
           class="tool-btn nb-mini-btn"
           :class="{ active: editingKey === 'buy' }"
@@ -201,7 +201,7 @@ async function copyCommand() {
         <span class="nb-label">第二购买</span>
         <ItemSearchInput v-model="buyBId" :extra-ids="['emerald']" placeholder="可选，搜索物品" :max-version="format === 'legacy' ? 20 : 21" />
         <span class="nb-label nb-label-short">×</span>
-        <input v-model.number="buyBCount" type="number" class="nb-num" min="1" max="64" />
+        <input v-model.number="buyBCount" type="number" class="nb-num" min="1" max="64" autocomplete="off" />
         <button
           class="tool-btn nb-mini-btn"
           :class="{ active: editingKey === 'buyB' }"
@@ -216,7 +216,7 @@ async function copyCommand() {
         <span class="nb-label">出售</span>
         <ItemSearchInput v-model="sellId" placeholder="书 / book" :max-version="format === 'legacy' ? 20 : 21" />
         <span class="nb-label nb-label-short">×</span>
-        <input v-model.number="sellCount" type="number" class="nb-num" min="1" max="64" />
+        <input v-model.number="sellCount" type="number" class="nb-num" min="1" max="64" autocomplete="off" />
         <button
           class="tool-btn nb-mini-btn"
           :class="{ active: editingKey === 'sell' }"
@@ -229,7 +229,7 @@ async function copyCommand() {
       <ModsEditor v-if="editingKey === 'sell'" :form="modsForms.sell" :format="format" />
       <div class="nb-row">
         <span class="nb-label">次数上限</span>
-        <input v-model.number="maxUses" type="number" class="nb-num" min="1" max="9999" />
+        <input v-model.number="maxUses" type="number" class="nb-num" min="1" max="9999" autocomplete="off" />
         <CheckToggle v-model="rewardExp" :size="14">奖励经验</CheckToggle>
         <button class="tool-btn nb-add-btn" @click="addTrade">
           <Plus :size="14" />

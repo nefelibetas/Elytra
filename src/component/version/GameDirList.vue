@@ -76,6 +76,7 @@ onUnmounted(() => window.removeEventListener("click", onWindowClick));
           type="text"
           maxlength="32"
           @keydown.enter="confirmRename"
+          autocomplete="off"
         />
         <div v-if="renameError" class="vs-err">{{ renameError }}</div>
       </div>
@@ -95,6 +96,7 @@ onUnmounted(() => window.removeEventListener("click", onWindowClick));
           type="text"
           maxlength="32"
           @keydown.enter="confirmAdd"
+          autocomplete="off"
         />
         <div v-if="addError" class="vs-err">{{ addError }}</div>
       </div>

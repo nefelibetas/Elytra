@@ -116,6 +116,7 @@ const charCount = () => visibleLength(text.value);
       rows="3"
       placeholder="输入 MOTD 文本，用下方按钮插入格式代码…"
       spellcheck="false"
+      autocomplete="off"
     ></textarea>
 
     <!-- 工具栏 -->
@@ -135,6 +136,7 @@ const charCount = () => visibleLength(text.value);
           class="motd-color-custom"
           title="自定义颜色（§x，需 1.16+）"
           @input="onCustomColor"
+          autocomplete="off"
         />
       </div>
       <div class="motd-toolbar-row">
@@ -161,9 +163,9 @@ const charCount = () => visibleLength(text.value);
       </div>
       <div class="motd-toolbar-row">
         <span class="motd-tool-label">渐变</span>
-        <input v-model="gradFrom" type="color" class="motd-grad" title="渐变起色" />
+        <input v-model="gradFrom" type="color" class="motd-grad" title="渐变起色" autocomplete="off" />
         <span class="motd-grad-arrow">→</span>
-        <input v-model="gradTo" type="color" class="motd-grad" title="渐变止色" />
+        <input v-model="gradTo" type="color" class="motd-grad" title="渐变止色" autocomplete="off" />
         <button class="tool-btn motd-grad-btn" @click="applyGradient">应用渐变</button>
       </div>
     </div>

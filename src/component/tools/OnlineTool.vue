@@ -142,6 +142,7 @@ async function copyRoomCode() {
           placeholder="U/XXXX-XXXX-XXXX-XXXX"
           :disabled="onlineStatus !== 'idle'"
           @keyup.enter="handleJoin"
+          autocomplete="off"
         />
       </div>
 

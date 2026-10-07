@@ -302,6 +302,7 @@ function useOfflineName(name: string) {
               type="text"
               placeholder="输入用户名"
               maxlength="16"
+              autocomplete="off"
             />
             <button
               class="icon-btn hist-btn"

@@ -174,13 +174,14 @@ onMounted(() => {
       </div>
       <!-- 行2：账号 + 密码 + 登录 -->
       <div class="tp-row tp-field">
-        <input v-model="extUser" class="tp-input" type="text" placeholder="皮肤站账号" />
+        <input v-model="extUser" class="tp-input" type="text" placeholder="皮肤站账号" autocomplete="off" />
         <input
           v-model="extPass"
           class="tp-input"
           type="password"
           placeholder="密码"
           @keyup.enter="doLogin"
+          autocomplete="new-password"
         />
         <button class="tp-btn tp-primary tp-login-btn" :disabled="extBusy" @click="doLogin">
           {{ extBusy ? "登录中…" : "登录" }}
@@ -222,6 +223,7 @@ onMounted(() => {
           type="text"
           placeholder="名称（如 LittleSkin）"
           @keyup.enter="addPreset"
+          autocomplete="off"
         />
         <input
           v-model="newValue"
@@ -229,6 +231,7 @@ onMounted(() => {
           type="text"
           placeholder="地址（如 https://littleskin.cn/api/yggdrasil）"
           @keyup.enter="addPreset"
+          autocomplete="off"
         />
         <button class="tp-btn" @click="addPreset">
           <Plus :size="13" />
