@@ -15,6 +15,7 @@ import {
 } from "../../store/online";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
+import { copyText } from "../../utils/clipboard";
 
 onMounted(() => {
   ensureOnlineListen();
@@ -59,12 +60,7 @@ async function handleStop() {
 }
 
 async function copyRoomCode() {
-  try {
-    await navigator.clipboard.writeText(onlineRoomCode.value);
-    showToast("房间码已复制");
-  } catch {
-    showToast("复制失败，请手动复制");
-  }
+  await copyText(onlineRoomCode.value, "房间码已复制");
 }
 </script>
 

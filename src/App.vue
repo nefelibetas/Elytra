@@ -236,6 +236,8 @@ input, textarea {
   /* 滑块填充比例（range 进度条）：组件经 style="--range-pct: N%" 内联注入覆盖，
      此处默认值仅为静态解析兜底（settings-shared.css 的 var() 引用）。 */
   --range-pct: 0%;
+  /* 等宽字体栈：生成器命令块 / MOTD 预览等代码等宽文本使用 */
+  --font-mono: "Cascadia Mono", Consolas, "Courier New", monospace;
   font-family: Inter, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "Noto Sans SC", sans-serif;
   font-size: 14px;
   line-height: 1.5;
@@ -340,6 +342,7 @@ input, textarea {
   --shadow-md: 0 2px 8px rgba(36, 27, 69, 0.08);
   --shadow-lg: 0 4px 16px rgba(36, 27, 69, 0.10);
 
+  --font-mono: "Cascadia Mono", Consolas, "Courier New", monospace;
   --scrollbar-thumb: #D2CBEA;
 
   --edge-line: rgba(76, 29, 149, 0.18);
@@ -374,6 +377,7 @@ input, textarea {
   --shadow-md: 0 2px 8px rgba(41, 37, 36, 0.08);
   --shadow-lg: 0 4px 16px rgba(41, 37, 36, 0.10);
 
+  --font-mono: "Cascadia Mono", Consolas, "Courier New", monospace;
   --scrollbar-thumb: #DED2C8;
 
   --edge-line: rgba(124, 45, 18, 0.18);
@@ -408,6 +412,7 @@ input, textarea {
   --shadow-md: 0 2px 8px rgba(15, 23, 42, 0.08);
   --shadow-lg: 0 4px 16px rgba(15, 23, 42, 0.10);
 
+  --font-mono: "Cascadia Mono", Consolas, "Courier New", monospace;
   --scrollbar-thumb: #C6D6E0;
 
   --edge-line: rgba(12, 74, 110, 0.18);

@@ -8,7 +8,7 @@ use crate::game::modpack::{pack_modpack, resolve_hosted_mods, resolve_version_me
 use crate::game::updates::{
     self, ModFileDetail, ModListResult, ModUpdate, ResourceListResult,
 };
-use crate::game::version::dir::version_dir_path;
+use crate::game::version::dir::{version_dir_path, version_server_section};
 use crate::util;
 
 /// 本地存档信息（saves 目录子目录扫描结果）。
@@ -213,7 +213,10 @@ pub struct VersionServer {
 
 #[tauri::command]
 pub fn get_version_server(version_name: String) -> VersionServer {
-    crate::persist::read(&format!("version_server_{version_name}")).unwrap_or_default()
+    let Ok(section) = version_server_section(&version_name) else {
+        return VersionServer::default();
+    };
+    crate::persist::read(&section).unwrap_or_default()
 }
 
 #[tauri::command]
@@ -222,11 +225,12 @@ pub fn save_version_server(
     server: Option<String>,
     port: Option<u16>,
 ) -> Result<(), String> {
+    let section = version_server_section(&version_name)?;
     let cfg = VersionServer {
         server: server.filter(|s| !s.trim().is_empty()),
         port,
     };
-    crate::persist::save(&format!("version_server_{version_name}"), &cfg).map_err(|e| {
+    crate::persist::save(&section, &cfg).map_err(|e| {
         format!(
             "保存失败
 {e}"

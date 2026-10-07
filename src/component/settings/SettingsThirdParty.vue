@@ -50,7 +50,7 @@ async function doLogin() {
     showLoginForm.value = false;
     showToast("登录成功");
   } catch (e) {
-    extError.value = String(e);
+    extError.value = errMsg(e);
   } finally {
     extBusy.value = false;
   }

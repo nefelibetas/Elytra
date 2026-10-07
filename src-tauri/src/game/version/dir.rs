@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::config::downloader::DownloaderConfig;
 use crate::launcher::args::find_version_json;
 use crate::persist;
-use crate::util::infer_loader_from_json;
+use crate::util::{infer_loader_from_json, is_simple_name};
 
 /// 当前激活游戏目录（versions/ 父目录）绝对路径。
 pub fn active_minecraft_dir() -> PathBuf {
@@ -23,6 +23,16 @@ pub fn version_dir_path(version_name: &str) -> Result<PathBuf, String> {
         return Err(format!("版本目录不存在\n{}", dir.display()));
     }
     Ok(dir)
+}
+
+/// 版本级服务器直连配置的 persist section 名：`version_server_{版本目录名}`。
+/// 版本名会直接成为 TOML 顶层 key，因此与其他「名字进路径/键」的命令一致做简单名校验，
+/// 避免异常名产生非预期的键（这也是全仓 `SECT_*` 常量约定之外的唯一动态 section）。
+pub fn version_server_section(version_name: &str) -> Result<String, String> {
+    if !is_simple_name(version_name) {
+        return Err("版本名非法\n仅允许不含路径分隔符与 `..` 的名称".into());
+    }
+    Ok(format!("version_server_{version_name}"))
 }
 
 /// 已安装版本信息（get_installed_versions 返回项）。
@@ -124,4 +134,23 @@ pub fn resolve_version_dir(mc: &Path, version_id: &str) -> (String, PathBuf) {
     }
     // 循环为无限 RangeFrom（命中即 return），此处仅为满足类型检查
     unreachable!()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::version_server_section;
+
+    #[test]
+    fn version_server_section_rejects_unsafe_names() {
+        // 空名 / 路径分隔符 / `..` 段都会让版本名直接污染 TOML 顶层 key
+        assert!(version_server_section("").is_err());
+        assert!(version_server_section("../evil").is_err());
+        assert!(version_server_section("a/b").is_err());
+        assert!(version_server_section("a\\b").is_err());
+        // 真实版本目录名（含点与连字符）必须原样通过
+        assert_eq!(
+            version_server_section("1.20.1-fabric-0.15.0").unwrap(),
+            "version_server_1.20.1-fabric-0.15.0"
+        );
+    }
 }
