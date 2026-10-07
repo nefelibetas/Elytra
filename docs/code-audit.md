@@ -607,3 +607,13 @@ pub struct InstallCtx<'a> {
 | 其余 10 个长函数（`run_repair_task` 230 行、`join` 196 行等） | ⬜ 未做 | 均为「线性编排 + 内联步骤」，拆分收益低于 `run_task`；建议与阶段 C 一起在能跑端到端验证的轮次处理 |
 
 每阶段收口：`cargo check` + `cargo clippy --lib`（零警告）+ `cargo test --lib -- --test-threads=1`。
+
+### 附：文档漂移（本轮新发现，未修改文档）
+
+`AGENTS.md:53` 的「测试红线」与 `README.md:39` / `README-en-US.md:40` 提到的 `download_snapshot_full`（真实下载数百 MB 到 `D:\download_test`）与 `tests/downloader_test.rs`，**在当前代码中均不存在**：
+
+- 全仓仅文档提及该符号，源码/grep 无定义；
+- `src-tauri/tests/` 只有 `online_diag.rs`（联机回环集成测试）；
+- `cargo test --lib` 当前唯一的 `ignored` 是 `downloader::fetcher::redirect::tests::bmclapi_optifine_real_download`（本轮迁移时保留的 `#[ignore]` 网络测试）。
+
+影响：`run_task`（下载主流程）**没有任何自动化测试覆盖**——它需要 `tauri::AppHandle`，只能在真实运行时被 `task::spawn_download` 驱动。这条也是「阶段 C 编排拆分」缺少验证手段的原因。

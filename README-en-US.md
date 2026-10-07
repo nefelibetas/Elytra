@@ -37,13 +37,13 @@ pnpm build            # frontend type-check + build
 pnpm tauri build      # release build
 ```
 
-> ⚠️ Note: a full `cargo test` downloads hundreds of MB for real (`download_snapshot_full`); use `cargo test --lib` for everyday verification.
+> ℹ️ A few network tests (`fetch_asset_index_end_to_end`, `count_assets_all_end_to_end`, `global_client_uses_system_proxy_when_enabled`) hit the real internet with small single requests; they fail or skip offline. `bmclapi_optifine_real_download` is marked `#[ignore]` and does not run by default.
 
 ## 📁 Structure
 
-- 🖼️ `src/` — Vue 3 frontend (6 pages + module-level `reactive()` state singletons)
-- 🦀 `src-tauri/` — Rust backend: `commands/` command glue layer, `task/` task manager & download orchestration, `config/launcher/` launch build/env/offline skin, `auth/` Microsoft login & skin API, `downloader/` download engine, `persist/` TOML config
-- 📚 `docs/` — design docs
+- 🖼️ `src/` — Vue 3 frontend (9 pages + module-level `reactive()` state singletons)
+- 🦀 `src-tauri/` — Rust backend: `commands/` command glue layer, `task/` task manager & download orchestration, `downloader/` pure transport layer (fetch/batch/probe/path-lock), `game/` content & assembly (version metadata, resources, ModLoader, community, modpacks, mod updates), `launcher/` launch build & env prep, `auth/` Microsoft login & skin API, `jdk/` JDK scan & managed runtime download, `online/` EasyTier LAN, `persist/` TOML config & secrets
+- 📚 `docs/` — icon assets and `code-audit.md` (code issue ledger)
 - 📄 `LICENSE` — MIT license
 
 See 📖 [AGENTS.md](AGENTS.md) (repository development guide).
