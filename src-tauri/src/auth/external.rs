@@ -241,10 +241,17 @@ pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccoun
         .map_err(|e| format!("刷新请求失败\n{e}"))?;
     if !resp.status().is_success() {
         let status = resp.status();
+        let code = status.as_u16();
         let text = resp.text().await.unwrap_or_default();
         let msg = extract_yggdrasil_error(&text, status);
-        // 401/ForbiddenOperationException = token 失效（密码改/账号删）→ 提示重新登录
-        return Err(format!("登录凭据已失效，请重新登录\n{msg}"));
+        // 401/403 = 凭据彻底失效（令牌超期/密码改/账号删）→ **顺手注销该账号**：
+        // 留着只会在账号列表里占位，而每次刷新又必然失败。用户重新登录即可。
+        // 其它非 2xx（5xx / 网关错误）只是服务端一时的问题 → 保留账号，别误踢。
+        if code == 401 || code == 403 {
+            let _ = remove(api_url, uuid); // 幂等；注销失败也不影响把错误报给前端
+            return Err(format!("登录凭据已失效，已退出该账号，请重新登录\n{msg}"));
+        }
+        return Err(format!("刷新失败（服务端返回 {status}），账号已保留\n{msg}"));
     }
     let json: serde_json::Value = resp
         .json()

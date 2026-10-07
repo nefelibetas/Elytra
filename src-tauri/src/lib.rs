@@ -41,12 +41,6 @@ use commands::launch::{
 };
 use commands::launch_options::{get_launch_options, get_memory_info, save_launch_options};
 use commands::launch_script::export_launch_script;
-use commands::littleskin::{
-    add_littleskin_closet_item, apply_littleskin_textures, get_littleskin_account,
-    list_littleskin_closet, list_littleskin_players, logout_littleskin, poll_littleskin_auth,
-    refresh_littleskin_account, remove_littleskin_closet_item, rename_littleskin_closet_item,
-    reset_littleskin_textures, start_littleskin_auth,
-};
 use commands::loader::{
     get_fabric_api_versions, get_fabric_versions, get_forge_versions, get_neoforge_versions,
     get_optifine_versions, get_quilt_versions,
@@ -200,18 +194,6 @@ pub fn run() {
             save_local_skin_file,
             remove_local_skin,
             read_local_skin,
-            start_littleskin_auth,
-            poll_littleskin_auth,
-            get_littleskin_account,
-            refresh_littleskin_account,
-            logout_littleskin,
-            list_littleskin_players,
-            list_littleskin_closet,
-            add_littleskin_closet_item,
-            rename_littleskin_closet_item,
-            remove_littleskin_closet_item,
-            apply_littleskin_textures,
-            reset_littleskin_textures,
             online_start_host,
             online_join,
             online_stop,

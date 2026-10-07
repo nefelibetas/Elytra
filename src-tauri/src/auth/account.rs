@@ -283,12 +283,24 @@ pub async fn disable_cape(access_token: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// 上传本地皮肤到官方账号（POST multipart: variant=CLASSIC + file）。
+/// 上传本地皮肤文件到官方账号（读盘 → [`upload_skin_bytes`]）。
 /// 注意：披风没有公开上传端点（官方仅支持网页/游戏内上传），故只有皮肤走此通道。
 pub async fn upload_skin(access_token: &str, file_path: &str, variant: &str) -> Result<(), String> {
     let bytes = tokio::fs::read(file_path)
         .await
         .map_err(|e| format!("读取文件失败\n{e}"))?;
+    upload_skin_bytes(access_token, bytes, variant).await
+}
+
+/// 上传皮肤字节到官方账号（POST multipart: variant + file）。
+///
+/// **bytes → 上传的唯一入口**：本地文件（[`upload_skin`]）走这里，字节直接进
+/// multipart，不落临时文件。`variant` 由调用方校验（CLASSIC / SLIM）。
+pub async fn upload_skin_bytes(
+    access_token: &str,
+    bytes: Vec<u8>,
+    variant: &str,
+) -> Result<(), String> {
     let form = reqwest::multipart::Form::new()
         .text("variant", variant.to_string())
         .part(
