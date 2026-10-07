@@ -123,6 +123,7 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 - **工具链很新**：vite 8、typescript 6、vue-tsc 3、vue-router 5——新增依赖前确认兼容（@lucide/vue 图标库已引入）
 - **窗口**：840×540、`decorations:false` + `transparent:true` + `resizable:false`——前端自绘 TitleBar（`startDragging`）
 - **Rust 变更需重启 `pnpm tauri dev`**（vite `watch.ignored` 忽略 src-tauri）；前端改动 HMR 即时生效
+- **前端大量改动后建议重启 dev**：跨多个 store/模块的批量改动、或触发依赖预构建失效时（vite 日志出现 `Re-optimizing dependencies because vite config has changed`），HMR 可能停在**半旧半新**状态——表现为「组件逻辑更新了但 store 还是旧的」这类诡异现象（实测过一次：资源详情页左上角返回键点了完全没反应，重启 dev 即恢复）。**排查前端怪状前，先重启一次 dev 排除这个因素**
 - **reqwest 0.13 无 `.form()`**：表单需手工 urlencode（auth 里 `form_body`）
 - **MS_CLIENT_ID 固定，已注册完成**；回调端口 27205 写死
 - **lib 名 `elytra_lib`**：Windows 下 bin/lib 同名会 Cargo 8519，保留 `_lib` 后缀
