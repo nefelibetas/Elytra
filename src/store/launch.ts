@@ -109,10 +109,11 @@ export async function doLaunch(navigateToDownload: () => void) {
   ];
 
   try {
-    // 正版：等待 token 刷新完成（失败时重置并返回，不重复弹窗）；第三方/离线跳过
+    // 正版：确保凭证可用（后端按需续签——未过期时零网络开销，避免每次启动都走完整
+    // 微软登录链）；失败说明 refresh_token 已失效，重置并提示重登。第三方/离线跳过
     if (!isOffline && !isThirdParty) {
       try {
-        msAccount.value = await invoke<MsAccountInfo>("refresh_ms_account");
+        msAccount.value = await invoke<MsAccountInfo>("ensure_ms_account");
       } catch (e) {
         msAccount.value = null;
         resetLaunch();

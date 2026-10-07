@@ -223,6 +223,13 @@ pub async fn disable_cape() -> Result<(), String> {
     account::disable_cape(&token).await
 }
 
+/// 确保当前正版账号凭证可用（临近过期才刷新），返回账号本体供前端更新缓存。
+/// 启动游戏前调用：未过期时零网络开销，避免每次都走完整微软登录链。
+#[tauri::command]
+pub async fn ensure_ms_account() -> Result<model::MsAccount, String> {
+    account::ensure_valid_account().await
+}
+
 /// 刷新正版账号（静默，refresh_token 失效时返回错误）。
 #[tauri::command]
 pub async fn refresh_ms_account() -> Result<model::MsAccount, String> {

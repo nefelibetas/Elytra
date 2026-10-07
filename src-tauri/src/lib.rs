@@ -21,7 +21,7 @@ use commands::account::{
     fetch_default_skin, get_external_accounts,
     switch_external_role, refresh_external_account,
     switch_external_account, get_ms_account, get_ms_accounts,
-    get_third_party_config, refresh_ms_account, remove_external_account, remove_ms_account,
+    ensure_ms_account, get_third_party_config, refresh_ms_account, remove_external_account, remove_ms_account,
     save_skin, save_third_party_config, set_active_cape, start_ms_login, switch_ms_account,
     upload_skin_file,
 };
@@ -173,6 +173,7 @@ pub fn run() {
             get_ms_accounts,
             remove_ms_account,
             switch_ms_account,
+            ensure_ms_account,
             refresh_ms_account,
             fetch_account_skin,
             fetch_account_skin_profile,

@@ -34,21 +34,30 @@ fn unix_now() -> u64 {
         .unwrap_or(0)
 }
 
-/// 取当前正版账号**可用**的 Minecraft access_token：临近过期时用 refresh_token 静默刷新并回写。
+/// 取当前正版账号，并确保其凭证可用：临近过期时才用 refresh_token 静默刷新并回写列表。
 ///
 /// 背景：`MsAccount.expires_at` 此前只在写入时设置、**从未被读取**，于是所有用 token 的功能
 /// （披风 / 皮肤 / 启动）拿到的都可能是已过期的缓存值 —— MC token 只有约 24h 有效期，
 /// 过期后表现为 401，而账号仍在列表里（就是「明明已登录却失败」的假象）。
-pub async fn valid_access_token() -> Result<String, String> {
+///
+/// 注意与 `refresh_ms_account` 的区别：后者**无条件**走完整微软登录链（MS token → Xbox Live
+/// → XSTS → MC login，四五次网络往返），作为「启动游戏前每次跑一遍」太重；本函数只在
+/// `expires_at` 已到/临近时才付这份代价。
+pub async fn ensure_valid_account() -> Result<auth::model::MsAccount, String> {
     let account = auth::model::read().ok_or_else(|| "尚未登录正版账号".to_string())?;
     if account.expires_at > unix_now() + TOKEN_REFRESH_SKEW_SECS {
-        return Ok(account.access_token);
+        return Ok(account);
     }
     let refreshed = auth::microsoft::refresh_login(&account)
         .await
         .map_err(|e| format!("登录凭证已过期，自动刷新失败（请重新登录）\n{e}"))?;
     auth::model::save(&refreshed)?;
-    Ok(refreshed.access_token)
+    Ok(refreshed)
+}
+
+/// 只要 token 字符串的便捷入口（披风 / 皮肤等 API 调用与启动参数注入共用）。
+pub async fn valid_access_token() -> Result<String, String> {
+    ensure_valid_account().await.map(|a| a.access_token)
 }
 
 /// 下载远程资源并返回 base64（头像/纹理/皮肤/披风共用）。
