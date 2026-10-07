@@ -183,7 +183,20 @@ interface HeadBox {
   uvY: number;
   inflate: number;
   doubleSided: boolean;
+  /** 限定渲染的面（默认全部）。披风等非立方体部件用它避免渲染无意义的薄边。 */
+  onlySides?: Side[];
+  /** 自定义按面 UV，覆盖标准皮肤布局。披风贴图是 10×16 展开图而非实体 UV，需要它。 */
+  customUv?: (s: Side) => { x: number; y: number; w: number; h: number };
+  /** 使用哪张贴图（默认 `skin`）。披风与皮肤是两张独立 PNG。 */
+  tex?: TextureKey;
+  /** 背面水平镜像。披风是单片双面 quad：MC 里从背面看到的是同一张贴图的背面，
+   *  带 logo/文字的披风若不做镜像会「反字」。皮肤各部件的背面是标准 UV，不用此项。 */
+  mirrorBack?: boolean;
 }
+
+/** 可用贴图源：皮肤（64×64）与披风（64×32，有效区 10×16）。 */
+type TextureKey = "skin" | "cape";
+type TextureSet = Partial<Record<TextureKey, HTMLImageElement>>;
 
 /** 切向半尺寸（沿 uAxis），含膨胀。 */
 function halfU(b: HeadBox, s: Side): number {
@@ -244,23 +257,48 @@ function projectCorner(
   return v3(r.x * ppv, -r.y * ppv, r.z);
 }
 
-/** 面纹理：裁 UV 子图 + 按面明暗（跳过透明像素）。UV 越界返回 null。 */
+/** 面切片缓存：WeakMap<贴图, Map<「UV 区 + 明暗」, 切片画布>>。
+ *  切片只取决于「哪张图的哪个 UV 区域、按哪个面的明暗」——与 yaw/pitch 无关，
+ *  故可跨帧、跨视角复用。拖动旋转时若不缓存，每帧要重切 14 部件 × 6 面 ≈ 84 张，
+ *  实测慢到不可用（5 帧超 30s）。 */
+const faceCache = new WeakMap<HTMLImageElement, Map<string, HTMLCanvasElement | null>>();
+
+/** 面纹理：裁 UV 子图 + 按面明暗（跳过透明像素）。UV 越界返回 null。结果按图缓存。 */
 function faceTexture(img: HTMLImageElement, scale: number, b: HeadBox, s: Side): HTMLCanvasElement | null {
-  const uv = faceUv(b, s);
+  const uv = b.customUv ? b.customUv(s) : faceUv(b, s);
+  let per = faceCache.get(img);
+  if (!per) {
+    per = new Map();
+    faceCache.set(img, per);
+  }
+  // scale 由图片宽度决定（每张图固定），无需进 key
+  const key = `${uv.x},${uv.y},${uv.w},${uv.h},${FACE_SPECS[s].shade},${b.mirrorBack && s === "BACK" ? "m" : ""}`;
+  const hit = per.get(key);
+  if (hit !== undefined) return hit;
   const sx = Math.round(uv.x * scale);
   const sy = Math.round(uv.y * scale);
   const sw = Math.round(uv.w * scale);
   const sh = Math.round(uv.h * scale);
-  if (sx + sw > img.width || sy + sh > img.height) return null;
+  if (sx + sw > img.width || sy + sh > img.height) {
+    per.set(key, null); // 越界也缓存，避免每帧重复判定
+    return null;
+  }
   const crop = document.createElement("canvas");
   crop.width = sw;
   crop.height = sh;
   const c = ctx2d(crop);
   if (!c) return null;
   c.imageSmoothingEnabled = false;
+  if (b.mirrorBack && s === "BACK") {
+    c.translate(sw, 0);
+    c.scale(-1, 1); // 水平镜像：背面看到的是同一张贴图的背面
+  }
   c.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
   const shade = FACE_SPECS[s].shade;
-  if (shade >= 1) return crop;
+  if (shade >= 1) {
+    per.set(key, crop);
+    return crop;
+  }
   const data = c.getImageData(0, 0, sw, sh);
   const px = data.data;
   for (let i = 0; i < px.length; i += 4) {
@@ -270,6 +308,7 @@ function faceTexture(img: HTMLImageElement, scale: number, b: HeadBox, s: Side):
     px[i + 2] = (px[i + 2] * shade) | 0;
   }
   c.putImageData(data, 0, 0);
+  per.set(key, crop);
   return crop;
 }
 
@@ -291,22 +330,22 @@ function hatHasPixels(img: HTMLImageElement, scale: number): boolean {
     return false;
 }
 
-/** 头部 3D 渲染（Cubatar IsometricRenderer 移植）：8×8×8 头盒 + 0.5 膨胀帽子层（双面），
- * yaw/pitch 正交投影 + painter 排序 + 六面明暗。默认完全正脸视角 yaw=0° pitch=0°
- *（仅正面可见，无俯视）；legacy 64×32 皮肤无独立帽子层，自动跳过。
- * 画布按可见面角点贴合（透明背景，头 8 voxel = 64px），容器用 object-fit 等比适配。 */
-export async function renderSkinHead3D(b64: string, yawDeg = 0, pitchDeg = 0): Promise<string> {
-  const img = await loadImage(`data:image/png;base64,${b64}`);
-  const scale = img.width / 64;
-  const ppv = 8; // 头 8 voxel → 64px
+/** 通用盒子渲染核心：box 列表 → yaw/pitch 正交投影 → painter 排序 → 贴合画布输出。
+ *  头部头像与全身预览共用（六面明暗、仿射贴图、深度排序均不含部位假设）。
+ *
+ *  `viewport` 为空时按可见面角点 min/max 贴合裁切（头像用，画布无空白）；
+ *  传入时改用固定画布并把内容居中——拖动旋转时包围盒每帧都变，
+ *  贴合裁切会让画布尺寸跟着跳（图像忽大忽小），故全身预览必须固定视口。 */
+function renderBoxes(
+  tex: TextureSet,
+  boxes: HeadBox[],
+  yawDeg: number,
+  pitchDeg: number,
+  ppv: number,
+  viewport?: { w: number; h: number },
+): string {
   const yaw = (yawDeg * Math.PI) / 180;
   const pitch = (pitchDeg * Math.PI) / 180;
-
-  const head: HeadBox = { cx: 0, cy: 4, cz: 0, w: 8, h: 8, d: 8, uvX: 0, uvY: 0, inflate: 0, doubleSided: false };
-  const boxes: HeadBox[] = [head];
-  if (img.height !== 32 && hatHasPixels(img, scale)) {
-    boxes.push({ cx: 0, cy: 4, cz: 0, w: 8, h: 8, d: 8, uvX: 32, uvY: 0, inflate: 0.5, doubleSided: true });
-  }
 
   // 收集可见面 quad（投影未偏移）
   const quads: {
@@ -318,39 +357,58 @@ export async function renderSkinHead3D(b64: string, yawDeg = 0, pitchDeg = 0): P
     depth: number;
   }[] = [];
   for (const b of boxes) {
-    for (const s of Object.keys(FACE_SPECS) as Side[]) {
+    const img = tex[b.tex ?? "skin"];
+    if (!img) continue; // 该贴图源缺失（如未提供披风）→ 跳过该部件
+    const scale = img.width / 64;
+    const sides = b.onlySides ?? (Object.keys(FACE_SPECS) as Side[]);
+    for (const s of sides) {
       const nz = rotX(rotY(FACE_SPECS[s].normal, yaw), pitch).z;
       if (Math.abs(nz) < 1e-6) continue; // 棱边朝相机：退化面
       if (!b.doubleSided && nz < 0) continue; // 单面：背面不画
-      const tex = faceTexture(img, scale, b, s);
-      if (!tex) continue;
+      const q = faceTexture(img, scale, b, s);
+      if (!q) continue;
       const p00 = projectCorner(b, s, -1, -1, yaw, pitch, ppv);
       const p10 = projectCorner(b, s, 1, -1, yaw, pitch, ppv);
       const p01 = projectCorner(b, s, -1, 1, yaw, pitch, ppv);
       const p11 = projectCorner(b, s, 1, 1, yaw, pitch, ppv);
-      quads.push({ tex, p00, p10, p01, p11, depth: (p00.z + p10.z + p01.z + p11.z) / 4 });
+      quads.push({ tex: q, p00, p10, p01, p11, depth: (p00.z + p10.z + p01.z + p11.z) / 4 });
     }
   }
   if (quads.length === 0) return "";
 
-  // 画布包围盒：可见面角点的 min/max（贴合内容，无空白）
-  let minX = Infinity;
-  let maxX = -Infinity;
-  let minY = Infinity;
-  let maxY = -Infinity;
-  for (const q of quads) {
-    for (const p of [q.p00, q.p10, q.p01, q.p11]) {
-      minX = Math.min(minX, p.x);
-      maxX = Math.max(maxX, p.x);
-      minY = Math.min(minY, p.y);
-      maxY = Math.max(maxY, p.y);
+  let ox: number;
+  let oy: number;
+  let cw: number;
+  let ch: number;
+  if (viewport) {
+    cw = viewport.w;
+    ch = viewport.h;
+    // 内容包围盒居中：模型水平中轴 cx=0、脚底 y=0、身高 32 voxel
+    const spanY = 32 * ppv;
+    ox = cw / 2;
+    oy = ch / 2 + spanY / 2;
+  } else {
+    // 画布包围盒：可见面角点的 min/max（贴合内容，无空白）
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const q of quads) {
+      for (const p of [q.p00, q.p10, q.p01, q.p11]) {
+        minX = Math.min(minX, p.x);
+        maxX = Math.max(maxX, p.x);
+        minY = Math.min(minY, p.y);
+        maxY = Math.max(maxY, p.y);
+      }
     }
+    cw = Math.ceil(maxX - minX) + 2;
+    ch = Math.ceil(maxY - minY) + 2;
+    ox = 1 - minX;
+    oy = 1 - minY;
   }
-  const ox = 1 - minX;
-  const oy = 1 - minY;
   const out = document.createElement("canvas");
-  out.width = Math.ceil(maxX - minX) + 2;
-  out.height = Math.ceil(maxY - minY) + 2;
+  out.width = cw;
+  out.height = ch;
   const ctx = ctx2d(out);
   if (!ctx) return ""; // 拿不到上下文返回空串，调用方按无头像降级
   ctx.imageSmoothingEnabled = false;
@@ -367,6 +425,112 @@ export async function renderSkinHead3D(b64: string, yawDeg = 0, pitchDeg = 0): P
   }
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   return out.toDataURL("image/png");
+}
+
+/** 头部 3D 渲染（Cubatar IsometricRenderer 移植）：8×8×8 头盒 + 0.5 膨胀帽子层（双面），
+ * yaw/pitch 正交投影 + painter 排序 + 六面明暗。默认完全正脸视角 yaw=0° pitch=0°
+ *（仅正面可见，无俯视）；legacy 64×32 皮肤无独立帽子层，自动跳过。
+ * 画布按可见面角点贴合（透明背景，头 8 voxel = 64px），容器用 object-fit 等比适配。 */
+export async function renderSkinHead3D(b64: string, yawDeg = 0, pitchDeg = 0): Promise<string> {
+  const img = await loadImage(`data:image/png;base64,${b64}`);
+  const scale = img.width / 64;
+  const head: HeadBox = { cx: 0, cy: 4, cz: 0, w: 8, h: 8, d: 8, uvX: 0, uvY: 0, inflate: 0, doubleSided: false };
+  const boxes: HeadBox[] = [head];
+  if (img.height !== 32 && hatHasPixels(img, scale)) {
+    boxes.push({ cx: 0, cy: 4, cz: 0, w: 8, h: 8, d: 8, uvX: 32, uvY: 0, inflate: 0.5, doubleSided: true });
+  }
+  return renderBoxes({ skin: img }, boxes, yawDeg, pitchDeg, 8);
+}
+
+/** 标准皮肤（1.8+ 64×64）各部位盒：静止站姿，脚底 y=0，向上为 +y（单位 = voxel）。
+ *  UV 原点按 MC 标准布局（v=16 起）。第二层 inflate 0.25（帽子 0.5）+ 双面渲染——
+ *  透过透明像素可见远侧内壁，与游戏内一致。legacy 64×32 旧皮肤没有第二层，
+ *  且左臂/左腿复用右臂/右腿的 UV。 */
+function bodyBoxes(slim: boolean, legacy: boolean): HeadBox[] {
+  const aw = slim ? 3 : 4; // 纤细手臂 3px（位图仍按 4px 预留，UV 布局不变）
+  const boxes: HeadBox[] = [
+    // ── 第一层（本体）──
+    { cx: 0, cy: 28, cz: 0, w: 8, h: 8, d: 8, uvX: 0, uvY: 0, inflate: 0, doubleSided: false }, // 头
+    { cx: 0, cy: 18, cz: 0, w: 8, h: 12, d: 4, uvX: 16, uvY: 16, inflate: 0, doubleSided: false }, // 躯干
+    { cx: -6, cy: 18, cz: 0, w: aw, h: 12, d: 4, uvX: 40, uvY: 16, inflate: 0, doubleSided: false }, // 右臂
+    { cx: 6, cy: 18, cz: 0, w: aw, h: 12, d: 4, uvX: legacy ? 40 : 32, uvY: 16, inflate: 0, doubleSided: false }, // 左臂
+    { cx: -2, cy: 6, cz: 0, w: 4, h: 12, d: 4, uvX: 0, uvY: 16, inflate: 0, doubleSided: false }, // 右腿
+    { cx: 2, cy: 6, cz: 0, w: 4, h: 12, d: 4, uvX: legacy ? 0 : 16, uvY: legacy ? 16 : 48, inflate: 0, doubleSided: false }, // 左腿
+  ];
+  if (!legacy) {
+    // ── 第二层（帽子 / 外套 / 袖 / 裤腿）──
+    boxes.push(
+      { cx: 0, cy: 28, cz: 0, w: 8, h: 8, d: 8, uvX: 32, uvY: 0, inflate: 0.5, doubleSided: true }, // 帽子层
+      { cx: 0, cy: 18, cz: 0, w: 8, h: 12, d: 4, uvX: 16, uvY: 32, inflate: 0.25, doubleSided: true }, // 外套层
+      { cx: -6, cy: 18, cz: 0, w: aw, h: 12, d: 4, uvX: 40, uvY: 32, inflate: 0.25, doubleSided: true }, // 右臂层
+      { cx: 6, cy: 18, cz: 0, w: aw, h: 12, d: 4, uvX: 48, uvY: 48, inflate: 0.25, doubleSided: true }, // 左臂层
+      { cx: -2, cy: 6, cz: 0, w: 4, h: 12, d: 4, uvX: 0, uvY: 32, inflate: 0.25, doubleSided: true }, // 右腿层
+      { cx: 2, cy: 6, cz: 0, w: 4, h: 12, d: 4, uvX: 0, uvY: 48, inflate: 0.25, doubleSided: true }, // 左腿层
+    );
+  }
+  return boxes;
+}
+
+/** 披风盒：10×16×1 薄板贴背（`cy=16` 自肩部向下，`cz` 在躯干后半深之外）。
+ *  披风贴图是 10×16 展开图而非 MC 实体 UV 布局，故用 `customUv`：
+ *  正/背面取整张，四个薄边取相邻 1px 拉伸，避免边缘出现空白像素。 */
+function capeBox(): HeadBox {
+  return {
+    cx: 0,
+    cy: 16,
+    cz: -2.5,
+    w: 10,
+    h: 16,
+    d: 1,
+    uvX: 0,
+    uvY: 0,
+    inflate: 0,
+    doubleSided: true,
+    tex: "cape",
+    mirrorBack: true,
+    customUv: (s) => {
+      switch (s) {
+        case "FRONT":
+        case "BACK":
+          return { x: 0, y: 0, w: 10, h: 16 };
+        case "LEFT":
+          return { x: 0, y: 0, w: 1, h: 16 };
+        case "RIGHT":
+          return { x: 9, y: 0, w: 1, h: 16 };
+        case "TOP":
+          return { x: 0, y: 0, w: 10, h: 1 };
+        case "BOTTOM":
+          return { x: 0, y: 15, w: 10, h: 1 };
+      }
+    },
+  };
+}
+
+/** 全身 3D 渲染（静止站姿，脚底在下；yaw/pitch 供拖动旋转）。`slim` = 纤细手臂模型。
+ *  legacy（64×32）皮肤与头部渲染同规则自动降级：无第二层，左臂/左腿复用右侧 UV。
+ *  传入 `capeB64` 时在背后挂上披风（同一套投影与 painter 排序，随身体一起旋转）。
+ *
+ *  用**固定视口**（宽 20 / 高 34 voxel，模型居中）：贴合裁切会让画布随 yaw 每帧变化，
+ *  拖动时图像会忽大忽小；固定尺寸后由容器统一缩放，旋转过程稳定。
+ *  高度 34 = 身高 32 + 上下各 1 voxel 余量；宽度取最宽姿态（躯干 8 + 双臂 4×2 = 16）留余量。
+ */
+export async function renderSkinFull3D(
+  b64: string,
+  slim = false,
+  yawDeg = 0,
+  pitchDeg = 0,
+  ppv = 6,
+  capeB64?: string,
+): Promise<string> {
+  const skin = await loadImage(`data:image/png;base64,${b64}`);
+  const boxes = bodyBoxes(slim, skin.height === 32);
+  const tex: TextureSet = { skin };
+  if (capeB64) {
+    tex.cape = await loadImage(`data:image/png;base64,${capeB64}`);
+    boxes.push(capeBox());
+  }
+  const viewport = { w: Math.ceil(20 * ppv), h: Math.ceil(34 * ppv) };
+  return renderBoxes(tex, boxes, yawDeg, pitchDeg, ppv, viewport);
 }
 
 /** 第三方登录（皮肤站）头像：拉 skin + 模型 → 本地 3D 渲染。 */
