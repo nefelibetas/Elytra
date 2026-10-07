@@ -217,6 +217,13 @@ input, textarea {
   opacity: 1;
 }
 
+/* 主题 token 事实源（CSS 侧）。以下 8 个核心色板键与 src/store/theme.ts 的
+   builtinVars() 逐键重复（JS 侧供自定义主题编辑器/预览作内置起点）：
+   --color-brand / --text-primary / --text-secondary / --text-tertiary /
+   --surface-page / --surface-hover / --border-default / --border-strong。
+   :root 对应 builtinVars("grass")，[data-theme="end"|"nether"|"ice"] 对应同名 id；
+   两处任一改动必须同步另一处（消除重复会引入首屏 FOUC，故保留双写 +
+   本交叉引用）。 */
 :root {
   --titlebar-h: 48px;
   /* 标题栏前景：标题栏铺品牌渐变，白字与半透明白叠层独立于正文语义色 */
@@ -319,7 +326,8 @@ input, textarea {
   --edge-shade: rgba(6, 78, 59, 0.08);
 }
 
-/* ===== 主题 End（末影紫）：取自 Minecraft 末地 ===== */
+/* ===== 主题 End（末影紫）：取自 Minecraft 末地 =====
+   键与色值须与 src/store/theme.ts builtinVars("end") 同步（两处任一改动需同步另一处） */
 [data-theme="end"] {
   --color-brand: #7C3AED;
   --color-brand-dark: #6D28D9;
@@ -354,7 +362,8 @@ input, textarea {
   --ld-quilt: #A855F7;
 }
 
-/* ===== 主题 Nether（下界橙/烈焰）：取自 Minecraft 下界 ===== */
+/* ===== 主题 Nether（下界橙/烈焰）：取自 Minecraft 下界 =====
+   键与色值须与 src/store/theme.ts builtinVars("nether") 同步（两处任一改动需同步另一处） */
 [data-theme="nether"] {
   --color-brand: #EA580C;
   --color-brand-dark: #C2410C;
@@ -389,7 +398,8 @@ input, textarea {
   --ld-quilt: #C026D3;
 }
 
-/* ===== 主题 Ice（冰霜青）：取自 Minecraft 冰霜/钻石 ===== */
+/* ===== 主题 Ice（冰霜青）：取自 Minecraft 冰霜/钻石 =====
+   键与色值须与 src/store/theme.ts builtinVars("ice") 同步（两处任一改动需同步另一处） */
 [data-theme="ice"] {
   --color-brand: #0EA5E9;
   --color-brand-dark: #0284C7;

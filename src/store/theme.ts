@@ -54,7 +54,11 @@ export interface CustomTheme {
 const STORAGE_KEY = "elytra.theme";
 const CUSTOMS_KEY = "elytra.customThemes";
 
-/** 内置主题 → 可作为自定义起点的完整可编辑变量值（新建自定义时复制）。 */
+/** 内置主题 → 可作为自定义起点的完整可编辑变量值（新建自定义时复制）。
+ *  色值须与 src/App.vue 的 :root（grass 默认）及各 [data-theme="<id>"] 覆盖块保持同步
+ *  （CSS 侧为运行时事实源，本表为 JS 侧起点；两处任一改动需同步另一处）：
+ *  --color-brand / --text-primary / --text-secondary / --text-tertiary /
+ *  --surface-page / --surface-hover / --border-default / --border-strong。 */
 export function builtinVars(id: ThemeId): CustomThemeVars {
   switch (id) {
     case "grass":
