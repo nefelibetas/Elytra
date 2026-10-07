@@ -73,7 +73,7 @@ const props = withDefaults(
               </span>
               <span v-if="dlTranslateMode !== 'en'" class="cs-desc">{{ m.translated ?? m.description }}</span>
               <span v-if="m.loaders.length || m.game_version_range" class="cs-support">
-                <span v-for="ld in m.loaders" :key="ld" class="cs-ld">{{ ld }}</span>
+                <span v-for="ld in m.loaders" :key="ld" class="cs-ld" :class="ld">{{ ld }}</span>
                 <span v-if="m.game_version_range" class="cs-gv">{{ m.game_version_range }}</span>
               </span>
             </span>
@@ -139,6 +139,22 @@ const props = withDefaults(
 .cs-ld {
   flex-shrink: 0; font-size: 10px; font-weight: 600; padding: 0 5px;
   border-radius: 6px; background: var(--color-brand-bg); color: var(--color-brand);
+}
+/* 按加载器区分配色：与详情页 .md-ld-* 共用同一套 --ld-* token；
+   未匹配到的加载器（未来新增/第三方）保留品牌色兜底。 */
+.cs-ld.fabric { color: var(--ld-fabric); }
+.cs-ld.forge { color: var(--ld-forge); }
+.cs-ld.neoforge { color: var(--ld-neoforge); }
+.cs-ld.quilt { color: var(--ld-quilt); }
+.cs-ld.optifine { color: var(--ld-optifine); }
+/* 徽章底色：color-mix 需 WebKitGTK ≥ 2.42（Ubuntu 22.04 的 2.40 不支持）。
+ * 不支持的平台降级为纯文字色徽章，避免整条声明失效丢色（与详情页同款降级）。 */
+@supports (color-mix(in srgb, red 12%, transparent)) {
+  .cs-ld.fabric { background: color-mix(in srgb, var(--ld-fabric) 12%, transparent); }
+  .cs-ld.forge { background: color-mix(in srgb, var(--ld-forge) 12%, transparent); }
+  .cs-ld.neoforge { background: color-mix(in srgb, var(--ld-neoforge) 12%, transparent); }
+  .cs-ld.quilt { background: color-mix(in srgb, var(--ld-quilt) 12%, transparent); }
+  .cs-ld.optifine { background: color-mix(in srgb, var(--ld-optifine) 12%, transparent); }
 }
 .cs-gv {
   font-size: 10px; color: var(--text-tertiary);
