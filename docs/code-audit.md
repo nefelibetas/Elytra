@@ -688,3 +688,32 @@ pub struct InstallCtx<'a> {
 
 - 已修复：三份文档在「文档校准」提交中同步（改为列真实存在的网络测试）。
 - 后续又发现：`run_task` 当时**没有自动化测试**（它需要 `AppHandle`）。此点也已在「事件出口抽象」提交中解决 —— 现由 `tests/e2e_download.rs` 以真实网络驱动覆盖。
+
+---
+
+### 阶段 9：审计项复核（2026-10-07）—— 以代码为准重新判定
+
+阶段 1-8 之后，前面 0-2 节的状态列已滞后（全停在「待定」）。本节用脚本 + 只读复核逐条对代码判定：
+
+| 条目 | 原描述 | 现况 |
+|---|---|---|
+| 0.1-0.3 编译阻塞 | 工作区编译不通过 | **已修**（阶段 1） |
+| 1.1 锁序反转 | ABBA 死锁窗口 | **已修**（阶段 3 H1） |
+| 1.2 `--text-danger` | 12 处未定义 CSS 变量 | **已修**（全仓 0 处） |
+| 1.3 RNG 失败被吞 | 房间码/凭据可预测 | **已修**（阶段 3 H2） |
+| 1.4 网络输入切片 | `hash[..2]` 可 panic | **已修**（阶段 3 M2 → `util::sha1_sub_dir`） |
+| 1.5 unwrap/expect | 17 处非测试点 | **已修**（阶段 7：消除 9 + 保留 8 并注明理由） |
+| 1.6 静默失败 | 6 项 | **部分修**：5 项已加 stderr 诊断（包身份标记、密钥 0o600、默认目录、JDK 扫描 ×2）；**仍在** —— `commands/account.rs:247` 的 `ensure_jar()` 失败仅 `eprintln!`（登录观感成功、缺 jar 到启动才暴露）＋ `task/store.rs:134-203` 三个写函数失败完全丢弃（仅 pool 初始化留痕） |
+| 1.7 前端非空断言 | 可白屏 | **仍在** —— `VanillaDetail.vue:18`（`sv()` 模板反复解引用）、`VanillaList.vue:23,24`、`store/avatar.ts:253,278,347,402,429`（`getContext("2d")!` ×5） |
+| 1.8 未走 `errMsg()` | 内联多行技术细节 | **仍在** —— `ServerStatusTool.vue:55`、`SettingsThirdParty.vue:53`、`utils/useConfigSection.ts:13`、`store/online.ts:138,152,166` |
+| 2.1 裸 `color-mix()` | 20+ 处裸用 | **已修** —— 全仓 24 处声明全部合规（21 处双声明降级 + 4 处 `@supports`；`App.vue:227-228` 有兼容 token） |
+| 2.2 绕过 store `invoke()` | 13 文件 | **部分修** —— 降至 4 文件 5 处；其中仅 `install_modpack`（`ModpackSearchBar.vue:25` 与 `ResourceDetail.vue:346` 各实现一份）值得下沉共享，其余 3 处为单点一次性动作 |
+| 2.3 重复实现（Rust） | 4 项 | **已修**（阶段 7） |
+| 2.4 重复实现（前端） | 8 项 | **仍在** —— `formatOptions` ×3、`copyCommand()` ×7、生成器输出样式 ×5、`.nb-tag-x` hover ×5、`.expand-*` CSS ×5、`VersionSetup*` 动作栏 ×3、常量表双份 ×2、主题变量双事实源（`App.vue` vs `store/theme.ts`） |
+| 2.5 VersionCard expand | 手写像素估算 | **仍在** —— 仍用 `Math.min(count*100+24, 99999)+'px'`，行高不同即裁切 |
+| 2.6 命令层业务逻辑 | 9 子项 | **部分修** —— `spawn_game` 主体（pre_launch/内存/GPU/皮肤/环境/watch）已下沉；**仍在命令层**：`launch.rs:110-132`（Command 装配 + stdio 排空线程）、`launch.rs:184-189`（async 内同步 `std::fs` 读 + 吞 IO 错）、`launch.rs:176`（命令互调 `gamedirs::open_folder`）、`gamedirs.rs:146-171 auto_activate_version`、`gamedirs.rs:9-27 read_dirs` 写盘副作用、`offline_account.rs:8-49` 五命令各自 read/retain/upsert/save、`version.rs:118-137 delete_resource_file`、`version_icon.rs:17-25` 优先级规则、`account.rs:295-305 get_third_party_config` 默认注入 |
+| 2.7 `too_many_arguments` | 17 处 | **已修**（全仓 0） |
+| 2.8 超长函数 | 9 个 | **已修**（阶段 7 + 8；当前仅 `run_task` 192 行与 `EmitLoop::spawn` 171 行，后者判定不拆） |
+| 2.9 超大文件 | 13 个 | **仍在** —— >600 行 18 个；Rust 侧仅 `util.rs`(669) 确需按职责拆分，其余（`task/modpack.rs` 1273 等）内部分区清晰 |
+| 2.10 一致性缺陷 | 13 子项 | **多数仍在** —— 16 个 `unsafe` 块 0 条 `// SAFETY:`；`task/emit.rs:70-100 update_and_emit` 在 async 上下文用 `std::thread::sleep(5ms)` 自旋占死 tokio worker；动态 section（`version_server_{name}`）无 `is_simple_name` 校验；测试内无谓 `unsafe`（`room.rs`）；`args.rs::push_unique` 注释误抄；`server_status.rs` 位于 crate 根；前端三套等宽字体栈、主字体栈偏离、聚合 total 语义、`launchOptions.ts` 的 `as any`、模块缓存无上限。**误报 2 项**：`PersistError::NotFound` 实有构造点（该行应删）、`events` 注释漂移已修。**另**：`list_mods_detailed` 并非死命令（`store/versionDetail.ts` 在用） |
+| 3 文档漂移 | 3 项 | **已修** |
