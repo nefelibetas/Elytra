@@ -54,6 +54,7 @@ cd src-tauri && cargo check              # Rust 编译检查
 cd src-tauri && cargo clippy --lib       # Rust lint（保持零代码警告）
 cd src-tauri && cargo test --lib -- --test-threads=1   # 单元测试（当前 239 passed + 1 ignored；串行防 persist/网络竞争）
 cd src-tauri && cargo test --test online_diag          # 联机集成测试（host/guest 双实例回环，走真实 easytier）
+cd src-tauri && cargo test --test e2e_download -- --ignored   # run_task 端到端（真实网络：取消路径秒级 / 完整下载分钟级）
 npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 ```
 
@@ -141,14 +142,15 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 - **persist 测试隔离**：测试进程下配置落在 `target/debug/deps/Elytra/Settings.toml`（config_dir 基于 current_exe 推导，测试进程在 deps/ 下），与正式运行隔离；每个测试先 remove_file 再 save（串行依赖）
 - **安全命令**：`cargo test --lib -- --test-threads=1`——日常验证用这个；**并行跑会偶发竞争**（persist 共用 Settings.toml + 网络测试抖动），必须串行
 - **clippy 红线**：`cargo clippy --lib` 保持零代码警告（`too_many_arguments` 已通过上下文结构体全部消除；仅余 `type_complexity` ×2 与 `upper_case_acronyms` ×3（Win32 类型），均为显式 allow）
-- **未覆盖区域**：`task/runner.rs` 的 `run_task`（下载主流程）**没有自动化测试**——它需要 `tauri::AppHandle`，只能由真实运行时的 `task::spawn_download` 驱动；改动它需人工跑一次真实下载验证
+- **端到端测试**：`tests/e2e_download.rs`（`#[ignore]`，需真实网络）驱动 `run_task`（下载主流程）——任务层的事件出口已抽象为 `task::emit::EventSink`（`impl<R: Runtime> EventSink for AppHandle<R>`），测试注入记录型实现即可跑完整流程且不触碰 IPC。两个用例分别覆盖「阶段 A/B 真实执行 + 阶段 C 取消收口」与「真实完整下载 Minecraft 1.20.1」。**注意**：须用 `#[tokio::test(flavor = "multi_thread")]` —— 终态收口经 `store::update_status` 走 `util::block_on` 的 `block_in_place` 分支，current_thread runtime 下会 panic（与生产 tauri runtime 一致）。
 
 ## Known Debt（已知遗留，待处理）
 
 - **OptiFabric 覆盖范围有限**：Fabric/Quilt + OptiFine 依赖 OptiFabric 桥接（CurseForge 渠道，slug `optifabric`）；OptiFabric 维护缓慢（CF 最新 1.14.3，2024-01，仅覆盖至 ~1.20.x），1.21+ 组合会明确报错而非静默失效
 - **待产品决策**：`GcType::Custom` 语义为"不追加 GC 参数（用 JVM 默认）"，前端 label 已注明，行为符合设计
-- **待验证的重构**：`task/runner.rs::run_task` 的阶段 C（jar/libs/assets/natives/loader 并行编排）尚未拆分（当前 472 行）；拆分必须配端到端下载验证，见 `docs/code-audit.md`
+- **已完成的重构**：`run_task` 阶段 C 并行编排已拆分（534 → 189 行，上下文结构体 + 步骤函数）；事件出口已抽象为 `EventSink`，`run_task` 现有真实网络端到端测试（`tests/e2e_download.rs`）
+- **剩余长函数**：`run_repair_task` 230 行、`join` 196 行、`run_files_task` 188 行等 10 处，均为「线性编排 + 内联步骤」，可沿用 `run_task` 的模式（上下文结构体 + 步骤函数）处理
 - **已解决**：`LauncherVisibility` 已删除（前后端同步）；离线皮肤配置层已砍（启动与头像固定随机哈希 Steve/Alex，后续计划接入自定义皮肤站登录）；OptiFine 分场景安装（纯净版 classpath 独立版本 / Forge-like 进 mods / Fabric-like OptiFabric 进 mods，mainClass 统一官方 Main；重定向黑洞黑名单精确放行 `minio.749333.xyz`——bmclapi 下载主存储）
 - **已解决**：guest 端 MC 局域网广播名参数化（房间码 `#MOTD` 段携带 host 存档名 → guest 广播真实世界名；`OnlineConfig.advertise_motd` 支持自定义广播名，优先级 自定义 > host 世界名 > 默认文案）
 - **联机遗留**：跨网联机依赖协调服务器（默认社区节点 `tcp://8.138.31.80:11010`，easytier 官方公共节点已下线）；MC 26.2 离线账号只能走"局域网发现"路径进入（手动 IP 会报无效会话，广播模拟已绕过）
-- **备注**：README.md 是完整中文文档；`README.md:39` / `README-en-US.md:40` 提到的 `download_snapshot_full`（真实下载数百 MB）在当前代码中**不存在**，待同步删除；AGENTS.md 已被 git 跟踪（修改会出现在 git status）
+- **备注**：README.md 是完整中文文档（`README-en-US.md` 为英文版）；AGENTS.md 已被 git 跟踪（修改会出现在 git status）

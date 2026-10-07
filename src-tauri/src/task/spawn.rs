@@ -61,7 +61,7 @@ pub fn spawn_download(app: AppHandle, task: DownloadTask) -> Result<String, Stri
         store::JobSpec::Download(task.clone()),
         move |a, cancel, progress| {
             tauri::async_runtime::spawn(async move {
-                runner::run_task(a, &cancel, &progress, &task).await;
+                runner::run_task(Arc::new(a), &cancel, &progress, &task).await;
             });
         },
     )

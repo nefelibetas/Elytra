@@ -606,22 +606,28 @@ pub struct InstallCtx<'a> {
 | 长函数拆分 | ✅ 完成（`run_task`） | **534 → 472 → 189 行**：抽出 `Counters`（20 个原子计数器）、`StepIndex`（8 个步骤索引）、`DownloadCtx<'a>`（13 个共享引用）与 7 个阶段 C 步骤函数（client jar / libraries / assets / natives / loader / optifine / fabric api）+ `spawn_emit_loop`；主函数只保留编排（构造上下文 → 统一转 running → `try_join!` 七路并行 → 终态收口）。逻辑逐字搬移，零行为变更 |
 | 其余 10 个长函数 | ⬜ 未做 | 均为「线性编排 + 内联步骤」（`run_repair_task` 230 行、`join` 196 行、`run_files_task` 188 行等），拆分收益低于 `run_task`；如需可沿用同一模式（上下文结构体 + 步骤函数）处理 |
 
-### 端到端验证：结论与人工步骤（重要）
+### 端到端验证：已解决（事件出口抽象 + 真实下载测试）
 
-`run_task` 是**唯一无自动化测试覆盖**的核心路径（它要求 `AppHandle`）。两条自动化路线均已**实测**受阻：
+`run_task` 是唯一无自动化覆盖的核心路径（它要求 `AppHandle`）。此前两条路线均**实测**受阻：
 
 | 路线 | 结果 | 原因 |
 |---|---|---|
-| `tauri::test::mock_app()` 驱动 `run_task` | ✗ | 返回 `App<MockRuntime>`，而 `run_task` 参数是默认泛型的 `AppHandle`（`Wry`）→ 类型不匹配。要打通需把任务层的事件发送（`set_*` / `emit_event` / `EmitLoop`，约 10 个函数）抽象成 trait 或整体泛型化 |
-| 集成测试内 `tauri::Builder::default().build(tauri::generate_context!())` | ✗ | 编译通过，运行时报 `STATUS_ENTRYPOINT_NOT_FOUND`（tauri 应用依赖 build script 生成的资源/符号，测试 exe 不具备；WebView2 为静态链接，与本项无关） |
-| `pnpm tauri dev` 后人工点击下载 | ✓ 可行 | 需在界面操作 |
+| `tauri::test::mock_app()` 驱动 `run_task` | ✗ | 返回 `App<MockRuntime>`，与生产 `AppHandle<Wry>` 类型不匹配 |
+| 集成测试内 `tauri::Builder::build(generate_context!())` | ✗ | 运行时报 `STATUS_ENTRYPOINT_NOT_FOUND`（缺 build script 生成的资源/符号） |
 
-**人工验证清单**（改动 `run_task` 后执行一次）：
+**解决方式**：把任务层的事件出口抽象为 `task::emit::EventSink`（`impl<R: Runtime> EventSink for AppHandle<R>`），
+`run_task` 等执行体改收 `Arc<dyn EventSink>`；测试注入记录型实现即可驱动完整流程，且不触碰任何 IPC。
+队列线程随之改投递闭包（`Box<dyn FnOnce() + Send>`），与具体 runtime 解耦。
 
-1. `pnpm tauri dev` → 删除某版本的版本目录（保证走「全新下载」路径）→ 重新下载该版本；
-   观察：阶段文案推进（版本 JSON → 库 → 资源 → natives）、实时速度/ETA 正常、卡片最终置为完成并消失、版本目录内无 `.elytra-part` 残留。
-2. 再下一次（改走「补全」路径，目录已存在）：确认失败时**不**整删已有目录。
-3. 下载中途点取消：确认卡片消失、本次新建的版本目录被**异步**清理（不阻塞界面）。
+新增 `tests/e2e_download.rs`（均 `#[ignore]`，需真实网络）：
+
+| 测试 | 覆盖 | 实测 |
+|---|---|---|
+| `run_task_cancel_path` | 阶段 A（真实拉取版本 JSON）+ 阶段 B（本地扫描）+ 阶段 C 前置位取消 → `Cancelled` 收口、任务注册移除、进度事件已发出 | **0.18s ✓** |
+| `run_task_full_download` | 真实完整下载 Minecraft 1.20.1（client jar + 支持库 + 资源 objects 全量）→ `Done` | **20.6s ✓** |
+
+注意：两个测试都需 `#[tokio::test(flavor = "multi_thread")]` —— 终态收口经 `store::update_status`
+走 `util::block_on` 的 `block_in_place` 分支，current_thread runtime 下会 panic（与生产 tauri runtime 一致）。
 
 每阶段收口：`cargo check` + `cargo clippy --lib`（零警告）+ `cargo test --lib -- --test-threads=1`。
 

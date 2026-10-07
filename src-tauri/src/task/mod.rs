@@ -34,5 +34,6 @@ pub use spawn::{spawn_download, spawn_install_jdk};
 pub use steps::{StepKind, StepSpec, TaskSpec};
 
 pub(crate) use ctx::TaskCtx;
+pub use emit::EventSink;
 pub(crate) use emit::{emit, emit_event, update_and_emit};
 pub(crate) use spawn::{spawn_task, steps_by_names};
