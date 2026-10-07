@@ -7,7 +7,6 @@ import AlertDialog from "../component/common/AlertDialog.vue";
 import LaunchProgress from "../component/launch/LaunchProgress.vue";
 import AccountSection from "../component/launch/AccountSection.vue";
 import LaunchSection from "../component/launch/LaunchSection.vue";
-import CapeDialog from "../component/launch/CapeDialog.vue";
 import VersionDetailCard from "../component/launch/VersionDetailCard.vue";
 import { alertState } from "../store/alert";
 import { renderOfflineAvatar, renderPremiumAvatar } from "../store/avatar";
@@ -62,8 +61,6 @@ onMounted(async () => {
       :copyable="alertState.copyable"
     />
 
-
-    <CapeDialog />
   </div>
 </template>
 
