@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { StepStatus } from "./download";
 import type { InstalledVersionInfo } from "./gameDirs";
-import { EVT_GAME_EXITED, EVT_GAME_WINDOW_VISIBLE } from "./events";
+import { GAME_EXITED, GAME_WINDOW_VISIBLE } from "./events";
 import { authMode, msAccount, username, externalAccount, type MsAccountInfo } from "./auth";
 import { selectedVersion, setSelected, getSavedDir } from "./selectedVersion";
 import { showError } from "./alert";
@@ -198,12 +198,12 @@ function waitGameWindow(label: string): Promise<boolean> {
       resolve(ok);
     };
     const timer = setTimeout(() => finish(false), 90_000);
-    listen<[number, string]>(EVT_GAME_WINDOW_VISIBLE, (ev) => {
+    listen<[number, string]>(GAME_WINDOW_VISIBLE, (ev) => {
       if (ev.payload[1] !== label) return;
       windowSeen = true;
       finish(true);
     }).then(u => unlisteners.push(u));
-    listen<GameExitedPayload>(EVT_GAME_EXITED, (ev) => {
+    listen<GameExitedPayload>(GAME_EXITED, (ev) => {
       if (ev.payload[1] !== label) return;
       // 任意退出码：窗口已见则视为"已成功等待"，否则判定失败
       finish(windowSeen);
@@ -211,11 +211,16 @@ function waitGameWindow(label: string): Promise<boolean> {
   });
 }
 
+/** 读取某版本的最近一次游戏日志（launcher/process.rs 落盘）。 */
+export async function loadGameLog(gameDir: string, versionName: string): Promise<string> {
+  return await invoke<string>("get_game_log", { gameDir, versionName });
+}
+
 /** 幂等注册 game-exited 监听（页面 onMounted 调用一次）：非零退出码弹错误提示。 */
 export async function ensureGameExitListener() {
   if (gameExitListenerReady) return;
   gameExitListenerReady = true;
-  await listen<GameExitedPayload>(EVT_GAME_EXITED, (ev) => {
+  await listen<GameExitedPayload>(GAME_EXITED, (ev) => {
     console.log("Game exited:", ev.payload);
     const [, label, exitCode, crashReport] = ev.payload;
     // 退出码非 0：游戏异常退出（崩溃/启动失败）——不再静默，弹错误级提示

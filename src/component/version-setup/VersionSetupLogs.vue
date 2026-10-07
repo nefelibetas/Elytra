@@ -3,7 +3,8 @@
 // 与 .minecraft/logs/elytra-launch.log（启动器捕获的启动输出），尾部 200 行。
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
-import { invoke } from "@tauri-apps/api/core";
+import { loadGameLog } from "../../store/launch";
+import { openFolder } from "../../utils/fs";
 import { RefreshCw, FolderOpen } from "@lucide/vue";
 import { activePath } from "../../store/gameDirs";
 
@@ -21,10 +22,7 @@ async function loadLog() {
   }
   loading.value = true;
   try {
-    const text = await invoke<string>("get_game_log", {
-      gameDir: activePath.value,
-      versionName: versionName.value,
-    });
+    const text = await loadGameLog(activePath.value, versionName.value);
     logText.value = text || "暂无日志（尚未启动过该版本）";
   } catch (e) {
     logText.value = String(e);
@@ -39,9 +37,9 @@ async function openLogDir() {
   if (!activePath.value) return;
   const vdir = activePath.value.replace(/\\+$/, "") + "/versions/" + versionName.value;
   try {
-    await invoke("open_folder", { path: vdir + "/logs" });
+    await openFolder(vdir + "/logs");
   } catch {
-    await invoke("open_folder", { path: vdir });
+    await openFolder(vdir);
   }
 }
 </script>

@@ -222,6 +222,10 @@ input, textarea {
   /* 标题栏前景：标题栏铺品牌渐变，白字与半透明白叠层独立于正文语义色 */
   --titlebar-fg: #FFFFFF;
   --titlebar-fg-dim: rgba(255, 255, 255, 0.7);
+  /* 标题栏交互态底色：color-mix() 在低版本 WebKitGTK 不可用，
+     故给出等价 token 作为前序声明（双声明降级，与 ResourceDetail 的写法一致） */
+  --titlebar-hover: rgba(255, 255, 255, 0.16);
+  --titlebar-active: rgba(255, 255, 255, 0.22);
   /* 浮层层级常量：FAB < 模态弹窗 < 内容/边缘加深 < 右键菜单 < toast < tooltip。
      组件内一律引用变量，禁止裸写数值（曾经 waiting 弹窗 z=200 被菜单盖住的根因）。 */
   --z-fab: 900;

@@ -3,7 +3,7 @@
 import { ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { EVT_MS_LOGIN_COMPLETE } from "./events";
+import { MS_LOGIN_COMPLETE } from "./events";
 import { showError } from "./alert";
 import { avatarState, renderPremiumAvatar, renderExternalAvatar } from "./avatar";
 
@@ -234,7 +234,7 @@ export async function ensureLoginListener() {
   if (loginListenerReady) return;
   loginListenerReady = true;
   await listen<MsLoginCompletePayload>(
-    EVT_MS_LOGIN_COMPLETE,
+    MS_LOGIN_COMPLETE,
     async (ev) => {
       msLoginState.value = "idle";
       if (ev.payload.ok && ev.payload.account) {

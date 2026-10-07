@@ -4,7 +4,9 @@
 import { computed, ref, onMounted, onUnmounted } from "vue";
 import { useRoute } from "vue-router";
 import { Folder, Trash2, Map } from "@lucide/vue";
-import { invoke } from "@tauri-apps/api/core";
+import { deleteWorld } from "../../store/versionDetail";
+import { ensureGameFolder } from "../../store/gameDirs";
+import { openFolder } from "../../utils/fs";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 import { fmtUnix } from "../../utils/format";
@@ -50,10 +52,7 @@ async function confirmDelete() {
   deletePending.value = [];
   for (const n of names) {
     try {
-      await invoke("delete_world", {
-        versionName: versionName.value,
-        worldName: n,
-      });
+      await deleteWorld(versionName.value, n);
       showToast(`已删除存档 ${n}`);
     } catch (e) {
       showToast(errMsg(e));
@@ -80,13 +79,10 @@ onUnmounted(() => stopWorldsLivePolling());
 /** 打开地图编辑器窗口（独立 WebView；初始定位到该存档）。 */
 
 /** 打开存档文件夹（目录不存在先创建）。 */
-async function openFolder() {
+async function openSavesFolder() {
   try {
-    const target = await invoke<string>("ensure_game_folder", {
-      kind: "saves",
-      versionName: versionName.value,
-    });
-    await invoke("open_folder", { path: target });
+    const target = await ensureGameFolder("saves", versionName.value);
+    await openFolder(target);
   } catch (e) {
     showToast(errMsg(e));
   }
@@ -99,7 +95,7 @@ async function openFolder() {
     <div class="vss-card vss-head-card">
       <Map :size="16" class="vss-head-icon" />
       <span class="vss-head-title">存档管理</span>
-      <button class="vss-act-btn" @click="openFolder">
+      <button class="vss-act-btn" @click="openSavesFolder">
         <Folder :size="13" />
         <span>打开存档文件夹</span>
       </button>
@@ -361,12 +357,14 @@ async function openFolder() {
 }
 
 .vss-ab-btn.danger {
+  border: 1px solid var(--color-danger);
   border: 1px solid color-mix(in srgb, var(--color-danger) 40%, transparent);
   background: transparent;
   color: var(--color-danger);
 }
 
 .vss-ab-btn.danger:hover:not(:disabled) {
+  background: var(--color-danger-bg);
   background: color-mix(in srgb, var(--color-danger) 8%, transparent);
   border-color: var(--color-danger);
 }

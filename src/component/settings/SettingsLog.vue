@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 设置-启动器日志：查看启动器自身输出（stdout/stderr 重定向到 exe 旁 Elytra/launcher.log）。
 import { onMounted, ref } from "vue";
-import { invoke } from "@tauri-apps/api/core";
+import { loadLauncherLog, openLauncherLogDir } from "../../store/appLog";
 import { RefreshCw, FolderOpen } from "@lucide/vue";
 
 const logText = ref("");
@@ -10,7 +10,7 @@ const loading = ref(false);
 async function loadLog() {
   loading.value = true;
   try {
-    const text = await invoke<string>("get_launcher_log");
+    const text = await loadLauncherLog();
     logText.value = text || "暂无启动器日志（launcher.log 尚未产生内容）";
   } catch (e) {
     logText.value = String(e);
@@ -23,7 +23,7 @@ onMounted(loadLog);
 /** 打开启动器日志所在目录（exe 旁 Elytra/）。 */
 async function openLogDir() {
   try {
-    await invoke("open_launcher_log_dir");
+    await openLauncherLogDir();
   } catch (e) {
     /* 目录不存在时忽略 */
   }

@@ -220,9 +220,11 @@ function editionLabel(): string {
   padding: 10px 12px;
   font-size: 12px;
   line-height: 1.6;
-  color: var(--text-danger, #ff5555);
-  background: color-mix(in srgb, var(--text-danger, #ff5555) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--text-danger, #ff5555) 25%, transparent);
+  color: var(--color-danger);
+  background: var(--color-danger-bg);
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+  border: 1px solid var(--color-danger);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 25%, transparent);
   border-radius: var(--radius-sm);
   white-space: pre-wrap;
   word-break: break-all;

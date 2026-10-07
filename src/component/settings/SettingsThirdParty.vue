@@ -2,7 +2,7 @@
 // 设置-第三方登录：登录（服务器下拉选择）+ 预设管理（label + value）。
 // 下拉选项 = 内置预设 + 用户预设（下面有什么，上面才能选什么）。
 import { computed, onMounted, ref } from "vue";
-import { invoke } from "@tauri-apps/api/core";
+import { loadThirdPartyConfig, saveThirdPartyConfig } from "../../store/thirdParty";
 import { Plus, Trash2, ExternalLink } from "@lucide/vue";
 import DropSelect from "../common/DropSelect.vue";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -65,7 +65,7 @@ function openServerLink(url: string) {
 // ── 预设管理 ──
 async function loadPresets() {
   try {
-    const cfg = await invoke<{ servers: { label: string; value: string }[] }>("get_third_party_config");
+    const cfg = await loadThirdPartyConfig();
     presetServers.value = cfg.servers ?? [];
     if (!extApi.value && presetServers.value.length) {
       extApi.value = presetServers.value[0].value;
@@ -77,7 +77,7 @@ async function loadPresets() {
 
 async function savePresets() {
   try {
-    await invoke("save_third_party_config", { config: { servers: presetServers.value } });
+    await saveThirdPartyConfig({ servers: presetServers.value });
   } catch (e) {
     showToast(errMsg(e));
   }

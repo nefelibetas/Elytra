@@ -7,7 +7,7 @@
 import { ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { EVT_ONLINE_STATE } from "./events";
+import { ONLINE_STATE } from "./events";
 
 /** 联机状态（镜像 Rust OnlineStatus）。 */
 export type OnlineStatus = "idle" | "waiting" | "hosting" | "joining";
@@ -72,7 +72,7 @@ let listening = false;
 export function ensureOnlineListen() {
   if (listening) return;
   listening = true;
-  listen<OnlineSnapshot>(EVT_ONLINE_STATE, (ev) => {
+  listen<OnlineSnapshot>(ONLINE_STATE, (ev) => {
     applySnapshot(ev.payload);
   });
 }
