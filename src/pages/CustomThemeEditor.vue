@@ -20,6 +20,15 @@ const editName = ref("");
 const editDesc = ref("");
 const editVars = ref<CustomThemeVars>(initVars());
 
+/** query.from 解析：显式指定且存在（内置主题或已保存的自定义）时的起点 id。 */
+function fromParam(): ThemeId | undefined {
+  const from = route.query.from as string | undefined;
+  if (!from) return undefined;
+  if (THEMES.some((t) => t.id === from)) return from as ThemeId;
+  if (customThemes.value[from]) return from as ThemeId;
+  return undefined;
+}
+
 function initVars(): CustomThemeVars {
   if (editingId.value && customThemes.value[editingId.value]) {
     // 编辑：载入现有值
@@ -28,17 +37,13 @@ function initVars(): CustomThemeVars {
     editDesc.value = t.desc ?? "";
     return { ...t.vars };
   }
-  // 新建：从当前主题（内置或自定义）复制起点
-  const from = route.query.from as string | undefined;
+  // 新建：从 query.from 指定主题（内置或现有自定义）复制起点
+  const from = fromParam();
   editName.value = "自定义外观";
   editDesc.value = "";
-  if (from && THEMES.some((t) => t.id === from)) {
-    return builtinVars(from as ThemeId);
-  }
-  if (from && customThemes.value[from]) {
-    return { ...customThemes.value[from].vars };
-  }
-  return builtinVars("grass");
+  if (!from) return builtinVars("grass");
+  if (THEMES.some((t) => t.id === from)) return builtinVars(from);
+  return { ...customThemes.value[from].vars };
 }
 
 /** 同组件实例下 query 变化（新建 ↔ 编辑）：重建表单与色板状态。 */
@@ -200,7 +205,10 @@ function save() {
     updateCustomTheme(editingId.value, patch);
     activateCustomTheme(editingId.value as ThemeId);
   } else {
-    const t = createCustomTheme();
+    // 起点与 initVars 保持一致：createCustomTheme 会为内置起点写入 basedOn，
+    // 使品牌衍生物直接取自该内置主题的 CSS 值
+    const from = fromParam();
+    const t = createCustomTheme(from);
     updateCustomTheme(t.id, patch);
     activateCustomTheme(t.id as ThemeId);
   }
@@ -260,6 +268,15 @@ function save() {
                 class="pv-part pv-card-btn pv-static"
               ></span>
             </div>
+            <!-- 内容区分隔线：常规边框（--border-default）的可点载体 -->
+            <span
+              class="pv-part pv-divider"
+              :class="{ active: activeField === '--border-default' }"
+              @click="pickField('--border-default')"
+            >
+              <span class="pv-divider-line"></span>
+              <span class="pv-tag">常规边框</span>
+            </span>
             <div class="pv-card pv-card-list">
               <span
                 class="pv-part pv-list-item"
@@ -684,6 +701,21 @@ function save() {
   align-items: stretch;
   gap: 8px;
   overflow: hidden;
+}
+
+/* 内容区分隔线：常规边框（--border-default）的可点载体；
+   外层 9px 高度为 1px 的线留出可点击热区（hover/active 轮廓随之可见） */
+.pv-divider {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 9px;
+}
+
+.pv-divider-line {
+  flex: 1;
+  height: 1px;
+  background: var(--pv-border-default, var(--border-default));
 }
 
 .pv-list-item {
