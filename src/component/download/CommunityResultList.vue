@@ -87,7 +87,8 @@ const props = withDefaults(
           <span class="cs-pager-info">{{ search.page }} / {{ totalPages }}</span>
           <button class="cs-pager-btn" :disabled="search.page >= totalPages" @click="search.search(search.page + 1)">下一页</button>
         </div>
-        <span class="cs-result-count">共 {{ search.total }} 个结果</span>
+        <!-- 聚合（all）模式的 total 是去重后的已知下限而非精确总数，用「至少」避免误导；单源为精确值用「共」 -->
+        <span class="cs-result-count">{{ search.source === "all" ? "至少" : "共" }} {{ search.total }} 个结果</span>
       </div>
     </template>
     <EmptyState v-else>

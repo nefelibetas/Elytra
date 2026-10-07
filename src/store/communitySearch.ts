@@ -129,9 +129,13 @@ export function needsTranslation(): boolean {
   return dlTranslateMode.value !== "en";
 }
 
-/** 聚合搜索：两源并发，单源失败降级为空；按标题去重保留下载量高的一侧；总数取两源较大值（去重无法精确）。
+/** 聚合搜索：两源并发，单源失败降级为空；按标题去重保留下载量高的一侧。
  *  `category` 为项目类型过滤（如 "shader"），普通 mod 传 null。
- *  `pageSize` 每源条数：聚合模式传页大小一半（15），合并去重后展示 ≤15 条。 */
+ *  `pageSize` 每源条数：聚合模式传页大小一半（15），合并去重后展示 ≤15 条。
+ *  返回的 `maxKnownTotal` 为「已知总量下限」：两源各自的 `total` 是平台精确命中数，
+ *  聚合去重后真实总数需拉全两源才能得（跨源标题去重无法离线求并），故取两者较大值——
+ *  并集 ≥ 任一源，因此它是下限；同时与分页口径一致（每页每源各取 15 条、offset 同步推进，
+ *  能翻到的最深页数正是 ceil(max/每源页大小)）。**不要改成 sum**（去重后会重复计数）。 */
 export async function searchAllSources(
   query: string,
   gameVersion: string,
@@ -139,7 +143,7 @@ export async function searchAllSources(
   category: string | null,
   offset: number,
   pageSize: number,
-): Promise<{ items: CommunityDisplayItem[]; total: number }> {
+): Promise<{ items: CommunityDisplayItem[]; maxKnownTotal: number }> {
   const queryParams = {
     query,
     gameVersion: gameVersion || null,
@@ -166,7 +170,7 @@ export async function searchAllSources(
   }
   return {
     items: Array.from(merged.values()).sort((a, b) => b.downloads - a.downloads),
-    total: Math.max(mr?.total ?? 0, cf?.total ?? 0),
+    maxKnownTotal: Math.max(mr?.total ?? 0, cf?.total ?? 0),
   };
 }
 
@@ -179,6 +183,7 @@ export const communitySearch = reactive({
   error: "",
   searched: false,
   results: [] as CommunityDisplayItem[],
+  /** 结果总数：单源为平台精确命中数；聚合（source="all"）为两源较大值＝已知总量下限（非精确），UI 文案须标「至少」。 */
   total: 0,
   page: 1,
   /** 请求序号：筛选快速连切时只应用最后一次发起的结果（防过期响应覆盖） */
@@ -195,7 +200,7 @@ export const communitySearch = reactive({
         const res = await searchAllSources(this.query.trim(), this.gameVersion, this.loader, null, offset, pageSize);
         if (seq !== this.searchSeq) return;
         this.results = res.items;
-        this.total = res.total;
+        this.total = res.maxKnownTotal;
       } else {
         const res = await invoke<CommunitySearchPage>("search_community", {
           source: this.source,
