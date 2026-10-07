@@ -67,7 +67,7 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 - **返回**：可失败 → `Result<T, String>`；纯读取 → 裸 `T`/`Option<T>`；错误在模块边界 `.map_err(|e| e.to_string())`
 - **错误消息规范**：**中文短文案首行 + `\n` + 技术细节**（如 `下载资源索引失败\n{e}`、`请求失败\nHTTP {status}`）；前端 toast/内联错误经 `errMsg()` 取首行，AlertDialog（带复制）显示全文
 - **async 分布**：网络/IO 重命令 async；配置读写/本地小操作同步；重活（remove_dir_all、rename）走 `spawn_blocking`/`tauri::async_runtime::spawn_blocking`
-- **注册**：新命令 = `commands/<file>.rs` 加 `#[tauri::command] pub fn`，再在 `lib.rs` 的 `generate_handler!` 追加**全限定路径**——`commands/mod.rs` 只有 `pub mod`，re-export 不能代替
+- **注册**：新命令 = `commands/<file>.rs` 加 `#[tauri::command] pub fn`，在 `lib.rs` 顶部（`use commands::<模块>::{…}`）追加导入，再把它加到 `generate_handler!` 列表（列**裸名**，不写路径）——`commands/mod.rs` 只有 `pub mod`，re-export 不能代替
 - **持久化**：配置一律 `persist::read::<T>("section").unwrap_or_default()`；结构体实现 `Default`；`save` 前读改写（全局锁串行化）
 - **锁**：一律 `parking_lot`（无中毒）；**锁序统一 inner→progress**；`fail()` 前先 `drop` progress 锁；**DB 写（sqlite）移出锁 + 2s 超时**；`update_and_emit` 锁内更新 + clone 快照、锁外 `emit_event`（O(1) 队列投递，任务线程永不碰 IPC）
 - **模块组织**：`mod.rs` 只允许**子模块声明 / `pub use` 重导出 / 模块级文档 / `#[cfg(test)]` 测试模块 / 条件编译声明**——不许放任何逻辑代码（哪怕一个小函数）；实现一律放同级命名文件（如 `task/manager.rs`、`online/service.rs`、`downloader/fetcher/api.rs`）
@@ -87,7 +87,7 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 - **事件监听幂等**：`ensureListen()` 用 listening 标志防重复注册；终态（done/cancelled/error）事件用 `terminalTaskIds` 防幽灵卡片复活
 - **样式**：CSS 变量统一在 App.vue `:root` + 四套 `data-theme` 主题覆盖块（`--color-brand`/`--text-*`/`--surface-*`/`--ld-*` loader 标签色等），组件页面一律 `var()` 引用、`<style scoped>`；图标用 `@lucide/vue`，无自研图标库
 - **三端 WebView 一致性（保守用现代 CSS）**：渲染内核三端不同——Win WebView2（Blink）/ macOS WKWebView（WebKit）/ Linux WebKitGTK（WebKit，发行版版本滞后，如 Ubuntu 22.04 仅 2.40）；新 CSS 特性一律 `@supports` 包裹或直接写兼容写法，**禁止裸用**；中文字体栈固定三端兜底链（`"Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "Noto Sans SC", sans-serif`），禁止单独写死平台字体。降级范例：ResourceDetail.vue `.md-ld-*` 徽章 color-mix、AlertDialog.vue 遮罩 backdrop-filter
-- **错误提示两级**：toast（`window.__showToast`，2.5s）vs AlertDialog（复杂错误，带复制按钮）；均经 `errMsg()` 取首行
+- **错误提示两级**：toast（`utils/toast.ts` 的 `showToast(msg, durationMs=2500)` + App.vue 渲染 `toastState`）vs AlertDialog（复杂错误，带复制按钮）；均经 `errMsg()` 取首行
 - **展开/收起必须有动画**：一律 `<Transition name="expand">` + `.expand-enter-to/.expand-leave-from { max-height: 1000px }` 显式目标值（max-height 写在 active 类上会因同特异性覆盖 from 态导致**无动画**，勿回退）
 - **社区资源搜索**：搜索表单 + 结果列表组件成对复制（绑各自 store）；聚合模式每源只取 `AGG_PAGE_SIZE=15` 条按标题去重；进入下载页 onMounted 并发预加载全部社区 tab 热门（`ensureAutoSearch` 幂等）；左侧 Tab 刷新按钮 = 各 store 的 `reset()`
 - **路由**：hash 路由（`createWebHashHistory`），`RouteMeta.transition` + `routeLevel`/`tabOrder` 驱动页面动画；DownloadDetail 为**顶级 tab**（routeLevel 0），无全局 FAB
