@@ -314,6 +314,7 @@ pub fn unique_child_dir(parent: &Path, base: &str) -> String {
             return candidate;
         }
     }
+    // 循环为无限 RangeFrom（命中即 return），此处仅为满足类型检查
     unreachable!()
 }
 

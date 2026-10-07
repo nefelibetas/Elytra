@@ -130,7 +130,9 @@ pub async fn join(app: &tauri::AppHandle, room_code: &str) -> Result<u16, String
     // 回写状态
     let mut svc = SERVICE.lock().await;
     svc.advertiser = Some(advertiser);
-    svc.session.as_mut().unwrap().local_port = local_port;
+    if let Some(s) = svc.session.as_mut() {
+        s.local_port = local_port;
+    }
     svc.profiles = Some(ProfileTable::with_host(local_profile.clone()));
     let snap = snapshot_inner(&svc);
     emit_snapshot(app, &snap);

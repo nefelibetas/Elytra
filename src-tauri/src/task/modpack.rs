@@ -34,7 +34,8 @@ use crate::game::resource::{assets, extract, library};
 use crate::game::version::meta;
 use crate::game::version::model::VersionJson;
 use crate::task::progress::{
-    cancelled, set_cancelled, set_error, set_phase, set_total, spawn_heartbeat, step_done,
+    cancelled, set_cancelled, set_done, set_error, set_phase, set_total, spawn_heartbeat,
+    step_done,
     HeartbeatStats,
 };
 use crate::task::{global, update_and_emit, StepInfo, StepStatus, TaskProgress, TaskStatus};
@@ -145,29 +146,19 @@ fn fail_or_cancel(
     if cancelled(cancel) {
         set_cancelled(app, progress);
     } else {
-        set_error(app, progress, msg);
+        // 先登记清理路径再 set_error（后者收口时取走并后台整删；
+        // 同步 remove_dir_all 会阻塞任务线程，大目录可达数十秒）
         if let Some((vdir, existed_before)) = vdir_for_cleanup {
             if !existed_before {
-                let _ = std::fs::remove_dir_all(vdir);
+                let cleanup_id = progress.try_lock().map(|p| p.task_id.clone());
+                if let Some(id) = cleanup_id {
+                    global().set_cleanup_path(&id, vdir.to_path_buf());
+                }
             }
         }
+        set_error(app, progress, msg);
     }
     false
-}
-
-/// 成功收口（对齐既有 runner：Done 后自行 remove 注册）。
-fn finish_ok(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, phase: &str) {
-    update_and_emit(app, progress, |p| {
-        p.status = TaskStatus::Done;
-        p.progress = 100.0;
-        p.completed_files = p.total_files;
-        p.current_phase = phase.into();
-    });
-    if let Some(p) = progress.try_lock() {
-        let id = p.task_id.clone();
-        drop(p);
-        global().remove(&id);
-    }
 }
 
 /// 重写步骤表：前 `done_count` 步置 done，其余 pending（A 段完成后追加 B/C 段）。
@@ -364,7 +355,7 @@ pub async fn run_install(
         return run.fail(restricted_notice(&run.restricted));
     }
 
-    finish_ok(app, progress, "完成");
+    set_done(app, progress, "完成");
     true
 }
 
@@ -511,10 +502,10 @@ impl<'a> PackInstall<'a> {
         )
     }
 
-    fn vj(&self) -> &VersionJson {
+    fn vj(&self) -> Result<&VersionJson, String> {
         self.version_json
             .as_ref()
-            .expect("阶段顺序不变量：B1 先于 B2–B5")
+            .ok_or_else(|| "内部错误：版本清单未加载（B1 未先于 B2–B5 执行）".to_string())
     }
 
     /// B1：版本清单（唯一硬前置）。补齐 B 段总量估算；无 loader 时写原版 JSON。
@@ -583,7 +574,7 @@ impl<'a> PackInstall<'a> {
             self.idx.i_jar,
             StepStatus::Running,
         );
-        let vj = self.vj();
+        let vj = self.vj()?;
         if let Some(cl) = &vj.downloads.client {
             let jar_path = self
                 .vdir
@@ -620,7 +611,7 @@ impl<'a> PackInstall<'a> {
     /// B3/B4/B5：依赖库 → 资源文件 → 原生库。
     async fn b_vanilla_content(&self) -> Result<(), String> {
         let src_refs: Vec<&DownloadSource> = self.sources.iter().collect();
-        let vj = self.vj();
+        let vj = self.vj()?;
 
         set_phase(
             self.app,

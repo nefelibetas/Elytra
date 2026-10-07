@@ -132,9 +132,14 @@ const MAGIC: &[u8] = b"ELY1";
 fn key_encrypt(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, String> {
     let mut nonce_bytes = [0u8; 12];
     getrandom::getrandom(&mut nonce_bytes).map_err(|e| format!("生成随机数失败\n{e}"))?;
-    let cipher = ChaCha20Poly1305::new(&Key::try_from(key.as_slice()).unwrap());
+    // 定长来源走 fallible 转换（长度由类型保证，错误分支仅为消除 panic 路径）
+    let key_ref = Key::try_from(key.as_slice())
+        .map_err(|_| "内部错误：主密钥长度异常".to_string())?;
+    let nonce_ref = Nonce::try_from(nonce_bytes.as_slice())
+        .map_err(|_| "内部错误：nonce 长度异常".to_string())?;
+    let cipher = ChaCha20Poly1305::new(&key_ref);
     let ct = cipher
-        .encrypt(&Nonce::try_from(nonce_bytes.as_slice()).unwrap(), data)
+        .encrypt(&nonce_ref, data)
         .map_err(|e| format!("加密失败\n{e}"))?;
     let mut out = Vec::with_capacity(MAGIC.len() + nonce_bytes.len() + ct.len());
     out.extend_from_slice(MAGIC);
@@ -152,9 +157,13 @@ fn key_decrypt(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, String> {
         return Err("密文格式异常".into());
     }
     let (nonce, ct) = rest.split_at(12);
-    let cipher = ChaCha20Poly1305::new(&Key::try_from(key.as_slice()).unwrap());
+    let key_ref = Key::try_from(key.as_slice())
+        .map_err(|_| "内部错误：主密钥长度异常".to_string())?;
+    let nonce_ref =
+        Nonce::try_from(nonce).map_err(|_| "内部错误：nonce 长度异常".to_string())?;
+    let cipher = ChaCha20Poly1305::new(&key_ref);
     cipher
-        .decrypt(&Nonce::try_from(nonce).unwrap(), ct)
+        .decrypt(&nonce_ref, ct)
         .map_err(|e| format!("解密失败\n{e}"))
 }
 

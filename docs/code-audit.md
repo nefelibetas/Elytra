@@ -592,17 +592,18 @@ pub struct InstallCtx<'a> {
 
 注释精简：注释密度 11.4% → 11.5%（行数随拆分增大），27 处 ≥8 连行块中，压缩了 6 处最长的模块文档（`online/mod.rs` 25→20、`online/session.rs` 20→17、`downloader/endpoints.rs` 17→10 与 14→6、`online/mc_advertise.rs` 16→14、`game/community/mod.rs` 12→9）——**删的是历史叙述**（"此前散落在…"、"相比原 REWRITE_RULES 的差异"、"旧实现…"），保留实测约束与原因。
 
-### 阶段 7：其余审计项 —— 部分完成
+### 阶段 7：其余审计项 —— 已完成（仅阶段 C 编排拆分留待单独一轮）
 
 | 项 | 状态 | 说明 |
 |---|---|---|
 | 重复实现：并发下载循环 | ✅ 完成 | 新增 `downloader/batch.rs`（`BatchItem` + `run(items, concurrency, pc, cancel, max_errors)`），`assets.rs` 与 `library.rs` 那两份逐行相同的循环（各 ~90 行）合并为构造批 + 一次调用；顺带消除 `acquire_owned().await.unwrap()` |
 | 重复实现：路径穿越守卫 | ✅ 完成 | `game/modpack.rs::safe_rel_path` 与 `jdk/download.rs::safe_runtime_path` 合并为 `util::safe_relative_path`（3 处调用点改为 `root.join(safe_relative_path(...)?)`，2 个本地测试合并为 1 个 util 测试） |
 | 静默失败 | ✅ 完成 | 5 处加 stderr 诊断（落 launcher.log）：包身份标记写入、密钥文件 0o600 权限、默认游戏目录持久化、JDK 扫描结果 ×2；`task/store.rs::pool()` 初始化失败改为**一次性**留痕（避免每步刷屏，DB 故障不阻塞任务的语义不变） |
-| `too_many_arguments` | 🔄 进行中 | loader 6 处已消除；本轮引入 `TaskCtx`（task 层句柄）、`AssetIndexRef`（资源索引三元组）、`ScanInput`、`JvmSubst`/`LaunchRequest`、`PackMeta` 收敛其余 9 处；`task/modpack.rs::phase_fetch_pack` 仅需删 allow（7 参数不触发阈值） |
-| 速度探测双份（`probe.rs` vs `jdk/download.rs`） | ⬜ 未做 | 需把 JDK 侧自建 TTL 缓存并入 `downloader::probe`；两处缓存语义（TTL/键）需先对齐 |
-| 终态收口两套（`task/modpack.rs` vs `task/progress.rs`） | ⬜ 未做 | modpack 侧自建 Done/Cancelled/Error 收口与步骤重写；合并需重排步骤状态机 |
-| `unwrap/expect` 清理（14 处） | ⬜ 未做 | 多数为启动期一次性构造（`LazyLock`/顶层 `expect`）或长度恒定的定长数组转换，逐个评估收益低 |
-| 长函数拆分（`run_task` 511 行等 9 处） | ⬜ 未做 | 用户 6 条规范未涉及；`run_task` 承载阶段 A/B/C 全流程且共享 20+ 局部状态，拆分风险高于收益，建议单独开一轮 |
+| `too_many_arguments` | ✅ 完成 | loader 6 处 + 本轮 9 处全部消除（引入 `TaskCtx`、`AssetIndexRef`、`ScanInput`、`JvmSubst`/`LaunchRequest`、`PackMeta`；`task/modpack.rs::phase_fetch_pack` 仅删 allow）。全仓该 allow 清零，仅余 `type_complexity` ×2 与 `upper_case_acronyms` ×3（Win32 类型，合理） |
+| 速度探测双份 | ✅ 完成 | JDK 侧自建的 `speed_probe`/缓存/常量并入 `downloader/probe.rs`（新增 `probe_speed` + `SpeedProbeResult`，与 TTFB 探测共用 `cache_get/cache_set` 泛型缓存与 TTL/上限常量）；`jdk/download.rs` 删掉自建缓存与本文件 5 个 import。修正原描述：两处**测量不同**（HEAD TTFB vs 流式吞吐），重复的是缓存设施 |
+| 终态收口两套 | ✅ 完成 | 抽出 `progress::set_done(app, progress, phase)` 作为 Done 收口唯一实现（runner 的 `update_and_emit`+`fail` 与 modpack 的 `finish_ok`+`remove` 各自一份 → 共用）；`set_error` 增加 cleanup_path 处理（取走登记路径 + `spawn_blocking` 整删），runner 与 modpack 失败路径的**同步** `remove_dir_all`（阻塞任务线程）统一改为先 `set_cleanup_path` 登记 |
+| `unwrap/expect` 清理 | ✅ 完成 | 17 处非测试点分类处理：**消除 9 处**（`fetcher/core.rs` 的 `last_err.unwrap()`、`task/modpack.rs` 的 `expect("阶段顺序不变量…")` 改返回 `Err`、`launcher/env.rs` 的 `last().unwrap()` 改 `map`、`online/guest.rs` 的 `session.as_mut().unwrap()` 改 `if let`、`identity.rs` 的 `parent().expect` 改 `if let`、`persist/secrets.rs` 4 处 `Key/Nonce::try_from(..).unwrap()` 改 `map_err + ?`）；**保留 8 处**并加"为何不可达/为何不处理"注释（Tauri 顶层、tokio runtime 构建、事件线程 spawn、semaphore、client 一次性构建 ×2、两处 `for n in 1..` 后的 `unreachable!()`） |
+| 长函数拆分 | 🟡 部分完成 | `run_task` **534 → 472 行**：抽出 `prepare_runtime`（配置/目标目录/复用根/路径互斥，返回 `TaskRuntime`）与 `stage_fetch_version`（阶段 A：拉取 JSON + 落盘 + 登记清理），解构后**局部变量名与原一致**故函数体零改动。**阶段 C 的并行编排未拆**——它把 jar/libs/assets/natives/loader 的 future 与 20+ 计数器交织，拆分必须配端到端下载验证（`cargo test --test downloader_test -- --ignored` 或真实安装一次），当前环境不具备该验证条件，留待单独一轮 |
+| 其余 10 个长函数（`run_repair_task` 230 行、`join` 196 行等） | ⬜ 未做 | 均为「线性编排 + 内联步骤」，拆分收益低于 `run_task`；建议与阶段 C 一起在能跑端到端验证的轮次处理 |
 
 每阶段收口：`cargo check` + `cargo clippy --lib`（零警告）+ `cargo test --lib -- --test-threads=1`。

@@ -122,5 +122,6 @@ pub fn resolve_version_dir(mc: &Path, version_id: &str) -> (String, PathBuf) {
             return (name, dir);
         }
     }
+    // 循环为无限 RangeFrom（命中即 return），此处仅为满足类型检查
     unreachable!()
 }

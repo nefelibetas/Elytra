@@ -21,14 +21,131 @@ use crate::persist;
 use crate::task::{
     self,
     progress::{
-        cancelled, set_cancelled, set_completed, set_error, set_phase, set_total, step_done,
-        EmitLoop,
+        cancelled, set_cancelled, set_completed, set_done, set_error, set_phase, set_total,
+        step_done, EmitLoop,
     },
     repair::{count_assets_all, count_natives_missing},
     runner::progress::ProgressCounters,
     DownloadTask, StepInfo, StepKind, StepSpec, StepStatus, TaskProgress, TaskSpec, TaskStatus,
 };
 use crate::util;
+
+/// `run_task` 的运行期上下文：准备阶段确定、供后续各阶段共享。
+struct TaskRuntime {
+    started: std::time::Instant,
+    config: DownloaderConfig,
+    sources: Vec<DownloadSource>,
+    mc: std::path::PathBuf,
+    dir_name: String,
+    vdir: std::path::PathBuf,
+    reuse_root: Option<reuse::LocalRuntimeSource>,
+    vdir_existed_before: bool,
+    /// 目标目录互斥锁：必须存活到任务结束（Drop 释放占用）。
+    _lock: PathLock,
+}
+
+/// 准备阶段：读配置 → 解析目标目录（不依赖 version JSON）→ 本地复用根探测 → 目录互斥占用。
+/// `Err` 为可展示的错误文案（调用方转 `set_error`）。
+fn prepare_runtime(task: &DownloadTask) -> Result<TaskRuntime, String> {
+    let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
+    let sources: Vec<DownloadSource> = config.file_sources_list().into_iter().cloned().collect();
+    let mc = config.minecraft_dir_abs();
+
+    // ── 目标目录提前确定（不依赖 version JSON），并做同路径互斥 ──
+    let TargetDir { dir_name, vdir } = resolve_target_dir(task, &mc);
+    // 本地运行时复用根探测（迁移场景）：从版本目录向上找含 assets/+libraries/ 的
+    // .minecraft 根（HMCL/PCL2/官方启动器迁移用户已有数百 MB 文件），
+    // 命中后 libraries/assets/client jar 先走 size+sha1 校验的本地复制，免全量重下。
+    // 全新 .minecraft（无 libraries/）探测为 None，行为与现状一致。
+    let reuse_root = reuse::LocalRuntimeSource::discover(&vdir);
+    // 任务开始前该版本目录是否已存在：
+    // - 全新下载（目录不存在）→ 下载失败时整删残缺目录，免手动清理
+    // - 补全文件（目录已存在，如重下缺失库/修复）→ 失败不删，保留已有版本
+    let vdir_existed_before = vdir.exists();
+    // 同版本互斥：路径被其他任务占用时拒绝，避免并发互相覆盖/清理
+    let lock = PathLock::try_acquire(&vdir).ok_or_else(|| {
+        format!("该版本正在被其他任务下载:\n{}", vdir.display())
+    })?;
+
+    Ok(TaskRuntime {
+        started: std::time::Instant::now(),
+        config,
+        sources,
+        mc,
+        dir_name,
+        vdir,
+        reuse_root,
+        vdir_existed_before,
+        _lock: lock,
+    })
+}
+
+/// 阶段 A：拉取版本 JSON（唯一硬前置，client/libs/assets/natives/ModLoader 均依赖）
+/// → 非 loader 模式落盘原版 JSON → 登记取消时的目录清理路径。
+/// `Err(())` 表示已自行收口（`set_error`/`set_cancelled`），调用方直接返回。
+async fn stage_fetch_version(
+    app: &AppHandle,
+    progress: &Arc<Mutex<TaskProgress>>,
+    cancel: &Arc<AtomicBool>,
+    runtime: &TaskRuntime,
+    task: &DownloadTask,
+) -> Result<(VersionJson, String), ()> {
+    let config = &runtime.config;
+    let vdir = &runtime.vdir;
+    let t0 = runtime.started;
+
+    eprintln!("[task] 阶段A: fetch version json");
+    let (vj, parent_text) = match fetch_version_json(&task.version_url, config).await {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("[task] 阶段A 失败: {e}");
+            set_error(app, progress, e);
+            return Err(());
+        }
+    };
+    eprintln!(
+        "[task] 阶段A 完成 ({:.1}s): id={} libs={}",
+        t0.elapsed().as_secs_f64(),
+        vj.id,
+        vj.libraries.len()
+    );
+    step_done(app, progress, 0);
+    if cancelled(cancel) {
+        set_cancelled(app, progress);
+        return Err(());
+    }
+
+    // 确保目录存在；非 loader 模式下写入原版 version JSON（loader 模式由 installer 写合并 JSON）
+    std::fs::create_dir_all(vdir).ok();
+    if task.loader.is_none() {
+        // 写盘失败必须报错：假成功会让版本缺 json、启动时报"未找到版本 JSON"
+        match serde_json::to_string_pretty(&vj) {
+            Ok(json) => {
+                let jp = vdir.join(format!("{}.json", task.version_id));
+                if let Err(e) = std::fs::write(&jp, &json) {
+                    set_error(app, progress, format!("写入版本 JSON 失败\n{e}"));
+                    return Err(());
+                }
+            }
+            Err(e) => {
+                set_error(app, progress, format!("序列化版本 JSON 失败\n{e}"));
+                return Err(());
+            }
+        }
+    }
+    // 取消时整删本次安装的版本目录：仅新建目录（vdir_existed_before=false）
+    // 才登记清理——补全已有版本时取消不删，避免误删用户已有文件。
+    if !runtime.vdir_existed_before {
+        // try_lock 失败（并发 cancel 持锁）时放弃登记，不 panic——与终态收口风格一致。
+        // 先取 task_id 释放 progress 守卫再调 set_cleanup_path（后者取 inner 锁），
+        // 否则构成 progress→inner 反向锁序（ABBA）。
+        let cleanup_task_id = progress.try_lock().map(|p| p.task_id.clone());
+        if let Some(task_id) = cleanup_task_id {
+            task::global().set_cleanup_path(&task_id, vdir.clone());
+        }
+    }
+    Ok((vj, parent_text))
+}
 
 /// 完整下载任务主体：version json → client.jar / libraries / assets → natives → ModLoader/OptiFine → Fabric API。
 /// 任务配置（含 ModLoader 选择）由命令层校验后经 DownloadTask 传入。
@@ -42,46 +159,13 @@ pub async fn run_task(
         "[task] 开始: id={} mc={} loader={:?} url={}",
         task.version_id, task.mc_version, task.loader, task.version_url
     );
-    let t0 = std::time::Instant::now();
-    let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
-    let sources: Vec<DownloadSource> = config.file_sources_list().into_iter().cloned().collect();
-    let src_refs: Vec<&DownloadSource> = sources.iter().collect();
-    let mc = config.minecraft_dir_abs();
-
-    let version_id = &task.version_id;
-    let version_url = &task.version_url;
-    let mc_version = &task.mc_version;
-    let loader = task.loader.as_ref();
-    let optifine_patch = task.optifine_patch.as_deref();
-    let fabric_api = task.fabric_api.as_ref();
-
-    // ── 目标目录提前确定（不依赖 version JSON），并做同路径互斥 ──
-    let TargetDir { dir_name, vdir } = resolve_target_dir(task, &mc);
-    // 本地运行时复用根探测（迁移场景）：从版本目录向上找含 assets/+libraries/ 的
-    // .minecraft 根（HMCL/PCL2/官方启动器迁移用户已有数百 MB 文件），
-    // 命中后 libraries/assets/client jar 先走 size+sha1 校验的本地复制，免全量重下。
-    // 全新 .minecraft（无 libraries/）探测为 None，行为与现状一致。
-    let reuse_root = reuse::LocalRuntimeSource::discover(&vdir);
-    // 任务开始前该版本目录是否已存在：
-    // - 全新下载（目录不存在）→ 下载失败时整删残缺目录，免手动清理
-    // - 补全文件（目录已存在，如重下缺失库/修复）→ 失败不删，保留已有版本
-    let vdir_existed_before = vdir.exists();
-
-    // 同版本互斥：路径被其他任务占用时拒绝，避免并发互相覆盖/清理
-    let _lock = match PathLock::try_acquire(&vdir) {
-        Some(l) => l,
-        None => {
-            return set_error(
-                &app,
-                progress,
-                format!("该版本正在被其他任务下载:\n{}", vdir.display()),
-            )
-        }
+    let runtime = match prepare_runtime(task) {
+        Ok(rt) => rt,
+        Err(e) => return set_error(&app, progress, e),
     };
 
     // 步骤分析：初始完整列表（json 步骤恒在，索引 0；零缺失维度检测后过滤）
     let mut specs = task.steps();
-
     set_phase(
         &app,
         progress,
@@ -94,52 +178,30 @@ pub async fn run_task(
         return set_cancelled(&app, progress);
     }
 
-    // ── 阶段 A：fetch version.json in-memory（唯一硬前置，client/libs/assets/natives/ModLoader 均依赖）──
-    eprintln!("[task] 阶段A: fetch version json");
-    let (vj, parent_text) = match fetch_version_json(version_url, &config).await {
+    // ── 阶段 A：fetch version.json in-memory（唯一硬前置）──
+    let (vj, parent_text) = match stage_fetch_version(&app, progress, cancel, &runtime, task).await {
         Ok(v) => v,
-        Err(e) => {
-            eprintln!("[task] 阶段A 失败: {e}");
-            return set_error(&app, progress, e);
-        }
+        Err(()) => return,
     };
-    eprintln!(
-        "[task] 阶段A 完成 ({:.1}s): id={} libs={}",
-        t0.elapsed().as_secs_f64(),
-        vj.id,
-        vj.libraries.len()
-    );
-    step_done(&app, progress, 0);
-    if cancelled(cancel) {
-        return set_cancelled(&app, progress);
-    }
 
-    // 确保目录存在；非 loader 模式下写入原版 version JSON（loader 模式由 installer 写合并 JSON）
-    std::fs::create_dir_all(&vdir).ok();
-    if loader.is_none() {
-        // 写盘失败必须报错：假成功会让版本缺 json、启动时报"未找到版本 JSON"
-        match serde_json::to_string_pretty(&vj) {
-            Ok(json) => {
-                let jp = vdir.join(format!("{}.json", version_id));
-                if let Err(e) = std::fs::write(&jp, &json) {
-                    return set_error(&app, progress, format!("写入版本 JSON 失败\n{e}"));
-                }
-            }
-            Err(e) => return set_error(&app, progress, format!("序列化版本 JSON 失败\n{e}")),
-        }
-    }
-    // 取消时整删本次安装的版本目录：仅新建目录（vdir_existed_before=false）
-    // 才登记清理——补全已有版本时取消不删，避免误删用户已有文件
-    // （与下方失败路径 `if !vdir_existed_before { remove_dir_all }` 语义一致）。
-    if !vdir_existed_before {
-        // try_lock 失败（并发 cancel 持锁）时放弃登记，不 panic——与终态收口风格一致。
-        // 先取 task_id 释放 progress 守卫再调 set_cleanup_path（后者取 inner 锁），
-        // 否则构成 progress→inner 反向锁序（ABBA）。
-        let cleanup_task_id = progress.try_lock().map(|p| p.task_id.clone());
-        if let Some(task_id) = cleanup_task_id {
-            task::global().set_cleanup_path(&task_id, vdir.clone());
-        }
-    }
+    // 阶段 A 之后解构上下文（名称与后续各阶段既有局部变量一致，函数体零改动）
+    let TaskRuntime {
+        started: t0,
+        config,
+        sources,
+        mc,
+        dir_name,
+        vdir,
+        reuse_root,
+        vdir_existed_before,
+        _lock,
+    } = runtime;
+    let src_refs: Vec<&DownloadSource> = sources.iter().collect();
+
+    let mc_version = &task.mc_version;
+    let loader = task.loader.as_ref();
+    let optifine_patch = task.optifine_patch.as_deref();
+    let fabric_api = task.fabric_api.as_ref();
 
     // ── 阶段 B：本地缺失检测 + 步骤布局 + 总进度基线（含资产清单 fetch 与多线程 sha1 检测）──
     eprintln!("[task] 阶段B: 本地扫描开始");
@@ -540,7 +602,11 @@ pub async fn run_task(
         // 全新下载失败：整删残缺版本目录（含未写全的 json/jar），免手动清理；
         // 补全文件（任务开始前目录已存在）不删，避免误删已有版本
         if !vdir_existed_before {
-            let _ = std::fs::remove_dir_all(&vdir);
+            // 登记清理路径，由 set_error 收口后台整删（同步删大目录会阻塞任务线程）
+            let cleanup_id = progress.try_lock().map(|p| p.task_id.clone());
+            if let Some(id) = cleanup_id {
+                task::global().set_cleanup_path(&id, vdir.clone());
+            }
         }
         eprintln!("[task] 失败: {}", errors.join("; "));
         return set_error(&app, progress, errors.join("; "));
@@ -553,18 +619,7 @@ pub async fn run_task(
     // 收尾（EmitLoop 已完成全部计数自然退出；此处显式设 100% 并发 done 终态事件，
     // 前端据此移除卡片并触发完成通知——缺失则卡片停在 EmitLoop 封顶的 99.9%）
     eprintln!("[task] 完成 ({:.1}s)", t0.elapsed().as_secs_f64());
-    task::update_and_emit(&app, progress, |p| {
-        p.status = TaskStatus::Done;
-        p.completed_files = p.total_files;
-        p.progress = 100.0;
-        p.current_phase = "完成".into();
-    });
-    // 终态统一移除后端任务注册（与 set_error/set_cancelled 一致）
-    if let Some(p) = progress.try_lock() {
-        let task_id = p.task_id.clone();
-        drop(p); // 先释放 progress 锁再 fail（fail 内部读 progress，防重入死锁）
-        task::global().fail(&task_id);
-    }
+    set_done(&app, progress, "完成");
 }
 
 /// 拉取并解析版本 JSON，同时保留原始文本（ModLoader 合并需保留未知字段）。
