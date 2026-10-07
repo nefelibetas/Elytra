@@ -314,9 +314,9 @@ fn auto_pick_jdk(discovered: &[JdkInfo], required: u32) -> Option<JdkInfo> {
         enough.sort_by_key(|(m, _)| *m);
         return Some(enough[0].1.clone());
     }
-    // 都不满足 → 用最高版本
+    // 都不满足 → 用最高版本（列表可能为空，返回 None 由调用方兜底）
     candidates.sort_by_key(|(m, _)| *m);
-    Some(candidates.last().unwrap().1.clone())
+    candidates.last().map(|(_, v)| (*v).clone())
 }
 
 #[cfg(test)]

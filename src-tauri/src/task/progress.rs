@@ -416,21 +416,48 @@ pub fn set_completed(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, files
     // （Done/Error/Cancelled 的 update_and_emit 后）统一 fail 收口。
 }
 
-/// 收尾步骤的文件计数已由 EmitLoop 的 completed 公式（natives 计数 + 完成标志）承担，
-/// bump_completed 已删除。
+/// 成功收口（唯一实现）：Done 终态事件 + 100% 进度 + 移除任务注册。
+/// runner（完整下载）与 task/modpack（整合包）共用；`phase` 为收尾阶段文案。
+pub fn set_done(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, phase: &str) {
+    update_and_emit(app, progress, |p| {
+        p.status = TaskStatus::Done;
+        p.progress = 100.0;
+        p.completed_files = p.total_files;
+        p.current_phase = phase.into();
+    });
+    // 终态统一移除后端任务注册（与 set_error/set_cancelled 一致；remove 同时清挂起登记）。
+    // 先取 task_id 释放 progress 锁再调 remove（后者读 progress），防重入死锁。
+    if let Some(p) = progress.try_lock() {
+        let task_id = p.task_id.clone();
+        drop(p);
+        global().remove(&task_id);
+    }
+}
+
+/// 失败收口：Error 终态事件 + 移除任务注册。
+/// 若调用方此前用 `set_cleanup_path` 登记了清理路径（如本次新建的版本目录），
+/// 在此统一取走并**后台**整删——同步 `remove_dir_all` 会阻塞任务线程（大目录数十秒）。
 pub fn set_error(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, msg: String) {
     update_and_emit(app, progress, |p| {
         p.status = TaskStatus::Error;
         p.error = Some(msg);
     });
-    // 移除任务注册（前端收到 error 事件后清理卡片）。
+    // 先取 task_id 释放 progress 锁再 take_cleanup_path（后者持 inner 锁），
+    // 保持全模块 inner→progress 统一锁序。
+    let task_id = progress.try_lock().map(|p| p.task_id.clone());
+    let Some(task_id) = task_id else {
+        return;
+    };
+    if let Some(path) = global().take_cleanup_path(&task_id) {
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Err(e) = std::fs::remove_dir_all(&path) {
+                eprintln!("[task] 失败清理目录失败\n{e}");
+            }
+        });
+    }
     // 不整删下载产物：半截/0B 文件由 sha1 校验与空响应防护在重试时自愈，
     // 已下载内容保留可复用（含 loader 依赖的原版版本 JSON）。
-    if let Some(p) = progress.try_lock() {
-        let task_id = p.task_id.clone();
-        drop(p); // 先释放 progress 锁再 fail（fail 内部读 progress，防重入死锁）
-        global().fail(&task_id);
-    }
+    global().fail(&task_id);
 }
 
 pub fn set_cancelled(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>) {

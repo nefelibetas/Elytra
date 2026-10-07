@@ -1,5 +1,5 @@
-//! 源预探测：HEAD 测 TTFB + 可达性（下载前选源），结果 TTL 缓存。
-//! JDK 安装链（jdk/download.rs）与社区资源下载（util::community_download_urls）共用：
+//! 源预探测：HEAD 测 TTFB（选源）与流式测吞吐（大包选源），结果按 URL TTL 缓存。
+//! JDK 安装链（`jdk/download.rs`）与社区资源下载（`util::community_download_urls`）共用：
 //! Auto 模式下下载前对候选源并发探测，快者优先、慢者兜底；探测失败（超时/黑洞/
 //! 非 2xx）由调用方决定剔除（环节层）或仅降序（源层候选）。
 
@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
+use futures_util::StreamExt as _;
 use parking_lot::Mutex;
 
 use crate::downloader::fetcher::http;
@@ -18,32 +19,39 @@ pub(crate) struct ProbeResult {
     pub(crate) ttfb_ms: u64,
 }
 
+/// 速度探测结果：可达性 + 有效吞吐（字节/秒，不可达为 0）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SpeedProbeResult {
+    pub(crate) ok: bool,
+    pub(crate) speed_bps: u64,
+}
+
 /// 源预探测超时（秒）：黑洞/假死源 3s 掐断（探测失败 = 剔除/降序依据）。
 const PROBE_TIMEOUT_SECS: u64 = 3;
-/// 探测结果 TTL（秒）：一次会话内多次下载不重复探测。
+/// 速度探测超时（秒）：要跑满 2 MB 样本，比 TTFB 探测放宽。
+const SPEED_PROBE_TIMEOUT_SECS: u64 = 8;
+/// 速度探测样本大小：2 MB 足以反映真实带宽，又不会太慢。
+const SPEED_PROBE_BYTES: u64 = 2 * 1024 * 1024;
+/// 探测结果 TTL（秒）：一次会话内多次下载不重复探测（两类探测共用）。
 const PROBE_CACHE_TTL_SECS: u64 = 600;
 const PROBE_CACHE_MAX: usize = 64;
 
-fn probe_cache() -> &'static Mutex<HashMap<String, (Instant, ProbeResult)>> {
-    static C: LazyLock<Mutex<HashMap<String, (Instant, ProbeResult)>>> =
-        LazyLock::new(|| Mutex::new(HashMap::new()));
-    &C
-}
-
-fn probe_cache_get(url: &str) -> Option<ProbeResult> {
-    let mut m = probe_cache().lock();
-    let (t, res) = m.get(url)?;
+/// 取缓存（TTL 内命中即返回，过期项顺带清理）。
+fn cache_get<T: Copy>(cache: &Mutex<HashMap<String, (Instant, T)>>, key: &str) -> Option<T> {
+    let mut m = cache.lock();
+    let (t, res) = m.get(key)?;
     if t.elapsed() < Duration::from_secs(PROBE_CACHE_TTL_SECS) {
         Some(*res)
     } else {
-        m.remove(url);
+        m.remove(key);
         None
     }
 }
 
-fn probe_cache_set(url: String, res: ProbeResult) {
-    let mut m = probe_cache().lock();
-    m.insert(url, (Instant::now(), res));
+/// 写缓存并淘汰最旧项（上限 `PROBE_CACHE_MAX`）。
+fn cache_set<T: Copy>(cache: &Mutex<HashMap<String, (Instant, T)>>, key: String, res: T) {
+    let mut m = cache.lock();
+    m.insert(key, (Instant::now(), res));
     if m.len() > PROBE_CACHE_MAX {
         if let Some(oldest) = m
             .iter()
@@ -55,14 +63,26 @@ fn probe_cache_set(url: String, res: ProbeResult) {
     }
 }
 
+fn probe_cache() -> &'static Mutex<HashMap<String, (Instant, ProbeResult)>> {
+    static C: LazyLock<Mutex<HashMap<String, (Instant, ProbeResult)>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    &C
+}
+
+fn speed_cache() -> &'static Mutex<HashMap<String, (Instant, SpeedProbeResult)>> {
+    static C: LazyLock<Mutex<HashMap<String, (Instant, SpeedProbeResult)>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    &C
+}
+
 /// HEAD 探测单个 URL：测量 TTFB + 可达性。黑洞/假死源 3s 掐断（双保险：
 /// reqwest 请求级 timeout + tokio 独立计时器）；结果按 URL 缓存（TTL 10 分钟）。
 pub(crate) async fn probe_url(url: &str) -> ProbeResult {
-    if let Some(cached) = probe_cache_get(url) {
+    if let Some(cached) = cache_get(probe_cache(), url) {
         return cached;
     }
     let res = probe_url_uncached(url).await;
-    probe_cache_set(url.to_string(), res);
+    cache_set(probe_cache(), url.to_string(), res);
     res
 }
 
@@ -71,11 +91,23 @@ pub(crate) async fn probe_url(url: &str) -> ProbeResult {
 /// 用真实文件路径探测保证 2xx 判定有效（域根路径可能 404/403，误判不可达）。
 pub(crate) async fn probe_domain(url: &str) -> ProbeResult {
     let key = domain_root(url);
-    if let Some(cached) = probe_cache_get(&key) {
+    if let Some(cached) = cache_get(probe_cache(), &key) {
         return cached;
     }
     let res = probe_url_uncached(url).await;
-    probe_cache_set(key, res);
+    cache_set(probe_cache(), key, res);
+    res
+}
+
+/// 流式探测单个 URL 的下载吞吐（只读前 2 MB），结果按 URL 缓存（TTL 同 TTFB 探测）。
+/// 与 [`probe_url`] 的分工：后者测延迟（小文件/通用选源），本函数测带宽
+/// （JDK runtime 等数十~数百 MB 的包，延迟低不等于下载快）。
+pub(crate) async fn probe_speed(url: &str) -> SpeedProbeResult {
+    if let Some(cached) = cache_get(speed_cache(), url) {
+        return cached;
+    }
+    let res = probe_speed_uncached(url).await;
+    cache_set(speed_cache(), url.to_string(), res);
     res
 }
 
@@ -122,6 +154,49 @@ async fn probe_url_uncached(url: &str) -> ProbeResult {
     }
 }
 
+/// 速度探测执行体（无缓存）：流式读取前 `SPEED_PROBE_BYTES` 字节计算吞吐。
+async fn probe_speed_uncached(url: &str) -> SpeedProbeResult {
+    let client = http();
+    let timeout = Duration::from_secs(SPEED_PROBE_TIMEOUT_SECS);
+    let result = tokio::time::timeout(timeout, async {
+        let resp = match client.get(url).send().await {
+            Ok(r) if r.status().is_success() => r,
+            _ => return None,
+        };
+        // 元数据太小不适合测速
+        if let Some(len) = resp.content_length() {
+            if len > 0 && len < SPEED_PROBE_BYTES / 2 {
+                return None;
+            }
+        }
+        // 流式读取最多 SPEED_PROBE_BYTES 字节
+        let mut reader = resp.bytes_stream();
+        let mut bytes_read = 0u64;
+        let start = Instant::now();
+        while let Some(chunk) = reader.next().await {
+            match chunk {
+                Ok(chunk) if bytes_read < SPEED_PROBE_BYTES => bytes_read += chunk.len() as u64,
+                _ => break,
+            }
+        }
+        let elapsed = start.elapsed().as_secs_f64();
+        let speed_bps = if elapsed == 0.0 {
+            u64::MAX
+        } else {
+            (bytes_read as f64 / elapsed) as u64
+        };
+        Some(SpeedProbeResult {
+            ok: true,
+            speed_bps,
+        })
+    })
+    .await;
+    result.ok().flatten().unwrap_or(SpeedProbeResult {
+        ok: false,
+        speed_bps: 0,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,10 +212,26 @@ mod tests {
             ok: true,
             ttfb_ms: 42,
         };
-        probe_cache_set(url.to_string(), res);
-        assert_eq!(probe_cache_get(url), Some(res));
+        cache_set(probe_cache(), url.to_string(), res);
+        assert_eq!(cache_get(probe_cache(), url), Some(res));
         // 缓存命中后返回克隆值，原值不变
-        assert_eq!(probe_cache_get(url).unwrap().ttfb_ms, 42);
+        assert_eq!(cache_get(probe_cache(), url).unwrap().ttfb_ms, 42);
         probe_cache().lock().remove(url);
+    }
+
+    /// 速度缓存与 TTFB 缓存相互独立（同 URL 两类结果互不覆盖）。
+    #[test]
+    fn speed_cache_is_separate_from_probe_cache() {
+        let url = "https://example.com/speed-cache-test";
+        speed_cache().lock().remove(url);
+        probe_cache().lock().remove(url);
+        let speed = SpeedProbeResult {
+            ok: true,
+            speed_bps: 1_048_576,
+        };
+        cache_set(speed_cache(), url.to_string(), speed);
+        assert_eq!(cache_get(speed_cache(), url), Some(speed));
+        assert_eq!(cache_get(probe_cache(), url), None, "两类缓存的键空间独立");
+        speed_cache().lock().remove(url);
     }
 }

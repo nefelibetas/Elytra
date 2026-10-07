@@ -153,7 +153,13 @@ async fn fetch_with_retries<F: Fn(u64, u64)>(
             }
         }
     }
-    Err(last_err.unwrap())
+    // MAX_ATTEMPTS ≥ 1 保证循环至少执行一次并赋值；显式处理 None 以免 panic 路径
+    match last_err {
+        Some(e) => Err(e),
+        None => Err(FetchError::Network(
+            "下载重试未产生错误记录（内部状态异常）".into(),
+        )),
+    }
 }
 
 /// 冷启动预探测排序（async）：并发对每个候选做域级 HEAD（TTL 缓存，同域文件共享），

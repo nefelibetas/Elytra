@@ -8,21 +8,17 @@
 //! 下载目录：`{minecraft_dir}/runtime/{platform}/{version}/`，完成后经
 //! `scanner::inspect` 校验版本并注册进 persist 的 jdk section（discovered_jdks）。
 
-use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::LazyLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use futures_util::StreamExt as _;
-use parking_lot::Mutex;
 use sha2::Digest as _;
 
 use crate::config::downloader::{DownloaderConfig, JdkSourceMode};
 use crate::downloader::endpoints::JdkEndpoints;
 use crate::downloader::fetcher::{self, http};
-use crate::downloader::probe::probe_url;
+use crate::downloader::probe::{probe_speed, probe_url, SpeedProbeResult};
 use crate::game::version::source::CacheBehaviour;
 use crate::jdk::model::JdkInfo;
 use crate::jdk::scanner;
@@ -181,84 +177,6 @@ fn installer_chain(mode: JdkSourceMode) -> Vec<JdkInstaller> {
     }
 }
 
-/// 速度探测结果：每个 JDK 安装器端的速度。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct SpeedProbeResult {
-    /// 是否可达。
-    ok: bool,
-    /// 有效吞吐量（字节/秒）。不可达时为 0。
-    speed_bps: u64,
-}
-
-/// 速度探测缓存（TTL 10 分钟），避免一次会话内多次安装重复探测。
-fn speed_cache() -> &'static LazyLock<Mutex<HashMap<String, (Instant, SpeedProbeResult)>>> {
-    static CACHE: LazyLock<Mutex<HashMap<String, (Instant, SpeedProbeResult)>>> =
-        LazyLock::new(|| Mutex::new(HashMap::new()));
-    &CACHE
-}
-
-const SPEED_PROBE_TIMEOUT_SECS: u64 = 8;
-/// 速度探测样本大小：2 MB 足以反映真实带宽，又不会太慢。
-const SPEED_PROBE_BYTES: u64 = 2 * 1024 * 1024;
-const SPEED_CACHE_TTL_SECS: u64 = 600;
-
-/// 从缓存或实际下载中获取某个 URL 的速度（只读取前 2 MB）。
-async fn speed_probe(url: &str) -> SpeedProbeResult {
-    if let Some((cached_at, res)) = speed_cache().lock().get(url) {
-        if cached_at.elapsed().as_secs() < SPEED_CACHE_TTL_SECS {
-            return *res;
-        }
-    }
-    let res = speed_probe_uncached(url).await;
-    speed_cache()
-        .lock()
-        .insert(url.to_string(), (Instant::now(), res));
-    res
-}
-
-/// 实际下载前 N 字节并计算吞吐量的无缓存实现体。
-async fn speed_probe_uncached(url: &str) -> SpeedProbeResult {
-    let client = http();
-    let timeout = Duration::from_secs(SPEED_PROBE_TIMEOUT_SECS);
-    let result = tokio::time::timeout(timeout, async {
-        let resp = match client.get(url).send().await {
-            Ok(r) if r.status().is_success() => r,
-            _ => return None,
-        };
-        // 元数据太小不适合测速
-        if let Some(len) = resp.content_length() {
-            if len > 0 && len < SPEED_PROBE_BYTES / 2 {
-                return None;
-            }
-        }
-        // 流式读取最多 SPEED_PROBE_BYTES 字节
-        let mut reader = resp.bytes_stream();
-        let mut bytes_read = 0u64;
-        let start = Instant::now();
-        while let Some(chunk) = reader.next().await {
-            match chunk {
-                Ok(chunk) if bytes_read < SPEED_PROBE_BYTES => bytes_read += chunk.len() as u64,
-                _ => break,
-            }
-        }
-        let elapsed = start.elapsed().as_secs_f64();
-        let speed_bps = if elapsed == 0.0 {
-            u64::MAX
-        } else {
-            (bytes_read as f64 / elapsed) as u64
-        };
-        Some(SpeedProbeResult {
-            ok: true,
-            speed_bps,
-        })
-    })
-    .await;
-    result.ok().flatten().unwrap_or(SpeedProbeResult {
-        ok: false,
-        speed_bps: 0,
-    })
-}
-
 /// 为指定安装器构造可测速的文件 URL（async，因为需要查 API 拿文件名）。
 async fn speed_probe_url_for(
     installer: &JdkInstaller,
@@ -414,7 +332,7 @@ async fn build_speed_chain(
         handles.push(tokio::task::spawn(async move {
             let url = speed_probe_url_for(&installer, major_clone, &config_clone).await;
             let speed = match url {
-                Some(u) => speed_probe(&u).await,
+                Some(u) => probe_speed(&u).await,
                 None => SpeedProbeResult {
                     ok: false,
                     speed_bps: 0,
