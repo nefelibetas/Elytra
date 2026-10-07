@@ -8,6 +8,7 @@ import { ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ONLINE_STATE } from "./events";
+import { errMsg } from "../utils/error";
 
 /** 联机状态（镜像 Rust OnlineStatus）。 */
 export type OnlineStatus = "idle" | "waiting" | "hosting" | "joining";
@@ -135,7 +136,7 @@ export async function startHost() {
   try {
     applySnapshot(await invoke<OnlineSnapshot>("online_start_host"));
   } catch (e) {
-    onlineErrorHost.value = String(e);
+    onlineErrorHost.value = errMsg(e);
     throw e;
   }
 }
@@ -149,7 +150,7 @@ export async function joinRoom(roomCode: string) {
     onlineStatus.value = "joining";
     return port;
   } catch (e) {
-    onlineErrorGuest.value = String(e);
+    onlineErrorGuest.value = errMsg(e);
     throw e;
   }
 }
@@ -163,6 +164,6 @@ export async function stopOnline() {
     applySnapshot({ status: "idle", room_code: null, local_port: null, players: [] });
   } catch (e) {
     // 停止失败对 host 区展示（会话归属不确定时归 host）
-    onlineErrorHost.value = String(e);
+    onlineErrorHost.value = errMsg(e);
   }
 }

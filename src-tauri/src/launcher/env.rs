@@ -10,6 +10,7 @@ use crate::downloader::hash::sha1_hex;
 use crate::game::loader::expand_inheritance;
 use crate::game::resource::assets::AssetsIndex;
 use crate::game::resource::library::missing_libraries;
+use crate::game::version::dir::version_server_section;
 use crate::game::version::model::VersionJson;
 use crate::jdk::model::{JdkConfig, JdkInfo, JdkSelection};
 use crate::launcher::args::{find_file_in_dir, find_version_json};
@@ -51,8 +52,10 @@ pub fn load_launch_config(
         persist::read(constants::SECT_LAUNCHER).unwrap_or_default();
 
     // 版本级服务器直连（版本设置里配的 --server/--port）优先，覆盖全局 LauncherConfig
-    let version_server: VersionServer =
-        persist::read(&format!("version_server_{version_dir_name}")).unwrap_or_default();
+    let version_server: VersionServer = version_server_section(version_dir_name)
+        .ok()
+        .and_then(|s| persist::read(&s).ok())
+        .unwrap_or_default();
     let launcher_config = if version_server.server.is_some() || version_server.port.is_some() {
         LauncherConfig {
             server: version_server.server.or(launcher_config.server),

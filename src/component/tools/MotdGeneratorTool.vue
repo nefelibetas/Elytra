@@ -16,6 +16,7 @@ import {
 } from "../../store/online";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
+import { copyText } from "../../utils/clipboard";
 
 /** 当前编辑的 MOTD 文本（含 § 码）。 */
 const text = ref("§6Elytra §f联机服务器");
@@ -76,21 +77,11 @@ function applyGradient() {
 }
 
 async function copyRaw() {
-  try {
-    await navigator.clipboard.writeText(text.value);
-    showToast("已复制（§ 原始格式）");
-  } catch {
-    showToast("复制失败，请手动复制");
-  }
+  await copyText(text.value, "已复制（§ 原始格式）");
 }
 
 async function copyEscaped() {
-  try {
-    await navigator.clipboard.writeText(escapeServerProperties(text.value));
-    showToast("已复制（server.properties 转义格式）");
-  } catch {
-    showToast("复制失败，请手动复制");
-  }
+  await copyText(escapeServerProperties(text.value), "已复制（server.properties 转义格式）");
 }
 
 /** 设为联机广播名（guest 端局域网标签页显示名）。 */

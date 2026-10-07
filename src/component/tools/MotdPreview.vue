@@ -13,7 +13,7 @@ const segments = computed(() => parseMotd(props.motd));
 </script>
 
 <template>
-  <div class="motd-preview" :class="{ empty: segments.length === 0 }">
+  <div class="motd-preview gen-output" :class="{ empty: segments.length === 0 }">
     <template v-if="segments.length > 0">
       <span
         v-for="(seg, i) in segments"
@@ -34,18 +34,16 @@ const segments = computed(() => parseMotd(props.motd));
   </div>
 </template>
 
+<style>
+@import "../../styles/tools-shared.css";
+</style>
+
 <style scoped>
 .motd-preview {
-  /* 等宽字体栈：Minecraft 默认字体为等宽像素风格，monospace 最接近且三端一致 */
-  font-family: "Cascadia Mono", Consolas, "Courier New", monospace;
   font-size: 14px;
   line-height: 1.7;
   padding: 10px 14px;
   min-height: 24px;
-  background-color: rgba(0, 0, 0, 0.35);
-  border-radius: var(--radius-sm);
-  word-break: break-all;
-  white-space: pre-wrap;
 }
 
 .motd-preview.empty {

@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Radio, RefreshCw } from "@lucide/vue";
 import MotdPreview from "./MotdPreview.vue";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
+import { errMsg } from "../../utils/error";
 
 /** 服务器状态（镜像 Rust ServerStatus）。 */
 interface ServerStatus {
@@ -52,7 +53,7 @@ async function handlePing() {
     });
   } catch (e) {
     status.value = null;
-    error.value = String(e);
+    error.value = errMsg(e);
   } finally {
     elapsedMs.value = Math.round(performance.now() - start);
     loading.value = false;

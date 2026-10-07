@@ -1,0 +1,37 @@
+/* 生成器系组件共享样式（组件内以非 scoped <style> @import 引入） */
+
+/* 等宽输出块：命令块（/give、烟花、药水、村民）与 MOTD 预览共用。
+   等宽字体栈：MC 默认字体为等宽像素风格，monospace 最接近且三端一致。 */
+.gen-output {
+  font-family: var(--font-mono);
+  background-color: rgba(0, 0, 0, 0.35);
+  border-radius: var(--radius-sm);
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+/* 命令块专属声明（四类生成器逐字相同） */
+.gen-output-cmd {
+  display: block;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+
+/* 生成器列表项的删除按钮（5 处逐字相同，Give 原 give-tag-x 亦并入） */
+.nb-tag-x {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.nb-tag-x:hover {
+  color: var(--color-danger);
+  background-color: var(--surface-hover);
+}

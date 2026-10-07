@@ -114,6 +114,10 @@ function onCustomColor(e: Event) {
   </div>
 </template>
 
+<style>
+@import "../../styles/tools-shared.css";
+</style>
+
 <style scoped>
 .me {
   display: flex;
@@ -196,22 +200,6 @@ function onCustomColor(e: Event) {
   background-color: var(--surface-elevated);
   border: 1px solid var(--border-default);
   border-radius: 999px;
-}
-
-.nb-tag-x {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px;
-  border: none;
-  background: transparent;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  border-radius: 4px;
-}
-
-.nb-tag-x:hover {
-  color: var(--color-danger);
-  background-color: var(--surface-hover);
 }
 
 .me-color {

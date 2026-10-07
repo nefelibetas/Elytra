@@ -4,6 +4,7 @@ import { ArrowLeft, X, ChevronDown } from "@lucide/vue";
 import {
   vdState, displayLoaders, loaderIcon, vanillaIcon,
 } from "../../store/versionDownload";
+import type { VersionMeta } from "../../store/versionDownload";
 import commandIcon from "../../assets/command.png";
 import cobbleIcon from "../../assets/cobble.png";
 
@@ -15,7 +16,12 @@ function startDownload() {
   vdState.startDownload();
 }
 
-const sv = () => vdState.selectedVersion!;
+// 详情页仅选中版本时挂载，但切版本/退出时组件可能多存活一帧（Transition 离场），
+// 此时 selectedVersion 已置 null：用空对象兜底，模板 sv().id 取 "" 不产生白屏/报错。
+const EMPTY_VERSION: VersionMeta = {
+  id: "", type: "", url: "", time: "", releaseTime: "", sha1: "", complianceLevel: 0,
+};
+const sv = () => vdState.selectedVersion ?? EMPTY_VERSION;
 </script>
 
 <template>

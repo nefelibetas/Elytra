@@ -4,6 +4,11 @@
 import { reactive } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 
+/** 取 canvas 2D 上下文：极端 WebView/内存压力下可能为 null，调用方须兼底（避免非空断言崩溃）。 */
+function ctx2d(c: HTMLCanvasElement): CanvasRenderingContext2D | null {
+  return c.getContext("2d");
+}
+
 /** FNV-1a 哈希（与 Rust 侧 config/launcher/skin.rs hash_name 一致）。 */
 function hashName(name: string): number {
   let h = 2166136261;
@@ -250,7 +255,8 @@ function faceTexture(img: HTMLImageElement, scale: number, b: HeadBox, s: Side):
   const crop = document.createElement("canvas");
   crop.width = sw;
   crop.height = sh;
-  const c = crop.getContext("2d")!;
+  const c = ctx2d(crop);
+  if (!c) return null;
   c.imageSmoothingEnabled = false;
   c.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
   const shade = FACE_SPECS[s].shade;
@@ -275,7 +281,8 @@ function hatHasPixels(img: HTMLImageElement, scale: number): boolean {
   const tmp = document.createElement("canvas");
   tmp.width = x1 - x0;
   tmp.height = y1;
-  const c = tmp.getContext("2d")!;
+  const c = ctx2d(tmp);
+  if (!c) return false; // 读不到像素：按无帽子层处理（保守，仅影响外观降级）
   c.drawImage(img, x0, 0, x1 - x0, y1, 0, 0, x1 - x0, y1);
   const data = c.getImageData(0, 0, x1 - x0, y1).data;
   for (let i = 3; i < data.length; i += 4) {
@@ -344,7 +351,8 @@ export async function renderSkinHead3D(b64: string, yawDeg = 0, pitchDeg = 0): P
   const out = document.createElement("canvas");
   out.width = Math.ceil(maxX - minX) + 2;
   out.height = Math.ceil(maxY - minY) + 2;
-  const ctx = out.getContext("2d")!;
+  const ctx = ctx2d(out);
+  if (!ctx) return ""; // 拿不到上下文返回空串，调用方按无头像降级
   ctx.imageSmoothingEnabled = false;
 
   quads.sort((a, bq) => a.depth - bq.depth); // painter：远的先画
@@ -399,7 +407,8 @@ export function generatePixelFace(name: string): string {
   const canvas = document.createElement("canvas");
   canvas.width = 8;
   canvas.height = 8;
-  const ctx = canvas.getContext("2d")!;
+  const ctx = ctx2d(canvas);
+  if (!ctx) return ""; // 拿不到上下文返回空串，调用方按无头像降级
 
   // 皮肤底色
   ctx.fillStyle = base;
@@ -426,8 +435,8 @@ export function generatePixelFace(name: string): string {
   const out = document.createElement("canvas");
   out.width = 96;
   out.height = 96;
-  const octx = out.getContext("2d")!;
-  octx.imageSmoothingEnabled = false;
+  const octx = ctx2d(out);
+  if (!octx) return ""; // 同上：拿不到上下文返回空串
   octx.drawImage(canvas, 0, 0, 96, 96);
   return out.toDataURL("image/png");
 }

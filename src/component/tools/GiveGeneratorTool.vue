@@ -13,7 +13,7 @@ import {
   type GiveItem, type GiveFormat, type EnchantInput, type AttributeInput,
 } from "../../utils/give";
 import { MC_COLORS, MC_COLOR_KEYS, MC_COLOR_NAMES, hexToSectionX } from "../../utils/motd";
-import { showToast } from "../../utils/toast";
+import { copyText } from "../../utils/clipboard";
 
 /** 语法格式（modern = 1.20.5+ 组件 / legacy = 1.13–1.20.4 NBT）。 */
 const format = ref<GiveFormat>("modern");
@@ -149,12 +149,7 @@ const command = computed(() => {
 
 async function copyCommand() {
   if (!command.value) return;
-  try {
-    await navigator.clipboard.writeText(command.value);
-    showToast("命令已复制");
-  } catch {
-    showToast("复制失败，请手动复制");
-  }
+  await copyText(command.value, "命令已复制");
 }
 </script>
 
@@ -289,7 +284,7 @@ async function copyCommand() {
         <div v-if="enchantments.length > 0" class="give-tags">
           <span v-for="(e, i) in enchantments" :key="i" class="give-tag">
             {{ enchantName(e.id) }} {{ e.level }}
-            <button class="give-tag-x" @click="removeEnchant(i)">
+            <button class="nb-tag-x" @click="removeEnchant(i)">
               <Trash2 :size="12" />
             </button>
           </span>
@@ -316,7 +311,7 @@ async function copyCommand() {
         <div v-if="attributes.length > 0" class="give-tags">
           <span v-for="(a, i) in attributes" :key="i" class="give-tag">
             {{ attributeName(a.id) }} +{{ a.amount }}
-            <button class="give-tag-x" @click="removeAttribute(i)">
+            <button class="nb-tag-x" @click="removeAttribute(i)">
               <Trash2 :size="12" />
             </button>
           </span>
@@ -332,7 +327,7 @@ async function copyCommand() {
             复制
           </button>
         </div>
-        <code class="give-cmd">{{ command }}</code>
+        <code class="gen-output gen-output-cmd">{{ command }}</code>
         <div v-if="format === 'legacy' && attributes.length > 0" class="give-hint">
           属性修饰符每次生成随机 UUID（避免多次 give 相同属性不叠加）
         </div>
@@ -342,6 +337,10 @@ async function copyCommand() {
     <div v-else class="give-empty give-hint">请先选择物品</div>
   </div>
 </template>
+
+<style>
+@import "../../styles/tools-shared.css";
+</style>
 
 <style scoped>
 .tool-card {
@@ -615,22 +614,6 @@ async function copyCommand() {
   border-radius: 999px;
 }
 
-.give-tag-x {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px;
-  border: none;
-  background: transparent;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  border-radius: 4px;
-}
-
-.give-tag-x:hover {
-  color: var(--color-danger);
-  background-color: var(--surface-hover);
-}
-
 /* ===== 输出 ===== */
 .give-output-head {
   display: flex;
@@ -644,19 +627,6 @@ async function copyCommand() {
 .give-copy-btn {
   font-size: 12px;
   padding: 3px 10px;
-}
-
-.give-cmd {
-  display: block;
-  padding: 10px 12px;
-  font-family: "Cascadia Mono", Consolas, "Courier New", monospace;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--text-primary);
-  background-color: rgba(0, 0, 0, 0.35);
-  border-radius: var(--radius-sm);
-  word-break: break-all;
-  white-space: pre-wrap;
 }
 
 .give-hint {
