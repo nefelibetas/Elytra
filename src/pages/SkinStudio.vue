@@ -28,6 +28,12 @@ onMounted(async () => {
 });
 onUnmounted(() => skinStudio.dispose());
 
+/** 皮肤模型的中文名——与左侧预览的类型标签、模型弹窗用同一套说法（CLASSIC / SLIM 是
+ *  后端与官方 API 的取值，不该直接暴露给用户）。 */
+function variantLabel(variant: string): string {
+  return variant.toUpperCase() === "SLIM" ? "纤细" : "经典";
+}
+
 /** 平面皮肤图（3D 缩略图未就绪 / 渲染失败时的兜底）：64×64 纹理里截头部正面 (8,8,8,8) 区域放大
  *  （size 800% + position 14.286% = 8/56 → 精确对准该 UV 区）。 */
 function skinThumb(b64: string) {
@@ -306,7 +312,9 @@ function savePickedSkin() {
               </div>
               <!-- 角标只剩左上角的皮肤类型（来源角标已删除：衣柜现在只服务正版账号与本地文件，
                    来源不再有区分度） -->
-              <span class="card-tag variant" :class="{ slim: c.variant === 'SLIM' }">{{ c.variant }}</span>
+              <span class="card-tag variant" :class="{ slim: c.variant === 'SLIM' }">
+                {{ variantLabel(c.variant) }}
+              </span>
               <button
                 v-if="c.local"
                 class="card-del"
@@ -785,10 +793,9 @@ function savePickedSkin() {
   background-color: var(--surface-hover);
 }
 
-/* 皮肤类型角标：CLASSIC 中性、SLIM 品牌色 */
+/* 皮肤类型角标：经典中性、纤细品牌色（中文比原来的 CLASSIC / SLIM 短，字号略放大保证可读） */
 .card-tag.variant {
-  font-size: 9px;
-  letter-spacing: 0.5px;
+  font-size: 10.5px;
 }
 
 .card-tag.variant.slim {
