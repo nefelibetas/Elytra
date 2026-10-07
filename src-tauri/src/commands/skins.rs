@@ -21,17 +21,6 @@ pub fn save_local_skin(
     skins::save(&name, &b64, &variant, &source)
 }
 
-/// 保存用户选中的本地 PNG 文件到衣柜（前端经 dialog 只拿到路径，WebView 无 fs 插件读不了字节）。
-#[tauri::command]
-pub fn save_local_skin_file(
-    name: String,
-    file_path: String,
-    variant: String,
-    source: String,
-) -> Result<LocalSkinView, String> {
-    skins::save_path(&name, &file_path, &variant, &source)
-}
-
 /// 移除本地皮肤（幂等：id 不存在 / 文件已删均成功），返回删除后的列表。
 #[tauri::command]
 pub fn remove_local_skin(id: String) -> Result<Vec<LocalSkinView>, String> {

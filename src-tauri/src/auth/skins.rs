@@ -104,17 +104,6 @@ pub fn save(name: &str, b64: &str, variant: &str, source: &str) -> Result<LocalS
     save_bytes(name, &bytes, variant, source)
 }
 
-/// 保存本地 PNG 文件到衣柜（前端经 dialog 只拿到路径，WebView 无 fs 插件读不了字节）。
-pub fn save_path(
-    name: &str,
-    file_path: &str,
-    variant: &str,
-    source: &str,
-) -> Result<LocalSkinView, String> {
-    let bytes = std::fs::read(file_path).map_err(|e| format!("读取皮肤文件失败\n{e}"))?;
-    save_bytes(name, &bytes, variant, source)
-}
-
 /// 删除皮肤（幂等：索引无此项、PNG 不存在均视为成功），返回删除后的列表。
 pub fn remove(id: &str) -> Result<Vec<LocalSkinView>, String> {
     let path = skin_path(id)?; // 校验先于任何写操作
@@ -140,7 +129,7 @@ pub fn read(id: &str) -> Result<String, String> {
     Ok(util::to_base64(&bytes))
 }
 
-/// 写 PNG + 索引（save / save_path 共用尾段）。
+/// 写 PNG + 索引（save 的尾段）。
 fn save_bytes(
     name: &str,
     bytes: &[u8],

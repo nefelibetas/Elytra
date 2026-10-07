@@ -4,12 +4,12 @@
 
 Elytra Launcher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前端）** 的 Minecraft 启动器。功能：游戏版本下载（官方/国内镜像多源）、ModLoader 安装（Fabric/Quilt/Forge/NeoForge/OptiFine）、微软正版登录（OAuth PKCE）、离线模式（固定随机默认皮肤）、**皮肤衣柜**（3D 全身预览 + 正版皮肤/披风管理 + 本地皮肤收藏；第三方站点衣柜不内置，点头像用浏览器打开站点衣柜）、**JDK 扫描 + managed runtime 自动下载**（Mojang 官方 → Azul 双源回退）、Mod 双源搜索与**依赖解析**、下载任务管理、启动参数构建与游戏进程管理、**局域网联机**（easytier 库内嵌虚拟局域网 + 端口转发，房间码互连，无需公网服务器）。
 
-后端 **115 个 `#[tauri::command]`**（分布于 16 个命令模块），前端 **10 个页面**（`src/pages/`），无状态管理库（模块级 `reactive()` 单例）。
+后端 **114 个 `#[tauri::command]`**（分布于 16 个命令模块），前端 **10 个页面**（`src/pages/`），无状态管理库（模块级 `reactive()` 单例）。
 
 ## Architecture & Data Flow
 
 ```
-前端 Vue3 (src/)  ──invoke(snake_case)──▶  commands/（薄胶水层，16 模块 / 115 命令）
+前端 Vue3 (src/)  ──invoke(snake_case)──▶  commands/（薄胶水层，16 模块 / 114 命令）
     ▲                                          │ 读 persist 配置、调领域函数
     │ task-progress / ms-login-complete /     ▼
     │ game-exited 事件（emit 顺序队列线程）  downloader/（传输层）  game/（内容与装配）  auth/
@@ -37,7 +37,7 @@ Elytra Launcher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前�
 | `src-tauri/src/online/` | **局域网联机**：`service.rs`（单例 + 共享状态 + 快照/终止）、`host.rs`（建网 + 信息服务器 6 协议 + 游戏端口发现与实例重建）、`guest.rs`（加入/中心发现/本地代理）、`session.rs`（easytier 会话：no_tun+smoltcp+KCP 数据面、host 固定虚拟 IP 10.144.144.1、guest DHCP、白名单 ACL）、`model.rs`（状态模型与协议常量）、`scaffold/`（`room.rs` 房间码 base34+模 7、`codec.rs` 帧编解码、`profiles.rs` 玩家表、`server.rs` 信息服务器、`identity.rs` machine_id）、`mc_discover.rs`（组播 224.0.2.60:4445 解析游戏端口）、`mc_advertise.rs`（guest 端模拟 MC LAN 广播，绕过 MC 26.2 离线会话校验） |
 | `src-tauri/src/persist/` | `config.rs`（TOML section 读写 + 全局锁）、`store.rs`（低层文件 IO + 路径）、`secrets.rs`（密钥加密：DPAPI / Keychain / Secret Service + ChaCha20-Poly1305） |
 | `src-tauri/src/launcher/` | `args.rs`（命令构建）/ `env.rs`（环境准备）/ `process.rs`（进程生命周期与监听）/ `script.rs`（BAT/SH 渲染）/ `skin.rs`（离线皮肤）/ `platform.rs`（平台调节）/ `memory.rs` / `model.rs` |
-| `src-tauri/src/commands/` | 16 个命令模块（115 命令）：account(27) / community(3) / downloader(5) / gamedirs(11) / jdk(4) / launch(5) / launch_options(3) / launch_script(1) / loader(6) / offline_account(5) / online(6) / server_status(1) / skins(5，本地皮肤衣柜) / task(14) / version(15) / version_icon(4) —— 薄胶水，逻辑在各领域层 |
+| `src-tauri/src/commands/` | 16 个命令模块（114 命令）：account(27) / community(3) / downloader(5) / gamedirs(11) / jdk(4) / launch(5) / launch_options(3) / launch_script(1) / loader(6) / offline_account(5) / online(6) / server_status(1) / skins(4，本地皮肤衣柜) / task(14) / version(15) / version_icon(4) —— 薄胶水，逻辑在各领域层 |
 | `src/pages/` | Launch / Download（资源中心）/ **DownloadDetail（下载任务中心，顶级路由）** / ResourceDetail（资源详情+依赖链）/ Settings / VersionSelect / VersionSetup（容器化，业务在 store/组件）/ Tools（生成器工具集）/ CustomThemeEditor / SkinStudio（皮肤衣柜：3D 预览 + 皮肤/披风/本地衣柜，**仅正版账号可进**） |
 | `src/store/` | 25 个模块级 reactive/ref 单例：`download.ts`（dlState 任务状态机 + `ensureListen` 幂等 + terminalTaskIds 防幽灵）、`communitySearch.ts`/`categorySearch.ts`（聚合/分页/四分类工厂）、`resourceDetail.ts`、`versionDownload.ts`、`versionDetail.ts`、`launch.ts`、`accountUi.ts`、`auth.ts`、`avatar.ts`（FNV-1a 头像）、`alert.ts`、`theme.ts`（四主题）、`nav.ts`、`downloadTab.ts`、`settingsTab.ts`、`selectedVersion.ts`、`jdkConfig.ts`、`launchOptions.ts`、`downloaderConfig.ts`、`gameDirs.ts`、`online.ts`（联机状态机）、`memory.ts`、`versionIcon.ts`、`events.ts`（镜像 Rust `events.rs`）、`skinStudio.ts`（皮肤衣柜：3D 全身预览帧 + 官方皮肤/披风 + 本地衣柜） |
 | `src/component/` | 按域分目录：`common/`（TitleBar / AlertDialog / DialogModal / ScrollTopFab / IconImage / EmptyState / ErrorState / CheckToggle / DropSelect / LoadingSpinner / StepDot / MenuPopover）、`download/`、`launch/`、`settings/`、`tools/`（Give/Potion/Firework/Villager/Motd 生成器 + ModsEditor + ServerStatus/Online 工具）、`version/`、`version-setup/` —— 页面组件直接 import store，无 props 链 |
@@ -97,7 +97,7 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 
 | 文件 | 说明 |
 | --- | --- |
-| `src-tauri/src/lib.rs` | 入口：`task::init()`、后台预扫 JDK、**唯一** generate_handler! 注册点（115 个 tauri::command） |
+| `src-tauri/src/lib.rs` | 入口：`task::init()`、后台预扫 JDK、**唯一** generate_handler! 注册点（114 个 tauri::command） |
 | `src-tauri/src/main.rs` | 仅 `elytra_lib::run()` |
 | `src-tauri/src/constants.rs` | APP_NAME/UA/MIRROR_CONCURRENCY、`option_env!` 注入 CURSEFORGE_API_KEY / MS_CLIENT_ID（.env 经 build.rs）、persist SECT_* 段名 |
 | `src-tauri/src/events.rs` | 事件名常量（与 `src/store/events.ts` 手写镜像同步） |
