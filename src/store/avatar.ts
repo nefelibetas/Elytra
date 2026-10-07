@@ -533,6 +533,29 @@ export async function renderSkinFull3D(
   return renderBoxes(tex, boxes, yawDeg, pitchDeg, ppv, viewport);
 }
 
+/** 动画帧缓存上限（超出按插入顺序淘汰最旧）。 */
+const SKIN_THUMB_CACHE_MAX = 64;
+/** 衣柜 3D 缩略图缓存：key = `S|slim|皮肤base64` → dataURL。
+ *  衣柜网格一屏十几张卡，按需重渲会卡；贴图 base64 不变即同一张图，可直接复用。 */
+const skinThumbCache = new Map<string, string>();
+
+/** 衣柜卡片的 3D 侧视缩略图：yaw 30° 呈 3/4 立体感（非纯 90° 侧面），固定 ppv=3（60×102）。
+ *  结果按「皮肤 base64 + 模型」模块级缓存，列表滚动 / 重进页面不重渲；
+ *  渲染失败由调用方回落到平面皮肤图。 */
+export async function renderSkinThumb3D(b64: string, slim = false): Promise<string> {
+  if (!b64) return "";
+  const key = `S|${slim ? 1 : 0}|${b64}`;
+  const hit = skinThumbCache.get(key);
+  if (hit !== undefined) return hit;
+  const url = await renderSkinFull3D(b64, slim, 30, 0, 3);
+  if (skinThumbCache.size >= SKIN_THUMB_CACHE_MAX) {
+    const oldest = skinThumbCache.keys().next().value;
+    if (oldest !== undefined) skinThumbCache.delete(oldest);
+  }
+  skinThumbCache.set(key, url);
+  return url;
+}
+
 /** 第三方登录（皮肤站）头像：拉 skin + 模型 → 本地 3D 渲染。 */
 export async function renderExternalAvatar(apiUrl: string, uuid: string, force = false) {
   const key = `${apiUrl}|${uuid}`;

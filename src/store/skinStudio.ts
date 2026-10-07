@@ -1,6 +1,6 @@
-// 皮肤衣柜 store（模块级 reactive 单例，项目约定无 Pinia）：
+// 衣柜 store（模块级 reactive 单例，项目约定无 Pinia）：
 //   左：3D 全身预览帧（复用 avatar.renderSkinFull3D，模块级缓存已渲染帧）
-//   右：官方皮肤/披风 + 本地衣柜（list_local_skins / save_local_skin_file / remove_local_skin）
+//   右：皮肤 / 披风 tab（皮肤 = 官方当前 + 本地衣柜 + 自动缓存；披风 = 官方列表）
 // 拖动旋转：pointer 事件累加 yaw/pitch（俯仰限 ±40°），每帧按需重渲（实测 15–37ms）。
 import { reactive } from "vue";
 import { invoke } from "@tauri-apps/api/core";
@@ -18,11 +18,16 @@ export interface LocalSkin {
   variant: "CLASSIC" | "SLIM";
   /** 加入时间（Unix 秒） */
   added_at: number;
+  /** 来源：`microsoft` / 第三方站点名 / `upload`（旧数据默认 upload） */
+  source: string;
   /** 衣柜内绝对路径（可直接交给 upload_skin_file 应用） */
   path: string;
   /** 皮肤 PNG base64（预览/缩略图用；文件缺失时为空串） */
   skin: string;
 }
+
+/** 衣柜右侧 tab：皮肤 / 披风。 */
+export type StudioTab = "skins" | "capes";
 
 /** 官方披风条目（后端 CapeInfo）。 */
 export interface StudioCape {
@@ -88,6 +93,8 @@ export const skinStudio = reactive({
   skins: [] as LocalSkin[],
   skinsLoading: false,
   skinsError: "",
+  /** 右侧 tab：皮肤 / 披风 */
+  tab: "skins" as StudioTab,
 
   // ── 官方披风 ──
   capes: [] as StudioCape[],
@@ -150,6 +157,7 @@ export const skinStudio = reactive({
     await Promise.allSettled([this.loadOfficial(), this.loadSkins(), this.loadCapes()]);
     skinToken++;
     this.scheduleRender();
+    void this.cacheCurrent(); // 自动缓存当前皮肤（后台进行，不阻塞首帧）
   },
 
   /** 拉取账号当前皮肤（正版 / 第三方 / 离线各自来源）；失败回退内置 Steve 保证预览可用。 */
@@ -232,6 +240,7 @@ export const skinStudio = reactive({
   async refresh() {
     await Promise.allSettled([this.loadOfficial(), this.loadSkins(), this.loadCapes()]);
     this.scheduleRender();
+    void this.cacheCurrent();
     showToast("已刷新");
   },
 
@@ -335,6 +344,33 @@ export const skinStudio = reactive({
 
   // ── 衣柜操作 ──
 
+  /** 自动缓存当前皮肤：把正版 / 第三方账号的当前皮肤存进衣柜（进入页面、刷新时调用）。
+   *  按来源分桶缓存：同一来源 + 同一贴图只存一份（不重复、不互相覆盖）；
+   *  离线 / 未登录（内置默认皮肤）不入柜。 */
+  async cacheCurrent() {
+    const skin = this.officialSkin;
+    const acc = msAccount.value;
+    const ext = externalAccount.value;
+    // 来源标识：正版固定 microsoft；第三方取站点名，取不到回落 external
+    let source = "";
+    if (this.premium && acc) source = "microsoft";
+    else if (authMode.value === "thirdparty" && ext) source = (ext.server_name ?? "").trim() || "external";
+    if (!skin || !source) return;
+    if (this.skinsError) return; // 列表没读全 → 去重不可靠，跳过本轮（下次进入再补）
+    if (this.skins.some((s) => s.source === source && s.skin === skin)) return; // 同来源同贴图已缓存
+    try {
+      const item = await invoke<LocalSkin>("save_local_skin", {
+        name: source === "microsoft" ? "当前" : source, // 正版显示「当前」，第三方显示来源名
+        b64: skin,
+        variant: this.officialModel.toLowerCase() === "slim" ? "SLIM" : "CLASSIC",
+        source,
+      });
+      this.skins = [item, ...this.skins.filter((s) => s.id !== item.id)];
+    } catch (e) {
+      console.error("自动缓存当前皮肤失败:", e); // 静默：衣柜里已有旧缓存，不打断预览
+    }
+  },
+
   /** 选中皮肤（'official' 或本地条目 id）→ 立即预览。 */
   selectSkin(key: string) {
     if (this.selectedKey === key) return;
@@ -367,6 +403,7 @@ export const skinStudio = reactive({
         name,
         filePath: path,
         variant,
+        source: "upload",
       });
       this.skins = [item, ...this.skins.filter((s) => s.id !== item.id)];
       this.selectSkin(item.id); // 新入柜即选中预览
