@@ -230,15 +230,18 @@ impl Default for DownloaderConfig {
 }
 
 impl DownloaderConfig {
-    /// 绝对化的游戏目录（相对路径基于 `util::default_game_dir_base()` 解析——Windows
-    /// exe 旁 / macOS Linux 应用数据目录——而非进程 cwd：从任意目录启动 `./elytra`
-    /// 时 cwd 不同会导致解析错位）。启动参数（classpath/natives）与文件操作统一走绝对路径。
+    /// 绝对化的游戏目录。绝对路径原样返回（`set_active` 写入的始终是绝对路径）；
+    /// 相对路径基于 `util::default_game_dir_base()` 解析而非进程 cwd（从任意目录启动
+    /// `./elytra` 时 cwd 不同会解析错位）；无默认基准（macOS/Linux）时退化为配置目录，
+    /// 仅作防御——正常流程下这里拿到的都是绝对路径。
     pub fn minecraft_dir_abs(&self) -> std::path::PathBuf {
         let p = std::path::PathBuf::from(&self.minecraft_dir);
         if p.is_absolute() {
             p
         } else {
-            util::default_game_dir_base().join(p)
+            util::default_game_dir_base()
+                .unwrap_or_else(util::config_dir)
+                .join(p)
         }
     }
 }
