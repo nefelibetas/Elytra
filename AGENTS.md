@@ -2,14 +2,14 @@
 
 ## Project Overview
 
-Elytra Launcher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前端）** 的 Minecraft 启动器。功能：游戏版本下载（官方/国内镜像多源）、ModLoader 安装（Fabric/Quilt/Forge/NeoForge/OptiFine）、微软正版登录（OAuth PKCE）、离线模式（固定随机默认皮肤）、**皮肤衣柜**（3D 全身预览 + 官方皮肤/披风管理 + 本地皮肤收藏）、**JDK 扫描 + managed runtime 自动下载**（Mojang 官方 → Azul 双源回退）、Mod 双源搜索与**依赖解析**、下载任务管理、启动参数构建与游戏进程管理、**局域网联机**（easytier 库内嵌虚拟局域网 + 端口转发，房间码互连，无需公网服务器）。
+Elytra Launcher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前端）** 的 Minecraft 启动器。功能：游戏版本下载（官方/国内镜像多源）、ModLoader 安装（Fabric/Quilt/Forge/NeoForge/OptiFine）、微软正版登录（OAuth PKCE）、离线模式（固定随机默认皮肤）、**皮肤衣柜**（3D 全身预览 + 正版皮肤/披风管理 + 本地皮肤收藏；第三方站点衣柜不内置，点头像用浏览器打开站点衣柜）、**JDK 扫描 + managed runtime 自动下载**（Mojang 官方 → Azul 双源回退）、Mod 双源搜索与**依赖解析**、下载任务管理、启动参数构建与游戏进程管理、**局域网联机**（easytier 库内嵌虚拟局域网 + 端口转发，房间码互连，无需公网服务器）。
 
-后端 **127 个 `#[tauri::command]`**（分布于 17 个命令模块），前端 **10 个页面**（`src/pages/`），无状态管理库（模块级 `reactive()` 单例）。
+后端 **115 个 `#[tauri::command]`**（分布于 16 个命令模块），前端 **10 个页面**（`src/pages/`），无状态管理库（模块级 `reactive()` 单例）。
 
 ## Architecture & Data Flow
 
 ```
-前端 Vue3 (src/)  ──invoke(snake_case)──▶  commands/（薄胶水层，17 模块 / 127 命令）
+前端 Vue3 (src/)  ──invoke(snake_case)──▶  commands/（薄胶水层，16 模块 / 115 命令）
     ▲                                          │ 读 persist 配置、调领域函数
     │ task-progress / ms-login-complete /     ▼
     │ game-exited 事件（emit 顺序队列线程）  downloader/（传输层）  game/（内容与装配）  auth/
@@ -32,13 +32,13 @@ Elytra Launcher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前�
 | `src-tauri/src/game/` | **内容与装配**（特化场景，依赖 `downloader` 的传输能力）：`version/`（`model.rs` 版本 JSON serde / `meta.rs` 元数据获取 / `manifest.rs` 清单 / `dir.rs` 已安装版本目录域 / `source.rs` 源与镜像重写）、`resource/`（`assets.rs` 资源索引与批量下载 / `library.rs` 支持库 / `extract.rs` rules 匹配与 natives 解压，`TARGET_OS` 唯一实现）、`loader/`（`dispatch.rs` 统一入口 / `ctx.rs` 参数结构 / `shared.rs` profile 合并与继承展开 / fabric·forge·neoforge·optifine·version_query）、`community/`（`api.rs` 出参与分派 / modrinth / curseforge / shared / translation / wiki_entry）、`modpack.rs`（整合包清单解析与安装计划）、`updates/`（Mod 扫描/识别/更新） |
 | `src-tauri/src/task/` | 任务系统：`manager.rs`（TaskManager 单例 + 终态收口）、`emit.rs`（`EMIT_TX` 队列线程 + 锁外 emit）、`spawn.rs`（任务注册与 spawn）、`ctx.rs`（`TaskCtx` 句柄结构）、`model.rs`（serde 任务配置 + `TaskProgress`/`StepInfo` 唯一定义）、`steps.rs`（StepSpec 分析）、`progress.rs`（EmitLoop/心跳/`set_done`/`set_error`/`set_cancelled`）、`runner.rs`（完整下载主体）、`repair.rs`（缺失扫描/`count_assets_all`）、`files.rs`（批量下载 + WaitingForUser）、`jdk.rs`（JDK 安装任务）、`modpack.rs`（整合包安装编排）、`store.rs`（SQLite 快照/恢复） |
 | `src-tauri/src/config/` | 纯数据模型（无逻辑）：`downloader.rs`（多源/三态/`NetworkMode`/`DownloaderConfig`/`DownloadSource`）、`online.rs`、`game_dirs.rs` |
-| `src-tauri/src/auth/` | 微软 OAuth PKCE（`microsoft.rs`）+ 官方 API（`mojang.rs`）+ 账号服务（`account.rs`）+ 第三方皮肤站（`external.rs`，authlib-injector）+ MsAccount（`model.rs`，多账号列表，secrets.bin 加密） |
+| `src-tauri/src/auth/` | 微软 OAuth PKCE（`microsoft.rs`）+ 官方 API（`mojang.rs`）+ 账号服务（`account.rs`）+ 第三方皮肤站（`external.rs`，authlib-injector）+ 本地皮肤收藏（`skins.rs`）+ MsAccount（`model.rs`，多账号列表，secrets.bin 加密） |
 | `src-tauri/src/jdk/` | `scanner.rs`（本机 JDK 扫描）、`download.rs`（managed runtime：Mojang all.json 逐文件 sha1 → Azul 包 sha256，双源回退 + 解压）、`config.rs`（配置读写/扫描注册/`SUPPORTED_JAVA_MAJORS`）、`model.rs` |
 | `src-tauri/src/online/` | **局域网联机**：`service.rs`（单例 + 共享状态 + 快照/终止）、`host.rs`（建网 + 信息服务器 6 协议 + 游戏端口发现与实例重建）、`guest.rs`（加入/中心发现/本地代理）、`session.rs`（easytier 会话：no_tun+smoltcp+KCP 数据面、host 固定虚拟 IP 10.144.144.1、guest DHCP、白名单 ACL）、`model.rs`（状态模型与协议常量）、`scaffold/`（`room.rs` 房间码 base34+模 7、`codec.rs` 帧编解码、`profiles.rs` 玩家表、`server.rs` 信息服务器、`identity.rs` machine_id）、`mc_discover.rs`（组播 224.0.2.60:4445 解析游戏端口）、`mc_advertise.rs`（guest 端模拟 MC LAN 广播，绕过 MC 26.2 离线会话校验） |
 | `src-tauri/src/persist/` | `config.rs`（TOML section 读写 + 全局锁）、`store.rs`（低层文件 IO + 路径）、`secrets.rs`（密钥加密：DPAPI / Keychain / Secret Service + ChaCha20-Poly1305） |
 | `src-tauri/src/launcher/` | `args.rs`（命令构建）/ `env.rs`（环境准备）/ `process.rs`（进程生命周期与监听）/ `script.rs`（BAT/SH 渲染）/ `skin.rs`（离线皮肤）/ `platform.rs`（平台调节）/ `memory.rs` / `model.rs` |
-| `src-tauri/src/commands/` | 17 个命令模块（127 命令）：account(27) / community(3) / downloader(5) / gamedirs(11) / jdk(4) / launch(5) / launch_options(3) / launch_script(1) / littleskin(12，第三方站皮肤/披风) / loader(6) / offline_account(5) / online(6) / server_status(1) / skins(5，本地皮肤衣柜) / task(14) / version(15) / version_icon(4) —— 薄胶水，逻辑在各领域层 |
-| `src/pages/` | Launch / Download（资源中心）/ **DownloadDetail（下载任务中心，顶级路由）** / ResourceDetail（资源详情+依赖链）/ Settings / VersionSelect / VersionSetup（容器化，业务在 store/组件）/ Tools（生成器工具集）/ CustomThemeEditor / SkinStudio（皮肤衣柜：3D 预览 + 皮肤/披风/本地衣柜） |
+| `src-tauri/src/commands/` | 16 个命令模块（115 命令）：account(27) / community(3) / downloader(5) / gamedirs(11) / jdk(4) / launch(5) / launch_options(3) / launch_script(1) / loader(6) / offline_account(5) / online(6) / server_status(1) / skins(5，本地皮肤衣柜) / task(14) / version(15) / version_icon(4) —— 薄胶水，逻辑在各领域层 |
+| `src/pages/` | Launch / Download（资源中心）/ **DownloadDetail（下载任务中心，顶级路由）** / ResourceDetail（资源详情+依赖链）/ Settings / VersionSelect / VersionSetup（容器化，业务在 store/组件）/ Tools（生成器工具集）/ CustomThemeEditor / SkinStudio（皮肤衣柜：3D 预览 + 皮肤/披风/本地衣柜，**仅正版账号可进**） |
 | `src/store/` | 25 个模块级 reactive/ref 单例：`download.ts`（dlState 任务状态机 + `ensureListen` 幂等 + terminalTaskIds 防幽灵）、`communitySearch.ts`/`categorySearch.ts`（聚合/分页/四分类工厂）、`resourceDetail.ts`、`versionDownload.ts`、`versionDetail.ts`、`launch.ts`、`accountUi.ts`、`auth.ts`、`avatar.ts`（FNV-1a 头像）、`alert.ts`、`theme.ts`（四主题）、`nav.ts`、`downloadTab.ts`、`settingsTab.ts`、`selectedVersion.ts`、`jdkConfig.ts`、`launchOptions.ts`、`downloaderConfig.ts`、`gameDirs.ts`、`online.ts`（联机状态机）、`memory.ts`、`versionIcon.ts`、`events.ts`（镜像 Rust `events.rs`）、`skinStudio.ts`（皮肤衣柜：3D 全身预览帧 + 官方皮肤/披风 + 本地衣柜） |
 | `src/component/` | 按域分目录：`common/`（TitleBar / AlertDialog / DialogModal / ScrollTopFab / IconImage / EmptyState / ErrorState / CheckToggle / DropSelect / LoadingSpinner / StepDot / MenuPopover）、`download/`、`launch/`、`settings/`、`tools/`（Give/Potion/Firework/Villager/Motd 生成器 + ModsEditor + ServerStatus/Online 工具）、`version/`、`version-setup/` —— 页面组件直接 import store，无 props 链 |
 | `src/utils/` | `error.ts`（**`errMsg()` 取错误首行**，toast/内联错误用）、`format.ts`（fmtCount/fmtSize/fmtModDate/fmtDateTime/fmtSpeed/fmtEta…）、`versionClassify.ts`（目录名 `{mc}-{loader}-{ver}` 解析）、`versionMeta.ts`、`give.ts`/`motd.ts`/`nbt.ts`（生成器算法）、`toast.ts`、`tooltip.ts`、`useConfigSection.ts`、`useSelectable.ts`、`useConfirmDelete.ts` |
@@ -52,7 +52,7 @@ pnpm dev            # 仅 vite dev server（:1420 strictPort）
 pnpm build          # vue-tsc --noEmit（全量类型检查）+ vite build → dist/
 cd src-tauri && cargo check              # Rust 编译检查
 cd src-tauri && cargo clippy --lib       # Rust lint（保持零代码警告）
-cd src-tauri && cargo test --lib -- --test-threads=1   # 单元测试（当前 288 passed + 1 ignored；串行防 persist/网络竞争）
+cd src-tauri && cargo test --lib -- --test-threads=1   # 单元测试（当前 291 passed + 1 ignored；串行防 persist/网络竞争）
 cd src-tauri && cargo test --test online_diag          # 联机集成测试（host/guest 双实例回环，走真实 easytier）
 cd src-tauri && cargo test --test e2e_download -- --ignored   # run_task 端到端（真实网络：取消路径秒级 / 完整下载分钟级）
 npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
@@ -97,9 +97,9 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 
 | 文件 | 说明 |
 | --- | --- |
-| `src-tauri/src/lib.rs` | 入口：`task::init()`、后台预扫 JDK、**唯一** generate_handler! 注册点（127 个 tauri::command） |
+| `src-tauri/src/lib.rs` | 入口：`task::init()`、后台预扫 JDK、**唯一** generate_handler! 注册点（115 个 tauri::command） |
 | `src-tauri/src/main.rs` | 仅 `elytra_lib::run()` |
-| `src-tauri/src/constants.rs` | APP_NAME/UA/MIRROR_CONCURRENCY、`option_env!` 注入 CURSEFORGE_API_KEY / MS_CLIENT_ID / LITTLESKIN_CLIENT_ID（.env 经 build.rs）、persist SECT_* 段名 |
+| `src-tauri/src/constants.rs` | APP_NAME/UA/MIRROR_CONCURRENCY、`option_env!` 注入 CURSEFORGE_API_KEY / MS_CLIENT_ID（.env 经 build.rs）、persist SECT_* 段名 |
 | `src-tauri/src/events.rs` | 事件名常量（与 `src/store/events.ts` 手写镜像同步） |
 | `src-tauri/src/task/manager.rs` | TaskManager 单例（create/pause/cancel/fail/remove/list + 挂起决策 + `LazyLock` 单例） |
 | `src-tauri/src/task/emit.rs` | `EMIT_TX` 顺序队列线程 + `emit_event` 泛型派发 + `update_and_emit`（锁外 emit） |
@@ -137,7 +137,7 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 
 ## Testing & QA
 
-- **无前端测试**；Rust 侧约 288 个单元测试，全部内嵌各模块 `#[cfg(test)] mod tests`（含测试与实现同文件的约定），`cargo test --lib -- --test-threads=1` 运行；另有集成测试 `tests/online_diag.rs`（联机全链路：host/guest 双实例回环 + easytier 日志落盘）
+- **无前端测试**；Rust 侧约 291 个单元测试，全部内嵌各模块 `#[cfg(test)] mod tests`（含测试与实现同文件的约定），`cargo test --lib -- --test-threads=1` 运行；另有集成测试 `tests/online_diag.rs`（联机全链路：host/guest 双实例回环 + easytier 日志落盘）
 - **单元测试只测纯函数**：PKCE、URL 组装、启动命令构建（`build_launch_command` + `minimal_version_json()` 助手）、离线皮肤 UUID 算法（与 Java `UUID.hashCode() & 1` 一致性）、内存分配公式、util（URL 文件名/版本目录解析/`sha1_sub_dir`/`safe_relative_path`）、maven XML 解析与语义化排序、Mod 双源搜索、修复步骤规划、persist 读写回环、secrets DPAPI、store 快照/恢复、**`store_ops_from_runtime_worker_no_panic`（worker 线程 block_on 回归）**、**`count_assets_all_end_to_end`（真实索引 + 5057 项多线程扫描，网络）**、**`find_java_home_finds_nested_bin`（Azul 布局幂等）**、`downloader/fetcher` 的取消/换源/校验/重定向/并发上限、loader 的 profile 合并与继承展开、房间码解析/广播回环（online）
 - **断言风格**：`assert_eq!` 精确值为主（argv 位置、公式值、错误码消息）；行为不变量用 `assert!` + 中文 message
 - **平台隔离**：Windows 专属逻辑（BAT 脚本渲染、DPAPI、注册表代理）用 `#[cfg(target_os = "windows")]`
@@ -154,5 +154,8 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 - **已解决**：`LauncherVisibility` 已删除（前后端同步）；离线皮肤配置层已砍（启动与头像固定随机哈希 Steve/Alex，后续计划接入自定义皮肤站登录）；OptiFine 分场景安装（纯净版 classpath 独立版本 / Forge-like 进 mods / Fabric-like OptiFabric 进 mods，mainClass 统一官方 Main；重定向黑洞黑名单精确放行 `minio.749333.xyz`——bmclapi 下载主存储）
 - **已解决**：guest 端 MC 局域网广播名参数化（房间码 `#MOTD` 段携带 host 存档名 → guest 广播真实世界名；`OnlineConfig.advertise_motd` 支持自定义广播名，优先级 自定义 > host 世界名 > 默认文案）
 - **联机遗留**：跨网联机依赖协调服务器（默认社区节点 `tcp://8.138.31.80:11010`，easytier 官方公共节点已下线）；MC 26.2 离线账号只能走"局域网发现"路径进入（手动 IP 会报无效会话，广播模拟已绕过）
-- **第三方皮肤站（LittleSkin / Blessing Skin）没有公开的材质上传端点** —— 逐条核对过：`routes/api.php` 只有 user/players/closet/admin 四组无材质创建路由；上传实现在网页侧（`SkinlibController@handleUpload`，依赖会话与 CSRF）；`POST /api/closet` 与 `PUT /api/players/{pid}/textures` 都只接受**已存在**的材质 TID；LittleSkin 的 OpenAPI 全文只有 4 个端点、OIDC `scopes_supported` 无任何材质写权限；实测 `PUT .../profile/{uuid}/skin` 返回 404。故启动器侧能做的上限是：**读**（角色/衣柜）+ **管理站点已有材质**（入柜/改名/移出/应用到角色/重置）。上传本地图片须由用户在站点网页完成，再按 TID（材质页 URL `/skinlib/show/{tid}` 末尾数字）交给启动器。将来若 LittleSkin 启用 `yggdrasil-api` 插件的 `PUT {yggdrasil}/api/user/profile/{uuid}/{type}` 路由，可补上上传通道
+- **第三方皮肤站（LittleSkin / Blessing Skin）没有公开的材质上传端点** —— 逐条核对过：`routes/api.php` 只有 user/players/closet/admin 四组无材质创建路由；上传实现在网页侧（`SkinlibController@handleUpload`，依赖会话与 CSRF）；`POST /api/closet` 与 `PUT /api/players/{pid}/textures` 都只接受**已存在**的材质 TID；LittleSkin 的 OpenAPI 全文只有 4 个端点、OIDC `scopes_supported` 无任何材质写权限；实测 `PUT .../profile/{uuid}/skin` 返回 404。故启动器侧当时能做的上限是：**读**（角色/衣柜）+ **管理站点已有材质**（入柜/改名/移出/应用到角色/重置）。上传本地图片须由用户在站点网页完成，再按 TID（材质页 URL `/skinlib/show/{tid}` 末尾数字）交给启动器。**（曾按此结论实现过启动器内第三方站衣柜，产品决策变更后已整体移除——第三方账号不再进启动器衣柜，改为点头像用浏览器打开站点衣柜；仅保留调研事实备查。）** 将来若 LittleSkin 启用 `yggdrasil-api` 插件的 `PUT {yggdrasil}/api/user/profile/{uuid}/{type}` 路由，可补上上传通道
+- **（同上条的落地方式，已移除）曾实现过跨来源合并的第三方衣柜**：正版账号下也能列出站点衣柜的材质并「换」（后端下载站点原始 PNG 后直传 Mojang，不落本地衣柜）；第三方站点账号下能看到本地收藏中来自官方的皮肤；披风**只取当前账号来源支持的那一种**（正版 = Mojang 披风，站点账号 = 站点衣柜 cape 材质，离线无披风）。该实现随产品决策变更**整体移除**，第三方账号不再进启动器衣柜（改为点头像用浏览器打开站点衣柜）。仍有效的调研事实：材质贴图必须用 **`{site}/raw/{tid}`**（返回原始 PNG）；`{site}/preview/{tid}` 是渲染图（按高度缩放），不能用于 3D 建模或上传 Mojang
+- **LittleSkin 的 Yggdrasil 实现（Yggdrasil Connect 0.0.8）没有材质管理端点** —— 实测 `PUT|DELETE {api}/api/user/profile/{uuid}/skin`、`PUT .../cape` 全部 **404**（对照：`GET .../sessionserver/session/minecraft/profile/{uuid}` 返回 204，说明该实现只有 Auth Server + Session Server）。因此**不能用「已登录的第三方账号 accessToken」直接改皮肤**，材质读写只能走 OAuth（这一约束曾决定已移除的第三方外观实现形态，别再试图用 Yggdrasil 绕开）
+- **设备代码流仍需白名单，授权码流不需要** —— 实测：`POST open.littleskin.cn/oauth/device_code` 对未白名单的应用（含新建的）一律 `invalid_client / not whitelisted`，且与**根本不存在的 client_id 报错完全相同**（排查此类问题时务必用"不存在的 ID"做对照，否则会误判成"ID 无效"）；而 `POST littleskin.cn/oauth/token`（授权码流）对正确凭据会走到 `invalid_request / Cannot decrypt the authorization code`，即**客户端认证已通过**。故授权码流是当时唯一无需审核的路径，代价是站点不支持 PKCE、secret 必须内嵌客户端（由作者注册一次应用、全体用户共用，同 `MS_CLIENT_ID` 模式）；该实现已随第三方衣柜一并移除。
 - **备注**：README.md 是完整中文文档（`README-en-US.md` 为英文版）；AGENTS.md 已被 git 跟踪（修改会出现在 git status）

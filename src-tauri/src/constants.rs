@@ -29,19 +29,6 @@ pub const CURSEFORGE_API_KEY: Option<&str> = option_env!("ELYTRA_CURSEFORGE_API_
 /// 未配置时为 None，此时微软正版登录返回 NotConfigured。
 pub const MS_CLIENT_ID: Option<&str> = option_env!("ELYTRA_MS_CLIENT_ID");
 
-/// LittleSkin OAuth 客户端 ID（设备代码流，公开客户端，无 client_secret；
-/// 构建时从项目根 `.env` 注入，不提交 git）。
-/// 未配置时为 None，此时 LittleSkin 相关命令返回「未配置」提示而非崩溃。
-pub const LITTLESKIN_CLIENT_ID: Option<&str> = option_env!("ELYTRA_LITTLESKIN_CLIENT_ID");
-/// LittleSkin 站点根地址（Blessing Skin 业务 API + 材质预览图）。
-pub const LITTLESKIN_SITE: &str = "https://littleskin.cn";
-/// LittleSkin OAuth 开放平台根地址（Yggdrasil Connect：设备代码流 / 令牌端点）。
-pub const LITTLESKIN_OPEN: &str = "https://open.littleskin.cn";
-/// persist::secrets 键：LittleSkin OAuth 令牌（access / refresh，加密存储）
-pub const SECT_LITTLESKIN_TOKEN: &str = "littleskin_token";
-/// LittleSkin 访问令牌提前刷新窗口（秒）：剩余有效期低于该值时先刷新再请求
-pub const LITTLESKIN_REFRESH_SKEW_SECS: u64 = 300;
-
 /// 配置目录名（exe 旁）
 pub const CONFIG_DIR: &str = "Elytra";
 /// 配置文件名

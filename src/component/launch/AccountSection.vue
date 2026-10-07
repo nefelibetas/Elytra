@@ -16,6 +16,7 @@ import { showToast } from "../../utils/toast";
 import { invoke } from "@tauri-apps/api/core";
 import { showError } from "../../store/alert";
 import { settingsTab } from "../../store/settingsTab";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useRouter } from "vue-router";
 import MenuPopover from "../common/MenuPopover.vue";
 
@@ -61,9 +62,39 @@ function goThirdPartyLogin() {
   settingsTab.value = "thirdparty";
   void router.push("/settings");
 }
-/** 点皮肤头像 → 衣柜（3D 预览 + 皮肤/披风管理）。 */
+/** 离线模式没有任何皮肤来源 → 衣柜入口直接置灰。 */
+const isOffline = computed(() => authMode.value === "offline");
+/** 第三方账号的衣柜在站点网页上，不在启动器里。 */
+const isThirdParty = computed(() => authMode.value === "thirdparty");
+
+/** 站点衣柜地址：由 authlib-injector 的 API 地址推 origin（Blessing Skin 的衣柜路径固定为 `/user/closet`）。 */
+const siteClosetUrl = computed(() => {
+  const api = externalAccount.value?.api_url;
+  if (!api) return "";
+  try {
+    return `${new URL(api).origin}/user/closet`;
+  } catch {
+    return "";
+  }
+});
+
+/** 点皮肤头像：
+ *  正版 → 启动器衣柜（Mojang 皮肤 + 本地收藏）；
+ *  第三方 → 直接用浏览器打开**站点衣柜**——站点有完整的上传/预览/整理，
+ *           而启动器只能管"已有材质"（站点没有上传 API），镜像一份反而更残缺；
+ *  离线 → 入口已置灰，这里静默返回，不弹提示。 */
 function openSkinStudio() {
   accountUi.closeMenus();
+  if (isOffline.value) return;
+  if (isThirdParty.value) {
+    const url = siteClosetUrl.value;
+    if (!url) {
+      showToast("未获取到站点地址，请重新登录第三方账号");
+      return;
+    }
+    void openUrl(url).catch((e) => showError(`打开站点衣柜失败：${String(e)}`, true));
+    return;
+  }
   void router.push("/skin-studio");
 }
 /** 第三方已登录时的附加操作（多角色切换 / 皮肤下载）。 */
@@ -260,7 +291,14 @@ function useOfflineName(name: string) {
         @mouseleave="onExtLeave"
       >
         <div class="user-main">
-          <div class="avatar clickable" v-tooltip="'衣柜'" @click="openSkinStudio">
+          <div
+            class="avatar"
+            :class="isOffline ? 'disabled' : 'clickable'"
+            v-tooltip="
+              isOffline ? '离线模式没有皮肤来源' : isThirdParty ? '在站点衣柜中管理' : '衣柜'
+            "
+            @click="openSkinStudio"
+          >
             <img
               v-if="avatarUrl && !avatarState.avatarError"
               :src="avatarUrl"
@@ -766,6 +804,12 @@ function useOfflineName(name: string) {
 
 .avatar.clickable:hover {
   box-shadow: 0 0 0 3px var(--color-brand-glow);
+}
+
+/* 离线模式：衣柜没有皮肤来源，入口不可点（置灰 + 禁用光标，不弹提示） */
+.avatar.disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .avatar img {

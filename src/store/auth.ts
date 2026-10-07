@@ -129,9 +129,18 @@ export async function switchExternalAccount(apiUrl: string, uuid: string) {
   await loadExternalAccounts();
 }
 
-/** 刷新第三方账号（refresh：新 token + 最新角色列表 + 角色变化同步）。 */
+/** 刷新第三方账号（refresh：新 token + 最新角色列表 + 角色变化同步）。
+ *  后端在凭据彻底失效时会**注销**该账号（免得占位又刷不动），所以失败后也要同步一次列表，
+ *  让界面立刻反映「账号已退出」。 */
 export async function refreshExternalAccount(apiUrl: string, uuid: string) {
-  await invoke<ExternalAccountInfo>("refresh_external_account", { apiUrl, uuid });
+  try {
+    await invoke<ExternalAccountInfo>("refresh_external_account", { apiUrl, uuid });
+  } catch (e) {
+    await loadExternalAccounts().catch(() => {
+      // 列表本身读不出来不影响把错误抛给调用方
+    });
+    throw e;
+  }
   await loadExternalAccounts();
 }
 

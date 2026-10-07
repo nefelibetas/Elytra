@@ -2,6 +2,7 @@
 // 衣柜：左 = 3D 全身预览（拖动旋转，默认 3/4 正面；左上/右上浮动图层），右 = 皮肤 / 披风 tab。
 // 交互与状态全在 store/skinStudio（模块级单例），本页仅编排布局与缩略图缓存。
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+import { useRouter } from "vue-router";
 import { Check, Download, Plus, RefreshCw, RotateCcw, Shirt, Wind, X } from "@lucide/vue";
 import AlertDialog from "../component/common/AlertDialog.vue";
 import EmptyState from "../component/common/EmptyState.vue";
@@ -9,8 +10,20 @@ import LoadingSpinner from "../component/common/LoadingSpinner.vue";
 import { renderSkinThumb3D } from "../store/avatar";
 import { authMode, externalAccount, msAccount } from "../store/auth";
 import { skinStudio, type LocalSkin } from "../store/skinStudio";
+import { showToast } from "../utils/toast";
 
-onMounted(() => void skinStudio.load());
+const router = useRouter();
+
+/** 衣柜只服务正版账号：第三方账号的外观一律在站点网页管理（点头像直接跳过去），
+ *  离线没有任何皮肤来源。两个入口都已在 AccountSection 拦住，这里兜底直接改 URL / 历史前进后退。 */
+onMounted(() => {
+  if (!skinStudio.premium) {
+    showToast("皮肤衣柜仅对正版账号开放");
+    void router.replace("/");
+    return;
+  }
+  void skinStudio.load();
+});
 onUnmounted(() => skinStudio.dispose());
 
 /** 实时卡的来源标签：官方 = `Mojang`，第三方 = 站点名（如 LittleSkin），离线 = 默认（内置皮肤）。

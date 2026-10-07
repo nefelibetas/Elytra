@@ -389,11 +389,9 @@ async fn install_mojang_runtime(
 
     // 1. 拉取 all.json（多源回退 + TTL 缓存：BMCLAPI 镜像 piston-meta）
     let all_text = config
-        .fetch_with_fallback(
-            config.game_source_mode,
-            CacheBehaviour::DefaultTtl,
-            |s| s.mirror_url(JdkEndpoints::RUNTIME_ALL_JSON),
-        )
+        .fetch_with_fallback(config.game_source_mode, CacheBehaviour::DefaultTtl, |s| {
+            s.mirror_url(JdkEndpoints::RUNTIME_ALL_JSON)
+        })
         .await
         .map_err(|e| format!("获取 Java runtime 索引失败\n{e}"))?;
     let all: serde_json::Value =

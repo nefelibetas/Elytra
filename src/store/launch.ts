@@ -6,7 +6,7 @@ import { listen } from "@tauri-apps/api/event";
 import type { StepStatus } from "./download";
 import type { InstalledVersionInfo } from "./gameDirs";
 import { GAME_EXITED, GAME_WINDOW_VISIBLE } from "./events";
-import { authMode, msAccount, username, externalAccount, type MsAccountInfo } from "./auth";
+import { authMode, msAccount, username, externalAccount, refreshExternalAccount, type MsAccountInfo } from "./auth";
 import { selectedVersion, setSelected, getSavedDir } from "./selectedVersion";
 import { showError } from "./alert";
 
@@ -109,9 +109,25 @@ export async function doLaunch(navigateToDownload: () => void) {
   ];
 
   try {
-    // 正版：确保凭证可用（后端按需续签——未过期时零网络开销，避免每次启动都走完整
-    // 微软登录链）；失败说明 refresh_token 已失效，重置并提示重登。第三方/离线跳过
-    if (!isOffline && !isThirdParty) {
+    // 启动前确保凭据可用。
+    // 正版：后端按需续签（未过期时零网络开销，避免每次启动都走完整微软登录链）。
+    // 第三方：同样先静默续签——Yggdrasil 令牌的刷新窗口有限，不主动续签就会一直放到
+    //   连 refresh 都过期的地步，届时只能报「登录凭据已失效」重新登录（Yggdrasil 不返回
+    //   过期时间，无法像正版那样先判过期，故每次启动都刷一次，网络开销可忽略）。
+    // 离线：无凭据，跳过。
+    if (isThirdParty) {
+      const ext = externalAccount.value;
+      if (ext) {
+        try {
+          await refreshExternalAccount(ext.api_url, ext.uuid);
+        } catch (e) {
+          externalAccount.value = null;
+          resetLaunch();
+          showError(`第三方账号登录已失效，请重新登录：${String(e)}`, true);
+          return;
+        }
+      }
+    } else if (!isOffline) {
       try {
         msAccount.value = await invoke<MsAccountInfo>("ensure_ms_account");
       } catch (e) {
