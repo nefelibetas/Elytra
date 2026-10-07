@@ -1,29 +1,37 @@
 //! 配置 / 数据 / 游戏目录基准（平台感知）。
 
-#[cfg(any(not(target_os = "windows"), test))]
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::constants;
 
 /// 配置目录（Settings.toml / secrets.bin / tasks.db / 日志的基准）。
-/// - Windows：exe 旁 `Elytra/`（便携语义，与历史布局一致）
-/// - macOS：`~/Library/Application Support/Elytra`——current_exe 指向 app bundle 内部
-///   （`Contents/MacOS/`），写入会破坏签名且 /Applications 下不可写，配置必须外置
-/// - Linux：`$XDG_DATA_HOME/Elytra`（缺省 `~/.local/share/Elytra`）——exe 位置由
-///   包管理器/挂载器决定（/usr 只读、AppImage 挂载点每次不同），数据一律走用户目录
-/// - dev/cargo test 进程（exe 位于 cargo target 下）走 exe 旁：测试隔离 + dev 行为不变
+/// - 三端统一走平台用户数据目录：Windows `%APPDATA%\Elytra`、macOS
+///   `~/Library/Application Support/Elytra`、Linux `$XDG_DATA_HOME/Elytra`。
+///   理由与 macOS/Linux 原本相同，只是 Windows 此前是例外：安装到只读位置
+///   （Program Files / /Applications / /usr）时 exe 旁根本不可写；多用户共用一台
+///   机器时账号与配置也不应互相污染（`secrets.bin` 存着 token）。
+/// - dev / cargo test 进程（exe 位于 cargo target 下）仍走 exe 旁：测试天然隔离在
+///   `target/debug/deps/`，`pnpm tauri dev` 的数据也留在 target 下，不碰真实用户目录。
 pub fn config_dir() -> PathBuf {
-    #[cfg(not(target_os = "windows"))]
-    {
-        if is_dev_runtime() {
-            return exe_dir().join(constants::CONFIG_DIR);
-        }
-        if let Some(root) = platform_data_root() {
-            return root.join(constants::CONFIG_DIR);
-        }
+    if is_dev_runtime() {
+        return exe_dir().join(constants::CONFIG_DIR);
     }
+    if let Some(root) = platform_data_root() {
+        return root.join(constants::CONFIG_DIR);
+    }
+    // 极端环境（APPDATA/HOME 均缺失）：退回 exe 旁，至少让应用能起来
     exe_dir().join(constants::CONFIG_DIR)
+}
+
+/// 平台用户数据根目录（配置与数据的用户级基准，三端语义对齐）。
+/// - Windows：`%APPDATA%`（Roaming），缺省回退 `%USERPROFILE%\AppData\Roaming`
+/// - macOS：`~/Library/Application Support`
+/// - Linux：`$XDG_DATA_HOME` 非空用之，否则 `~/.local/share`（XDG Base Directory）
+#[cfg(target_os = "windows")]
+fn platform_data_root() -> Option<PathBuf> {
+    std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("USERPROFILE").map(|h| PathBuf::from(h).join("AppData/Roaming")))
 }
 
 /// 平台用户数据根目录（macOS/Linux，config 与默认游戏目录的共同基准）。
@@ -48,7 +56,6 @@ fn platform_data_root() -> Option<PathBuf> {
 /// exe 是否位于 cargo target/debug|release 下（dev 与 cargo test 进程）。
 /// 此类进程配置走 exe 旁：单元测试进程在 `target/debug/deps/` 下，配置天然落在
 /// 该隔离区（不污染真实用户数据目录），`pnpm tauri dev` 行为也与历史一致。
-#[cfg(not(target_os = "windows"))]
 fn is_dev_runtime() -> bool {
     std::env::current_exe()
         .ok()
@@ -57,7 +64,6 @@ fn is_dev_runtime() -> bool {
 }
 
 /// 路径是否形如 `…/target/{debug|release}/…`（纯函数，便于单测）。
-#[cfg(any(not(target_os = "windows"), test))]
 fn path_under_cargo_target(p: &Path) -> bool {
     let comps: Vec<&str> = p
         .components()
@@ -81,27 +87,40 @@ pub fn exe_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// 默认游戏目录（.minecraft）的基准目录。
-/// - Windows：exe 旁（便携语义，与历史一致）
-/// - macOS/Linux：应用数据目录（`<数据根>/Elytra`）——默认 .minecraft 由启动器自持，
-///   与官方/其它启动器默认位置隔离；需要共享的目录在游戏目录列表里显式添加
-pub fn default_game_dir_base() -> PathBuf {
-    #[cfg(target_os = "windows")]
-    return exe_dir();
-    // macOS/Linux：dev/cargo test 进程走 exe 旁（与 config_dir 同规则，测试隔离）；
-    // 发布形态 = 应用数据目录（默认游戏目录 = <数据根>/Elytra/.minecraft）
-    #[cfg(not(target_os = "windows"))]
-    {
-        if is_dev_runtime() {
-            exe_dir()
-        } else if let Some(root) = platform_data_root() {
-            root.join(constants::CONFIG_DIR)
-        } else if let Some(home) = std::env::var_os("HOME") {
-            PathBuf::from(home)
-        } else {
-            exe_dir()
-        }
+/// 默认游戏目录（.minecraft）的基准目录；`None` = 该平台没有合适的默认位置，
+/// 交由用户显式添加游戏目录。
+/// - Windows：exe 旁（便携语义——与 PCL2 / HMCL 等国内启动器习惯一致，用户找得到、
+///   备份与迁移就是整目录拷走）。仅当 exe 落在只读位置（Program Files，MSI 默认）
+///   时无默认：那里连建目录都会失败。
+/// - macOS/Linux：**无默认**。exe 位置由包管理器/挂载器决定（/usr 只读、AppImage
+///   挂载点每次不同），猜一个「应用数据目录下的 .minecraft」用户既找不到也想不到；
+///   游戏目录一律由用户在列表里显式添加。
+/// - dev / cargo test 进程：exe 旁（与 config_dir 同规则，测试隔离）。
+///
+/// 注意：装机形态下游戏目录可能位于安装目录内，**卸载程序必须保留它**，
+/// 否则用户几个 GB 的整合包会随卸载一起消失。
+pub fn default_game_dir_base() -> Option<PathBuf> {
+    if is_dev_runtime() {
+        return Some(exe_dir());
     }
+    #[cfg(target_os = "windows")]
+    if !exe_dir_is_readonly() {
+        return Some(exe_dir());
+    }
+    None
+}
+
+/// exe 是否位于常见的只读安装位置（Windows 的 Program Files）。
+#[cfg(target_os = "windows")]
+fn exe_dir_is_readonly() -> bool {
+    path_is_readonly_install(&exe_dir())
+}
+
+/// 路径是否位于常见的只读安装位置（Program Files / Program Files (x86)）。
+/// 纯函数、不做 IO：命中时默认游戏目录改走用户数据目录，避免「建目录即失败」。
+#[cfg(target_os = "windows")]
+fn path_is_readonly_install(p: &Path) -> bool {
+    p.to_string_lossy().to_lowercase().contains("program files")
 }
 
 #[cfg(test)]
@@ -124,6 +143,26 @@ mod tests {
         assert!(!path_under_cargo_target(Path::new("target/debuggy/x")));
         assert!(!path_under_cargo_target(Path::new(
             "/tmp/.mount_elytraX/usr/bin/elytra"
+        )));
+    }
+
+    /// 只读安装位置判定：Program Files 下不能把默认游戏目录放在 exe 旁
+    /// （建目录就会失败），此时应回退到用户数据目录。
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn readonly_install_detects_program_files() {
+        assert!(path_is_readonly_install(Path::new(
+            r"C:\Program Files\Elytra\Elytra Launcher.exe"
+        )));
+        assert!(path_is_readonly_install(Path::new(
+            r"C:\Program Files (x86)\Elytra\Elytra.exe"
+        )));
+        // 用户级安装（NSIS 默认位置）与便携目录都不算只读
+        assert!(!path_is_readonly_install(Path::new(
+            r"C:\Users\u\AppData\Local\Programs\Elytra\Elytra.exe"
+        )));
+        assert!(!path_is_readonly_install(Path::new(
+            r"D:\Games\Elytra\Elytra.exe"
         )));
     }
 }
