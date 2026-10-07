@@ -75,21 +75,17 @@ pub(crate) fn update_and_emit(
     // 锁内更新 + clone 快照，锁外 emit：emit（tauri IPC 分发）若因 webview
     // 未及时消费而阻塞，不会持有 progress 锁——否则取消（cancel 的 try_lock）
     // 和进度读取都会卡死，表现为"取消失效"。
-    // try_lock 循环：正常短临界区立即成功；异常（锁被长期持有/死锁）打印
-    // 告警后继续等待——不 panic 不放弃，且日志能定位持锁方。
-    let mut waited_ms = 0u32;
-    let snapshot = loop {
-        if let Some(p) = guard.try_lock() {
-            break p;
+    //
+    // 优先 try_lock：正常短临界区立即成功，不阻塞调用方。仅当锁已被占用
+    // （异常：持锁方长时间未释放）才退化为阻塞式 lock —— parking_lot 会在锁
+    // 释放时立即唤醒，而此前的 `std::thread::sleep(5ms)` 自旋既占死 tokio
+    // worker，又平白引入最多 5ms 延迟。临界区内无 IO/await，不会长等。
+    let snapshot = match guard.try_lock() {
+        Some(p) => p,
+        None => {
+            eprintln!("[emit] 进度锁被占用，改为阻塞等待（正常短临界区不应出现）");
+            guard.lock()
         }
-        waited_ms += 5;
-        if waited_ms == 5 || waited_ms.is_multiple_of(500) {
-            eprintln!(
-                "[emit] 进度锁被持有 {}ms（等待中，正常短临界区不应出现）",
-                waited_ms
-            );
-        }
-        std::thread::sleep(std::time::Duration::from_millis(5));
     };
     let snapshot_clone;
     {

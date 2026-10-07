@@ -24,7 +24,8 @@ pub async fn export_launch_script(
             &access_token,
             &uuid,
             &xuid,
-        )?;
+        )
+        .await?;
     let cmd = args::build_launch_command(
         &java_path,
         &version_json,

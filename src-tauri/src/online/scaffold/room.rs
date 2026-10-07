@@ -178,6 +178,9 @@ mod tests {
         let first = bad.as_bytes()[2];
         let new = if first == b'0' { b'1' } else { b'0' };
         // 替换后若仍合法则跳过（极小概率），否则应拒绝
+        // SAFETY: bad 是本地独占的 String，长度固定为合法码格式（索引 2 必然位于 ASCII 段），
+        // 且写入的 new 为 ASCII 单字节，不改变 UTF-8 字节长度，不破坏字符串有效性。
+        // （本可用重建字符串替代，但按约定仅补注释、不改动逻辑。）
         unsafe {
             bad.as_bytes_mut()[2] = new;
         }

@@ -11,7 +11,7 @@ use std::os::windows::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use crate::auth::external::{AUTHLIB_JAR, read};
+use crate::auth::external::{ensure_jar, read};
 use crate::auth::microsoft::extract_xuid_from_jwt;
 use crate::game::version::model::VersionJson;
 use crate::launcher::args::{ensure_old_style_natives, mc_version_of};
@@ -139,6 +139,8 @@ fn process_has_visible_window(pid: u32) -> bool {
         found: bool,
     }
 
+    // SAFETY: 作为 EnumWindows 回调，lparam 恒为调用处传入的 &mut search（见下方），
+    // 该指针在枚举期间保持有效且独占，回调内按 *mut Search 还原并解引用因此安全。
     unsafe extern "system" fn enum_proc(hwnd: *mut c_void, lparam: isize) -> i32 {
         let s = &mut *(lparam as *mut Search);
         let mut wpid: u32 = 0;
@@ -152,6 +154,8 @@ fn process_has_visible_window(pid: u32) -> bool {
     }
 
     let mut search = Search { pid, found: false };
+    // SAFETY: enum_proc 是签名匹配的 "system" 回调，search 在本栈帧存活至调用结束，
+    // 其地址作为 lparam 传入；EnumWindows 同步枚举完才返回，期间指针保持有效。
     unsafe {
         EnumWindows(enum_proc, &mut search as *mut Search as isize);
     }
@@ -293,7 +297,7 @@ pub fn fill_missing_xuid(auth: &mut AuthMode) {
 /// 启动类命令（launch_game / export_launch_script / spawn_game）共享的前置：
 /// 构造账号（补 xuid）→ 加载配置与版本 JSON。
 #[allow(clippy::type_complexity)]
-pub fn prepare_launch(
+pub async fn prepare_launch(
     version_dir_name: &str,
     auth_mode: &str,
     username: &str,
@@ -315,12 +319,13 @@ pub fn prepare_launch(
     fill_missing_xuid(&mut auth);
     let (java_path, version_json, mc_dir, launcher_config, java_major) =
         load_launch_config(version_dir_name)?;
-    // 第三方登录：启动前确保 authlib-injector.jar 存在（注入必需，缺失会启动失败）
+    // 第三方登录：启动前确保 authlib-injector.jar 就绪（注入必需，缺失会启动失败）。
+    // 缺失时先尝试自动补齐（官方 → BMCLAPI 双源），仍失败才报错——不该为了一个
+    // 组件文件让用户重走一遍登录流程。
     if matches!(auth, AuthMode::External { .. }) {
-        let jar = crate::util::config_dir().join(AUTHLIB_JAR);
-        if !jar.exists() {
-            return Err("第三方登录组件缺失\n请重新登录第三方账号以恢复 authlib-injector.jar".into());
-        }
+        ensure_jar().await.map_err(|e| {
+            format!("第三方登录组件缺失且自动下载失败\n请检查网络后重试\n{e}")
+        })?;
     }
     Ok((
         auth,

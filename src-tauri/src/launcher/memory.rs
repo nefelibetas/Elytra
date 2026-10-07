@@ -60,6 +60,8 @@ pub fn guess_auto_memory(version_dir: &Path) -> u32 {
 /// 系统物理内存（MB）：(总内存, 可用内存)。三平台统一入口，启动内存显示与自动分配共用。
 pub fn system_memory_mb() -> (u64, u64) {
     #[cfg(target_os = "windows")]
+    // SAFETY: MEMORYSTATUSEX 为 #[repr(C)]，dw_length 已置为结构体真实大小；
+    // 传入的指针指向本栈帧上已完整初始化的 status，GlobalMemoryStatusEx 只会写入该结构体内，返回值已检查。
     unsafe {
         #[allow(clippy::upper_case_acronyms)]
         type DWORD = u32;
@@ -136,6 +138,8 @@ fn sysctl_u64(name: &str) -> Option<u64> {
     let mut out = 0u64;
     let mut len = std::mem::size_of::<u64>() as usize;
     let c_name = std::ffi::CString::new(name).ok()?;
+    // SAFETY: out 是本栈帧上的 u64，len 为其字节长度，c_name 是有效的 NUL 结尾 C 字符串；
+    // sysctlbyname 按 len 写入 out，返回值已检查，仅在 ret == 0 时读取 out。
     let ret = unsafe {
         libc::sysctlbyname(
             c_name.as_ptr(),
