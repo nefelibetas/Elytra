@@ -54,6 +54,28 @@ const FRAME_CACHE_MAX = 96;
 /** 上传官方账号后等待 Mojang 处理新纹理生效的时间。 */
 const APPLY_SETTLE_MS = 3000;
 
+/** `Promise.withResolvers` 是 ES2024 新增，当前 tsconfig lib 为 ES2020 未收录，
+ *  故在此声明其形状；运行时仍可能缺失（旧 WebKitGTK），调用前用 `typeof` 守卫。 */
+const promiseCtor = Promise as unknown as {
+  withResolvers?: <T>() => { promise: Promise<T>; resolve: (value: T) => void };
+};
+
+/** 延时等待。优先 `Promise.withResolvers`（线性控制流、无回调嵌套）；
+ *  Linux WebKitGTK（如 Ubuntu 22.04 的 2.40）没有该 API，回退到 executor 形式——
+ *  三端 WebView 一致性的红线优先于单一写法。
+ *  **必须写成 `promiseCtor.withResolvers()`**：该静态方法依赖 `this` 指向 Promise 构造器，
+ *  提取到局部变量再调用会抛 `TypeError: Promise.withResolvers called on non-object`。 */
+function delay(ms: number): Promise<void> {
+  if (typeof promiseCtor.withResolvers === "function") {
+    const { promise, resolve } = promiseCtor.withResolvers<void>();
+    setTimeout(() => resolve(undefined), ms);
+    return promise;
+  }
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 /** 已渲染帧缓存：key = 选择令牌 + 圆整视角 → dataURL（拖动中间帧不写缓存）。 */
 const frameCache = new Map<string, string>();
 /** 选择令牌：皮肤 / 披风任一变化即自增，旧帧缓存自然失效（免把 base64 塞进 key）。 */
@@ -351,26 +373,23 @@ export const skinStudio = reactive({
 
   // ── 衣柜操作 ──
 
-  /** 自动缓存当前皮肤：把正版 / 第三方账号的当前皮肤存进衣柜（进入页面、刷新时调用）。
-   *  按来源分桶缓存：同一来源 + 同一贴图只存一份（不重复、不互相覆盖）；
-   *  离线 / 未登录（内置默认皮肤）不入柜。 */
+  /** 自动缓存当前皮肤：把正版账号的当前皮肤存进衣柜（进入页面、刷新时调用）。
+   *  **只缓存正版账号**：第三方账号的外观在站点网页管理（衣柜入口也不再进启动器），
+   *  缓存进来既应用不了（站点没有上传 API），名字又只能是站点名 / `external` 这类
+   *  对用户毫无意义的技术标识。离线（内置默认皮肤）同样不入柜。
+   *  按来源 + 贴图去重：同一账号的同一份皮肤只存一条。 */
   async cacheCurrent() {
     const skin = this.officialSkin;
     const acc = msAccount.value;
-    const ext = externalAccount.value;
-    // 来源标识：正版固定 microsoft；第三方取站点名，取不到回落 external
-    let source = "";
-    if (this.premium && acc) source = "microsoft";
-    else if (authMode.value === "thirdparty" && ext) source = (ext.server_name ?? "").trim() || "external";
-    if (!skin || !source) return;
+    if (!this.premium || !acc || !skin) return;
     if (this.skinsError) return; // 列表没读全 → 去重不可靠，跳过本轮（下次进入再补）
-    if (this.skins.some((s) => s.source === source && s.skin === skin)) return; // 同来源同贴图已缓存
+    if (this.skins.some((s) => s.source === "microsoft" && s.skin === skin)) return; // 已缓存
     try {
       const item = await invoke<LocalSkin>("save_local_skin", {
-        name: source === "microsoft" ? "当前" : source, // 正版显示「当前」，第三方显示来源名
+        name: "当前",
         b64: skin,
         variant: this.officialModel.toLowerCase() === "slim" ? "SLIM" : "CLASSIC",
-        source,
+        source: "microsoft",
       });
       this.skins = [item, ...this.skins.filter((s) => s.id !== item.id)];
     } catch (e) {
@@ -397,26 +416,25 @@ export const skinStudio = reactive({
     this.skinModelDialog = true;
   },
 
-  /** 确认模型 → 交由后端读字节存入衣柜（校验 PNG 魔数 + 尺寸）。 */
+  /** 确认模型 → **直接上传到账号**。本地文件换肤的目的就是换皮肤本身，不是收藏，
+   *  所以不落本地衣柜（先落一份再让人点「应用」是多余的一步，还会和实时卡撞成两张卡）。
+   *  上传成功后账号当前皮肤即变成它，实时卡自然更新；随后它会作为一条历史缓存进衣柜，
+   *  供日后从衣柜切回。 */
   async confirmSaveSkin(variant: "CLASSIC" | "SLIM") {
     this.skinModelDialog = false;
     const path = this.pendingSkinPath;
     this.pendingSkinPath = "";
-    if (!path) return;
+    const acc = msAccount.value;
+    if (!path || !this.premium || !acc || this.applyBusy) return;
+    this.applyBusy = true;
     try {
-      // 条目名默认取文件名（去扩展名）
-      const name = (path.split(/[\\/]/).pop() ?? path).replace(/\.[^.]+$/, "") || "未命名皮肤";
-      const item = await invoke<LocalSkin>("save_local_skin_file", {
-        name,
-        filePath: path,
-        variant,
-        source: "upload",
-      });
-      this.skins = [item, ...this.skins.filter((s) => s.id !== item.id)];
-      this.selectSkin(item.id); // 新入柜即选中预览
-      showToast(`已加入衣柜：${item.name}`);
+      await invoke("upload_skin_file", { filePath: path, variant });
+      showToast("皮肤已上传，等待生效…");
+      await this.settleAfterSkinChange(acc.uuid);
     } catch (e) {
-      showError(`保存到衣柜失败：${String(e)}`, true);
+      showError(`更换皮肤失败：${String(e)}`, true);
+    } finally {
+      this.applyBusy = false;
     }
   },
 
@@ -435,7 +453,7 @@ export const skinStudio = reactive({
     }
   },
 
-  /** 把选中的本地皮肤应用为账号当前皮肤（上传官方）。 */
+  /** 把选中的本地条目应用为账号当前皮肤（在衣柜里「切换」皮肤）。 */
   async applySelected() {
     const local = this.selectedLocal;
     const acc = msAccount.value;
@@ -444,18 +462,25 @@ export const skinStudio = reactive({
     try {
       await invoke("upload_skin_file", { filePath: local.path, variant: local.variant });
       showToast("皮肤已上传，等待生效…");
-      await new Promise((r) => setTimeout(r, APPLY_SETTLE_MS)); // 等 Mojang 处理新纹理
-      await this.loadOfficial();
-      this.selectedKey = "official";
-      skinToken++;
-      this.scheduleRender();
-      void renderPremiumAvatar(acc.uuid, true); // 启动页头像同步
-      showToast("皮肤已更新");
+      await this.settleAfterSkinChange(acc.uuid);
     } catch (e) {
       showError(`应用皮肤失败：${String(e)}`, true);
     } finally {
       this.applyBusy = false;
     }
+  },
+
+  /** 换肤成功后的共同尾段：等 Mojang 生效 → 重拉账号皮肤 → 把新皮肤缓存进衣柜
+   *  （作为一条历史，日后可从衣柜切回）→ 回落实时卡 → 同步启动页头像。 */
+  async settleAfterSkinChange(uuid: string) {
+    await delay(APPLY_SETTLE_MS);
+    await this.loadOfficial();
+    await this.cacheCurrent();
+    this.selectedKey = "official";
+    skinToken++;
+    this.scheduleRender();
+    void renderPremiumAvatar(uuid, true); // 启动页头像同步
+    showToast("皮肤已更新");
   },
 
   /** 导出账号当前皮肤到用户选定路径。 */

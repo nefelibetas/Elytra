@@ -8,7 +8,7 @@ import AlertDialog from "../component/common/AlertDialog.vue";
 import EmptyState from "../component/common/EmptyState.vue";
 import LoadingSpinner from "../component/common/LoadingSpinner.vue";
 import { renderSkinThumb3D } from "../store/avatar";
-import { authMode, externalAccount, msAccount } from "../store/auth";
+import { ensureAuthReady } from "../store/auth";
 import { skinStudio, type LocalSkin } from "../store/skinStudio";
 import { showToast } from "../utils/toast";
 
@@ -16,7 +16,9 @@ const router = useRouter();
 
 /** 衣柜只服务正版账号：第三方账号的外观一律在站点网页管理（点头像直接跳过去），
  *  离线没有任何皮肤来源。两个入口都已在 AccountSection 拦住，这里兜底直接改 URL / 历史前进后退。 */
-onMounted(() => {
+onMounted(async () => {
+  // 账号列表是异步 IPC：未就绪就判定来源，会把正版账号当成离线而误拦（store 的 loadOfficial 同样先 await）。
+  await ensureAuthReady();
   if (!skinStudio.premium) {
     showToast("皮肤衣柜仅对正版账号开放");
     void router.replace("/");
@@ -25,17 +27,6 @@ onMounted(() => {
   void skinStudio.load();
 });
 onUnmounted(() => skinStudio.dispose());
-
-/** 实时卡的来源标签：官方 = `Mojang`，第三方 = 站点名（如 LittleSkin），离线 = 默认（内置皮肤）。
- *  本地条目（自动缓存与上传）一律**不标名**——它们与实时卡是同一份皮肤时，两边都标反而像是
- *  重复条目；靠 3D 缩略图与 hover 提示区分即可。 */
-const officialLabel = computed(() => {
-  if (authMode.value === "premium" && msAccount.value) return "Mojang";
-  if (authMode.value === "thirdparty" && externalAccount.value) {
-    return externalAccount.value.server_name?.trim() || "第三方";
-  }
-  return "默认";
-});
 
 /** 平面皮肤图（3D 缩略图未就绪 / 渲染失败时的兜底）：64×64 纹理里截头部正面 (8,8,8,8) 区域放大
  *  （size 800% + position 14.286% = 8/56 → 精确对准该 UV 区）。 */
@@ -124,11 +115,8 @@ interface SkinCard {
   skin: string;
   /** 3D 缩略图 dataURL；空串 = 未就绪 / 失败 → 回落平面皮肤图 */
   thumb: string;
-  /** 右上角来源角标文案（Mojang / 站点名 / 默认）；空串 = 不显示角标 */
-  source: string;
   /** 皮肤模型：卡片左上角标（CLASSIC / SLIM） */
   variant: string;
-  tip: string;
   /** 本地条目（可删除）；官方当前卡片为 null */
   local: LocalSkin | null;
 }
@@ -143,10 +131,7 @@ const skinCards = computed<SkinCard[]>(() => {
       key: "official",
       skin: official,
       thumb: thumbs[thumbKey(official, officialSlim)] || "",
-      // 来源（Mojang / 站点名 / 默认）只做右上角标：早期放在名称行会被误读成皮肤名
-      source: officialLabel.value,
       variant: officialSlim ? "SLIM" : "CLASSIC",
-      tip: "账号当前皮肤",
       local: null,
     });
   }
@@ -156,10 +141,7 @@ const skinCards = computed<SkinCard[]>(() => {
       key: s.id,
       skin: s.skin,
       thumb: s.skin ? thumbs[thumbKey(s.skin, slim)] || "" : "",
-      // 本地条目（自动缓存与上传）不标来源：文件名 / 站点名在 hover 提示里给出即可
-      source: "",
       variant: s.variant,
-      tip: s.name,
       local: s,
     });
   }
@@ -315,7 +297,6 @@ function savePickedSkin() {
               :key="c.key"
               class="card"
               :class="{ active: effectiveSelectedKey === c.key }"
-              v-tooltip="c.tip"
               @click="skinStudio.selectSkin(c.key)"
             >
               <div class="thumb-3d">
@@ -323,9 +304,9 @@ function savePickedSkin() {
                 <div v-else-if="c.skin" class="thumb" :style="skinThumb(c.skin)"></div>
                 <div v-else class="thumb empty"></div>
               </div>
-              <!-- 信息全用角标：左上 = 皮肤类型，右上 = 来源（本地条目没有来源名，不显示） -->
+              <!-- 角标只剩左上角的皮肤类型（来源角标已删除：衣柜现在只服务正版账号与本地文件，
+                   来源不再有区分度） -->
               <span class="card-tag variant" :class="{ slim: c.variant === 'SLIM' }">{{ c.variant }}</span>
-              <span v-if="c.source" class="card-tag source">{{ c.source }}</span>
               <button
                 v-if="c.local"
                 class="card-del"
@@ -339,7 +320,7 @@ function savePickedSkin() {
             <!-- 上传本地皮肤：与普通卡片区分（虚线框 + 加号），放在网格末尾 -->
             <div
               class="card upload"
-              v-tooltip="'把本地 64×64 皮肤 PNG 收进衣柜'"
+              v-tooltip="'选择本地 64×64 皮肤 PNG，上传为账号当前皮肤'"
               @click="skinStudio.pickSkinFile()"
             >
               <span class="upload-plus"><Plus :size="20" /></span>
@@ -409,7 +390,7 @@ function savePickedSkin() {
     <!-- 上传皮肤前选择模型：经典（Steve 宽）/ 纤细（Alex 窄）。无默认值，必须点一次再确认 -->
     <AlertDialog v-model="skinStudio.skinModelDialog" title="选择皮肤模型">
       <div class="model-desc">
-        皮肤将存入本地衣柜；模型不可中途更换（需重新上传），按所选模型预览与应用。
+        皮肤将直接上传为账号当前皮肤；模型不可中途更换（需重新上传），按所选模型应用。
       </div>
       <div class="model-pick">
         <button
@@ -802,12 +783,6 @@ function savePickedSkin() {
   letter-spacing: 0.4px;
   color: var(--text-tertiary);
   background-color: var(--surface-hover);
-}
-
-/* 来源角标（皮肤卡右上角）：与左上角类型角标同一套版式，避免把来源读成皮肤名 */
-.card-tag.source {
-  left: auto;
-  right: 5px;
 }
 
 /* 皮肤类型角标：CLASSIC 中性、SLIM 品牌色 */
