@@ -808,13 +808,15 @@ function savePickedSkin() {
   background-color: var(--color-brand-bg);
 }
 
-/* 上传卡片（网格最后一格）：虚线框 + 圆形加号，与普通卡片区分 */
+/* 上传卡片（网格最后一格）：虚线框 + 圆形加号，与普通卡片区分。
+   边框/文字比普通卡片用更深一档的 token——太浅的话在深色主题下几乎看不见。 */
 .card.upload {
   justify-content: center;
   gap: 8px;
   border-style: dashed;
+  border-color: var(--border-strong);
   background-color: transparent;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
 }
 
 .card.upload:hover {
@@ -833,7 +835,8 @@ function savePickedSkin() {
   justify-content: center;
   width: 44px;
   height: 44px;
-  border: 1px dashed var(--border-default);
+  /* 1.5px + border-strong：虚线本身的视觉重量比实线轻，用粗一档补回来 */
+  border: 1.5px dashed var(--border-strong);
   border-radius: 50%;
 }
 
