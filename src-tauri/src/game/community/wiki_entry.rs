@@ -11,11 +11,23 @@ use std::sync::LazyLock;
 
 const WIKI_ENTRIES: &str = include_str!("../../data/wiki_entries.txt");
 
+/// 中文查询词频统计的候选上限（取够样本即可，不逐条搜索）。
+const CHINESE_MATCH_LIMIT: usize = 200;
+/// 词频统计忽略的通用词 / 平台词（作为查询词无区分度）。
+const QUERY_STOP_WORDS: [&str; 8] = ["a", "an", "the", "of", "for", "and", "mod", "minecraft"];
+/// 高频词的最低出现次数与最短长度（避免把偶然重复的短词当成查询词）。
+const MIN_WORD_HITS: usize = 2;
+const MIN_WORD_LEN: usize = 3;
+
 /// 一个百科条目（可能对应多平台 slug，共享同一 mcmod_id）。
 pub struct WikiEntry {
     pub mcmod_id: u32,
     /// 原始中文译名（未处理 `*` 与 ` (原名)` 后缀）；无译名条目为 None
     pub chinese_raw: Option<String>,
+    /// CurseForge slug（该条目在此平台收录时）；供中文反查派生英文查询词
+    curseforge_slug: Option<String>,
+    /// Modrinth slug
+    modrinth_slug: Option<String>,
 }
 
 /// slug → 条目索引（两平台独立）。
@@ -23,12 +35,66 @@ pub struct WikiIndex {
     curseforge: HashMap<String, usize>,
     modrinth: HashMap<String, usize>,
     entries: Vec<WikiEntry>,
+    /// (清洗后的中文译名, 条目索引)：中文搜索用，解析时一次性建好（避免每次搜索重算）
+    chinese: Vec<(String, usize)>,
+}
+
+/// 中文查询反查命中：把一个中文词映射到该平台上可用的英文查询词。
+pub struct ChineseHit {
+    /// 该平台可用的英文查询词；两平台都无 slug 且译名不含原名时为 None
+    pub query: Option<String>,
+}
+
+/// 解析 slug 字段 → (CurseForge slug, Modrinth slug)。
+/// `xxx@` = CF（Modrinth 同名）、`@xxx` = 仅 MR、`xxx@yyy` = CF xxx + MR yyy、`xxx` = CF。
+fn split_slugs(slugs: &str) -> (Option<String>, Option<String>) {
+    if let Some(s) = slugs.strip_prefix('@') {
+        (None, Some(s.to_string()))
+    } else if let Some(s) = slugs.strip_suffix('@') {
+        (Some(s.to_string()), Some(s.to_string()))
+    } else if let Some((cf, mr)) = slugs.split_once('@') {
+        (Some(cf.to_string()), Some(mr.to_string()))
+    } else if slugs.is_empty() {
+        (None, None)
+    } else {
+        (Some(slugs.to_string()), None)
+    }
+}
+
+/// 从原始译名里取 `(English Name)` 括号内的原名（括号内须以 ASCII 字母开头，防误伤中文括号）。
+fn english_from_raw(raw: &str) -> Option<String> {
+    let cleaned = raw.replace('*', "");
+    let open = cleaned.rfind(" (")?;
+    if !cleaned.ends_with(')') {
+        return None;
+    }
+    let tail = &cleaned[open + 2..cleaned.len() - 1];
+    tail.starts_with(|c: char| c.is_ascii_alphabetic())
+        .then(|| tail.to_string())
+}
+
+impl WikiEntry {
+    /// 派生该平台的英文查询词：译名括号内的原名优先（两平台通用且最准），
+    /// 其次由该平台 slug 还原（`entity-culling` → `entity culling`）。
+    fn derived_query(&self, platform: &str) -> Option<String> {
+        if let Some(en) = self.chinese_raw.as_deref().and_then(english_from_raw) {
+            return Some(en);
+        }
+        let slug = if platform == "modrinth" {
+            self.modrinth_slug.as_deref()
+        } else {
+            self.curseforge_slug.as_deref()
+        }?;
+        let words = slug.replace('-', " ");
+        (!words.is_empty()).then_some(words)
+    }
 }
 
 fn parse() -> WikiIndex {
     let mut curseforge: HashMap<String, usize> = HashMap::new();
     let mut modrinth: HashMap<String, usize> = HashMap::new();
     let mut entries: Vec<WikiEntry> = Vec::new();
+    let mut chinese: Vec<(String, usize)> = Vec::new();
 
     let lines: Vec<&str> = WIKI_ENTRIES.lines().collect();
     let body_len = lines.len().saturating_sub(1); // 跳过最后一行 popularity 压缩数据
@@ -45,23 +111,23 @@ fn parse() -> WikiIndex {
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(str::to_string);
+            let (curseforge_slug, modrinth_slug) = split_slugs(slugs);
             let idx = entries.len();
             entries.push(WikiEntry {
                 mcmod_id,
                 chinese_raw,
+                curseforge_slug,
+                modrinth_slug,
             });
-            if let Some(s) = slugs.strip_prefix('@') {
-                // Modrinth only
-                modrinth.insert(s.to_string(), idx);
-            } else if let Some(s) = slugs.strip_suffix('@') {
-                // CurseForge（Modrinth 同名）
-                curseforge.insert(s.to_string(), idx);
-                modrinth.insert(s.to_string(), idx);
-            } else if let Some((cf, mr)) = slugs.split_once('@') {
-                curseforge.insert(cf.to_string(), idx);
-                modrinth.insert(mr.to_string(), idx);
-            } else if !slugs.is_empty() {
-                curseforge.insert(slugs.to_string(), idx);
+            if let Some(s) = entries[idx].curseforge_slug.clone() {
+                curseforge.insert(s, idx);
+            }
+            if let Some(s) = entries[idx].modrinth_slug.clone() {
+                modrinth.insert(s, idx);
+            }
+            // 中文搜索索引：清洗后仍含中文才算译名（与 chinese_name 同一判据）
+            if let Some(clean) = entries[idx].chinese_raw.as_deref().and_then(chinese_name) {
+                chinese.push((clean, idx));
             }
         }
     }
@@ -69,6 +135,7 @@ fn parse() -> WikiIndex {
         curseforge,
         modrinth,
         entries,
+        chinese,
     }
 }
 
@@ -84,6 +151,86 @@ impl WikiIndex {
             &self.curseforge
         };
         map.get(slug).map(|&i| &self.entries[i])
+    }
+
+    /// 中文查询反查：译名子串匹配，前缀命中优先、译名短者优先（更精确）；
+    /// 同一百科条目（mcmod_id）只保留首个命中。零网络，供「用中文搜英文 mod」。
+    pub fn search_chinese(&self, platform: &str, q: &str, limit: usize) -> Vec<ChineseHit> {
+        let q = q.trim();
+        if q.is_empty() || limit == 0 {
+            return Vec::new();
+        }
+        // (前缀命中, 译名字符数, chinese 下标)
+        let mut hits: Vec<(bool, usize, usize)> = self
+            .chinese
+            .iter()
+            .enumerate()
+            .filter_map(|(ci, (name, _))| {
+                let pos = name.find(q)?;
+                Some((pos == 0, name.chars().count(), ci))
+            })
+            .collect();
+        hits.sort_by_key(|(prefix, len, ci)| (!*prefix, *len, *ci));
+
+        let mut out: Vec<ChineseHit> = Vec::new();
+        let mut seen: Vec<u32> = Vec::new();
+        for (_, _, ci) in hits {
+            let (_, idx) = &self.chinese[ci];
+            let entry = &self.entries[*idx];
+            if seen.contains(&entry.mcmod_id) {
+                continue; // 同一百科条目的多平台条目只取一个
+            }
+            seen.push(entry.mcmod_id);
+            out.push(ChineseHit {
+                query: entry.derived_query(platform),
+            });
+            if out.len() >= limit {
+                break;
+            }
+        }
+        out
+    }
+
+    /// 中文查询 → 该平台可用的英文查询词（词频策略）。
+    ///
+    /// 为什么不用「首个命中」：按译名长度排序时，搜「实体」会先命中「实体弹簧」这类
+    /// 短译名，而用户真正要找的「实体渲染机制优化」(Entity Culling) 排在第 11 位——
+    /// 逐候选搜索既漏结果又需多次请求。改为取命中英文名里的**高频词**（如 entity），
+    /// 交给平台按自身热度排序，一次请求即覆盖整类 mod。
+    ///
+    /// 无高频词时退回首个候选的完整英文名；非中文查询或零命中返回 None。
+    pub fn query_for_chinese(&self, platform: &str, q: &str) -> Option<String> {
+        let q = q.trim();
+        if q.is_empty() || !q.chars().any(|c| ('\u{4E00}'..='\u{9FFF}').contains(&c)) {
+            return None;
+        }
+        let queries: Vec<String> = self
+            .search_chinese(platform, q, CHINESE_MATCH_LIMIT)
+            .into_iter()
+            .filter_map(|h| h.query)
+            .collect();
+        let first = queries.first()?.clone();
+
+        // 词频：只统计长度达标且非停用词的英文单词（小写归一后比较）
+        let mut freq: Vec<(String, usize)> = Vec::new();
+        for word in queries.iter().flat_map(|s| s.split_whitespace()) {
+            let w = word
+                .trim_matches(|c: char| !c.is_ascii_alphanumeric())
+                .to_lowercase();
+            if w.len() < MIN_WORD_LEN || QUERY_STOP_WORDS.contains(&w.as_str()) {
+                continue;
+            }
+            match freq.iter_mut().find(|(k, _)| *k == w) {
+                Some((_, n)) => *n += 1,
+                None => freq.push((w, 1)),
+            }
+        }
+        // 高频优先，同频取词长者（更具区分度）
+        freq.sort_by_key(|(w, n)| (std::cmp::Reverse(*n), std::cmp::Reverse(w.len())));
+        match freq.first() {
+            Some((w, n)) if *n >= MIN_WORD_HITS => Some(w.clone()),
+            _ => Some(first),
+        }
     }
 }
 
@@ -154,6 +301,61 @@ mod tests {
             WIKI.lookup("modrinth", "industrial-craft").is_some(),
             "CF 结尾 @ 的条目应同时注册到 Modrinth 索引"
         );
+    }
+
+    /// 中文反查：中文查询应能定位到含该词的条目，并能为 entity-culling 派生英文查询词。
+    /// 回归背景：中文原样发给 Modrinth/CurseForge 只会拿到按热度排的无关结果。
+    #[test]
+    fn search_chinese_maps_to_english_query() {
+        let hits = WIKI.search_chinese("modrinth", "实体", 200);
+        assert!(!hits.is_empty(), "「实体」应至少命中一个条目");
+        let queries: Vec<String> = hits.iter().filter_map(|h| h.query.clone()).collect();
+        assert!(
+            queries
+                .iter()
+                .any(|q| q.eq_ignore_ascii_case("entity culling")),
+            "应能为 entity-culling 派生英文名 Entity Culling（共 {} 项候选）",
+            queries.len()
+        );
+        // 前缀命中优先 + 短译名优先：第一个能派生英文查询词的应是「实体距离」
+        // (Entity Distance)；译名更长的「实体渲染机制优化」(Entity Culling) 需往后靠
+        // （前面几个短译名只有 CurseForge slug，Modrinth 侧派生不出查询词，query 为 None）
+        assert_eq!(
+            hits.iter().find_map(|h| h.query.as_deref()),
+            Some("Entity Distance"),
+            "首个能派生英文查询词的命中应为前缀匹配且译名最短者"
+        );
+    }
+
+    /// 无匹配的中文查询返回空（调用方据此保持原查询直发平台）。
+    #[test]
+    fn search_chinese_returns_empty_when_no_match() {
+        assert!(
+            WIKI.search_chinese("modrinth", "绝不存在的中文译名词", 5)
+                .is_empty(),
+            "未命中应返回空"
+        );
+    }
+
+    /// 中文查询 → 英文查询词（词频策略）。回归背景：搜「实体」时 wiki 命中的
+    /// 「实体渲染机制优化」(Entity Culling) 因译名长而排在「实体弹簧」之后，
+    /// 只取首个候选会漏掉它；改为取命中英文名里的高频词，让平台按自身热度排序。
+    #[test]
+    fn query_for_chinese_prefers_common_word() {
+        let q = WIKI.query_for_chinese("modrinth", "实体");
+        assert_eq!(
+            q.as_deref(),
+            Some("entity"),
+            "「实体」的命中里 entity 是高频词，应作为宽泛查询词"
+        );
+    }
+
+    /// 无高频词时退回首个候选的完整英文名（该场景由下方实现覆盖，另测）。
+    /// 非中文查询不参与反查。
+    #[test]
+    fn query_for_chinese_ignores_ascii() {
+        assert!(WIKI.query_for_chinese("modrinth", "sodium").is_none());
+        assert!(WIKI.query_for_chinese("modrinth", "").is_none());
     }
 
     /// 中文名处理：剥离开头星号/英文后缀；全英文视为无翻译。
