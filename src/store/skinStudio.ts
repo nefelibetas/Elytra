@@ -5,7 +5,7 @@
 import { reactive } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { authMode, externalAccount, msAccount } from "./auth";
+import { authMode, ensureAuthReady, externalAccount, msAccount } from "./auth";
 import { DEFAULT_VIEW_PITCH, DEFAULT_VIEW_YAW, renderPremiumAvatar, renderSkinFull3D } from "./avatar";
 import { showError } from "./alert";
 import { showToast } from "../utils/toast";
@@ -168,6 +168,9 @@ export const skinStudio = reactive({
   async loadOfficial() {
     this.officialLoading = true;
     this.officialError = "";
+    // 账号列表是异步 IPC：未就绪就判定来源会把正版 / 第三方账号当成离线，
+    // 先渲染出一张带「默认」角标的 Steve 实时卡（随后才被真实皮肤替换）。
+    await ensureAuthReady();
     const acc = msAccount.value;
     const ext = externalAccount.value;
     try {

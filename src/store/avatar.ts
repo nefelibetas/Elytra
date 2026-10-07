@@ -75,13 +75,29 @@ function mulberry32(seed: number) {
   };
 }
 
+/** 已解码纹理缓存：同一 base64 反复渲染时不再重复解码（缩略图 → 大预览 → 拖动换视角都复用同一 img 实例，
+ *  顺带让按图缓存的面切片（faceCache）命中）。按插入顺序淘汰最旧的；失败不留缓存，便于重试。 */
+const IMAGE_CACHE_MAX = 24;
+const imageCache = new Map<string, Promise<HTMLImageElement>>();
+
 function loadImage(src: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
+  const hit = imageCache.get(src);
+  if (hit) return hit;
+  const pending = new Promise<HTMLImageElement>((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error("image load failed"));
+    img.onerror = () => {
+      imageCache.delete(src); // 失败不入缓存：下次调用可重试
+      reject(new Error("image load failed"));
+    };
     img.src = src;
   });
+  imageCache.set(src, pending);
+  if (imageCache.size > IMAGE_CACHE_MAX) {
+    const oldest = imageCache.keys().next().value;
+    if (oldest !== undefined) imageCache.delete(oldest);
+  }
+  return pending;
 }
 
 /** 离线头像：按用户名哈希确定性渲染 Steve/Alex 默认皮肤（与游戏内一致），失败回退像素脸。 */
@@ -540,21 +556,22 @@ export const DEFAULT_VIEW_PITCH = 15;
 
 /** 动画帧缓存上限（超出按插入顺序淘汰最旧）。 */
 const SKIN_THUMB_CACHE_MAX = 64;
-/** 衣柜 3D 缩略图缓存：key = `S|slim|披风|皮肤base64` → dataURL。
+/** 衣柜 3D 缩略图缓存：key = `S|slim|皮肤base64` → dataURL。
  *  衣柜网格一屏十几张卡，按需重渲会卡；贴图 base64 不变即同一张图，可直接复用。 */
 const skinThumbCache = new Map<string, string>();
 
 /** 衣柜卡片的 3D 缩略图：与左侧预览同一视角（[DEFAULT_VIEW_YAW]/[DEFAULT_VIEW_PITCH]，
  *  3/4 正面 + 微俯 → 看得到脸与一点头顶），固定 ppv=3（60×102）。
- *  传 `capeB64` 时连同披风一起渲染（与预览同一套渲染参数；正面看不到披风，转到侧面才有）。
- *  结果按「皮肤 base64 + 模型 + 披风 base64」模块级缓存，列表滚动 / 重进页面不重渲；
+ *  **不渲染披风**：卡面上披风几乎不可辨（正面视角被身体挡住），披风信息由大预览承担；
+ *  披风贴图是异步到达的，若参与渲染，首批缩略图会在披风列表到达后全部作废重渲（整屏双倍开销）。
+ *  结果按「皮肤 base64 + 模型」模块级缓存，列表滚动 / 重进页面不重渲；
  *  渲染失败由调用方回落到平面皮肤图。 */
-export async function renderSkinThumb3D(b64: string, slim = false, capeB64?: string): Promise<string> {
+export async function renderSkinThumb3D(b64: string, slim = false): Promise<string> {
   if (!b64) return "";
-  const key = `S|${slim ? 1 : 0}|${capeB64 || ""}|${b64}`;
+  const key = `S|${slim ? 1 : 0}|${b64}`;
   const hit = skinThumbCache.get(key);
   if (hit !== undefined) return hit;
-  const url = await renderSkinFull3D(b64, slim, DEFAULT_VIEW_YAW, DEFAULT_VIEW_PITCH, 3, capeB64);
+  const url = await renderSkinFull3D(b64, slim, DEFAULT_VIEW_YAW, DEFAULT_VIEW_PITCH, 3);
   if (skinThumbCache.size >= SKIN_THUMB_CACHE_MAX) {
     const oldest = skinThumbCache.keys().next().value;
     if (oldest !== undefined) skinThumbCache.delete(oldest);

@@ -43,9 +43,11 @@ function capeThumb(b64: string) {
   };
 }
 
-/** 卡片 3D 缩略图缓存键 = 皮肤贴图 + 模型 + 披风贴图：三者相同即同一张图，无需失效逻辑。 */
-function thumbKey(b64: string, slim: boolean, cape: string) {
-  return `${slim ? 1 : 0}|${cape}|${b64}`;
+/** 卡片 3D 缩略图缓存键 = 皮肤贴图 + 模型：两者相同即同一张图，无需失效逻辑。
+ *  **不含披风**：缩略图不渲染披风（见 thumbReqs），披风贴图又是异步到达的——
+ *  一旦计入键，首批缩略图会在披风列表到达后全部作废重渲（整屏双倍开销）。 */
+function thumbKey(b64: string, slim: boolean) {
+  return `${slim ? 1 : 0}|${b64}`;
 }
 
 /** 卡片 3D 缩略图（键见 thumbKey）→ dataURL；未就绪 / 渲染失败留空串（回落平面图）。 */
@@ -67,35 +69,32 @@ const localEntries = computed<LocalSkin[]>(() => {
   return out;
 });
 
-/** 卡片缩略图用的披风贴图：账号当前启用（active）的披风——缩略图与左侧大预览用同一套渲染
- *  参数（同角度、同披风），拖动预览时两处表现一致。 */
-const activeCape = computed(() => skinStudio.capes.find((c) => c.active)?.texture ?? "");
-
-/** 待渲染的皮肤（官方当前 + 本地条目，须有贴图）——卡片增减 / 换账号 / 换披风时补齐。 */
+/** 待渲染的皮肤（官方当前 + 本地条目，须有贴图）——卡片增减 / 换账号时补齐。
+ *  **不渲染披风**：60×102 的卡面上披风几乎不可辨（正面视角还被身体挡住），
+ *  信息由左侧大预览（可拖动旋转）承担；且披风贴图异步到达，若参与渲染会让整屏缩略图重渲一次。 */
 const thumbReqs = computed(() => {
-  const cape = activeCape.value;
-  const reqs: { key: string; b64: string; slim: boolean; cape: string }[] = [];
+  const reqs: { key: string; b64: string; slim: boolean }[] = [];
   const official = skinStudio.officialSkin;
   const officialSlim = skinStudio.officialModel.toLowerCase() === "slim";
   if (official) {
-    reqs.push({ key: thumbKey(official, officialSlim, cape), b64: official, slim: officialSlim, cape });
+    reqs.push({ key: thumbKey(official, officialSlim), b64: official, slim: officialSlim });
   }
   for (const s of localEntries.value) {
     if (!s.skin) continue;
     const slim = s.variant === "SLIM";
-    reqs.push({ key: thumbKey(s.skin, slim, cape), b64: s.skin, slim, cape });
+    reqs.push({ key: thumbKey(s.skin, slim), b64: s.skin, slim });
   }
   return reqs;
 });
 
-// 渲染器内部同样按「贴图 + 模型 + 披风」缓存，这里再记一层结果：tab 往返 / 重复皮肤都不重渲。
+// 渲染器内部同样按「贴图 + 模型」缓存，这里再记一层结果：tab 往返 / 重复皮肤都不重渲。
 watch(
   thumbReqs,
   (reqs) => {
     for (const r of reqs) {
       if (thumbs[r.key] !== undefined) continue; // 已就绪（含失败标记）
       thumbs[r.key] = ""; // 占位：同一张贴图只提交一次渲染
-      void renderSkinThumb3D(r.b64, r.slim, r.cape || undefined)
+      void renderSkinThumb3D(r.b64, r.slim)
         .then((url) => {
           thumbs[r.key] = url;
         })
@@ -123,7 +122,6 @@ interface SkinCard {
 
 const skinCards = computed<SkinCard[]>(() => {
   const cards: SkinCard[] = [];
-  const cape = activeCape.value;
   const official = skinStudio.officialSkin;
   const officialSlim = skinStudio.officialModel.toLowerCase() === "slim";
   // 无实时皮肤（未登录且内置默认皮肤也没取到）时不占一张空卡：否则空态与空卡并存，自相矛盾
@@ -131,7 +129,7 @@ const skinCards = computed<SkinCard[]>(() => {
     cards.push({
       key: "official",
       skin: official,
-      thumb: thumbs[thumbKey(official, officialSlim, cape)] || "",
+      thumb: thumbs[thumbKey(official, officialSlim)] || "",
       // 来源（Mojang / 站点名 / 默认）只做右上角标：早期放在名称行会被误读成皮肤名
       source: officialLabel.value,
       variant: officialSlim ? "SLIM" : "CLASSIC",
@@ -144,7 +142,7 @@ const skinCards = computed<SkinCard[]>(() => {
     cards.push({
       key: s.id,
       skin: s.skin,
-      thumb: s.skin ? thumbs[thumbKey(s.skin, slim, cape)] || "" : "",
+      thumb: s.skin ? thumbs[thumbKey(s.skin, slim)] || "" : "",
       // 本地条目（自动缓存与上传）不标来源：文件名 / 站点名在 hover 提示里给出即可
       source: "",
       variant: s.variant,
