@@ -48,6 +48,9 @@ export interface CustomTheme {
   name: string;
   /** 副标题（卡片/编辑器展示；旧数据可能缺失） */
   desc?: string;
+  /** 基于哪个内置主题新建（仅内置来源写入；旧数据缺失 → 运行时按主色反查兼容）。
+   *  品牌衍生物据此直接取该内置主题的 CSS 计算值（见 deriveBrandVars）。 */
+  basedOn?: ThemeId;
   vars: CustomThemeVars;
 }
 
@@ -136,6 +139,8 @@ function loadCustoms(): Record<string, CustomTheme> {
       if (required.every((k) => typeof t.vars[k] === "string")) {
         // 旧数据无 desc：补默认
         if (typeof t.desc !== "string") t.desc = "自定义配色";
+        // 旧数据无 basedOn（运行时按主色反查兼容）；非内置来源的残留值丢弃
+        if (t.basedOn !== undefined && !THEMES.some((b) => b.id === t.basedOn)) delete t.basedOn;
         out[id] = t;
       }
     }
@@ -152,8 +157,11 @@ function saveCustoms() {
 /** 新建自定义主题：从指定主题复制初始色板（内置或现有自定义，默认从当前主题）。
  *  返回新主题；不自动切换（由外部决定是否激活）。 */
 export function createCustomTheme(from: ThemeId = themeId.value): CustomTheme {
-  const base = THEMES.some((t) => t.id === from)
-    ? builtinVars(from)
+  // 来源是否为内置主题：决定 vars 起点 + 是否记录 basedOn
+  // （vars 仅含 8 个可编辑/隐藏变量，品牌衍生物在 applyCustomThemeStyle 时注入，不入库）
+  const fromBuiltin: ThemeId | null = THEMES.some((t) => t.id === from) ? from : null;
+  const base = fromBuiltin
+    ? builtinVars(fromBuiltin)
     : (customThemes.value[from]?.vars ?? builtinVars("grass"));
   // 唯一 id
   let n = Object.keys(customThemes.value).length + 1;
@@ -166,6 +174,8 @@ export function createCustomTheme(from: ThemeId = themeId.value): CustomTheme {
     id,
     name: `自定义 ${n}`,
     desc: "自定义配色",
+    // 仅内置来源记录 basedOn；自定义来源不写（后续按主色反查兼容）
+    ...(fromBuiltin ? { basedOn: fromBuiltin } : {}),
     vars: { ...base },
   };
   customThemes.value = { ...customThemes.value, [id]: t };
@@ -204,9 +214,65 @@ export function isCustom(id: string): boolean {
 
 // ── 主题应用与持久化 ──
 
+/** 品牌衍生变量键（面板不可编辑：随品牌主色派生，或取自内置主题的 CSS 值）。 */
+const BRAND_DERIVED_KEYS = [
+  "--color-brand-dark",
+  "--color-brand-hover",
+  "--color-brand-bg",
+  "--color-brand-glow",
+  "--color-brand-gradient",
+] as const;
+
+/** 读取某内置主题的 5 个品牌衍生变量：唯一事实源是 src/App.vue 的 CSS，
+ *  故用 getComputedStyle 取计算值，不在 JS 里另列一份色值表。
+ *  做法：把 <html data-theme> 临时切到该主题读值，随后同步还原原值——
+ *  同一 JS 执行帧内浏览器不会重绘，故期间不会出现视觉闪烁（无需异步还原）。
+ *  非浏览器环境或任一变量缺失（读不到值）→ null，调用方回退派生算法。 */
+function readBuiltinDerived(id: ThemeId): Record<string, string> | null {
+  if (typeof document === "undefined") return null;
+  const root = document.documentElement;
+  const prev = root.dataset.theme;
+  const out: Record<string, string> = {};
+  try {
+    root.dataset.theme = id;
+    const cs = getComputedStyle(root);
+    for (const k of BRAND_DERIVED_KEYS) {
+      const v = cs.getPropertyValue(k).trim();
+      if (!v) return null;
+      out[k] = v;
+    }
+  } finally {
+    // 无论读值成功与否都还原（prev 为 undefined = 原本无 data-theme 属性）
+    if (prev === undefined) delete root.dataset.theme;
+    else root.dataset.theme = prev;
+  }
+  return out;
+}
+
+/** 解析品牌衍生值的来源内置主题，两级匹配：
+ *  1) 显式来源主题 CustomTheme.basedOn 为内置主题 id；
+ *  2) 反查：品牌主色与某内置主题的 --color-brand 相等（大小写不敏感），
+ *     值取自 builtinVars（JS 侧起点表，与 CSS 同步），用于旧数据（无 basedOn）兼容。
+ *  两级都要求当前主色仍与内置主色一致——用户改过主色即返回 null → 回退派生算法。 */
+function resolveBuiltinSource(brand: string, fromTheme?: string): ThemeId | null {
+  const target = brand.trim().toLowerCase();
+  const candidate =
+    (fromTheme ? THEMES.find((t) => t.id === fromTheme)?.id : undefined) ??
+    THEMES.find((t) => builtinVars(t.id)["--color-brand"].toLowerCase() === target)?.id ??
+    null;
+  return candidate && builtinVars(candidate)["--color-brand"].toLowerCase() === target ? candidate : null;
+}
+
 /** 品牌主色 → 品牌衍生物变量（dark/hover/bg/glow/gradient）。
- *  面板只编辑品牌主色，其余自动派生，保证配色协调。 */
-function deriveBrandVars(brand: string): Record<string, string> {
+ *  面板只编辑品牌主色，其余自动派生，保证配色协调。
+ *  来源主题命中内置（且主色未改）时，直接取该内置主题的 CSS 计算值，
+ *  使「基于内置主题新建」的自定义外观与内置主题完全一致；否则走下方算法派生。 */
+function deriveBrandVars(brand: string, fromTheme?: string): Record<string, string> {
+  const builtin = resolveBuiltinSource(brand, fromTheme);
+  if (builtin) {
+    const fromCss = readBuiltinDerived(builtin);
+    if (fromCss) return fromCss;
+  }
   // 解析 hex 做 darken + 透明度（bg/glow 固定透明度）
   const hex = brand.replace("#", "");
   if (!/^[0-9a-fA-F]{6}$/.test(hex)) {
@@ -240,7 +306,7 @@ function deriveBrandVars(brand: string): Record<string, string> {
 export function applyCustomThemeStyle(id: string) {
   const t = customThemes.value[id];
   if (!t) return;
-  const derived = deriveBrandVars(t.vars["--color-brand"]);
+  const derived = deriveBrandVars(t.vars["--color-brand"], t.basedOn);
   const lines = [
     ...Object.entries(t.vars).map(([k, v]) => `  ${k}: ${v};`),
     // 品牌衍生物（面板不直接编辑，自动派生注入）
