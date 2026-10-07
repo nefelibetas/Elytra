@@ -717,3 +717,15 @@ pub struct InstallCtx<'a> {
 | 2.9 超大文件 | 13 个 | **仍在** —— >600 行 18 个；Rust 侧仅 `util.rs`(669) 确需按职责拆分，其余（`task/modpack.rs` 1273 等）内部分区清晰 |
 | 2.10 一致性缺陷 | 13 子项 | **多数仍在** —— 16 个 `unsafe` 块 0 条 `// SAFETY:`；`task/emit.rs:70-100 update_and_emit` 在 async 上下文用 `std::thread::sleep(5ms)` 自旋占死 tokio worker；动态 section（`version_server_{name}`）无 `is_simple_name` 校验；测试内无谓 `unsafe`（`room.rs`）；`args.rs::push_unique` 注释误抄；`server_status.rs` 位于 crate 根；前端三套等宽字体栈、主字体栈偏离、聚合 total 语义、`launchOptions.ts` 的 `as any`、模块缓存无上限。**误报 2 项**：`PersistError::NotFound` 实有构造点（该行应删）、`events` 注释漂移已修。**另**：`list_mods_detailed` 并非死命令（`store/versionDetail.ts` 在用） |
 | 3 文档漂移 | 3 项 | **已修** |
+
+---
+
+### 阶段 10：P1 修复（2026-10-07）—— 已完成
+
+| 项 | 修法 | 验证 |
+|---|---|---|
+| 16 个 `unsafe` 块无 `// SAFETY:` 注释 | 逐块补具**具体理由**的注释（不变量 / 指针有效范围 / 缓冲区长度与指针的对应 / 句柄来源与释放次数），覆盖 `launcher/memory.rs`×2、`launcher/platform.rs`×4、`launcher/process.rs`×2（含 `unsafe extern fn` 定义）、`persist/secrets.rs`×6（DPAPI 加解密各 3）、`util.rs`×2（SetStdHandle / dup2）、`online/scaffold/room.rs`×1（测试）；并在 `lib.rs` 首行加 `#![deny(clippy::undocumented_unsafe_blocks)]` 门禁 | `cargo clippy --all-targets` 零警告；**门禁实测生效**（临时删一条注释即报 `unsafe block missing a safety comment` 并编译失败） |
+| `commands/account.rs:247` 的 `ensure_jar()` 失败仅 `eprintln!` | **复核后问题定位修正**：登录侧静默本身有兜底（`launcher/process.rs` 启动前检查 jar 存在并给出明确报错与指引），真正值得改的是「别为一个组件文件让用户重走登录流程」。改为 `prepare_launch` **async 化**，jar 缺失时先自动补齐（官方 → BMCLAPI 双源，`ensure_jar` 已存在时零开销返回），仍失败才报错并带上底层原因 | `cargo check --all-targets` + clippy 零警告；新签名在 2 个调用点（`commands/launch.rs::spawn_game`、`commands/launch_script.rs::export_launch_script`，均 async）编译通过 |
+| `task/emit.rs::update_and_emit` 的 async 内 `std::thread::sleep(5ms)` 自旋 | 去掉轮询循环：`try_lock` 优先（正常短临界区无变化），失败才退化为 `parking_lot` 阻塞 `lock()` —— 锁释放即唤醒，既不再占死 tokio worker 轮询，也去掉了最多 5ms 的人为延迟；一次性诊断告警保留 | 编译 + `cargo test --lib` 通过 |
+
+影响面说明：`update_and_emit` 有 19 个调用点，全部为同步 `set_*` 系列函数，因此**不能**改为 async（会向上扩散成百处）；阻塞 `lock()` 是本场景的正确选择——临界区只做字段更新 + `clone`，无 IO 无 `await`，不会长等。

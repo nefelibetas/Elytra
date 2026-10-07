@@ -403,6 +403,8 @@ mod dpapi {
             cb_data: 0,
             pb_data: ptr::null_mut(),
         };
+        // SAFETY: in_blob 的 pb_data/cb_data 由 data 切片及其长度构造且 DPAPI 只读输入；
+        // out_blob 是本栈帧可写变量，CryptProtectData 成功后由其填充，返回值已检查。
         let ok = unsafe {
             CryptProtectData(
                 &in_blob,
@@ -417,9 +419,11 @@ mod dpapi {
         if ok == 0 {
             return Err("CryptProtectData 失败".into());
         }
+        // SAFETY: ok != 0 表示调用成功，out_blob.pb_data 指向 LocalAlloc 分配、长度恰为 cb_data 的有效缓冲。
         let out = unsafe {
             std::slice::from_raw_parts(out_blob.pb_data, out_blob.cb_data as usize).to_vec()
         };
+        // SAFETY: out_blob.pb_data 是上一步输出的 LocalAlloc 内存句柄，此前未释放，此处释放且仅释放一次。
         unsafe {
             LocalFree(out_blob.pb_data as *mut c_void);
         }
@@ -435,6 +439,8 @@ mod dpapi {
             cb_data: 0,
             pb_data: ptr::null_mut(),
         };
+        // SAFETY: in_blob 的 pb_data/cb_data 由 data 切片及其长度构造且 DPAPI 只读输入；
+        // out_blob 是本栈帧可写变量，CryptUnprotectData 成功后由其填充，返回值已检查。
         let ok = unsafe {
             CryptUnprotectData(
                 &in_blob,
@@ -449,9 +455,11 @@ mod dpapi {
         if ok == 0 {
             return Err("CryptUnprotectData 失败（凭据不可解密，可能已换 Windows 用户）".into());
         }
+        // SAFETY: ok != 0 表示调用成功，out_blob.pb_data 指向 LocalAlloc 分配、长度恰为 cb_data 的有效缓冲。
         let out = unsafe {
             std::slice::from_raw_parts(out_blob.pb_data, out_blob.cb_data as usize).to_vec()
         };
+        // SAFETY: out_blob.pb_data 是上一步输出的 LocalAlloc 内存句柄，此前未释放，此处释放且仅释放一次。
         unsafe {
             LocalFree(out_blob.pb_data as *mut c_void);
         }

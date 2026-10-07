@@ -59,7 +59,8 @@ pub async fn spawn_game(
             &access_token,
             &uuid,
             &xuid,
-        )?;
+        )
+        .await?;
 
     // 离线皮肤（PCL 机制）：固定随机（用户名哈希决定 Steve/Alex），UUID 匹配模型
     skin::apply_offline_skin(&mut auth);
