@@ -315,6 +315,7 @@ input, textarea {
   --ld-forge: #DC2626;
   --ld-neoforge: #16A34A;
   --ld-quilt: #7C3AED;
+  --ld-optifine: #0284C7;
 
   /* 平台品牌徽章色（Modrinth / CurseForge，平台官方色，不随主题变化） */
   --color-modrinth: #1bd96a;
@@ -376,6 +377,7 @@ input, textarea {
   --ld-forge: #E11D48;
   --ld-neoforge: #059669;
   --ld-quilt: #A855F7;
+  --ld-optifine: #0891B2;
 }
 
 /* ===== 主题 Nether（下界橙/烈焰）：取自 Minecraft 下界 =====
@@ -412,6 +414,7 @@ input, textarea {
   --ld-forge: #DC2626;
   --ld-neoforge: #65A30D;
   --ld-quilt: #C026D3;
+  --ld-optifine: #0369A1;
 }
 
 /* ===== 主题 Ice（冰霜青）：取自 Minecraft 冰霜/钻石 =====
@@ -448,6 +451,7 @@ input, textarea {
   --ld-forge: #F43F5E;
   --ld-neoforge: #10B981;
   --ld-quilt: #8B5CF6;
+  --ld-optifine: #1D4ED8;
 }
 
 * {

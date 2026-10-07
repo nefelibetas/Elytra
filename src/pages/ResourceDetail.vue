@@ -751,6 +751,9 @@ async function copyName() {
 .md-ld-quilt {
   color: var(--ld-quilt);
 }
+.md-ld-optifine {
+  color: var(--ld-optifine);
+}
 
 /* 徽章底色：color-mix 需要 WebKitGTK ≥ 2.42（Ubuntu 22.04 的 2.40 不支持）。
  * 不支持的平台（低版本 Linux WebView）降级为纯文字色徽章，避免整条声明失效丢色。 */
@@ -766,6 +769,9 @@ async function copyName() {
   }
   .md-ld-quilt {
     background: color-mix(in srgb, var(--ld-quilt) 12%, transparent);
+  }
+  .md-ld-optifine {
+    background: color-mix(in srgb, var(--ld-optifine) 12%, transparent);
   }
 }
 
