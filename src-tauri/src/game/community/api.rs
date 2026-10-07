@@ -83,6 +83,9 @@ pub struct CommunityDependencyItem {
 /// 社区资源搜索条件（统一入参：前端表单 + 分页）。
 /// 命令层直接收该结构体（前端 invoke 传命名对象，字段 camelCase），
 /// 领域层解包分派给两平台实现。
+/// 例外说明：本结构体刻意 `rename_all = "camelCase"`，与全仓「字段全 snake_case」相反——
+/// 它是 Tauri 命令 `search_community` 的入参，字段名即前端 invoke 传入 JS 对象的键
+/// （前端固定写 `gameVersion` / `pageSize`），改回 snake_case 会破坏 IPC 契约，故保留。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchQuery {

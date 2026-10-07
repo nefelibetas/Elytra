@@ -113,7 +113,7 @@ export async function loadLaunchOptions() {
     loServer.value = cfg.server ?? "";
     loPort.value = cfg.port != null ? String(cfg.port) : "";
     loMemMode.value = cfg.memory === "Auto" ? "Auto" : "Custom";
-    if (cfg.memory !== "Auto") loMemMb.value = (cfg.memory as any).Custom ?? 4096;
+    if (cfg.memory !== "Auto") loMemMb.value = cfg.memory.Custom ?? 4096;
     loMinMem.value = cfg.min_memory ?? null;
     loMemOptimize.value = !!cfg.pre_launch_memory_optimize;
     // 内存快照由全局监听提供；首帧未就绪时补拉一次

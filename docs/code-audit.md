@@ -229,12 +229,10 @@ Rust：`task/modpack.rs` 1267 行、`jdk/download.rs` 1096、`downloader/modpack
 | `update_and_emit` 自旋 | `task/mod.rs:455-470` | async 上下文里 `std::thread::sleep(5ms)` 自旋 `try_lock`，占死 tokio worker |
 | 动态 section 无校验 | `commands/version.rs:216,231` | 用户可控版本名成为 TOML 顶层 key（`version_server_{name}`），无界增长且未做 `is_simple_name` 校验，偏离 `SECT_*` 常量约定 |
 | 死命令 | `commands/version.rs:157 list_mods_detailed` | 已注册但前端无调用 |
-| 死变体 | `persist/mod.rs:13 PersistError::NotFound` | 全仓无构造点（未逐点复验） |
 | unsafe 无 SAFETY | `util.rs:576`、`launcher/memory.rs:63,139`、`launcher/platform.rs:90,135,174,195`、`launcher/process.rs:147`、`persist/secrets.rs:395-446` | 全部缺 `// SAFETY:` 说明 |
 | 测试内无谓 unsafe | `online/scaffold/room.rs:180` | `as_bytes_mut()` 改写 String，可用重建字符串消除 |
 | 等宽字体栈三套 | tools 系 / 日志系（`SettingsLog.vue:93`、`VersionSetupLogs.vue:133`）/ `CustomThemeEditor.vue:883,895` | 缺 `--font-mono` token |
 | 主字体栈偏离规定 | `App.vue:235` | 以 `Inter, "Segoe UI", "Microsoft YaHei UI"` 起头；Inter 未 `@font-face` 引入（不生效）；AGENTS 规定链未遵守 |
-| events 注释漂移 | `events.rs:9` vs `store/events.ts:13`、`launch.ts:220` | GAME_EXITED 实际是 4 元组（pid/label/exitCode/crashReport）；ONLINE_STATE 注释缺 `players` |
 | doc 误抄 | `launcher/args.rs:576` | `push_unique` 的注释照抄 `has_old_style_natives` |
 | 模块划分 | `server_status.rs` 在 crate 根 | 同类域均用目录（`downloader/`、`jdk/`、`online/`） |
 | 聚合 total 语义 | `communitySearch.ts:169,249-252` | `Math.max(mr.total, cf.total)` 与分页换算口径不一致 |
@@ -767,6 +765,19 @@ pub struct InstallCtx<'a> {
 | 前端缓存无上限 | `versionDownload` / `versionIcon` / `versionDetail` 的模块级缓存加容量上限 |
 | 主题变量双事实源 | `App.vue` 四套 `[data-theme]` vs `store/theme.ts::builtinVars()`：先逐键对比再决定处置（消除重复会引入首屏 FOUC 或构建期代码生成，代价大于收益） |
 
-**尚未处理的小尾巴**（台账遗留，待收）：主字体栈偏离 AGENTS 规定（`App.vue` 以 `Inter` 起头且未 `@font-face`）、
-聚合 total 语义（`communitySearch.ts` 的 `Math.max` 与分页换算口径）、`SearchQuery` 隐式 camelCase 缺注释、
-`store/launchOptions.ts` 的 `as any`、以及本台账 2.10 里 `PersistError::NotFound` 那条误报行。
+---
+
+### 阶段 13：遗留小尾巴（2026-10-07）—— 已完成
+
+| 项 | 处置 |
+|---|---|
+| 主字体栈偏离 AGENTS 规定 | `App.vue` 的 `Inter, "Segoe UI", "Microsoft YaHei UI", …` → 规定链 `"Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "Noto Sans SC", sans-serif`（全仓无 `@font-face`，`Inter` 实际从不生效） |
+| 聚合 total 语义 | **不改数值**：两源 `total` 分别是平台精确命中数，跨源去重后的并集总数离线不可求（`Math.max` 是下限，且恰好与可翻页数 `ceil(max/15)` 一致）。改为语义化命名 `maxKnownTotal` + JSDoc 写明「已知总量下限 / 不可求并 / 不要改成 sum（去重会重复计数）」；UI 在聚合模式下显示「至少 N 个结果」 |
+| `SearchQuery` 的 camelCase | 查清后确认是 `search_community` 的**前端 IPC 契约**（前端固定传 camelCase），故保留字段名，只补例外说明注释 |
+| `store/launchOptions.ts` 的 `as any` | 上一行 `cfg.memory !== "Auto"` 已收窄联合类型，`as any` 纯属多余 → 直接去掉（全仓 `as any` 归零） |
+| 本台账 2.10 的两条误报行 | 删除（`PersistError::NotFound` 实有构造点；`events` 注释漂移已修） |
+
+**尚未处理**：`CustomThemeEditor` 的 `--border-default` 标签在模板里没有可点部位（死数据，改动前既有；修它需动 UI 结构）。
+
+**阶段 13 收口验证**：`cargo clippy --all-targets` 零警告、`cargo test --lib` 244 passed、
+`npx vue-tsc --noEmit` 0 错误、`pnpm build` 成功。

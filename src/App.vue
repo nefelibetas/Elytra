@@ -245,7 +245,7 @@ input, textarea {
   --range-pct: 0%;
   /* 等宽字体栈：生成器命令块 / MOTD 预览等代码等宽文本使用 */
   --font-mono: "Cascadia Mono", Consolas, "Courier New", monospace;
-  font-family: Inter, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "Noto Sans SC", sans-serif;
+  font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "Noto Sans SC", sans-serif;
   font-size: 14px;
   line-height: 1.5;
   font-weight: 400;
