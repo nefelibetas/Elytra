@@ -44,6 +44,13 @@ async function copyWaitingError() {
   }
 }
 
+/** 目标是否处于可编辑上下文（输入框 / 文本域 / contenteditable）。 */
+function isEditableTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el || typeof el.tagName !== "string") return false;
+  return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable;
+}
+
 function onKeyDown(e: KeyboardEvent) {
   // 禁止打开开发者工具：F12 / Ctrl+Shift+I/J/C / Ctrl+U
   if (
@@ -59,12 +66,21 @@ function onKeyDown(e: KeyboardEvent) {
     e.preventDefault();
     return;
   }
+  // 输入框/文本域内放行原生编辑快捷键（全选/复制/剪切/粘贴/撤销/重做）：
+  // 这些都是元素自身的编辑行为，全局拦截会连带废掉输入框里的 Ctrl+A 等
+  if (
+    isEditableTarget(e.target) &&
+    e.ctrlKey &&
+    ["A", "C", "X", "V", "Z", "Y"].includes(e.key.toUpperCase())
+  ) {
+    return;
+  }
   // 禁止 Tab 切换控件焦点
   if (e.key === "Tab") {
     e.preventDefault();
     return;
   }
-  // 禁止全选（Ctrl+A）
+  // 禁止全选（Ctrl+A；输入上下文已在上面放行）
   if (e.ctrlKey && e.key.toLowerCase() === "a") {
     e.preventDefault();
     return;
