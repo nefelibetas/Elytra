@@ -1,5 +1,5 @@
 // 账号管理 UI store：编辑信息菜单（修改密码/修改玩家名）+ 账号列表/离线历史菜单。
-// 皮肤与披风功能已内移到 store/skinStudio（皮肤衣柜页）。
+// 皮肤与披风功能已内移到 store/skinStudio（衣柜页）。
 // 依赖 tauri opener 插件（菜单项跳官网）。
 import { nextTick, reactive } from "vue";
 import { openUrl } from "@tauri-apps/plugin-opener";

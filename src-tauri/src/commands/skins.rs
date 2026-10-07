@@ -9,14 +9,16 @@ pub fn list_local_skins() -> Vec<LocalSkinView> {
     skins::list_views()
 }
 
-/// 保存皮肤到本地衣柜（b64 = PNG 原文 base64；variant = CLASSIC | SLIM）。
+/// 保存皮肤到本地衣柜（b64 = PNG 原文 base64；variant = CLASSIC | SLIM；
+/// source = microsoft / 站点名 / upload，空值后端回落 upload）。
 #[tauri::command]
 pub fn save_local_skin(
     name: String,
     b64: String,
     variant: String,
+    source: String,
 ) -> Result<LocalSkinView, String> {
-    skins::save(&name, &b64, &variant)
+    skins::save(&name, &b64, &variant, &source)
 }
 
 /// 保存用户选中的本地 PNG 文件到衣柜（前端经 dialog 只拿到路径，WebView 无 fs 插件读不了字节）。
@@ -25,8 +27,9 @@ pub fn save_local_skin_file(
     name: String,
     file_path: String,
     variant: String,
+    source: String,
 ) -> Result<LocalSkinView, String> {
-    skins::save_path(&name, &file_path, &variant)
+    skins::save_path(&name, &file_path, &variant, &source)
 }
 
 /// 移除本地皮肤（幂等：id 不存在 / 文件已删均成功），返回删除后的列表。

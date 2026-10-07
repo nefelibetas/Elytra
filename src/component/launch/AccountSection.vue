@@ -61,7 +61,7 @@ function goThirdPartyLogin() {
   settingsTab.value = "thirdparty";
   void router.push("/settings");
 }
-/** 点皮肤头像 → 皮肤衣柜（3D 预览 + 皮肤/披风管理）。 */
+/** 点皮肤头像 → 衣柜（3D 预览 + 皮肤/披风管理）。 */
 function openSkinStudio() {
   accountUi.closeMenus();
   void router.push("/skin-studio");
@@ -260,7 +260,7 @@ function useOfflineName(name: string) {
         @mouseleave="onExtLeave"
       >
         <div class="user-main">
-          <div class="avatar clickable" v-tooltip="'皮肤衣柜'" @click="openSkinStudio">
+          <div class="avatar clickable" v-tooltip="'衣柜'" @click="openSkinStudio">
             <img
               v-if="avatarUrl && !avatarState.avatarError"
               :src="avatarUrl"
@@ -756,7 +756,7 @@ function useOfflineName(name: string) {
   height: 100%;
 }
 
-/* 头像即皮肤衣柜入口：hover 品牌色描边提示可点（z-index 盖过 .user-area::before 热区） */
+/* 头像即衣柜入口：hover 品牌色描边提示可点（z-index 盖过 .user-area::before 热区） */
 .avatar.clickable {
   z-index: 1;
   cursor: pointer;

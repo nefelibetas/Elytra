@@ -26,6 +26,9 @@ pub const VARIANT_CLASSIC: &str = "CLASSIC";
 /// 皮肤模型：纤细（Alex）。
 pub const VARIANT_SLIM: &str = "SLIM";
 
+/// 来源：手动上传的本地文件（前端 pickSkinFile）。也是旧索引（无 source 字段）的默认值。
+pub const SOURCE_UPLOAD: &str = "upload";
+
 /// 收藏的本地皮肤（persist 索引条目；PNG 原文在 `skins/<id>.png`）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LocalSkin {
@@ -36,6 +39,11 @@ pub struct LocalSkin {
     pub variant: String,
     /// 添加时间（Unix 秒）
     pub added_at: u64,
+    /// 来源标识：`microsoft`（正版当前皮肤自动缓存）/ 站点名如 `LittleSkin`（第三方当前皮肤）
+    /// / `upload`（手动上传）。前端按来源分别缓存，互不覆盖。
+    /// 旧数据无此字段 → 默认 `upload`（`#[serde(default)]`，读旧索引不炸）。
+    #[serde(default = "default_source")]
+    pub source: String,
 }
 
 /// 本地皮肤索引（persist section `local_skins`）。
@@ -53,6 +61,8 @@ pub struct LocalSkinView {
     pub name: String,
     pub variant: String,
     pub added_at: u64,
+    /// 来源标识（见 [`LocalSkin::source`]）：`upload` 的条目前端不展示名称
+    pub source: String,
     /// 衣柜内 PNG 绝对路径（前端可直接交给 `upload_skin_file` 应用）
     pub path: String,
     /// PNG base64（前端 3D 预览）；文件缺失时为空串
@@ -88,16 +98,21 @@ pub fn list_views() -> Vec<LocalSkinView> {
     list().into_iter().map(to_view).collect()
 }
 
-/// 保存皮肤到衣柜（PNG base64）。
-pub fn save(name: &str, b64: &str, variant: &str) -> Result<LocalSkinView, String> {
+/// 保存皮肤到衣柜（PNG base64）。`source` 见 [`LocalSkin::source`]（空值回落 `upload`）。
+pub fn save(name: &str, b64: &str, variant: &str, source: &str) -> Result<LocalSkinView, String> {
     let bytes = decode_b64(b64)?;
-    save_bytes(name, &bytes, variant)
+    save_bytes(name, &bytes, variant, source)
 }
 
 /// 保存本地 PNG 文件到衣柜（前端经 dialog 只拿到路径，WebView 无 fs 插件读不了字节）。
-pub fn save_path(name: &str, file_path: &str, variant: &str) -> Result<LocalSkinView, String> {
+pub fn save_path(
+    name: &str,
+    file_path: &str,
+    variant: &str,
+    source: &str,
+) -> Result<LocalSkinView, String> {
     let bytes = std::fs::read(file_path).map_err(|e| format!("读取皮肤文件失败\n{e}"))?;
-    save_bytes(name, &bytes, variant)
+    save_bytes(name, &bytes, variant, source)
 }
 
 /// 删除皮肤（幂等：索引无此项、PNG 不存在均视为成功），返回删除后的列表。
@@ -126,7 +141,12 @@ pub fn read(id: &str) -> Result<String, String> {
 }
 
 /// 写 PNG + 索引（save / save_path 共用尾段）。
-fn save_bytes(name: &str, bytes: &[u8], variant: &str) -> Result<LocalSkinView, String> {
+fn save_bytes(
+    name: &str,
+    bytes: &[u8],
+    variant: &str,
+    source: &str,
+) -> Result<LocalSkinView, String> {
     let name = name.trim();
     if name.is_empty() {
         return Err("皮肤名称不能为空\nname is empty".to_string());
@@ -140,6 +160,7 @@ fn save_bytes(name: &str, bytes: &[u8], variant: &str) -> Result<LocalSkinView, 
         name: name.to_string(),
         variant,
         added_at: now_secs(),
+        source: normalize_source(source),
     };
     let path = skin_path(&entry.id)?;
     std::fs::create_dir_all(skins_dir()).map_err(|e| format!("创建皮肤目录失败\n{e}"))?;
@@ -173,6 +194,7 @@ fn to_view(entry: LocalSkin) -> LocalSkinView {
         name: entry.name,
         variant: entry.variant,
         added_at: entry.added_at,
+        source: entry.source,
         path,
         skin,
     }
@@ -209,6 +231,21 @@ fn next_id(ts_millis: u128, existing: &[LocalSkin]) -> String {
         }
         n += 1;
     }
+}
+
+/// 归一化来源标识：去首尾空白；空值回落 `upload`（旧前端不传 source 时保持旧语义）。
+fn normalize_source(source: &str) -> String {
+    let s = source.trim();
+    if s.is_empty() {
+        SOURCE_UPLOAD.to_string()
+    } else {
+        s.to_string()
+    }
+}
+
+/// serde 默认值：旧索引无 `source` 字段 → 视为手动上传。
+fn default_source() -> String {
+    SOURCE_UPLOAD.to_string()
 }
 
 /// 归一化模型字符串：大小写不敏感，仅接受 CLASSIC / SLIM。
@@ -266,6 +303,7 @@ mod tests {
             name: name.to_string(),
             variant: VARIANT_CLASSIC.to_string(),
             added_at,
+            source: SOURCE_UPLOAD.to_string(),
         }
     }
 
@@ -333,6 +371,22 @@ mod tests {
         assert_eq!(decode_b64("Zm9v").unwrap(), b"foo");
         assert_eq!(decode_b64("data:image/png;base64,Zm9v").unwrap(), b"foo");
         assert!(decode_b64("not base64!!!").is_err());
+    }
+
+    /// 旧索引条目（无 source 字段）反序列化后来源回落 upload，不报错。
+    #[test]
+    fn legacy_entry_defaults_source_to_upload() {
+        let json = r#"{"id":"1-0","name":"a","variant":"CLASSIC","added_at":7}"#;
+        let entry: LocalSkin = serde_json::from_str(json).unwrap();
+        assert_eq!(entry.source, SOURCE_UPLOAD);
+    }
+
+    /// 来源去空白；空值回落 upload（旧前端不传 source 时保持旧语义）。
+    #[test]
+    fn normalize_source_falls_back_to_upload() {
+        assert_eq!(normalize_source("  microsoft "), "microsoft");
+        assert_eq!(normalize_source("LittleSkin"), "LittleSkin");
+        assert_eq!(normalize_source("   "), SOURCE_UPLOAD);
     }
 
     /// 路径穿越 / 绝对路径 / 空 id 一律拒绝（拼路径前守卫）。

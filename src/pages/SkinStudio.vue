@@ -1,17 +1,18 @@
 <script setup lang="ts">
-// 皮肤衣柜：左 = 3D 全身预览（拖动旋转，能看到披风），右 = 衣柜（上皮肤 / 下披风）。
-// 交互与状态全在 store/skinStudio（模块级单例），本页仅编排布局与缩略图样式。
-import { onMounted, onUnmounted } from "vue";
-import { Check, Download, RefreshCw, RotateCcw, Shirt, Upload, X } from "@lucide/vue";
+// 衣柜：左 = 3D 全身预览（拖动旋转，能看到披风；左上/右上浮动图层），右 = 皮肤 / 披风 tab。
+// 交互与状态全在 store/skinStudio（模块级单例），本页仅编排布局与缩略图缓存。
+import { computed, onMounted, onUnmounted, reactive, watch } from "vue";
+import { Check, Download, RefreshCw, RotateCcw, Shirt, Upload, Wind, X } from "@lucide/vue";
 import AlertDialog from "../component/common/AlertDialog.vue";
 import EmptyState from "../component/common/EmptyState.vue";
 import LoadingSpinner from "../component/common/LoadingSpinner.vue";
-import { skinStudio } from "../store/skinStudio";
+import { renderSkinThumb3D } from "../store/avatar";
+import { skinStudio, type LocalSkin } from "../store/skinStudio";
 
 onMounted(() => void skinStudio.load());
 onUnmounted(() => skinStudio.dispose());
 
-/** 皮肤缩略图：64×64 纹理里截头部正面 (8,8,8,8) 区域放大
+/** 平面皮肤图（3D 缩略图未就绪 / 渲染失败时的兜底）：64×64 纹理里截头部正面 (8,8,8,8) 区域放大
  *  （size 800% + position 14.286% = 8/56 → 精确对准该 UV 区）。 */
 function skinThumb(b64: string) {
   return {
@@ -28,6 +29,102 @@ function capeThumb(b64: string) {
     backgroundSize: "640% 200%",
     backgroundPosition: "0 0",
   };
+}
+
+/** 卡片 3D 缩略图缓存键 = 皮肤贴图 + 模型：同贴图同模型共用一张，无需失效逻辑。 */
+function thumbKey(b64: string, slim: boolean) {
+  return `${slim ? 1 : 0}|${b64}`;
+}
+
+/** 卡片 3D 缩略图（键见 thumbKey）→ dataURL；未就绪 / 渲染失败留空串（回落平面图）。 */
+const thumbs = reactive<Record<string, string>>({});
+
+/** 待渲染的皮肤（官方当前 + 本地条目，须有贴图）——卡片增减 / 换账号时补齐。 */
+const thumbReqs = computed(() => {
+  const reqs: { key: string; b64: string; slim: boolean }[] = [];
+  const official = skinStudio.officialSkin;
+  const officialSlim = skinStudio.officialModel.toLowerCase() === "slim";
+  if (official) {
+    reqs.push({ key: thumbKey(official, officialSlim), b64: official, slim: officialSlim });
+  }
+  for (const s of skinStudio.skins) {
+    if (!s.skin) continue;
+    const slim = s.variant === "SLIM";
+    reqs.push({ key: thumbKey(s.skin, slim), b64: s.skin, slim });
+  }
+  return reqs;
+});
+
+// 渲染器内部同样按「贴图 + 模型」缓存，这里再记一层结果：tab 往返 / 重复皮肤都不重渲。
+watch(
+  thumbReqs,
+  (reqs) => {
+    for (const r of reqs) {
+      if (thumbs[r.key] !== undefined) continue; // 已就绪（含失败标记）
+      thumbs[r.key] = ""; // 占位：同一张贴图只提交一次渲染
+      void renderSkinThumb3D(r.b64, r.slim)
+        .then((url) => {
+          thumbs[r.key] = url;
+        })
+        .catch((e) => console.error("3D 缩略图渲染失败:", e)); // 留空串 → 平面图兜底
+    }
+  },
+  { immediate: true },
+);
+
+/** 皮肤卡片（官方当前置首 + 本地条目）。 */
+interface SkinCard {
+  key: string;
+  /** 皮肤贴图 base64；空串 = 无图（占位方块） */
+  skin: string;
+  /** 3D 缩略图 dataURL；空串 = 未就绪 / 失败 → 回落平面皮肤图 */
+  thumb: string;
+  /** 名称行文案；空串 = 不展示名称行（上传来源的条目） */
+  label: string;
+  variant: string;
+  tip: string;
+  /** 本地条目（可删除）；官方当前卡片为 null */
+  local: LocalSkin | null;
+}
+
+/** 名称规则：官方当前「当前」，第三方当前显示来源名（缓存时已写成站点名），
+ *  上传来源（source = upload）不展示名称行。 */
+function cardLabel(s: LocalSkin): string {
+  if (s.source === "upload") return "";
+  return s.source === "microsoft" ? "当前" : s.name;
+}
+
+const skinCards = computed<SkinCard[]>(() => {
+  const cards: SkinCard[] = [];
+  const official = skinStudio.officialSkin;
+  const officialSlim = skinStudio.officialModel.toLowerCase() === "slim";
+  cards.push({
+    key: "official",
+    skin: official,
+    thumb: official ? thumbs[thumbKey(official, officialSlim)] || "" : "",
+    label: "当前",
+    variant: officialSlim ? "SLIM" : "CLASSIC",
+    tip: "账号当前皮肤",
+    local: null,
+  });
+  for (const s of skinStudio.skins) {
+    const slim = s.variant === "SLIM";
+    cards.push({
+      key: s.id,
+      skin: s.skin,
+      thumb: s.skin ? thumbs[thumbKey(s.skin, slim)] || "" : "",
+      label: cardLabel(s),
+      variant: s.variant,
+      tip: s.name,
+      local: s,
+    });
+  }
+  return cards;
+});
+
+/** 删除卡片（仅本地条目有删除按钮）。 */
+function removeCard(c: SkinCard) {
+  if (c.local) void skinStudio.removeSkin(c.local);
 }
 </script>
 
@@ -59,90 +156,108 @@ function capeThumb(b64: string) {
           <p>登录账号或从本地衣柜选一件</p>
         </EmptyState>
 
-        <div class="stage-tip">按住拖动旋转 · 上下 ±40°</div>
-      </div>
-
-      <div class="stage-bar">
-        <div class="stage-meta">
-          <span class="meta-name">
-            {{ skinStudio.selectedLocal ? skinStudio.selectedLocal.name : "账号当前皮肤" }}
+        <!-- 左上浮动图层：当前预览的皮肤类型（经典 / 纤细） -->
+        <div class="layer type-layer">
+          <span class="type-tag" :class="{ slim: skinStudio.currentSlim }">
+            {{ skinStudio.currentSlim ? "纤细" : "经典" }}
           </span>
-          <span class="meta-tag">{{ skinStudio.currentSlim ? "SLIM" : "CLASSIC" }}</span>
-          <span v-if="skinStudio.selectedLocal" class="meta-tag local">本地</span>
         </div>
-        <div class="stage-actions">
-          <button class="tool" v-tooltip="'重置视角'" @click="skinStudio.resetView">
+
+        <!-- 右上浮动图层：操作按钮（按钮上按下不触发旋转 → @pointerdown.stop） -->
+        <div class="layer action-layer">
+          <button class="tool fab" v-tooltip="'重置视角'" @pointerdown.stop @click="skinStudio.resetView">
             <RotateCcw :size="14" /><span>重置视角</span>
           </button>
-          <button class="tool" v-tooltip="'重新拉取皮肤与披风'" @click="skinStudio.refresh">
+          <button class="tool fab" v-tooltip="'重新拉取皮肤与披风'" @pointerdown.stop @click="skinStudio.refresh">
             <RefreshCw :size="14" /><span>刷新</span>
           </button>
           <button
-            class="tool"
+            class="tool fab"
             :disabled="!skinStudio.premium"
             v-tooltip="'导出账号当前皮肤 PNG'"
+            @pointerdown.stop
             @click="skinStudio.saveSkinFile"
           >
             <Download :size="14" /><span>保存皮肤</span>
           </button>
           <button
             v-if="skinStudio.selectedLocal"
-            class="tool primary"
+            class="tool fab primary"
             :disabled="!skinStudio.canApply"
             v-tooltip="'上传为账号当前皮肤'"
+            @pointerdown.stop
             @click="skinStudio.applySelected"
           >
             <Check :size="14" />
             <span>{{ skinStudio.applyBusy ? "应用中…" : "应用为当前皮肤" }}</span>
           </button>
         </div>
-        <p v-if="!skinStudio.premium" class="hint">
-          本地衣柜可用于预览；应用皮肤 / 管理披风需登录正版账号
-        </p>
-        <p v-if="skinStudio.officialError" class="err">{{ skinStudio.officialError }}</p>
+
+        <div class="stage-tip">按住拖动旋转 · 上下 ±40°</div>
       </div>
     </div>
 
-    <!-- 右：衣柜（上半皮肤 / 下半披风） -->
+    <!-- 右：衣柜（皮肤 / 披风 tab 共用一个面板） -->
     <div class="wardrobe">
       <section class="panel">
         <header class="panel-hd">
-          <span class="panel-title"><Shirt :size="15" />皮肤</span>
-          <div class="panel-hd-right">
-            <span v-if="skinStudio.skins.length" class="panel-count">
-              {{ skinStudio.skins.length }} 件收藏
-            </span>
-            <button class="tool sm" v-tooltip="'把本地 64×64 皮肤 PNG 收进衣柜'" @click="skinStudio.pickSkinFile">
-              <Upload :size="13" /><span>上传本地皮肤</span>
+          <div class="tabs">
+            <button
+              class="tab"
+              :class="{ active: skinStudio.tab === 'skins' }"
+              @click="skinStudio.tab = 'skins'"
+            >
+              <Shirt :size="14" /><span>皮肤</span>
+            </button>
+            <button
+              class="tab"
+              :class="{ active: skinStudio.tab === 'capes' }"
+              @click="skinStudio.tab = 'capes'"
+            >
+              <Wind :size="14" /><span>披风</span>
             </button>
           </div>
+          <div class="panel-hd-right">
+            <template v-if="skinStudio.tab === 'skins'">
+              <span v-if="skinStudio.skins.length" class="panel-count">
+                {{ skinStudio.skins.length }} 件收藏
+              </span>
+              <button class="tool sm" v-tooltip="'把本地 64×64 皮肤 PNG 收进衣柜'" @click="skinStudio.pickSkinFile">
+                <Upload :size="13" /><span>上传本地皮肤</span>
+              </button>
+            </template>
+            <span v-else-if="skinStudio.premium && skinStudio.capes.length" class="panel-count">
+              {{ skinStudio.capes.filter(c => c.active).length ? "已装备" : "未装备" }}
+            </span>
+          </div>
         </header>
-        <div class="panel-body">
+
+        <!-- 皮肤 tab：3D 侧视缩略图网格 -->
+        <div v-if="skinStudio.tab === 'skins'" class="panel-body">
           <div class="grid">
             <div
+              v-for="c in skinCards"
+              :key="c.key"
               class="card"
-              :class="{ active: skinStudio.selectedKey === 'official' }"
-              v-tooltip="'账号当前皮肤'"
-              @click="skinStudio.selectSkin('official')"
+              :class="{ active: skinStudio.selectedKey === c.key }"
+              v-tooltip="c.tip"
+              @click="skinStudio.selectSkin(c.key)"
             >
-              <div v-if="skinStudio.officialSkin" class="thumb" :style="skinThumb(skinStudio.officialSkin)"></div>
-              <div v-else class="thumb empty"></div>
-              <div class="card-name">官方当前</div>
-            </div>
-            <div
-              v-for="s in skinStudio.skins"
-              :key="s.id"
-              class="card"
-              :class="{ active: skinStudio.selectedKey === s.id }"
-              @click="skinStudio.selectSkin(s.id)"
-            >
-              <div v-if="s.skin" class="thumb" :style="skinThumb(s.skin)"></div>
-              <div v-else class="thumb empty"></div>
-              <div class="card-name" :title="s.name">
-                <span class="nm">{{ s.name }}</span>
-                <span class="vt">{{ s.variant }}</span>
+              <div v-if="c.thumb" class="thumb-3d">
+                <img class="thumb-3d-img" :src="c.thumb" alt="" draggable="false" />
               </div>
-              <button class="card-del" v-tooltip="'从衣柜删除'" @click.stop="skinStudio.removeSkin(s)">
+              <div v-else-if="c.skin" class="thumb" :style="skinThumb(c.skin)"></div>
+              <div v-else class="thumb empty"></div>
+              <div v-if="c.label" class="card-name" :title="c.label">
+                <span class="nm">{{ c.label }}</span>
+                <span class="vt">{{ c.variant }}</span>
+              </div>
+              <button
+                v-if="c.local"
+                class="card-del"
+                v-tooltip="'从衣柜删除'"
+                @click.stop="removeCard(c)"
+              >
                 <X :size="12" />
               </button>
             </div>
@@ -155,18 +270,9 @@ function capeThumb(b64: string) {
           </EmptyState>
           <p v-if="skinStudio.skinsError" class="err">{{ skinStudio.skinsError }}</p>
         </div>
-      </section>
 
-      <section class="panel">
-        <header class="panel-hd">
-          <span class="panel-title"><Shirt :size="15" />披风</span>
-          <div class="panel-hd-right">
-            <span v-if="skinStudio.premium && skinStudio.capes.length" class="panel-count">
-              {{ skinStudio.capes.filter(c => c.active).length ? "已装备" : "未装备" }}
-            </span>
-          </div>
-        </header>
-        <div class="panel-body">
+        <!-- 披风 tab -->
+        <div v-else class="panel-body">
           <template v-if="skinStudio.premium">
             <div class="grid">
               <div
@@ -207,6 +313,14 @@ function capeThumb(b64: string) {
           </EmptyState>
         </div>
       </section>
+
+      <!-- 状态提示（无内容时不占位） -->
+      <footer v-if="!skinStudio.premium || skinStudio.officialError" class="wardrobe-foot">
+        <p v-if="!skinStudio.premium" class="hint">
+          本地衣柜可用于预览；应用皮肤 / 管理披风需登录正版账号
+        </p>
+        <p v-if="skinStudio.officialError" class="err">{{ skinStudio.officialError }}</p>
+      </footer>
     </div>
 
     <!-- 上传皮肤前确认模型：CLASSIC（经典 Steve 宽）/ SLIM（纤细 Alex 窄） -->
@@ -232,7 +346,7 @@ function capeThumb(b64: string) {
 
 /* ===== 左：3D 预览 ===== */
 .stage-col {
-  flex: 0 0 42%;
+  flex: 0 0 38%;
   min-width: 300px;
   display: flex;
   flex-direction: column;
@@ -273,6 +387,45 @@ function capeThumb(b64: string) {
   -webkit-user-drag: none;
 }
 
+/* ===== 浮动图层（叠在 3D 图之上；空白处不吃指针 → 不挡拖动） ===== */
+.layer {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  pointer-events: none;
+}
+
+.type-layer {
+  top: 12px;
+  left: 12px;
+}
+
+.type-tag {
+  padding: 3px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  background-color: var(--surface-card);
+  box-shadow: var(--shadow-sm);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  color: var(--text-secondary);
+}
+
+.type-tag.slim {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
+  background-color: var(--color-brand-bg);
+}
+
+.action-layer {
+  top: 12px;
+  right: 12px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
 .stage-tip {
   position: absolute;
   left: 0;
@@ -282,53 +435,6 @@ function capeThumb(b64: string) {
   font-size: 11.5px;
   color: var(--text-tertiary);
   pointer-events: none;
-}
-
-.stage-bar {
-  flex: none;
-  border-top: 1px solid var(--border-default);
-  padding: 10px 16px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-}
-
-.stage-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.meta-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.meta-tag {
-  flex: none;
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.4px;
-  color: var(--text-secondary);
-  background-color: var(--surface-hover);
-}
-
-.meta-tag.local {
-  color: var(--color-brand);
-  background-color: var(--color-brand-bg);
-}
-
-.stage-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
 }
 
 .tool {
@@ -344,6 +450,13 @@ function capeThumb(b64: string) {
   white-space: nowrap;
   cursor: pointer;
   transition: all 0.15s;
+}
+
+/* 浮动按钮：实底 + 投影，浮在 3D 图之上；接管指针（与模板 @pointerdown.stop 配套） */
+.tool.fab {
+  pointer-events: auto;
+  background-color: var(--surface-card);
+  box-shadow: var(--shadow-sm);
 }
 
 .tool:hover:not(:disabled) {
@@ -403,30 +516,48 @@ function capeThumb(b64: string) {
   flex-direction: column;
 }
 
-.panel + .panel {
-  border-top: 1px solid var(--border-default);
-}
-
 .panel-hd {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 11px 16px;
+  padding: 9px 16px;
   border-bottom: 1px solid var(--border-default);
 }
 
-.panel-title {
+/* tab 切换：皮肤 / 披风（同 side-nav 的「品牌色 + 品牌底色」激活态） */
+.tabs {
   display: flex;
   align-items: center;
-  gap: 7px;
-  font-size: 13.5px;
-  font-weight: 600;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  background-color: var(--surface-hover);
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background-color: transparent;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.tab:hover {
   color: var(--text-primary);
 }
 
-.panel-title svg {
+.tab.active {
   color: var(--color-brand);
+  background-color: var(--surface-card);
+  font-weight: 600;
 }
 
 .panel-hd-right {
@@ -445,6 +576,15 @@ function capeThumb(b64: string) {
   min-height: 0;
   overflow-y: auto;
   padding: 14px 16px 18px;
+}
+
+.wardrobe-foot {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 16px 12px;
+  border-top: 1px solid var(--border-default);
 }
 
 .grid {
@@ -477,6 +617,25 @@ function capeThumb(b64: string) {
   box-shadow: 0 0 0 3px var(--color-brand-glow);
 }
 
+/* 3D 侧视缩略图：固定高度，60×102 帧等比缩放（image-rendering 保持像素风不糊） */
+.thumb-3d {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100px;
+  background: radial-gradient(circle at 50% 38%, var(--color-brand-bg), transparent 68%);
+}
+
+.thumb-3d-img {
+  max-width: 100%;
+  max-height: 100%;
+  image-rendering: pixelated;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+/* 平面皮肤图：仅在 3D 缩略图未就绪 / 失败时短暂出现 */
 .thumb {
   width: 64px;
   height: 64px;
