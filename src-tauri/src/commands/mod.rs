@@ -6,6 +6,7 @@ pub mod jdk;
 pub mod launch;
 pub mod launch_options;
 pub mod launch_script;
+pub mod littleskin;
 pub mod loader;
 pub mod offline_account;
 pub mod online;
