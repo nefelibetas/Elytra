@@ -43,8 +43,8 @@ impl EventSink for RecordingSink {
 }
 
 impl RecordingSink {
-    fn saw(&self, event: &str) -> bool {
-        self.events.lock().iter().any(|e| *e == event)
+    fn saw(&self, event: &'static str) -> bool {
+        self.events.lock().contains(&event)
     }
 }
 

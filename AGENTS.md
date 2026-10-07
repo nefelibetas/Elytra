@@ -148,8 +148,7 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 
 - **OptiFabric 覆盖范围有限**：Fabric/Quilt + OptiFine 依赖 OptiFabric 桥接（CurseForge 渠道，slug `optifabric`）；OptiFabric 维护缓慢（CF 最新 1.14.3，2024-01，仅覆盖至 ~1.20.x），1.21+ 组合会明确报错而非静默失效
 - **待产品决策**：`GcType::Custom` 语义为"不追加 GC 参数（用 JVM 默认）"，前端 label 已注明，行为符合设计
-- **已完成的重构**：`run_task` 阶段 C 并行编排已拆分（534 → 189 行，上下文结构体 + 步骤函数）；事件出口已抽象为 `EventSink`，`run_task` 现有真实网络端到端测试（`tests/e2e_download.rs`）
-- **剩余长函数**：`run_repair_task` 230 行、`join` 196 行、`run_files_task` 188 行等 10 处，均为「线性编排 + 内联步骤」，可沿用 `run_task` 的模式（上下文结构体 + 步骤函数）处理
+- **已完成的重构**：全仓 >150 行函数批量拆分完成——`run_task`（534 → 192，阶段 7）+ 其余 9 个长函数（阶段 8，`run_repair_task`/`join`/`run_files_task`/`build_launch_command`/`download_and_extract`/`start_host`/`run_install_jdk`/`run_install`/`extract_forge_client_lzma`），共约 40 个新辅助单元（上下文结构体 + 阶段函数）；仅 `task/progress.rs::EmitLoop::spawn` 判定不拆（本体即采样循环）。事件出口已抽象为 `task::emit::EventSink`；`run_task` 与联机链路均有真实网络端到端测试（`tests/e2e_download.rs` / `tests/online_diag.rs`）
 - **已解决**：`LauncherVisibility` 已删除（前后端同步）；离线皮肤配置层已砍（启动与头像固定随机哈希 Steve/Alex，后续计划接入自定义皮肤站登录）；OptiFine 分场景安装（纯净版 classpath 独立版本 / Forge-like 进 mods / Fabric-like OptiFabric 进 mods，mainClass 统一官方 Main；重定向黑洞黑名单精确放行 `minio.749333.xyz`——bmclapi 下载主存储）
 - **已解决**：guest 端 MC 局域网广播名参数化（房间码 `#MOTD` 段携带 host 存档名 → guest 广播真实世界名；`OnlineConfig.advertise_motd` 支持自定义广播名，优先级 自定义 > host 世界名 > 默认文案）
 - **联机遗留**：跨网联机依赖协调服务器（默认社区节点 `tcp://node.invalid:11010`，easytier 官方公共节点已下线）；MC 26.2 离线账号只能走"局域网发现"路径进入（手动 IP 会报无效会话，广播模拟已绕过）

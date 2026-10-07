@@ -256,8 +256,10 @@ mod tests {
 
     #[test]
     fn test_window_size_custom_passes_width_height() {
-        let mut cfg = LauncherConfig::default();
-        cfg.window_size = WindowSize::Custom(1920, 1080);
+        let cfg = LauncherConfig {
+            window_size: WindowSize::Custom(1920, 1080),
+            ..Default::default()
+        };
         let args = build_cmd(&cfg);
         assert!(args.contains(&"--width".into()));
         assert!(args.contains(&"1920".into()));
@@ -279,9 +281,11 @@ mod tests {
     #[test]
     fn test_server_direct_args() {
         // 服务器直连：--server/--port 追加到游戏参数末尾；未配置时不出现
-        let mut cfg = LauncherConfig::default();
-        cfg.server = Some("1.2.3.4".into());
-        cfg.port = Some(25565);
+        let cfg = LauncherConfig {
+            server: Some("1.2.3.4".into()),
+            port: Some(25565),
+            ..Default::default()
+        };
         let args = build_cmd(&cfg);
         assert!(args.contains(&"--server".into()));
         assert!(args.contains(&"1.2.3.4".into()));
@@ -381,8 +385,10 @@ mod tests {
 
     #[test]
     fn test_window_title_prop() {
-        let mut cfg = LauncherConfig::default();
-        cfg.window_title = "我的世界".into();
+        let cfg = LauncherConfig {
+            window_title: "我的世界".into(),
+            ..Default::default()
+        };
         let args = build_cmd(&cfg);
         assert!(args.contains(&"-Dminecraft.window.title=我的世界".into()));
         // 空 = 不传
@@ -417,8 +423,10 @@ mod tests {
         assert!(args.contains(&"net.minecraft.launchwrapper.Launch".to_string()));
 
         // 禁用后：直接用客户端主类
-        let mut cfg = LauncherConfig::default();
-        cfg.disable_launch_wrapper = true;
+        let cfg = LauncherConfig {
+            disable_launch_wrapper: true,
+            ..Default::default()
+        };
         let args = build_launch_command(
             std::path::Path::new("C:/java/bin/java.exe"),
             &vj,
@@ -441,19 +449,23 @@ mod tests {
 
     #[test]
     fn test_disable_lwjgl_unsafe_agent_filters_javaagent() {
-        let mut cfg = LauncherConfig::default();
-        cfg.jvm_args = vec![
-            "-javaagent:lwjgl-unsafe-agent.jar".into(),
-            "-XX:-OmitStackTraceInFastThrow".into(),
-        ];
-        cfg.disable_lwjgl_unsafe_agent = true;
+        let cfg = LauncherConfig {
+            jvm_args: vec![
+                "-javaagent:lwjgl-unsafe-agent.jar".into(),
+                "-XX:-OmitStackTraceInFastThrow".into(),
+            ],
+            disable_lwjgl_unsafe_agent: true,
+            ..Default::default()
+        };
         let args = build_cmd(&cfg);
         assert!(!args.iter().any(|a| a.contains("lwjgl-unsafe-agent")));
         assert!(args.contains(&"-XX:-OmitStackTraceInFastThrow".to_string()));
 
         // 默认不禁用：agent 参数保留
-        let mut cfg = LauncherConfig::default();
-        cfg.jvm_args = vec!["-javaagent:lwjgl-unsafe-agent.jar".into()];
+        let cfg = LauncherConfig {
+            jvm_args: vec!["-javaagent:lwjgl-unsafe-agent.jar".into()],
+            ..Default::default()
+        };
         let args = build_cmd(&cfg);
         assert!(args.iter().any(|a| a.contains("lwjgl-unsafe-agent")));
     }
@@ -513,9 +525,11 @@ mod tests {
     #[test]
     fn test_min_memory_xms_injection() {
         // Custom + min_memory → 注入 -Xms（clamp 到 -Xmx 内）
-        let mut cfg = LauncherConfig::default();
-        cfg.memory = MemoryMode::Custom(4096);
-        cfg.min_memory = Some(2048);
+        let cfg = LauncherConfig {
+            memory: MemoryMode::Custom(4096),
+            min_memory: Some(2048),
+            ..Default::default()
+        };
         let args = build_cmd(&cfg);
         assert!(
             args.iter().any(|a| a == "-Xmx4096m"),
@@ -527,9 +541,11 @@ mod tests {
         );
 
         // min_memory > Xmx → clamp 到 Xmx
-        let mut cfg = LauncherConfig::default();
-        cfg.memory = MemoryMode::Custom(1024);
-        cfg.min_memory = Some(8192);
+        let cfg = LauncherConfig {
+            memory: MemoryMode::Custom(1024),
+            min_memory: Some(8192),
+            ..Default::default()
+        };
         let args = build_cmd(&cfg);
         assert!(
             args.iter().any(|a| a == "-Xms1024m"),
@@ -537,9 +553,11 @@ mod tests {
         );
 
         // Auto 模式忽略 min_memory（-Xmx 动态推测，固定 -Xms 可能超上限）
-        let mut cfg = LauncherConfig::default();
-        cfg.memory = MemoryMode::Auto;
-        cfg.min_memory = Some(2048);
+        let cfg = LauncherConfig {
+            memory: MemoryMode::Auto,
+            min_memory: Some(2048),
+            ..Default::default()
+        };
         let args = build_cmd(&cfg);
         assert!(
             !args.iter().any(|a| a.starts_with("-Xms")),

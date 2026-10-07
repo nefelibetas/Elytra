@@ -216,9 +216,73 @@ pub async fn run_install(
     let online = matches!(request.source, PackSource::Online { .. });
     let zip_path = zip_cache_path(request);
 
-    // ── A 段临时心跳：正式心跳在解析完成后才启动（完整步骤表那时才知道），
-    // A 段若无心跳则包体下载全程 0%（无速度/ETA/百分比）。临时心跳只覆盖
-    // A1/A2：est = 包体大小，进度走字节公式；A 段结束后 abort，正式心跳接管。
+    // ── A 段（包体 → 清单 → 计划）：失败/取消已在内部收口 → 直接返回 ──
+    let Some((plan, pack_bytes_est, a_done)) =
+        phase_a_fetch_and_parse(app, cancel, progress, request, &config, &zip_path, online).await
+    else {
+        return false;
+    };
+    let PackPrep { c, emit, idx } =
+        prepare_pack_install(app, progress, request, &plan, pack_bytes_est, a_done);
+
+    // ── 目标目录：预指定名保证解析期/安装期一致 ──
+    let (vdir, vdir_existed_before) = prepare_version_dir(progress, &config, request, &plan);
+    let lib_dir = config.minecraft_dir_abs().join("libraries");
+    let reuse_root = LocalRuntimeSource::discover(&vdir);
+
+    // ── A3：项目图标持久化（装饰性内容：缺失/下载失败静默跳过，不阻塞安装）──
+    persist_pack_icon(cancel, request, &vdir).await;
+    let sources: Vec<DownloadSource> = config.file_sources_list().into_iter().cloned().collect();
+
+    let mut run = PackInstall {
+        app,
+        cancel,
+        progress,
+        config: &config,
+        plan: &plan,
+        sources,
+        c,
+        emit,
+        idx,
+        vdir,
+        vdir_existed_before,
+        lib_dir,
+        reuse_root,
+        parent_text: String::new(),
+        restricted: plan.restricted.clone(),
+        pending: Vec::new(),
+        version_json: None,
+    };
+
+    // ── B/C 段：本体 + 内容分阶段推进（失败即收口）──
+    if let Err(e) = run.phases_bc().await {
+        return run.fail(e);
+    }
+    run.finish_install(app, progress)
+}
+
+/// A 段产出的运行态：正式计数器 + 心跳句柄 + 步骤索引表（B/C 段共用）。
+struct PackPrep {
+    c: Counters,
+    emit: tauri::async_runtime::JoinHandle<()>,
+    idx: StepIndex,
+}
+
+/// A 段：获取包体 → 解析清单 → 生成计划。失败/取消时已收口，返回 None。
+/// 返回（计划，包体字节估算，A 段已完成步骤数）。
+///
+/// A 段临时心跳：正式心跳在解析完成后才启动（完整步骤表那时才知道），
+/// A 段若无心跳则包体下载全程 0%（无速度/ETA/百分比）。临时心跳只覆盖
+/// A1/A2：est = 包体大小，进度走字节公式；A 段结束后 abort，正式心跳接管。
+async fn phase_a_fetch_and_parse(
+    app: &AppHandle,
+    cancel: &Arc<AtomicBool>,
+    progress: &Arc<Mutex<TaskProgress>>,
+    request: &ModpackRequest,
+    config: &DownloaderConfig,
+    zip_path: &Path,
+    online: bool,
+) -> Option<(PackPlan, u64, usize)> {
     let a_bytes = Arc::new(AtomicU64::new(0));
     let a_est = Arc::new(AtomicU64::new(0));
     let a_heartbeat = spawn_heartbeat(
@@ -234,44 +298,58 @@ pub async fn run_install(
 
     // ── A1：获取包体（幂等：本地缓存 sha1 命中直接跳过）──
     let pack_bytes_est =
-        match phase_fetch_pack(app, cancel, progress, request, &zip_path, &a_bytes, &a_est).await {
+        match phase_fetch_pack(app, cancel, progress, request, zip_path, &a_bytes, &a_est).await {
             Ok(v) => v,
-            Err(e) => return fail_or_cancel(app, progress, cancel, e, None),
+            Err(e) => {
+                let _ = fail_or_cancel(app, progress, cancel, e, None);
+                return None;
+            }
         };
     if cancelled(cancel) {
         set_cancelled(app, progress);
-        return false;
+        return None;
     }
     let pack_bytes_est = if pack_bytes_est == 0 {
-        std::fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0)
+        std::fs::metadata(zip_path).map(|m| m.len()).unwrap_or(0)
     } else {
         pack_bytes_est
     };
 
     // ── A2：解析清单并生成计划 ──
     let parse_idx = usize::from(online);
-    let plan = match phase_parse_plan(
-        app, cancel, progress, &zip_path, request, &config, parse_idx,
-    )
-    .await
-    {
-        Ok(p) => p,
-        Err(e) => return fail_or_cancel(app, progress, cancel, e, None),
-    };
-    // A 段结束：停临时心跳，正式 Counters/心跳在下方接管（est 补齐内容部分）
+    let plan =
+        match phase_parse_plan(app, cancel, progress, zip_path, request, config, parse_idx).await {
+            Ok(p) => p,
+            Err(e) => {
+                let _ = fail_or_cancel(app, progress, cancel, e, None);
+                return None;
+            }
+        };
+    // A 段结束：停临时心跳，正式 Counters/心跳由 prepare_pack_install 接管
     a_heartbeat.abort();
     let a_done = parse_idx + 1; // A 段已完成步骤数
+    Some((plan, pack_bytes_est, a_done))
+}
 
-    // ── 重建完整步骤表（B 段本体 + C 段内容）──
-    let (full_names, idx, content_est) = build_step_plan(request, &plan);
+/// 重建完整步骤表（B 段本体 + C 段内容）+ 装配正式计数器与心跳。
+///
+/// 心跳：150ms 共享心跳刷新计数/速度/ETA（est_total_bytes 用 c.est_bytes，
+/// 版本清单获取后仍可运行中增长）；进度百分比由 update_progress 按
+/// completed_files/total_files（即完成步骤数）计算。收尾前 abort。
+fn prepare_pack_install(
+    app: &AppHandle,
+    progress: &Arc<Mutex<TaskProgress>>,
+    request: &ModpackRequest,
+    plan: &PackPlan,
+    pack_bytes_est: u64,
+    a_done: usize,
+) -> PackPrep {
+    let (full_names, idx, content_est) = build_step_plan(request, plan);
     replace_steps(app, progress, &full_names, a_done);
     let c = Counters::new(full_names.len() as u32, pack_bytes_est + content_est);
     set_total(app, progress, c.total_steps, 0);
 
-    // 心跳：150ms 共享心跳刷新计数/速度/ETA（est_total_bytes 用 c.est_bytes，
-    // 版本清单获取后仍可运行中增长）；进度百分比由 update_progress 按
-    // completed_files/total_files（即完成步骤数）计算。收尾前 abort。
-    let emit_handle = spawn_heartbeat(
+    let emit = spawn_heartbeat(
         Arc::new(app.clone()),
         progress,
         HeartbeatStats {
@@ -281,13 +359,11 @@ pub async fn run_install(
             est_total_bytes: Arc::clone(&c.est_bytes),
         },
     );
+    PackPrep { c, emit, idx }
+}
 
-    // ── 目标目录：预指定名保证解析期/安装期一致 ──
-    let (vdir, vdir_existed_before) = prepare_version_dir(progress, &config, request, &plan);
-    let lib_dir = config.minecraft_dir_abs().join("libraries");
-    let reuse_root = LocalRuntimeSource::discover(&vdir);
-
-    // ── A3：项目图标持久化（装饰性内容：缺失/下载失败静默跳过，不阻塞安装）──
+/// A3：项目图标持久化（装饰性内容，缺失/下载失败静默跳过，不阻塞安装）。
+async fn persist_pack_icon(cancel: &Arc<AtomicBool>, request: &ModpackRequest, vdir: &Path) {
     if let Some(icon) = request.icon_url.as_deref().filter(|s| !s.trim().is_empty()) {
         let dest = vdir.join("pack-icon.png");
         if !dest.exists() {
@@ -297,66 +373,6 @@ pub async fn run_install(
                 .await;
         }
     }
-    let sources: Vec<DownloadSource> = config.file_sources_list().into_iter().cloned().collect();
-
-    let mut run = PackInstall {
-        app,
-        cancel,
-        progress,
-        config: &config,
-        plan: &plan,
-        sources,
-        c,
-        emit: emit_handle,
-        idx,
-        vdir,
-        vdir_existed_before,
-        lib_dir,
-        reuse_root,
-        parent_text: String::new(),
-        restricted: plan.restricted.clone(),
-        pending: Vec::new(),
-        version_json: None,
-    };
-
-    // ── B1：版本清单（唯一硬前置）──
-    if let Err(e) = run.b_manifest().await {
-        return run.fail(e);
-    }
-    // ── B2：client.jar ──
-    if let Err(e) = run.b_client_jar().await {
-        return run.fail(e);
-    }
-    // ── B3/B4/B5：依赖库 / 资源 / 原生库（领域函数内部 sha1 跳过已有文件；
-    //     内部并发由 config.concurrency 驱动，字节进共享计数）──
-    if let Err(e) = run.b_vanilla_content().await {
-        return run.fail(e);
-    }
-    // ── B6：ModLoader（钩子推进 配置/文件 两步）──
-    if let Err(e) = run.b_loader().await {
-        return run.fail(e);
-    }
-    // ── C0：包内资源复用 ──
-    if let Err(e) = run.c0_bundled_reuse() {
-        return run.fail(e);
-    }
-    // ── C1：内容文件并发下载 ──
-    if let Err(e) = run.c1_download_files().await {
-        return run.fail(e);
-    }
-    // ── C2：overrides 解压 ──
-    if let Err(e) = run.c2_overrides().await {
-        return run.fail(e);
-    }
-    run.emit.abort();
-
-    // ── 受限文件收口：其余内容已全部就位，明确列出需手动下载的文件 ──
-    if !run.restricted.is_empty() {
-        return run.fail(restricted_notice(&run.restricted));
-    }
-
-    set_done(app, progress, "完成");
-    true
 }
 
 /// 步骤索引表（步骤表两段式重写后，各阶段在完整列表中的下标）。
@@ -937,6 +953,38 @@ impl<'a> PackInstall<'a> {
         .await?;
         finish_step(self.app, self.progress, idx, &self.c);
         Ok(())
+    }
+
+    /// B/C 段编排：本体（版本清单 → client → 依赖/资源/原生 → loader）→
+    /// 内容（包内复用 → 并发下载 → overrides）；错误交调用方统一收口。
+    async fn phases_bc(&mut self) -> Result<(), String> {
+        // ── B1：版本清单（唯一硬前置）──
+        self.b_manifest().await?;
+        // ── B2：client.jar ──
+        self.b_client_jar().await?;
+        // ── B3/B4/B5：依赖库 / 资源 / 原生库（领域函数内部 sha1 跳过已有文件；
+        //     内部并发由 config.concurrency 驱动，字节进共享计数）──
+        self.b_vanilla_content().await?;
+        // ── B6：ModLoader（钩子推进 配置/文件 两步）──
+        self.b_loader().await?;
+        // ── C0：包内资源复用 ──
+        self.c0_bundled_reuse()?;
+        // ── C1：内容文件并发下载 ──
+        self.c1_download_files().await?;
+        // ── C2：overrides 解压 ──
+        self.c2_overrides().await?;
+        Ok(())
+    }
+
+    /// 收尾：停正式心跳 → 受限文件提示（有则失败收口）→ done。
+    fn finish_install(self, app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>) -> bool {
+        self.emit.abort();
+        // ── 受限文件收口：其余内容已全部就位，明确列出需手动下载的文件 ──
+        if !self.restricted.is_empty() {
+            return self.fail(restricted_notice(&self.restricted));
+        }
+        set_done(app, progress, "完成");
+        true
     }
 }
 
