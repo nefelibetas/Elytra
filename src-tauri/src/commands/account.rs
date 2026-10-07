@@ -189,37 +189,38 @@ pub async fn save_skin(uuid: String, path: String) -> Result<(), String> {
 }
 
 /// 上传本地皮肤到官方账号（POST multipart: variant=CLASSIC + file）。
+/// token 由后端取（临近过期自动静默刷新），前端不再传可能已过期的缓存值。
 #[tauri::command]
-pub async fn upload_skin_file(
-    access_token: String,
-    file_path: String,
-    variant: String,
-) -> Result<(), String> {
+pub async fn upload_skin_file(file_path: String, variant: String) -> Result<(), String> {
     if !matches!(variant.as_str(), "CLASSIC" | "SLIM") {
         return Err(format!(
             "未知皮肤模型
 {variant}"
         ));
     }
-    account::upload_skin(&access_token, &file_path, &variant).await
+    let token = account::valid_access_token().await?;
+    account::upload_skin(&token, &file_path, &variant).await
 }
 
-/// 拉取官方披风列表（GET /minecraft/profile，需 Bearer token）。
+/// 拉取官方披风列表（GET /minecraft/profile；token 由后端取并自动刷新）。
 #[tauri::command]
-pub async fn fetch_capes(access_token: String) -> Result<Vec<account::CapeInfo>, String> {
-    account::fetch_capes(&access_token).await
+pub async fn fetch_capes() -> Result<Vec<account::CapeInfo>, String> {
+    let token = account::valid_access_token().await?;
+    account::fetch_capes(&token).await
 }
 
 /// 切换当前启用的披风（PUT /minecraft/profile/capes/active + JSON capeId）。
 #[tauri::command]
-pub async fn set_active_cape(access_token: String, cape_id: String) -> Result<(), String> {
-    account::set_active_cape(&access_token, &cape_id).await
+pub async fn set_active_cape(cape_id: String) -> Result<(), String> {
+    let token = account::valid_access_token().await?;
+    account::set_active_cape(&token, &cape_id).await
 }
 
 /// 移除当前启用的披风（DELETE /minecraft/profile/capes/active）。
 #[tauri::command]
-pub async fn disable_cape(access_token: String) -> Result<(), String> {
-    account::disable_cape(&access_token).await
+pub async fn disable_cape() -> Result<(), String> {
+    let token = account::valid_access_token().await?;
+    account::disable_cape(&token).await
 }
 
 /// 刷新正版账号（静默，refresh_token 失效时返回错误）。

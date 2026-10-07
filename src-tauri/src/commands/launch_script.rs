@@ -16,6 +16,12 @@ pub async fn export_launch_script(
     uuid: String,
     xuid: String,
 ) -> Result<String, String> {
+    // 与 spawn_game 同：正版模式用后端取的有效 token（自动刷新），其余沿用传入值
+    let access_token = if auth_mode == "online" {
+        crate::auth::account::valid_access_token().await?
+    } else {
+        access_token
+    };
     let (auth, java_path, version_json, mc_dir, launcher_config, java_major) =
         process::prepare_launch(
             &version_dir_name,

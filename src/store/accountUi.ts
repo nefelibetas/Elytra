@@ -180,7 +180,6 @@ export const accountUi = reactive({
     this.pendingSkinPath = "";
     try {
       await invoke("upload_skin_file", {
-        accessToken: acct.access_token,
         filePath: path,
         variant,
       });
@@ -224,9 +223,7 @@ export const accountUi = reactive({
     if (!acct) return false;
     this.capeLoading = true;
     try {
-      this.capes = await invoke<CapeInfo[]>("fetch_capes", {
-        accessToken: acct.access_token,
-      });
+      this.capes = await invoke<CapeInfo[]>("fetch_capes");
       return true;
     } catch (e) {
       showError(`获取披风列表失败：${String(e)}`, true);
@@ -262,12 +259,11 @@ export const accountUi = reactive({
     try {
       if (cape) {
         await invoke("set_active_cape", {
-          accessToken: acct.access_token,
           capeId: cape.id,
         });
         showToast(`已切换到披风「${cape.alias || cape.id.slice(0, 8)}」`);
       } else {
-        await invoke("disable_cape", { accessToken: acct.access_token });
+        await invoke("disable_cape");
         showToast("已移除披风");
       }
       this.closeCapeDialog();
