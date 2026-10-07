@@ -2,7 +2,7 @@
 // 衣柜：左 = 3D 全身预览（拖动旋转，能看到披风；左上/右上浮动图层），右 = 皮肤 / 披风 tab。
 // 交互与状态全在 store/skinStudio（模块级单例），本页仅编排布局与缩略图缓存。
 import { computed, onMounted, onUnmounted, reactive, watch } from "vue";
-import { Check, Download, RefreshCw, RotateCcw, Shirt, Upload, Wind, X } from "@lucide/vue";
+import { Check, Download, Plus, RefreshCw, RotateCcw, Shirt, Wind, X } from "@lucide/vue";
 import AlertDialog from "../component/common/AlertDialog.vue";
 import EmptyState from "../component/common/EmptyState.vue";
 import LoadingSpinner from "../component/common/LoadingSpinner.vue";
@@ -51,6 +51,22 @@ function thumbKey(b64: string, slim: boolean) {
 /** 卡片 3D 缩略图（键见 thumbKey）→ dataURL；未就绪 / 渲染失败留空串（回落平面图）。 */
 const thumbs = reactive<Record<string, string>>({});
 
+/** 去重后的本地条目（缩略图渲染与卡片列表共用同一条去重规则）：
+ *  实时卡的贴图先占位（实时卡恒显示，本地一律让它），本地之间同一份贴图只留最靠前的一条
+ *  （后端按加入时间倒序 → 留最新）；无贴图（文件缺失）的条目不参与去重，各自保留。 */
+const localEntries = computed<LocalSkin[]>(() => {
+  const seen = new Set<string>();
+  const official = skinStudio.officialSkin;
+  if (official) seen.add(official);
+  const out: LocalSkin[] = [];
+  for (const s of skinStudio.skins) {
+    if (s.skin && seen.has(s.skin)) continue; // 与实时卡 / 更靠前的本地条目重复
+    if (s.skin) seen.add(s.skin);
+    out.push(s);
+  }
+  return out;
+});
+
 /** 待渲染的皮肤（官方当前 + 本地条目，须有贴图）——卡片增减 / 换账号时补齐。 */
 const thumbReqs = computed(() => {
   const reqs: { key: string; b64: string; slim: boolean }[] = [];
@@ -59,7 +75,7 @@ const thumbReqs = computed(() => {
   if (official) {
     reqs.push({ key: thumbKey(official, officialSlim), b64: official, slim: officialSlim });
   }
-  for (const s of skinStudio.skins) {
+  for (const s of localEntries.value) {
     if (!s.skin) continue;
     const slim = s.variant === "SLIM";
     reqs.push({ key: thumbKey(s.skin, slim), b64: s.skin, slim });
@@ -84,15 +100,16 @@ watch(
   { immediate: true },
 );
 
-/** 皮肤卡片（官方当前置首 + 本地条目）。 */
+/** 皮肤卡片（官方当前置首 + 去重后的本地条目；标签均为角标式，不再与名称挤一行）。 */
 interface SkinCard {
   key: string;
   /** 皮肤贴图 base64；空串 = 无图（占位方块） */
   skin: string;
   /** 3D 缩略图 dataURL；空串 = 未就绪 / 失败 → 回落平面皮肤图 */
   thumb: string;
-  /** 名称行文案；空串 = 不展示名称行（上传来源的条目） */
+  /** 名称行文案；空串 = 名称行留白（上传来源的本地条目） */
   label: string;
+  /** 皮肤模型：卡片左上角标（CLASSIC / SLIM） */
   variant: string;
   tip: string;
   /** 本地条目（可删除）；官方当前卡片为 null */
@@ -116,7 +133,7 @@ const skinCards = computed<SkinCard[]>(() => {
     tip: "账号当前皮肤",
     local: null,
   });
-  for (const s of skinStudio.skins) {
+  for (const s of localEntries.value) {
     const slim = s.variant === "SLIM";
     cards.push({
       key: s.id,
@@ -129,6 +146,17 @@ const skinCards = computed<SkinCard[]>(() => {
     });
   }
   return cards;
+});
+
+/** 可见的本地条目数（= 去重后的卡片数 − 实时卡）；面板计数与网格内容保持一致。 */
+const visibleSkinCount = computed(() => skinCards.value.length - 1);
+
+/** 实际高亮的卡片：选中的本地条目被去重隐藏时（与当前皮肤同一张图）改高亮实时卡——
+ *  两者本就是这个账号的同一份皮肤，避免出现「选了却看不到选中态」。 */
+const effectiveSelectedKey = computed(() => {
+  const key = skinStudio.selectedKey;
+  if (key === "official") return key;
+  return localEntries.value.some((s) => s.id === key) ? key : "official";
 });
 
 /** 删除卡片（仅本地条目有删除按钮）。 */
@@ -227,39 +255,38 @@ function removeCard(c: SkinCard) {
             </button>
           </div>
           <div class="panel-hd-right">
-            <template v-if="skinStudio.tab === 'skins'">
-              <span v-if="skinStudio.skins.length" class="panel-count">
-                {{ skinStudio.skins.length }} 件收藏
-              </span>
-              <button class="tool sm" v-tooltip="'把本地 64×64 皮肤 PNG 收进衣柜'" @click="skinStudio.pickSkinFile">
-                <Upload :size="13" /><span>上传本地皮肤</span>
-              </button>
-            </template>
-            <span v-else-if="skinStudio.premium && skinStudio.capes.length" class="panel-count">
+            <span v-if="skinStudio.tab === 'skins' && visibleSkinCount" class="panel-count">
+              {{ visibleSkinCount }} 件收藏
+            </span>
+            <span
+              v-else-if="skinStudio.tab === 'capes' && skinStudio.premium && skinStudio.capes.length"
+              class="panel-count"
+            >
               {{ skinStudio.capes.filter(c => c.active).length ? "已装备" : "未装备" }}
             </span>
           </div>
         </header>
 
-        <!-- 皮肤 tab：3D 侧视缩略图网格 -->
+        <!-- 皮肤 tab：3D 侧视缩略图网格（3 列 × 2 行，超出滚动；末尾一格为上传卡片） -->
         <div v-if="skinStudio.tab === 'skins'" class="panel-body">
-          <div class="grid">
+          <div class="grid skins">
             <div
               v-for="c in skinCards"
               :key="c.key"
               class="card"
-              :class="{ active: skinStudio.selectedKey === c.key }"
+              :class="{ active: effectiveSelectedKey === c.key }"
               v-tooltip="c.tip"
               @click="skinStudio.selectSkin(c.key)"
             >
-              <div v-if="c.thumb" class="thumb-3d">
-                <img class="thumb-3d-img" :src="c.thumb" alt="" draggable="false" />
+              <div class="thumb-3d">
+                <img v-if="c.thumb" class="thumb-3d-img" :src="c.thumb" alt="" draggable="false" />
+                <div v-else-if="c.skin" class="thumb" :style="skinThumb(c.skin)"></div>
+                <div v-else class="thumb empty"></div>
               </div>
-              <div v-else-if="c.skin" class="thumb" :style="skinThumb(c.skin)"></div>
-              <div v-else class="thumb empty"></div>
-              <div v-if="c.label" class="card-name" :title="c.label">
-                <span class="nm">{{ c.label }}</span>
-                <span class="vt">{{ c.variant }}</span>
+              <!-- 皮肤类型角标（叠在缩略图左上，与披风「使用中」同一套角标语言） -->
+              <span class="card-tag variant" :class="{ slim: c.variant === 'SLIM' }">{{ c.variant }}</span>
+              <div class="card-name" :title="c.label || undefined">
+                <span v-if="c.label" class="nm">{{ c.label }}</span>
               </div>
               <button
                 v-if="c.local"
@@ -270,12 +297,22 @@ function removeCard(c: SkinCard) {
                 <X :size="12" />
               </button>
             </div>
+
+            <!-- 上传本地皮肤：与普通卡片区分（虚线框 + 加号），放在网格末尾 -->
+            <div
+              class="card upload"
+              v-tooltip="'把本地 64×64 皮肤 PNG 收进衣柜'"
+              @click="skinStudio.pickSkinFile()"
+            >
+              <span class="upload-plus"><Plus :size="20" /></span>
+              <div class="card-name"><span class="nm">上传本地皮肤</span></div>
+            </div>
           </div>
 
           <LoadingSpinner v-if="skinStudio.skinsLoading" text="读取本地衣柜…" />
-          <EmptyState v-else-if="!skinStudio.skins.length">
+          <EmptyState v-else-if="!visibleSkinCount">
             <p>衣柜还是空的</p>
-            <p>点「上传本地皮肤」把皮肤文件收进来</p>
+            <p>点下方「上传本地皮肤」把皮肤文件收进来</p>
           </EmptyState>
           <p v-if="skinStudio.skinsError" class="err">{{ skinStudio.skinsError }}</p>
         </div>
@@ -491,11 +528,6 @@ function removeCard(c: SkinCard) {
   box-shadow: 0 0 0 3px var(--color-brand-glow);
 }
 
-.tool.sm {
-  padding: 4px 9px;
-  font-size: 11.5px;
-}
-
 .err {
   margin: 0;
   font-size: 11.5px;
@@ -602,6 +634,23 @@ function removeCard(c: SkinCard) {
   gap: 12px;
 }
 
+/* 皮肤网格：每行 3 个、最多可见 2 行（再多的在网格内滚动）
+   行高固定 → 各卡缩略图统一加高；minmax(0,1fr) 防内容撑破列宽 */
+.grid.skins {
+  --row-h: 186px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: var(--row-h);
+  max-height: calc(var(--row-h) * 2 + 12px); /* 2 行 + 行间距 */
+  overflow-y: auto;
+}
+
+/* 名称行占固定高度，缩略图吃掉剩余高度 → 有无名称的卡片内部尺寸一致 */
+.grid.skins .card-name {
+  flex: none;
+  height: 16px;
+  line-height: 16px;
+}
+
 .card {
   position: relative;
   display: flex;
@@ -626,13 +675,15 @@ function removeCard(c: SkinCard) {
   box-shadow: 0 0 0 3px var(--color-brand-glow);
 }
 
-/* 3D 侧视缩略图：固定高度，60×102 帧等比缩放（image-rendering 保持像素风不糊） */
+/* 3D 侧视缩略图：撑满卡片内容区（高度由卡片行高决定 → 明显加高，60×102 帧等比缩放不糊）；
+   min-height 仅作兜底（行高失效时也不会塌成 0） */
 .thumb-3d {
+  flex: 1;
+  min-height: 120px;
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 100%;
-  height: 100px;
   background: radial-gradient(circle at 50% 38%, var(--color-brand-bg), transparent 68%);
 }
 
@@ -680,23 +731,12 @@ function removeCard(c: SkinCard) {
   color: var(--text-secondary);
 }
 
-/* 名称超出省略，模型标签固定不压缩 */
+/* 名称超出省略（名称行只放来源名，模型改由左上角标呈现） */
 .card-name .nm {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.card-name .vt {
-  flex: none;
-  padding: 0 4px;
-  border: 1px solid var(--border-default);
-  border-radius: 3px;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.3px;
-  color: var(--text-tertiary);
 }
 
 .card.active .card-name {
@@ -720,6 +760,50 @@ function removeCard(c: SkinCard) {
 .card-tag.ok {
   color: var(--text-inverse);
   background-color: var(--color-brand);
+}
+
+/* 皮肤类型角标（沿用上面披风「使用中」的角标版式）：CLASSIC 中性、SLIM 品牌色 */
+.card-tag.variant {
+  font-size: 9px;
+  letter-spacing: 0.5px;
+}
+
+.card-tag.variant.slim {
+  color: var(--color-brand);
+  background-color: var(--color-brand-bg);
+}
+
+/* 上传卡片（网格最后一格）：虚线框 + 圆形加号，与普通卡片区分 */
+.card.upload {
+  justify-content: center;
+  gap: 8px;
+  border-style: dashed;
+  background-color: transparent;
+  color: var(--text-tertiary);
+}
+
+.card.upload:hover {
+  border-color: var(--color-brand);
+  background-color: var(--color-brand-bg);
+  color: var(--color-brand);
+}
+
+.card.upload:hover .card-name {
+  color: inherit;
+}
+
+.upload-plus {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 1px dashed var(--border-default);
+  border-radius: 50%;
+}
+
+.card.upload:hover .upload-plus {
+  border-color: var(--color-brand);
 }
 
 .card-del {
