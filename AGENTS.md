@@ -129,6 +129,7 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 - **lib 名 `elytra_lib`**：Windows 下 bin/lib 同名会 Cargo 8519，保留 `_lib` 后缀
 - **版本号**：tauri.conf.json / Cargo.toml / package.json 三处一致（当前 1.0.0），改动需同步
 - **capabilities 是 v2 权限门**：新增 JS 侧 window/fs/dialog API 必须先在 `default.json` 加权限
+- **打包与卸载**：`bundle.targets` 含 `nsis` + `msi`。Tauri 的 NSIS 卸载器是**逐文件 `Delete` + `RMDir "$INSTDIR"`（非递归，只删空目录）**——游戏目录（`.minecraft`）虽在安装目录内但非空，**卸载不会删游戏数据**；`src-tauri/windows/hooks.nsh` 的 `PREUNINSTALL` 仅做告知（`IfSilent` 跳过，避免静默卸载卡住）。另一处坑：`identifier`（`xyz.bridgefish.elytra`）与配置目录名（`constants::CONFIG_DIR = "Elytra"`）不同，Tauri 原生「删除应用数据」复选框实际删的是 `%APPDATA%\<identifier>` 这个并不存在的目录，故 `POSTUNINSTALL` 按真实路径补删，避免「说删没删」。**MSI 默认装 `Program Files`（只读）**，`default_game_dir_base` 对其做了回退；NSIS 默认装 `%LOCALAPPDATA%\Programs`（可写），游戏目录照旧在 exe 旁。另：卸载后 `HKCU\Software\<manufacturer>\<product>` 会保留（Tauri 用它记住上次安装位置，重装时恢复），仅在勾选「删除应用数据」时才清除——这是有意行为，不是残留 bug
 - **系统代理**：Windows 读注册表（`winreg`，仅 windows 依赖）→ env；Linux env → GNOME gsettings；reqwest 默认不读系统代理，开启系统代理（Clash 等）时官方源直连会被劫持/黑洞
 - **联机编译**：easytier `kcp` feature 依赖 kcp-sys（bindgen 需 libclang）——构建机须装 LLVM（`winget install LLVM.LLVM`）并设 `LIBCLANG_PATH`
 - 敏感信息（token/client secret）不硬编码、不打印日志、不提交 git
