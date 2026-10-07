@@ -175,15 +175,10 @@ mod tests {
         assert!(parse_room_code("U/ABCD-EFGH-JKMN-PQ^S").is_none(), "非法字符");
         // 构造一个模 7 不为 0 的码：取合法码把首字符替换（大概率破坏校验）
         let mut bad = create_room().unwrap().code;
-        let first = bad.as_bytes()[2];
-        let new = if first == b'0' { b'1' } else { b'0' };
+        let new = if bad.as_bytes()[2] == b'0' { "1" } else { "0" };
+        // 替换首字符（码为 ASCII，索引 2..3 必在字符边界），重建字符串避免 unsafe
+        bad.replace_range(2..3, new);
         // 替换后若仍合法则跳过（极小概率），否则应拒绝
-        // SAFETY: bad 是本地独占的 String，长度固定为合法码格式（索引 2 必然位于 ASCII 段），
-        // 且写入的 new 为 ASCII 单字节，不改变 UTF-8 字节长度，不破坏字符串有效性。
-        // （本可用重建字符串替代，但按约定仅补注释、不改动逻辑。）
-        unsafe {
-            bad.as_bytes_mut()[2] = new;
-        }
         if !parse_room_value(&bad).is_multiple_of(7) {
             assert!(parse_room_code(&bad).is_none(), "模 7 校验应拒绝: {bad}");
         }

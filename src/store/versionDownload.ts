@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { dlState, registerVersionTarget } from "./download";
 import { CATEGORIES, LOADER_MIN_VERSION } from "../utils/versionMeta";
 import { errMsg } from "../utils/error";
+import { createBoundedCache } from "../utils/boundedCache";
 
 export interface VersionMeta {
   id: string;
@@ -43,6 +44,16 @@ export interface FabricApiVer {
 let manifestLoaded = false;
 let manifestLoading = false;
 let cachedManifest: VersionManifest | null = null;
+
+// loader 版本列表缓存（key `${loader}_${mcVersion}`）：一次选择版本写入 5 条
+// （forge/neoforge/fabric/quilt/optifine，条目为 loader 版本号数组）。
+// 上限 64（≈12 个版本的量）：当前所选版本的 5 条总是最新写入、必不被淘汰，
+// 更早版本条目被淘汰后重新选择会照常重取（selectVersion 对缺失键重新请求）。
+const loaderDataCache = createBoundedCache<string[]>(64);
+
+// Fabric API 版本列表缓存（key mcVersion）：条目含下载 URL（每条 10 个量级）。
+// 换版本且选了 Fabric 时整体清空（见下方 watch），上限 8 仅为兜底。
+const fabricApiDataCache = createBoundedCache<FabricApiVer[]>(8);
 
 export const loaderIcon: Record<string, string> = Object.fromEntries(
   CATEGORIES.filter(c => c.key !== "vanilla").map(c => [c.key, c.icon]),
@@ -86,16 +97,14 @@ export const vdState = reactive({
   versionInput: "",
   resolvedDirName: "",
 
-  // Loader version data cache
-  loaderData: {} as Record<string, string[]>,
+  // Loader 加载态（数据本体见模块级 loaderDataCache；此表键为 loader 名，恒 ≤5 条）
   loaderLoading: {} as Record<string, boolean>,
   // Selected loader: only one of forge/neoforge/fabric at a time
   selectedMainLoader: null as string | null,
   selectedLoaderVersions: {} as Record<string, string>,
   expandedLoader: {} as Record<string, boolean>,
 
-  // Fabric API state
-  fabricApiData: {} as Record<string, FabricApiVer[]>,
+  // Fabric API 数据本体见模块级 fabricApiDataCache
   fabricApiLoading: false,
   fabricApiExpanded: false,
 
@@ -204,7 +213,7 @@ export const vdState = reactive({
 
   async fetchLoaderVersions(ld: string, mcVersion: string) {
     const key = `${ld}_${mcVersion}`;
-    if (this.loaderData[key]) return;
+    if (loaderDataCache.record[key]) return;
     if (this.loaderLoading[ld]) return;
 
     this.loaderLoading[ld] = true;
@@ -217,31 +226,31 @@ export const vdState = reactive({
     } as Record<string, string>)[ld];
     try {
       const versions = await invoke<string[]>(cmdName, { mcVersion });
-      this.loaderData[key] = versions;
+      loaderDataCache.put(key, versions);
     } catch {
-      this.loaderData[key] = [];
+      loaderDataCache.put(key, []);
     } finally {
       this.loaderLoading[ld] = false;
     }
   },
 
   getLoaderVersions(ld: string, mcVersion: string): string[] {
-    return this.loaderData[`${ld}_${mcVersion}`] ?? [];
+    return loaderDataCache.record[`${ld}_${mcVersion}`] ?? [];
   },
 
   // ── Fabric API ──
   async fetchFabricApi(mcVer: string) {
-    if (this.fabricApiData[mcVer]) return;
+    if (fabricApiDataCache.record[mcVer]) return;
     if (this.fabricApiLoading) return;
     this.fabricApiLoading = true;
     try {
       const versions = await invoke<FabricApiVer[]>("get_fabric_api_versions", { mcVersion: mcVer });
-      this.fabricApiData[mcVer] = versions;
+      fabricApiDataCache.put(mcVer, versions);
       if (versions.length > 0 && !this.selectedLoaderVersions["fabric-api"]) {
         this.selectedLoaderVersions["fabric-api"] = versions[0].version;
       }
     } catch {
-      this.fabricApiData[mcVer] = [];
+      fabricApiDataCache.put(mcVer, []);
     } finally {
       this.fabricApiLoading = false;
     }
@@ -261,7 +270,7 @@ export const vdState = reactive({
     // ponytail: re-auto-select latest if data exists
     const mc = this.selectedVersion?.id;
     if (mc) {
-      const data = this.fabricApiData[mc];
+      const data = fabricApiDataCache.record[mc];
       if (data && data.length > 0) {
         this.selectedLoaderVersions["fabric-api"] = data[0].version;
       }
@@ -269,7 +278,7 @@ export const vdState = reactive({
   },
 
   getFabricApiVersions(mcVer: string): FabricApiVer[] {
-    return this.fabricApiData[mcVer] ?? [];
+    return fabricApiDataCache.record[mcVer] ?? [];
   },
 
   /** 选了 Fabric 但 Fabric API 列表未就绪（加载中/拉取失败/未选择）时禁止下载。 */
@@ -278,7 +287,7 @@ export const vdState = reactive({
     const sv = this.selectedVersion;
     if (!sv) return false;
     if (this.selectedLoaderVersions["fabric-api"]) return false;
-    const data = this.fabricApiData[sv.id];
+    const data = fabricApiDataCache.record[sv.id];
     return this.fabricApiLoading || !data || data.length === 0;
   },
 
@@ -305,7 +314,7 @@ export const vdState = reactive({
     let faUrl = "";
     let faVerStr = "";
     if (faVer) {
-      const data = this.fabricApiData[sv.id] ?? [];
+      const data = fabricApiDataCache.record[sv.id] ?? [];
       const found = data.find(v => v.version === faVer);
       if (found) {
         faUrl = found.download_url;
@@ -408,7 +417,7 @@ watch(() => vdState.selectedMainLoader, (ld) => {
 watch(() => vdState.selectedVersion?.id, (mc) => {
   if (vdState.selectedMainLoader === "fabric" && mc) {
     delete vdState.selectedLoaderVersions["fabric-api"];
-    vdState.fabricApiData = {};
+    fabricApiDataCache.clear();
     vdState.fetchFabricApi(mc);
   }
 });

@@ -671,7 +671,7 @@ fn append_pcl_fabric_libs(cp: &mut Vec<PathBuf>, lib_dir: &Path) {
     }
 }
 
-/// 检查版本是否包含旧式 natives 库（lwjgl 2.x，有 `natives` 字段）。
+/// 去重追加：`list` 中尚不存在 `arg` 时压入（保序，避免重复的启动参数）。
 fn push_unique(list: &mut Vec<String>, arg: String) {
     if !list.iter().any(|a| a == &arg) {
         list.push(arg);

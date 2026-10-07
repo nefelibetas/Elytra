@@ -753,3 +753,20 @@ pub struct InstallCtx<'a> {
 **复核时发现但未改（需产品决策或超出本阶段范围）**：
 - `CustomThemeEditor` 的 `--border-default` 标签在模板里没有可点部位（纯死数据，改动前既有）
 - `commands/version.rs::delete_resource_file` 由同步转 async —— Tauri `invoke` 语义不变，但值得在真实窗口回归一次
+
+---
+
+### 阶段 12：P3 收尾（2026-10-07）
+
+| 项 | 内容 |
+|---|---|
+| `util.rs`（669 行，crate 根唯一杂项工具箱） | 按职责拆为 `util/` 目录；`mod.rs` 仅声明 + `pub use` 重导出，**保持全仓 `crate::util::xxx` 路径不变**（调用点零改动） |
+| `server_status.rs`（681 行） | 移入 `server_status/` 目录（全仓同类域均目录制，只有它留在 crate 根） |
+| 测试内无谓 `unsafe` | `online/scaffold/room.rs` 的 `as_bytes_mut()` 改为重建字符串（消除 `unsafe` 与那条 SAFETY 注释） |
+| 注释误抄 | `launcher/args.rs::push_unique` 的描述改回真实语义 |
+| 前端缓存无上限 | `versionDownload` / `versionIcon` / `versionDetail` 的模块级缓存加容量上限 |
+| 主题变量双事实源 | `App.vue` 四套 `[data-theme]` vs `store/theme.ts::builtinVars()`：先逐键对比再决定处置（消除重复会引入首屏 FOUC 或构建期代码生成，代价大于收益） |
+
+**尚未处理的小尾巴**（台账遗留，待收）：主字体栈偏离 AGENTS 规定（`App.vue` 以 `Inter` 起头且未 `@font-face`）、
+聚合 total 语义（`communitySearch.ts` 的 `Math.max` 与分页换算口径）、`SearchQuery` 隐式 camelCase 缺注释、
+`store/launchOptions.ts` 的 `as any`、以及本台账 2.10 里 `PersistError::NotFound` 那条误报行。
