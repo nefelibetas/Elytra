@@ -130,6 +130,7 @@ function onJdkPick(value: string) {
           placeholder="每行一个 JVM 参数"
           spellcheck="false"
           @change="saveLaunchOptions"
+          autocomplete="off"
         ></textarea>
       </div>
 
@@ -144,6 +145,7 @@ function onJdkPick(value: string) {
           placeholder="每行一个游戏参数"
           spellcheck="false"
           @change="saveLaunchOptions"
+          autocomplete="off"
         ></textarea>
       </div>
 
@@ -156,6 +158,7 @@ function onJdkPick(value: string) {
           type="text"
           placeholder="启动游戏前执行的命令"
           @change="saveLaunchOptions"
+          autocomplete="off"
         />
       </div>
 

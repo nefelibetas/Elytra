@@ -182,6 +182,7 @@ async function copyCommand() {
             class="give-input"
             placeholder="搜索物品（ID 或中文名）…"
             spellcheck="false"
+            autocomplete="off"
           />
         </div>
         <DropSelect
@@ -211,7 +212,7 @@ async function copyCommand() {
       <div class="give-sec">
         <div class="give-row">
           <span class="give-label">数量</span>
-          <input v-model.number="count" type="number" class="give-num" min="1" max="99" />
+          <input v-model.number="count" type="number" class="give-num" min="1" max="99" autocomplete="off" />
         </div>
         <div class="give-row">
           <span class="give-label">名称颜色</span>
@@ -237,6 +238,7 @@ async function copyCommand() {
             :class="{ active: colorCode.startsWith('§x') }"
             title="自定义颜色（§x，需 1.16+）"
             @input="onCustomColor"
+            autocomplete="off"
           />
         </div>
         <div class="give-row">
@@ -246,6 +248,7 @@ async function copyCommand() {
             class="give-input"
             placeholder="留空使用默认名称"
             spellcheck="false"
+            autocomplete="off"
           />
         </div>
         <div class="give-row give-row-top">
@@ -256,6 +259,7 @@ async function copyCommand() {
             rows="2"
             placeholder="每行一条（可多行）"
             spellcheck="false"
+            autocomplete="off"
           ></textarea>
         </div>
         <div class="give-checks">
@@ -275,7 +279,7 @@ async function copyCommand() {
             placeholder="选择附魔"
             @update:model-value="(v: string) => (newEnch = v)"
           />
-          <input v-model.number="newEnchLevel" type="number" class="give-num" min="1" max="255" />
+          <input v-model.number="newEnchLevel" type="number" class="give-num" min="1" max="255" autocomplete="off" />
           <button class="tool-btn give-add-btn" :disabled="!newEnch" @click="addEnchant">
             <Plus :size="14" />
             添加
@@ -302,7 +306,7 @@ async function copyCommand() {
             placeholder="选择属性"
             @update:model-value="(v: string) => (newAttr = v)"
           />
-          <input v-model.number="newAttrAmount" type="number" class="give-num" min="0" />
+          <input v-model.number="newAttrAmount" type="number" class="give-num" min="0" autocomplete="off" />
           <button class="tool-btn give-add-btn" :disabled="!newAttr" @click="addAttribute">
             <Plus :size="14" />
             添加

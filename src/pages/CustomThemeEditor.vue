@@ -335,6 +335,7 @@ function save() {
               class="cte-custom-color"
               :value="currentHex"
               @input="pickPreset(($event.target as HTMLInputElement).value)"
+              autocomplete="off"
             />
             <div class="cte-hex-box">
               <span class="cte-hex-prefix">#</span>
@@ -343,6 +344,7 @@ function save() {
                 :value="currentHex.replace(/^#/, '')"
                 @change="onHexText"
                 spellcheck="false"
+                autocomplete="off"
               />
             </div>
           </div>
@@ -361,6 +363,7 @@ function save() {
             type="text"
             placeholder="外观名称"
             maxlength="24"
+            autocomplete="off"
           />
           <input
             v-model="editDesc"
@@ -368,6 +371,7 @@ function save() {
             type="text"
             placeholder="副标题（可选）"
             maxlength="60"
+            autocomplete="off"
           />
         </div>
         <button class="cte-save" @click="save">

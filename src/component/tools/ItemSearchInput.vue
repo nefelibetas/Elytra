@@ -89,6 +89,7 @@ function onBlur() {
         @input="onInput"
         @focus="open = keyword.trim().length > 0"
         @blur="onBlur"
+        autocomplete="off"
       />
     </div>
     <div v-if="open && matches.length > 0" class="isi-panel">

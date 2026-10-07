@@ -47,6 +47,7 @@ function onChange(e: Event) {
       :value="value"
       :disabled="disabled"
       @change="onChange"
+      autocomplete="off"
     />
     <span class="ck-box"></span>
     <span class="ck-label"><slot /></span>

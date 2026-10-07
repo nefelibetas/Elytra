@@ -59,6 +59,7 @@ async function save() {
             placeholder="留空不直连（如 mc.example.com）"
             maxlength="128"
             @change="save"
+            autocomplete="off"
           />
         </div>
         <div class="vssrv-row">
@@ -72,6 +73,7 @@ async function save() {
             max="65535"
             placeholder="25565"
             @change="save"
+            autocomplete="off"
           />
           <span v-if="saved" class="vssrv-saved">已保存</span>
         </div>

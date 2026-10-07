@@ -86,6 +86,7 @@ async function handleSaveNickname() {
         class="online-textarea"
         rows="3"
         placeholder="tcp://服务器地址:11010"
+        autocomplete="off"
       ></textarea>
       <div class="online-actions">
         <button class="online-btn" :disabled="savingConfig" @click="handleSaveConfig">
@@ -103,6 +104,7 @@ async function handleSaveNickname() {
         v-model="onlineAdvertiseMotd"
         class="online-input"
         placeholder="留空自动（host 世界名），支持 § 格式码"
+        autocomplete="off"
       />
       <div class="online-actions">
         <button class="online-btn" :disabled="savingMotd" @click="handleSaveMotd">
@@ -120,6 +122,7 @@ async function handleSaveNickname() {
         v-model="onlineNickname"
         class="online-input"
         placeholder="留空使用系统用户名"
+        autocomplete="off"
       />
       <div class="online-actions">
         <button class="online-btn" :disabled="savingNickname" @click="handleSaveNickname">

@@ -55,6 +55,7 @@ function goDownload() {
           class="vs-search-input"
           type="text"
           placeholder="搜索版本…"
+          autocomplete="off"
         />
       </div>
       <div v-if="allVersions.length === 0" class="vs-empty">

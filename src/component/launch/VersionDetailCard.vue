@@ -461,6 +461,7 @@ async function confirmRename() {
           type="text"
           maxlength="64"
           @keydown.enter="confirmRename"
+          autocomplete="off"
         />
         <div v-if="renameError" class="vdc-err">{{ renameError }}</div>
       </div>

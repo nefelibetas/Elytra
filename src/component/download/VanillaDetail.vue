@@ -31,7 +31,7 @@ const sv = () => vdState.selectedVersion ?? EMPTY_VERSION;
         <ArrowLeft :size="16" />
       </button>
       <img :src="vdState.selectedMainLoader && loaderIcon[vdState.selectedMainLoader] ? loaderIcon[vdState.selectedMainLoader] : versionIcon(sv())" width="28" height="28" class="det-icon" alt="" />
-      <input class="det-input" v-model="vdState.versionInput" />
+      <input class="det-input" v-model="vdState.versionInput" autocomplete="off" />
       <span v-if="vdState.resolvedDirName" class="det-dir">目录: {{ vdState.resolvedDirName }}</span>
     </div>
   </div>
