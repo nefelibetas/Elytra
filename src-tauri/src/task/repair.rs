@@ -232,7 +232,7 @@ pub async fn run_repair_task(
 
     // repair 无 ModLoader 安装步骤：安装步骤字节/总数字段全为占位（0 时公式回退，不显示进度）
     let emit_handle = EmitLoop {
-        app: app.clone(),
+        sink: Arc::new(app.clone()),
         cancel: Arc::clone(cancel),
         progress: Arc::clone(progress),
         jar_done: Arc::clone(&jar_counter),
@@ -335,7 +335,7 @@ pub async fn run_repair_task(
     }
 
     // 收尾心跳：natives 等后续步骤期间保持速度/字节进度（EmitLoop 已 abort）
-    let _tail_loop = spawn_tail_loop(&app, progress, Arc::clone(&bytes_counter));
+    let _tail_loop = spawn_tail_loop(Arc::new(app.clone()), progress, Arc::clone(&bytes_counter));
 
     // 各下载步骤标记完成（按实际索引）
     if let Some(i) = jar_idx {

@@ -326,7 +326,7 @@ pub async fn run_files_task(
     // 实现：停滞 >4s 或速度 <1KB/s 时 ETA 置 None）。当前文件的步骤级字节占比
     // 由下载回调节流刷新（见下方 cb），心跳不再重复处理步骤进度。
     let emit_handle = spawn_heartbeat(
-        &app,
+        Arc::new(app.clone()),
         progress,
         HeartbeatStats {
             done_files: Arc::clone(&done_files),

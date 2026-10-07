@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
-use tauri::AppHandle;
+use super::emit::EventSink;
 
 use super::{emit, global, update_and_emit, StepStatus, TaskProgress, TaskStatus};
 
@@ -74,7 +74,7 @@ impl SpeedSampler {
 /// run_task（完整下载）与 run_repair_task（补全）共用，消除整段复制。
 /// 字段由兄弟模块（runner/repair）构造时填充，故全部 pub。
 pub struct EmitLoop {
-    pub app: AppHandle,
+    pub sink: Arc<dyn EventSink>,
     pub cancel: Arc<AtomicBool>,
     pub progress: Arc<Mutex<TaskProgress>>,
     pub jar_done: Arc<AtomicU32>,
@@ -291,7 +291,7 @@ impl EmitLoop {
                     )
                 };
                 // 队列线程派发（emit 阻塞不占本任务/心跳线程）
-                emit(&self.app, &progress_snapshot);
+                emit(self.sink.as_ref(), &progress_snapshot);
                 if done {
                     break;
                 }
@@ -305,12 +305,12 @@ impl EmitLoop {
 /// 期间读 bytes_counter 增量恢复速度与字节进度（避免显示"速度 0 / 进度冻结"）。
 /// 自终止：status 离开 `TaskStatus::Running`（done/error/cancelled）即退出，无需外部 abort。
 pub fn spawn_tail_loop(
-    app: &AppHandle,
+    sink: Arc<dyn EventSink>,
     progress: &Arc<Mutex<TaskProgress>>,
     bytes: Arc<AtomicU64>,
 ) -> tauri::async_runtime::JoinHandle<()> {
     tauri::async_runtime::spawn({
-        let app = app.clone();
+        let sink = sink.clone();
         let progress = progress.clone();
         async move {
             let mut tick = tokio::time::interval(Duration::from_millis(150));
@@ -345,7 +345,7 @@ pub fn spawn_tail_loop(
                     Some(p.clone())
                 };
                 if let Some(p) = snapshot {
-                    emit(&app, &p);
+                    emit(sink.as_ref(), &p);
                 }
             }
         }
@@ -357,14 +357,14 @@ pub fn cancelled(cancel: &Arc<AtomicBool>) -> bool {
 }
 
 pub fn set_phase(
-    app: &AppHandle,
+    sink: &dyn EventSink,
     progress: &Arc<Mutex<TaskProgress>>,
     status: Option<TaskStatus>,
     phase: &str,
     step: usize,
     step_status: StepStatus,
 ) {
-    update_and_emit(app, progress, |p| {
+    update_and_emit(sink, progress, |p| {
         if let Some(s) = status {
             p.status = s;
         }
@@ -375,8 +375,8 @@ pub fn set_phase(
     });
 }
 
-pub fn step_done(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, idx: usize) {
-    update_and_emit(app, progress, |p| {
+pub fn step_done(sink: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>, idx: usize) {
+    update_and_emit(sink, progress, |p| {
         if let Some(st) = p.steps.get_mut(idx) {
             st.status = StepStatus::Done;
             st.progress = 100.0;
@@ -397,16 +397,16 @@ pub fn update_progress(p: &mut TaskProgress) {
     };
 }
 
-pub fn set_total(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, files: u32, bytes: u64) {
-    update_and_emit(app, progress, |p| {
+pub fn set_total(sink: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>, files: u32, bytes: u64) {
+    update_and_emit(sink, progress, |p| {
         p.total_files = files;
         p.total_bytes = bytes;
         update_progress(p);
     });
 }
 
-pub fn set_completed(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, files: u32, bytes: u64) {
-    update_and_emit(app, progress, |p| {
+pub fn set_completed(sink: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>, files: u32, bytes: u64) {
+    update_and_emit(sink, progress, |p| {
         p.completed_files = files;
         p.completed_bytes = bytes;
         update_progress(p);
@@ -418,8 +418,8 @@ pub fn set_completed(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, files
 
 /// 成功收口（唯一实现）：Done 终态事件 + 100% 进度 + 移除任务注册。
 /// runner（完整下载）与 task/modpack（整合包）共用；`phase` 为收尾阶段文案。
-pub fn set_done(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, phase: &str) {
-    update_and_emit(app, progress, |p| {
+pub fn set_done(sink: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>, phase: &str) {
+    update_and_emit(sink, progress, |p| {
         p.status = TaskStatus::Done;
         p.progress = 100.0;
         p.completed_files = p.total_files;
@@ -437,8 +437,8 @@ pub fn set_done(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, phase: &st
 /// 失败收口：Error 终态事件 + 移除任务注册。
 /// 若调用方此前用 `set_cleanup_path` 登记了清理路径（如本次新建的版本目录），
 /// 在此统一取走并**后台**整删——同步 `remove_dir_all` 会阻塞任务线程（大目录数十秒）。
-pub fn set_error(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, msg: String) {
-    update_and_emit(app, progress, |p| {
+pub fn set_error(sink: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>, msg: String) {
+    update_and_emit(sink, progress, |p| {
         p.status = TaskStatus::Error;
         p.error = Some(msg);
     });
@@ -460,7 +460,7 @@ pub fn set_error(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, msg: Stri
     global().fail(&task_id);
 }
 
-pub fn set_cancelled(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>) {
+pub fn set_cancelled(sink: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>) {
     // 取消收口：任务侧下载已停止，取走清理路径后台整删（大目录不阻塞收尾线程）。
     // 先取 task_id 释放 progress 锁再 take_cleanup_path（后者持 inner 锁），
     // 保持全模块 inner→progress 统一锁序，杜绝死锁环。
@@ -498,7 +498,7 @@ pub fn set_cancelled(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>) {
             }
         });
     }
-    update_and_emit(app, progress, |p| {
+    update_and_emit(sink, progress, |p| {
         p.status = TaskStatus::Cancelled;
         p.current_phase = "已取消".into();
     });
@@ -526,7 +526,7 @@ pub struct HeartbeatStats {
 /// 进度百分比交由 `update_progress` 统一公式计算；返回句柄由调用方在
 /// 任务收尾前 abort。语义对齐 files/modpack 原有内联实现。
 pub fn spawn_heartbeat(
-    app: &AppHandle,
+    sink: Arc<dyn EventSink>,
     progress: &Arc<Mutex<TaskProgress>>,
     stats: HeartbeatStats,
 ) -> tauri::async_runtime::JoinHandle<()> {
@@ -535,7 +535,7 @@ pub fn spawn_heartbeat(
     let est = stats.est_total_bytes;
     let total_files = stats.total_files;
     tauri::async_runtime::spawn({
-        let app = app.clone();
+        let sink = sink.clone();
         let progress = progress.clone();
         async move {
             let mut tick = tokio::time::interval(Duration::from_millis(150));
@@ -556,7 +556,7 @@ pub fn spawn_heartbeat(
                 let cur = bytes.load(Ordering::Relaxed);
                 let total_bytes = est.load(Ordering::Relaxed);
                 let (speed_bps, eta) = sampler.sample(cur, total_bytes);
-                update_and_emit(&app, &progress, |p| {
+                update_and_emit(sink.as_ref(), &progress, |p| {
                     p.status = TaskStatus::Running;
                     p.completed_files = done_files.load(Ordering::Relaxed);
                     p.total_files = total_files;

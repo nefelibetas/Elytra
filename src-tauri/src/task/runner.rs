@@ -4,7 +4,7 @@ use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use tauri::AppHandle;
+use super::emit::EventSink;
 
 use std::path::Path;
 
@@ -87,7 +87,7 @@ fn prepare_runtime(task: &DownloadTask) -> Result<TaskRuntime, String> {
 /// → 非 loader 模式落盘原版 JSON → 登记取消时的目录清理路径。
 /// `Err(())` 表示已自行收口（`set_error`/`set_cancelled`），调用方直接返回。
 async fn stage_fetch_version(
-    app: &AppHandle,
+    app: &dyn EventSink,
     progress: &Arc<Mutex<TaskProgress>>,
     cancel: &Arc<AtomicBool>,
     runtime: &TaskRuntime,
@@ -189,7 +189,7 @@ struct StepIndex {
 
 /// 阶段 C 的共享上下文：并行下载各步骤共用，避免每个步骤函数重复展开十余个参数。
 struct DownloadCtx<'a> {
-    app: &'a AppHandle,
+    app: &'a dyn EventSink,
     cancel: &'a Arc<AtomicBool>,
     progress: &'a Arc<Mutex<TaskProgress>>,
     config: &'a DownloaderConfig,
@@ -365,12 +365,12 @@ async fn extract_natives_step(ctx: &DownloadCtx<'_>) -> Result<(), Vec<String>> 
 /// 阶段 C 步骤：启动进度上报循环（EmitLoop 心跳）。
 fn spawn_emit_loop(
     ctx: &DownloadCtx<'_>,
+    sink: Arc<dyn EventSink>,
     scan: &LocalScan,
     total_files: u32,
     jar_total_fallback: u64,
 ) -> tokio::task::JoinHandle<()> {
     let DownloadCtx {
-        app,
         cancel,
         progress,
         vj,
@@ -380,7 +380,7 @@ fn spawn_emit_loop(
     } = *ctx;
     let _ = vj;
     EmitLoop {
-        app: app.clone(),
+        sink,
         cancel: Arc::clone(cancel),
         progress: Arc::clone(progress),
         jar_done: Arc::clone(&ctr.jar_done),
@@ -607,24 +607,26 @@ async fn download_fabric_api_step(
 /// 完整下载任务主体：version json → client.jar / libraries / assets → natives → ModLoader/OptiFine → Fabric API。
 /// 任务配置（含 ModLoader 选择）由命令层校验后经 DownloadTask 传入。
 pub async fn run_task(
-    app: AppHandle,
+    sink: Arc<dyn EventSink>,
     cancel: &Arc<AtomicBool>,
     progress: &Arc<Mutex<TaskProgress>>,
     task: &DownloadTask,
 ) {
+    // 事件出口以引用贯穿各阶段（`Arc` 仅在 EmitLoop 需要克隆到上报线程时使用）
+    let app = sink.as_ref();
     eprintln!(
         "[task] 开始: id={} mc={} loader={:?} url={}",
         task.version_id, task.mc_version, task.loader, task.version_url
     );
     let runtime = match prepare_runtime(task) {
         Ok(rt) => rt,
-        Err(e) => return set_error(&app, progress, e),
+        Err(e) => return set_error(app, progress, e),
     };
 
     // 步骤分析：初始完整列表（json 步骤恒在，索引 0；零缺失维度检测后过滤）
     let mut specs = task.steps();
     set_phase(
-        &app,
+        app,
         progress,
         Some(TaskStatus::Running),
         &specs[0].name,
@@ -632,11 +634,11 @@ pub async fn run_task(
         StepStatus::Running,
     );
     if cancelled(cancel) {
-        return set_cancelled(&app, progress);
+        return set_cancelled(app, progress);
     }
 
     // ── 阶段 A：fetch version.json in-memory（唯一硬前置）──
-    let (vj, parent_text) = match stage_fetch_version(&app, progress, cancel, &runtime, task).await {
+    let (vj, parent_text) = match stage_fetch_version(app, progress, cancel, &runtime, task).await {
         Ok(v) => v,
         Err(()) => return,
     };
@@ -664,7 +666,7 @@ pub async fn run_task(
     eprintln!("[task] 阶段B: 本地扫描开始");
     let lib_dir = mc.join("libraries");
     let scan = match init_local_scan(
-        &app,
+        app,
         progress,
         ScanInput {
             vj: &vj,
@@ -682,10 +684,10 @@ pub async fn run_task(
             // 扫描阶段被取消（count_assets_all 轮询返回）走取消收口，而非报错
             if cancelled(cancel) {
                 eprintln!("[task] 阶段B 取消");
-                return set_cancelled(&app, progress);
+                return set_cancelled(app, progress);
             }
             eprintln!("[task] 阶段B 失败: {e}");
-            return set_error(&app, progress, e);
+            return set_error(app, progress, e);
         }
     };
     eprintln!(
@@ -708,8 +710,8 @@ pub async fn run_task(
     if fabric_api.is_some() {
         total_files += 1;
     }
-    set_total(&app, progress, total_files, scan.total_bytes);
-    set_completed(&app, progress, scan.initial_completed, scan.initial_bytes);
+    set_total(app, progress, total_files, scan.total_bytes);
+    set_completed(app, progress, scan.initial_completed, scan.initial_bytes);
     // 阶段 C：计数器 + 步骤索引 + 共享上下文（各步骤函数共用，避免重复展开十余参数）
     let ctr = Counters::default();
     let steps = StepIndex {
@@ -723,7 +725,7 @@ pub async fn run_task(
         fabric: scan.fabric_step,
     };
     let ctx = DownloadCtx {
-        app: &app,
+        app,
         cancel,
         progress,
         config: &config,
@@ -741,12 +743,13 @@ pub async fn run_task(
     // 统一转 running（重建后列表；json 保持 done）——在 spawn EmitLoop 前完成，避免锁竞争
     for (i, s) in specs.iter().enumerate() {
         if s.kind != StepKind::VersionJson {
-            set_phase(&app, progress, None, &s.name, i, StepStatus::Running);
+            set_phase(app, progress, None, &s.name, i, StepStatus::Running);
         }
     }
 
     let _emit_handle = spawn_emit_loop(
         &ctx,
+        Arc::clone(&sink),
         &scan,
         total_files,
         vj.downloads.client.as_ref().map(|c| c.size).unwrap_or(0),
@@ -770,7 +773,7 @@ pub async fn run_task(
     // 失败/取消优先上报，避免先发 100% 完成误导前端
     if cancelled(cancel) {
         eprintln!("[task] 取消收口");
-        return set_cancelled(&app, progress);
+        return set_cancelled(app, progress);
     }
     if let Err(errors) = parallel {
         // 全新下载失败：整删残缺版本目录（含未写全的 json/jar），免手动清理；
@@ -783,17 +786,17 @@ pub async fn run_task(
             }
         }
         eprintln!("[task] 失败: {}", errors.join("; "));
-        return set_error(&app, progress, errors.join("; "));
+        return set_error(app, progress, errors.join("; "));
     }
     if cancelled(cancel) {
         eprintln!("[task] 取消收口(下载后)");
-        return set_cancelled(&app, progress);
+        return set_cancelled(app, progress);
     }
 
     // 收尾（EmitLoop 已完成全部计数自然退出；此处显式设 100% 并发 done 终态事件，
     // 前端据此移除卡片并触发完成通知——缺失则卡片停在 EmitLoop 封顶的 99.9%）
     eprintln!("[task] 完成 ({:.1}s)", t0.elapsed().as_secs_f64());
-    set_done(&app, progress, "完成");
+    set_done(app, progress, "完成");
 }
 
 /// 拉取并解析版本 JSON，同时保留原始文本（ModLoader 合并需保留未知字段）。
@@ -882,7 +885,7 @@ struct ScanInput<'a> {
 /// `cancel`：扫描轮询取消（count_assets_all 内部检查），任务被取消时返回
 /// Err("任务已取消")，调用方转 set_cancelled。
 async fn init_local_scan(
-    app: &AppHandle,
+    app: &dyn EventSink,
     progress: &Arc<Mutex<TaskProgress>>,
     scan: ScanInput<'_>,
     specs: &mut Vec<StepSpec>,

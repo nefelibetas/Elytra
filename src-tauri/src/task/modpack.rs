@@ -222,7 +222,7 @@ pub async fn run_install(
     let a_bytes = Arc::new(AtomicU64::new(0));
     let a_est = Arc::new(AtomicU64::new(0));
     let a_heartbeat = spawn_heartbeat(
-        app,
+        Arc::new(app.clone()),
         progress,
         HeartbeatStats {
             done_files: Arc::new(AtomicU32::new(0)),
@@ -272,7 +272,7 @@ pub async fn run_install(
     // 版本清单获取后仍可运行中增长）；进度百分比由 update_progress 按
     // completed_files/total_files（即完成步骤数）计算。收尾前 abort。
     let emit_handle = spawn_heartbeat(
-        app,
+        Arc::new(app.clone()),
         progress,
         HeartbeatStats {
             done_files: Arc::clone(&c.done_steps),
