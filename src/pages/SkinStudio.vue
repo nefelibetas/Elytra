@@ -7,10 +7,22 @@ import AlertDialog from "../component/common/AlertDialog.vue";
 import EmptyState from "../component/common/EmptyState.vue";
 import LoadingSpinner from "../component/common/LoadingSpinner.vue";
 import { renderSkinThumb3D } from "../store/avatar";
+import { authMode, externalAccount, msAccount } from "../store/auth";
 import { skinStudio, type LocalSkin } from "../store/skinStudio";
 
 onMounted(() => void skinStudio.load());
 onUnmounted(() => skinStudio.dispose());
+
+/** 实时卡的来源标签：官方 = `Mojang`，第三方 = 站点名（如 LittleSkin），离线 = 默认（内置皮肤）。
+ *  本地条目（自动缓存与上传）一律**不标名**——它们与实时卡是同一份皮肤时，两边都标反而像是
+ *  重复条目；靠 3D 缩略图与 hover 提示区分即可。 */
+const officialLabel = computed(() => {
+  if (authMode.value === "premium" && msAccount.value) return "Mojang";
+  if (authMode.value === "thirdparty" && externalAccount.value) {
+    return externalAccount.value.server_name?.trim() || "第三方";
+  }
+  return "默认";
+});
 
 /** 平面皮肤图（3D 缩略图未就绪 / 渲染失败时的兜底）：64×64 纹理里截头部正面 (8,8,8,8) 区域放大
  *  （size 800% + position 14.286% = 8/56 → 精确对准该 UV 区）。 */
@@ -87,12 +99,9 @@ interface SkinCard {
   local: LocalSkin | null;
 }
 
-/** 名称规则：官方当前「当前」，第三方当前显示来源名（缓存时已写成站点名），
- *  上传来源（source = upload）不展示名称行。 */
-function cardLabel(s: LocalSkin): string {
-  if (s.source === "upload") return "";
-  return s.source === "microsoft" ? "当前" : s.name;
-}
+/** 本地条目的名称：一律不展示（缓存与上传都不标）——实时卡已按来源标注（Mojang / 站点名），
+ *  本地条目只作为「可回切的存档」，名称在 hover 提示里给出足矣。 */
+const LOCAL_CARD_LABEL = "";
 
 const skinCards = computed<SkinCard[]>(() => {
   const cards: SkinCard[] = [];
@@ -102,7 +111,7 @@ const skinCards = computed<SkinCard[]>(() => {
     key: "official",
     skin: official,
     thumb: official ? thumbs[thumbKey(official, officialSlim)] || "" : "",
-    label: "当前",
+    label: officialLabel.value,
     variant: officialSlim ? "SLIM" : "CLASSIC",
     tip: "账号当前皮肤",
     local: null,
@@ -113,7 +122,7 @@ const skinCards = computed<SkinCard[]>(() => {
       key: s.id,
       skin: s.skin,
       thumb: s.skin ? thumbs[thumbKey(s.skin, slim)] || "" : "",
-      label: cardLabel(s),
+      label: LOCAL_CARD_LABEL,
       variant: s.variant,
       tip: s.name,
       local: s,
