@@ -363,7 +363,7 @@ async function copyCommand() {
 }
 
 .nb-tag-x:hover {
-  color: var(--text-danger, #e5484d);
+  color: var(--color-danger);
   background-color: var(--surface-hover);
 }
 

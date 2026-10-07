@@ -423,6 +423,20 @@ export async function updateMod(versionName: string, upd: ModUpdate) {
   }
 }
 
+/** 删除指定版本下的单个存档目录（批量删除场景由调用方循环并控制刷新时机）。 */
+export async function deleteWorld(versionName: string, worldName: string) {
+  await invoke("delete_world", { versionName, worldName });
+}
+
+/** 删除指定版本资源目录（材质包/数据包/光影包）下的单个文件。 */
+export async function deleteResourceFile(
+  versionName: string,
+  kind: ResourceKind,
+  fileName: string,
+) {
+  await invoke("delete_resource_file", { versionName, kind, fileName });
+}
+
 /** 删除单个 mod 文件：删除后刷新本地列表 + 从更新列表移除该项。
  *  reset 重建列表，确保已删文件从 mods 中消失。 */
 export async function deleteMod(versionName: string, fileName: string) {

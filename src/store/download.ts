@@ -1,6 +1,6 @@
 import { reactive, ref } from "vue"
 import { listen } from "@tauri-apps/api/event"
-import { EVT_TASK_PROGRESS, EVT_TASK_WAITING_USER } from "./events";
+import { TASK_PROGRESS, TASK_WAITING_USER } from "./events";
 import type { StepStatus, StepInfo, ProgressPayload, WaitingUserPayload } from "./events";
 // 事件 payload 类型集中定义在 events.ts，这里 re-export 保持既有 import 路径兼容。
 export type { StepStatus, StepInfo, ProgressPayload, WaitingUserPayload };
@@ -73,7 +73,7 @@ export function registerVersionTarget(taskId: string, dirName: string) {
 }
 
 /** 任务完成钩子（taskId → 回调，消费后即删）：特殊任务（JDK 安装等）经统一监听
- *  感知终态并接续自身流程，替代各 store 自建 EVT_TASK_PROGRESS 监听。 */
+ *  感知终态并接续自身流程，替代各 store 自建 TASK_PROGRESS 监听。 */
 export const taskDoneHooks = new Map<string, () => void>();
 
 /** 注册任务完成钩子：任务 done 时回调一次（error/cancel 不触发且清除）。 */
@@ -245,11 +245,11 @@ const terminalTaskIds = new Set<string>()
 export function ensureListen() {
   if (listening) return
   listening = true
-  listen<WaitingUserPayload>(EVT_TASK_WAITING_USER, (ev) => {
+  listen<WaitingUserPayload>(TASK_WAITING_USER, (ev) => {
     // 批量文件下载失败挂起：弹窗询问 跳过/重试/取消
     waitingUser.value = ev.payload
   })
-  listen<ProgressPayload>(EVT_TASK_PROGRESS, (ev) => {
+  listen<ProgressPayload>(TASK_PROGRESS, (ev) => {
     const p = ev.payload
     const idx = dlState.tasks.findIndex(t => t.taskId === p.task_id)
     if (idx >= 0) {
@@ -391,4 +391,22 @@ export async function dismissAllInterrupted() {
       // 忽略失败不影响本地清理
     }
   }
+}
+
+/** 缺失文件扫描结果（镜像 Rust commands/version.rs 的 MissingReport）。 */
+export interface MissingReport {
+  client_jar: boolean;
+  libraries: number;
+  assets: number;
+  natives: number;
+}
+
+/** 扫描指定版本的缺失文件（client jar / 库 / 资源 / natives），仅统计不下载。 */
+export async function scanMissingFiles(versionDirName: string): Promise<MissingReport> {
+  return await invoke<MissingReport>("scan_missing_files", { versionDirName });
+}
+
+/** 提交"补全缺失文件"任务到任务中心，返回任务 id。 */
+export async function submitMissingDownload(versionDirName: string): Promise<string> {
+  return await invoke<string>("submit_missing_download", { versionDirName });
 }

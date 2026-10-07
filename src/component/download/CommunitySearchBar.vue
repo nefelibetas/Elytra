@@ -159,7 +159,7 @@ watch(
 .cs-btn-primary:hover { background-color: var(--color-brand-hover); }
 .cs-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .cs-spin {
-  width: 12px; height: 12px; border: 2px solid color-mix(in srgb, var(--text-inverse) 40%, transparent);
+  width: 12px; height: 12px; border: 2px solid var(--text-inverse); border: 2px solid color-mix(in srgb, var(--text-inverse) 40%, transparent);
   border-top-color: var(--text-inverse); border-radius: 50%; animation: cs-spin 0.6s linear infinite;
 }
 @keyframes cs-spin { to { transform: rotate(360deg); } }

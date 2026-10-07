@@ -7,6 +7,7 @@ import { LOADER_TITLES, LOADER_ICONS } from "../utils/versionMeta";
 import { classifyVersion } from "../utils/versionClassify";
 import { showToast } from "../utils/toast";
 import { errMsg } from "../utils/error";
+import { openFolder } from "../utils/fs";
 import { selectedVersion, setSelected, clearSelected } from "./selectedVersion";
 
 export interface GameDir {
@@ -86,7 +87,7 @@ export async function menuOpen() {
   closeItemMenu();
   if (!d) return;
   try {
-    await invoke("open_folder", { path: d.path });
+    await openFolder(d.path);
   } catch (e) {
     dirsError.value = errMsg(e);
   }
@@ -224,6 +225,19 @@ export async function confirmDeleteVersion() {
 }
 
 // ── 版本列表（右侧，单卡片平铺全部版本）──
+
+/** 重命名版本目录（versions/{old} → versions/{new}）。 */
+export async function renameVersionDir(versionName: string, newName: string) {
+  await invoke("rename_version_dir", { versionName, newName });
+}
+
+/** 确保版本子目录存在并返回其绝对路径（后端 ensure_game_folder：不存在则创建）。 */
+export async function ensureGameFolder(
+  kind: "saves" | "version" | "mods" | "resourcepacks" | "datapacks" | "shaderpacks",
+  versionName: string,
+): Promise<string> {
+  return await invoke<string>("ensure_game_folder", { kind, versionName });
+}
 
 /** 已安装版本信息（镜像 Rust get_installed_versions；loader 为 json 推断）。 */
 export interface InstalledVersionInfo {

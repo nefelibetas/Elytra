@@ -383,7 +383,7 @@ async function copyCommand() {
 .nb-error {
   margin-top: 4px;
   font-size: 12px;
-  color: var(--text-danger, #e5484d);
+  color: var(--color-danger);
 }
 
 .nb-tags {
@@ -417,7 +417,7 @@ async function copyCommand() {
 }
 
 .nb-tag-x:hover {
-  color: var(--text-danger, #e5484d);
+  color: var(--color-danger);
   background-color: var(--surface-hover);
 }
 

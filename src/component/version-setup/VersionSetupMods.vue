@@ -5,7 +5,8 @@
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { Search, RefreshCw, Upload, Puzzle, Folder, Trash2 } from "@lucide/vue";
-import { invoke } from "@tauri-apps/api/core";
+import { ensureGameFolder } from "../../store/gameDirs";
+import { openFolder } from "../../utils/fs";
 import { fmtCount, fmtSize } from "../../utils/format";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
@@ -135,11 +136,8 @@ async function doCheckUpdates() {
 /** 打开 mods 文件夹（目录不存在先创建）。 */
 async function openModsFolder() {
   try {
-    const target = await invoke<string>("ensure_game_folder", {
-      kind: "mods",
-      versionName: versionName.value,
-    });
-    await invoke("open_folder", { path: target });
+    const target = await ensureGameFolder("mods", versionName.value);
+    await openFolder(target);
   } catch (e) {
     showToast(errMsg(e));
   }
@@ -640,12 +638,14 @@ async function openModsFolder() {
 }
 
 .vsm-ab-btn.danger {
+  border: 1px solid var(--color-danger);
   border: 1px solid color-mix(in srgb, var(--color-danger) 40%, transparent);
   background: transparent;
   color: var(--color-danger);
 }
 
 .vsm-ab-btn.danger:hover:not(:disabled) {
+  background: var(--color-danger-bg);
   background: color-mix(in srgb, var(--color-danger) 8%, transparent);
   border-color: var(--color-danger);
 }

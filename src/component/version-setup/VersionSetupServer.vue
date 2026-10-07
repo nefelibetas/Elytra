@@ -2,7 +2,7 @@
 // 版本设置-服务器：快速进服（--server/--port），per-version 存储，启动时优先于全局配置。
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
-import { invoke } from "@tauri-apps/api/core";
+import { loadVersionServer, saveVersionServer } from "../../store/versionSetup";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 
@@ -16,10 +16,7 @@ const saved = ref(false);
 
 onMounted(async () => {
   try {
-    const cfg = await invoke<{ server: string | null; port: number | null }>(
-      "get_version_server",
-      { versionName: versionName.value },
-    );
+    const cfg = await loadVersionServer(versionName.value);
     server.value = cfg.server ?? "";
     port.value = cfg.port != null ? String(cfg.port) : "";
   } catch {
@@ -29,11 +26,11 @@ onMounted(async () => {
 
 async function save() {
   try {
-    await invoke("save_version_server", {
-      versionName: versionName.value,
-      server: server.value.trim() || null,
-      port: port.value.trim() ? Number(port.value.trim()) : null,
-    });
+    await saveVersionServer(
+      versionName.value,
+      server.value.trim() || null,
+      port.value.trim() ? Number(port.value.trim()) : null,
+    );
     saved.value = true;
     setTimeout(() => (saved.value = false), 1500);
   } catch (e) {

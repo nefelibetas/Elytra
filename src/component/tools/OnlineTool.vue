@@ -340,7 +340,7 @@ async function copyRoomCode() {
   cursor: not-allowed;
 }
 .online-btn-stop {
-  color: var(--text-danger, #e5484d);
+  color: var(--color-danger);
 }
 .online-btn-primary {
   color: #fff;
@@ -357,8 +357,9 @@ async function copyRoomCode() {
   padding: 8px 10px;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--text-danger, #e5484d);
-  background-color: color-mix(in srgb, var(--text-danger, #e5484d) 8%, transparent);
+  color: var(--color-danger);
+  background-color: var(--color-danger-bg);
+  background-color: color-mix(in srgb, var(--color-danger) 8%, transparent);
   border-radius: var(--radius-sm);
   white-space: pre-wrap;
   word-break: break-all;
@@ -377,6 +378,7 @@ async function copyRoomCode() {
   gap: 8px;
   padding: 4px 8px;
   border-radius: var(--radius-sm);
+  background-color: var(--surface-default);
   background-color: color-mix(in srgb, var(--surface-default) 60%, transparent);
 }
 .online-player-dot {

@@ -210,7 +210,7 @@ function onCustomColor(e: Event) {
 }
 
 .nb-tag-x:hover {
-  color: var(--text-danger, #e5484d);
+  color: var(--color-danger);
   background-color: var(--surface-hover);
 }
 

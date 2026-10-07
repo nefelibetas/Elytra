@@ -5,7 +5,9 @@
 import { computed, ref, onMounted } from "vue";
 import { useRoute } from "vue-router";
 import { Folder, Trash2, Palette, Database, Sun } from "@lucide/vue";
-import { invoke } from "@tauri-apps/api/core";
+import { deleteResourceFile } from "../../store/versionDetail";
+import { ensureGameFolder } from "../../store/gameDirs";
+import { openFolder } from "../../utils/fs";
 import { fmtCount, fmtSize } from "../../utils/format";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
@@ -77,11 +79,7 @@ async function confirmDelete() {
   deletePending.value = [];
   for (const n of names) {
     try {
-      await invoke("delete_resource_file", {
-        versionName: versionName.value,
-        kind: props.kind,
-        fileName: n,
-      });
+      await deleteResourceFile(versionName.value, props.kind, n);
       showToast(`已删除 ${n}`);
     } catch (e) {
       showToast(errMsg(e));
@@ -104,13 +102,10 @@ onMounted(async () => {
 });
 
 /** 打开资源目录（目录不存在先创建）。 */
-async function openFolder() {
+async function openResourceFolder() {
   try {
-    const target = await invoke<string>("ensure_game_folder", {
-      kind: props.kind,
-      versionName: versionName.value,
-    });
-    await invoke("open_folder", { path: target });
+    const target = await ensureGameFolder(props.kind, versionName.value);
+    await openFolder(target);
   } catch (e) {
     showToast(errMsg(e));
   }
@@ -123,7 +118,7 @@ async function openFolder() {
     <div class="vsr-card vsr-head-card">
       <component :is="meta.icon" :size="16" class="vsr-head-icon" />
       <span class="vsr-head-title">{{ meta.label }}管理</span>
-      <button class="vsr-act-btn" @click="openFolder">
+      <button class="vsr-act-btn" @click="openResourceFolder">
         <Folder :size="13" />
         <span>打开文件夹</span>
       </button>
@@ -462,12 +457,14 @@ async function openFolder() {
 }
 
 .vsr-ab-btn.danger {
+  border: 1px solid var(--color-danger);
   border: 1px solid color-mix(in srgb, var(--color-danger) 40%, transparent);
   background: transparent;
   color: var(--color-danger);
 }
 
 .vsr-ab-btn.danger:hover:not(:disabled) {
+  background: var(--color-danger-bg);
   background: color-mix(in srgb, var(--color-danger) 8%, transparent);
   border-color: var(--color-danger);
 }
