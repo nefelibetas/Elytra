@@ -5,8 +5,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { StepStatus } from "./download";
 import type { InstalledVersionInfo } from "./gameDirs";
-import { EVT_GAME_EXITED, EVT_GAME_WINDOW_VISIBLE } from "./events";
-import { authMode, msAccount, username, externalAccount, type MsAccountInfo } from "./auth";
+import { GAME_EXITED, GAME_WINDOW_VISIBLE } from "./events";
+import { authMode, msAccount, username, externalAccount, refreshExternalAccount, type MsAccountInfo } from "./auth";
 import { selectedVersion, setSelected, getSavedDir } from "./selectedVersion";
 import { showError } from "./alert";
 
@@ -109,10 +109,27 @@ export async function doLaunch(navigateToDownload: () => void) {
   ];
 
   try {
-    // 正版：等待 token 刷新完成（失败时重置并返回，不重复弹窗）；第三方/离线跳过
-    if (!isOffline && !isThirdParty) {
+    // 启动前确保凭据可用。
+    // 正版：后端按需续签（未过期时零网络开销，避免每次启动都走完整微软登录链）。
+    // 第三方：同样先静默续签——Yggdrasil 令牌的刷新窗口有限，不主动续签就会一直放到
+    //   连 refresh 都过期的地步，届时只能报「登录凭据已失效」重新登录（Yggdrasil 不返回
+    //   过期时间，无法像正版那样先判过期，故每次启动都刷一次，网络开销可忽略）。
+    // 离线：无凭据，跳过。
+    if (isThirdParty) {
+      const ext = externalAccount.value;
+      if (ext) {
+        try {
+          await refreshExternalAccount(ext.api_url, ext.uuid);
+        } catch (e) {
+          externalAccount.value = null;
+          resetLaunch();
+          showError(`第三方账号登录已失效，请重新登录：${String(e)}`, true);
+          return;
+        }
+      }
+    } else if (!isOffline) {
       try {
-        msAccount.value = await invoke<MsAccountInfo>("refresh_ms_account");
+        msAccount.value = await invoke<MsAccountInfo>("ensure_ms_account");
       } catch (e) {
         msAccount.value = null;
         resetLaunch();
@@ -198,12 +215,12 @@ function waitGameWindow(label: string): Promise<boolean> {
       resolve(ok);
     };
     const timer = setTimeout(() => finish(false), 90_000);
-    listen<[number, string]>(EVT_GAME_WINDOW_VISIBLE, (ev) => {
+    listen<[number, string]>(GAME_WINDOW_VISIBLE, (ev) => {
       if (ev.payload[1] !== label) return;
       windowSeen = true;
       finish(true);
     }).then(u => unlisteners.push(u));
-    listen<GameExitedPayload>(EVT_GAME_EXITED, (ev) => {
+    listen<GameExitedPayload>(GAME_EXITED, (ev) => {
       if (ev.payload[1] !== label) return;
       // 任意退出码：窗口已见则视为"已成功等待"，否则判定失败
       finish(windowSeen);
@@ -211,11 +228,16 @@ function waitGameWindow(label: string): Promise<boolean> {
   });
 }
 
+/** 读取某版本的最近一次游戏日志（launcher/process.rs 落盘）。 */
+export async function loadGameLog(gameDir: string, versionName: string): Promise<string> {
+  return await invoke<string>("get_game_log", { gameDir, versionName });
+}
+
 /** 幂等注册 game-exited 监听（页面 onMounted 调用一次）：非零退出码弹错误提示。 */
 export async function ensureGameExitListener() {
   if (gameExitListenerReady) return;
   gameExitListenerReady = true;
-  await listen<GameExitedPayload>(EVT_GAME_EXITED, (ev) => {
+  await listen<GameExitedPayload>(GAME_EXITED, (ev) => {
     console.log("Game exited:", ev.payload);
     const [, label, exitCode, crashReport] = ev.payload;
     // 退出码非 0：游戏异常退出（崩溃/启动失败）——不再静默，弹错误级提示

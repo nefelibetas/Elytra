@@ -8,9 +8,11 @@ use std::time::Duration;
 
 use tauri::AppHandle;
 
-use crate::config::downloader::model::DownloaderConfig;
+use crate::config::downloader::DownloaderConfig;
 use crate::constants;
 use crate::downloader::fetcher;
+use crate::downloader::path_lock::PathLock;
+use crate::game::resource::extract::extract_zip_safe;
 use crate::persist;
 use crate::task::model::{DownloadFileItem, DownloadFileKind, DownloadFilesTask};
 use crate::task::{self, StepStatus, TaskProgress, TaskSpec, TaskStatus, WaitingDecision};
@@ -18,6 +20,7 @@ use crate::task::{self, StepStatus, TaskProgress, TaskSpec, TaskStatus, WaitingD
 use super::progress::{
     cancelled, set_cancelled, set_error, set_phase, spawn_heartbeat, step_done, HeartbeatStats,
 };
+use super::{EventSink, TaskCtx};
 
 /// 单文件目标路径（纯函数，供单测）：versions/{version_dir}/{kind_dir}/{filename}。
 fn file_dest(
@@ -47,12 +50,8 @@ struct WaitingUserPayload {
 /// 下载成功调用 `on_success(tmp)` 落盘/安装；失败清理 tmp。
 /// 返回 None = 任务已结束（内部已 set_error/set_cancelled）；Some(()) = 该文件完成
 /// （用户明示跳过时 tmp 已被清理，on_success 落盘会失败——与既有流程报错语义一致）。
-#[allow(clippy::too_many_arguments)] // 上下文参数（app/cancel/progress/task_id）对齐 search_community 先例
 async fn download_with_decision(
-    app: &AppHandle,
-    cancel: &Arc<AtomicBool>,
-    progress: &Arc<Mutex<TaskProgress>>,
-    task_id: &str,
+    ctx: &TaskCtx<'_>,
     filename: &str,
     url: &str,
     tmp: &Path,
@@ -60,6 +59,12 @@ async fn download_with_decision(
     emit_handle: &tauri::async_runtime::JoinHandle<()>,
     on_success: impl FnOnce(&Path) -> Result<(), String>,
 ) -> Option<()> {
+    let TaskCtx {
+        app,
+        cancel,
+        progress,
+        task_id,
+    } = *ctx;
     let mut decided = WaitingDecision::Retry;
     let mut silent_retries = 0u32;
     while decided == WaitingDecision::Retry {
@@ -126,25 +131,27 @@ async fn download_with_decision(
 /// 移动至 versions/{vdir}/saves/{name}（同名冲突 _{n} 后缀）→ 清理临时区。
 /// 版本隔离落盘：MC 启动时版本目录即游戏目录，saves 直接可读。
 /// 返回 None = 任务已结束（内部已 set_error/set_cancelled）；Some(()) = 安装完成。
-#[allow(clippy::too_many_arguments)] // 上下文参数（app/cancel/progress/task_id）对齐 search_community 先例
 async fn install_world(
-    app: &AppHandle,
-    cancel: &Arc<AtomicBool>,
-    progress: &Arc<Mutex<TaskProgress>>,
-    task_id: &str,
+    ctx: &TaskCtx<'_>,
     mc: &Path,
     version_dir: &str,
     f: &DownloadFileItem,
     cb: &(dyn Fn(u64, u64) + Send + Sync),
     emit_handle: &tauri::async_runtime::JoinHandle<()>,
 ) -> Option<()> {
+    let TaskCtx {
+        app,
+        cancel,
+        progress,
+        ..
+    } = *ctx;
     let stage = mc
         .join("versions")
         .join(version_dir)
         .join("saves")
         .join(".elytra-worlds");
     // 锁临时区目录：防并发 worlds 任务互相踩踏（下载/解压/移动全程独占）
-    let _lock = match task::PathLock::try_acquire(task::global(), &stage) {
+    let _lock = match PathLock::try_acquire(&stage) {
         Some(l) => l,
         None => {
             emit_handle.abort();
@@ -171,10 +178,7 @@ async fn install_world(
     // 下载（含静默重试/WaitingForUser，与普通 kind 一致），成功后 rename 到临时区 zip
     let zip_for_rename = zip_path.clone();
     download_with_decision(
-        app,
-        cancel,
-        progress,
-        task_id,
+        ctx,
         &f.filename,
         &f.url,
         &tmp,
@@ -184,7 +188,7 @@ async fn install_world(
     )
     .await?;
     // 解压（zip slip 防护 + 逐条目取消检查）
-    if let Err(e) = crate::downloader::extract::extract_zip_safe(&zip_path, &unpack, cancel) {
+    if let Err(e) = extract_zip_safe(&zip_path, &unpack, cancel) {
         let _ = std::fs::remove_dir_all(&stage);
         emit_handle.abort();
         set_error(app, progress, e);
@@ -261,11 +265,109 @@ fn locate_world_root(
 /// 步骤 = 每文件一步；逐文件下载到 .elytra-part 临时文件后 rename，取消/失败清理临时文件。
 /// 进度：文件计数 + 字节累计（当前文件增量），EMA 速度，复用 update_progress。
 pub async fn run_files_task(
-    app: AppHandle,
+    sink: Arc<dyn EventSink>,
     cancel: &Arc<AtomicBool>,
     progress: &Arc<Mutex<TaskProgress>>,
     task: &DownloadFilesTask,
 ) {
+    let app: &dyn EventSink = sink.as_ref();
+    // 准备阶段：配置/目标路径/路径锁/目录创建，失败或已取消 → 内部收口后返回
+    // （`_locks` 持有全部路径锁，存活至任务结束）。
+    let Some(FilesPlan {
+        mc,
+        items,
+        locks: _locks,
+        task_id,
+    }) = prepare_files(app, cancel, progress, task)
+    else {
+        return;
+    };
+    let counts = FilesCounters::new();
+    let total_files = task.files.len() as u32;
+    // 进度上报：150ms 共享心跳刷新状态/文件数/字节/EMA 速度/ETA（语义对齐原内联
+    // 实现：停滞 >4s 或速度 <1KB/s 时 ETA 置 None）。当前文件的步骤级字节占比
+    // 由下载回调节流刷新（见 file_progress_callback），心跳不再重复处理步骤进度。
+    let emit_handle = spawn_heartbeat(
+        Arc::clone(&sink),
+        progress,
+        HeartbeatStats {
+            done_files: Arc::clone(&counts.done_files),
+            total_files,
+            bytes: Arc::clone(&counts.total_bytes),
+            est_total_bytes: Arc::clone(&counts.est_bytes),
+        },
+    );
+    let ctx = FilesCtx {
+        sink: &sink,
+        cancel,
+        progress,
+        task,
+        task_id: &task_id,
+        mc: &mc,
+        items: &items,
+        counts: &counts,
+    };
+    // 逐文件下载/落盘；None = 任务已结束（内部已 set_error/set_cancelled），直接返回。
+    if run_file_steps(&ctx, &emit_handle).await.is_none() {
+        return;
+    }
+    finish_files(app, progress, total_files);
+}
+
+/// 批量文件下载的准备结果：游戏目录 + 目标/临时路径 + 路径锁（存活至任务结束）。
+struct FilesPlan {
+    mc: std::path::PathBuf,
+    items: Vec<(std::path::PathBuf, std::path::PathBuf)>,
+    locks: Vec<PathLock>,
+    task_id: String,
+}
+
+/// 批量文件任务的共享计数器：心跳读取 + 下载回调写入。
+struct FilesCounters {
+    done_files: Arc<AtomicU32>,
+    // 心跳字节源 = 已完成文件累计 + 当前文件已下载（回调内维护），速度平滑连续
+    total_bytes: Arc<AtomicU64>,
+    // 总量估算 = 已完成累计 + 当前文件声明大小（回调内随 total_size 更新）
+    est_bytes: Arc<AtomicU64>,
+    cur_bytes: Arc<AtomicU64>,
+    cur_total: Arc<AtomicU64>,
+    cur_idx: Arc<AtomicU32>,
+}
+
+impl FilesCounters {
+    fn new() -> Self {
+        Self {
+            done_files: Arc::new(AtomicU32::new(0)),
+            total_bytes: Arc::new(AtomicU64::new(0)),
+            est_bytes: Arc::new(AtomicU64::new(0)),
+            cur_bytes: Arc::new(AtomicU64::new(0)),
+            cur_total: Arc::new(AtomicU64::new(0)),
+            cur_idx: Arc::new(AtomicU32::new(0)),
+        }
+    }
+}
+
+/// 批量文件下载执行上下文：阶段函数共用的一组句柄与计划。
+#[derive(Clone, Copy)]
+struct FilesCtx<'a> {
+    sink: &'a Arc<dyn EventSink>,
+    cancel: &'a Arc<AtomicBool>,
+    progress: &'a Arc<Mutex<TaskProgress>>,
+    task: &'a DownloadFilesTask,
+    task_id: &'a str,
+    mc: &'a Path,
+    items: &'a [(std::path::PathBuf, std::path::PathBuf)],
+    counts: &'a FilesCounters,
+}
+
+/// 准备阶段：读取下载器配置 → 计算目标/临时路径 → 全部路径互斥占用 →
+/// 取消检查 → 创建目标目录。返回 None = 已收口（内部 set_error/set_cancelled）。
+fn prepare_files(
+    app: &dyn EventSink,
+    cancel: &Arc<AtomicBool>,
+    progress: &Arc<Mutex<TaskProgress>>,
+    task: &DownloadFilesTask,
+) -> Option<FilesPlan> {
     let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
     let mc = config.minecraft_dir_abs();
     let task_id = progress.lock().task_id.clone();
@@ -281,161 +383,167 @@ pub async fn run_files_task(
         .collect();
 
     // 全部路径互斥占用：任一被其他任务占用 → 整任务拒绝（可预期，不半途而废）
-    let mut _locks = Vec::new();
+    let mut locks = Vec::new();
     for (dest, _) in &items {
-        match task::PathLock::try_acquire(task::global(), dest) {
-            Some(l) => _locks.push(l),
+        match PathLock::try_acquire(dest) {
+            Some(l) => locks.push(l),
             None => {
-                return set_error(
-                    &app,
+                set_error(
+                    app,
                     progress,
                     format!("该文件正在被其他任务下载:\n{}", dest.display()),
-                )
+                );
+                return None;
             }
         }
     }
     if cancelled(cancel) {
-        return set_cancelled(&app, progress);
+        set_cancelled(app, progress);
+        return None;
     }
     for (dest, _) in &items {
         if let Some(parent) = dest.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
-                return set_error(
-                    &app,
+                set_error(
+                    app,
                     progress,
                     format!("创建目录失败:\n{}\n{}", e, parent.display()),
                 );
+                return None;
             }
         }
     }
+    Some(FilesPlan {
+        mc,
+        items,
+        locks,
+        task_id,
+    })
+}
 
-    let done_files = Arc::new(AtomicU32::new(0));
-    // 心跳字节源 = 已完成文件累计 + 当前文件已下载（回调内维护），速度平滑连续
-    let total_bytes = Arc::new(AtomicU64::new(0));
-    // 总量估算 = 已完成累计 + 当前文件声明大小（回调内随 total_size 更新）
-    let est_bytes = Arc::new(AtomicU64::new(0));
-    let cur_bytes = Arc::new(AtomicU64::new(0));
-    let cur_total = Arc::new(AtomicU64::new(0));
-    let cur_idx = Arc::new(AtomicU32::new(0));
-    let total_files = task.files.len() as u32;
-    // 进度上报：150ms 共享心跳刷新状态/文件数/字节/EMA 速度/ETA（语义对齐原内联
-    // 实现：停滞 >4s 或速度 <1KB/s 时 ETA 置 None）。当前文件的步骤级字节占比
-    // 由下载回调节流刷新（见下方 cb），心跳不再重复处理步骤进度。
-    let emit_handle = spawn_heartbeat(
-        &app,
+/// 构造当前文件的下载回调：维护当前文件字节（步骤级占比）+ 心跳字节源/总量估算；
+/// 步骤级进度节流刷新（~150ms，对齐心跳频率），避免每 chunk 都锁 progress。
+fn file_progress_callback(
+    sink: &Arc<dyn EventSink>,
+    progress: &Arc<Mutex<TaskProgress>>,
+    counts: &FilesCounters,
+    acc_snap: u64,
+) -> impl Fn(u64, u64) + Send + Sync {
+    let app = Arc::clone(sink);
+    let progress = Arc::clone(progress);
+    let cur_bytes = Arc::clone(&counts.cur_bytes);
+    let cur_total = Arc::clone(&counts.cur_total);
+    let est_bytes = Arc::clone(&counts.est_bytes);
+    let total_bytes = Arc::clone(&counts.total_bytes);
+    let cur_idx = Arc::clone(&counts.cur_idx);
+    let throttle_ms = Arc::new(AtomicU64::new(0));
+    let clock = std::time::Instant::now();
+    move |downloaded: u64, total_size: u64| {
+        cur_bytes.store(downloaded, Ordering::Relaxed);
+        total_bytes.store(acc_snap + downloaded, Ordering::Relaxed);
+        if total_size > 0 {
+            cur_total.store(total_size, Ordering::Relaxed);
+            est_bytes.store(acc_snap + total_size, Ordering::Relaxed);
+        }
+        // 步骤级字节占比节流刷新（~150ms）；整体进度/速度/ETA 由共享心跳负责
+        let now_ms = clock.elapsed().as_millis() as u64;
+        if now_ms.saturating_sub(throttle_ms.swap(now_ms, Ordering::Relaxed)) >= 150 {
+            task::update_and_emit(app.as_ref(), &progress, |p| {
+                let cb_b = cur_bytes.load(Ordering::Relaxed);
+                let ct = cur_total.load(Ordering::Relaxed);
+                if let Some(st) = p.steps.get_mut(cur_idx.load(Ordering::Relaxed) as usize) {
+                    if st.status == StepStatus::Running {
+                        st.progress = if ct > 0 {
+                            (cb_b as f64 / ct as f64).min(1.0) * 100.0
+                        } else {
+                            0.0
+                        };
+                    }
+                }
+            });
+        }
+    }
+}
+
+/// 逐文件阶段：下载/落盘 + 步骤收口，循环结束 abort 心跳。
+/// 返回 None = 任务已结束（内部收口）；Some(()) = 全部文件完成（心跳已 abort）。
+async fn run_file_steps(
+    ctx: &FilesCtx<'_>,
+    emit_handle: &tauri::async_runtime::JoinHandle<()>,
+) -> Option<()> {
+    let FilesCtx {
+        sink,
+        cancel,
         progress,
-        HeartbeatStats {
-            done_files: Arc::clone(&done_files),
-            total_files,
-            bytes: Arc::clone(&total_bytes),
-            est_total_bytes: Arc::clone(&est_bytes),
-        },
-    );
-
+        task,
+        task_id,
+        mc,
+        items,
+        counts,
+    } = *ctx;
+    let app: &dyn EventSink = sink.as_ref();
+    let total_files = task.files.len() as u32;
     for (i, (dest, tmp)) in items.iter().enumerate() {
-        cur_idx.store(i as u32, Ordering::Relaxed);
+        counts.cur_idx.store(i as u32, Ordering::Relaxed);
         let f = &task.files[i];
         set_phase(
-            &app,
+            app,
             progress,
             None,
             &format!("下载 {}", f.filename),
             i,
             StepStatus::Running,
         );
-        cur_bytes.store(0, Ordering::Relaxed);
-        let acc_snap = total_bytes.load(Ordering::Relaxed);
-        // 下载回调：维护当前文件字节（步骤级占比）+ 心跳字节源/总量估算；
-        // 步骤级进度节流刷新（~150ms，对齐心跳频率），避免每 chunk 都锁 progress。
-        let cb = {
-            let app = app.clone();
-            let progress = progress.clone();
-            let cur_bytes = cur_bytes.clone();
-            let cur_total = cur_total.clone();
-            let est_bytes = est_bytes.clone();
-            let total_bytes = total_bytes.clone();
-            let cur_idx = cur_idx.clone();
-            let throttle_ms = Arc::new(AtomicU64::new(0));
-            let clock = std::time::Instant::now();
-            move |downloaded: u64, total_size: u64| {
-                cur_bytes.store(downloaded, Ordering::Relaxed);
-                total_bytes.store(acc_snap + downloaded, Ordering::Relaxed);
-                if total_size > 0 {
-                    cur_total.store(total_size, Ordering::Relaxed);
-                    est_bytes.store(acc_snap + total_size, Ordering::Relaxed);
-                }
-                // 步骤级字节占比节流刷新（~150ms）；整体进度/速度/ETA 由共享心跳负责
-                let now_ms = clock.elapsed().as_millis() as u64;
-                if now_ms.saturating_sub(throttle_ms.swap(now_ms, Ordering::Relaxed)) >= 150 {
-                    task::update_and_emit(&app, &progress, |p| {
-                        let cb_b = cur_bytes.load(Ordering::Relaxed);
-                        let ct = cur_total.load(Ordering::Relaxed);
-                        if let Some(st) = p.steps.get_mut(cur_idx.load(Ordering::Relaxed) as usize)
-                        {
-                            if st.status == StepStatus::Running {
-                                st.progress = if ct > 0 {
-                                    (cb_b as f64 / ct as f64).min(1.0) * 100.0
-                                } else {
-                                    0.0
-                                };
-                            }
-                        }
-                    });
-                }
-            }
-        };
+        counts.cur_bytes.store(0, Ordering::Relaxed);
+        let acc_snap = counts.total_bytes.load(Ordering::Relaxed);
+        let cb = file_progress_callback(sink, progress, counts, acc_snap);
         // 下载 + 落盘：普通 kind 下载到 .elytra-part 后 rename 到 kind 目录；
         // 失败重试/WaitingForUser 语义两种 kind 一致（download_with_decision 提取）。
         // None = 任务已结束（内部已 set_error/set_cancelled），直接返回。
+        let file_ctx = TaskCtx {
+            app,
+            cancel,
+            progress,
+            task_id,
+        };
         let placed = if f.kind == DownloadFileKind::World {
-            install_world(
-                &app,
-                cancel,
-                progress,
-                &task_id,
-                &mc,
-                &task.version_dir_name,
-                f,
-                &cb,
-                &emit_handle,
-            )
-            .await
+            install_world(&file_ctx, mc, &task.version_dir_name, f, &cb, emit_handle).await
         } else {
             download_with_decision(
-                &app,
-                cancel,
-                progress,
-                &task_id,
+                &file_ctx,
                 &f.filename,
                 &f.url,
                 tmp,
                 &cb,
-                &emit_handle,
+                emit_handle,
                 |tmp| std::fs::rename(tmp, dest).map_err(|e| e.to_string()),
             )
             .await
         };
-        if placed.is_none() {
-            return;
-        }
-        total_bytes.store(
-            acc_snap + cur_bytes.load(Ordering::Relaxed),
+        placed?;
+        counts.total_bytes.store(
+            acc_snap + counts.cur_bytes.load(Ordering::Relaxed),
             Ordering::Relaxed,
         );
-        cur_bytes.store(0, Ordering::Relaxed);
-        cur_total.store(0, Ordering::Relaxed);
-        step_done(&app, progress, i);
-        task::update_and_emit(&app, progress, |p| {
+        counts.cur_bytes.store(0, Ordering::Relaxed);
+        counts.cur_total.store(0, Ordering::Relaxed);
+        step_done(app, progress, i);
+        task::update_and_emit(app, progress, |p| {
             p.current_phase = format!("已完成 {}/{}", i + 1, total_files);
         });
         if cancelled(cancel) {
             emit_handle.abort();
-            return set_cancelled(&app, progress);
+            set_cancelled(app, progress);
+            return None;
         }
     }
     emit_handle.abort();
+    Some(())
+}
 
-    task::update_and_emit(&app, progress, |p| {
+/// 收尾阶段：Done 终态 + 100% 进度 + 移除任务注册（先释放 progress 锁再 remove）。
+fn finish_files(app: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>, total_files: u32) {
+    task::update_and_emit(app, progress, |p| {
         p.status = TaskStatus::Done;
         p.progress = 100.0;
         p.completed_files = total_files;
@@ -470,10 +578,10 @@ pub(crate) fn spawn_files_task(app: AppHandle, task: DownloadFilesTask) -> Resul
         app,
         task.name(),
         task.steps(),
-        crate::task::store::JobSpec::Files(task.clone()),
+        task::store::JobSpec::Files(task.clone()),
         move |a, cancel, progress| {
             tauri::async_runtime::spawn(async move {
-                run_files_task(a, &cancel, &progress, &task).await;
+                run_files_task(Arc::new(a), &cancel, &progress, &task).await;
             });
         },
     )

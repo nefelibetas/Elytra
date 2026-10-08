@@ -17,3 +17,26 @@
 .route-leave-to,
 .slide-left-leave-to,
 .slide-right-leave-to { opacity: 0; }
+
+/* 展开/收起共享骨架（<Transition name="expand">）。
+ * 目标高度由 --expand-h 注入，各组件只负责给元素挂上该变量（默认回退 1000px，防止漏注入时高度归零）。
+ * 铁律：目标最大高度必须写在 enter-to/leave-from。写在 enter-active 会与 enter-from
+ * 同特异性共存、覆盖 from 态 → 无动画。
+ * max-height / overflow 用 !important：部分展开区基类自带用于内部滚动的持久
+ * max-height、overflow-y（scoped 选择器含 [data-v]，特异性高于本文件），
+ * 必须强制压过才能归零/到位、并在过渡期间裁剪。 */
+.expand-enter-active,
+.expand-leave-active {
+  transition: max-height 0.25s ease, opacity 0.2s ease;
+  overflow: hidden !important;
+}
+.expand-enter-from,
+.expand-leave-to {
+  max-height: 0 !important;
+  opacity: 0;
+}
+.expand-enter-to,
+.expand-leave-from {
+  max-height: var(--expand-h, 1000px) !important;
+  opacity: 1;
+}

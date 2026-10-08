@@ -6,7 +6,9 @@ import { useRouter } from "vue-router";
 import { Pencil, Folder, FolderOpen, CloudDownload, Puzzle, Map, Settings2, Palette, Database, Sun, ImagePlus } from "@lucide/vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import { fmtUnix } from "../../utils/format";
-import { invoke } from "@tauri-apps/api/core";
+import { ensureGameFolder, renameVersionDir } from "../../store/gameDirs";
+import { scanMissingFiles, submitMissingDownload } from "../../store/download";
+import { openFolder } from "../../utils/fs";
 import { classifyVersion } from "../../utils/versionClassify";
 import { LOADER_ICONS, LOADER_TITLES } from "../../utils/versionMeta";
 import { fmtCount, fmtSize } from "../../utils/format";
@@ -194,13 +196,10 @@ watch(
 onBeforeUnmount(() => stopWorldsLivePolling());
 
 // ── 打开文件夹（目录不存在先创建；后端 ensure_game_folder 支持 version/saves/mods/资源目录）──
-async function openFolder(kind: "saves" | "version" | "mods" | "resourcepacks" | "datapacks" | "shaderpacks") {
+async function openVersionFolder(kind: "saves" | "version" | "mods" | "resourcepacks" | "datapacks" | "shaderpacks") {
   try {
-    const target = await invoke<string>("ensure_game_folder", {
-      kind,
-      versionName: versionName.value,
-    });
-    await invoke("open_folder", { path: target });
+    const target = await ensureGameFolder(kind, versionName.value);
+    await openFolder(target);
   } catch (e) {
     showToast(errMsg(e));
   }
@@ -213,21 +212,14 @@ async function repairFiles() {
   if (checking.value || isLaunching.value) return;
   checking.value = true;
   try {
-    const report = await invoke<{
-      client_jar: boolean;
-      libraries: number;
-      assets: number;
-      natives: number;
-    }>("scan_missing_files", { versionDirName: versionName.value });
+    const report = await scanMissingFiles(versionName.value);
     const total =
       (report.client_jar ? 1 : 0) + report.libraries + report.assets + report.natives;
     if (total === 0) {
       showToast("游戏文件完整，无需补全");
       return;
     }
-    const taskId = await invoke<string>("submit_missing_download", {
-      versionDirName: versionName.value,
-    });
+    const taskId = await submitMissingDownload(versionName.value);
     // 预注册任务：任务中心徽标立即出现（首次 task-progress 事件到达前也能看到）
     dlState.addTask({
       taskId,
@@ -273,10 +265,7 @@ async function confirmRename() {
     return;
   }
   try {
-    await invoke("rename_version_dir", {
-      versionName: versionName.value,
-      newName,
-    });
+    await renameVersionDir(versionName.value, newName);
     renameDialog.value = false;
     // 保持选中新名：卡片 watch 自动刷新内容
     setSelected(newName);
@@ -326,7 +315,7 @@ async function confirmRename() {
           type="button"
           class="vdc-side-open"
           v-tooltip="folderMeta.label"
-          @click="openFolder(folderMeta.kind)"
+          @click="openVersionFolder(folderMeta.kind)"
         >
           <FolderOpen :size="15" />
         </button>
@@ -452,7 +441,7 @@ async function confirmRename() {
 
     <!-- 底部操作 -->
     <div class="vdc-foot">
-      <button class="vdc-foot-btn" @click="openFolder('version')">
+      <button class="vdc-foot-btn" @click="openVersionFolder('version')">
         <Folder :size="14" />
         <span>游戏文件夹</span>
       </button>
@@ -472,6 +461,7 @@ async function confirmRename() {
           type="text"
           maxlength="64"
           @keydown.enter="confirmRename"
+          autocomplete="off"
         />
         <div v-if="renameError" class="vdc-err">{{ renameError }}</div>
       </div>

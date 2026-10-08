@@ -2,12 +2,13 @@
 // 账号区：正版/离线切换 + 用户区（头像/用户名/登录/操作菜单）。
 // 菜单跟随鼠标 Teleport 到 body；window click 关闭菜单（组件挂载周期内注册）。
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
-import { ShieldCheck, User, UserRound, Shirt, Pencil, LogOut, Users, ChevronDown, Link2, RotateCcw, RefreshCw } from "@lucide/vue";
+import { ShieldCheck, User, UserRound, Pencil, LogOut, Users, ChevronDown, Link2, RotateCcw, RefreshCw } from "@lucide/vue";
 import {
   authMode, msAccount, msAccounts, offlineAccounts, username, setAuthMode, msLoginState,
   startMsLogin, cancelMsLogin, switchMsAccount, removeMsAccount,
   saveOfflineAccount, removeOfflineAccount,
   externalAccount, loadExternalAccounts, switchExternalRole, refreshExternalAccount,
+  type MsAccountInfo,
 } from "../../store/auth";
 import { avatarState, scheduleOfflineRender, renderAccountHead, renderOfflineHead, accountHeads, offlineHeads, renderSkinHead3D, renderExternalAvatar, renderPremiumAvatar } from "../../store/avatar";
 import { accountUi } from "../../store/accountUi";
@@ -15,9 +16,9 @@ import { showToast } from "../../utils/toast";
 import { invoke } from "@tauri-apps/api/core";
 import { showError } from "../../store/alert";
 import { settingsTab } from "../../store/settingsTab";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useRouter } from "vue-router";
 import MenuPopover from "../common/MenuPopover.vue";
-import AlertDialog from "../common/AlertDialog.vue";
 
 const router = useRouter();
 
@@ -60,6 +61,51 @@ const closeHandler = () => {
 function goThirdPartyLogin() {
   settingsTab.value = "thirdparty";
   void router.push("/settings");
+}
+/** 能否进启动器衣柜：**只有已登录的正版账号**。
+ *  注意不能只看 authMode ——「正版模式但尚未登录」同样进不去衣柜，
+ *  入口必须与衣柜页自身的准入条件一致，否则点进去会被瞬间弹回。 */
+const canOpenSkinStudio = computed(() => authMode.value === "premium" && !!msAccount.value);
+/** 能否打开站点衣柜：第三方模式且已登录第三方账号。 */
+const canOpenSiteCloset = computed(() => authMode.value === "thirdparty" && !!externalAccount.value);
+
+/** 站点衣柜地址：由 authlib-injector 的 API 地址推 origin（Blessing Skin 的衣柜路径固定为 `/user/closet`）。 */
+const siteClosetUrl = computed(() => {
+  const api = externalAccount.value?.api_url;
+  if (!api) return "";
+  try {
+    return `${new URL(api).origin}/user/closet`;
+  } catch {
+    return "";
+  }
+});
+
+/** 头像提示：入口不可用时由它承担引导（说清为什么点不动、该做什么），
+ *  而不是让用户点进去再被弹回来。 */
+const avatarTip = computed(() => {
+  if (canOpenSiteCloset.value) return "在站点衣柜中管理";
+  if (canOpenSkinStudio.value) return "衣柜";
+  if (authMode.value === "thirdparty") return "第三方账号的外观在站点衣柜管理，请先登录第三方账号";
+  return authMode.value === "offline"
+    ? "离线模式没有皮肤来源，登录账号后可用"
+    : "登录 Microsoft 账号后可管理皮肤与披风";
+});
+
+/** 点皮肤头像：
+ *  正版（已登录）→ 启动器衣柜（Mojang 皮肤 + 本地收藏）；
+ *  第三方（已登录）→ 直接用浏览器打开**站点衣柜**——站点有完整的上传 / 预览 / 整理，
+ *                    而启动器只能管「已有材质」（站点没有上传 API），镜像一份反而更残缺；
+ *  其余（离线 / 正版未登录 / 第三方未登录）→ 入口已置灰，这里静默返回，不弹提示。 */
+function openSkinStudio() {
+  accountUi.closeMenus();
+  if (canOpenSiteCloset.value) {
+    void openUrl(siteClosetUrl.value).catch((e) =>
+      showError(`打开站点衣柜失败：${String(e)}`, true),
+    );
+    return;
+  }
+  if (!canOpenSkinStudio.value) return;
+  void router.push("/skin-studio");
 }
 /** 第三方已登录时的附加操作（多角色切换 / 皮肤下载）。 */
 const showRoles = ref(false);
@@ -162,6 +208,23 @@ async function ensureOfflineHeads() {
   }
 }
 
+/** 正版 access_token 仅约 24h 有效；过期后各入口会经后端 valid_access_token 自动静默续签。
+ *  这里只把状态摆明：正常时不打扰界面，临近（<5 分钟）或已过期才标警示，
+ *  消除「账号还在列表里、却各个功能失败」的困惑。 */
+function credHint(acc: MsAccountInfo): string {
+  const left = acc.expires_at - Date.now() / 1000;
+  if (left <= 0) return "登录凭证已过期，将在使用时自动续签";
+  const hours = Math.floor(left / 3600);
+  if (hours >= 1) return `凭证有效，约 ${hours} 小时后到期（自动续签）`;
+  const mins = Math.max(1, Math.floor(left / 60));
+  return `凭证有效，约 ${mins} 分钟后到期（自动续签）`;
+}
+
+/** 凭证是否临近过期或已过期（用于显示警示标记）。 */
+function credWarn(acc: MsAccountInfo): boolean {
+  return acc.expires_at - Date.now() / 1000 < 300;
+}
+
 /** 切换正版账号（防止连点；失败 = refresh_token 失效需重登）。 */
 async function switchAccount(uuid: string) {
   if (accountUi.accountsBusy) return;
@@ -233,12 +296,17 @@ function useOfflineName(name: string) {
     <div class="section s-user">
       <div
         class="user-area"
-        :class="{ 'menu-open': accountUi.skinMenu.visible || accountUi.editMenu.visible || accountUi.accountsMenu.visible }"
+        :class="{ 'menu-open': accountUi.editMenu.visible || accountUi.accountsMenu.visible }"
         @mouseenter="onExtEnter"
         @mouseleave="onExtLeave"
       >
         <div class="user-main">
-          <div class="avatar">
+          <div
+            class="avatar"
+            :class="{ clickable: canOpenSkinStudio || canOpenSiteCloset }"
+            v-tooltip="avatarTip"
+            @click="openSkinStudio"
+          >
             <img
               v-if="avatarUrl && !avatarState.avatarError"
               :src="avatarUrl"
@@ -252,7 +320,7 @@ function useOfflineName(name: string) {
               v-if="avatarState.avatarError && authMode !== 'offline'"
               class="avatar-retry"
               title="重新加载头像"
-              @click="retryAvatar"
+              @click.stop="retryAvatar"
             >
               <RefreshCw :size="14" />
             </button>
@@ -302,6 +370,7 @@ function useOfflineName(name: string) {
               type="text"
               placeholder="输入用户名"
               maxlength="16"
+              autocomplete="off"
             />
             <button
               class="icon-btn hist-btn"
@@ -357,10 +426,6 @@ function useOfflineName(name: string) {
             >
               <Users :size="14" />
             </button>
-            <!-- 衣服：皮肤/披风菜单 -->
-            <button class="icon-btn" v-tooltip="'皮肤与披风'" @click.stop="accountUi.openSkinMenu($event)">
-              <Shirt :size="14" />
-            </button>
             <!-- 编辑：账号信息菜单（修改密码 / 修改玩家名） -->
             <button class="icon-btn" v-tooltip="'编辑信息'" @click.stop="accountUi.openEditMenu($event)">
               <Pencil :size="14" />
@@ -375,20 +440,6 @@ function useOfflineName(name: string) {
             <span>登录微软账号</span>
           </button>
         </div>
-
-        <!-- 皮肤/披风菜单（跟随鼠标，出现在右下方） -->
-        <MenuPopover
-          :visible="accountUi.skinMenu.visible"
-          :x="accountUi.skinMenu.x"
-          :y="accountUi.skinMenu.y"
-        >
-          <div class="menu-item" @click="accountUi.uploadSkin">修改皮肤</div>
-          <div class="menu-item" @click="accountUi.refreshSkin">刷新皮肤</div>
-          <div class="menu-item" @click="accountUi.saveSkin">保存皮肤文件</div>
-          <div class="menu-sep"></div>
-          <div class="menu-item" @click="accountUi.openCapeDialog">修改披风</div>
-          <div class="menu-item" @click="accountUi.refreshCape">刷新披风列表</div>
-        </MenuPopover>
 
         <!-- 编辑信息菜单（修改密码 / 修改玩家名） -->
         <MenuPopover
@@ -424,7 +475,12 @@ function useOfflineName(name: string) {
                   draggable="false"
                 />
                 <UserRound v-else :size="16" class="acct-icon" />
-                <span class="acct-name">{{ acc.name }}</span>
+                <span class="acct-name" :title="credHint(acc)">{{ acc.name }}</span>
+                <span
+                  v-if="credWarn(acc)"
+                  class="acct-cred-warn"
+                  :title="credHint(acc)"
+                >!</span>
                 <span v-if="acc.uuid === msAccount?.uuid" class="acct-check">✓</span>
                 <button
                   class="acct-del"
@@ -440,15 +496,6 @@ function useOfflineName(name: string) {
       </div>
     </div>
 
-    <!-- 上传皮肤前确认模型：CLASSIC（经典 Steve 宽）/ SLIM（纤细 Alex 窄） -->
-    <AlertDialog v-model="accountUi.skinModelDialog" title="选择皮肤模型">
-      <div class="skin-model-desc">上传后将替换当前皮肤，模型不可中途更换（需重新上传）。</div>
-      <template #actions>
-        <button class="dialog-btn" @click="accountUi.skinModelDialog = false">取消</button>
-        <button class="dialog-btn danger" @click="accountUi.confirmUploadSkin('CLASSIC')">经典模型（Steve）</button>
-        <button class="dialog-btn" @click="accountUi.confirmUploadSkin('SLIM')">纤细模型（Alex）</button>
-      </template>
-    </AlertDialog>
   </div>
 </template>
 
@@ -755,6 +802,23 @@ function useOfflineName(name: string) {
   height: 100%;
 }
 
+/* 头像即衣柜入口：hover 品牌色描边提示可点（z-index 盖过 .user-area::before 热区） */
+.avatar.clickable {
+  z-index: 1;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  transition: box-shadow 0.15s;
+}
+
+.avatar.clickable:hover {
+  box-shadow: 0 0 0 3px var(--color-brand-glow);
+}
+
+/* 离线模式：衣柜没有皮肤来源，入口不可点。**不给任何样式**——
+ *  点击由 openSkinStudio() 内部守卫拦住（!canOpenSkinStudio 直接 return），
+ *  光标也保持默认。头像是内容而非按钮，任何置灰/降透明度都会让它发白、去饱和
+ *  （#efdabf 混 45% 白底 → #f6ebdc），看起来像渲染出了问题。 */
+
 .avatar img {
   max-width: 100%;
   max-height: 100%;
@@ -867,25 +931,8 @@ function useOfflineName(name: string) {
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
-}
-
-/* expand 动画目标值 = 固定高度（写在 enter-to/leave-from，写在 active 会覆盖 from 态导致无动画） */
-.expand-enter-active,
-.expand-leave-active {
-  transition: max-height 0.2s ease, opacity 0.15s ease;
-  overflow: hidden;
-}
-
-.expand-enter-from,
-.expand-leave-to {
-  max-height: 0;
-  opacity: 0;
-}
-
-.expand-enter-to,
-.expand-leave-from {
-  max-height: 180px;
-  opacity: 1;
+  /* expand 目标高度 = 固定高度（共享骨架见 styles/transitions.css） */
+  --expand-h: 180px;
 }
 
 /* premium hover actions：始终占位（不影响头像/用户名位置），仅切换透明度。
@@ -976,6 +1023,21 @@ function useOfflineName(name: string) {
 .acct-check {
   color: var(--color-brand);
   font-size: 12px;
+}
+
+/* 凭证临近过期/已过期标记：正版 token 约 24h 有效，过期后会自动续签，仅作提醒不阻断操作 */
+.acct-cred-warn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-danger);
+  color: var(--text-inverse);
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .acct-del {
@@ -1074,11 +1136,6 @@ function useOfflineName(name: string) {
   border-color: var(--color-brand);
   color: var(--color-brand);
   background-color: var(--color-brand-bg);
-}
-.skin-model-desc {
-  font-size: 12.5px;
-  color: var(--text-secondary);
-  line-height: 1.6;
 }
 
 </style>

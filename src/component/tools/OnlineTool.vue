@@ -15,6 +15,7 @@ import {
 } from "../../store/online";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
+import { copyText } from "../../utils/clipboard";
 
 onMounted(() => {
   ensureOnlineListen();
@@ -59,12 +60,7 @@ async function handleStop() {
 }
 
 async function copyRoomCode() {
-  try {
-    await navigator.clipboard.writeText(onlineRoomCode.value);
-    showToast("房间码已复制");
-  } catch {
-    showToast("复制失败，请手动复制");
-  }
+  await copyText(onlineRoomCode.value, "房间码已复制");
 }
 </script>
 
@@ -146,6 +142,7 @@ async function copyRoomCode() {
           placeholder="U/XXXX-XXXX-XXXX-XXXX"
           :disabled="onlineStatus !== 'idle'"
           @keyup.enter="handleJoin"
+          autocomplete="off"
         />
       </div>
 
@@ -340,7 +337,7 @@ async function copyRoomCode() {
   cursor: not-allowed;
 }
 .online-btn-stop {
-  color: var(--text-danger, #e5484d);
+  color: var(--color-danger);
 }
 .online-btn-primary {
   color: #fff;
@@ -357,8 +354,9 @@ async function copyRoomCode() {
   padding: 8px 10px;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--text-danger, #e5484d);
-  background-color: color-mix(in srgb, var(--text-danger, #e5484d) 8%, transparent);
+  color: var(--color-danger);
+  background-color: var(--color-danger-bg);
+  background-color: color-mix(in srgb, var(--color-danger) 8%, transparent);
   border-radius: var(--radius-sm);
   white-space: pre-wrap;
   word-break: break-all;
@@ -377,6 +375,7 @@ async function copyRoomCode() {
   gap: 8px;
   padding: 4px 8px;
   border-radius: var(--radius-sm);
+  background-color: var(--surface-default);
   background-color: color-mix(in srgb, var(--surface-default) 60%, transparent);
 }
 .online-player-dot {

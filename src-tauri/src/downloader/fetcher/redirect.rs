@@ -67,3 +67,141 @@ pub fn reset_http_client() {
 
 static HTTP_CLIENT: LazyLock<parking_lot::Mutex<Option<std::sync::Arc<Client>>>> =
     LazyLock::new(|| parking_lot::Mutex::new(None));
+
+#[cfg(test)]
+mod tests {
+    use super::super::api::{fetch, fetch_verified};
+    use super::super::core::test_support::{serve, temp_dest};
+    use super::{redirect_allowed, reset_http_client, http};
+    use crate::downloader::hash::{file_sha1_matches, sha1_hex};
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// 重定向放行决策纯函数：黑洞子域拒绝、minio（bmclapi 下载存储）放行、
+    /// 普通域放行。minio 放行是 OptiFine 安装的硬前提（下载 URL 302 → minio）。
+    #[test]
+    fn redirect_policy_minio_allowed() {
+        assert!(!redirect_allowed("17.749333.xyz"), "实测黑洞子域必须拒绝");
+        assert!(
+            !redirect_allowed("cdn.749333.xyz"),
+            "未知 749333 子域保持拒绝"
+        );
+        assert!(
+            redirect_allowed("minio.749333.xyz"),
+            "bmclapi 下载存储必须放行"
+        );
+        assert!(redirect_allowed("bmclapi2.bangbang93.com"));
+        assert!(redirect_allowed("example.com"));
+    }
+
+    /// 真实 bmclapi OptiFine 下载（302 → minio.749333.xyz）：验证重定向放行后
+    /// OptiFine 下载链路可用（黑名单按域名前缀一刀切时此测试必失败——
+    /// minio 放行是 OptiFine 安装的硬前提）。网络测试，默认忽略。
+    #[tokio::test]
+    #[ignore]
+    async fn bmclapi_optifine_real_download() {
+        let dest = temp_dest("optifine_real");
+        let res = fetch(
+            "https://bmclapi2.bangbang93.com/optifine/1.20.1/HD_U/I6",
+            &dest,
+            None::<fn(u64, u64)>,
+        )
+        .await;
+        assert!(res.is_ok(), "真实下载应成功: {:?}", res);
+        let meta = std::fs::metadata(&dest).unwrap();
+        assert!(
+            meta.len() > 1_000_000,
+            "OptiFine jar 应大于 1MB（实测 {} bytes）",
+            meta.len()
+        );
+        let _ = std::fs::remove_file(&dest);
+    }
+
+    /// 302 到黑洞节点域（749333.xyz）应被重定向策略立即拒绝（快速失败，
+    /// 而不是跟随到 TCP 黑洞挂满超时——国内网络实测卡在 asset index 的根因）。
+    #[tokio::test]
+    async fn redirect_to_blackhole_domain_rejected() {
+        // 服务器 accept 3 次（fetch_with 有 3 轮重试），每轮都返回 302 → 黑洞域
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            for _ in 0..3 {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    break;
+                };
+                let mut buf = [0u8; 4096];
+                let _ = sock.read(&mut buf).await;
+                let head = "HTTP/1.1 302 Found\r\nLocation: https://17.749333.xyz:443/download/x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                let _ = sock.write_all(head.as_bytes()).await;
+            }
+        });
+        let url = format!("http://{addr}/f");
+        let dest = temp_dest("redirect_blackhole");
+        let t0 = std::time::Instant::now();
+        let res = fetch_verified(&[url], &dest, None::<fn(u64, u64)>, "").await;
+        let elapsed = t0.elapsed();
+        eprintln!(
+            "黑洞重定向总耗时: {:.2}s res={res:?}",
+            elapsed.as_secs_f64()
+        );
+        assert!(res.is_err(), "黑洞重定向应失败，实际: {:?}", res);
+        assert!(
+            elapsed.as_secs() < 5,
+            "应在超时前快速失败（{}s）",
+            elapsed.as_secs_f64()
+        );
+        let _ = std::fs::remove_file(&dest);
+    }
+
+    /// 302 到正常域应正常跟随（重定向策略只拒绝黑洞域，不破坏 BMCLAPI 常规 302）。
+    #[tokio::test]
+    async fn redirect_to_normal_domain_followed() {
+        let good = b"followed-content".to_vec();
+        let final_url = serve(good.clone()).await;
+        let target = final_url.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        // 无限 accept：Auto 模式会先对域做 HEAD 探测（消耗一次连接），正式请求另有
+        // 3 轮重试——只 accept 一次会被探测吃掉导致正式请求连接拒绝（确定性 flaky）。
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        tokio::spawn(async move {
+            let _ = tx.send(());
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    break;
+                };
+                let mut buf = [0u8; 4096];
+                let _ = sock.read(&mut buf).await;
+                let head = format!(
+                    "HTTP/1.1 302 Found\r\nLocation: {target}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                );
+                let _ = sock.write_all(head.as_bytes()).await;
+            }
+        });
+        let _ = rx.await;
+        let url = format!("http://{addr}/redirect");
+        let dest = temp_dest("redirect_normal");
+        let res = fetch_verified(&[url], &dest, None::<fn(u64, u64)>, &sha1_hex(&good)).await;
+        assert!(res.is_ok(), "正常 302 应跟随成功: {:?}", res);
+        assert!(
+            file_sha1_matches(&dest, &sha1_hex(&good)),
+            "落地内容应正确"
+        );
+        let _ = std::fs::remove_file(&dest);
+    }
+
+    /// network_mode 切换重建：reset 后下次 http() 构建新实例（旧 Arc 由持有者释放）。
+    /// 构建 reqwest Client 不联网，测试在离线环境亦通过。
+    #[test]
+    fn http_client_reset_rebuilds_new_instance() {
+        let a = http();
+        reset_http_client();
+        let b = http();
+        assert!(
+            !Arc::ptr_eq(&a, &b),
+            "reset 后应重建新 client 实例（代理配置随 network_mode 切换生效）"
+        );
+        // 重建后全局实例稳定（再次调用复用同一实例）
+        assert!(Arc::ptr_eq(&b, &http()));
+    }
+}

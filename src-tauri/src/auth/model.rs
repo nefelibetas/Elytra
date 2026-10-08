@@ -1,4 +1,5 @@
 use crate::constants;
+use crate::persist;
 use serde::{Deserialize, Serialize};
 
 /// Microsoft 正版账号（含长期 refresh_token 与短期 Minecraft access_token）。
@@ -22,7 +23,7 @@ pub struct MsAccount {
 
 /// 读取全部正版账号（登录时间升序，末尾 = 当前账号）。无账号返回空列表。
 pub fn read_all() -> Vec<MsAccount> {
-    crate::persist::secrets::read_json_list(constants::SECT_MS_ACCOUNTS)
+    persist::secrets::read_json_list(constants::SECT_MS_ACCOUNTS)
 }
 
 /// 读取当前正版账号（列表最后一个，即最近登录/切换的）。无则 None。
@@ -35,14 +36,14 @@ pub fn save(account: &MsAccount) -> Result<(), String> {
     let mut list = read_all();
     list.retain(|a| a.uuid != account.uuid);
     list.push(account.clone());
-    crate::persist::secrets::save_json_list(constants::SECT_MS_ACCOUNTS, &list)
+    persist::secrets::save_json_list(constants::SECT_MS_ACCOUNTS, &list)
 }
 
 /// 移除指定 uuid 的正版账号（连同其长期 refresh_token）。列表清空时删除存储键。
 pub fn remove(uuid: &str) -> Result<(), String> {
     let mut list = read_all();
     list.retain(|a| a.uuid != uuid);
-    crate::persist::secrets::save_json_list(constants::SECT_MS_ACCOUNTS, &list)
+    persist::secrets::save_json_list(constants::SECT_MS_ACCOUNTS, &list)
 }
 
 #[cfg(test)]
@@ -61,7 +62,7 @@ mod tests {
     }
 
     fn cleanup() {
-        crate::persist::secrets::remove_secret(constants::SECT_MS_ACCOUNTS).ok();
+        persist::secrets::remove_secret(constants::SECT_MS_ACCOUNTS).ok();
     }
 
     /// 多账号：save 追加新账号，upsert 不重复，末尾 = 当前。

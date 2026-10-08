@@ -3,7 +3,20 @@
 //! 退出监听与崩溃报告定位。命令层（commands/launch.rs）只做编排与事件派发，
 //! 本模块不依赖 tauri：退出/窗口回调由调用方注入。
 
+#[cfg(target_os = "windows")]
+use std::ffi::c_void;
+use std::io::Write as _;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt as _;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+use crate::auth::external::{ensure_jar, read};
+use crate::auth::microsoft::extract_xuid_from_jwt;
+use crate::game::version::model::VersionJson;
+use crate::launcher::args::{ensure_old_style_natives, mc_version_of};
+use crate::launcher::env::{load_launch_config, pre_launch_check};
+use crate::launcher::model::{AuthMode, LauncherConfig, ProcessPriority};
 
 /// 启动游戏子进程（cwd/stdio 由调用方在 command 上预设）。
 /// Windows：游戏进程应与启动器生命周期解耦，否则关闭启动器（或其终端）会连游戏一起关闭：
@@ -17,7 +30,6 @@ use std::path::{Path, PathBuf};
 pub fn spawn_game_child(
     command: &mut std::process::Command,
 ) -> Result<std::process::Child, String> {
-    use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
     let mut flags = CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB;
@@ -42,7 +54,6 @@ pub fn spawn_game_child(
 
 /// 读取子进程输出并追加写入日志文件，直到 EOF 或出错。
 pub fn drain_output(reader: &mut impl std::io::Read, path: &Path, is_stderr: bool) {
-    use std::io::Write;
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -72,7 +83,6 @@ pub fn drain_output(reader: &mut impl std::io::Read, path: &Path, is_stderr: boo
 pub fn run_pre_launch_command(command: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let status = {
-        use std::os::windows::process::CommandExt;
         let mut cmd = std::process::Command::new("cmd");
         cmd.args(["/C", command]);
         cmd.creation_flags(0x08000000);
@@ -93,15 +103,15 @@ pub fn run_pre_launch_command(command: &str) -> Result<(), String> {
 
 /// 启动前完整性与 natives 准备（check_launch_env 与 spawn_game 共用）。
 pub fn ensure_game_ready(
-    version_json: &crate::downloader::model::VersionJson,
+    version_json: &VersionJson,
     mc_dir: &Path,
     version_dir_name: &str,
 ) -> Result<(), String> {
-    crate::launcher::env::pre_launch_check(version_json, mc_dir, version_dir_name)?;
+    pre_launch_check(version_json, mc_dir, version_dir_name)?;
     let natives_dir = mc_dir
         .join("natives")
-        .join(crate::launcher::args::mc_version_of(version_dir_name));
-    crate::launcher::args::ensure_old_style_natives(
+        .join(mc_version_of(version_dir_name));
+    ensure_old_style_natives(
         version_json,
         &mc_dir.join("libraries"),
         &natives_dir,
@@ -114,8 +124,6 @@ pub fn ensure_game_ready(
 /// 其他平台无此能力，直接视为可见（保持旧行为，前端另有 90s 超时兜底）。
 #[cfg(target_os = "windows")]
 fn process_has_visible_window(pid: u32) -> bool {
-    use std::ffi::c_void;
-
     extern "system" {
         fn EnumWindows(
             lp_enum_func: unsafe extern "system" fn(*mut c_void, isize) -> i32,
@@ -131,6 +139,8 @@ fn process_has_visible_window(pid: u32) -> bool {
         found: bool,
     }
 
+    // SAFETY: 作为 EnumWindows 回调，lparam 恒为调用处传入的 &mut search（见下方），
+    // 该指针在枚举期间保持有效且独占，回调内按 *mut Search 还原并解引用因此安全。
     unsafe extern "system" fn enum_proc(hwnd: *mut c_void, lparam: isize) -> i32 {
         let s = &mut *(lparam as *mut Search);
         let mut wpid: u32 = 0;
@@ -144,6 +154,8 @@ fn process_has_visible_window(pid: u32) -> bool {
     }
 
     let mut search = Search { pid, found: false };
+    // SAFETY: enum_proc 是签名匹配的 "system" 回调，search 在本栈帧存活至调用结束，
+    // 其地址作为 lparam 传入；EnumWindows 同步枚举完才返回，期间指针保持有效。
     unsafe {
         EnumWindows(enum_proc, &mut search as *mut Search as isize);
     }
@@ -157,7 +169,6 @@ fn process_has_visible_window(_pid: u32) -> bool {
 
 /// 返回目录下最新的 `crash-*.txt` 文件路径（崩溃报告）。
 fn latest_crash_report(dir: &Path) -> Option<String> {
-    use std::time::SystemTime;
     let mut latest: Option<(SystemTime, String)> = None;
     for entry in std::fs::read_dir(dir).ok()?.flatten() {
         let path = entry.path();
@@ -170,6 +181,75 @@ fn latest_crash_report(dir: &Path) -> Option<String> {
         }
     }
     latest.map(|(_, p)| p)
+}
+
+/// 游戏窗口首次可见的轮询间隔（毫秒）。
+const WINDOW_POLL_MS: u64 = 300;
+
+/// `spawn_and_watch` 的装配参数（参数超过 7 个时用上下文结构体，避免 too_many_arguments）。
+pub struct SpawnRequest<'a> {
+    /// 完整启动命令 argv（`args[0]` = java 可执行文件）
+    pub args: &'a [String],
+    /// 版本隔离 gameDir：子进程 cwd（游戏相对路径正确，crash-reports/logs 落在此处）
+    pub game_dir: &'a Path,
+    /// 子进程 stdout/stderr 落盘路径
+    pub log_path: &'a Path,
+    pub process_priority: ProcessPriority,
+}
+
+/// 启动游戏子进程并完成全部接线：cwd/stdio 装配 → spawn（Job Object 脱钩）→
+/// 进程优先级 → stdout/stderr 排空线程 → 后台监听（窗口可见 + 退出）。
+/// 两个事件回调由调用方注入（本域不依赖 tauri 与事件常量），回调首参为子进程 pid，
+/// 使调用方无需在 spawn 前就持有它。返回 pid。
+pub fn spawn_and_watch<W, E>(
+    req: SpawnRequest<'_>,
+    on_window_visible: W,
+    on_exit: E,
+) -> Result<u32, String>
+where
+    W: FnMut(u32) + Send + 'static,
+    E: FnOnce(u32, Option<i32>, Option<String>) + Send + 'static,
+{
+    let SpawnRequest {
+        args,
+        game_dir,
+        log_path,
+        process_priority,
+    } = req;
+    let Some((program, rest)) = args.split_first() else {
+        return Err("启动命令为空\n无法启动游戏".into());
+    };
+    let mut command = std::process::Command::new(program);
+    command
+        .args(rest)
+        .current_dir(game_dir)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .stdin(std::process::Stdio::null());
+    let mut child = spawn_game_child(&mut command)?;
+    let pid = child.id();
+    // 进程刚启动即设置优先级（Windows: SetPriorityClass）
+    crate::launcher::platform::set_process_priority(pid, process_priority);
+    // 捕获子进程 stdout/stderr 写入日志文件（避免 GBK 乱码污染终端，同时保留诊断信息）
+    if let Some(mut so) = child.stdout.take() {
+        let lp = log_path.to_path_buf();
+        std::thread::spawn(move || drain_output(&mut so, &lp, false));
+    }
+    if let Some(mut se) = child.stderr.take() {
+        let lp = log_path.to_path_buf();
+        std::thread::spawn(move || drain_output(&mut se, &lp, true));
+    }
+    let crash_dir = game_dir.join("crash-reports");
+    let mut on_window_visible = on_window_visible;
+    watch_game_process(
+        child,
+        pid,
+        crash_dir,
+        WINDOW_POLL_MS,
+        move || on_window_visible(pid),
+        move |exit_code, crash_report| on_exit(pid, exit_code, crash_report),
+    );
+    Ok(pid)
 }
 
 /// 合一监听循环（后台线程）：try_wait 非阻塞查退出 + 可见窗口轮询；
@@ -242,8 +322,7 @@ pub fn build_auth(
     access_token: &str,
     uuid: &str,
     xuid: &str,
-) -> crate::launcher::model::AuthMode {
-    use crate::launcher::model::AuthMode;
+) -> AuthMode {
     match auth_mode {
         "online" => AuthMode::Online {
             username: username.to_string(),
@@ -254,7 +333,7 @@ pub fn build_auth(
         "external" => {
             // 第三方登录：账号从 secrets 读（uuid/name/token/api_url 一致），
             // 前端传 username/uuid/token；api_url 从当前第三方账号取
-            let api_url = crate::auth::external::read()
+            let api_url = read()
                 .map(|a| a.api_url)
                 .unwrap_or_default();
             AuthMode::External {
@@ -273,14 +352,13 @@ pub fn build_auth(
 
 /// 正版模式 xuid 缺失时从 Minecraft access token（JWT）解析兜底
 /// （XSTS 的 xid 字段部分账号缺失，旧配置也可能未保存 xuid）。
-pub fn fill_missing_xuid(auth: &mut crate::launcher::model::AuthMode) {
-    use crate::launcher::model::AuthMode;
+pub fn fill_missing_xuid(auth: &mut AuthMode) {
     if let AuthMode::Online {
         xuid, access_token, ..
     } = auth
     {
         if xuid.is_empty() {
-            *xuid = crate::auth::microsoft::extract_xuid_from_jwt(access_token);
+            *xuid = extract_xuid_from_jwt(access_token);
         }
     }
 }
@@ -288,7 +366,7 @@ pub fn fill_missing_xuid(auth: &mut crate::launcher::model::AuthMode) {
 /// 启动类命令（launch_game / export_launch_script / spawn_game）共享的前置：
 /// 构造账号（补 xuid）→ 加载配置与版本 JSON。
 #[allow(clippy::type_complexity)]
-pub fn prepare_launch(
+pub async fn prepare_launch(
     version_dir_name: &str,
     auth_mode: &str,
     username: &str,
@@ -297,11 +375,11 @@ pub fn prepare_launch(
     xuid: &str,
 ) -> Result<
     (
-        crate::launcher::model::AuthMode,
+        AuthMode,
         PathBuf,
-        crate::downloader::model::VersionJson,
+        VersionJson,
         PathBuf,
-        crate::launcher::model::LauncherConfig,
+        LauncherConfig,
         u32,
     ),
     String,
@@ -309,13 +387,14 @@ pub fn prepare_launch(
     let mut auth = build_auth(auth_mode, username, access_token, uuid, xuid);
     fill_missing_xuid(&mut auth);
     let (java_path, version_json, mc_dir, launcher_config, java_major) =
-        crate::launcher::env::load_launch_config(version_dir_name)?;
-    // 第三方登录：启动前确保 authlib-injector.jar 存在（注入必需，缺失会启动失败）
-    if matches!(auth, crate::launcher::model::AuthMode::External { .. }) {
-        let jar = crate::util::config_dir().join(crate::auth::external::AUTHLIB_JAR);
-        if !jar.exists() {
-            return Err("第三方登录组件缺失\n请重新登录第三方账号以恢复 authlib-injector.jar".into());
-        }
+        load_launch_config(version_dir_name)?;
+    // 第三方登录：启动前确保 authlib-injector.jar 就绪（注入必需，缺失会启动失败）。
+    // 缺失时先尝试自动补齐（官方 → BMCLAPI 双源），仍失败才报错——不该为了一个
+    // 组件文件让用户重走一遍登录流程。
+    if matches!(auth, AuthMode::External { .. }) {
+        ensure_jar().await.map_err(|e| {
+            format!("第三方登录组件缺失且自动下载失败\n请检查网络后重试\n{e}")
+        })?;
     }
     Ok((
         auth,

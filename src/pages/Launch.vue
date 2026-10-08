@@ -7,19 +7,18 @@ import AlertDialog from "../component/common/AlertDialog.vue";
 import LaunchProgress from "../component/launch/LaunchProgress.vue";
 import AccountSection from "../component/launch/AccountSection.vue";
 import LaunchSection from "../component/launch/LaunchSection.vue";
-import CapeDialog from "../component/launch/CapeDialog.vue";
 import VersionDetailCard from "../component/launch/VersionDetailCard.vue";
 import { alertState } from "../store/alert";
 import { renderOfflineAvatar, renderPremiumAvatar } from "../store/avatar";
 import {
-  msAccount, username, loadMsAccounts, loadOfflineAccounts, loadLastUsername, ensureLoginListener,
+  msAccount, username, ensureAuthReady, loadOfflineAccounts, loadLastUsername, ensureLoginListener,
 } from "../store/auth";
 import { launchState, loadVersions, ensureGameExitListener } from "../store/launch";
 import { selectedVersion } from "../store/selectedVersion";
 
 onMounted(async () => {
   await loadLastUsername();
-  await loadMsAccounts();
+  await ensureAuthReady(); // 正版 / 第三方账号列表（衣柜判定来源也要等这一份）
   await loadOfflineAccounts();
   void renderOfflineAvatar(username.value);
   // 账号变化（登录/退出）时渲染正版头像；初始已保存的账号也立即渲染
@@ -62,8 +61,6 @@ onMounted(async () => {
       :copyable="alertState.copyable"
     />
 
-
-    <CapeDialog />
   </div>
 </template>
 

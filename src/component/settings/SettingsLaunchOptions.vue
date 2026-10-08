@@ -52,6 +52,7 @@ const winsizeOptions: SelOption[] = [
           placeholder="不修改（默认）"
           maxlength="64"
           @change="saveLaunchOptions"
+          autocomplete="off"
         />
       </div>
 
@@ -86,6 +87,7 @@ const winsizeOptions: SelOption[] = [
                 max="7680"
                 placeholder="宽"
                 @change="saveLaunchOptions"
+                autocomplete="off"
               />
               <span class="lo-times">×</span>
               <input
@@ -96,6 +98,7 @@ const winsizeOptions: SelOption[] = [
                 max="4320"
                 placeholder="高"
                 @change="saveLaunchOptions"
+                autocomplete="off"
               />
             </div>
           </Transition>
@@ -142,6 +145,7 @@ const winsizeOptions: SelOption[] = [
           :disabled="loMemMode !== 'Custom'"
           :style="{ '--range-pct': ((loMemMb - 1024) / ((memState.availMb || 4096) - 1024) * 100) + '%' }"
           @change="saveLaunchOptions"
+          autocomplete="off"
         />
         <span class="mem-slider-val" :class="{ disabled: loMemMode !== 'Custom' }">{{ fmtGb(loMemMb) }}</span>
       </div>
@@ -158,6 +162,7 @@ const winsizeOptions: SelOption[] = [
           :disabled="loMemMode !== 'Custom'"
           :style="{ '--range-pct': ((loMinMem - 256) / (loMemMb - 256) * 100) + '%' }"
           @change="saveLaunchOptions"
+          autocomplete="off"
         />
         <span v-if="loMinMem !== null" class="mem-slider-val" :class="{ disabled: loMemMode !== 'Custom' }">{{ loMinMem }} MB</span>
       </div>

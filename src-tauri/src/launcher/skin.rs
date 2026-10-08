@@ -2,6 +2,8 @@
 //! 固定随机行为（用户名哈希决定 Steve/Alex，与游戏内默认皮肤一致）；
 //! 配置层已砍（2026-08），后续由自定义皮肤站登录（外置认证）接管皮肤注入。
 
+use base64::Engine as _;
+
 use crate::launcher::model::AuthMode;
 
 /// 离线默认 UUID（固定占位）。
@@ -86,7 +88,6 @@ fn textures_payload(url: &str, slim: bool) -> String {
     }
     textures.insert("SKIN".into(), serde_json::Value::Object(skin_obj));
     let payload = serde_json::json!({ "textures": textures });
-    use base64::Engine;
     base64::engine::general_purpose::STANDARD.encode(payload.to_string())
 }
 

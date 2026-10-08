@@ -1,10 +1,11 @@
-use crate::config::downloader::model::DownloaderConfig;
+use crate::config::downloader::DownloaderConfig;
 use crate::constants;
-use crate::downloader::manifest;
-use crate::downloader::model::VersionManifest;
-use crate::downloader::resolve_version_dir;
-use crate::persist;
 use crate::downloader::fetcher;
+use crate::game::version::manifest;
+use crate::game::version::model::VersionManifest;
+use crate::game::version::dir::resolve_version_dir;
+use crate::game::version::dir;
+use crate::persist;
 
 #[tauri::command]
 pub async fn get_version_list() -> Result<VersionManifest, String> {
@@ -34,8 +35,8 @@ pub fn save_downloader_config(config: DownloaderConfig) -> Result<(), String> {
 
 /// 已安装版本列表（枚举/loader 推断在 downloader/version.rs）。
 #[tauri::command]
-pub fn get_installed_versions() -> Result<Vec<crate::downloader::version::InstalledVersionInfo>, String> {
-    crate::downloader::version::list_installed()
+pub fn get_installed_versions() -> Result<Vec<dir::InstalledVersionInfo>, String> {
+    dir::list_installed()
 }
 
 #[tauri::command]

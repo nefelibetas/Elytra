@@ -3,3 +3,5 @@ pub mod external;
 pub mod microsoft;
 pub mod model;
 pub mod mojang;
+pub mod offline;
+pub mod skins;

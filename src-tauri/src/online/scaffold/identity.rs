@@ -24,7 +24,9 @@ pub fn get_machine_id() -> String {
 
 /// 读取 / 创建 machine-id 文件（单测可注入路径）。
 fn load_or_create(path: &PathBuf) -> String {
-    let _ = std::fs::create_dir_all(path.parent().expect("machine-id 文件应有父目录"));
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
     let mut file = match std::fs::OpenOptions::new()
         .read(true)
         .write(true)

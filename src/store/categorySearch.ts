@@ -26,6 +26,7 @@ export function createCategorySearch(
     error: "",
     searched: false,
     results: [] as CommunityDisplayItem[],
+    /** 结果总数：单源为平台精确命中数；聚合（source="all"）为两源较大值＝已知总量下限（非精确），UI 文案须标「至少」。 */
     total: 0,
     page: 1,
     /** 请求序号：筛选快速连切时只应用最后一次发起的结果（防过期响应覆盖） */
@@ -42,7 +43,7 @@ export function createCategorySearch(
           const res = await searchAllSources(this.query.trim(), this.gameVersion, "", category, offset, pageSize);
           if (seq !== this.searchSeq) return;
           this.results = res.items;
-          this.total = res.total;
+          this.total = res.maxKnownTotal;
         } else {
           const res = await invoke<{ items: CommunityDisplayItem[]; total: number }>("search_community", {
             source: this.source,

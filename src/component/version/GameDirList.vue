@@ -21,6 +21,12 @@ onUnmounted(() => window.removeEventListener("click", onWindowClick));
     <!-- 游戏列表 -->
     <div class="vs-group-label">游戏列表</div>
     <div class="vs-dir-list">
+      <!-- 无目录：macOS/Linux 无平台默认，Windows 只在只读安装位置才为空，
+           此时下方「添加已有游戏目录」就是唯一入口，需给出明确引导 -->
+      <div v-if="!dirs.length" class="vs-dir-empty">
+        尚未添加游戏目录<br />
+        <span class="vs-dir-empty-hint">游戏本体、版本与模组都存在游戏目录里，请先添加一个</span>
+      </div>
       <div
         v-for="d in dirs"
         :key="d.path"
@@ -76,6 +82,7 @@ onUnmounted(() => window.removeEventListener("click", onWindowClick));
           type="text"
           maxlength="32"
           @keydown.enter="confirmRename"
+          autocomplete="off"
         />
         <div v-if="renameError" class="vs-err">{{ renameError }}</div>
       </div>
@@ -95,6 +102,7 @@ onUnmounted(() => window.removeEventListener("click", onWindowClick));
           type="text"
           maxlength="32"
           @keydown.enter="confirmAdd"
+          autocomplete="off"
         />
         <div v-if="addError" class="vs-err">{{ addError }}</div>
       </div>
@@ -132,6 +140,19 @@ onUnmounted(() => window.removeEventListener("click", onWindowClick));
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+/* 空状态：无游戏目录时的引导文案（此时下方「添加已有游戏目录」是唯一入口） */
+.vs-dir-empty {
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+
+.vs-dir-empty-hint {
+  font-size: 11px;
+  color: var(--text-tertiary);
 }
 
 .vs-dir-item {

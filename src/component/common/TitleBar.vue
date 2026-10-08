@@ -16,7 +16,8 @@ const isDetail = computed(
     route.path === "/resource-detail" ||
     route.path === "/version-select" ||
     route.path === "/version-setup" ||
-    route.path === "/custom-theme",
+    route.path === "/custom-theme" ||
+    route.path === "/skin-studio",
 );
 
 /** 次级页面标题栏文案。 */
@@ -29,6 +30,7 @@ const barTitle = computed(() => {
     // 新建（无 id）与编辑（有 id）区分标题
     return route.query.id ? "编辑自定义外观" : "新建自定义外观";
   }
+  if (route.path === "/skin-studio") return "衣柜";
   if (route.path === "/resource-detail") {
     // 资源详情：有译名时 "翻译名（原名）"，否则原名
     return detailTitle() || "资源详情";
@@ -149,6 +151,7 @@ function onMouseDown(e: MouseEvent) {
   display: flex; align-items: center; gap: 6px;
   padding: 4px 10px;
   border: none; background: transparent;
+  color: var(--titlebar-fg-dim);
   color: color-mix(in srgb, var(--titlebar-fg) 85%, transparent);
   cursor: pointer; border-radius: var(--radius-sm);
   font-size: 14px; font-weight: 500;
@@ -156,7 +159,7 @@ function onMouseDown(e: MouseEvent) {
   outline: none;
 }
 .back-btn svg { flex-shrink: 0; }
-.back-btn:hover { background-color: color-mix(in srgb, var(--titlebar-fg) 15%, transparent); color: var(--titlebar-fg); }
+.back-btn:hover { background-color: var(--titlebar-hover); background-color: color-mix(in srgb, var(--titlebar-fg) 15%, transparent); color: var(--titlebar-fg); }
 .back-btn { white-space: nowrap; }
 
 .tc {
@@ -184,11 +187,13 @@ function onMouseDown(e: MouseEvent) {
 
 .nav:hover {
   color: var(--titlebar-fg);
+  background-color: var(--titlebar-hover);
   background-color: color-mix(in srgb, var(--titlebar-fg) 14%, transparent);
 }
 
 .nav.active {
   color: var(--titlebar-fg);
+  background-color: var(--titlebar-active);
   background-color: color-mix(in srgb, var(--titlebar-fg) 22%, transparent);
 }
 
@@ -222,6 +227,7 @@ function onMouseDown(e: MouseEvent) {
   width: 30px; height: 30px;
   display: flex; align-items: center; justify-content: center;
   border: none; background: transparent;
+  color: var(--titlebar-fg-dim);
   color: color-mix(in srgb, var(--titlebar-fg) 65%, transparent);
   cursor: pointer;
   border-radius: var(--radius-sm);
@@ -230,11 +236,13 @@ function onMouseDown(e: MouseEvent) {
 }
 
 .win:hover {
+  background-color: var(--titlebar-hover);
   background-color: color-mix(in srgb, var(--titlebar-fg) 16%, transparent);
   color: var(--titlebar-fg);
 }
 
 .close:hover {
+  background-color: var(--titlebar-active);
   background-color: color-mix(in srgb, var(--titlebar-fg) 24%, transparent);
   color: var(--titlebar-fg);
 }

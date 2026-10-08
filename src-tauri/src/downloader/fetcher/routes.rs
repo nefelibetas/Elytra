@@ -5,9 +5,12 @@ use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 
-use crate::config::downloader::model::{DownloadSourceMode, DownloaderConfig, ResourceClass};
+use crate::config::downloader::{
+    infer_resource_class, DownloadSourceMode, DownloaderConfig, ResourceClass,
+};
 use crate::constants::SECT_DOWNLOADER;
 use crate::downloader::endpoints::MIRROR_ROUTES;
+use crate::persist;
 
 /// 真镜像源判定（路由排序/镜像候选用，不含"官方 maven 限流"语义）：
 /// 仅 BMCLAPI / MCIM 域。is_mirror_url 承担限流职责（含官方不稳 maven），
@@ -97,7 +100,7 @@ pub(super) fn record_route_failure(url: &str) {
 
 /// 当前文件下载源模式（Auto 时启用健康度路由；路由层兜底读全局配置）。
 pub(super) fn source_mode() -> DownloadSourceMode {
-    crate::persist::read::<DownloaderConfig>(SECT_DOWNLOADER)
+    persist::read::<DownloaderConfig>(SECT_DOWNLOADER)
         .map(|c| c.game_source_mode)
         .unwrap_or_default()
 }
@@ -117,7 +120,7 @@ pub(super) fn resolve_download_routes(
         }
     }
     let first = seen.first().map(String::as_str).unwrap_or("");
-    let class = crate::config::downloader::model::infer_resource_class(first);
+    let class = infer_resource_class(first);
     // 原始列表已含镜像（调用方手工构造的双源）则不重复追加
     if !seen.iter().any(|u| is_mirror_domain(u)) {
         for cand in mirror_candidates(first) {
@@ -158,4 +161,137 @@ pub(super) fn resolve_download_routes(
         }
     }
     routes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        mirror_candidates, record_route_failure, record_route_success, resolve_download_routes,
+        route_health,
+    };
+    use crate::config::downloader::DownloadSourceMode;
+
+    /// 镜像候选生成：mojang/library/loader 域 → BMCLAPI 镜像（单一表在 downloader/model.rs）。
+    #[test]
+    fn mirror_candidates_generate_bmclapi_urls() {
+        assert_eq!(
+            mirror_candidates("https://libraries.minecraft.net/com/x/y.jar"),
+            vec!["https://bmclapi2.bangbang93.com/libraries/com/x/y.jar"]
+        );
+        assert_eq!(
+            mirror_candidates("https://resources.download.minecraft.net/ab/hash"),
+            vec!["https://bmclapi2.bangbang93.com/assets/ab/hash"]
+        );
+        assert_eq!(
+            mirror_candidates("https://maven.neoforged.net/releases/net/neoforged/x/1.0/x-1.0.jar"),
+            vec!["https://bmclapi2.bangbang93.com/maven/releases/net/neoforged/x/1.0/x-1.0.jar"]
+        );
+        assert_eq!(
+            mirror_candidates("https://meta.fabricmc.net/v2/versions/loader/1.20.4"),
+            vec!["https://bmclapi2.bangbang93.com/fabric-meta/v2/versions/loader/1.20.4"]
+        );
+        // 未知域不生成
+        assert!(mirror_candidates("https://example.com/x.jar").is_empty());
+    }
+
+    /// 路由解析：去重保序 + 未含镜像时自动追加候选。
+    #[test]
+    fn resolve_routes_dedupes_and_appends_mirror_candidate() {
+        let urls = vec![
+            "https://libraries.minecraft.net/com/x/y.jar".to_string(),
+            "https://libraries.minecraft.net/com/x/y.jar".to_string(), // 重复
+        ];
+        let routes = resolve_download_routes(&urls, DownloadSourceMode::Auto);
+        assert_eq!(routes.len(), 2, "去重后原始 1 + 镜像候选 1");
+        assert_eq!(routes[0].url, "https://libraries.minecraft.net/com/x/y.jar");
+        assert_eq!(
+            routes[1].url,
+            "https://bmclapi2.bangbang93.com/libraries/com/x/y.jar"
+        );
+        assert!(!routes[0].is_mirror);
+        assert!(routes[1].is_mirror);
+        // 调用方已含镜像（手工双源）→ 不再重复追加
+        let urls2 = vec![
+            "https://maven.fabricmc.net/a.jar".to_string(),
+            "https://bmclapi2.bangbang93.com/maven/a.jar".to_string(),
+        ];
+        let routes2 = resolve_download_routes(&urls2, DownloadSourceMode::Auto);
+        assert_eq!(routes2.len(), 2);
+    }
+
+    /// 单选模式（OfficialOnly/MirrorOnly）保持调用方顺序（无健康度竞争）。
+    #[test]
+    fn resolve_routes_single_mode_keeps_order() {
+        // OfficialOnly：调用方传官方 URL → 保持（自动追加镜像候选，顺序官方在前）
+        let urls = vec!["https://libraries.minecraft.net/com/x/y.jar".to_string()];
+        let routes = resolve_download_routes(&urls, DownloadSourceMode::OfficialOnly);
+        assert!(
+            !routes[0].is_mirror,
+            "OfficialOnly 官方先行，实际: {}",
+            routes[0].url
+        );
+        // MirrorOnly：调用方只传镜像 URL → 保持单一镜像
+        let mirror = vec!["https://bmclapi2.bangbang93.com/libraries/com/x/y.jar".to_string()];
+        let routes2 = resolve_download_routes(&mirror, DownloadSourceMode::MirrorOnly);
+        assert_eq!(routes2.len(), 1, "MirrorOnly 单源不追加候选");
+        assert!(
+            routes2[0].is_mirror,
+            "MirrorOnly 保持镜像，实际: {}",
+            routes2[0].url
+        );
+    }
+
+    /// 健康度：连续失败 >=3 进入冷却（Auto 排序中冷却路由排最末）。
+    #[test]
+    fn route_health_cooldown_after_consecutive_failures() {
+        let url = "https://example.com/bad-route.jar";
+        let mut h = route_health(url);
+        assert_eq!(h.failures, 0);
+        assert!(!h.in_cooldown());
+        record_route_failure(url);
+        record_route_failure(url);
+        record_route_failure(url);
+        h = route_health(url);
+        assert_eq!(h.failures, 3);
+        assert!(h.in_cooldown(), "连续 3 次失败应进入 30s 冷却");
+        // 成功重置失败数并清除冷却
+        record_route_success(url, 120.0);
+        h = route_health(url);
+        assert_eq!(h.failures, 0);
+        assert!(!h.in_cooldown());
+        assert_eq!(h.samples, 1);
+        // TTFB EWMA 更新（α=0.25）
+        record_route_success(url, 200.0);
+        h = route_health(url);
+        assert!(
+            (h.ttfb_ewma_ms - 140.0).abs() < 0.01,
+            "EWMA 应收敛到 140，实际 {}",
+            h.ttfb_ewma_ms
+        );
+    }
+
+    /// Auto 模式：冷却中的路由排最末；Loader 镜像冷启动优先。
+    #[test]
+    fn resolve_routes_auto_sorts_by_health() {
+        let official = "https://maven.neoforged.net/releases/x.jar".to_string();
+        let mirror = "https://bmclapi2.bangbang93.com/maven/releases/x.jar".to_string();
+        let urls = vec![official.clone(), mirror.clone()];
+        // 冷启动（无样本）：Loader 镜像优先
+        let routes = resolve_download_routes(&urls, DownloadSourceMode::Auto);
+        assert!(
+            routes[0].is_mirror,
+            "Auto + Loader 冷启动镜像优先: {}",
+            routes[0].url
+        );
+        // 镜像连续失败进入冷却 → 官方排前
+        record_route_failure(&mirror);
+        record_route_failure(&mirror);
+        record_route_failure(&mirror);
+        let routes2 = resolve_download_routes(&urls, DownloadSourceMode::Auto);
+        assert!(
+            !routes2[0].is_mirror,
+            "冷却中的镜像应排最末，实际: {}",
+            routes2[0].url
+        );
+    }
 }

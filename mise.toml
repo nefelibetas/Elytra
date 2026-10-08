@@ -21,9 +21,9 @@ description = "开发模式：vite :1420 + Rust dev 窗口"
 run = "pnpm tauri dev"
 
 [tasks.test]
-description = "Rust 单元测试"
+description = "Rust 单元测试（串行：persist 共用 Settings.toml，并行会偶发竞争）"
 dir = "src-tauri"
-run = "cargo test --lib"
+run = "cargo test --lib -- --test-threads=1"
 
 [tasks.build]
 description = "前端类型检查 + 构建"

@@ -20,8 +20,8 @@ import cobbleIcon from "../../assets/cobble.png";
     <div class="card">
       <div class="card-title">最新版本</div>
       <div class="card-body">
-        <VersionItem :icon-src="vanillaIcon" :version-id="vdState.manifest.latest.release" :subtitle="'最新正式版，发布于 ' + (latestRelease ? fmtDateTime(latestRelease.releaseTime) : '')" @select="vdState.selectVersion(latestRelease!)" />
-        <VersionItem :icon-src="commandIcon" :version-id="vdState.manifest.latest.snapshot" :subtitle="'最新预览版，发布于 ' + (latestSnapshot ? fmtDateTime(latestSnapshot.releaseTime) : '')" @select="vdState.selectVersion(latestSnapshot!)" />
+        <VersionItem :icon-src="vanillaIcon" :version-id="vdState.manifest.latest.release" :subtitle="'最新正式版，发布于 ' + (latestRelease ? fmtDateTime(latestRelease.releaseTime) : '')" @select="latestRelease && vdState.selectVersion(latestRelease)" />
+        <VersionItem :icon-src="commandIcon" :version-id="vdState.manifest.latest.snapshot" :subtitle="'最新预览版，发布于 ' + (latestSnapshot ? fmtDateTime(latestSnapshot.releaseTime) : '')" @select="latestSnapshot && vdState.selectVersion(latestSnapshot)" />
       </div>
     </div>
     <VersionCard title="正式版" :count="releases.length" :expanded="vdState.expanded.release" @toggle="vdState.toggle('release')">
