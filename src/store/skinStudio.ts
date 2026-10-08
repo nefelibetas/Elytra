@@ -1,12 +1,15 @@
 // 衣柜 store（模块级 reactive 单例，项目约定无 Pinia）：
-//   左：3D 全身预览帧（复用 avatar.renderSkinFull3D，模块级缓存已渲染帧）
+//   左：等距 3D 全身预览（自研渲染器 `skinRender.ts` 直接画到 canvas，见 SkinStudio.vue ——
+//       本 store 只提供皮肤/披风/视角状态，页面 watch 后重绘一帧）
 //   右：皮肤 / 披风 tab（皮肤 = 官方当前 + 本地衣柜 + 自动缓存；披风 = 官方列表）
-// 拖动旋转：pointer 事件累加 yaw/pitch（俯仰以默认视角为基准限 ±40°），每帧按需重渲（实测 15–37ms）。
+// 拖动旋转：pointer 事件累加 yaw/pitch（俯仰以默认视角为基准限 ±40°）。
 import { reactive } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { authMode, ensureAuthReady, externalAccount, msAccount } from "./auth";
-import { DEFAULT_VIEW_PITCH, DEFAULT_VIEW_YAW, renderPremiumAvatar, renderSkinFull3D } from "./avatar";
+import { renderPremiumAvatar } from "./avatar";
+import { DEFAULT_VIEW_PITCH, DEFAULT_VIEW_YAW } from "./skinRender";
+import type { Animation } from "./skinRender";
 import { showError } from "./alert";
 import { showToast } from "../utils/toast";
 
@@ -39,18 +42,15 @@ export interface StudioCape {
   texture: string;
 }
 
-/** 每体素像素数：预览画布固定为 20×34 体素（宽 120 / 高 204），随容器等比缩放。 */
-const PPV = 6;
 /** 俯仰角相对默认视角的拖动范围（±40°；越过默认值两侧都能拖，且不会让模型上下翻转）。 */
 const PITCH_RANGE = 40;
 /** 俯仰角拖动下限 / 上限（默认视角上下各 [PITCH_RANGE] 度）。 */
 const PITCH_MIN = DEFAULT_VIEW_PITCH - PITCH_RANGE;
 const PITCH_MAX = DEFAULT_VIEW_PITCH + PITCH_RANGE;
-/** 拖动灵敏度（度/像素）。 */
-const YAW_SENS = 0.6;
+/** 拖动灵敏度（度/像素）。yaw 的符号与 viewer 的相机朝向配套：向左拖 → 模型向左转；
+ *  pitch 保持正号：向下拖 → 视角下移（看到更多头顶）。 */
+const YAW_SENS = -0.6;
 const PITCH_SENS = 0.5;
-/** 已渲染帧缓存上限（超出按插入顺序淘汰最旧的）。 */
-const FRAME_CACHE_MAX = 96;
 /** 上传官方账号后等待 Mojang 处理新纹理生效的时间。 */
 const APPLY_SETTLE_MS = 3000;
 
@@ -76,37 +76,25 @@ function delay(ms: number): Promise<void> {
   });
 }
 
-/** 已渲染帧缓存：key = 选择令牌 + 圆整视角 → dataURL（拖动中间帧不写缓存）。 */
-const frameCache = new Map<string, string>();
-/** 选择令牌：皮肤 / 披风任一变化即自增，旧帧缓存自然失效（免把 base64 塞进 key）。 */
-let skinToken = 0;
-let capeToken = 0;
-/** 渲染序号：只应用最后一次请求的结果，拖动时不堆积过期帧。 */
-let renderSeq = 0;
-/** 待执行的重渲 rAF 句柄（把同一帧内的多次 pointermove 合并成一次重渲）。 */
-let rafId = 0;
 /** 拖动会话：上一次指针位置（非响应式，仅内部用）。 */
 let lastX = 0;
 let lastY = 0;
 
-/** 写入帧缓存，超过上限先淘汰最旧键。 */
-function putFrame(key: string, url: string) {
-  if (frameCache.size >= FRAME_CACHE_MAX) {
-    const oldest = frameCache.keys().next().value;
-    if (oldest !== undefined) frameCache.delete(oldest);
-  }
-  frameCache.set(key, url);
-}
+/** 交互缩放的倍率范围（乘在基础占比上）。 */
+const ZOOM_MIN = 0.4;
+const ZOOM_MAX = 4;
 
 export const skinStudio = reactive({
   // ── 3D 预览 ──
-  /** 当前帧（dataURL）；空串 = 暂无可预览皮肤 */
-  frame: "",
-  rendering: false,
+  /** 拖动中（页面据此切换抓手光标；渲染由常驻 viewer 负责，不经此处） */
   dragging: false,
+  /** 预览动作：`none` = 静止站姿，`idle` = 待机呼吸，`walk` = 行走 */
+  animation: "none" as Animation,
   /** 初始视角见 avatar 的 DEFAULT_VIEW_*：3/4 正面 + 微俯，看得到脸与一点头顶 */
   yaw: DEFAULT_VIEW_YAW,
   pitch: DEFAULT_VIEW_PITCH,
+  /** 交互缩放倍率（滚轮 / 双指捏合调整；1 = 默认占比）。 */
+  zoom: 1,
 
   // ── 账号当前皮肤 ──
   officialSkin: "",
@@ -180,9 +168,8 @@ export const skinStudio = reactive({
   async load() {
     this.yaw = DEFAULT_VIEW_YAW;
     this.pitch = DEFAULT_VIEW_PITCH;
+    this.zoom = 1;
     await Promise.allSettled([this.loadOfficial(), this.loadSkins(), this.loadCapes()]);
-    skinToken++;
-    this.scheduleRender();
     void this.cacheCurrent(); // 自动缓存当前皮肤（后台进行，不阻塞首帧）
   },
 
@@ -223,7 +210,6 @@ export const skinStudio = reactive({
       }
     } finally {
       this.officialLoading = false;
-      skinToken++;
     }
   },
 
@@ -236,7 +222,6 @@ export const skinStudio = reactive({
       // 选中项已不存在（被删/换账号）→ 回落官方皮肤
       if (this.selectedKey !== "official" && !this.skins.some((s) => s.id === this.selectedKey)) {
         this.selectedKey = "official";
-        skinToken++;
       }
     } catch (e) {
       this.skinsError = `读取本地衣柜失败\n${String(e)}`;
@@ -257,7 +242,6 @@ export const skinStudio = reactive({
     try {
       this.capes = await invoke<StudioCape[]>("fetch_capes");
       this.selectedCapeId = this.capes.find((c) => c.active)?.id ?? "";
-      capeToken++;
     } catch (e) {
       this.capesError = `披风列表加载失败\n${String(e)}`;
     } finally {
@@ -268,63 +252,13 @@ export const skinStudio = reactive({
   /** 刷新：重新拉取三方数据并重渲当前帧。 */
   async refresh() {
     await Promise.allSettled([this.loadOfficial(), this.loadSkins(), this.loadCapes()]);
-    this.scheduleRender();
     void this.cacheCurrent();
     showToast("已刷新");
   },
 
-  /** 注销：取消待执行的重渲（模块级单例状态留给下次进入复用）。 */
+  /** 注销：常驻 viewer 由页面负责 dispose，这里只复位拖动状态（模块级单例状态留给下次进入复用）。 */
   dispose() {
-    if (rafId) {
-      cancelAnimationFrame(rafId);
-      rafId = 0;
-    }
     this.dragging = false;
-  },
-
-  // ── 渲染 ──
-
-  /** 合并同一帧内的多次拖动事件后重渲。 */
-  scheduleRender() {
-    if (rafId) return;
-    rafId = requestAnimationFrame(() => {
-      rafId = 0;
-      void this.render();
-    });
-  },
-
-  /** 渲染当前选择 + 视角的一帧（命中缓存直接取用）。 */
-  async render() {
-    const skin = this.currentSkin;
-    if (!skin) {
-      this.frame = "";
-      return;
-    }
-    const key = `${skinToken}|${capeToken}|${Math.round(this.yaw)}|${Math.round(this.pitch)}`;
-    const cached = frameCache.get(key);
-    if (cached) {
-      this.frame = cached;
-      return;
-    }
-    const seq = ++renderSeq;
-    this.rendering = true;
-    try {
-      const url = await renderSkinFull3D(
-        skin,
-        this.currentSlim,
-        this.yaw,
-        this.pitch,
-        PPV,
-        this.currentCapeTexture || undefined,
-      );
-      if (seq !== renderSeq) return; // 已有更新的渲染请求，丢弃本帧
-      this.frame = url;
-      if (!this.dragging) putFrame(key, url); // 拖动中的中间帧不占缓存
-    } catch (e) {
-      if (seq === renderSeq) console.error("3D 预览渲染失败:", e);
-    } finally {
-      if (seq === renderSeq) this.rendering = false;
-    }
   },
 
   // ── 拖动旋转 ──
@@ -349,7 +283,6 @@ export const skinStudio = reactive({
     this.pitch = Math.max(PITCH_MIN, Math.min(PITCH_MAX, this.pitch + (e.clientY - lastY) * PITCH_SENS));
     lastX = e.clientX;
     lastY = e.clientY;
-    this.scheduleRender();
   },
 
   endDrag(e: PointerEvent) {
@@ -361,14 +294,18 @@ export const skinStudio = reactive({
     } catch {
       // 已释放：忽略
     }
-    this.scheduleRender(); // 落定帧此时才写缓存
   },
 
-  /** 重置视角（回到默认视角：3/4 正面 + 微俯）。 */
+  /** 重置视角与缩放（回到默认视角 + 默认占比）。 */
   resetView() {
     this.yaw = DEFAULT_VIEW_YAW;
     this.pitch = DEFAULT_VIEW_PITCH;
-    this.scheduleRender();
+    this.zoom = 1;
+  },
+
+  /** 按倍率缩放预览（`factor` > 1 放大，< 1 缩小），夹在 [ZOOM_MIN, ZOOM_MAX]。 */
+  zoomBy(factor: number) {
+    this.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, this.zoom * factor));
   },
 
   // ── 衣柜操作 ──
@@ -401,8 +338,6 @@ export const skinStudio = reactive({
   selectSkin(key: string) {
     if (this.selectedKey === key) return;
     this.selectedKey = key;
-    skinToken++;
-    this.scheduleRender();
   },
 
   /** 上传本地文件到衣柜：先选 PNG，再确认模型。 */
@@ -444,8 +379,6 @@ export const skinStudio = reactive({
       this.skins = await invoke<LocalSkin[]>("remove_local_skin", { id: item.id });
       if (this.selectedKey === item.id) {
         this.selectedKey = "official";
-        skinToken++;
-        this.scheduleRender();
       }
       showToast(`已删除：${item.name}`);
     } catch (e) {
@@ -477,8 +410,6 @@ export const skinStudio = reactive({
     await this.loadOfficial();
     await this.cacheCurrent();
     this.selectedKey = "official";
-    skinToken++;
-    this.scheduleRender();
     void renderPremiumAvatar(uuid, true); // 启动页头像同步
     showToast("皮肤已更新");
   },
@@ -507,8 +438,6 @@ export const skinStudio = reactive({
     if (!this.premium || this.capeBusy || id === this.selectedCapeId) return;
     const prev = this.selectedCapeId;
     this.selectedCapeId = id;
-    capeToken++;
-    this.scheduleRender();
     this.capeBusy = true;
     try {
       if (id) await invoke("set_active_cape", { capeId: id });
@@ -520,11 +449,8 @@ export const skinStudio = reactive({
         showToast("已移除披风");
       }
       await this.loadCapes();
-      this.scheduleRender();
     } catch (e) {
       this.selectedCapeId = prev;
-      capeToken++;
-      this.scheduleRender();
       showError(`切换披风失败：${String(e)}`, true);
     } finally {
       this.capeBusy = false;
