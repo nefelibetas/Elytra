@@ -207,6 +207,16 @@ function buildCape(): VoxelBox[] {
  *  正面视角能从身体右侧露出一条明显边缘，背面视角仍完整。 */
 const CAPE_DRAPE_DEG = 12;
 
+/** 披风动效：在基础外张上叠加随动画的摆动。
+ *  行走时向后飘起（Minecraft 里移动会让披风张开得更多），待机时只有极轻的呼吸起伏。 */
+function applyCapeMotion(capes: VoxelBox[], anim: Animation, phase: number): void {
+  if (anim === "none") return;
+  const speed = anim === "walk" ? 6 : 2.2;
+  const wave = Math.sin(phase * speed);
+  const extra = anim === "walk" ? 16 + wave * 5 : wave * 2;
+  for (const c of capes) c.swing = CAPE_DRAPE_DEG + extra;
+}
+
 /** 只取头部（头像用）：头 + 帽子层，中心在原点。 */
 function buildHead(): VoxelBox[] {
   const mk = (
@@ -479,9 +489,16 @@ export function drawFullCanvas(
   },
 ): boolean {
   const boxes = buildPlayer(opts.slim, opts.legacy ?? false);
-  applyAnimation(boxes, opts.animation ?? "none", opts.phase ?? 0);
-  // 披风追加在四肢之后：applyAnimation 按固定下标 [4..11] 取四肢，追加不影响
-  if (opts.capeTex) boxes.push(...buildCape());
+  const anim = opts.animation ?? "none";
+  const phase = opts.phase ?? 0;
+  applyAnimation(boxes, anim, phase);
+  // 披风追加在四肢之后：applyAnimation 按固定下标 [4..11] 取四肢，追加不影响；
+  // 但它自己的摆动要单独给（下标方案覆盖不到）
+  if (opts.capeTex) {
+    const capes = buildCape();
+    applyCapeMotion(capes, anim, phase);
+    boxes.push(...capes);
+  }
   return paint(canvas, skin, boxes, {
     yaw: opts.yaw,
     pitch: opts.pitch,
