@@ -303,7 +303,7 @@ function useOfflineName(name: string) {
         <div class="user-main">
           <div
             class="avatar"
-            :class="canOpenSkinStudio || canOpenSiteCloset ? 'clickable' : 'disabled'"
+            :class="{ clickable: canOpenSkinStudio || canOpenSiteCloset }"
             v-tooltip="avatarTip"
             @click="openSkinStudio"
           >
@@ -814,11 +814,10 @@ function useOfflineName(name: string) {
   box-shadow: 0 0 0 3px var(--color-brand-glow);
 }
 
-/* 离线模式：衣柜没有皮肤来源，入口不可点（置灰 + 禁用光标，不弹提示） */
-.avatar.disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
+/* 离线模式：衣柜没有皮肤来源，入口不可点。**不给任何样式**——
+ *  点击由 openSkinStudio() 内部守卫拦住（!canOpenSkinStudio 直接 return），
+ *  光标也保持默认。头像是内容而非按钮，任何置灰/降透明度都会让它发白、去饱和
+ *  （#efdabf 混 45% 白底 → #f6ebdc），看起来像渲染出了问题。 */
 
 .avatar img {
   max-width: 100%;

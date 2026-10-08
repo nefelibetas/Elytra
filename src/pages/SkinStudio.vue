@@ -1,18 +1,143 @@
 <script setup lang="ts">
 // 衣柜：左 = 3D 全身预览（拖动旋转，默认 3/4 正面；左上/右上浮动图层），右 = 皮肤 / 披风 tab。
 // 交互与状态全在 store/skinStudio（模块级单例），本页仅编排布局与缩略图缓存。
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { Check, Download, Plus, RefreshCw, RotateCcw, Shirt, Wind, X } from "@lucide/vue";
 import AlertDialog from "../component/common/AlertDialog.vue";
 import EmptyState from "../component/common/EmptyState.vue";
 import LoadingSpinner from "../component/common/LoadingSpinner.vue";
 import { renderSkinThumb3D } from "../store/avatar";
+import { drawFullCanvas, loadSkinImage } from "../store/skinRender";
 import { ensureAuthReady } from "../store/auth";
 import { skinStudio, type LocalSkin } from "../store/skinStudio";
 import { showToast } from "../utils/toast";
 
 const router = useRouter();
+
+/** 常驻预览画布：自研等距渲染器直接画到它上面（无 WebGL 上下文、无库）。
+ *  拖动/动作变化只改参数后重绘一帧 —— 单帧几毫秒，足够流畅。 */
+const stageCanvas = ref<HTMLCanvasElement | null>(null);
+/** 已解码的当前皮肤（重绘时复用，不重复解码）。 */
+let stageImg: HTMLImageElement | null = null;
+/** 已解码的当前披风贴图；无披风时为 null。 */
+let stageCape: HTMLImageElement | null = null;
+/** 动画帧句柄（0 = 未运行）。静止时停掉循环，不空转。 */
+let animRaf = 0;
+/** 动画起始时刻（相位基准）。 */
+let animStart = 0;
+
+/** 默认占比（模型约占画布高的 40%）；实际占比 = BASE_FILL × skinStudio.zoom。 */
+const BASE_FILL = 0.4;
+
+/** 重绘预览一帧（画布尺寸跟随容器 + 设备像素比）。 */
+function drawStage(): void {
+  const el = stageCanvas.value;
+  const box = el?.parentElement;
+  if (!el || !box || !stageImg) return;
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(box.clientWidth * dpr));
+  const h = Math.max(1, Math.round(box.clientHeight * dpr));
+  if (el.width !== w || el.height !== h) {
+    el.width = w;
+    el.height = h;
+  }
+  drawFullCanvas(el, stageImg, {
+    yaw: skinStudio.yaw,
+    pitch: skinStudio.pitch,
+    slim: skinStudio.currentSlim,
+    legacy: stageImg.naturalHeight < 64,
+    animation: skinStudio.animation,
+    phase: (performance.now() - animStart) / 1000,
+    fill: BASE_FILL * skinStudio.zoom,
+    capeTex: stageCape ?? undefined,
+  });
+}
+
+/** 滚轮缩放（桌面 WebView）。 */
+function onWheel(e: WheelEvent): void {
+  skinStudio.zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1);
+  if (!animRaf) drawStage();
+}
+
+/** 双指捏合缩放（触屏）。单指仍走拖动旋转。 */
+let pinchDist = 0;
+function touchDist(t: TouchList): number {
+  const a = t[0];
+  const b = t[1];
+  if (!a || !b) return 0;
+  return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+}
+function onTouchStart(e: TouchEvent): void {
+  if (e.touches.length === 2) {
+    pinchDist = touchDist(e.touches);
+    skinStudio.dragging = false; // 双指时不旋转
+  }
+}
+function onTouchMove(e: TouchEvent): void {
+  if (e.touches.length !== 2) return;
+  e.preventDefault();
+  const d = touchDist(e.touches);
+  if (pinchDist > 0 && d > 0) {
+    skinStudio.zoomBy(d / pinchDist);
+    if (!animRaf) drawStage();
+  }
+  pinchDist = d;
+}
+function onTouchEnd(): void {
+  pinchDist = 0;
+}
+
+/** 动画帧循环（仅「待机/行走」时运行）。 */
+function animTick(): void {
+  drawStage();
+  animRaf = requestAnimationFrame(animTick);
+}
+
+/** 动作切换：起停动画循环。静止时停帧并重绘一张定格图。 */
+function syncAnimation(): void {
+  const wantLoop = skinStudio.animation !== "none";
+  if (wantLoop && !animRaf) {
+    animStart = performance.now();
+    animRaf = requestAnimationFrame(animTick);
+  } else if (!wantLoop && animRaf) {
+    cancelAnimationFrame(animRaf);
+    animRaf = 0;
+    drawStage();
+  }
+}
+
+/** 解码皮肤并重绘（皮肤变化时调用）。 */
+async function refreshSkin(): Promise<void> {
+  const skin = skinStudio.currentSkin;
+  if (!skin) {
+    stageImg = null;
+    return;
+  }
+  try {
+    stageImg = await loadSkinImage(skin.startsWith("data:") ? skin : `data:image/png;base64,${skin}`);
+  } catch {
+    stageImg = null;
+    return;
+  }
+  drawStage();
+}
+
+/** 解码披风贴图并重绘（披风选择变化时调用；无披风则清空）。 */
+async function refreshCape(): Promise<void> {
+  const cape = skinStudio.currentCapeTexture;
+  if (!cape) {
+    stageCape = null;
+    if (!animRaf) drawStage();
+    return;
+  }
+  try {
+    stageCape = await loadSkinImage(cape.startsWith("data:") ? cape : `data:image/png;base64,${cape}`);
+  } catch {
+    stageCape = null;
+  }
+  if (!animRaf) drawStage();
+}
 
 /** 衣柜只服务正版账号：第三方账号的外观一律在站点网页管理（点头像直接跳过去），
  *  离线没有任何皮肤来源。两个入口都已在 AccountSection 拦住，这里兜底直接改 URL / 历史前进后退。 */
@@ -25,8 +150,53 @@ onMounted(async () => {
     return;
   }
   void skinStudio.load();
+  await nextTick(); // 等 canvas 挂载
+  stageImg = null;
+  stageCape = null;
+  await Promise.all([refreshSkin(), refreshCape()]);
+  syncAnimation();
 });
-onUnmounted(() => skinStudio.dispose());
+
+onUnmounted(() => {
+  cancelAnimationFrame(animRaf);
+  animRaf = 0;
+  stageImg = null;
+  stageCape = null;
+  skinStudio.dispose();
+});
+
+/** 皮肤 / 模型变化 → 重新解码重绘 */
+watch(
+  () => [skinStudio.currentSkin, skinStudio.currentSlim] as const,
+  () => void refreshSkin(),
+);
+
+/** 披风选择变化 → 重新解码重绘 */
+watch(
+  () => skinStudio.currentCapeTexture,
+  () => void refreshCape(),
+);
+
+/** 拖动 / 重置视角 / 缩放 → 重绘一帧 */
+watch(
+  () => [skinStudio.yaw, skinStudio.pitch, skinStudio.zoom] as const,
+  () => {
+    if (!animRaf) drawStage();
+  },
+);
+
+/** 动作切换 → 起停动画循环 */
+watch(
+  () => skinStudio.animation,
+  () => syncAnimation(),
+);
+
+/** 预览动作选项。名称按场景语义取，不直接暴露库的动画类名。 */
+const ANIM_OPTIONS = [
+  { value: "none", label: "静止" },
+  { value: "idle", label: "待机" },
+  { value: "walk", label: "行走" },
+] as const;
 
 /** 皮肤模型的中文名——与左侧预览的类型标签、模型弹窗用同一套说法（CLASSIC / SLIM 是
  *  后端与官方 API 的取值，不该直接暴露给用户）。 */
@@ -195,7 +365,7 @@ function savePickedSkin() {
 
 <template>
   <div class="studio">
-    <!-- 左：3D 全身预览（按住拖动旋转；初始为 3/4 正面微俯，俯仰以初始视角为基准 ±40°） -->
+    <!-- 左：3D 全身预览（按住拖动旋转，滚轮 / 双指捏合缩放；初始化 3/4 正面微俯） -->
     <div class="stage-col">
       <div
         class="stage"
@@ -204,19 +374,18 @@ function savePickedSkin() {
         @pointermove="skinStudio.moveDrag($event)"
         @pointerup="skinStudio.endDrag($event)"
         @pointercancel="skinStudio.endDrag($event)"
+        @wheel.prevent="onWheel"
+        @touchstart="onTouchStart"
+        @touchmove="onTouchMove"
+        @touchend="onTouchEnd"
       >
-        <img
-          v-if="skinStudio.frame"
-          class="frame"
-          :src="skinStudio.frame"
-          alt="3D 皮肤预览"
-          draggable="false"
-        />
+        <!-- 等距渲染画布：皮肤 / 模型 / 视角 / 缩放 / 动作变化后重绘一帧 -->
+        <canvas v-show="!!skinStudio.currentSkin" ref="stageCanvas" class="frame"></canvas>
         <LoadingSpinner
-          v-else-if="skinStudio.officialLoading || skinStudio.rendering"
-          text="正在渲染…"
+          v-if="!skinStudio.currentSkin && skinStudio.officialLoading"
+          text="正在加载…"
         />
-        <EmptyState v-else>
+        <EmptyState v-else-if="!skinStudio.currentSkin">
           <p>暂无可预览的皮肤</p>
           <p>登录账号或从本地衣柜选一件</p>
         </EmptyState>
@@ -228,22 +397,32 @@ function savePickedSkin() {
           </span>
         </div>
 
-        <!-- 右上浮动图层：操作按钮（按钮上按下不触发旋转 → @pointerdown.stop） -->
+        <!-- 右上浮动图层：操作按钮（仅图标 + tooltip；按钮上按下不触发旋转 → @pointerdown.stop） -->
         <div class="layer action-layer">
-          <button class="tool fab" v-tooltip="'重置视角'" @pointerdown.stop @click="skinStudio.resetView">
-            <RotateCcw :size="14" /><span>重置视角</span>
-          </button>
-          <button class="tool fab" v-tooltip="'重新拉取皮肤与披风'" @pointerdown.stop @click="skinStudio.refresh">
-            <RefreshCw :size="14" /><span>刷新</span>
+          <button
+            class="tool fab icon-only"
+            v-tooltip="'重置视角与缩放'"
+            @pointerdown.stop
+            @click="skinStudio.resetView"
+          >
+            <RotateCcw :size="15" />
           </button>
           <button
-            class="tool fab"
+            class="tool fab icon-only"
+            v-tooltip="'重新拉取皮肤与披风'"
+            @pointerdown.stop
+            @click="skinStudio.refresh"
+          >
+            <RefreshCw :size="15" />
+          </button>
+          <button
+            class="tool fab icon-only"
             :disabled="!skinStudio.premium"
             v-tooltip="'导出账号当前皮肤 PNG'"
             @pointerdown.stop
             @click="skinStudio.saveSkinFile"
           >
-            <Download :size="14" /><span>保存皮肤</span>
+            <Download :size="15" />
           </button>
           <button
             v-if="skinStudio.selectedLocal"
@@ -253,12 +432,26 @@ function savePickedSkin() {
             @pointerdown.stop
             @click="skinStudio.applySelected"
           >
-            <Check :size="14" />
-            <span>{{ skinStudio.applyBusy ? "应用中…" : "应用为当前皮肤" }}</span>
+            <Check :size="15" />
+            <span>{{ skinStudio.applyBusy ? "应用中" : "应用" }}</span>
           </button>
         </div>
 
-        <div class="stage-tip">按住拖动旋转 · 上下 ±40°</div>
+        <!-- 底部居中：动作切换（静止 / 待机 / 行走） -->
+        <div class="layer anim-layer">
+          <div class="anim-group">
+            <button
+              v-for="a in ANIM_OPTIONS"
+              :key="a.value"
+              class="anim-btn"
+              :class="{ on: skinStudio.animation === a.value }"
+              @pointerdown.stop
+              @click="skinStudio.animation = a.value"
+            >
+              {{ a.label }}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -448,8 +641,8 @@ function savePickedSkin() {
   display: flex;
   align-items: center;
   justify-content: center;
-  /* 底部留白给「按住拖动」提示，避免与模型脚部重叠 */
-  padding: 16px 16px 30px;
+  /* 四周等距留白（底部提示已移除，无需额外空间） */
+  padding: 16px;
   overflow: hidden;
   cursor: grab;
   /* 拖动旋转：禁掉浏览器手势/选中，pointer 事件才不会被滚屏吞掉 */
@@ -465,9 +658,10 @@ function savePickedSkin() {
   cursor: grabbing;
 }
 
+/* 常驻 WebGL 画布：尺寸由 ResizeObserver → viewer.resize 设定（含设备像素比），
+   这里不做任何缩放 —— 对 canvas 用 max-width/max-height 会让像素被拉伸变形。 */
 .frame {
-  max-width: 100%;
-  max-height: 100%;
+  display: block;
   image-rendering: pixelated;
   pointer-events: none;
   -webkit-user-drag: none;
@@ -512,15 +706,44 @@ function savePickedSkin() {
   gap: 6px;
 }
 
-.stage-tip {
-  position: absolute;
+/* 底部居中动作切换：分段按钮，选中项用品牌色（接管指针，不触发拖动） */
+.anim-layer {
   left: 0;
   right: 0;
-  bottom: 10px;
-  text-align: center;
-  font-size: 11.5px;
-  color: var(--text-tertiary);
-  pointer-events: none;
+  bottom: 14px;
+  justify-content: center;
+}
+
+.anim-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-sm);
+  background-color: var(--surface-card);
+  box-shadow: var(--shadow-sm);
+  pointer-events: auto;
+}
+
+.anim-btn {
+  padding: 4px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background-color: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.anim-btn:hover {
+  color: var(--text-primary);
+}
+
+.anim-btn.on {
+  color: var(--color-brand);
+  background-color: var(--color-brand-bg);
+  font-weight: 600;
 }
 
 .tool {
@@ -543,6 +766,16 @@ function savePickedSkin() {
   pointer-events: auto;
   background-color: var(--surface-card);
   box-shadow: var(--shadow-sm);
+  height: 30px;
+}
+
+/* 仅图标按钮：正方形、图标居中（文案交给 tooltip），把浮层的占位压到最小 */
+.tool.icon-only {
+  width: 30px;
+  padding: 0;
+  justify-content: center;
+  gap: 0;
+  flex-shrink: 0;
 }
 
 .tool:hover:not(:disabled) {
