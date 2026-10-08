@@ -35,6 +35,10 @@ interface VoxelBox {
   pivot?: readonly [number, number, number];
   /** 用披风贴图而非皮肤贴图绘制（披风是独立的 64×32 纹理，UV 原点同为 (0,0)）。 */
   cape?: boolean;
+  /** 交换 z 方向两面的贴图区域。
+   *  皮肤/身体靠它保持「正面朝观察者」；披风贴在背后、朝外的面是 -z，
+   *  不交换的话图案会朝到身体那侧（背面看只有素色）。 */
+  flipZ?: boolean;
 }
 
 /** 一个面的静态定义：法线 + UV 取样矩形 + 四顶点（从面外看的左下、右下、右上、左上）。 */
@@ -100,13 +104,17 @@ function facesOf(b: VoxelBox): FaceDef[] {
   const hw = w / 2 + b.inflate;
   const hh = h / 2 + b.inflate;
   const hd = d / 2 + b.inflate;
+  // z 方向两面的贴图区域：默认 +z 用 north(u+d)、-z 用 south(u+d+w+d)；
+  // flipZ 时对调（披风朝外的面是 -z，要显示图案所在的 north）
+  const uvZPlus: UvRect = b.flipZ ? [u + d + w + d, v + d, w, h] : [u + d, v + d, w, h];
+  const uvZMinus: UvRect = b.flipZ ? [u + d, v + d, w, h] : [u + d + w + d, v + d, w, h];
   return [
     { normal: [0, 1, 0], uv: [u + d, v, w, d], corners: cornersFor(1, 1, hw, hh, hd) },
     { normal: [0, -1, 0], uv: [u + d + w, v, w, d], corners: cornersFor(1, -1, hw, hh, hd) },
     { normal: [-1, 0, 0], uv: [u, v + d, d, h], corners: cornersFor(0, -1, hw, hh, hd) },
-    { normal: [0, 0, 1], uv: [u + d, v + d, w, h], corners: cornersFor(2, 1, hw, hh, hd) },
+    { normal: [0, 0, 1], uv: uvZPlus, corners: cornersFor(2, 1, hw, hh, hd) },
     { normal: [1, 0, 0], uv: [u + d + w, v + d, d, h], corners: cornersFor(0, 1, hw, hh, hd) },
-    { normal: [0, 0, -1], uv: [u + d + w + d, v + d, w, h], corners: cornersFor(2, -1, hw, hh, hd) },
+    { normal: [0, 0, -1], uv: uvZMinus, corners: cornersFor(2, -1, hw, hh, hd) },
   ];
 }
 
@@ -187,6 +195,7 @@ function buildCape(): VoxelBox[] {
       v: 0,
       inflate: 0,
       cape: true,
+      flipZ: true, // 披风朝外的面是 -z，图案（north 区）要显示在这一面
       swing: CAPE_DRAPE_DEG,
       pivot: [0, 24, -2.5], // 肩部：披风从这里垂下
     },
