@@ -50,29 +50,24 @@ fn component_for_major(major: u32) -> Option<&'static str> {
 }
 
 /// 当前平台在 all.json 中的平台键。
+/// 用 `cfg!` 而非 `#[cfg]` 块语句：多块写法下 rust-analyzer 会把 cfg 剥离后的
+/// 上一块误判为语句（E0308 expected (), found &'static str），rustc 则正常。
 fn platform_key() -> &'static str {
-    #[cfg(target_os = "windows")]
-    {
+    if cfg!(target_os = "windows") {
         "windows-x64"
-    }
-    #[cfg(target_os = "macos")]
-    {
+    } else if cfg!(target_os = "macos") {
         if cfg!(target_arch = "aarch64") {
             "mac-os-arm64"
         } else {
             "mac-os-x64"
         }
-    }
-    #[cfg(target_os = "linux")]
-    {
+    } else if cfg!(target_os = "linux") {
         if cfg!(target_arch = "aarch64") {
             "linux-arm64"
         } else {
             "linux-x64"
         }
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    {
+    } else {
         "unsupported"
     }
 }
@@ -80,14 +75,7 @@ fn platform_key() -> &'static str {
 /// 当前平台/架构是否受支持的 managed runtime 目标（64 位 x64/arm64）。
 /// 32 位（i686/x86/arm）等罕见架构 Minecraft 生态不支持，明确拒绝而非静默误判为 x64。
 fn is_supported_runtime_target() -> bool {
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    {
-        true
-    }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    {
-        false
-    }
+    cfg!(any(target_arch = "x86_64", target_arch = "aarch64"))
 }
 
 /// 统一入口：按 jdk_source_mode 三态选择回退链（见 installer_chain）。
