@@ -26,6 +26,7 @@
 - 🎭 Offline skin: fixed random-hash Steve/Alex
 - ☕ Automatic JDK scanning and custom configuration
 - 🚀 Multiple game directories, download task management, launch argument building & game process management
+- 🚀 Toolbox: multi-threaded downloader (URL queue concurrency + per-file HTTP Range segmentation, resumable)
 
 ## 🛠️ Development
 
@@ -41,7 +42,7 @@ pnpm tauri build      # release build
 
 ## 📁 Structure
 
-- 🖼️ `src/` — Vue 3 frontend (9 pages + module-level `reactive()` state singletons)
+- 🖼️ `src/` — Vue 3 frontend (10 pages + module-level `reactive()` state singletons)
 - 🦀 `src-tauri/` — Rust backend: `commands/` command glue layer, `task/` task manager & download orchestration, `downloader/` pure transport layer (fetch/batch/probe/path-lock), `game/` content & assembly (version metadata, resources, ModLoader, community, modpacks, mod updates), `launcher/` launch build & env prep, `auth/` Microsoft login & skin API, `jdk/` JDK scan & managed runtime download, `online/` EasyTier LAN, `persist/` TOML config & secrets
 - 📚 `docs/` — icon assets and `code-audit.md` (code issue ledger)
 - 📄 `LICENSE` — MIT license

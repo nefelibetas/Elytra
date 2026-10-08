@@ -13,6 +13,7 @@ pub mod online;
 mod persist;
 mod server_status;
 pub mod task;
+pub mod tooldl;
 pub mod util;
 
 use commands::account::{
@@ -62,6 +63,10 @@ use commands::task::{
     download_single_file, install_modpack, list_interrupted_tasks, pause_task, resume_task,
     scan_missing_files, start_download, submit_install_jdk, submit_missing_download, task_exists,
 };
+use commands::tooldl::{
+    tooldl_cancel, tooldl_clear_finished, tooldl_enqueue, tooldl_get_config, tooldl_list,
+    tooldl_pause, tooldl_remove, tooldl_resume, tooldl_save_config,
+};
 use commands::version::{
     check_mod_updates, delete_mod_file, delete_resource_file, delete_world, export_modpack,
     get_version_server, get_world_icon, identify_mod_file, list_mods_detailed,
@@ -77,6 +82,7 @@ pub fn run() {
     // 启动器日志落盘（stdout/stderr → Elytra/launcher.log）
     util::init_file_logging();
     task::init();
+    tooldl::init();
     // 启动时后台自动扫描 JDK（已有持久化结果则跳过）
     std::thread::spawn(|| {
         jdk::init();
@@ -200,6 +206,15 @@ pub fn run() {
             get_online_config,
             save_online_config,
             ping_server,
+            tooldl_enqueue,
+            tooldl_pause,
+            tooldl_resume,
+            tooldl_cancel,
+            tooldl_remove,
+            tooldl_clear_finished,
+            tooldl_list,
+            tooldl_get_config,
+            tooldl_save_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

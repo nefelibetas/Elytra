@@ -13,6 +13,8 @@ export const GAME_EXITED = "game-exited";
 export const GAME_WINDOW_VISIBLE = "game-window-visible";
 /** 联机状态变更（{ status: "idle"|"hosting"|"joining" }） */
 export const ONLINE_STATE = "online-state";
+/** 工具箱下载器任务快照（ToolDlSnapshot；单任务全量状态，按 id 增量更新） */
+export const TOOL_DL_PROGRESS = "tooldl-progress";
 
 // ── 事件 payload 类型（集中定义，store 经 re-export 保持既有 import 路径兼容）──
 
@@ -47,4 +49,35 @@ export interface WaitingUserPayload {
   task_id: string;
   file_name: string;
   error: string;
+}
+
+/** 工具箱下载任务状态（镜像 Rust tooldl::model::ToolDlStatus）。 */
+export type ToolDlStatus =
+  | "queued"
+  | "downloading"
+  | "paused"
+  | "done"
+  | "error"
+  | "cancelled";
+
+/** tooldl-progress 事件 payload（镜像 Rust tooldl::model::ToolDlSnapshot）。 */
+export interface ToolDlSnapshot {
+  id: string;
+  url: string;
+  file_name: string;
+  /** 最终落地路径 */
+  dest: string;
+  save_dir: string;
+  /** 总字节（0 = 未知） */
+  total: number;
+  downloaded: number;
+  /** 字节/秒（0 = 未在下载） */
+  speed: number;
+  /** 是否走 HTTP Range 分段 */
+  ranged: boolean;
+  /** 实际分段数（1 = 单连接） */
+  segments: number;
+  status: ToolDlStatus;
+  error: string | null;
+  created_at: number;
 }

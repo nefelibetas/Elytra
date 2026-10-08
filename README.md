@@ -25,6 +25,7 @@
 - 🔐 账号：微软正版登录（OAuth PKCE）、离线模式
 - 🎭 离线皮肤：固定随机哈希 Steve/Alex
 - 🌐 局域网联机：EasyTier 虚拟局域网（房间码互连，无需公网服务器），跨网可配协调服务器
+- 🚀 工具箱：多线程下载器（多链接队列并发 + 单文件 HTTP Range 分段，支持断点续传）
 
 ## 🛠️ 开发
 
@@ -40,7 +41,7 @@ pnpm tauri build      # 发布构建
 
 ## 📁 结构
 
-- 🖼️ `src/` — Vue 3 前端（9 个页面 + 模块级 `reactive()` 状态单例）
+- 🖼️ `src/` — Vue 3 前端（10 个页面 + 模块级 `reactive()` 状态单例）
 - 🦀 `src-tauri/` — Rust 后端：`commands/` 命令胶水层、`task/` 任务管理与下载编排、`downloader/` 纯传输层（fetch/批处理/探测/路径互斥）、`game/` 内容与装配（版本元数据/资源/ModLoader/社区资源/整合包/Mod 更新）、`launcher/` 启动构建与环境准备、`auth/` 微软登录与皮肤 API、`jdk/` JDK 扫描与 managed runtime 下载、`online/` EasyTier 局域网联机、`persist/` TOML 配置与密钥存储
 - 📚 `docs/` — 图标资源与 `code-audit.md`（代码问题台账与治理记录）
 - 📄 `LICENSE` — MIT 许可证

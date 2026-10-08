@@ -59,6 +59,8 @@ pub const SECT_GAME_DIRS: &str = "game_dirs";
 pub const SECT_ONLINE: &str = "online";
 /// persist section: 本地皮肤收藏索引（PNG 原文存配置目录 `skins/<id>.png`）
 pub const SECT_LOCAL_SKINS: &str = "local_skins";
+/// persist section: 工具箱多线程下载器（保存目录 / 并发文件数 / 分段数）
+pub const SECT_TOOL_DL: &str = "tooldl";
 
 #[cfg(test)]
 mod tests {

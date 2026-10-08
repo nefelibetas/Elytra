@@ -2,14 +2,14 @@
 
 ## Project Overview
 
-Elytra Launcher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前端）** 的 Minecraft 启动器。功能：游戏版本下载（官方/国内镜像多源）、ModLoader 安装（Fabric/Quilt/Forge/NeoForge/OptiFine）、微软正版登录（OAuth PKCE）、离线模式（固定随机默认皮肤）、**皮肤衣柜**（3D 全身预览 + 正版皮肤/披风管理 + 本地皮肤收藏；第三方站点衣柜不内置，点头像用浏览器打开站点衣柜）、**JDK 扫描 + managed runtime 自动下载**（Mojang 官方 → Azul 双源回退）、Mod 双源搜索与**依赖解析**、下载任务管理、启动参数构建与游戏进程管理、**局域网联机**（easytier 库内嵌虚拟局域网 + 端口转发，房间码互连，无需公网服务器）。
+Elytra Launcher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前端）** 的 Minecraft 启动器。功能：游戏版本下载（官方/国内镜像多源）、ModLoader 安装（Fabric/Quilt/Forge/NeoForge/OptiFine）、微软正版登录（OAuth PKCE）、离线模式（固定随机默认皮肤）、**皮肤衣柜**（3D 全身预览 + 正版皮肤/披风管理 + 本地皮肤收藏；第三方站点衣柜不内置，点头像用浏览器打开站点衣柜）、**JDK 扫描 + managed runtime 自动下载**（Mojang 官方 → Azul 双源回退）、Mod 双源搜索与**依赖解析**、下载任务管理、启动参数构建与游戏进程管理、**局域网联机**（easytier 库内嵌虚拟局域网 + 端口转发，房间码互连，无需公网服务器）、**工具箱多线程下载器**（URL 队列并发 + 单文件 HTTP Range 分段，断点续传，独立于启动器下载任务）。
 
-后端 **114 个 `#[tauri::command]`**（分布于 16 个命令模块），前端 **10 个页面**（`src/pages/`），无状态管理库（模块级 `reactive()` 单例）。
+后端 **123 个 `#[tauri::command]`**（分布于 17 个命令模块），前端 **10 个页面**（`src/pages/`），无状态管理库（模块级 `reactive()` 单例）。
 
 ## Architecture & Data Flow
 
 ```
-前端 Vue3 (src/)  ──invoke(snake_case)──▶  commands/（薄胶水层，16 模块 / 114 命令）
+前端 Vue3 (src/)  ──invoke(snake_case)──▶  commands/（薄胶水层，17 模块 / 123 命令）
     ▲                                          │ 读 persist 配置、调领域函数
     │ task-progress / ms-login-complete /     ▼
     │ game-exited 事件（emit 顺序队列线程）  downloader/（传输层）  game/（内容与装配）  auth/
@@ -18,7 +18,7 @@ Elytra Launcher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前�
 ```
 
 - **后端分层**：`commands/` 只做胶水（读配置 → 调领域函数 → `map_err` 展平 String）；领域逻辑按域归位——**传输层 `downloader/`**（`fetcher/{api,core,routes,redirect}.rs` 下载核心与公开入口、`batch.rs` 并发批处理、`probe.rs` 源探测 TTFB/吞吐、`path_lock.rs` 跨任务路径互斥、`hash/progress/proxy/reuse/endpoints`；**不得依赖 `task`/`launcher`/`jdk`/`game`**），**内容与装配 `game/`**（`version/` 版本元数据与本地目录、`resource/` 资源与支持库装配、`loader/` ModLoader 安装、`community/` 社区资源搜索、`modpack.rs` 整合包、`updates/` Mod 更新），任务编排 `task/`（`manager.rs` TaskManager 单例 / `emit.rs` 事件队列 / `spawn.rs` 任务注册 / `runner.rs` 下载主体 / `progress.rs` 进度与终态收口 / `store.rs` SQLite 快照），启动 `launcher/`（`args.rs` 命令构建 / `env.rs` 环境准备 / `process.rs` 进程生命周期与监听 / `script.rs` 启动脚本渲染 / `skin.rs` 离线皮肤 / `platform.rs` 平台调节），账号 `auth/`（`microsoft.rs` OAuth / `mojang.rs` 官方 API / `account.rs` 回调与披风 / `external.rs` 第三方皮肤站 / `model.rs` MsAccount），纯数据 `config/`；统一持久化 `persist/`（`config.rs` section 读写 / `store.rs` 低层文件 IO / `secrets.rs` 密钥；`util::config_dir()` 平台感知：Windows exe 旁 `Elytra/`（便携），macOS `~/Library/Application Support/Elytra`，Linux `$XDG_DATA_HOME/Elytra` 缺省 `~/.local/share/Elytra`——dev/test 进程在 cargo target 下走 exe 旁保持隔离；TOML 分 section，全局 Mutex 串行化）；联机 `online/`（`service.rs` 单例与共享状态 / `host.rs` / `guest.rs` / `session.rs` easytier 会话 / `scaffold/` 协议编解码与房间码）；跨域小工具 `util.rs`（纯函数）
-- **事件推送**：`task/emit.rs` 的 `EMIT_TX`（LazyLock + 独立 `task-progress-emit` 线程 + mpsc）**顺序派发全部事件**（task-progress / task-waiting-user / ms-login-complete / game-exited / game-window-visible / online-state）——`app.emit` 若因 webview 未消费而阻塞只占队列线程，任务线程/进度锁永不碰 IPC（卡死与取消失效的根治）
+- **事件推送**：`task/emit.rs` 的 `EMIT_TX`（LazyLock + 独立 `task-progress-emit` 线程 + mpsc）**顺序派发全部事件**（task-progress / task-waiting-user / ms-login-complete / game-exited / game-window-visible / online-state / tooldl-progress）——`app.emit` 若因 webview 未消费而阻塞只占队列线程，任务线程/进度锁永不碰 IPC（卡死与取消失效的根治）
 - **锁约定**：全后端 `parking_lot`；**统一 inner→progress 锁序**（cancel/list/fail 先 inner 后 progress），调用 `fail()` 前必须 `drop` progress 锁（防重入死锁）；跨任务路径互斥独立为 `downloader::path_lock`（自持全局表，不挂 TaskManager）；`cancel()` 的 DB 持久化移出锁；DB（sqlite）写统一 2s 超时
 - **终态收口唯一入口**：`task/progress.rs` 的 `set_done` / `set_error` / `set_cancelled`——三者内部统一「发终态事件 → 移除任务注册」，且 `set_error`/`set_cancelled` 会取走此前 `set_cleanup_path` 登记的目录做**后台**整删（禁止在任务线程里同步 `remove_dir_all` 大目录）
 - **配置联动**：`gamedirs::set_active_game_dir` 写 downloader section 的 `minecraft_dir`，launch/downloader 都读该字段
@@ -28,19 +28,20 @@ Elytra Launcher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前�
 
 | 路径 | 职责 |
 | --- | --- |
-| `src-tauri/src/downloader/` | **传输层**（URL → 校验过的字节，不认资源类型）：`fetcher/{api,core,routes,redirect}.rs`（公开 fetch 变体 / 多源下载核心 / 镜像候选与健康度排序 / 黑洞 302 拒绝与安全跟随）、`batch.rs`（并发批处理：本地复用优先 + sha1 校验 + 路径互斥 + 逐文件进度）、`probe.rs`（HEAD 测 TTFB 与流式测吞吐，共用 TTL 缓存）、`path_lock.rs`（跨任务目标路径互斥）、`hash.rs`（sha1/sha512/流式）、`progress.rs`（`ProgressCounters`）、`proxy.rs`（系统代理探测）、`reuse.rs`（本地运行时复用）、`endpoints.rs`（网络拓扑单一事实源） |
+| `src-tauri/src/downloader/` | **传输层**（URL → 校验过的字节，不认资源类型）：`fetcher/{api,core,routes,redirect}.rs`（公开 fetch 变体 / 多源下载核心 / 镜像候选与健康度排序 / 黑洞 302 拒绝与安全跟随）、`batch.rs`（并发批处理：本地复用优先 + sha1 校验 + 路径互斥 + 逐文件进度）、`probe.rs`（HEAD 测 TTFB 与流式测吞吐，共用 TTL 缓存）、`path_lock.rs`（跨任务目标路径互斥）、`hash.rs`（sha1/sha512/流式）、`progress.rs`（`ProgressCounters`）、`proxy.rs`（系统代理探测）、`reuse.rs`（本地运行时复用）、`segmented.rs`（**单文件 HTTP Range 分段下载**：206 探测 / 多段并发随机写 / 段内字节级断点续传 / 跨段共享限速；镜像源与小文件自动回退单连接）、`endpoints.rs`（网络拓扑单一事实源） |
 | `src-tauri/src/game/` | **内容与装配**（特化场景，依赖 `downloader` 的传输能力）：`version/`（`model.rs` 版本 JSON serde / `meta.rs` 元数据获取 / `manifest.rs` 清单 / `dir.rs` 已安装版本目录域 / `source.rs` 源与镜像重写）、`resource/`（`assets.rs` 资源索引与批量下载 / `library.rs` 支持库 / `extract.rs` rules 匹配与 natives 解压，`TARGET_OS` 唯一实现）、`loader/`（`dispatch.rs` 统一入口 / `ctx.rs` 参数结构 / `shared.rs` profile 合并与继承展开 / fabric·forge·neoforge·optifine·version_query）、`community/`（`api.rs` 出参与分派 / modrinth / curseforge / shared / translation / wiki_entry）、`modpack.rs`（整合包清单解析与安装计划）、`updates/`（Mod 扫描/识别/更新） |
 | `src-tauri/src/task/` | 任务系统：`manager.rs`（TaskManager 单例 + 终态收口）、`emit.rs`（`EMIT_TX` 队列线程 + 锁外 emit）、`spawn.rs`（任务注册与 spawn）、`ctx.rs`（`TaskCtx` 句柄结构）、`model.rs`（serde 任务配置 + `TaskProgress`/`StepInfo` 唯一定义）、`steps.rs`（StepSpec 分析）、`progress.rs`（EmitLoop/心跳/`set_done`/`set_error`/`set_cancelled`）、`runner.rs`（完整下载主体）、`repair.rs`（缺失扫描/`count_assets_all`）、`files.rs`（批量下载 + WaitingForUser）、`jdk.rs`（JDK 安装任务）、`modpack.rs`（整合包安装编排）、`store.rs`（SQLite 快照/恢复） |
+| `src-tauri/src/tooldl/` | **工具箱多线程下载器域**（独立于 `task/` 的启动器下载任务）：`model.rs`（任务状态 + 对外快照）、`manager.rs`（任务注册表 + 并发槽位调度 + 暂停/继续/取消/清除）、`runner.rs`（单任务执行体：分段下载 + 250ms 进度心跳 + 终态收口）。复用 `downloader::segmented` 内核；事件出口走 `task::EventSink`（域层不依赖 `AppHandle`，可注入测试），进度以单任务快照事件 `tooldl-progress` 推送 |
 | `src-tauri/src/config/` | 纯数据模型（无逻辑）：`downloader.rs`（多源/三态/`NetworkMode`/`DownloaderConfig`/`DownloadSource`）、`online.rs`、`game_dirs.rs` |
 | `src-tauri/src/auth/` | 微软 OAuth PKCE（`microsoft.rs`）+ 官方 API（`mojang.rs`）+ 账号服务（`account.rs`）+ 第三方皮肤站（`external.rs`，authlib-injector）+ 本地皮肤收藏（`skins.rs`）+ MsAccount（`model.rs`，多账号列表，secrets.bin 加密） |
 | `src-tauri/src/jdk/` | `scanner.rs`（本机 JDK 扫描）、`download.rs`（managed runtime：Mojang all.json 逐文件 sha1 → Azul 包 sha256，双源回退 + 解压）、`config.rs`（配置读写/扫描注册/`SUPPORTED_JAVA_MAJORS`）、`model.rs` |
 | `src-tauri/src/online/` | **局域网联机**：`service.rs`（单例 + 共享状态 + 快照/终止）、`host.rs`（建网 + 信息服务器 6 协议 + 游戏端口发现与实例重建）、`guest.rs`（加入/中心发现/本地代理）、`session.rs`（easytier 会话：no_tun+smoltcp+KCP 数据面、host 固定虚拟 IP 10.144.144.1、guest DHCP、白名单 ACL）、`model.rs`（状态模型与协议常量）、`scaffold/`（`room.rs` 房间码 base34+模 7、`codec.rs` 帧编解码、`profiles.rs` 玩家表、`server.rs` 信息服务器、`identity.rs` machine_id）、`mc_discover.rs`（组播 224.0.2.60:4445 解析游戏端口）、`mc_advertise.rs`（guest 端模拟 MC LAN 广播，绕过 MC 26.2 离线会话校验） |
 | `src-tauri/src/persist/` | `config.rs`（TOML section 读写 + 全局锁）、`store.rs`（低层文件 IO + 路径）、`secrets.rs`（密钥加密：DPAPI / Keychain / Secret Service + ChaCha20-Poly1305） |
 | `src-tauri/src/launcher/` | `args.rs`（命令构建）/ `env.rs`（环境准备）/ `process.rs`（进程生命周期与监听）/ `script.rs`（BAT/SH 渲染）/ `skin.rs`（离线皮肤）/ `platform.rs`（平台调节）/ `memory.rs` / `model.rs` |
-| `src-tauri/src/commands/` | 16 个命令模块（114 命令）：account(27) / community(3) / downloader(5) / gamedirs(11) / jdk(4) / launch(5) / launch_options(3) / launch_script(1) / loader(6) / offline_account(5) / online(6) / server_status(1) / skins(4，本地皮肤衣柜) / task(14) / version(15) / version_icon(4) —— 薄胶水，逻辑在各领域层 |
-| `src/pages/` | Launch / Download（资源中心）/ **DownloadDetail（下载任务中心，顶级路由）** / ResourceDetail（资源详情+依赖链）/ Settings / VersionSelect / VersionSetup（容器化，业务在 store/组件）/ Tools（生成器工具集）/ CustomThemeEditor / SkinStudio（皮肤衣柜：3D 预览 + 皮肤/披风/本地衣柜，**仅正版账号可进**） |
-| `src/store/` | 25 个模块级 reactive/ref 单例：`download.ts`（dlState 任务状态机 + `ensureListen` 幂等 + terminalTaskIds 防幽灵）、`communitySearch.ts`/`categorySearch.ts`（聚合/分页/四分类工厂）、`resourceDetail.ts`、`versionDownload.ts`、`versionDetail.ts`、`launch.ts`、`accountUi.ts`、`auth.ts`、`avatar.ts`（FNV-1a 头像）、`alert.ts`、`theme.ts`（四主题）、`nav.ts`、`downloadTab.ts`、`settingsTab.ts`、`selectedVersion.ts`、`jdkConfig.ts`、`launchOptions.ts`、`downloaderConfig.ts`、`gameDirs.ts`、`online.ts`（联机状态机）、`memory.ts`、`versionIcon.ts`、`events.ts`（镜像 Rust `events.rs`）、`skinStudio.ts`（皮肤衣柜：3D 全身预览帧 + 官方皮肤/披风 + 本地衣柜） |
-| `src/component/` | 按域分目录：`common/`（TitleBar / AlertDialog / DialogModal / ScrollTopFab / IconImage / EmptyState / ErrorState / CheckToggle / DropSelect / LoadingSpinner / StepDot / MenuPopover）、`download/`、`launch/`、`settings/`、`tools/`（Give/Potion/Firework/Villager/Motd 生成器 + ModsEditor + ServerStatus/Online 工具）、`version/`、`version-setup/` —— 页面组件直接 import store，无 props 链 |
+| `src-tauri/src/commands/` | 17 个命令模块（123 命令）：account(27) / community(3) / downloader(5) / gamedirs(11) / jdk(4) / launch(5) / launch_options(3) / launch_script(1) / loader(6) / offline_account(5) / online(6) / server_status(1) / skins(4，本地皮肤衣柜) / task(14) / tooldl(9，工具箱下载器) / version(15) / version_icon(4) —— 薄胶水，逻辑在各领域层 |
+| `src/pages/` | Launch / Download（资源中心）/ **DownloadDetail（下载任务中心，顶级路由）** / ResourceDetail（资源详情+依赖链）/ Settings / VersionSelect / VersionSetup（容器化，业务在 store/组件）/ Tools（生成器 + 多线程下载器 + 联机等工具集）/ CustomThemeEditor / SkinStudio（皮肤衣柜：3D 预览 + 皮肤/披风/本地衣柜，**仅正版账号可进**） |
+| `src/store/` | 26 个模块级 reactive/ref 单例：`download.ts`（dlState 任务状态机 + `ensureListen` 幂等 + terminalTaskIds 防幽灵）、`communitySearch.ts`/`categorySearch.ts`（聚合/分页/四分类工厂）、`resourceDetail.ts`、`versionDownload.ts`、`versionDetail.ts`、`launch.ts`、`accountUi.ts`、`auth.ts`、`avatar.ts`（FNV-1a 头像）、`alert.ts`、`theme.ts`（四主题）、`nav.ts`、`downloadTab.ts`、`settingsTab.ts`、`selectedVersion.ts`、`jdkConfig.ts`、`launchOptions.ts`、`downloaderConfig.ts`、`gameDirs.ts`、`online.ts`（联机状态机）、`memory.ts`、`versionIcon.ts`、`events.ts`（镜像 Rust `events.rs`）、`skinStudio.ts`（皮肤衣柜：3D 全身预览帧 + 官方皮肤/披风 + 本地衣柜）、`toolDownload.ts`（工具箱多线程下载器：任务列表 + 配置 + 操作命令，与 dlState 完全隔离） |
+| `src/component/` | 按域分目录：`common/`（TitleBar / AlertDialog / DialogModal / ScrollTopFab / IconImage / EmptyState / ErrorState / CheckToggle / DropSelect / LoadingSpinner / StepDot / MenuPopover）、`download/`、`launch/`、`settings/`、`tools/`（Give/Potion/Firework/Villager/Motd 生成器 + ModsEditor + ServerStatus/Online 工具 + **DownloadTool（多线程下载器）**）、`version/`、`version-setup/` —— 页面组件直接 import store，无 props 链 |
 | `src/utils/` | `error.ts`（**`errMsg()` 取错误首行**，toast/内联错误用）、`format.ts`（fmtCount/fmtSize/fmtModDate/fmtDateTime/fmtSpeed/fmtEta…）、`versionClassify.ts`（目录名 `{mc}-{loader}-{ver}` 解析）、`versionMeta.ts`、`give.ts`/`motd.ts`/`nbt.ts`（生成器算法）、`toast.ts`、`tooltip.ts`、`useConfigSection.ts`、`useSelectable.ts`、`useConfirmDelete.ts` |
 
 ## Development Commands
@@ -52,8 +53,9 @@ pnpm dev            # 仅 vite dev server（:1420 strictPort）
 pnpm build          # vue-tsc --noEmit（全量类型检查）+ vite build → dist/
 cd src-tauri && cargo check              # Rust 编译检查
 cd src-tauri && cargo clippy --lib       # Rust lint（保持零代码警告）
-cd src-tauri && cargo test --lib -- --test-threads=1   # 单元测试（当前 291 passed + 1 ignored；串行防 persist/网络竞争）
+cd src-tauri && cargo test --lib -- --test-threads=1   # 单元测试（当前 267 passed + 1 ignored；串行防 persist/网络竞争）
 cd src-tauri && cargo test --test online_diag          # 联机集成测试（host/guest 双实例回环，走真实 easytier）
+cd src-tauri && cargo test --test tool_download        # 工具箱下载器集成测试（本地 HTTP 服务驱动完整链路：分段/暂停续传/取消/回退）
 cd src-tauri && cargo test --test e2e_download -- --ignored   # run_task 端到端（真实网络：取消路径秒级 / 完整下载分钟级）
 npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 ```
@@ -97,7 +99,7 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 
 | 文件 | 说明 |
 | --- | --- |
-| `src-tauri/src/lib.rs` | 入口：`task::init()`、后台预扫 JDK、**唯一** generate_handler! 注册点（114 个 tauri::command） |
+| `src-tauri/src/lib.rs` | 入口：`task::init()` / `tooldl::init()`、后台预扫 JDK、**唯一** generate_handler! 注册点（123 个 tauri::command） |
 | `src-tauri/src/main.rs` | 仅 `elytra_lib::run()` |
 | `src-tauri/src/constants.rs` | APP_NAME/UA/MIRROR_CONCURRENCY、`option_env!` 注入 CURSEFORGE_API_KEY / MS_CLIENT_ID（.env 经 build.rs）、persist SECT_* 段名 |
 | `src-tauri/src/events.rs` | 事件名常量（与 `src/store/events.ts` 手写镜像同步） |
@@ -137,14 +139,15 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 
 ## Testing & QA
 
-- **无前端测试**；Rust 侧约 291 个单元测试，全部内嵌各模块 `#[cfg(test)] mod tests`（含测试与实现同文件的约定），`cargo test --lib -- --test-threads=1` 运行；另有集成测试 `tests/online_diag.rs`（联机全链路：host/guest 双实例回环 + easytier 日志落盘）
-- **单元测试只测纯函数**：PKCE、URL 组装、启动命令构建（`build_launch_command` + `minimal_version_json()` 助手）、离线皮肤 UUID 算法（与 Java `UUID.hashCode() & 1` 一致性）、内存分配公式、util（URL 文件名/版本目录解析/`sha1_sub_dir`/`safe_relative_path`）、maven XML 解析与语义化排序、Mod 双源搜索、修复步骤规划、persist 读写回环、secrets DPAPI、store 快照/恢复、**`store_ops_from_runtime_worker_no_panic`（worker 线程 block_on 回归）**、**`count_assets_all_end_to_end`（真实索引 + 5057 项多线程扫描，网络）**、**`find_java_home_finds_nested_bin`（Azul 布局幂等）**、`downloader/fetcher` 的取消/换源/校验/重定向/并发上限、loader 的 profile 合并与继承展开、房间码解析/广播回环（online）
+- **无前端测试**；Rust 侧 267 个单元测试，全部内嵌各模块 `#[cfg(test)] mod tests`（含测试与实现同文件的约定），`cargo test --lib -- --test-threads=1` 运行；集成测试 `tests/online_diag.rs`（联机全链路：host/guest 双实例回环 + easytier 日志落盘）与 `tests/tool_download.rs`（工具箱下载器全链路：本地 HTTP 服务驱动入队 / 分段 / 暂停续传 / 取消 / 回退，5 用例，含 1 个真实网络 `#[ignore]`）
+- **单元测试只测纯函数**：PKCE、URL 组装、启动命令构建（`build_launch_command` + `minimal_version_json()` 助手）、离线皮肤 UUID 算法（与 Java `UUID.hashCode() & 1` 一致性）、内存分配公式、util（URL 文件名/版本目录解析/`sha1_sub_dir`/`safe_relative_path`）、maven XML 解析与语义化排序、Mod 双源搜索、修复步骤规划、persist 读写回环、secrets DPAPI、store 快照/恢复、**`store_ops_from_runtime_worker_no_panic`（worker 线程 block_on 回归）**、**`count_assets_all_end_to_end`（真实索引 + 5057 项多线程扫描，网络）**、**`find_java_home_finds_nested_bin`（Azul 布局幂等）**、`downloader/fetcher` 的取消/换源/校验/重定向/并发上限、`downloader/segmented` 的切分覆盖/小文件不分段/分段写一致性/不支持 Range 回退/段级与段内续传/陈旧位图作废、loader 的 profile 合并与继承展开、房间码解析/广播回环（online）
 - **断言风格**：`assert_eq!` 精确值为主（argv 位置、公式值、错误码消息）；行为不变量用 `assert!` + 中文 message
 - **平台隔离**：Windows 专属逻辑（BAT 脚本渲染、DPAPI、注册表代理）用 `#[cfg(target_os = "windows")]`
 - **persist 测试隔离**：测试进程下配置落在 `target/debug/deps/Elytra/Settings.toml`（config_dir 基于 current_exe 推导，测试进程在 deps/ 下），与正式运行隔离；每个测试先 remove_file 再 save（串行依赖）
 - **安全命令**：`cargo test --lib -- --test-threads=1`——日常验证用这个；**并行跑会偶发竞争**（persist 共用 Settings.toml + 网络测试抖动），必须串行
 - **clippy 红线**：`cargo clippy --lib` 保持零代码警告（`too_many_arguments` 已通过上下文结构体全部消除；仅余 `type_complexity` ×2 与 `upper_case_acronyms` ×3（Win32 类型），均为显式 allow）
 - **端到端测试**：`tests/e2e_download.rs`（`#[ignore]`，需真实网络）驱动 `run_task`（下载主流程）——任务层的事件出口已抽象为 `task::emit::EventSink`（`impl<R: Runtime> EventSink for AppHandle<R>`），测试注入记录型实现即可跑完整流程且不触碰 IPC。两个用例分别覆盖「阶段 A/B 真实执行 + 阶段 C 取消收口」与「真实完整下载 Minecraft 1.20.1」。**注意**：须用 `#[tokio::test(flavor = "multi_thread")]` —— 终态收口经 `store::update_status` 走 `util::block_on` 的 `block_in_place` 分支，current_thread runtime 下会 panic（与生产 tauri runtime 一致）。
+- **工具箱下载器测试**：`tests/tool_download.rs` 走本地 HTTP 服务（可控 206/200 + 按块节流），验证入队调度、分段写一致性、暂停保留位图、续传完成、取消清理、不支持 Range 回退。`tooldl` 域同样只依赖 `task::EventSink` 而非 `AppHandle`（`enqueue`/`resume` 的第一个参数是 `Arc<dyn EventSink>`），故无需 mock app 即可驱动。用例共享进程级全局（注册表 / 并发上限），文件内有 `TEST_LOCK` 串行闸，默认可与并行测试框架共存。
 
 ## Known Debt（已知遗留，待处理）
 

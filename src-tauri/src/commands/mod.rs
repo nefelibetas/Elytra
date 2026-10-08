@@ -12,5 +12,6 @@ pub mod online;
 pub mod server_status;
 pub mod skins;
 pub mod task;
+pub mod tooldl;
 pub mod version;
 pub mod version_icon;

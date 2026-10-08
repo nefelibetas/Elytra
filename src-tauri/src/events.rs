@@ -13,3 +13,5 @@ pub const GAME_WINDOW_VISIBLE: &str = "game-window-visible";
 pub const TASK_WAITING_USER: &str = "task-waiting-user";
 /// 联机状态快照（OnlineSnapshot：{ status, room_code, local_port, players }）
 pub const ONLINE_STATE: &str = "online-state";
+/// 工具箱下载器任务快照（ToolDlSnapshot：单任务全量状态，前端按 id 增量更新）
+pub const TOOL_DL_PROGRESS: &str = "tooldl-progress";
