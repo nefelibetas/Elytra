@@ -33,7 +33,9 @@ interface VoxelBox {
   swing?: number;
   /** 绕支点的 Z 轴摆动（度）：正 = 下端向 +x。用于手臂外张（skinview3d 的 idle/walk）。 */
   swingZ?: number;
-  /** 摆动支点（体素坐标，X/Z 轴共用）；未给则绕立方体中心。 */
+  /** 绕支点的 Y 轴旋转（度）：正 = 向 +x 侧偏转。用于行走的头部摆动（headBobbing）。 */
+  swingY?: number;
+  /** 摆动支点（体素坐标，三轴共用）；未给则绕立方体中心。 */
   pivot?: readonly [number, number, number];
   /** 用披风贴图而非皮肤贴图绘制（披风是独立的 64×32 纹理，UV 原点同为 (0,0)）。 */
   cape?: boolean;
@@ -324,35 +326,42 @@ function paint(
 
       const pts: number[] = [];
       let depthSum = 0;
-      // 四肢摆动：顶点绕支点先做 X 轴旋转（前后摆）再做 Z 轴旋转（外张）
+      // 四肢/头部姿态：顶点绕支点依次做 X（前后摆）→ Y（转头）→ Z（外张）旋转
       const swing = ((b.swing ?? 0) * Math.PI) / 180;
       const cosS = Math.cos(swing);
       const sinS = Math.sin(swing);
+      const swingY = ((b.swingY ?? 0) * Math.PI) / 180;
+      const cosYy = Math.cos(swingY);
+      const sinYy = Math.sin(swingY);
       const swingZ = ((b.swingZ ?? 0) * Math.PI) / 180;
       const cosZ = Math.cos(swingZ);
       const sinZ = Math.sin(swingZ);
+      const px0 = b.pivot ? b.pivot[0] : b.cx;
       const py0 = b.pivot ? b.pivot[1] : b.cy;
       const pz0 = b.pivot ? b.pivot[2] : b.cz;
-      const px0 = b.pivot ? b.pivot[0] : b.cx;
       for (const c of f.corners) {
-        const vx = b.cx + c[0];
-        let vy = b.cy + c[1];
-        let vz = b.cz + c[2];
+        let wx = b.cx + c[0];
+        let wy = b.cy + c[1];
+        let wz = b.cz + c[2];
         if (swing !== 0) {
-          const ry = vy - py0;
-          const rz = vz - pz0;
-          vy = py0 + ry * cosS - rz * sinS;
-          vz = pz0 + ry * sinS + rz * cosS;
+          const ry = wy - py0;
+          const rz = wz - pz0;
+          wy = py0 + ry * cosS - rz * sinS;
+          wz = pz0 + ry * sinS + rz * cosS;
         }
-        let wx = vx;
-        let wy = vy;
+        if (swingY !== 0) {
+          const rx = wx - px0;
+          const rz = wz - pz0;
+          wx = px0 + rx * cosYy + rz * sinYy;
+          wz = pz0 - rx * sinYy + rz * cosYy;
+        }
         if (swingZ !== 0) {
-          const rx = vx - px0;
-          const ry = vy - py0;
+          const rx = wx - px0;
+          const ry = wy - py0;
           wx = px0 + rx * cosZ - ry * sinZ;
           wy = py0 + rx * sinZ + ry * cosZ;
         }
-        const [sx, sy, depth] = project(wx, wy, vz, cosY, sinY, cosP, sinP);
+        const [sx, sy, depth] = project(wx, wy, wz, cosY, sinY, cosP, sinP);
         pts.push(sx, sy);
         depthSum += depth;
         if (sx < minX) minX = sx;
@@ -518,6 +527,17 @@ function applyAnimation(boxes: VoxelBox[], anim: Animation, phase: number): void
     setX(4, -legR, 24);
     setX(5, -legR, 24);
     setArms(t);
+    // 头部摆动（官方 headBobbing：rotation.y = sin(t/4)*0.2、rotation.x = sin(t/5)*0.1）
+    // 头与帽子层（0/1）一起转，绕头自身中心。Y 轴符号与官方相反（本实现正向朝 +x 偏）。
+    const headX = Math.sin(t / 5) * 5.73;
+    const headY = -Math.sin(t / 4) * 11.46;
+    for (const hi of [0, 1]) {
+      const hb = boxes[hi];
+      if (!hb) continue;
+      hb.swing = headX;
+      hb.swingY = headY;
+      hb.pivot = [hb.cx, hb.cy, hb.cz];
+    }
     return;
   }
   // 待机：腿不动，只有手臂外张
