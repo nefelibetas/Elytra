@@ -29,9 +29,11 @@ interface VoxelBox {
   inflate: number;
   /** 贴图水平镜像（64×32 旧格式的左侧肢体复用右侧贴图时用） */
   mirror?: boolean;
-  /** 绕肩/髋的 X 轴摆动（度）：正 = 向前摆。用于待机/行走动画。 */
+  /** 绕肩/髋的 X 轴摆动（度）：正 = 向后摆。用于待机/行走动画。 */
   swing?: number;
-  /** 摆动支点（体素坐标）；未给则绕立方体中心。 */
+  /** 绕支点的 Z 轴摆动（度）：正 = 下端向 +x。用于手臂外张（skinview3d 的 idle/walk）。 */
+  swingZ?: number;
+  /** 摆动支点（体素坐标，X/Z 轴共用）；未给则绕立方体中心。 */
   pivot?: readonly [number, number, number];
   /** 用披风贴图而非皮肤贴图绘制（披风是独立的 64×32 纹理，UV 原点同为 (0,0)）。 */
   cape?: boolean;
@@ -207,14 +209,15 @@ function buildCape(): VoxelBox[] {
  *  正面视角能从身体右侧露出一条明显边缘，背面视角仍完整。 */
 const CAPE_DRAPE_DEG = 12;
 
-/** 披风动效：在基础外张上叠加随动画的摆动。
- *  行走时向后飘起（Minecraft 里移动会让披风张开得更多），待机时只有极轻的呼吸起伏。 */
+/** 披风动效：对齐 skinview3d 的官方实现——
+ *  `cape.rotation.x = sin(t/1.5) * 0.06 + 0.188`（行走）、`sin(t) * 0.01 + 0.188`（待机）。
+ *  基础外张用本渲染器的 CAPE_DRAPE_DEG（约合 0.21 rad，与官方的 0.188 接近），
+ *  摆动幅度 ±3.4°(行走) / ±0.6°(待机)。 */
 function applyCapeMotion(capes: VoxelBox[], anim: Animation, phase: number): void {
   if (anim === "none") return;
-  const speed = anim === "walk" ? 6 : 2.2;
-  const wave = Math.sin(phase * speed);
-  const extra = anim === "walk" ? 16 + wave * 5 : wave * 2;
-  for (const c of capes) c.swing = CAPE_DRAPE_DEG + extra;
+  const wave =
+    anim === "walk" ? Math.sin((phase * 8) / 1.5) * 3.4 : Math.sin(phase * 2) * 0.6;
+  for (const c of capes) c.swing = CAPE_DRAPE_DEG + wave;
 }
 
 /** 只取头部（头像用）：头 + 帽子层，中心在原点。 */
@@ -321,12 +324,16 @@ function paint(
 
       const pts: number[] = [];
       let depthSum = 0;
-      // 四肢摆动：顶点绕支点做 X 轴旋转（正 = 向前摆）
+      // 四肢摆动：顶点绕支点先做 X 轴旋转（前后摆）再做 Z 轴旋转（外张）
       const swing = ((b.swing ?? 0) * Math.PI) / 180;
       const cosS = Math.cos(swing);
       const sinS = Math.sin(swing);
+      const swingZ = ((b.swingZ ?? 0) * Math.PI) / 180;
+      const cosZ = Math.cos(swingZ);
+      const sinZ = Math.sin(swingZ);
       const py0 = b.pivot ? b.pivot[1] : b.cy;
       const pz0 = b.pivot ? b.pivot[2] : b.cz;
+      const px0 = b.pivot ? b.pivot[0] : b.cx;
       for (const c of f.corners) {
         const vx = b.cx + c[0];
         let vy = b.cy + c[1];
@@ -337,7 +344,15 @@ function paint(
           vy = py0 + ry * cosS - rz * sinS;
           vz = pz0 + ry * sinS + rz * cosS;
         }
-        const [sx, sy, depth] = project(vx, vy, vz, cosY, sinY, cosP, sinP);
+        let wx = vx;
+        let wy = vy;
+        if (swingZ !== 0) {
+          const rx = vx - px0;
+          const ry = vy - py0;
+          wx = px0 + rx * cosZ - ry * sinZ;
+          wy = py0 + rx * sinZ + ry * cosZ;
+        }
+        const [sx, sy, depth] = project(wx, wy, vz, cosY, sinY, cosP, sinP);
         pts.push(sx, sy);
         depthSum += depth;
         if (sx < minX) minX = sx;
@@ -453,22 +468,60 @@ export const DEFAULT_VIEW_PITCH = 15;
 export const BODY_VOXEL_W = 20;
 export const BODY_VOXEL_H = 34;
 
-/** 按动画与相位给四肢设定摆角（左右反相，腿与同侧臂反相）。 */
+/** 按动画与相位给四肢设定摆角，参数对齐 skinview3d 官方实现（WalkingAnimation / IdleAnimation）：
+ *
+ *  - 行走：`t = progress * 8`，四肢绕 X 轴 ±0.5 rad (±28.6°)，臂与同侧腿反相；
+ *          手臂另有绕 Z 轴的外张（基础 0.02π≈3.6° + cos 摆动 ±1.72°）。
+ *  - 待机：`t = progress * 2`，**腿完全不动**，只有手臂的 Z 轴外张。
+ *  - 披风：`sin(t/1.5) * 0.06 + 0.06π`（约基础 10.8° + 摆动 ±3.4°）。
+ *
+ *  符号：skinview3d 的 rotation.x 正值让肢体向前，本实现的 swing 正值向后，故取反；
+ *  绕 Z 轴的外张方向两侧对称（官方左臂 +、右臂 −），与本实现的臂位（左 +x / 右 −x）一致。 */
 function applyAnimation(boxes: VoxelBox[], anim: Animation, phase: number): void {
   if (anim === "none") return;
-  const speed = anim === "walk" ? 7 : 2.2;
-  const amp = anim === "walk" ? 42 : 5;
-  const s = Math.sin(phase * speed) * amp;
-  // 约定 box 顺序：4/5 右臂(+袖)，6/7 左臂(+袖)，8/9 右腿(+裤)，10/11 左腿(+裤)
-  const set = (i: number, angle: number, pivotY: number) => {
+  const setX = (i: number, angle: number, pivotY: number) => {
     const b = boxes[i];
     if (!b) return;
     b.swing = angle;
     b.pivot = [b.cx, pivotY, 0];
   };
-  for (const [i, sign, pivotY] of [[4, 1, 24], [5, 1, 24], [6, -1, 24], [7, -1, 24], [8, -1, 12], [9, -1, 12], [10, 1, 12], [11, 1, 12]] as const) {
-    set(i, s * sign, pivotY);
+  const setZ = (i: number, angle: number, pivotY: number) => {
+    const b = boxes[i];
+    if (!b) return;
+    b.swingZ = angle;
+    b.pivot = [b.cx, pivotY, 0];
+  };
+  // 手臂 Z 轴外张（官方 idle / walk 共用）：基础 3.6°，叠加 cos 摆动 ±1.72°
+  const armZ = (t: number) => 3.6 + Math.cos(t) * 1.72;
+  const setArms = (t: number) => {
+    const z = armZ(t);
+    // 4/5 = 右臂（−x 侧，外张取负）；6/7 = 左臂（+x 侧，外张取正）
+    setZ(4, -z, 24);
+    setZ(5, -z, 24);
+    setZ(6, z, 24);
+    setZ(7, z, 24);
+  };
+
+  // 约定 box 顺序：4/5 右臂(+袖)，6/7 左臂(+袖)，8/9 右腿(+裤)，10/11 左腿(+裤)
+  if (anim === "walk") {
+    const t = phase * 8;
+    const AMP = 28.6; // 0.5 rad
+    const legL = -Math.sin(t) * AMP;
+    const legR = -Math.sin(t + Math.PI) * AMP;
+    setX(10, legL, 12);
+    setX(11, legL, 12);
+    setX(8, legR, 12);
+    setX(9, legR, 12);
+    // 臂绕 X 与同侧腿反相
+    setX(6, -legL, 24);
+    setX(7, -legL, 24);
+    setX(4, -legR, 24);
+    setX(5, -legR, 24);
+    setArms(t);
+    return;
   }
+  // 待机：腿不动，只有手臂外张
+  setArms(phase * 2);
 }
 
 /** 把皮肤画到给定 canvas（衣柜实时预览 / 离屏取图共用）。
