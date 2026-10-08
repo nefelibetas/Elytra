@@ -15,4 +15,5 @@ pub use api::{
     fetch_verified_c, fetch_with, fetch_with_c, DownloadResult, FetchError,
 };
 pub use core::set_speed_limit;
+pub(crate) use core::{is_mirror_url, speed_limit};
 pub use redirect::{http, reset_http_client};

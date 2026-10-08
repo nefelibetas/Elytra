@@ -34,13 +34,18 @@ pub fn set_speed_limit(bytes: u64) {
     SPEED_LIMIT.store(bytes, Ordering::Relaxed);
 }
 
+/// 当前全局限速（bytes/s，0 = 不限）。分段下载据此在所有段之间统一配速。
+pub(crate) fn speed_limit() -> u64 {
+    SPEED_LIMIT.load(Ordering::Relaxed)
+}
+
 static MIRROR_SEM: LazyLock<Arc<Semaphore>> =
     LazyLock::new(|| Arc::new(Semaphore::new(constants::MIRROR_CONCURRENCY)));
 
 /// 该 URL 是否走限流（镜像源 + 高并发不稳定的官方 maven，统一限 MIRROR_CONCURRENCY）。
 /// 镜像源域名变化时在此追加；maven.neoforged.net / maven.quiltmc.org / maven.minecraftforge.net
 /// 实测高并发下连接失败（服务器限流），无镜像兜底的源（quilt）尤其依赖此保护。
-pub(super) fn is_mirror_url(url: &str) -> bool {
+pub(crate) fn is_mirror_url(url: &str) -> bool {
     url.contains("bmclapi")
         || url.contains("mcimirror")
         || url.contains("maven.neoforged.net")

@@ -10,3 +10,4 @@ pub mod probe;
 pub mod progress;
 pub mod proxy;
 pub mod reuse;
+pub mod segmented;
