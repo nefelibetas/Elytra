@@ -62,10 +62,12 @@ function goThirdPartyLogin() {
   settingsTab.value = "thirdparty";
   void router.push("/settings");
 }
-/** 离线模式没有任何皮肤来源 → 衣柜入口直接置灰。 */
-const isOffline = computed(() => authMode.value === "offline");
-/** 第三方账号的衣柜在站点网页上，不在启动器里。 */
-const isThirdParty = computed(() => authMode.value === "thirdparty");
+/** 能否进启动器衣柜：**只有已登录的正版账号**。
+ *  注意不能只看 authMode ——「正版模式但尚未登录」同样进不去衣柜，
+ *  入口必须与衣柜页自身的准入条件一致，否则点进去会被瞬间弹回。 */
+const canOpenSkinStudio = computed(() => authMode.value === "premium" && !!msAccount.value);
+/** 能否打开站点衣柜：第三方模式且已登录第三方账号。 */
+const canOpenSiteCloset = computed(() => authMode.value === "thirdparty" && !!externalAccount.value);
 
 /** 站点衣柜地址：由 authlib-injector 的 API 地址推 origin（Blessing Skin 的衣柜路径固定为 `/user/closet`）。 */
 const siteClosetUrl = computed(() => {
@@ -78,23 +80,31 @@ const siteClosetUrl = computed(() => {
   }
 });
 
+/** 头像提示：入口不可用时由它承担引导（说清为什么点不动、该做什么），
+ *  而不是让用户点进去再被弹回来。 */
+const avatarTip = computed(() => {
+  if (canOpenSiteCloset.value) return "在站点衣柜中管理";
+  if (canOpenSkinStudio.value) return "衣柜";
+  if (authMode.value === "thirdparty") return "第三方账号的外观在站点衣柜管理，请先登录第三方账号";
+  return authMode.value === "offline"
+    ? "离线模式没有皮肤来源，登录账号后可用"
+    : "登录 Microsoft 账号后可管理皮肤与披风";
+});
+
 /** 点皮肤头像：
- *  正版 → 启动器衣柜（Mojang 皮肤 + 本地收藏）；
- *  第三方 → 直接用浏览器打开**站点衣柜**——站点有完整的上传/预览/整理，
- *           而启动器只能管"已有材质"（站点没有上传 API），镜像一份反而更残缺；
- *  离线 → 入口已置灰，这里静默返回，不弹提示。 */
+ *  正版（已登录）→ 启动器衣柜（Mojang 皮肤 + 本地收藏）；
+ *  第三方（已登录）→ 直接用浏览器打开**站点衣柜**——站点有完整的上传 / 预览 / 整理，
+ *                    而启动器只能管「已有材质」（站点没有上传 API），镜像一份反而更残缺；
+ *  其余（离线 / 正版未登录 / 第三方未登录）→ 入口已置灰，这里静默返回，不弹提示。 */
 function openSkinStudio() {
   accountUi.closeMenus();
-  if (isOffline.value) return;
-  if (isThirdParty.value) {
-    const url = siteClosetUrl.value;
-    if (!url) {
-      showToast("未获取到站点地址，请重新登录第三方账号");
-      return;
-    }
-    void openUrl(url).catch((e) => showError(`打开站点衣柜失败：${String(e)}`, true));
+  if (canOpenSiteCloset.value) {
+    void openUrl(siteClosetUrl.value).catch((e) =>
+      showError(`打开站点衣柜失败：${String(e)}`, true),
+    );
     return;
   }
+  if (!canOpenSkinStudio.value) return;
   void router.push("/skin-studio");
 }
 /** 第三方已登录时的附加操作（多角色切换 / 皮肤下载）。 */
@@ -293,10 +303,8 @@ function useOfflineName(name: string) {
         <div class="user-main">
           <div
             class="avatar"
-            :class="isOffline ? 'disabled' : 'clickable'"
-            v-tooltip="
-              isOffline ? '离线模式没有皮肤来源' : isThirdParty ? '在站点衣柜中管理' : '衣柜'
-            "
+            :class="canOpenSkinStudio || canOpenSiteCloset ? 'clickable' : 'disabled'"
+            v-tooltip="avatarTip"
             @click="openSkinStudio"
           >
             <img
