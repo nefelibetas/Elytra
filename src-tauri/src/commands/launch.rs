@@ -4,13 +4,20 @@
 //! 启动选项在 commands/launch_options.rs、离线账号历史在 commands/offline_account.rs。
 
 use tauri::AppHandle;
+use tauri_plugin_opener::OpenerExt;
 
+use crate::auth::account;
 use crate::constants;
+use crate::events;
 use crate::jdk::model::JdkConfig;
-use crate::launcher::args::build_launch_command;
+use crate::launcher::args::{build_launch_command, LaunchRequest};
 use crate::launcher::env;
 use crate::launcher::platform;
+use crate::launcher::process;
 use crate::launcher::skin;
+use crate::persist;
+use crate::task;
+use crate::util;
 
 // ── 启动装配（build_auth / fill_missing_xuid / prepare_launch 已下沉 launcher/process.rs）──
 
@@ -26,9 +33,9 @@ pub async fn check_launch_env(version_dir_name: String) -> Result<String, String
         env::load_launch_config(&version_dir_name)?;
 
     // 游戏完整性 + 旧式 natives 解压准备
-    crate::launcher::process::ensure_game_ready(&version_json, &mc_dir, &version_dir_name)?;
+    process::ensure_game_ready(&version_json, &mc_dir, &version_dir_name)?;
 
-    let java_env = crate::persist::read::<JdkConfig>(constants::SECT_JDK)
+    let java_env = persist::read::<JdkConfig>(constants::SECT_JDK)
         .ok()
         .and_then(|c| env::selected_jdk_version(&c))
         .unwrap_or_else(|| "自动选择".into());
@@ -46,21 +53,30 @@ pub async fn spawn_game(
     uuid: String,
     xuid: String,
 ) -> Result<u32, String> {
+    // 正版（online）模式：改用后端取的有效 token（临近过期自动静默刷新）——
+    // 前端缓存的是登录当时的 token，MC token 仅约 24h 有效，过期后启动会「会话无效」。
+    // 离线（空串）与第三方（authlib-injector 自有 token）沿用调用方传入值。
+    let access_token = if auth_mode == "online" {
+        account::valid_access_token().await?
+    } else {
+        access_token
+    };
     let (mut auth, java_path, version_json, mc_dir, launcher_config, java_major) =
-        crate::launcher::process::prepare_launch(
+        process::prepare_launch(
             &version_dir_name,
             &auth_mode,
             &username,
             &access_token,
             &uuid,
             &xuid,
-        )?;
+        )
+        .await?;
 
     // 离线皮肤（PCL 机制）：固定随机（用户名哈希决定 Steve/Alex），UUID 匹配模型
     skin::apply_offline_skin(&mut auth);
 
     // 启动前完整性检测 + 旧式 natives 解压准备
-    crate::launcher::process::ensure_game_ready(&version_json, &mc_dir, &version_dir_name)?;
+    process::ensure_game_ready(&version_json, &mc_dir, &version_dir_name)?;
 
     // 离线皮肤：构造 --user-properties 参数（1.19.2 以下版本生效；Alex 注入 slim 纹理，Steve 默认）
     let user_properties = skin::build_user_properties(&auth);
@@ -74,17 +90,19 @@ pub async fn spawn_game(
     let cmd = build_launch_command(
         &java_path,
         &version_json,
-        &version_dir_name,
-        &mc_dir,
-        &launcher_config,
-        &auth,
-        java_major,
-        &user_properties,
+        &LaunchRequest {
+            version_dir_name: &version_dir_name,
+            mc_dir: &mc_dir,
+            config: &launcher_config,
+            auth: &auth,
+            java_major_version: java_major,
+            user_properties: &user_properties,
+        },
     );
 
     // 启动前执行命令（非空时运行；失败则中止启动）
     if !launcher_config.pre_launch_cmd.trim().is_empty() {
-        crate::launcher::process::run_pre_launch_command(&launcher_config.pre_launch_cmd)
+        process::run_pre_launch_command(&launcher_config.pre_launch_cmd)
             .map_err(|e| format!("启动前命令执行失败\n{e}"))?;
     }
 
@@ -98,61 +116,38 @@ pub async fn spawn_game(
 
     // 启动子进程：cwd = 版本隔离的 gameDir，与官方启动器一致——
     // 游戏相对路径行为正确，crash-reports/logs 落在版本目录而非启动器目录。
-    // spawn 的 Windows Job Object 脱钩重试逻辑在 launcher/process.rs（域层）。
-    let game_dir = mc_dir.join("versions").join(&version_dir_name);
-    let mut command = std::process::Command::new(&cmd.args[0]);
-    command
-        .args(&cmd.args[1..])
-        .current_dir(&game_dir)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .stdin(std::process::Stdio::null());
-    let mut child = crate::launcher::process::spawn_game_child(&mut command)?;
-
-    let pid = child.id();
-    // 进程优先级（Windows: SetPriorityClass；进程刚启动即设置）
-    platform::set_process_priority(pid, launcher_config.process_priority);
-
-    // 捕获子进程 stdout/stderr 写入日志文件（避免 GBK 乱码污染终端，同时保留诊断信息）
-    let log_path = mc_dir.join("logs").join("elytra-launch.log");
-    if let Some(mut so) = child.stdout.take() {
-        let lp = log_path.clone();
-        std::thread::spawn(move || crate::launcher::process::drain_output(&mut so, &lp, false));
-    }
-    if let Some(mut se) = child.stderr.take() {
-        let lp = log_path.clone();
-        std::thread::spawn(move || crate::launcher::process::drain_output(&mut se, &lp, true));
-    }
-
-    // 后台监听线程（合一循环：窗口可见轮询 + 退出等待）由 launcher/process.rs 承载；
-    // 此处仅注入事件派发——队列线程派发（与 task-progress 同机制），
+    // 装配（cwd/stdio/优先级/日志排空/后台监听）全在 launcher/process.rs（域层），
+    // 此处只注入事件派发——队列线程派发（与 task-progress 同机制），
     // 游戏监听线程不因 webview 未消费而阻塞。
+    let game_dir = mc_dir.join("versions").join(&version_dir_name);
+    let log_path = mc_dir.join("logs").join("elytra-launch.log");
     let app_window = app.clone();
     let app_exit = app.clone();
     let label_window = version_dir_name.clone();
     let label_exit = version_dir_name.clone();
-    let crash_dir = game_dir.join("crash-reports");
-    crate::launcher::process::watch_game_process(
-        child,
-        pid,
-        crash_dir,
-        300,
-        move || {
-            crate::task::emit_event(
+    let pid = process::spawn_and_watch(
+        process::SpawnRequest {
+            args: &cmd.args,
+            game_dir: &game_dir,
+            log_path: &log_path,
+            process_priority: launcher_config.process_priority,
+        },
+        move |pid| {
+            task::emit_event(
                 &app_window,
-                crate::events::GAME_WINDOW_VISIBLE,
+                events::GAME_WINDOW_VISIBLE,
                 (pid, label_window.clone()),
             );
         },
-        move |exit_code, crash_report| {
+        move |pid, exit_code, crash_report| {
             // 退出码随事件送出：前端据此区分正常退出与崩溃（非 0 → 错误级提示）
-            crate::task::emit_event(
+            task::emit_event(
                 &app_exit,
-                crate::events::GAME_EXITED,
+                events::GAME_EXITED,
                 (pid, label_exit, exit_code, crash_report),
             );
         },
-    );
+    )?;
 
     Ok(pid)
 }
@@ -161,31 +156,40 @@ pub async fn spawn_game(
 /// 启动器捕获日志 <game_dir>/logs/elytra-launch.log；读取逻辑在 launcher/process.rs。
 #[tauri::command]
 pub async fn get_game_log(game_dir: String, version_name: String) -> String {
-    crate::launcher::process::read_game_log(std::path::Path::new(&game_dir), &version_name)
+    process::read_game_log(std::path::Path::new(&game_dir), &version_name)
 }
 
 /// 打开启动器日志所在目录（exe 旁 Elytra/，launcher.log 所在地）。
 #[tauri::command]
 pub fn open_launcher_log_dir(app: AppHandle) -> Result<(), String> {
-    let dir = crate::util::config_dir();
-    super::gamedirs::open_folder(app, dir.to_string_lossy().to_string())
+    let dir = util::config_dir();
+    let path = dir.to_string_lossy().to_string();
+    // 与 gamedirs::open_folder 同机制，但直接调 plugin 而非调另一个命令（命令间不互调）
+    if !dir.exists() {
+        return Err(format!("目录不存在\n{path}"));
+    }
+    app.opener()
+        .open_path(path, None::<&str>)
+        .map_err(|e| format!("打开文件夹失败\n{e}"))
 }
 
 /// 读取启动器日志尾部（最多 200 行）：exe 旁 Elytra/launcher.log（stdout/stderr 重定向落盘）。
 /// 文件不存在/不可读返回空字符串（不报错）。
 #[tauri::command]
 pub async fn get_launcher_log() -> String {
-    let path = crate::util::config_dir().join("launcher.log");
-    std::fs::read_to_string(path)
-        .map(|text| crate::util::tail_lines(&text))
+    let path = util::config_dir().join("launcher.log");
+    // 异步读：命令是 async，同步 std::fs 会阻塞 tokio worker（文件不大但没必要）
+    tokio::fs::read_to_string(path)
+        .await
+        .map(|text| util::tail_lines(&text))
         .unwrap_or_default()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::downloader::model::VersionJson;
-    use crate::launcher::model::{AuthMode, LauncherConfig, MemoryMode};
+    use crate::game::version::model::VersionJson;
+    use crate::launcher::model::{AuthMode, LauncherConfig, MemoryMode, WindowSize};
 
     /// 构造一个最小可用的版本 JSON（旧格式 minecraftArguments，保底参数路径）。
     fn minimal_version_json() -> VersionJson {
@@ -223,15 +227,17 @@ mod tests {
         let cmd = build_launch_command(
             std::path::Path::new("C:/java/bin/java.exe"),
             &vj,
-            "1.18.2",
-            std::path::Path::new("D:/Minecraft/.minecraft"),
-            config,
-            &AuthMode::Offline {
-                username: "tester".into(),
-                uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+            &LaunchRequest {
+                version_dir_name: "1.18.2",
+                mc_dir: std::path::Path::new("D:/Minecraft/.minecraft"),
+                config,
+                auth: &AuthMode::Offline {
+                    username: "tester".into(),
+                    uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+                },
+                java_major_version: 17,
+                user_properties: "",
             },
-            17,
-            "",
         );
         cmd.args
     }
@@ -247,8 +253,10 @@ mod tests {
 
     #[test]
     fn test_window_size_custom_passes_width_height() {
-        let mut cfg = LauncherConfig::default();
-        cfg.window_size = crate::launcher::model::WindowSize::Custom(1920, 1080);
+        let cfg = LauncherConfig {
+            window_size: WindowSize::Custom(1920, 1080),
+            ..Default::default()
+        };
         let args = build_cmd(&cfg);
         assert!(args.contains(&"--width".into()));
         assert!(args.contains(&"1920".into()));
@@ -270,9 +278,11 @@ mod tests {
     #[test]
     fn test_server_direct_args() {
         // 服务器直连：--server/--port 追加到游戏参数末尾；未配置时不出现
-        let mut cfg = LauncherConfig::default();
-        cfg.server = Some("1.2.3.4".into());
-        cfg.port = Some(25565);
+        let cfg = LauncherConfig {
+            server: Some("1.2.3.4".into()),
+            port: Some(25565),
+            ..Default::default()
+        };
         let args = build_cmd(&cfg);
         assert!(args.contains(&"--server".into()));
         assert!(args.contains(&"1.2.3.4".into()));
@@ -295,15 +305,17 @@ mod tests {
         let cmd = build_launch_command(
             std::path::Path::new("C:/java/bin/java.exe"),
             &vj,
-            "1.18.2",
-            std::path::Path::new("D:/Minecraft/.minecraft"),
-            &cfg,
-            &AuthMode::Offline {
-                username: "tester".into(),
-                uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+            &LaunchRequest {
+                version_dir_name: "1.18.2",
+                mc_dir: std::path::Path::new("D:/Minecraft/.minecraft"),
+                config: &cfg,
+                auth: &AuthMode::Offline {
+                    username: "tester".into(),
+                    uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+                },
+                java_major_version: 17,
+                user_properties: props,
             },
-            17,
-            props,
         );
         let joined = cmd.args.join(" ");
         assert!(
@@ -335,15 +347,17 @@ mod tests {
         let cmd = build_launch_command(
             std::path::Path::new("C:/java/bin/java.exe"),
             &vj,
-            "1.18.2",
-            std::path::Path::new("D:/Minecraft/.minecraft"),
-            &cfg,
-            &AuthMode::Offline {
-                username: "tester".into(),
-                uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+            &LaunchRequest {
+                version_dir_name: "1.18.2",
+                mc_dir: std::path::Path::new("D:/Minecraft/.minecraft"),
+                config: &cfg,
+                auth: &AuthMode::Offline {
+                    username: "tester".into(),
+                    uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+                },
+                java_major_version: 17,
+                user_properties: props,
             },
-            17,
-            props,
         );
         let joined = cmd.args.join(" ");
         assert!(joined.contains(props), "应注入 user properties: {joined}");
@@ -368,8 +382,10 @@ mod tests {
 
     #[test]
     fn test_window_title_prop() {
-        let mut cfg = LauncherConfig::default();
-        cfg.window_title = "我的世界".into();
+        let cfg = LauncherConfig {
+            window_title: "我的世界".into(),
+            ..Default::default()
+        };
         let args = build_cmd(&cfg);
         assert!(args.contains(&"-Dminecraft.window.title=我的世界".into()));
         // 空 = 不传
@@ -387,35 +403,41 @@ mod tests {
         let args = build_launch_command(
             std::path::Path::new("C:/java/bin/java.exe"),
             &vj,
-            "1.8.9",
-            std::path::Path::new("D:/Minecraft/.minecraft"),
-            &cfg,
-            &AuthMode::Offline {
-                username: "t".into(),
-                uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+            &LaunchRequest {
+                version_dir_name: "1.8.9",
+                mc_dir: std::path::Path::new("D:/Minecraft/.minecraft"),
+                config: &cfg,
+                auth: &AuthMode::Offline {
+                    username: "t".into(),
+                    uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+                },
+                java_major_version: 8,
+                user_properties: "",
             },
-            8,
-            "",
         )
         .args;
         // 默认：主类为 launchwrapper
         assert!(args.contains(&"net.minecraft.launchwrapper.Launch".to_string()));
 
         // 禁用后：直接用客户端主类
-        let mut cfg = LauncherConfig::default();
-        cfg.disable_launch_wrapper = true;
+        let cfg = LauncherConfig {
+            disable_launch_wrapper: true,
+            ..Default::default()
+        };
         let args = build_launch_command(
             std::path::Path::new("C:/java/bin/java.exe"),
             &vj,
-            "1.8.9",
-            std::path::Path::new("D:/Minecraft/.minecraft"),
-            &cfg,
-            &AuthMode::Offline {
-                username: "t".into(),
-                uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+            &LaunchRequest {
+                version_dir_name: "1.8.9",
+                mc_dir: std::path::Path::new("D:/Minecraft/.minecraft"),
+                config: &cfg,
+                auth: &AuthMode::Offline {
+                    username: "t".into(),
+                    uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+                },
+                java_major_version: 8,
+                user_properties: "",
             },
-            8,
-            "",
         )
         .args;
         assert!(args.contains(&"net.minecraft.client.main.Main".to_string()));
@@ -424,19 +446,23 @@ mod tests {
 
     #[test]
     fn test_disable_lwjgl_unsafe_agent_filters_javaagent() {
-        let mut cfg = LauncherConfig::default();
-        cfg.jvm_args = vec![
-            "-javaagent:lwjgl-unsafe-agent.jar".into(),
-            "-XX:-OmitStackTraceInFastThrow".into(),
-        ];
-        cfg.disable_lwjgl_unsafe_agent = true;
+        let cfg = LauncherConfig {
+            jvm_args: vec![
+                "-javaagent:lwjgl-unsafe-agent.jar".into(),
+                "-XX:-OmitStackTraceInFastThrow".into(),
+            ],
+            disable_lwjgl_unsafe_agent: true,
+            ..Default::default()
+        };
         let args = build_cmd(&cfg);
         assert!(!args.iter().any(|a| a.contains("lwjgl-unsafe-agent")));
         assert!(args.contains(&"-XX:-OmitStackTraceInFastThrow".to_string()));
 
         // 默认不禁用：agent 参数保留
-        let mut cfg = LauncherConfig::default();
-        cfg.jvm_args = vec!["-javaagent:lwjgl-unsafe-agent.jar".into()];
+        let cfg = LauncherConfig {
+            jvm_args: vec!["-javaagent:lwjgl-unsafe-agent.jar".into()],
+            ..Default::default()
+        };
         let args = build_cmd(&cfg);
         assert!(args.iter().any(|a| a.contains("lwjgl-unsafe-agent")));
     }
@@ -463,15 +489,17 @@ mod tests {
         let args = build_launch_command(
             std::path::Path::new("C:/java/bin/java.exe"),
             &vj,
-            "1.18.2",
-            &tmp,
-            &cfg,
-            &AuthMode::Offline {
-                username: "t".into(),
-                uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+            &LaunchRequest {
+                version_dir_name: "1.18.2",
+                mc_dir: &tmp,
+                config: &cfg,
+                auth: &AuthMode::Offline {
+                    username: "t".into(),
+                    uuid: "00000000FFFFFFFFFFFFFFFFFFFFFFFF".into(),
+                },
+                java_major_version: 17,
+                user_properties: "",
             },
-            17,
-            "",
         )
         .args;
         let cp_idx = args
@@ -494,9 +522,11 @@ mod tests {
     #[test]
     fn test_min_memory_xms_injection() {
         // Custom + min_memory → 注入 -Xms（clamp 到 -Xmx 内）
-        let mut cfg = LauncherConfig::default();
-        cfg.memory = MemoryMode::Custom(4096);
-        cfg.min_memory = Some(2048);
+        let cfg = LauncherConfig {
+            memory: MemoryMode::Custom(4096),
+            min_memory: Some(2048),
+            ..Default::default()
+        };
         let args = build_cmd(&cfg);
         assert!(
             args.iter().any(|a| a == "-Xmx4096m"),
@@ -508,9 +538,11 @@ mod tests {
         );
 
         // min_memory > Xmx → clamp 到 Xmx
-        let mut cfg = LauncherConfig::default();
-        cfg.memory = MemoryMode::Custom(1024);
-        cfg.min_memory = Some(8192);
+        let cfg = LauncherConfig {
+            memory: MemoryMode::Custom(1024),
+            min_memory: Some(8192),
+            ..Default::default()
+        };
         let args = build_cmd(&cfg);
         assert!(
             args.iter().any(|a| a == "-Xms1024m"),
@@ -518,9 +550,11 @@ mod tests {
         );
 
         // Auto 模式忽略 min_memory（-Xmx 动态推测，固定 -Xms 可能超上限）
-        let mut cfg = LauncherConfig::default();
-        cfg.memory = MemoryMode::Auto;
-        cfg.min_memory = Some(2048);
+        let cfg = LauncherConfig {
+            memory: MemoryMode::Auto,
+            min_memory: Some(2048),
+            ..Default::default()
+        };
         let args = build_cmd(&cfg);
         assert!(
             !args.iter().any(|a| a.starts_with("-Xms")),

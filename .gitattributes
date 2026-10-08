@@ -1,5 +1,16 @@
-# 统一行尾策略：文本文件仓库内一律 LF 存储，检出时按平台转换
-# （Windows → CRLF，Linux/macOS → LF）。显式声明后不依赖各机器
-# core.autocrlf 配置，协作者行为一致，消除"幽灵 modified"与
-# "LF will be replaced by CRLF" 噪音。
-* text=auto
+# 默认所有文本文件检出为 LF，提交时存为 LF
+* text=auto eol=lf
+
+# 针对常见文本文件明确指定
+*.rs text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.vue text eol=lf
+*.md text eol=lf
+*.js text eol=lf
+
+# 二进制文件保持原样
+*.png binary
+*.ico binary

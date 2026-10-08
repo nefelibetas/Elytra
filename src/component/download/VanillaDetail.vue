@@ -4,6 +4,7 @@ import { ArrowLeft, X, ChevronDown } from "@lucide/vue";
 import {
   vdState, displayLoaders, loaderIcon, vanillaIcon,
 } from "../../store/versionDownload";
+import type { VersionMeta } from "../../store/versionDownload";
 import commandIcon from "../../assets/command.png";
 import cobbleIcon from "../../assets/cobble.png";
 
@@ -15,7 +16,12 @@ function startDownload() {
   vdState.startDownload();
 }
 
-const sv = () => vdState.selectedVersion!;
+// 详情页仅选中版本时挂载，但切版本/退出时组件可能多存活一帧（Transition 离场），
+// 此时 selectedVersion 已置 null：用空对象兜底，模板 sv().id 取 "" 不产生白屏/报错。
+const EMPTY_VERSION: VersionMeta = {
+  id: "", type: "", url: "", time: "", releaseTime: "", sha1: "", complianceLevel: 0,
+};
+const sv = () => vdState.selectedVersion ?? EMPTY_VERSION;
 </script>
 
 <template>
@@ -25,7 +31,7 @@ const sv = () => vdState.selectedVersion!;
         <ArrowLeft :size="16" />
       </button>
       <img :src="vdState.selectedMainLoader && loaderIcon[vdState.selectedMainLoader] ? loaderIcon[vdState.selectedMainLoader] : versionIcon(sv())" width="28" height="28" class="det-icon" alt="" />
-      <input class="det-input" v-model="vdState.versionInput" />
+      <input class="det-input" v-model="vdState.versionInput" autocomplete="off" />
       <span v-if="vdState.resolvedDirName" class="det-dir">目录: {{ vdState.resolvedDirName }}</span>
     </div>
   </div>
@@ -189,12 +195,9 @@ const sv = () => vdState.selectedVersion!;
 .dl-btn:active:not(:disabled) { transform: scale(0.97); }
 .dl-done { font-size: 14px; font-weight: 600; color: var(--color-success); text-align: center; padding: 10px 40px; }
 
-/* expand：max-height 目标值必须写在 enter-to/leave-from（写在 active 上会因同特异性覆盖 from 态导致无动画），
-   且目标值与展开区自身 max-height 一致（320px），内容超高时内部滚动不撑出窗口 */
-.det-ld-body { border-top: 1px solid var(--border-default); max-height: 320px; overflow-y: auto; }
-.expand-enter-active, .expand-leave-active { transition: max-height 0.3s ease, opacity 0.25s ease; }
-.expand-enter-from, .expand-leave-to { max-height: 0; opacity: 0; }
-.expand-enter-to, .expand-leave-from { max-height: 320px; opacity: 1; }
+/* expand：目标高度由共享骨架（styles/transitions.css）提供，此处仅注入 --expand-h。
+   与展开区自身 max-height 一致（320px），内容超高时内部滚动不撑出窗口 */
+.det-ld-body { border-top: 1px solid var(--border-default); max-height: 320px; overflow-y: auto; --expand-h: 320px; }
 
 /* loader cards */
 .ld-enter-active, .ld-leave-active { transition: all 0.25s ease; }

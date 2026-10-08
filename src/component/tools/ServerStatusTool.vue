@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Radio, RefreshCw } from "@lucide/vue";
 import MotdPreview from "./MotdPreview.vue";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
+import { errMsg } from "../../utils/error";
 
 /** 服务器状态（镜像 Rust ServerStatus）。 */
 interface ServerStatus {
@@ -52,7 +53,7 @@ async function handlePing() {
     });
   } catch (e) {
     status.value = null;
-    error.value = String(e);
+    error.value = errMsg(e);
   } finally {
     elapsedMs.value = Math.round(performance.now() - start);
     loading.value = false;
@@ -88,6 +89,7 @@ function editionLabel(): string {
         placeholder="服务器地址[:端口]，如 play.example.com 或 1.2.3.4:25565"
         :disabled="loading"
         @keyup.enter="handlePing"
+        autocomplete="off"
       />
       <DropSelect
         :model-value="edition"
@@ -220,9 +222,11 @@ function editionLabel(): string {
   padding: 10px 12px;
   font-size: 12px;
   line-height: 1.6;
-  color: var(--text-danger, #ff5555);
-  background: color-mix(in srgb, var(--text-danger, #ff5555) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--text-danger, #ff5555) 25%, transparent);
+  color: var(--color-danger);
+  background: var(--color-danger-bg);
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+  border: 1px solid var(--color-danger);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 25%, transparent);
   border-radius: var(--radius-sm);
   white-space: pre-wrap;
   word-break: break-all;

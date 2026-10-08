@@ -7,6 +7,11 @@ import type { Directive } from "vue";
 
 interface TooltipTarget extends HTMLElement {
   __ttCleanup?: () => void;
+  /** 最新提示文本：hover 时由它取值。
+   *  指令的 binding 对象每次更新都会**重建**，闭包若直接捕获 `binding.value`，
+   *  hover 显示的会是「首次绑定」时的快照——动态文案（如按登录状态给出不同的引导）
+   *  会一直停在旧值。故在此存一份可变的最新值。 */
+  __ttText?: string;
 }
 
 const TIP_CLASS = "elytra-tooltip";
@@ -101,7 +106,8 @@ const tooltip: Directive<HTMLElement, string> = {
   mounted(el: TooltipTarget, binding) {
     // 去掉 UA 原生 tooltip（指令接管）
     el.removeAttribute("title");
-    const onEnter = () => show(el, binding.value);
+    el.__ttText = binding.value;
+    const onEnter = () => show(el, el.__ttText ?? "");
     const onLeave = () => hide();
     el.addEventListener("mouseenter", onEnter);
     el.addEventListener("mouseleave", onLeave);
@@ -111,6 +117,8 @@ const tooltip: Directive<HTMLElement, string> = {
     };
   },
   updated(el: TooltipTarget, binding) {
+    // 同步最新文本（hover 时读的就是它，见 __ttText 注释）
+    el.__ttText = binding.value;
     // 值变化且正在显示 → 即时更新文本并重定位
     if (currentTarget === el && binding.value !== currentText) {
       const tip = ensureTip();

@@ -2,7 +2,7 @@
 // 设置-第三方登录：登录（服务器下拉选择）+ 预设管理（label + value）。
 // 下拉选项 = 内置预设 + 用户预设（下面有什么，上面才能选什么）。
 import { computed, onMounted, ref } from "vue";
-import { invoke } from "@tauri-apps/api/core";
+import { loadThirdPartyConfig, saveThirdPartyConfig } from "../../store/thirdParty";
 import { Plus, Trash2, ExternalLink } from "@lucide/vue";
 import DropSelect from "../common/DropSelect.vue";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -50,7 +50,7 @@ async function doLogin() {
     showLoginForm.value = false;
     showToast("登录成功");
   } catch (e) {
-    extError.value = String(e);
+    extError.value = errMsg(e);
   } finally {
     extBusy.value = false;
   }
@@ -65,7 +65,7 @@ function openServerLink(url: string) {
 // ── 预设管理 ──
 async function loadPresets() {
   try {
-    const cfg = await invoke<{ servers: { label: string; value: string }[] }>("get_third_party_config");
+    const cfg = await loadThirdPartyConfig();
     presetServers.value = cfg.servers ?? [];
     if (!extApi.value && presetServers.value.length) {
       extApi.value = presetServers.value[0].value;
@@ -77,7 +77,7 @@ async function loadPresets() {
 
 async function savePresets() {
   try {
-    await invoke("save_third_party_config", { config: { servers: presetServers.value } });
+    await saveThirdPartyConfig({ servers: presetServers.value });
   } catch (e) {
     showToast(errMsg(e));
   }
@@ -174,13 +174,14 @@ onMounted(() => {
       </div>
       <!-- 行2：账号 + 密码 + 登录 -->
       <div class="tp-row tp-field">
-        <input v-model="extUser" class="tp-input" type="text" placeholder="皮肤站账号" />
+        <input v-model="extUser" class="tp-input" type="text" placeholder="皮肤站账号" autocomplete="off" />
         <input
           v-model="extPass"
           class="tp-input"
           type="password"
           placeholder="密码"
           @keyup.enter="doLogin"
+          autocomplete="new-password"
         />
         <button class="tp-btn tp-primary tp-login-btn" :disabled="extBusy" @click="doLogin">
           {{ extBusy ? "登录中…" : "登录" }}
@@ -222,6 +223,7 @@ onMounted(() => {
           type="text"
           placeholder="名称（如 LittleSkin）"
           @keyup.enter="addPreset"
+          autocomplete="off"
         />
         <input
           v-model="newValue"
@@ -229,6 +231,7 @@ onMounted(() => {
           type="text"
           placeholder="地址（如 https://littleskin.cn/api/yggdrasil）"
           @keyup.enter="addPreset"
+          autocomplete="off"
         />
         <button class="tp-btn" @click="addPreset">
           <Plus :size="13" />
@@ -267,22 +270,8 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-/* 展开/收起动画（max-height 写在 enter-to/leave-from，勿移 active） */
-.expand-enter-active,
-.expand-leave-active {
-  transition: max-height 0.22s ease, opacity 0.18s ease;
-}
-.expand-enter-from,
-.expand-leave-to {
-  max-height: 0;
-  opacity: 0;
-  overflow: hidden;
-}
-.expand-enter-to,
-.expand-leave-from {
-  max-height: 1000px;
-  overflow: hidden;
+  /* expand 目标高度（共享骨架见 styles/transitions.css） */
+  --expand-h: 1000px;
 }
 
 .tp-current {

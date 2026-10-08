@@ -11,14 +11,14 @@ import {
   type PotionEffectInput,
 } from "../../utils/nbt";
 import { MC_COLORS, MC_COLOR_KEYS, MC_COLOR_NAMES, hexToSectionX } from "../../utils/motd";
-import { showToast } from "../../utils/toast";
-import type { GiveFormat } from "../../utils/give";
+import { copyText } from "../../utils/clipboard";
+import { GIVE_FORMAT_OPTIONS, type GiveFormat } from "../../utils/give";
 
 const format = ref<GiveFormat>("modern");
-const formatOptions: SelOption[] = [
-  { value: "modern", label: "1.20.5+（组件格式）" },
-  { value: "legacy", label: "1.13–1.20.4（NBT 格式）" },
-];
+const formatOptions: SelOption[] = GIVE_FORMAT_OPTIONS.map((o) => ({
+  value: o.value,
+  label: o.label,
+}));
 
 const kindOptions: SelOption[] = POTION_ITEM_KINDS.map((k) => ({ value: k.id, label: k.name }));
 const baseOptions: SelOption[] = [
@@ -102,12 +102,7 @@ const command = computed(() =>
 );
 
 async function copyCommand() {
-  try {
-    await navigator.clipboard.writeText(command.value);
-    showToast("命令已复制");
-  } catch {
-    showToast("复制失败，请手动复制");
-  }
+  await copyText(command.value, "命令已复制");
 }
 </script>
 
@@ -146,7 +141,7 @@ async function copyCommand() {
           @update:model-value="(v: string) => (potionId = v)"
         />
         <span class="nb-label nb-label-short">数量</span>
-        <input v-model.number="count" type="number" class="nb-num" min="1" max="64" />
+        <input v-model.number="count" type="number" class="nb-num" min="1" max="64" autocomplete="off" />
       </div>
     </div>
 
@@ -162,9 +157,9 @@ async function copyCommand() {
           @update:model-value="(v: string) => (newEffect = v)"
         />
         <span class="nb-label nb-label-short">等级</span>
-        <input v-model.number="newAmp" type="number" class="nb-num" min="0" max="255" />
+        <input v-model.number="newAmp" type="number" class="nb-num" min="0" max="255" autocomplete="off" />
         <span class="nb-label nb-label-short">时长（秒）</span>
-        <input v-model.number="newDurSec" type="number" class="nb-num" min="1" />
+        <input v-model.number="newDurSec" type="number" class="nb-num" min="1" autocomplete="off" />
         <button class="tool-btn nb-add-btn" :disabled="!newEffect" @click="addEffect">
           <Plus :size="14" />
           添加
@@ -191,6 +186,7 @@ async function copyCommand() {
           class="nb-color-pick"
           :value="customColorHex"
           @input="onCustomColor"
+          autocomplete="off"
         />
         <span v-if="customColor === null" class="nb-hint">默认液体颜色</span>
       </div>
@@ -201,6 +197,7 @@ async function copyCommand() {
           class="nb-input"
           placeholder="留空使用默认名称"
           spellcheck="false"
+          autocomplete="off"
         />
       </div>
       <div class="nb-row">
@@ -220,6 +217,7 @@ async function copyCommand() {
           :class="{ active: colorCode.startsWith('§x') }"
           title="自定义颜色（§x，需 1.16+）"
           @input="onCustomNameColor"
+          autocomplete="off"
         />
       </div>
     </div>
@@ -233,10 +231,14 @@ async function copyCommand() {
           复制
         </button>
       </div>
-      <code class="nb-cmd">{{ command }}</code>
+      <code class="gen-output gen-output-cmd">{{ command }}</code>
     </div>
   </div>
 </template>
+
+<style>
+@import "../../styles/tools-shared.css";
+</style>
 
 <style scoped>
 .tool-card {
@@ -351,22 +353,6 @@ async function copyCommand() {
   border-radius: 999px;
 }
 
-.nb-tag-x {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px;
-  border: none;
-  background: transparent;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  border-radius: 4px;
-}
-
-.nb-tag-x:hover {
-  color: var(--text-danger, #e5484d);
-  background-color: var(--surface-hover);
-}
-
 .nb-hint {
   font-size: 11px;
   color: var(--text-tertiary);
@@ -420,16 +406,4 @@ async function copyCommand() {
   padding: 3px 10px;
 }
 
-.nb-cmd {
-  display: block;
-  padding: 10px 12px;
-  font-family: "Cascadia Mono", Consolas, "Courier New", monospace;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--text-primary);
-  background-color: rgba(0, 0, 0, 0.35);
-  border-radius: var(--radius-sm);
-  word-break: break-all;
-  white-space: pre-wrap;
-}
 </style>

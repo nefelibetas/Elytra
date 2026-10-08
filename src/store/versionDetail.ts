@@ -1,9 +1,10 @@
 // 主页版本卡片 store：存档/Mod 列表加载、Mod 更新检查与更新执行。
 // 卡片组件 import 本模块单例；版本切换时 reset 后重新加载。
-import { ref, computed, reactive, watch, type Ref } from "vue";
+import { ref, computed, watch, type Ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { showToast } from "../utils/toast";
 import { errMsg } from "../utils/error";
+import { createBoundedCache } from "../utils/boundedCache";
 import { classifyVersion } from "../utils/versionClassify";
 import type { InstalledVersionInfo } from "./gameDirs";
 
@@ -137,15 +138,19 @@ watch(worlds, list => {
 
 // ── 世界缩略图（saves/<world>/icon.png 懒加载缓存）──
 
-/** world name → data URL（版本切换时清空）。 */
-export const worldIcons = reactive<Record<string, string>>({});
+/** world name → data URL（版本切换时清空）。
+ *  条目为 base64 data URL（单图上限见 Rust get_world_icon）；上限 128 兜底防
+ *  同一版本下浏览大量存档时无界增长（正常存档数远小于此）。 */
+const worldIconsCache = createBoundedCache<string>(128);
+export const worldIcons = worldIconsCache.record;
 /** 加载中标记（幂等，防并发重复请求）。 */
-const worldIconsLoading = reactive<Record<string, boolean>>({});
+const worldIconsLoadingCache = createBoundedCache<boolean>(256);
+const worldIconsLoading = worldIconsLoadingCache.record;
 
 /** 懒加载单个世界缩略图（本地读取，缺失/失败保持 Map 占位）。 */
 export async function loadWorldIcon(versionName: string, worldName: string) {
   if (worldIcons[worldName] || worldIconsLoading[worldName]) return;
-  worldIconsLoading[worldName] = true;
+  worldIconsLoadingCache.put(worldName, true);
   try {
     // 后端返回 { mime, base64 } 载荷（魔数嗅探 + 服务端编码，替代 JSON 数字数组）
     const icon = await invoke<{ mime: string; data: string } | null>("get_world_icon", {
@@ -153,12 +158,12 @@ export async function loadWorldIcon(versionName: string, worldName: string) {
       worldName,
     });
     if (icon) {
-      worldIcons[worldName] = `data:${icon.mime};base64,${icon.data}`;
+      worldIconsCache.put(worldName, `data:${icon.mime};base64,${icon.data}`);
     }
   } catch {
     // 缺失/读取失败：保持 Map 占位
   } finally {
-    worldIconsLoading[worldName] = false;
+    worldIconsLoadingCache.put(worldName, false);
   }
 }
 
@@ -423,6 +428,20 @@ export async function updateMod(versionName: string, upd: ModUpdate) {
   }
 }
 
+/** 删除指定版本下的单个存档目录（批量删除场景由调用方循环并控制刷新时机）。 */
+export async function deleteWorld(versionName: string, worldName: string) {
+  await invoke("delete_world", { versionName, worldName });
+}
+
+/** 删除指定版本资源目录（材质包/数据包/光影包）下的单个文件。 */
+export async function deleteResourceFile(
+  versionName: string,
+  kind: ResourceKind,
+  fileName: string,
+) {
+  await invoke("delete_resource_file", { versionName, kind, fileName });
+}
+
 /** 删除单个 mod 文件：删除后刷新本地列表 + 从更新列表移除该项。
  *  reset 重建列表，确保已删文件从 mods 中消失。 */
 export async function deleteMod(versionName: string, fileName: string) {
@@ -445,8 +464,8 @@ export function resetVersionDetail() {
   worlds.value = [];
   worldsError.value = "";
   worldsLoadedFor.value = "";
-  Object.keys(worldIcons).forEach(k => delete worldIcons[k]);
-  Object.keys(worldIconsLoading).forEach(k => delete worldIconsLoading[k]);
+  worldIconsCache.clear();
+  worldIconsLoadingCache.clear();
   mods.value = [];
   modsError.value = "";
   modsNetworkError.value = false;

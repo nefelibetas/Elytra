@@ -1,14 +1,18 @@
 // ── JDK 安装任务（下载缺失 Java 运行时）──
 // 从 runner.rs 拆出：单步任务主体，与完整下载 runner 解耦。
 
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
 use tauri::AppHandle;
 
-use crate::config::downloader::model::DownloaderConfig;
+use crate::config::downloader::DownloaderConfig;
 use crate::constants;
+use crate::downloader::path_lock::PathLock;
+use crate::jdk::download::{auto_install, runtime_dir, InstallProgress};
+use crate::jdk::model::JdkInfo;
 use crate::persist;
 use crate::task::progress::{
     cancelled, set_cancelled, set_error, set_phase, set_total, update_progress,
@@ -27,28 +31,82 @@ pub async fn run_install_jdk(
     major: u32,
 ) {
     let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
-    let dest_dir = crate::jdk::download::runtime_dir(&config, major);
+    let dest_dir = runtime_dir(&config, major);
 
+    // 准备阶段：目录互斥 + 清理登记 + Running 相位（锁冲突/已取消时自行收口）
+    let Some(_lock) = begin_jdk_install(&app, progress, cancel, &dest_dir, major) else {
+        return;
+    };
+
+    // 原子计数器（下载回调写入，心跳读取）
+    let counts = JdkCounters::new();
+
+    let emit_handle = spawn_jdk_heartbeat(app.clone(), progress.clone(), &counts);
+
+    // 下载 + 安装（按 jdk_source_mode 回退链；取消/失败由 auto_install 返回）
+    let hook = InstallProgress {
+        cancel: Some(cancel),
+        on_total: Some(&{
+            let app = app.clone();
+            let progress = progress.clone();
+            let files_total = counts.files_total.clone();
+            move |files: u32, bytes: u64| {
+                files_total.store(files, Ordering::Relaxed);
+                set_total(&app, &progress, files, bytes);
+            }
+        }),
+        on_bytes: Some(&{
+            let acc = counts.acc_bytes.clone();
+            move |delta: u64| {
+                acc.fetch_add(delta, Ordering::Relaxed);
+            }
+        }),
+        on_file_done: Some(&{
+            let fd = counts.files_done.clone();
+            move || {
+                fd.fetch_add(1, Ordering::Relaxed);
+            }
+        }),
+    };
+    let result = auto_install(major, &config, &hook).await;
+
+    settle_jdk_install(&app, progress, cancel, &dest_dir, emit_handle, result);
+}
+
+/// 准备阶段：同目录互斥 + 半截目录清理登记 + Running 相位。
+/// 锁冲突（另一任务正装同 major）或已取消时自行收口并返回 None；
+/// 返回的锁由调用方持有至任务结束。
+fn begin_jdk_install(
+    app: &AppHandle,
+    progress: &Arc<Mutex<TaskProgress>>,
+    cancel: &Arc<AtomicBool>,
+    dest_dir: &Path,
+    major: u32,
+) -> Option<PathLock> {
     // 同目录互斥：另一任务正安装同 major 时拒绝（可预期，不半途而废）
-    let _lock = match task::PathLock::try_acquire(task::global(), &dest_dir) {
+    let lock = match PathLock::try_acquire(dest_dir) {
         Some(l) => l,
         None => {
-            return set_error(
-                &app,
+            set_error(
+                app,
                 progress,
                 format!("Java {major} 正在被其他任务安装:\n{}", dest_dir.display()),
-            )
+            );
+            return None;
         }
     };
 
     // 取消/失败时整删半截 runtime 目录：managed 目录程序专属（可重下），
-    // 半截残留会误导 auto_install 的幂等检查（bin/java.exe 已存在即误判已装）
-    if let Some(p) = progress.try_lock() {
-        task::global().set_cleanup_path(&p.task_id, dest_dir.clone());
+    // 半截残留会误导 auto_install 的幂等检查（bin/java.exe 已存在即误判已装）。
+    // 先取 task_id 释放 progress 守卫再调 set_cleanup_path（后者取 inner 锁），
+    // 否则构成 progress→inner 反向锁序（与 fail/list 的 inner→progress 成 ABBA）。
+    let cleanup_task_id = progress.try_lock().map(|p| p.task_id.clone());
+    if let Some(task_id) = cleanup_task_id {
+        task::global().set_cleanup_path(&task_id, dest_dir.to_path_buf());
     }
 
     set_phase(
-        &app,
+        app,
         progress,
         Some(TaskStatus::Running),
         &format!("下载 Java {major}"),
@@ -56,109 +114,111 @@ pub async fn run_install_jdk(
         StepStatus::Running,
     );
     if cancelled(cancel) {
-        return set_cancelled(&app, progress);
+        set_cancelled(app, progress);
+        return None;
     }
+    Some(lock)
+}
 
-    // 原子计数器（下载回调写入，心跳读取）
-    let files_done = Arc::new(AtomicU32::new(0));
-    let files_total = Arc::new(AtomicU32::new(0));
-    let acc_bytes = Arc::new(AtomicU64::new(0));
-    let cur_bytes = Arc::new(AtomicU64::new(0));
-    let cur_total = Arc::new(AtomicU64::new(0));
+/// 原子计数器束（下载回调写入，心跳读取）。
+struct JdkCounters {
+    files_done: Arc<AtomicU32>,
+    files_total: Arc<AtomicU32>,
+    acc_bytes: Arc<AtomicU64>,
+    cur_bytes: Arc<AtomicU64>,
+    cur_total: Arc<AtomicU64>,
+}
 
-    // 进度心跳：150ms，速度按相邻采样差分 + EMA 平滑；status 离开 Running 即退出。
-    // 未换用 progress::spawn_heartbeat——语义有差异：
-    // 1) 字节口径为 acc_bytes + cur_bytes（累计 + 当前文件）双计数器合成，
-    //    spawn_heartbeat 只接受单一 bytes 计数器；
-    // 2) 额外维护 steps[0] 的当前文件字节占比（步骤级进度），
-    //    spawn_heartbeat 无步骤进度逻辑；
-    // 3) 不覆写 total_bytes（由 on_total 钩子经 set_total 设置），也不写 p.status，
-    //    spawn_heartbeat 每拍以 est_total_bytes 覆写总量并强置 Running。
-    let emit_handle = tauri::async_runtime::spawn({
-        let app = app.clone();
-        let progress = progress.clone();
-        let files_done = files_done.clone();
-        let files_total = files_total.clone();
-        let acc_bytes = acc_bytes.clone();
-        let cur_bytes = cur_bytes.clone();
-        let cur_total = cur_total.clone();
-        async move {
-            let mut tick = tokio::time::interval(std::time::Duration::from_millis(150));
-            let mut sampler = task::progress::SpeedSampler::new();
-            loop {
-                tick.tick().await;
-                // 终态（done/error/cancelled）由任务侧收口发出，心跳随之自退出
-                if progress.lock().status != TaskStatus::Running {
-                    return;
-                }
-                let fd = files_done.load(Ordering::Relaxed);
-                let ft = files_total.load(Ordering::Relaxed);
-                let cb = cur_bytes.load(Ordering::Relaxed);
-                let ct = cur_total.load(Ordering::Relaxed);
-                let cur = acc_bytes.load(Ordering::Relaxed) + cb;
-                let total_bytes = progress.lock().total_bytes;
-                let (speed_bps, eta) = sampler.sample(cur, total_bytes);
-                task::update_and_emit(&app, &progress, |p| {
-                    p.speed_bps = speed_bps;
-                    p.eta_seconds = eta;
-                    p.completed_files = fd;
-                    p.total_files = ft;
-                    p.completed_bytes = cur;
-                    // 当前文件字节占比（单步任务的步骤进度）
-                    if let Some(st) = p.steps.get_mut(0) {
-                        if st.status == StepStatus::Running {
-                            st.progress = if ct > 0 {
-                                (cb as f64 / ct as f64).min(1.0) * 100.0
-                            } else if ft > 0 {
-                                (fd as f64 / ft as f64).min(1.0) * 100.0
-                            } else {
-                                0.0
-                            };
-                        }
-                    }
-                    update_progress(p);
-                });
-            }
+impl JdkCounters {
+    fn new() -> Self {
+        Self {
+            files_done: Arc::new(AtomicU32::new(0)),
+            files_total: Arc::new(AtomicU32::new(0)),
+            acc_bytes: Arc::new(AtomicU64::new(0)),
+            cur_bytes: Arc::new(AtomicU64::new(0)),
+            cur_total: Arc::new(AtomicU64::new(0)),
         }
-    });
+    }
+}
 
-    // 下载 + 安装（按 jdk_source_mode 回退链；取消/失败由 auto_install 返回）
-    let hook = crate::jdk::download::InstallProgress {
-        cancel: Some(cancel),
-        on_total: Some(&{
-            let app = app.clone();
-            let progress = progress.clone();
-            let files_total = files_total.clone();
-            move |files: u32, bytes: u64| {
-                files_total.store(files, Ordering::Relaxed);
-                set_total(&app, &progress, files, bytes);
+/// 进度心跳：150ms，速度按相邻采样差分 + EMA 平滑；status 离开 Running 即退出。
+/// 未换用 progress::spawn_heartbeat——语义有差异：
+/// 1) 字节口径为 acc_bytes + cur_bytes（累计 + 当前文件）双计数器合成，
+///    spawn_heartbeat 只接受单一 bytes 计数器；
+/// 2) 额外维护 steps[0] 的当前文件字节占比（步骤级进度），
+///    spawn_heartbeat 无步骤进度逻辑；
+/// 3) 不覆写 total_bytes（由 on_total 钩子经 set_total 设置），也不写 p.status，
+///    spawn_heartbeat 每拍以 est_total_bytes 覆写总量并强置 Running。
+fn spawn_jdk_heartbeat(
+    app: AppHandle,
+    progress: Arc<Mutex<TaskProgress>>,
+    counts: &JdkCounters,
+) -> tauri::async_runtime::JoinHandle<()> {
+    let files_done = counts.files_done.clone();
+    let files_total = counts.files_total.clone();
+    let acc_bytes = counts.acc_bytes.clone();
+    let cur_bytes = counts.cur_bytes.clone();
+    let cur_total = counts.cur_total.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_millis(150));
+        let mut sampler = task::progress::SpeedSampler::new();
+        loop {
+            tick.tick().await;
+            // 终态（done/error/cancelled）由任务侧收口发出，心跳随之自退出
+            if progress.lock().status != TaskStatus::Running {
+                return;
             }
-        }),
-        on_bytes: Some(&{
-            let acc = acc_bytes.clone();
-            move |delta: u64| {
-                acc.fetch_add(delta, Ordering::Relaxed);
-            }
-        }),
-        on_file_done: Some(&{
-            let fd = files_done.clone();
-            move || {
-                fd.fetch_add(1, Ordering::Relaxed);
-            }
-        }),
-    };
-    let result = crate::jdk::download::auto_install(major, &config, &hook).await;
+            let fd = files_done.load(Ordering::Relaxed);
+            let ft = files_total.load(Ordering::Relaxed);
+            let cb = cur_bytes.load(Ordering::Relaxed);
+            let ct = cur_total.load(Ordering::Relaxed);
+            let cur = acc_bytes.load(Ordering::Relaxed) + cb;
+            let total_bytes = progress.lock().total_bytes;
+            let (speed_bps, eta) = sampler.sample(cur, total_bytes);
+            task::update_and_emit(&app, &progress, |p| {
+                p.speed_bps = speed_bps;
+                p.eta_seconds = eta;
+                p.completed_files = fd;
+                p.total_files = ft;
+                p.completed_bytes = cur;
+                // 当前文件字节占比（单步任务的步骤进度）
+                if let Some(st) = p.steps.get_mut(0) {
+                    if st.status == StepStatus::Running {
+                        st.progress = if ct > 0 {
+                            (cb as f64 / ct as f64).min(1.0) * 100.0
+                        } else if ft > 0 {
+                            (fd as f64 / ft as f64).min(1.0) * 100.0
+                        } else {
+                            0.0
+                        };
+                    }
+                }
+                update_progress(p);
+            });
+        }
+    })
+}
 
+/// 收尾：取消优先；成功注册进 jdk 配置并置 done，失败后台整删半截目录并置 error。
+fn settle_jdk_install(
+    app: &AppHandle,
+    progress: &Arc<Mutex<TaskProgress>>,
+    cancel: &Arc<AtomicBool>,
+    dest_dir: &Path,
+    emit_handle: tauri::async_runtime::JoinHandle<()>,
+    result: Result<JdkInfo, String>,
+) {
     if cancelled(cancel) {
         emit_handle.abort();
-        return set_cancelled(&app, progress);
+        set_cancelled(app, progress);
+        return;
     }
     match result {
         Ok(info) => {
             // 注册进 jdk 配置（discovered_jdks 去重），前端完成监听自动选中
             crate::jdk::register_scanned(vec![info]);
             emit_handle.abort();
-            task::update_and_emit(&app, progress, |p| {
+            task::update_and_emit(app, progress, |p| {
                 p.status = TaskStatus::Done;
                 p.progress = 100.0;
                 p.completed_files = p.total_files;
@@ -173,11 +233,11 @@ pub async fn run_install_jdk(
         Err(e) => {
             emit_handle.abort();
             // 半截安装后台整删（managed runtime 可重下；同步删会阻塞 worker）
-            let d = dest_dir.clone();
+            let d = dest_dir.to_path_buf();
             tauri::async_runtime::spawn_blocking(move || {
                 let _ = std::fs::remove_dir_all(&d);
             });
-            set_error(&app, progress, e);
+            set_error(app, progress, e);
         }
     }
 }

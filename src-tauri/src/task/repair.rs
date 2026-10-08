@@ -2,22 +2,26 @@
 // scan_missing 被命令层调用；run_repair_task 为补全任务主体。
 // count_natives_missing / count_assets_all 为"缺失统计"共享助手，run_task 亦复用。
 
-use parking_lot::Mutex;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
+use parking_lot::Mutex;
 use tauri::AppHandle;
 
-use crate::config::downloader::model::{DownloadSource, DownloaderConfig};
+use crate::config::downloader::{DownloadSource, DownloaderConfig};
 use crate::constants;
 use crate::downloader::fetcher;
 use crate::downloader::hash::file_sha1_matches;
-use crate::downloader::library;
-use crate::downloader::model::{Artifact, Library, VersionJson};
+use crate::downloader::progress;
+use crate::game::resource::assets::AssetIndexRef;
+use crate::game::resource::{assets, extract, library};
+use crate::game::version::model::{Artifact, Library, VersionJson};
+use crate::launcher;
 use crate::persist;
 use crate::task::{self, StepStatus, TaskProgress, TaskStatus};
-
+use crate::util::sha1_sub_dir;
+use super::emit::EventSink;
 use super::progress::{
     cancelled, set_cancelled, set_completed, set_error, set_phase, set_total, spawn_tail_loop,
     step_done, EmitLoop,
@@ -40,7 +44,7 @@ pub struct MissingReport {
 /// 原版目录可能被重命名过、loader 目录的 json 是 installer 合成的，只能删除重装。
 fn read_version_json(vdir: &Path) -> Result<VersionJson, String> {
     let dir_name = vdir.file_name().and_then(|s| s.to_str()).unwrap_or("");
-    let vj_path = crate::launcher::args::find_version_json(vdir, dir_name).ok_or_else(|| {
+    let vj_path = launcher::args::find_version_json(vdir, dir_name).ok_or_else(|| {
         format!(
             "版本 JSON 缺失\n目录 {} 下未找到版本 JSON 文件，无法修复，请删除该版本后重新下载安装",
             vdir.display()
@@ -62,9 +66,8 @@ pub fn missing_native_artifacts<'a, 'b>(
     libraries: &'a [Library],
     lib_dir: &'b Path,
 ) -> impl Iterator<Item = &'a Artifact> + use<'a, 'b> {
-    use crate::downloader::extract::legacy_classifier_artifact;
     libraries.iter().filter_map(move |lib| {
-        let artifact = legacy_classifier_artifact(lib)?;
+        let artifact = extract::legacy_classifier_artifact(lib)?;
         let dest = lib_dir.join(&artifact.path);
         if dest.exists() && file_sha1_matches(&dest, &artifact.sha1) {
             None
@@ -95,7 +98,7 @@ pub async fn scan_missing(version_dir_name: &str) -> Result<MissingReport, Strin
     let vj = read_version_json(&vdir)?;
 
     // 1. client.jar（扫描目录内实际 jar；0 字节或 sha1 不匹配视为缺失/损坏）
-    let jar_missing = match crate::launcher::args::find_file_in_dir(&vdir, "jar") {
+    let jar_missing = match launcher::args::find_file_in_dir(&vdir, "jar") {
         Some(p) => {
             let len_zero = p.metadata().map(|m| m.len() == 0).unwrap_or(true);
             if len_zero {
@@ -121,9 +124,11 @@ pub async fn scan_missing(version_dir_name: &str) -> Result<MissingReport, Strin
     // 4. 资源（sha1 比对本地缓存，多线程；带 index id/sha1 走本地缓存，避免重复拉取；
     //    拉取/解析失败显式报错，不再静默视为"完整"）
     let (asst_pending, _) = count_assets_all(
-        &vj.asset_index.url,
-        Some(&vj.asset_index.id),
-        Some(&vj.asset_index.sha1),
+        AssetIndexRef {
+            url: &vj.asset_index.url,
+            id: Some(&vj.asset_index.id),
+            sha1: Some(&vj.asset_index.sha1),
+        },
         &config,
         &mc,
         None,
@@ -158,23 +163,66 @@ pub fn repair_steps(report: &MissingReport) -> Vec<String> {
     steps
 }
 
-/// 补全任务主体：基于本地 version json 下载缺失文件，进度经 task-progress 事件推送。
-/// `report` 为提交时扫描结果（步骤数与其一致），运行中按对应步骤索引更新。
-pub async fn run_repair_task(
-    app: AppHandle,
-    cancel: &Arc<AtomicBool>,
-    progress: &Arc<Mutex<TaskProgress>>,
-    version_dir_name: &str,
-    report: MissingReport,
-) {
+/// `run_repair_task` 的运行期上下文：准备阶段确定、供下载/收尾各阶段共享。
+struct RepairCtx<'a> {
+    app: &'a dyn EventSink,
+    cancel: &'a Arc<AtomicBool>,
+    progress: &'a Arc<Mutex<TaskProgress>>,
+    version_dir_name: &'a str,
+    config: DownloaderConfig,
+    sources: Vec<DownloadSource>,
+    vdir: PathBuf,
+    lib_dir: PathBuf,
+    vj: VersionJson,
+    /// 提交时缺失快照（驱动步骤索引与总量）
+    jar_missing: bool,
+    lib_pending: u32,
+    asst_pending: u32,
+    total_files: u32,
+    /// 动态步骤索引（与 submit 生成的顺序一致）
+    jar_idx: Option<usize>,
+    libs_idx: Option<usize>,
+    asst_idx: Option<usize>,
+    natives_idx: Option<usize>,
+    /// 进度原子计数器（下载回调与收尾心跳共享）
+    ctr: RepairCounters,
+}
+
+/// repair 任务的进度原子计数器组（`Default` 全 0 初始化）。
+#[derive(Default)]
+struct RepairCounters {
+    /// 文件完成数（jar / libs / assets）
+    jar_files: Arc<AtomicU32>,
+    lib_files: Arc<AtomicU32>,
+    asst_files: Arc<AtomicU32>,
+    /// jar 字节独立计数（下载回调是覆盖式），libs/assets 字节为累加式
+    jar_bytes: Arc<AtomicU64>,
+    /// jar 总量（下载回调覆盖式）
+    jar_total: Arc<AtomicU64>,
+    /// libs/assets 累加字节
+    bytes: Arc<AtomicU64>,
+}
+
+/// 准备阶段：读下载配置与版本 JSON → 汇总缺失总量 → 生成动态步骤索引 →
+/// 推送总量/初始分步状态 → 建立进度原子计数器。
+/// `None` 表示无需继续（版本 JSON 缺失已 `set_error`，或 total==0 已收口 Done）。
+fn prepare_repair<'a>(
+    app: &'a dyn EventSink,
+    cancel: &'a Arc<AtomicBool>,
+    progress: &'a Arc<Mutex<TaskProgress>>,
+    version_dir_name: &'a str,
+    report: &MissingReport,
+) -> Option<RepairCtx<'a>> {
     let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
     let sources: Vec<DownloadSource> = config.file_sources_list().into_iter().cloned().collect();
-    let src_refs: Vec<&DownloadSource> = sources.iter().collect();
     let mc = config.minecraft_dir_abs();
     let vdir = mc.join("versions").join(version_dir_name);
     let vj = match read_version_json(&vdir) {
         Ok(v) => v,
-        Err(e) => return set_error(&app, progress, e),
+        Err(e) => {
+            set_error(app, progress, e);
+            return None;
+        }
     };
 
     let jar_missing = report.client_jar;
@@ -188,28 +236,18 @@ pub async fn run_repair_task(
         version_dir_name, jar_missing, lib_pending, asst_pending, natives_pending, total_files
     );
     if total_files == 0 {
-        task::update_and_emit(&app, progress, |p| {
-            p.status = TaskStatus::Done;
-            p.progress = 100.0;
-            p.current_phase = "文件完整，无需修复".into();
-        });
-        // 终态统一移除后端任务注册
-        if let Some(p) = progress.try_lock() {
-            let task_id = p.task_id.clone();
-            drop(p); // 先释放 progress 锁再 fail（fail 内部读 progress，防重入死锁）
-            task::global().fail(&task_id);
-        }
-        return;
+        close_repair_noop(app, progress);
+        return None;
     }
 
     // 动态步骤 → 各阶段在 steps 中的索引（与 submit 生成的顺序一致）
-    let (jar_idx, libs_idx, asst_idx, natives_idx) = repair_step_indices(&report);
+    let (jar_idx, libs_idx, asst_idx, natives_idx) = repair_step_indices(report);
 
-    set_total(&app, progress, total_files, 0);
-    set_completed(&app, progress, 0, 0);
+    set_total(app, progress, total_files, 0);
+    set_completed(app, progress, 0, 0);
     if let Some(i) = jar_idx {
         set_phase(
-            &app,
+            app,
             progress,
             Some(TaskStatus::Running),
             "修复中",
@@ -218,27 +256,61 @@ pub async fn run_repair_task(
         );
     }
 
-    let jar_counter = Arc::new(AtomicU32::new(0));
-    let lib_counter = Arc::new(AtomicU32::new(0));
-    let asst_counter = Arc::new(AtomicU32::new(0));
-    // jar 字节独立计数（下载回调是覆盖式），libs/assets 字节为累加式
-    let jar_bytes = Arc::new(AtomicU64::new(0));
-    let jar_total = Arc::new(AtomicU64::new(0));
-    let bytes_counter = Arc::<AtomicU64>::new(AtomicU64::new(0));
+    Some(RepairCtx {
+        app,
+        cancel,
+        progress,
+        version_dir_name,
+        config,
+        sources,
+        vdir,
+        lib_dir: mc.join("libraries"),
+        vj,
+        jar_missing,
+        lib_pending,
+        asst_pending,
+        total_files,
+        jar_idx,
+        libs_idx,
+        asst_idx,
+        natives_idx,
+        ctr: RepairCounters::default(),
+    })
+}
 
-    // repair 无 ModLoader 安装步骤：安装步骤字节/总数字段全为占位（0 时公式回退，不显示进度）
-    let emit_handle = EmitLoop {
-        app: app.clone(),
-        cancel: Arc::clone(cancel),
-        progress: Arc::clone(progress),
-        jar_done: Arc::clone(&jar_counter),
-        lib_done: Arc::clone(&lib_counter),
-        asst_done: Arc::clone(&asst_counter),
+/// 无需修复（total==0）时的 Done 收口：100% + "文件完整，无需修复" + 移除任务注册。
+fn close_repair_noop(app: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>) {
+    task::update_and_emit(app, progress, |p| {
+        p.status = TaskStatus::Done;
+        p.progress = 100.0;
+        p.current_phase = "文件完整，无需修复".into();
+    });
+    // 终态统一移除后端任务注册
+    if let Some(p) = progress.try_lock() {
+        let task_id = p.task_id.clone();
+        drop(p); // 先释放 progress 锁再 fail（fail 内部读 progress，防重入死锁）
+        task::global().fail(&task_id);
+    }
+}
+
+/// 启动进度上报循环（EmitLoop 心跳）。
+/// repair 无 ModLoader 安装步骤：安装步骤字节/总数字段全为占位（0 时公式回退，不显示进度）。
+fn spawn_repair_emit_loop(
+    ctx: &RepairCtx<'_>,
+    sink: Arc<dyn EventSink>,
+) -> tokio::task::JoinHandle<()> {
+    EmitLoop {
+        sink,
+        cancel: Arc::clone(ctx.cancel),
+        progress: Arc::clone(ctx.progress),
+        jar_done: Arc::clone(&ctx.ctr.jar_files),
+        lib_done: Arc::clone(&ctx.ctr.lib_files),
+        asst_done: Arc::clone(&ctx.ctr.asst_files),
         // repair 的 natives 在 EmitLoop 生命周期之外单独执行，计数/标志全为占位
         natives_done: Arc::new(AtomicU32::new(0)),
-        jar_bytes: Arc::clone(&jar_bytes),
-        jar_total: Arc::clone(&jar_total),
-        bytes: Arc::clone(&bytes_counter),
+        jar_bytes: Arc::clone(&ctx.ctr.jar_bytes),
+        jar_total: Arc::clone(&ctx.ctr.jar_total),
+        bytes: Arc::clone(&ctx.ctr.bytes),
         lib_bytes: Arc::new(AtomicU64::new(0)),
         asst_bytes: Arc::new(AtomicU64::new(0)),
         natives_bytes: Arc::new(AtomicU64::new(0)),
@@ -251,9 +323,9 @@ pub async fn run_repair_task(
         optifine_total: Arc::new(AtomicU64::new(0)),
         fabric_bytes: Arc::new(AtomicU64::new(0)),
         fabric_total: Arc::new(AtomicU64::new(0)),
-        jar_step: jar_idx,
-        lib_step: libs_idx,
-        asst_step: asst_idx,
+        jar_step: ctx.jar_idx,
+        lib_step: ctx.libs_idx,
+        asst_step: ctx.asst_idx,
         natives_step: None,
         loader_libs_step: None,
         optifine_step: None,
@@ -262,62 +334,129 @@ pub async fn run_repair_task(
         libs_done: Arc::new(AtomicBool::new(false)),
         optifine_done: Arc::new(AtomicBool::new(false)),
         fabric_done: Arc::new(AtomicBool::new(false)),
-        lib_pending,
-        asst_pending,
+        lib_pending: ctx.lib_pending,
+        asst_pending: ctx.asst_pending,
         natives_pending: 0,
         initial_completed: 0,
-        total_files,
+        total_files: ctx.total_files,
         initial_bytes: 0,
         total_bytes: 0,
         jar_total_fallback: 0,
     }
-    .spawn();
+    .spawn()
+}
 
-    let pc_jar = crate::downloader::progress::ProgressCounters {
-        files: Arc::clone(&jar_counter),
-        bytes: Arc::clone(&jar_bytes),
-        step_total: Arc::clone(&jar_total),
+/// 下载阶段：client.jar / 支持库 / 资源三路并行（`try_join`），任一失败返回错误文案列表。
+async fn repair_downloads(ctx: &RepairCtx<'_>) -> Result<(), Vec<String>> {
+    let src_refs: Vec<&DownloadSource> = ctx.sources.iter().collect();
+
+    let pc_jar = progress::ProgressCounters {
+        files: Arc::clone(&ctx.ctr.jar_files),
+        bytes: Arc::clone(&ctx.ctr.jar_bytes),
+        step_total: Arc::clone(&ctx.ctr.jar_total),
         ..Default::default()
     };
-    let jar = repair_jar(&vj, &vdir, version_dir_name, jar_missing, &sources, &pc_jar);
+    let jar = repair_jar(
+        &ctx.vj,
+        &ctx.vdir,
+        ctx.version_dir_name,
+        ctx.jar_missing,
+        &ctx.sources,
+        &pc_jar,
+    );
 
-    let lib_dir = mc.join("libraries");
-    let pc_lib = crate::downloader::progress::ProgressCounters {
-        files: Arc::clone(&lib_counter),
-        bytes: Arc::clone(&bytes_counter),
+    let pc_lib = progress::ProgressCounters {
+        files: Arc::clone(&ctx.ctr.lib_files),
+        bytes: Arc::clone(&ctx.ctr.bytes),
         ..Default::default() // 占位：repair 分步进度走文件数回退
     };
     let libs = library::download_libraries(
-        &vj.libraries,
-        &lib_dir,
-        config.concurrency as usize,
+        &ctx.vj.libraries,
+        &ctx.lib_dir,
+        ctx.config.concurrency as usize,
         &src_refs,
         None, // 修复任务不走本地运行时复用（保持"缺失补全"语义）
         &pc_lib,
-        Some(cancel),
+        Some(ctx.cancel),
     );
 
-    let pc_asst = crate::downloader::progress::ProgressCounters {
-        files: Arc::clone(&asst_counter),
-        bytes: Arc::clone(&bytes_counter),
+    let pc_asst = progress::ProgressCounters {
+        files: Arc::clone(&ctx.ctr.asst_files),
+        bytes: Arc::clone(&ctx.ctr.bytes),
         ..Default::default() // 占位：repair 分步进度走文件数回退
     };
-    let asst = crate::downloader::assets::download_assets(
-        &vj.asset_index.url,
-        &vj.asset_index.id,
-        &vj.asset_index.sha1,
-        &config,
-        config.concurrency as usize,
+    let asst = assets::download_assets(
+        AssetIndexRef {
+            url: &ctx.vj.asset_index.url,
+            id: Some(&ctx.vj.asset_index.id),
+            sha1: Some(&ctx.vj.asset_index.sha1),
+        },
+        &ctx.config,
+        ctx.config.concurrency as usize,
         None, // 同上：修复任务不走复用
         &pc_asst,
-        Some(cancel),
+        Some(ctx.cancel),
     );
 
-    let parallel = tokio::try_join!(jar, libs, asst);
+    tokio::try_join!(jar, libs, asst).map(|_| ())
+}
+
+/// natives 阶段（幂等：已解压跳过；仅报告有缺失时才执行，与 steps 索引对应）。
+async fn repair_natives(ctx: &RepairCtx<'_>) -> Result<(), Vec<String>> {
+    let Some(i) = ctx.natives_idx else {
+        return Ok(());
+    };
+    set_phase(
+        ctx.app,
+        ctx.progress,
+        None,
+        "处理 native 库",
+        i,
+        StepStatus::Running,
+    );
+    let src_refs: Vec<&DownloadSource> = ctx.sources.iter().collect();
+    extract::process_natives(
+        &ctx.vj.libraries,
+        &ctx.lib_dir,
+        &src_refs,
+        &progress::ProgressCounters {
+            files: Arc::clone(&ctx.ctr.lib_files),
+            bytes: Arc::clone(&ctx.ctr.bytes),
+            ..Default::default() // 占位：repair 分步进度走文件数回退
+        },
+        Some(ctx.cancel),
+    )
+    .await?;
+    step_done(ctx.app, ctx.progress, i);
+    Ok(())
+}
+
+/// 补全任务主体：基于本地 version json 下载缺失文件，进度经 task-progress 事件推送。
+/// `report` 为提交时扫描结果（步骤数与其一致），运行中按对应步骤索引更新。
+/// 仅保留编排：准备 → 并行下载 → 收尾心跳/步骤落章 → natives → 终态收口。
+pub async fn run_repair_task(
+    app: AppHandle,
+    cancel: &Arc<AtomicBool>,
+    progress: &Arc<Mutex<TaskProgress>>,
+    version_dir_name: &str,
+    report: MissingReport,
+) {
+    // 事件出口：仅心跳循环需要克隆 Arc，其余阶段以 &dyn EventSink 贯穿
+    let sink: Arc<dyn EventSink> = Arc::new(app.clone());
+    let app = sink.as_ref();
+
+    // 准备（配置/版本 JSON/缺失总量/步骤索引）；JSON 缺失或无需修复时已自行收口
+    let Some(ctx) = prepare_repair(app, cancel, progress, version_dir_name, &report) else {
+        return;
+    };
+
+    // 并行下载：进度心跳 + client.jar / 支持库 / 资源三路
+    let emit_handle = spawn_repair_emit_loop(&ctx, Arc::clone(&sink));
+    let parallel = repair_downloads(&ctx).await;
     emit_handle.abort();
 
     if cancelled(cancel) {
-        return set_cancelled(&app, progress);
+        return set_cancelled(app, progress);
     }
     if let Err(errors) = parallel {
         eprintln!(
@@ -325,57 +464,38 @@ pub async fn run_repair_task(
             version_dir_name,
             errors.join("; ")
         );
-        return set_error(&app, progress, errors.join("; "));
+        return set_error(app, progress, errors.join("; "));
     }
 
     // 收尾心跳：natives 等后续步骤期间保持速度/字节进度（EmitLoop 已 abort）
-    let _tail_loop = spawn_tail_loop(&app, progress, Arc::clone(&bytes_counter));
+    let _tail_loop = spawn_tail_loop(
+        Arc::clone(&sink),
+        progress,
+        Arc::clone(&ctx.ctr.bytes),
+    );
 
     // 各下载步骤标记完成（按实际索引）
-    if let Some(i) = jar_idx {
-        step_done(&app, progress, i);
+    if let Some(i) = ctx.jar_idx {
+        step_done(app, progress, i);
     }
-    if let Some(i) = libs_idx {
-        step_done(&app, progress, i);
+    if let Some(i) = ctx.libs_idx {
+        step_done(app, progress, i);
     }
-    if let Some(i) = asst_idx {
-        step_done(&app, progress, i);
+    if let Some(i) = ctx.asst_idx {
+        step_done(app, progress, i);
     }
 
     // natives（幂等：已解压跳过；仅报告有缺失时才执行，与 steps 索引对应）
-    if let Some(i) = natives_idx {
-        set_phase(
-            &app,
-            progress,
-            None,
-            "处理 native 库",
-            i,
-            StepStatus::Running,
+    if let Err(errors) = repair_natives(&ctx).await {
+        eprintln!(
+            "[repair] {} natives failed: {}",
+            version_dir_name,
+            errors.join("; ")
         );
-        if let Err(errors) = crate::downloader::extract::process_natives(
-            &vj.libraries,
-            &lib_dir,
-            &src_refs,
-            &crate::downloader::progress::ProgressCounters {
-                files: Arc::clone(&lib_counter),
-                bytes: Arc::clone(&bytes_counter),
-                ..Default::default() // 占位：repair 分步进度走文件数回退
-            },
-            Some(cancel),
-        )
-        .await
-        {
-            eprintln!(
-                "[repair] {} natives failed: {}",
-                version_dir_name,
-                errors.join("; ")
-            );
-            return set_error(&app, progress, errors.join("; "));
-        }
-        step_done(&app, progress, i);
+        return set_error(app, progress, errors.join("; "));
     }
 
-    task::update_and_emit(&app, progress, |p| {
+    task::update_and_emit(app, progress, |p| {
         p.status = TaskStatus::Done;
         p.completed_files = p.total_files;
         p.progress = 100.0;
@@ -428,11 +548,11 @@ async fn repair_jar(
     version_dir_name: &str,
     jar_missing: bool,
     sources: &[DownloadSource],
-    pc: &crate::downloader::progress::ProgressCounters,
+    pc: &progress::ProgressCounters,
 ) -> Result<(), Vec<String>> {
     if jar_missing {
         // 清理目录内损坏（0 字节或 sha1 不匹配）的 jar，避免与下载目标并存
-        if let Some(bad) = crate::launcher::args::find_file_in_dir(vdir, "jar") {
+        if let Some(bad) = launcher::args::find_file_in_dir(vdir, "jar") {
             let bad_jar = bad.metadata().map(|m| m.len() == 0).unwrap_or(true)
                 || vj
                     .downloads
@@ -469,27 +589,22 @@ async fn repair_jar(
 /// `cancel` 非空时扫描期间轮询：任务被取消立即退出（返回 Err("任务已取消")，
 /// 调用方转 set_cancelled）——否则 sha1 扫描阶段无取消检查，取消 flag 无人处理。
 /// B2 资产清单检测：拉取/缓存资源索引 → 解析 → 多线程 sha1 扫描本地 objects。
-/// 8 个参数均为语义必要（URL/校验/配置/目录/取消/两个进度回调），不合并。
-#[allow(clippy::too_many_arguments)]
+/// index 聚合 URL/id/sha1（AssetIndexRef），其余参数均为语义必要（配置/目录/取消/两个进度回调），不合并。
 pub async fn count_assets_all(
-    asset_index_url: &str,
-    index_id: Option<&str>,
-    index_sha1: Option<&str>,
+    index: AssetIndexRef<'_>,
     config: &DownloaderConfig,
     mc_dir: &Path,
     cancel: Option<&AtomicBool>,
     mut on_total: impl FnMut(u32, u64),
     mut on_checked: impl FnMut(u32, u64),
 ) -> Result<(u32, u64), String> {
-    use file_sha1_matches;
-    let text = crate::downloader::assets::fetch_asset_index(
-        config,
-        mc_dir,
-        asset_index_url,
-        index_id,
-        index_sha1,
-    )
-    .await?;
+    let AssetIndexRef {
+        url: asset_index_url,
+        id: index_id,
+        sha1: index_sha1,
+    } = index;
+    let text =
+        assets::fetch_asset_index(config, mc_dir, asset_index_url, index_id, index_sha1).await?;
     eprintln!("[assets] 索引文本: {}B", text.len());
     let idx: serde_json::Value =
         serde_json::from_str(&text).map_err(|e| format!("解析资源索引失败\n{e}"))?;
@@ -508,7 +623,7 @@ pub async fn count_assets_all(
             total_bytes += size;
             items.push((
                 hash.to_string(),
-                objects_dir.join(&hash[..2]).join(hash),
+                objects_dir.join(sha1_sub_dir(hash)).join(hash),
                 size,
             ));
         }
@@ -609,6 +724,10 @@ pub async fn count_assets_all(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::downloader::DownloaderConfig;
+    use crate::downloader::hash::sha1_hex;
+    use crate::game::version::model::{Artifact, Library, LibraryDownloads};
+    use std::collections::HashMap;
 
     #[test]
     fn test_repair_steps_all_missing() {
@@ -667,10 +786,6 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn test_count_natives_missing() {
-        use crate::downloader::hash::sha1_hex;
-        use crate::downloader::model::{Artifact, Library, LibraryDownloads};
-        use std::collections::HashMap;
-
         let tmp = std::env::temp_dir().join(format!("elytra_natives_test_{}", std::process::id()));
         let lib_dir = tmp.join("libraries");
         std::fs::create_dir_all(&lib_dir).unwrap();
@@ -730,7 +845,6 @@ mod tests {
     /// 网络测试（同 fetch_manifest_works 惯例）；开发环境（含系统代理）可达。
     #[tokio::test]
     async fn count_assets_all_end_to_end() {
-        use crate::config::downloader::model::DownloaderConfig;
         let cfg = DownloaderConfig::default();
         let mc = std::env::temp_dir().join(format!("elytra_caa_e2e_{}", std::process::id()));
         let url =
@@ -742,9 +856,11 @@ mod tests {
         let res = tokio::time::timeout(
             std::time::Duration::from_secs(30),
             count_assets_all(
-                url,
-                Some("32"),
-                Some(sha1),
+                AssetIndexRef {
+                    url,
+                    id: Some("32"),
+                    sha1: Some(sha1),
+                },
                 &cfg,
                 &mc,
                 None,

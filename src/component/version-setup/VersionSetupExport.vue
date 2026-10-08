@@ -4,7 +4,8 @@
 import { computed } from "vue";
 import { useRoute } from "vue-router";
 import { CodeXml, Package } from "@lucide/vue";
-import { invoke } from "@tauri-apps/api/core";
+import { loadLastUsername } from "../../store/auth";
+import { exportLaunchScript, exportModpack as exportModpackCommand } from "../../store/versionSetup";
 import { save } from "@tauri-apps/plugin-dialog";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
@@ -51,11 +52,11 @@ async function exportScript() {
       // 优先当前输入框用户名（未启动过也正确），回退上次保存，最后 Steve
       username =
         offlineUsername.value.trim() ||
-        (await invoke<string>("get_last_offline_username")) ||
+        (await loadLastUsername()) ||
         "Steve";
     }
 
-    await invoke("export_launch_script", {
+    await exportLaunchScript({
       savePath: path,
       versionDirName: versionName.value,
       authMode: authMode.value === "premium" ? "online" : "offline",
@@ -80,10 +81,7 @@ async function exportModpack() {
       filters: [{ name: "整合包 (mrpack/zip)", extensions: ["zip"] }],
     });
     if (!path) return; // 用户取消
-    await invoke("export_modpack", {
-      versionName: versionName.value,
-      savePath: path,
-    });
+    await exportModpackCommand(versionName.value, path);
     showToast("整合包已导出");
   } catch (e) {
     showToast(errMsg(e));

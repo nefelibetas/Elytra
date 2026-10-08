@@ -3,15 +3,20 @@
 
 use std::path::PathBuf;
 
-use crate::config::downloader::model::DownloaderConfig;
+use crate::commands::version::VersionServer;
+use crate::config::downloader::DownloaderConfig;
 use crate::constants;
 use crate::downloader::hash::sha1_hex;
-use crate::downloader::model::VersionJson;
+use crate::game::loader::expand_inheritance;
+use crate::game::resource::assets::AssetsIndex;
+use crate::game::resource::library::missing_libraries;
+use crate::game::version::dir::version_server_section;
+use crate::game::version::model::VersionJson;
 use crate::jdk::model::{JdkConfig, JdkInfo, JdkSelection};
 use crate::launcher::args::{find_file_in_dir, find_version_json};
 use crate::launcher::model::LauncherConfig;
 use crate::persist;
-use crate::util::{java_bin_path, parse_java_major};
+use crate::util::{java_bin_path, parse_java_major, sha1_sub_dir};
 
 /// 按 JDK 选择配置解析实际使用的 JDK 版本字符串：
 /// - Manual：在 discovered_jdks 中按 path 匹配，返回其 version；
@@ -47,8 +52,10 @@ pub fn load_launch_config(
         persist::read(constants::SECT_LAUNCHER).unwrap_or_default();
 
     // 版本级服务器直连（版本设置里配的 --server/--port）优先，覆盖全局 LauncherConfig
-    let version_server: crate::commands::version::VersionServer =
-        persist::read(&format!("version_server_{version_dir_name}")).unwrap_or_default();
+    let version_server: VersionServer = version_server_section(version_dir_name)
+        .ok()
+        .and_then(|s| persist::read(&s).ok())
+        .unwrap_or_default();
     let launcher_config = if version_server.server.is_some() || version_server.port.is_some() {
         LauncherConfig {
             server: version_server.server.or(launcher_config.server),
@@ -138,11 +145,7 @@ fn load_version_json_with_inheritance(
                 e
             )
         })?;
-        vj_value = crate::downloader::mod_loader::expand_inheritance(
-            &parent_text,
-            vj_value,
-            version_dir_name,
-        )?;
+        vj_value = expand_inheritance(&parent_text, vj_value, version_dir_name)?;
     }
 
     serde_json::from_value(vj_value).map_err(|e| format!("解析版本 JSON 失败\n{}", e))
@@ -170,8 +173,7 @@ pub fn pre_launch_check(
 
     // 2. libraries（复用下载侧过滤 + sha1 校验：缺失/损坏都算）
     let lib_dir = mc_dir.join("libraries");
-    let missing_libs =
-        crate::downloader::library::missing_libraries(&version_json.libraries, &lib_dir);
+    let missing_libs = missing_libraries(&version_json.libraries, &lib_dir);
     if !missing_libs.is_empty() {
         let mut msg = format!("缺失支持库 {} 个（含 sha1 校验）", missing_libs.len());
         for p in missing_libs.iter().take(20) {
@@ -208,8 +210,7 @@ pub fn pre_launch_check(
                 // 对象数可达数千，逐个 sha1 会让每次启动多花数秒；改为存在 + 文件大小校验
                 // （metadata 极廉价）：缺失/被截断/错误页覆盖（大小不符）都能可靠捕获，
                 // 正好覆盖镜像存储异常这一实际故障场景。
-                match serde_json::from_slice::<crate::downloader::assets::AssetsIndex>(&index_bytes)
-                {
+                match serde_json::from_slice::<AssetsIndex>(&index_bytes) {
                     Err(e) => {
                         missing.push(format!("资源索引解析失败（文件已损坏）: {e}"));
                     }
@@ -217,10 +218,7 @@ pub fn pre_launch_check(
                         let objects_dir = assets_dir.join("objects");
                         let mut bad_objects: Vec<String> = Vec::new();
                         for (name, obj) in &index.objects {
-                            if obj.hash.len() < 2 {
-                                continue;
-                            }
-                            let sub = &obj.hash[..2];
+                            let sub = sha1_sub_dir(&obj.hash);
                             let path = objects_dir.join(sub).join(&obj.hash);
                             let ok = std::fs::metadata(&path)
                                 .map(|m| m.len() == obj.size)
@@ -319,9 +317,9 @@ fn auto_pick_jdk(discovered: &[JdkInfo], required: u32) -> Option<JdkInfo> {
         enough.sort_by_key(|(m, _)| *m);
         return Some(enough[0].1.clone());
     }
-    // 都不满足 → 用最高版本
+    // 都不满足 → 用最高版本（列表可能为空，返回 None 由调用方兜底）
     candidates.sort_by_key(|(m, _)| *m);
-    Some(candidates.last().unwrap().1.clone())
+    candidates.last().map(|(_, v)| (*v).clone())
 }
 
 #[cfg(test)]

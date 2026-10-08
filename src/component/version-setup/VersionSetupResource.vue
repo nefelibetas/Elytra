@@ -5,7 +5,9 @@
 import { computed, ref, onMounted } from "vue";
 import { useRoute } from "vue-router";
 import { Folder, Trash2, Palette, Database, Sun } from "@lucide/vue";
-import { invoke } from "@tauri-apps/api/core";
+import { deleteResourceFile } from "../../store/versionDetail";
+import { ensureGameFolder } from "../../store/gameDirs";
+import { openFolder } from "../../utils/fs";
 import { fmtCount, fmtSize } from "../../utils/format";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
@@ -77,11 +79,7 @@ async function confirmDelete() {
   deletePending.value = [];
   for (const n of names) {
     try {
-      await invoke("delete_resource_file", {
-        versionName: versionName.value,
-        kind: props.kind,
-        fileName: n,
-      });
+      await deleteResourceFile(versionName.value, props.kind, n);
       showToast(`已删除 ${n}`);
     } catch (e) {
       showToast(errMsg(e));
@@ -104,13 +102,10 @@ onMounted(async () => {
 });
 
 /** 打开资源目录（目录不存在先创建）。 */
-async function openFolder() {
+async function openResourceFolder() {
   try {
-    const target = await invoke<string>("ensure_game_folder", {
-      kind: props.kind,
-      versionName: versionName.value,
-    });
-    await invoke("open_folder", { path: target });
+    const target = await ensureGameFolder(props.kind, versionName.value);
+    await openFolder(target);
   } catch (e) {
     showToast(errMsg(e));
   }
@@ -123,7 +118,7 @@ async function openFolder() {
     <div class="vsr-card vsr-head-card">
       <component :is="meta.icon" :size="16" class="vsr-head-icon" />
       <span class="vsr-head-title">{{ meta.label }}管理</span>
-      <button class="vsr-act-btn" @click="openFolder">
+      <button class="vsr-act-btn" @click="openResourceFolder">
         <Folder :size="13" />
         <span>打开文件夹</span>
       </button>
@@ -183,13 +178,13 @@ async function openFolder() {
 
     <!-- 底部 action 栏：选中 ≥1 时滑出，全选/取消 + 批量删除 -->
     <Transition name="fade">
-      <div v-if="selecting" class="vsr-actions-bar">
-        <button class="vsr-ab-btn" @click="toggleAll">
+      <div v-if="selecting" class="vs-actions-bar vs-bar-attached">
+        <button class="vs-ab-btn" @click="toggleAll">
           {{ allVisibleSelected ? "取消全选" : "全选" }}
         </button>
-        <button class="vsr-ab-btn" @click="clear">取消</button>
-        <span class="vsr-ab-count">已选 {{ selected.length }} 项</span>
-        <button class="vsr-ab-btn danger" @click="doBatchDelete">
+        <button class="vs-ab-btn" @click="clear">取消</button>
+        <span class="vs-ab-count">已选 {{ selected.length }} 项</span>
+        <button class="vs-ab-btn danger" @click="doBatchDelete">
           <Trash2 :size="13" />
           <span>删除（{{ selected.length }}）</span>
         </button>
@@ -210,6 +205,10 @@ async function openFolder() {
     </AlertDialog>
   </div>
 </template>
+
+<style>
+@import "../../styles/version-setup-shared.css";
+</style>
 
 <style scoped>
 .vsr {
@@ -413,63 +412,6 @@ async function openFolder() {
 .vsr-local-meta {
   font-size: 11px;
   color: var(--text-tertiary);
-}
-
-/* 底部 action 栏：选中 ≥1 时滑出，固定列表卡底部 */
-.vsr-actions-bar {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0 12px 12px;
-  padding: 10px 14px;
-  background: var(--surface-elevated);
-  border-top: 1px solid var(--border-default);
-  box-shadow: var(--shadow-md);
-}
-
-.vsr-ab-count {
-  flex: 1;
-  min-width: 0;
-  font-size: 12px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.vsr-ab-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.vsr-ab-btn:hover:not(:disabled) {
-  border-color: var(--color-brand);
-  color: var(--color-brand);
-}
-
-.vsr-ab-btn:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-.vsr-ab-btn.danger {
-  border: 1px solid color-mix(in srgb, var(--color-danger) 40%, transparent);
-  background: transparent;
-  color: var(--color-danger);
-}
-
-.vsr-ab-btn.danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
-  border-color: var(--color-danger);
 }
 
 .vsr-dialog-body {

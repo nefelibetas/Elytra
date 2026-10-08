@@ -12,15 +12,16 @@ import {
   VILLAGER_PROFESSIONS, VILLAGER_TYPES, buildVillagerCommand, isKnownItem,
   type VillagerTrade,
 } from "../../utils/nbt";
-import { GIVE_ITEMS, ENCHANTMENTS, type ItemMods } from "../../utils/give";
-import { showToast } from "../../utils/toast";
-import type { GiveFormat } from "../../utils/give";
+import {
+  GIVE_ITEMS, ENCHANTMENTS, GIVE_FORMAT_OPTIONS, type ItemMods, type GiveFormat,
+} from "../../utils/give";
+import { copyText } from "../../utils/clipboard";
 
 const format = ref<GiveFormat>("modern");
-const formatOptions: SelOption[] = [
-  { value: "modern", label: "1.20.5+（组件格式）" },
-  { value: "legacy", label: "1.13–1.20.4（NBT 格式）" },
-];
+const formatOptions: SelOption[] = GIVE_FORMAT_OPTIONS.map((o) => ({
+  value: o.value,
+  label: o.label,
+}));
 
 const professionOptions: SelOption[] = VILLAGER_PROFESSIONS.map((p) => ({
   value: p.id,
@@ -136,12 +137,7 @@ const command = computed(() =>
 );
 
 async function copyCommand() {
-  try {
-    await navigator.clipboard.writeText(command.value);
-    showToast("命令已复制");
-  } catch {
-    showToast("复制失败，请手动复制");
-  }
+  await copyText(command.value, "命令已复制");
 }
 </script>
 
@@ -179,7 +175,7 @@ async function copyCommand() {
           @update:model-value="(v: string) => (type = v)"
         />
         <span class="nb-label nb-label-short">等级</span>
-        <input v-model.number="level" type="number" class="nb-num" min="1" max="5" />
+        <input v-model.number="level" type="number" class="nb-num" min="1" max="5" autocomplete="off" />
       </div>
     </div>
 
@@ -190,7 +186,7 @@ async function copyCommand() {
         <span class="nb-label">购买</span>
         <ItemSearchInput v-model="buyId" :extra-ids="['emerald']" placeholder="绿宝石 / emerald" :max-version="format === 'legacy' ? 20 : 21" />
         <span class="nb-label nb-label-short">×</span>
-        <input v-model.number="buyCount" type="number" class="nb-num" min="1" max="64" />
+        <input v-model.number="buyCount" type="number" class="nb-num" min="1" max="64" autocomplete="off" />
         <button
           class="tool-btn nb-mini-btn"
           :class="{ active: editingKey === 'buy' }"
@@ -205,7 +201,7 @@ async function copyCommand() {
         <span class="nb-label">第二购买</span>
         <ItemSearchInput v-model="buyBId" :extra-ids="['emerald']" placeholder="可选，搜索物品" :max-version="format === 'legacy' ? 20 : 21" />
         <span class="nb-label nb-label-short">×</span>
-        <input v-model.number="buyBCount" type="number" class="nb-num" min="1" max="64" />
+        <input v-model.number="buyBCount" type="number" class="nb-num" min="1" max="64" autocomplete="off" />
         <button
           class="tool-btn nb-mini-btn"
           :class="{ active: editingKey === 'buyB' }"
@@ -220,7 +216,7 @@ async function copyCommand() {
         <span class="nb-label">出售</span>
         <ItemSearchInput v-model="sellId" placeholder="书 / book" :max-version="format === 'legacy' ? 20 : 21" />
         <span class="nb-label nb-label-short">×</span>
-        <input v-model.number="sellCount" type="number" class="nb-num" min="1" max="64" />
+        <input v-model.number="sellCount" type="number" class="nb-num" min="1" max="64" autocomplete="off" />
         <button
           class="tool-btn nb-mini-btn"
           :class="{ active: editingKey === 'sell' }"
@@ -233,7 +229,7 @@ async function copyCommand() {
       <ModsEditor v-if="editingKey === 'sell'" :form="modsForms.sell" :format="format" />
       <div class="nb-row">
         <span class="nb-label">次数上限</span>
-        <input v-model.number="maxUses" type="number" class="nb-num" min="1" max="9999" />
+        <input v-model.number="maxUses" type="number" class="nb-num" min="1" max="9999" autocomplete="off" />
         <CheckToggle v-model="rewardExp" :size="14">奖励经验</CheckToggle>
         <button class="tool-btn nb-add-btn" @click="addTrade">
           <Plus :size="14" />
@@ -262,10 +258,14 @@ async function copyCommand() {
           复制
         </button>
       </div>
-      <code class="nb-cmd">{{ command }}</code>
+      <code class="gen-output gen-output-cmd">{{ command }}</code>
     </div>
   </div>
 </template>
+
+<style>
+@import "../../styles/tools-shared.css";
+</style>
 
 <style scoped>
 .tool-card {
@@ -383,7 +383,7 @@ async function copyCommand() {
 .nb-error {
   margin-top: 4px;
   font-size: 12px;
-  color: var(--text-danger, #e5484d);
+  color: var(--color-danger);
 }
 
 .nb-tags {
@@ -405,22 +405,6 @@ async function copyCommand() {
   border-radius: 999px;
 }
 
-.nb-tag-x {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px;
-  border: none;
-  background: transparent;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  border-radius: 4px;
-}
-
-.nb-tag-x:hover {
-  color: var(--text-danger, #e5484d);
-  background-color: var(--surface-hover);
-}
-
 .nb-output-head {
   display: flex;
   align-items: center;
@@ -435,16 +419,4 @@ async function copyCommand() {
   padding: 3px 10px;
 }
 
-.nb-cmd {
-  display: block;
-  padding: 10px 12px;
-  font-family: "Cascadia Mono", Consolas, "Courier New", monospace;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--text-primary);
-  background-color: rgba(0, 0, 0, 0.35);
-  border-radius: var(--radius-sm);
-  word-break: break-all;
-  white-space: pre-wrap;
-}
 </style>

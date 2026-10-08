@@ -3,7 +3,7 @@
 import { ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { EVT_MS_LOGIN_COMPLETE } from "./events";
+import { MS_LOGIN_COMPLETE } from "./events";
 import { showError } from "./alert";
 import { avatarState, renderPremiumAvatar, renderExternalAvatar } from "./avatar";
 
@@ -81,14 +81,29 @@ export async function loadMsAccount() {
 
 /** 加载全部正版账号（当前 = 列表末尾，即最近登录/切换的）。 */
 /** 加载全部第三方账号（当前 = 列表末尾）。 */
-export async function loadExternalAccounts() {
+export async function loadExternalAccounts(): Promise<boolean> {
   try {
     externalAccounts.value = (await invoke<ExternalAccountInfo[]>("get_external_accounts")) ?? [];
     externalAccount.value = externalAccounts.value[externalAccounts.value.length - 1] ?? null;
+    return true;
   } catch {
     externalAccounts.value = [];
     externalAccount.value = null;
+    return false;
   }
+}
+
+/** 账号状态就绪 Promise（模块级单次）：authMode 同步读 localStorage，但账号列表是异步 IPC。
+ *  判定「正版 / 第三方 / 离线」前必须等它就绪，否则会把「还没读完」当成离线。
+ *  幂等——启动页与衣柜共用同一份请求，不重复 IPC。 */
+let authReadyPromise: Promise<void> | null = null;
+
+/** 等账号状态就绪（正版列表 + 第三方列表读完）。读取失败不留缓存 → 下次调用（重进页面 / 刷新）可重试。 */
+export function ensureAuthReady(): Promise<void> {
+  authReadyPromise ??= Promise.all([loadMsAccounts(), loadExternalAccounts()]).then(([ms, ext]) => {
+    if (!ms || !ext) authReadyPromise = null;
+  });
+  return authReadyPromise;
 }
 
 /** 第三方登录：服务器地址 + 账号密码 → 保存账号。 */
@@ -114,9 +129,18 @@ export async function switchExternalAccount(apiUrl: string, uuid: string) {
   await loadExternalAccounts();
 }
 
-/** 刷新第三方账号（refresh：新 token + 最新角色列表 + 角色变化同步）。 */
+/** 刷新第三方账号（refresh：新 token + 最新角色列表 + 角色变化同步）。
+ *  后端在凭据彻底失效时会**注销**该账号（免得占位又刷不动），所以失败后也要同步一次列表，
+ *  让界面立刻反映「账号已退出」。 */
 export async function refreshExternalAccount(apiUrl: string, uuid: string) {
-  await invoke<ExternalAccountInfo>("refresh_external_account", { apiUrl, uuid });
+  try {
+    await invoke<ExternalAccountInfo>("refresh_external_account", { apiUrl, uuid });
+  } catch (e) {
+    await loadExternalAccounts().catch(() => {
+      // 列表本身读不出来不影响把错误抛给调用方
+    });
+    throw e;
+  }
   await loadExternalAccounts();
 }
 
@@ -132,13 +156,15 @@ export async function switchExternalRole(apiUrl: string, uuid: string, profileId
   return acc;
 }
 
-export async function loadMsAccounts() {
+export async function loadMsAccounts(): Promise<boolean> {
   try {
     msAccounts.value = (await invoke<MsAccountInfo[]>("get_ms_accounts")) ?? [];
     msAccount.value = msAccounts.value[msAccounts.value.length - 1] ?? null;
+    return true;
   } catch {
     msAccounts.value = [];
     msAccount.value = null;
+    return false;
   }
 }
 
@@ -234,7 +260,7 @@ export async function ensureLoginListener() {
   if (loginListenerReady) return;
   loginListenerReady = true;
   await listen<MsLoginCompletePayload>(
-    EVT_MS_LOGIN_COMPLETE,
+    MS_LOGIN_COMPLETE,
     async (ev) => {
       msLoginState.value = "idle";
       if (ev.payload.ok && ev.payload.account) {

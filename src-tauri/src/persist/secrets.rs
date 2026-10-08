@@ -1,8 +1,16 @@
-use parking_lot::Mutex;
+#[cfg(not(target_os = "windows"))]
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
-use crate::util::config_dir;
 use base64::{engine, Engine};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use chacha20poly1305::{
+    aead::{Aead, KeyInit},
+    ChaCha20Poly1305, Key, Nonce,
+};
+use parking_lot::Mutex;
+
+use crate::util::config_dir;
 
 fn secrets_path() -> PathBuf {
     config_dir().join("secrets.bin")
@@ -75,8 +83,10 @@ fn write_map(map: &std::collections::HashMap<String, String>) -> Result<(), Stri
     let content = serde_json::to_string(map).map_err(|e| format!("序列化 secrets 失败\n{e}"))?;
     #[cfg(not(target_os = "windows"))]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        if let Err(e) = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)) {
+            // 密钥文件权限未生效是安全问题，必须留痕
+            eprintln!("[secrets] 密钥文件权限设置失败（应为 0o600）: {e}");
+        }
     }
     std::fs::write(&path, content).map_err(|e| format!("写入 secrets 失败\n{e}"))
 }
@@ -120,15 +130,16 @@ const MAGIC: &[u8] = b"ELY1";
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn key_encrypt(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, String> {
-    use chacha20poly1305::{
-        aead::{Aead, KeyInit},
-        ChaCha20Poly1305, Key, Nonce,
-    };
     let mut nonce_bytes = [0u8; 12];
     getrandom::getrandom(&mut nonce_bytes).map_err(|e| format!("生成随机数失败\n{e}"))?;
-    let cipher = ChaCha20Poly1305::new(&Key::try_from(key.as_slice()).unwrap());
+    // 定长来源走 fallible 转换（长度由类型保证，错误分支仅为消除 panic 路径）
+    let key_ref = Key::try_from(key.as_slice())
+        .map_err(|_| "内部错误：主密钥长度异常".to_string())?;
+    let nonce_ref = Nonce::try_from(nonce_bytes.as_slice())
+        .map_err(|_| "内部错误：nonce 长度异常".to_string())?;
+    let cipher = ChaCha20Poly1305::new(&key_ref);
     let ct = cipher
-        .encrypt(&Nonce::try_from(nonce_bytes.as_slice()).unwrap(), data)
+        .encrypt(&nonce_ref, data)
         .map_err(|e| format!("加密失败\n{e}"))?;
     let mut out = Vec::with_capacity(MAGIC.len() + nonce_bytes.len() + ct.len());
     out.extend_from_slice(MAGIC);
@@ -139,10 +150,6 @@ fn key_encrypt(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, String> {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn key_decrypt(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, String> {
-    use chacha20poly1305::{
-        aead::{Aead, KeyInit},
-        ChaCha20Poly1305, Key, Nonce,
-    };
     let Some(rest) = data.strip_prefix(MAGIC) else {
         return Ok(data.to_vec());
     };
@@ -150,9 +157,13 @@ fn key_decrypt(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, String> {
         return Err("密文格式异常".into());
     }
     let (nonce, ct) = rest.split_at(12);
-    let cipher = ChaCha20Poly1305::new(&Key::try_from(key.as_slice()).unwrap());
+    let key_ref = Key::try_from(key.as_slice())
+        .map_err(|_| "内部错误：主密钥长度异常".to_string())?;
+    let nonce_ref =
+        Nonce::try_from(nonce).map_err(|_| "内部错误：nonce 长度异常".to_string())?;
+    let cipher = ChaCha20Poly1305::new(&key_ref);
     cipher
-        .decrypt(&Nonce::try_from(nonce).unwrap(), ct)
+        .decrypt(&nonce_ref, ct)
         .map_err(|e| format!("解密失败\n{e}"))
 }
 
@@ -392,6 +403,8 @@ mod dpapi {
             cb_data: 0,
             pb_data: ptr::null_mut(),
         };
+        // SAFETY: in_blob 的 pb_data/cb_data 由 data 切片及其长度构造且 DPAPI 只读输入；
+        // out_blob 是本栈帧可写变量，CryptProtectData 成功后由其填充，返回值已检查。
         let ok = unsafe {
             CryptProtectData(
                 &in_blob,
@@ -406,9 +419,11 @@ mod dpapi {
         if ok == 0 {
             return Err("CryptProtectData 失败".into());
         }
+        // SAFETY: ok != 0 表示调用成功，out_blob.pb_data 指向 LocalAlloc 分配、长度恰为 cb_data 的有效缓冲。
         let out = unsafe {
             std::slice::from_raw_parts(out_blob.pb_data, out_blob.cb_data as usize).to_vec()
         };
+        // SAFETY: out_blob.pb_data 是上一步输出的 LocalAlloc 内存句柄，此前未释放，此处释放且仅释放一次。
         unsafe {
             LocalFree(out_blob.pb_data as *mut c_void);
         }
@@ -424,6 +439,8 @@ mod dpapi {
             cb_data: 0,
             pb_data: ptr::null_mut(),
         };
+        // SAFETY: in_blob 的 pb_data/cb_data 由 data 切片及其长度构造且 DPAPI 只读输入；
+        // out_blob 是本栈帧可写变量，CryptUnprotectData 成功后由其填充，返回值已检查。
         let ok = unsafe {
             CryptUnprotectData(
                 &in_blob,
@@ -438,9 +455,11 @@ mod dpapi {
         if ok == 0 {
             return Err("CryptUnprotectData 失败（凭据不可解密，可能已换 Windows 用户）".into());
         }
+        // SAFETY: ok != 0 表示调用成功，out_blob.pb_data 指向 LocalAlloc 分配、长度恰为 cb_data 的有效缓冲。
         let out = unsafe {
             std::slice::from_raw_parts(out_blob.pb_data, out_blob.cb_data as usize).to_vec()
         };
+        // SAFETY: out_blob.pb_data 是上一步输出的 LocalAlloc 内存句柄，此前未释放，此处释放且仅释放一次。
         unsafe {
             LocalFree(out_blob.pb_data as *mut c_void);
         }

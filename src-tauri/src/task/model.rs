@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::game::modpack::ModpackRequest;
+
 /// 任务状态（进度事件 payload，前端 ProgressPayload.status 为 string）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -231,7 +233,7 @@ fn validate_file_item(url: &str, filename: &str) -> Result<(), String> {
 /// 恢复语义 = 重跑整卡，各环节幂等。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModpackInstallSpec {
-    pub request: crate::downloader::modpack::ModpackRequest,
+    pub request: ModpackRequest,
 }
 
 #[cfg(test)]
@@ -251,6 +253,43 @@ pub(crate) fn test_valid_task() -> DownloadTask {
 mod tests {
     use super::*;
     use crate::task::steps::TaskSpec;
+
+    /// 序列化结果与前端 payload 约定的字符串一致（前端 ProgressPayload.status 为 string）。
+    #[test]
+    fn task_status_serde_lowercase() {
+        assert_eq!(
+            serde_json::to_string(&TaskStatus::Pending).unwrap(),
+            "\"pending\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TaskStatus::Running).unwrap(),
+            "\"running\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TaskStatus::Done).unwrap(),
+            "\"done\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TaskStatus::Error).unwrap(),
+            "\"error\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TaskStatus::Cancelled).unwrap(),
+            "\"cancelled\""
+        );
+        assert_eq!(
+            serde_json::to_string(&StepStatus::Pending).unwrap(),
+            "\"pending\""
+        );
+        assert_eq!(
+            serde_json::to_string(&StepStatus::Running).unwrap(),
+            "\"running\""
+        );
+        assert_eq!(
+            serde_json::to_string(&StepStatus::Done).unwrap(),
+            "\"done\""
+        );
+    }
 
     #[test]
     fn loader_kind_serde_and_name() {

@@ -503,7 +503,7 @@ async function copyName() {
                 <span class="mv-drop-label">{{ loaderFilter ? loaderLabel(loaderFilter) : "全部加载器" }}</span>
                 <span class="mv-drop-arrow" :class="{ open: openFilter === 'loader' }"></span>
                 <Transition name="expand">
-                  <div v-if="openFilter === 'loader'" class="mv-drop-pop" :style="{ '--pop-h': popMaxH + 'px' }">
+                  <div v-if="openFilter === 'loader'" class="mv-drop-pop" :style="{ '--expand-h': popMaxH + 'px' }">
                     <div class="mv-drop-opt" :class="{ sel: !loaderFilter }" @click.stop="pickLoader('')">全部加载器</div>
                     <div v-for="l in loaderOptions" :key="l" class="mv-drop-opt" :class="{ sel: loaderFilter === l }" @click.stop="pickLoader(l)">{{ loaderLabel(l) }}</div>
                   </div>
@@ -514,7 +514,7 @@ async function copyName() {
                 <span class="mv-drop-label">{{ gameVersionFilter || "全部版本" }}</span>
                 <span class="mv-drop-arrow" :class="{ open: openFilter === 'game' }"></span>
                 <Transition name="expand">
-                  <div v-if="openFilter === 'game'" class="mv-drop-pop" :style="{ '--pop-h': popMaxH + 'px' }">
+                  <div v-if="openFilter === 'game'" class="mv-drop-pop" :style="{ '--expand-h': popMaxH + 'px' }">
                     <div class="mv-drop-opt" :class="{ sel: !gameVersionFilter }" @click.stop="pickGame('')">全部版本</div>
                     <div v-for="gv in gameVersionOptions" :key="gv" class="mv-drop-opt" :class="{ sel: gameVersionFilter === gv }" @click.stop="pickGame(gv)">{{ gv }}</div>
                   </div>
@@ -751,6 +751,9 @@ async function copyName() {
 .md-ld-quilt {
   color: var(--ld-quilt);
 }
+.md-ld-optifine {
+  color: var(--ld-optifine);
+}
 
 /* 徽章底色：color-mix 需要 WebKitGTK ≥ 2.42（Ubuntu 22.04 的 2.40 不支持）。
  * 不支持的平台（低版本 Linux WebView）降级为纯文字色徽章，避免整条声明失效丢色。 */
@@ -766,6 +769,9 @@ async function copyName() {
   }
   .md-ld-quilt {
     background: color-mix(in srgb, var(--ld-quilt) 12%, transparent);
+  }
+  .md-ld-optifine {
+    background: color-mix(in srgb, var(--ld-optifine) 12%, transparent);
   }
 }
 
@@ -937,7 +943,7 @@ async function copyName() {
   left: 0;
   right: 0;
   z-index: 20;
-  max-height: var(--pop-h, 260px);
+  max-height: var(--expand-h, 260px);
   overflow-y: auto;
   background: var(--surface-card);
   border: 1px solid var(--border-strong);
@@ -966,22 +972,7 @@ async function copyName() {
   font-weight: 600;
 }
 
-/* expand 动画：目标值必须写在 enter-to/leave-from（写在 active 上会因同特异性覆盖 from 态导致无动画） */
-.expand-enter-active,
-.expand-leave-active {
-  transition: max-height 0.2s ease, opacity 0.15s ease;
-  overflow: hidden;
-}
-.expand-enter-from,
-.expand-leave-to {
-  max-height: 0;
-  opacity: 0;
-}
-.expand-enter-to,
-.expand-leave-from {
-  max-height: var(--pop-h, 260px);
-  opacity: 1;
-}
+/* expand 动画由共享骨架（styles/transitions.css）提供；元素通过内联 --expand-h 注入目标高度 */
 
 .mv-state {
   flex: 1;

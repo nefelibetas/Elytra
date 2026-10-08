@@ -6,7 +6,7 @@ import { useRoute } from "vue-router";
 import { goBack } from "../store/nav";
 import { Check, RotateCcw } from "@lucide/vue";
 import {
-  THEMES, customThemes, builtinVars,
+  THEMES, customThemes, builtinVars, EDITABLE_VAR_KEYS,
   createCustomTheme, updateCustomTheme, activateCustomTheme,
   type CustomThemeVars, type ThemeId,
 } from "../store/theme";
@@ -20,6 +20,15 @@ const editName = ref("");
 const editDesc = ref("");
 const editVars = ref<CustomThemeVars>(initVars());
 
+/** query.from 解析：显式指定且存在（内置主题或已保存的自定义）时的起点 id。 */
+function fromParam(): ThemeId | undefined {
+  const from = route.query.from as string | undefined;
+  if (!from) return undefined;
+  if (THEMES.some((t) => t.id === from)) return from as ThemeId;
+  if (customThemes.value[from]) return from as ThemeId;
+  return undefined;
+}
+
 function initVars(): CustomThemeVars {
   if (editingId.value && customThemes.value[editingId.value]) {
     // 编辑：载入现有值
@@ -28,17 +37,13 @@ function initVars(): CustomThemeVars {
     editDesc.value = t.desc ?? "";
     return { ...t.vars };
   }
-  // 新建：从当前主题（内置或自定义）复制起点
-  const from = route.query.from as string | undefined;
+  // 新建：从 query.from 指定主题（内置或现有自定义）复制起点
+  const from = fromParam();
   editName.value = "自定义外观";
   editDesc.value = "";
-  if (from && THEMES.some((t) => t.id === from)) {
-    return builtinVars(from as ThemeId);
-  }
-  if (from && customThemes.value[from]) {
-    return { ...customThemes.value[from].vars };
-  }
-  return builtinVars("grass");
+  if (!from) return builtinVars("grass");
+  if (THEMES.some((t) => t.id === from)) return builtinVars(from);
+  return { ...customThemes.value[from].vars };
 }
 
 /** 同组件实例下 query 变化（新建 ↔ 编辑）：重建表单与色板状态。 */
@@ -51,20 +56,19 @@ watch(
   },
 );
 
-/** 骨架可调部位 → 对应 CSS 变量与标签。 */
-interface PartDef { key: keyof CustomThemeVars; label: string }
-const PARTS: PartDef[] = [
-  { key: "--color-brand", label: "品牌色" },
-  { key: "--text-primary", label: "主文字" },
-  { key: "--text-secondary", label: "次要文字" },
-  { key: "--surface-page", label: "页面底色" },
-  { key: "--surface-hover", label: "悬停底色" },
-  { key: "--border-default", label: "常规边框" },
-  { key: "--border-strong", label: "强调边框" },
-];
-const PART_LABELS: Record<string, string> = Object.fromEntries(
-  PARTS.map((p) => [p.key, p.label]),
-);
+/** 骨架可调部位键（与 store 的可调变量清单同源，单一维护）。 */
+type EditableVarKey = (typeof EDITABLE_VAR_KEYS)[number];
+
+/** 部位标签：Record<EditableVarKey, …> 保证清单新增变量时此处必须补标签。 */
+const PART_LABELS: Record<EditableVarKey, string> = {
+  "--color-brand": "品牌色",
+  "--text-primary": "主文字",
+  "--text-secondary": "次要文字",
+  "--surface-page": "页面底色",
+  "--surface-hover": "悬停底色",
+  "--border-default": "常规边框",
+  "--border-strong": "强调边框",
+};
 
 /** 骨架预览 CSS 变量透传（局部作用域，不污染全局主题）。 */
 const previewStyle = computed(() => {
@@ -111,13 +115,13 @@ function colorMix(hex: string, alphaPct: number): string {
 // ── 调色板状态 ──
 
 /** 当前选中的部位变量。 */
-const activeField = ref<keyof CustomThemeVars | null>(null);
+const activeField = ref<EditableVarKey | null>(null);
 
 /** 调色板开关。 */
 const paletteOpen = ref(false);
 
 /** 点击骨架部位：选中 + 打开调色板。 */
-function pickField(key: keyof CustomThemeVars) {
+function pickField(key: EditableVarKey) {
   activeField.value = key;
   paletteOpen.value = true;
 }
@@ -201,7 +205,10 @@ function save() {
     updateCustomTheme(editingId.value, patch);
     activateCustomTheme(editingId.value as ThemeId);
   } else {
-    const t = createCustomTheme();
+    // 起点与 initVars 保持一致：createCustomTheme 会为内置起点写入 basedOn，
+    // 使品牌衍生物直接取自该内置主题的 CSS 值
+    const from = fromParam();
+    const t = createCustomTheme(from);
     updateCustomTheme(t.id, patch);
     activateCustomTheme(t.id as ThemeId);
   }
@@ -261,6 +268,15 @@ function save() {
                 class="pv-part pv-card-btn pv-static"
               ></span>
             </div>
+            <!-- 内容区分隔线：常规边框（--border-default）的可点载体 -->
+            <span
+              class="pv-part pv-divider"
+              :class="{ active: activeField === '--border-default' }"
+              @click="pickField('--border-default')"
+            >
+              <span class="pv-divider-line"></span>
+              <span class="pv-tag">常规边框</span>
+            </span>
             <div class="pv-card pv-card-list">
               <span
                 class="pv-part pv-list-item"
@@ -319,6 +335,7 @@ function save() {
               class="cte-custom-color"
               :value="currentHex"
               @input="pickPreset(($event.target as HTMLInputElement).value)"
+              autocomplete="off"
             />
             <div class="cte-hex-box">
               <span class="cte-hex-prefix">#</span>
@@ -327,6 +344,7 @@ function save() {
                 :value="currentHex.replace(/^#/, '')"
                 @change="onHexText"
                 spellcheck="false"
+                autocomplete="off"
               />
             </div>
           </div>
@@ -345,6 +363,7 @@ function save() {
             type="text"
             placeholder="外观名称"
             maxlength="24"
+            autocomplete="off"
           />
           <input
             v-model="editDesc"
@@ -352,6 +371,7 @@ function save() {
             type="text"
             placeholder="副标题（可选）"
             maxlength="60"
+            autocomplete="off"
           />
         </div>
         <button class="cte-save" @click="save">
@@ -685,6 +705,21 @@ function save() {
   align-items: stretch;
   gap: 8px;
   overflow: hidden;
+}
+
+/* 内容区分隔线：常规边框（--border-default）的可点载体；
+   外层 9px 高度为 1px 的线留出可点击热区（hover/active 轮廓随之可见） */
+.pv-divider {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 9px;
+}
+
+.pv-divider-line {
+  flex: 1;
+  height: 1px;
+  background: var(--pv-border-default, var(--border-default));
 }
 
 .pv-list-item {

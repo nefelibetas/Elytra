@@ -1,13 +1,14 @@
 //! 多源下载核心：9 个公开入口收敛于 [`download_core`]，按形态分流到
 //! 单 URL 重试路径（[`fetch_with_retries`]）或多源回退路径（[`fetch_from_sources`]）。
 
-use reqwest::Client;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
+use futures_util::StreamExt as _;
+use reqwest::Client;
 use tokio::sync::Semaphore;
 
 use super::redirect::{http, mirror_safe_redirect};
@@ -16,7 +17,9 @@ use super::routes::{
     DownloadRoute,
 };
 use super::{DownloadResult, FetchError};
-use crate::config::downloader::model::{DownloadSourceMode, ResourceClass};
+use crate::config::downloader::{infer_resource_class, DownloadSourceMode, ResourceClass};
+use crate::constants;
+use crate::downloader::hash::file_sha1_matches;
 use crate::downloader::probe::{probe_domain, ProbeResult};
 use crate::downloader::proxy::apply_system_proxy;
 
@@ -32,7 +35,7 @@ pub fn set_speed_limit(bytes: u64) {
 }
 
 static MIRROR_SEM: LazyLock<Arc<Semaphore>> =
-    LazyLock::new(|| Arc::new(Semaphore::new(crate::constants::MIRROR_CONCURRENCY)));
+    LazyLock::new(|| Arc::new(Semaphore::new(constants::MIRROR_CONCURRENCY)));
 
 /// 该 URL 是否走限流（镜像源 + 高并发不稳定的官方 maven，统一限 MIRROR_CONCURRENCY）。
 /// 镜像源域名变化时在此追加；maven.neoforged.net / maven.quiltmc.org / maven.minecraftforge.net
@@ -150,7 +153,13 @@ async fn fetch_with_retries<F: Fn(u64, u64)>(
             }
         }
     }
-    Err(last_err.unwrap())
+    // MAX_ATTEMPTS ≥ 1 保证循环至少执行一次并赋值；显式处理 None 以免 panic 路径
+    match last_err {
+        Some(e) => Err(e),
+        None => Err(FetchError::Network(
+            "下载重试未产生错误记录（内部状态异常）".into(),
+        )),
+    }
 }
 
 /// 冷启动预探测排序（async）：并发对每个候选做域级 HEAD（TTL 缓存，同域文件共享），
@@ -217,9 +226,7 @@ async fn fetch_from_sources<F: Fn(u64, u64)>(
         && source_mode() == DownloadSourceMode::Auto
         && routes.iter().all(|r| route_health(&r.url).samples == 0)
     {
-        let class = crate::config::downloader::model::infer_resource_class(
-            urls.first().map(String::as_str).unwrap_or(""),
-        );
+        let class = infer_resource_class(urls.first().map(String::as_str).unwrap_or(""));
         sort_routes_by_probes(&mut routes, class).await;
     }
     // 收集每源/每轮全部错误（展示时去重），避免最后一个源覆盖前面的失败原因
@@ -354,8 +361,6 @@ async fn fetch_once<F: Fn(u64, u64)>(
         .map_err(|e| FetchError::Io(format!("创建文件失败\n{e}")))?;
 
     let mut stream = response.bytes_stream();
-
-    use futures_util::StreamExt;
     while let Some(chunk) = stream.next().await {
         // 取消立即生效：当前块读完即停（不等 read_timeout/重试），清理残留由调用方负责
         if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
@@ -410,7 +415,7 @@ async fn fetch_once<F: Fn(u64, u64)>(
                 .await
                 .map_err(|e| FetchError::Io(format!("写入文件失败\n{e}")))?;
             drop(file);
-            if !crate::downloader::hash::file_sha1_matches(dest, sha1) {
+            if !file_sha1_matches(dest, sha1) {
                 let _ = std::fs::remove_file(dest);
                 return Err(FetchError::Checksum);
             }
@@ -424,4 +429,252 @@ async fn fetch_once<F: Fn(u64, u64)>(
         },
         ttfb_ms,
     })
+}
+
+/// 下载层测试共用的本地 HTTP 服务与临时文件工具。
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::path::PathBuf;
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// 就绪握手：accept 循环启动后通过 oneshot 通知调用方，杜绝 spawn 未调度时
+    /// 请求先行导致的连接竞态（此前偶发 "error sending request" 即此根因）。
+    pub(crate) async fn serve(body: Vec<u8>) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        tokio::spawn(async move {
+            let _ = tx.send(());
+            loop {
+                let (mut sock, _) = match listener.accept().await {
+                    Ok(x) => x,
+                    Err(_) => break,
+                };
+                let body = body.clone();
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let _ = sock.read(&mut buf).await;
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = sock.write_all(head.as_bytes()).await;
+                    let _ = sock.write_all(&body).await;
+                    let _ = sock.shutdown().await;
+                });
+            }
+        });
+        let _ = rx.await; // 就绪：accept 循环已启动
+        format!("http://{addr}/file.jar")
+    }
+
+    pub(crate) fn temp_dest(name: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!("{}_{}.jar", name, std::process::id()));
+        let _ = std::fs::remove_file(&p);
+        p
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_support::temp_dest;
+    use super::{is_mirror_url, sort_routes_with_probes};
+    use crate::config::downloader::ResourceClass;
+    use crate::constants;
+    use crate::downloader::fetcher::routes::DownloadRoute;
+    use crate::downloader::fetcher::fetch_verified;
+    use crate::downloader::probe::ProbeResult;
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// 镜像源判定：仅 BMCLAPI/MCIM 域名受限，官方源不受限。
+    #[test]
+    fn is_mirror_url_detects_mirror_domains() {
+        assert!(is_mirror_url(
+            "https://bmclapi2.bangbang93.com/libraries/x.jar"
+        ));
+        assert!(is_mirror_url("https://mod.mcimirror.top/data/x.jar"));
+        assert!(!is_mirror_url("https://libraries.minecraft.net/x.jar"));
+        assert!(!is_mirror_url("https://piston-data.mojang.com/x.jar"));
+        assert!(!is_mirror_url("https://resources.download.minecraft.net/x"));
+        // 高并发不稳的官方 maven 同样限流
+        assert!(is_mirror_url(
+            "https://maven.quiltmc.org/repository/release/org/quiltmc/x.jar"
+        ));
+        assert!(is_mirror_url(
+            "https://maven.neoforged.net/releases/net/neoforged/x.jar"
+        ));
+        assert!(is_mirror_url(
+            "https://maven.minecraftforge.net/net/minecraftforge/x.jar"
+        ));
+    }
+
+    /// 镜像源（URL 含 bmclapi）请求并发必须被限制在 MIRROR_CONCURRENCY 以内：
+    /// 20 个并发任务同时下载镜像文件，服务器观测到的同时在处理的连接数 ≤ 8。
+    #[tokio::test]
+    async fn mirror_requests_capped_at_mirror_concurrency() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let max_active = Arc::new(AtomicUsize::new(0));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (a2, m2) = (Arc::clone(&active), Arc::clone(&max_active));
+        tokio::spawn(async move {
+            loop {
+                let (mut sock, _) = match listener.accept().await {
+                    Ok(x) => x,
+                    Err(_) => break,
+                };
+                let (a3, m3) = (Arc::clone(&a2), Arc::clone(&m2));
+                tokio::spawn(async move {
+                    let cur = a3.fetch_add(1, Ordering::SeqCst) + 1;
+                    m3.fetch_max(cur, Ordering::SeqCst);
+                    let mut buf = [0u8; 4096];
+                    let _ = sock.read(&mut buf).await;
+                    // 模拟下载耗时，给并发统计留出窗口
+                    tokio::time::sleep(Duration::from_millis(80)).await;
+                    let body = b"mirror-content";
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = sock.write_all(head.as_bytes()).await;
+                    let _ = sock.write_all(body).await;
+                    let _ = sock.shutdown().await;
+                    a3.fetch_sub(1, Ordering::SeqCst);
+                });
+            }
+        });
+
+        // URL 以 userinfo 携带 bmclapi 标记（is_mirror_url 判定为镜像），
+        // host 仍是 127.0.0.1 保证可解析且直连本地服务器
+        let url = format!("http://bmclapi@127.0.0.1:{}/file.jar", addr.port());
+        let mut handles = Vec::new();
+        for i in 0..20 {
+            let u = url.clone();
+            let d = temp_dest(&format!("mirror_cap_{i}"));
+            handles.push(tokio::spawn(async move {
+                let _ = fetch_verified(std::slice::from_ref(&u), &d, None::<fn(u64, u64)>, "").await;
+                let _ = std::fs::remove_file(&d);
+            }));
+        }
+        for h in handles {
+            let _ = h.await;
+        }
+
+        let max = max_active.load(Ordering::SeqCst);
+        assert!(
+            max <= constants::MIRROR_CONCURRENCY,
+            "镜像并发应 ≤ {}，实际峰值 {}",
+            constants::MIRROR_CONCURRENCY,
+            max
+        );
+        assert!(max > 1, "应存在真实并发（>1），实际 {}", max);
+    }
+
+    /// 冷启动预探测排序纯逻辑：Loader 镜像永远先行（官方 maven 限流语义）；
+    /// 非 Loader 探测快者先行；探测失败/无样本排后（不剔除）。
+    #[test]
+    fn sort_routes_with_probes_orders_fastest_first() {
+        let mk = |url: &str| DownloadRoute {
+            url: url.into(),
+            is_mirror: url.contains("bmclapi"),
+        };
+        let ok = |ms: u64| ProbeResult {
+            ok: true,
+            ttfb_ms: ms,
+        };
+        let fail = ProbeResult {
+            ok: false,
+            ttfb_ms: 999,
+        };
+
+        // 非 Loader：官方快 → 官方前
+        let mut r = vec![
+            mk("https://libraries.minecraft.net/a.jar"),
+            mk("https://bmclapi2.bangbang93.com/libraries/a.jar"),
+        ];
+        sort_routes_with_probes(
+            &mut r,
+            &HashMap::from([
+                ("https://libraries.minecraft.net/a.jar".to_string(), ok(50)),
+                (
+                    "https://bmclapi2.bangbang93.com/libraries/a.jar".to_string(),
+                    ok(400),
+                ),
+            ]),
+            ResourceClass::Library,
+        );
+        assert!(
+            r[0].url.contains("minecraft.net"),
+            "官方快应先行: {}",
+            r[0].url
+        );
+
+        // 非 Loader：官方慢/失败 → 镜像前
+        let mut r = vec![
+            mk("https://libraries.minecraft.net/a.jar"),
+            mk("https://bmclapi2.bangbang93.com/libraries/a.jar"),
+        ];
+        sort_routes_with_probes(
+            &mut r,
+            &HashMap::from([
+                ("https://libraries.minecraft.net/a.jar".to_string(), fail),
+                (
+                    "https://bmclapi2.bangbang93.com/libraries/a.jar".to_string(),
+                    ok(80),
+                ),
+            ]),
+            ResourceClass::Library,
+        );
+        assert!(
+            r[0].url.contains("bmclapi"),
+            "官方探测失败应镜像先行: {}",
+            r[0].url
+        );
+
+        // Loader 类：镜像永远先行（即使官方探测更快）——官方 maven 限流语义
+        let mut r = vec![
+            mk("https://maven.minecraftforge.net/x.jar"),
+            mk("https://bmclapi2.bangbang93.com/maven/x.jar"),
+        ];
+        sort_routes_with_probes(
+            &mut r,
+            &HashMap::from([
+                ("https://maven.minecraftforge.net/x.jar".to_string(), ok(10)),
+                (
+                    "https://bmclapi2.bangbang93.com/maven/x.jar".to_string(),
+                    ok(500),
+                ),
+            ]),
+            ResourceClass::Loader,
+        );
+        assert!(
+            r[0].url.contains("bmclapi"),
+            "Loader 镜像先行语义不可被探测破坏: {}",
+            r[0].url
+        );
+
+        // 无探测样本视同失败排后（不剔除候选）
+        let mut r = vec![
+            mk("https://libraries.minecraft.net/b.jar"),
+            mk("https://bmclapi2.bangbang93.com/libraries/b.jar"),
+        ];
+        sort_routes_with_probes(
+            &mut r,
+            &HashMap::from([(
+                "https://bmclapi2.bangbang93.com/libraries/b.jar".to_string(),
+                ok(60),
+            )]),
+            ResourceClass::Library,
+        );
+        assert!(
+            r[0].url.contains("bmclapi"),
+            "无样本的官方应排后（镜像探测成功在前）: {}",
+            r[0].url
+        );
+    }
 }

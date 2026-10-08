@@ -4,7 +4,9 @@
 import { computed, ref, onMounted, onUnmounted } from "vue";
 import { useRoute } from "vue-router";
 import { Folder, Trash2, Map } from "@lucide/vue";
-import { invoke } from "@tauri-apps/api/core";
+import { deleteWorld } from "../../store/versionDetail";
+import { ensureGameFolder } from "../../store/gameDirs";
+import { openFolder } from "../../utils/fs";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 import { fmtUnix } from "../../utils/format";
@@ -50,10 +52,7 @@ async function confirmDelete() {
   deletePending.value = [];
   for (const n of names) {
     try {
-      await invoke("delete_world", {
-        versionName: versionName.value,
-        worldName: n,
-      });
+      await deleteWorld(versionName.value, n);
       showToast(`已删除存档 ${n}`);
     } catch (e) {
       showToast(errMsg(e));
@@ -80,13 +79,10 @@ onUnmounted(() => stopWorldsLivePolling());
 /** 打开地图编辑器窗口（独立 WebView；初始定位到该存档）。 */
 
 /** 打开存档文件夹（目录不存在先创建）。 */
-async function openFolder() {
+async function openSavesFolder() {
   try {
-    const target = await invoke<string>("ensure_game_folder", {
-      kind: "saves",
-      versionName: versionName.value,
-    });
-    await invoke("open_folder", { path: target });
+    const target = await ensureGameFolder("saves", versionName.value);
+    await openFolder(target);
   } catch (e) {
     showToast(errMsg(e));
   }
@@ -99,7 +95,7 @@ async function openFolder() {
     <div class="vss-card vss-head-card">
       <Map :size="16" class="vss-head-icon" />
       <span class="vss-head-title">存档管理</span>
-      <button class="vss-act-btn" @click="openFolder">
+      <button class="vss-act-btn" @click="openSavesFolder">
         <Folder :size="13" />
         <span>打开存档文件夹</span>
       </button>
@@ -142,13 +138,13 @@ async function openFolder() {
 
     <!-- 底部 action 栏：选中 ≥1 时滑出，固定列表卡底部 -->
     <Transition name="fade">
-      <div v-if="selecting" class="vss-actions-bar">
-        <button class="vss-ab-btn" @click="toggleAll">
+      <div v-if="selecting" class="vs-actions-bar vs-bar-boxed">
+        <button class="vs-ab-btn" @click="toggleAll">
           {{ allVisibleSelected ? "取消全选" : "全选" }}
         </button>
-        <button class="vss-ab-btn" @click="clear">取消</button>
-        <span class="vss-ab-count">已选 {{ selected.length }} 项</span>
-        <button class="vss-ab-btn danger" @click="doBatchDelete">
+        <button class="vs-ab-btn" @click="clear">取消</button>
+        <span class="vs-ab-count">已选 {{ selected.length }} 项</span>
+        <button class="vs-ab-btn danger" @click="doBatchDelete">
           <Trash2 :size="13" />
           <span>删除（{{ selected.length }}）</span>
         </button>
@@ -169,6 +165,10 @@ async function openFolder() {
     </AlertDialog>
   </div>
 </template>
+
+<style>
+@import "../../styles/version-setup-shared.css";
+</style>
 
 <style scoped>
 .vss {
@@ -311,64 +311,6 @@ async function openFolder() {
 .vss-local-meta {
   font-size: 11px;
   color: var(--text-tertiary);
-}
-
-/* 底部 action 栏：选中 ≥1 时滑出，固定列表卡底部 */
-.vss-actions-bar {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0 12px 12px;
-  padding: 10px 14px;
-  background: var(--surface-elevated);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
-}
-
-.vss-ab-count {
-  flex: 1;
-  min-width: 0;
-  font-size: 12px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.vss-ab-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.vss-ab-btn:hover:not(:disabled) {
-  border-color: var(--color-brand);
-  color: var(--color-brand);
-}
-
-.vss-ab-btn:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-.vss-ab-btn.danger {
-  border: 1px solid color-mix(in srgb, var(--color-danger) 40%, transparent);
-  background: transparent;
-  color: var(--color-danger);
-}
-
-.vss-ab-btn.danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
-  border-color: var(--color-danger);
 }
 
 .vss-dialog-body {

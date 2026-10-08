@@ -12,6 +12,8 @@
 
 use std::io::{self, Read, Write};
 
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
 /// 响应状态：成功。
 pub const STATUS_OK: u8 = 0;
 /// 响应状态：未知错误（响应体为 UTF8 错误详情）。
@@ -124,7 +126,6 @@ pub async fn read_request_async<R>(r: &mut R) -> io::Result<Request>
 where
     R: tokio::io::AsyncRead + Unpin,
 {
-    use tokio::io::AsyncReadExt;
     let mut kind_len = [0u8; 1];
     r.read_exact(&mut kind_len).await?;
     let kind_len = kind_len[0] as usize;
@@ -156,7 +157,6 @@ pub async fn write_request_async<W>(w: &mut W, namespace: &str, value: &str, bod
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
-    use tokio::io::AsyncWriteExt;
     let kind = format!("{namespace}:{value}");
     let kind_len = kind.len();
     if kind_len == 0 || kind_len > 255 {
@@ -177,7 +177,6 @@ pub async fn read_response_async<R>(r: &mut R) -> io::Result<Response>
 where
     R: tokio::io::AsyncRead + Unpin,
 {
-    use tokio::io::AsyncReadExt;
     let mut status = [0u8; 1];
     r.read_exact(&mut status).await?;
     let mut body_len = [0u8; 4];
@@ -196,7 +195,6 @@ pub async fn write_response_async<W>(w: &mut W, response: &Response) -> io::Resu
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
-    use tokio::io::AsyncWriteExt;
     w.write_all(&[response.status]).await?;
     w.write_all(&(response.body.len() as u32).to_be_bytes()).await?;
     w.write_all(&response.body).await?;

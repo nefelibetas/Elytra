@@ -8,21 +8,21 @@
 //! 下载目录：`{minecraft_dir}/runtime/{platform}/{version}/`，完成后经
 //! `scanner::inspect` 校验版本并注册进 persist 的 jdk section（discovered_jdks）。
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Duration;
 
-use crate::config::downloader::model::{DownloaderConfig, JdkSourceMode};
+use sha2::Digest as _;
+
+use crate::config::downloader::{DownloaderConfig, JdkSourceMode};
 use crate::downloader::endpoints::JdkEndpoints;
 use crate::downloader::fetcher::{self, http};
-use crate::downloader::probe::probe_url;
+use crate::downloader::probe::{probe_speed, probe_url, SpeedProbeResult};
+use crate::game::version::source::CacheBehaviour;
 use crate::jdk::model::JdkInfo;
 use crate::jdk::scanner;
-use crate::util::{java_bin_path, parse_java_major};
-use futures_util::StreamExt;
-use parking_lot::Mutex;
-use std::collections::HashMap;
-use std::sync::LazyLock;
-use std::time::{Duration, Instant};
+use crate::util::{java_bin_path, parse_java_major, safe_relative_path};
 
 /// 安装进度钩子（任务侧传入；均可为空，纯函数调用方直接不传）。
 pub struct InstallProgress<'a> {
@@ -50,29 +50,24 @@ fn component_for_major(major: u32) -> Option<&'static str> {
 }
 
 /// 当前平台在 all.json 中的平台键。
+/// 用 `cfg!` 而非 `#[cfg]` 块语句：多块写法下 rust-analyzer 会把 cfg 剥离后的
+/// 上一块误判为语句（E0308 expected (), found &'static str），rustc 则正常。
 fn platform_key() -> &'static str {
-    #[cfg(target_os = "windows")]
-    {
+    if cfg!(target_os = "windows") {
         "windows-x64"
-    }
-    #[cfg(target_os = "macos")]
-    {
+    } else if cfg!(target_os = "macos") {
         if cfg!(target_arch = "aarch64") {
             "mac-os-arm64"
         } else {
             "mac-os-x64"
         }
-    }
-    #[cfg(target_os = "linux")]
-    {
+    } else if cfg!(target_os = "linux") {
         if cfg!(target_arch = "aarch64") {
             "linux-arm64"
         } else {
             "linux-x64"
         }
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    {
+    } else {
         "unsupported"
     }
 }
@@ -80,14 +75,7 @@ fn platform_key() -> &'static str {
 /// 当前平台/架构是否受支持的 managed runtime 目标（64 位 x64/arm64）。
 /// 32 位（i686/x86/arm）等罕见架构 Minecraft 生态不支持，明确拒绝而非静默误判为 x64。
 fn is_supported_runtime_target() -> bool {
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    {
-        true
-    }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    {
-        false
-    }
+    cfg!(any(target_arch = "x86_64", target_arch = "aarch64"))
 }
 
 /// 统一入口：按 jdk_source_mode 三态选择回退链（见 installer_chain）。
@@ -175,84 +163,6 @@ fn installer_chain(mode: JdkSourceMode) -> Vec<JdkInstaller> {
             JdkInstaller::Azul,
         ],
     }
-}
-
-/// 速度探测结果：每个 JDK 安装器端的速度。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct SpeedProbeResult {
-    /// 是否可达。
-    ok: bool,
-    /// 有效吞吐量（字节/秒）。不可达时为 0。
-    speed_bps: u64,
-}
-
-/// 速度探测缓存（TTL 10 分钟），避免一次会话内多次安装重复探测。
-fn speed_cache() -> &'static LazyLock<Mutex<HashMap<String, (Instant, SpeedProbeResult)>>> {
-    static CACHE: LazyLock<Mutex<HashMap<String, (Instant, SpeedProbeResult)>>> =
-        LazyLock::new(|| Mutex::new(HashMap::new()));
-    &CACHE
-}
-
-const SPEED_PROBE_TIMEOUT_SECS: u64 = 8;
-/// 速度探测样本大小：2 MB 足以反映真实带宽，又不会太慢。
-const SPEED_PROBE_BYTES: u64 = 2 * 1024 * 1024;
-const SPEED_CACHE_TTL_SECS: u64 = 600;
-
-/// 从缓存或实际下载中获取某个 URL 的速度（只读取前 2 MB）。
-async fn speed_probe(url: &str) -> SpeedProbeResult {
-    if let Some((cached_at, res)) = speed_cache().lock().get(url) {
-        if cached_at.elapsed().as_secs() < SPEED_CACHE_TTL_SECS {
-            return *res;
-        }
-    }
-    let res = speed_probe_uncached(url).await;
-    speed_cache()
-        .lock()
-        .insert(url.to_string(), (Instant::now(), res));
-    res
-}
-
-/// 实际下载前 N 字节并计算吞吐量的无缓存实现体。
-async fn speed_probe_uncached(url: &str) -> SpeedProbeResult {
-    let client = http();
-    let timeout = Duration::from_secs(SPEED_PROBE_TIMEOUT_SECS);
-    let result = tokio::time::timeout(timeout, async {
-        let resp = match client.get(url).send().await {
-            Ok(r) if r.status().is_success() => r,
-            _ => return None,
-        };
-        // 元数据太小不适合测速
-        if let Some(len) = resp.content_length() {
-            if len > 0 && len < SPEED_PROBE_BYTES / 2 {
-                return None;
-            }
-        }
-        // 流式读取最多 SPEED_PROBE_BYTES 字节
-        let mut reader = resp.bytes_stream();
-        let mut bytes_read = 0u64;
-        let start = Instant::now();
-        while let Some(chunk) = reader.next().await {
-            match chunk {
-                Ok(chunk) if bytes_read < SPEED_PROBE_BYTES => bytes_read += chunk.len() as u64,
-                _ => break,
-            }
-        }
-        let elapsed = start.elapsed().as_secs_f64();
-        let speed_bps = if elapsed == 0.0 {
-            u64::MAX
-        } else {
-            (bytes_read as f64 / elapsed) as u64
-        };
-        Some(SpeedProbeResult {
-            ok: true,
-            speed_bps,
-        })
-    })
-    .await;
-    result.ok().flatten().unwrap_or(SpeedProbeResult {
-        ok: false,
-        speed_bps: 0,
-    })
 }
 
 /// 为指定安装器构造可测速的文件 URL（async，因为需要查 API 拿文件名）。
@@ -410,7 +320,7 @@ async fn build_speed_chain(
         handles.push(tokio::task::spawn(async move {
             let url = speed_probe_url_for(&installer, major_clone, &config_clone).await;
             let speed = match url {
-                Some(u) => speed_probe(&u).await,
+                Some(u) => probe_speed(&u).await,
                 None => SpeedProbeResult {
                     ok: false,
                     speed_bps: 0,
@@ -455,22 +365,6 @@ pub(crate) fn runtime_dir(config: &DownloaderConfig, major: u32) -> PathBuf {
         .join(format!("java-{major}"))
 }
 
-/// 词法路径穿越防护：manifest/zip 条目路径必须为相对路径且不含 `..` 段
-/// （manifest 来自网络，防恶意/篡改条目写出 runtime 根）。
-pub(crate) fn safe_runtime_path(root: &Path, entry: &str) -> Result<PathBuf, String> {
-    let entry = entry.trim();
-    if entry.is_empty() || entry.starts_with('/') || entry.starts_with('\\') {
-        return Err(format!("非法 runtime 文件路径\n{entry:?}"));
-    }
-    if entry
-        .split(['/', '\\'])
-        .any(|seg| seg == ".." || seg.is_empty())
-    {
-        return Err(format!("runtime 文件路径含非法段\n{entry:?}"));
-    }
-    Ok(root.join(entry))
-}
-
 /// 下载并安装 Mojang 官方 runtime。
 async fn install_mojang_runtime(
     major: u32,
@@ -483,11 +377,9 @@ async fn install_mojang_runtime(
 
     // 1. 拉取 all.json（多源回退 + TTL 缓存：BMCLAPI 镜像 piston-meta）
     let all_text = config
-        .fetch_with_fallback(
-            config.game_source_mode,
-            crate::downloader::source::CacheBehaviour::DefaultTtl,
-            |s| s.mirror_url(JdkEndpoints::RUNTIME_ALL_JSON),
-        )
+        .fetch_with_fallback(config.game_source_mode, CacheBehaviour::DefaultTtl, |s| {
+            s.mirror_url(JdkEndpoints::RUNTIME_ALL_JSON)
+        })
         .await
         .map_err(|e| format!("获取 Java runtime 索引失败\n{e}"))?;
     let all: serde_json::Value =
@@ -559,7 +451,7 @@ async fn install_mojang_runtime(
     }
     for (path, meta) in files {
         let ftype = meta["type"].as_str().unwrap_or("file");
-        let dest = safe_runtime_path(&dest_root, path)?;
+        let dest = dest_root.join(safe_relative_path(path)?);
         match ftype {
             "directory" => {
                 std::fs::create_dir_all(&dest).map_err(|e| format!("创建目录失败\n{e}"))?;
@@ -773,7 +665,7 @@ fn extract_zip(package: &Path, dest_root: &Path) -> Result<(), String> {
             .by_index(i)
             .map_err(|e| format!("读取条目失败\n{e}"))?;
         let name = entry.name().to_string();
-        let out = safe_runtime_path(dest_root, &name)?;
+        let out = dest_root.join(safe_relative_path(&name)?);
         if entry.is_dir() {
             std::fs::create_dir_all(&out).ok();
             continue;
@@ -808,7 +700,7 @@ fn extract_tar_gz(package: &Path, dest_root: &Path) -> Result<(), String> {
         while let Some(stripped) = name.strip_prefix("./") {
             name = stripped.to_string();
         }
-        let out = safe_runtime_path(dest_root, &name)?;
+        let out = dest_root.join(safe_relative_path(&name)?);
         if entry.header().entry_type().is_dir() {
             std::fs::create_dir_all(&out).ok();
             continue;
@@ -955,8 +847,6 @@ fn delta_callback<'a>(on_bytes: Option<&'a (dyn Fn(u64) + Send + Sync)>) -> impl
 /// Azul zip 包可达数百 MB，整文件读内存只为算哈希不划算。任一读取失败返回空串
 /// （fail-closed：与期望值必不相等 → 校验失败，语义同旧整读实现）。
 fn file_sha256(path: &Path) -> String {
-    use sha2::Digest;
-    use std::io::Read;
     let Ok(file) = std::fs::File::open(path) else {
         return String::new();
     };
@@ -989,18 +879,6 @@ mod tests {
         assert_eq!(component_for_major(25), Some("java-runtime-epsilon"));
         assert_eq!(component_for_major(11), None);
         assert_eq!(component_for_major(9), None);
-    }
-
-    #[test]
-    fn safe_runtime_path_rejects_traversal() {
-        let root = Path::new("C:/minecraft/runtime");
-        assert!(safe_runtime_path(root, "bin/java.exe").is_ok());
-        assert!(safe_runtime_path(root, "legal/README.txt").is_ok());
-        assert!(safe_runtime_path(root, "../evil.exe").is_err());
-        assert!(safe_runtime_path(root, "bin/../../evil").is_err());
-        assert!(safe_runtime_path(root, "/abs/path").is_err());
-        assert!(safe_runtime_path(root, "\\abs\\path").is_err());
-        assert!(safe_runtime_path(root, "").is_err());
     }
 
     /// 三态配置对应正确回退链长度与类型（顺序敏感：错误按链序拼接）。

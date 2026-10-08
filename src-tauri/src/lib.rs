@@ -1,8 +1,11 @@
+#![deny(clippy::undocumented_unsafe_blocks)]
+
 mod auth;
 mod commands;
 pub mod config;
 pub mod constants;
 pub mod downloader;
+pub mod game;
 mod events;
 mod jdk;
 pub mod launcher;
@@ -18,7 +21,7 @@ use commands::account::{
     fetch_default_skin, get_external_accounts,
     switch_external_role, refresh_external_account,
     switch_external_account, get_ms_account, get_ms_accounts,
-    get_third_party_config, refresh_ms_account, remove_external_account, remove_ms_account,
+    ensure_ms_account, get_third_party_config, refresh_ms_account, remove_external_account, remove_ms_account,
     save_skin, save_third_party_config, set_active_cape, start_ms_login, switch_ms_account,
     upload_skin_file,
 };
@@ -51,6 +54,9 @@ use commands::online::{
     save_online_config,
 };
 use commands::server_status::ping_server;
+use commands::skins::{
+    list_local_skins, read_local_skin, remove_local_skin, save_local_skin,
+};
 use commands::task::{
     cancel_task, decide_waiting_task, dismiss_interrupted_task, download_files,
     download_single_file, install_modpack, list_interrupted_tasks, pause_task, resume_task,
@@ -133,7 +139,7 @@ pub fn run() {
             get_community_versions,
             get_community_details,
             start_download,
-            download_files,
+            download_files,
             download_single_file,
             install_modpack,
             cancel_task,
@@ -170,6 +176,7 @@ pub fn run() {
             get_ms_accounts,
             remove_ms_account,
             switch_ms_account,
+            ensure_ms_account,
             refresh_ms_account,
             fetch_account_skin,
             fetch_account_skin_profile,
@@ -182,6 +189,10 @@ pub fn run() {
             fetch_capes,
             set_active_cape,
             disable_cape,
+            list_local_skins,
+            save_local_skin,
+            remove_local_skin,
+            read_local_skin,
             online_start_host,
             online_join,
             online_stop,

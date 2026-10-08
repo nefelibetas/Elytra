@@ -44,6 +44,13 @@ async function copyWaitingError() {
   }
 }
 
+/** 目标是否处于可编辑上下文（输入框 / 文本域 / contenteditable）。 */
+function isEditableTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el || typeof el.tagName !== "string") return false;
+  return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable;
+}
+
 function onKeyDown(e: KeyboardEvent) {
   // 禁止打开开发者工具：F12 / Ctrl+Shift+I/J/C / Ctrl+U
   if (
@@ -59,12 +66,21 @@ function onKeyDown(e: KeyboardEvent) {
     e.preventDefault();
     return;
   }
+  // 输入框/文本域内放行原生编辑快捷键（全选/复制/剪切/粘贴/撤销/重做）：
+  // 这些都是元素自身的编辑行为，全局拦截会连带废掉输入框里的 Ctrl+A 等
+  if (
+    isEditableTarget(e.target) &&
+    e.ctrlKey &&
+    ["A", "C", "X", "V", "Z", "Y"].includes(e.key.toUpperCase())
+  ) {
+    return;
+  }
   // 禁止 Tab 切换控件焦点
   if (e.key === "Tab") {
     e.preventDefault();
     return;
   }
-  // 禁止全选（Ctrl+A）
+  // 禁止全选（Ctrl+A；输入上下文已在上面放行）
   if (e.ctrlKey && e.key.toLowerCase() === "a") {
     e.preventDefault();
     return;
@@ -217,11 +233,22 @@ input, textarea {
   opacity: 1;
 }
 
+/* 主题 token 事实源（CSS 侧）。以下 8 个核心色板键与 src/store/theme.ts 的
+   builtinVars() 逐键重复（JS 侧供自定义主题编辑器/预览作内置起点）：
+   --color-brand / --text-primary / --text-secondary / --text-tertiary /
+   --surface-page / --surface-hover / --border-default / --border-strong。
+   :root 对应 builtinVars("grass")，[data-theme="end"|"nether"|"ice"] 对应同名 id；
+   两处任一改动必须同步另一处（消除重复会引入首屏 FOUC，故保留双写 +
+   本交叉引用）。 */
 :root {
   --titlebar-h: 48px;
   /* 标题栏前景：标题栏铺品牌渐变，白字与半透明白叠层独立于正文语义色 */
   --titlebar-fg: #FFFFFF;
   --titlebar-fg-dim: rgba(255, 255, 255, 0.7);
+  /* 标题栏交互态底色：color-mix() 在低版本 WebKitGTK 不可用，
+     故给出等价 token 作为前序声明（双声明降级，与 ResourceDetail 的写法一致） */
+  --titlebar-hover: rgba(255, 255, 255, 0.16);
+  --titlebar-active: rgba(255, 255, 255, 0.22);
   /* 浮层层级常量：FAB < 模态弹窗 < 内容/边缘加深 < 右键菜单 < toast < tooltip。
      组件内一律引用变量，禁止裸写数值（曾经 waiting 弹窗 z=200 被菜单盖住的根因）。 */
   --z-fab: 900;
@@ -232,7 +259,9 @@ input, textarea {
   /* 滑块填充比例（range 进度条）：组件经 style="--range-pct: N%" 内联注入覆盖，
      此处默认值仅为静态解析兜底（settings-shared.css 的 var() 引用）。 */
   --range-pct: 0%;
-  font-family: Inter, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "Noto Sans SC", sans-serif;
+  /* 等宽字体栈：生成器命令块 / MOTD 预览等代码等宽文本使用 */
+  --font-mono: "Cascadia Mono", Consolas, "Courier New", monospace;
+  font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "Noto Sans SC", sans-serif;
   font-size: 14px;
   line-height: 1.5;
   font-weight: 400;
@@ -286,6 +315,7 @@ input, textarea {
   --ld-forge: #DC2626;
   --ld-neoforge: #16A34A;
   --ld-quilt: #7C3AED;
+  --ld-optifine: #0284C7;
 
   /* 平台品牌徽章色（Modrinth / CurseForge，平台官方色，不随主题变化） */
   --color-modrinth: #1bd96a;
@@ -313,7 +343,8 @@ input, textarea {
   --edge-shade: rgba(6, 78, 59, 0.08);
 }
 
-/* ===== 主题 End（末影紫）：取自 Minecraft 末地 ===== */
+/* ===== 主题 End（末影紫）：取自 Minecraft 末地 =====
+   键与色值须与 src/store/theme.ts builtinVars("end") 同步（两处任一改动需同步另一处） */
 [data-theme="end"] {
   --color-brand: #7C3AED;
   --color-brand-dark: #6D28D9;
@@ -336,6 +367,7 @@ input, textarea {
   --shadow-md: 0 2px 8px rgba(36, 27, 69, 0.08);
   --shadow-lg: 0 4px 16px rgba(36, 27, 69, 0.10);
 
+  --font-mono: "Cascadia Mono", Consolas, "Courier New", monospace;
   --scrollbar-thumb: #D2CBEA;
 
   --edge-line: rgba(76, 29, 149, 0.18);
@@ -345,9 +377,11 @@ input, textarea {
   --ld-forge: #E11D48;
   --ld-neoforge: #059669;
   --ld-quilt: #A855F7;
+  --ld-optifine: #0891B2;
 }
 
-/* ===== 主题 Nether（下界橙/烈焰）：取自 Minecraft 下界 ===== */
+/* ===== 主题 Nether（下界橙/烈焰）：取自 Minecraft 下界 =====
+   键与色值须与 src/store/theme.ts builtinVars("nether") 同步（两处任一改动需同步另一处） */
 [data-theme="nether"] {
   --color-brand: #EA580C;
   --color-brand-dark: #C2410C;
@@ -370,6 +404,7 @@ input, textarea {
   --shadow-md: 0 2px 8px rgba(41, 37, 36, 0.08);
   --shadow-lg: 0 4px 16px rgba(41, 37, 36, 0.10);
 
+  --font-mono: "Cascadia Mono", Consolas, "Courier New", monospace;
   --scrollbar-thumb: #DED2C8;
 
   --edge-line: rgba(124, 45, 18, 0.18);
@@ -379,9 +414,11 @@ input, textarea {
   --ld-forge: #DC2626;
   --ld-neoforge: #65A30D;
   --ld-quilt: #C026D3;
+  --ld-optifine: #0369A1;
 }
 
-/* ===== 主题 Ice（冰霜青）：取自 Minecraft 冰霜/钻石 ===== */
+/* ===== 主题 Ice（冰霜青）：取自 Minecraft 冰霜/钻石 =====
+   键与色值须与 src/store/theme.ts builtinVars("ice") 同步（两处任一改动需同步另一处） */
 [data-theme="ice"] {
   --color-brand: #0EA5E9;
   --color-brand-dark: #0284C7;
@@ -404,6 +441,7 @@ input, textarea {
   --shadow-md: 0 2px 8px rgba(15, 23, 42, 0.08);
   --shadow-lg: 0 4px 16px rgba(15, 23, 42, 0.10);
 
+  --font-mono: "Cascadia Mono", Consolas, "Courier New", monospace;
   --scrollbar-thumb: #C6D6E0;
 
   --edge-line: rgba(12, 74, 110, 0.18);
@@ -413,6 +451,7 @@ input, textarea {
   --ld-forge: #F43F5E;
   --ld-neoforge: #10B981;
   --ld-quilt: #8B5CF6;
+  --ld-optifine: #1D4ED8;
 }
 
 * {
