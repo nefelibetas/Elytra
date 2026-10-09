@@ -56,7 +56,8 @@ use commands::online::{
 };
 use commands::server_status::ping_server;
 use commands::skins::{
-    list_local_skins, read_local_skin, remove_local_skin, save_local_skin,
+    export_skin_png, import_skin_png, list_local_skins, read_local_skin, remove_local_skin,
+    save_local_skin,
 };
 use commands::task::{
     cancel_task, decide_waiting_task, dismiss_interrupted_task, download_files,
@@ -199,6 +200,8 @@ pub fn run() {
             save_local_skin,
             remove_local_skin,
             read_local_skin,
+            export_skin_png,
+            import_skin_png,
             online_start_host,
             online_join,
             online_stop,

@@ -39,9 +39,9 @@ Elytra Launcher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前�
 | `src-tauri/src/persist/` | `config.rs`（TOML section 读写 + 全局锁）、`store.rs`（低层文件 IO + 路径）、`secrets.rs`（密钥加密：DPAPI / Keychain / Secret Service + ChaCha20-Poly1305） |
 | `src-tauri/src/launcher/` | `args.rs`（命令构建）/ `env.rs`（环境准备）/ `process.rs`（进程生命周期与监听）/ `script.rs`（BAT/SH 渲染）/ `skin.rs`（离线皮肤）/ `platform.rs`（平台调节）/ `memory.rs` / `model.rs` |
 | `src-tauri/src/commands/` | 17 个命令模块（123 命令）：account(27) / community(3) / downloader(5) / gamedirs(11) / jdk(4) / launch(5) / launch_options(3) / launch_script(1) / loader(6) / offline_account(5) / online(6) / server_status(1) / skins(4，本地皮肤衣柜) / task(14) / tooldl(9，工具箱下载器) / version(15) / version_icon(4) —— 薄胶水，逻辑在各领域层 |
-| `src/pages/` | Launch / Download（资源中心）/ **DownloadDetail（下载任务中心，顶级路由）** / ResourceDetail（资源详情+依赖链）/ Settings / VersionSelect / VersionSetup（容器化，业务在 store/组件）/ Tools（生成器 + 多线程下载器 + 联机等工具集）/ CustomThemeEditor / SkinStudio（皮肤衣柜：3D 预览 + 皮肤/披风/本地衣柜，**仅正版账号可进**） |
-| `src/store/` | 26 个模块级 reactive/ref 单例：`download.ts`（dlState 任务状态机 + `ensureListen` 幂等 + terminalTaskIds 防幽灵）、`communitySearch.ts`/`categorySearch.ts`（聚合/分页/四分类工厂）、`resourceDetail.ts`、`versionDownload.ts`、`versionDetail.ts`、`launch.ts`、`accountUi.ts`、`auth.ts`、`avatar.ts`（FNV-1a 头像）、`alert.ts`、`theme.ts`（四主题）、`nav.ts`、`downloadTab.ts`、`settingsTab.ts`、`selectedVersion.ts`、`jdkConfig.ts`、`launchOptions.ts`、`downloaderConfig.ts`、`gameDirs.ts`、`online.ts`（联机状态机）、`memory.ts`、`versionIcon.ts`、`events.ts`（镜像 Rust `events.rs`）、`skinStudio.ts`（皮肤衣柜：3D 全身预览帧 + 官方皮肤/披风 + 本地衣柜）、`toolDownload.ts`（工具箱多线程下载器：任务列表 + 配置 + 操作命令，与 dlState 完全隔离） |
-| `src/component/` | 按域分目录：`common/`（TitleBar / AlertDialog / DialogModal / ScrollTopFab / IconImage / EmptyState / ErrorState / CheckToggle / DropSelect / LoadingSpinner / StepDot / MenuPopover）、`download/`、`launch/`、`settings/`、`tools/`（Give/Potion/Firework/Villager/Motd 生成器 + ModsEditor + ServerStatus/Online 工具 + **DownloadTool（多线程下载器）**）、`version/`、`version-setup/` —— 页面组件直接 import store，无 props 链 |
+| `src/pages/` | Launch / Download（资源中心）/ **DownloadDetail（下载任务中心，顶级路由）** / ResourceDetail（资源详情+依赖链）/ Settings / VersionSelect / VersionSetup（容器化，业务在 store/组件）/ Tools（生成器 + 皮肤绘画器 + 多线程下载器 + 联机等工具集）/ CustomThemeEditor / SkinStudio（皮肤衣柜：3D 预览 + 皮肤/披风/本地衣柜，**仅正版账号可进**） |
+| `src/store/` | 27 个模块级 reactive/ref 单例：`download.ts`（dlState 任务状态机 + `ensureListen` 幂等 + terminalTaskIds 防幽灵）、`communitySearch.ts`/`categorySearch.ts`（聚合/分页/四分类工厂）、`resourceDetail.ts`、`versionDownload.ts`、`versionDetail.ts`、`launch.ts`、`accountUi.ts`、`auth.ts`、`avatar.ts`（FNV-1a 头像）、`alert.ts`、`theme.ts`（四主题）、`nav.ts`、`downloadTab.ts`、`settingsTab.ts`、`selectedVersion.ts`、`jdkConfig.ts`、`launchOptions.ts`、`downloaderConfig.ts`、`gameDirs.ts`、`online.ts`（联机状态机）、`memory.ts`、`versionIcon.ts`、`events.ts`（镜像 Rust `events.rs`）、`skinStudio.ts`（皮肤衣柜：3D 全身预览帧 + 官方皮肤/披风 + 本地衣柜）。**鞘翅预览当前已禁用**：UI 入口（动作栏的羽毛开关 / `elytraPreview` 状态 / `toggleElytra`）已整体移除，等对照资料齐了再开；渲染器侧 `skinRender.buildElytra` 与 `drawFullCanvas` 的 `elytra` 选项保留（暂无 UI 调用）。重开时务必注意：**取披风纹理的 `(22,0)-(46,22)`** —— Mojang 披风纹理是双用途的，左半 `(0,0)` 是披风展开、右半就是鞘翅模型 `texOffs(22,0)` 的图案（实测迁移者/用户披风右半都带独立的鞘翅图案），别改回取披风展开区；**姿态是收拢的**（`rotation.x` 与 `rotation.z` 各 15°，两片近乎垂直、在背后叠成壳状，对齐 skinview3d 的 `ElytraObject.resetJoints`），不是滑翔态的水平展开 —— 张开角一大会把按竖直朝向画的图案整体拧 90°；翅膀贴图只画朝外一面，故该盒子 `noCull`）、`toolDownload.ts`（工具箱多线程下载器：任务列表 + 配置 + 操作命令，与 dlState 完全隔离）、`skinEditor.ts`（皮肤绘画器：64×64 像素缓冲 + 工具 / 撤销栈 / 部位色表，缓冲**刻意非响应式**，视图只订阅 `revision`） |
+| `src/component/` | 按域分目录：`common/`（TitleBar / AlertDialog / DialogModal / ScrollTopFab / IconImage / EmptyState / ErrorState / CheckToggle / DropSelect / LoadingSpinner / StepDot / MenuPopover）、`download/`、`launch/`、`settings/`、`tools/`（Give/Potion/Firework/Villager/Motd 生成器 + ModsEditor + ServerStatus/Online 工具 + **DownloadTool（多线程下载器）** + **SkinPainterTool（皮肤绘画器：展开图逐像素 + 3D 直绘双模式，3D 模式下预览撑满中栏、左键落笔 / 抓手或右键拖动旋转、内层外层手动切换；展开图每部位独立配色标注；预览的透明像素垫棋盘底纹，且只垫第一层 —— 第二层空着时要透出内层，垫了就整块盖住）**）、`version/`、`version-setup/` —— 页面组件直接 import store，无 props 链 |
 | `src/utils/` | `error.ts`（**`errMsg()` 取错误首行**，toast/内联错误用）、`format.ts`（fmtCount/fmtSize/fmtModDate/fmtDateTime/fmtSpeed/fmtEta…）、`versionClassify.ts`（目录名 `{mc}-{loader}-{ver}` 解析）、`versionMeta.ts`、`give.ts`/`motd.ts`/`nbt.ts`（生成器算法）、`toast.ts`、`tooltip.ts`、`useConfigSection.ts`、`useSelectable.ts`、`useConfirmDelete.ts` |
 
 ## Development Commands
@@ -115,7 +115,7 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 | `src-tauri/src/online/session.rs` | easytier 会话封装：no_tun+smoltcp+KCP 数据面、bind_device=false、enable_kcp_proxy=true（KCP 数据面首选，缺则 smoltcp 传大数中断） |
 | `src-tauri/src/online/mc_advertise.rs` | guest 端 MC 局域网广播模拟（224.0.2.60:4445，绕过 MC 26.2 离线会话校验） |
 | `src-tauri/src/util.rs` | 跨域纯函数：`config_dir()`/`safe_relative_path`/`sha1_sub_dir`/`unique_child_dir`/`fnv1a64`/`is_simple_name`/`infer_loader_from_json`… |
-| `src-tauri/tauri.conf.json` | 窗口 **840×540**、无边框透明、`beforeDevCommand: pnpm dev`、devUrl :1420 |
+| `src-tauri/tauri.conf.json` | 窗口 **1008×648**（840×540 的 1.2 倍）、无边框透明、`beforeDevCommand: pnpm dev`、devUrl :1420 |
 | `src-tauri/capabilities/default.json` | main 窗口权限：core:default + window 控制子集 + opener + dialog |
 | `src/store/download.ts` | 下载任务状态机（事件驱动核心） |
 
@@ -123,7 +123,7 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 
 - **包管理器必须 pnpm**：`beforeDevCommand` 硬编码 `pnpm dev`；`pnpm-lock.yaml` 被 gitignore（依赖版本不锁定）
 - **工具链很新**：vite 8、typescript 6、vue-tsc 3、vue-router 5——新增依赖前确认兼容（@lucide/vue 图标库已引入）
-- **窗口**：840×540、`decorations:false` + `transparent:true` + `resizable:false`——前端自绘 TitleBar（`startDragging`）
+- **窗口**：1008×648（840×540 的 1.2 倍）、`decorations:false` + `transparent:true` + `resizable:false`——前端自绘 TitleBar（`startDragging`）
 - **Rust 变更需重启 `pnpm tauri dev`**（vite `watch.ignored` 忽略 src-tauri）；前端改动 HMR 即时生效
 - **前端大量改动后建议重启 dev**：跨多个 store/模块的批量改动、或触发依赖预构建失效时（vite 日志出现 `Re-optimizing dependencies because vite config has changed`），HMR 可能停在**半旧半新**状态——表现为「组件逻辑更新了但 store 还是旧的」这类诡异现象（实测过一次：资源详情页左上角返回键点了完全没反应，重启 dev 即恢复）。**排查前端怪状前，先重启一次 dev 排除这个因素**
 - **reqwest 0.13 无 `.form()`**：表单需手工 urlencode（auth 里 `form_body`）

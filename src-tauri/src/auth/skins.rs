@@ -129,6 +129,33 @@ pub fn read(id: &str) -> Result<String, String> {
     Ok(util::to_base64(&bytes))
 }
 
+/// 导出 PNG 到用户选定路径（绘画器的「导出」）。
+/// 这条路径会写到任意位置，故把扩展名作为唯一形态约束：必须是 `.png`。
+pub fn export_png(path: &str, b64: &str) -> Result<(), String> {
+    let target = std::path::Path::new(path.trim());
+    let is_png = target
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("png"));
+    if !is_png {
+        return Err(format!("请用 .png 作为文件名\n{path}"));
+    }
+    let bytes = decode_b64(b64)?;
+    ensure_png(&bytes)?;
+    std::fs::write(target, bytes).map_err(|e| format!("写入文件失败\n{e}"))
+}
+
+/// 读取任意路径的皮肤图片（绘画器的「导入」），返回 base64。
+/// 用 `is_supported_image` 而非 `ensure_png`：编辑器把图片解码成像素，
+/// 用户手边的 png/jpg 都能用。
+pub fn import_png(path: &str) -> Result<String, String> {
+    let bytes = std::fs::read(path.trim()).map_err(|e| format!("读取文件失败\n{e}"))?;
+    if !util::is_supported_image(&bytes) {
+        return Err(format!("不是受支持的图片格式\n{path}"));
+    }
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+}
+
 /// 写 PNG + 索引（save 的尾段）。
 fn save_bytes(
     name: &str,

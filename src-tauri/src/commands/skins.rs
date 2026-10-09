@@ -32,3 +32,15 @@ pub fn remove_local_skin(id: String) -> Result<Vec<LocalSkinView>, String> {
 pub fn read_local_skin(id: String) -> Result<String, String> {
     skins::read(&id)
 }
+
+/// 导出皮肤 PNG 到选定路径（绘画器导出；仅接受 .png）。
+#[tauri::command]
+pub fn export_skin_png(path: String, b64: String) -> Result<(), String> {
+    skins::export_png(&path, &b64)
+}
+
+/// 导入指定路径的皮肤图片（绘画器导入），返回 base64。
+#[tauri::command]
+pub fn import_skin_png(path: String) -> Result<String, String> {
+    skins::import_png(&path)
+}

@@ -1,0 +1,1350 @@
+<script setup lang="ts">
+// 皮肤绘画器（工具箱功能）：在 64×64 展开图上从零画皮肤，右侧实时等距 3D 预览。
+//
+// 与「衣柜」无关：不要求正版账号，离线 / 第三方用户同样可用。成果以 PNG 图片
+// 导入 / 导出（`export_skin_png` / `import_skin_png`），不写衣柜索引。
+//
+// 像素缓冲在 store/skinEditor（那里刻意非响应式），本组件只负责视口变换、
+// 指针交互与重绘调度。
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+import {
+  Brush, Download, Eraser, Frame, Grid3x3, Hand, Maximize, PaintBucket, Pipette, Redo2,
+  Undo2, Upload, ZoomIn, ZoomOut,
+} from "@lucide/vue";
+import { invoke } from "@tauri-apps/api/core";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import {
+  DEFAULT_VIEW_PITCH, DEFAULT_VIEW_YAW, drawFullCanvas,
+} from "../../store/skinRender";
+import type { Animation, PickFace } from "../../store/skinRender";
+import {
+  EDITOR_REGIONS, SKIN_SIZE, beginStroke, editorPixels, endStroke, exportEditorPng,
+  floodFillAt, loadImageIntoEditor, newEditorCanvas, paintAt, pickColorAt, redo, regionKeyAt,
+  skinEditor, undo,
+} from "../../store/skinEditor";
+import { showToast } from "../../utils/toast";
+import { errMsg } from "../../utils/error";
+import DropSelect from "../common/DropSelect.vue";
+
+/** 工具定义（顺序即左侧工具栏顺序）。 */
+const TOOLS = [
+  { value: "brush", label: "画笔", icon: Brush },
+  { value: "eraser", label: "橡皮", icon: Eraser },
+  { value: "fill", label: "油漆桶", icon: PaintBucket },
+  { value: "picker", label: "吸管", icon: Pipette },
+  { value: "hand", label: "抓手（平移画布）", icon: Hand },
+] as const;
+
+/** 手臂模型选项（slim 的手臂贴图只有 3 列宽，选错会让手臂采样错位）。 */
+const MODEL_OPTIONS = [
+  { value: "CLASSIC", label: "经典", desc: "Steve · 4 px 宽手臂" },
+  { value: "SLIM", label: "纤细", desc: "Alex · 3 px 窄手臂" },
+] as const;
+
+/** 笔刷边长选项。 */
+const SIZE_OPTIONS = [
+  { value: "1", label: "1 px" },
+  { value: "2", label: "2 px" },
+  { value: "3", label: "3 px" },
+];
+
+/** 预览动作选项（与衣柜页同一套语义）。 */
+const ANIM_OPTIONS = [
+  { value: "none", label: "静止" },
+  { value: "idle", label: "待机" },
+  { value: "walk", label: "行走" },
+] as const;
+
+/** 编辑模式选项。 */
+const MODE_OPTIONS = [
+  { value: "2d", label: "展开图" },
+  { value: "3d", label: "3D 直绘" },
+] as const;
+
+/** 3D 直绘的图层：MC 1.8+ 的双层皮肤结构，手动指定落笔画哪一层。
+ *  不做「透明处自动穿透」—— 那样想加厚外层时永远画不到外层。 */
+const LAYER_OPTIONS = [
+  { value: "0", label: "内层" },
+  { value: "1", label: "外层" },
+] as const;
+
+/** 画布缩放范围（每皮肤像素占多少 CSS px）。上限给到 96：单像素铺满屏才能做细节。 */
+const MIN_SCALE = 2;
+const MAX_SCALE = 96;
+/** 3D 预览的缩放范围。3D 直绘时预览就是主画面，上限要够大才点得准单个像素。 */
+const PREVIEW_ZOOM_MIN = 0.4;
+const PREVIEW_ZOOM_MAX = 4;
+/** 预览俯仰限幅（相对默认视角，避免翻过头）。 */
+const PREVIEW_PITCH_RANGE = 40;
+/** 部位标签只在放大到一定程度后绘制（缩太小时标签会挤成一团糊掉）。 */
+const LABEL_MIN_SCALE = 6;
+
+const viewport = ref<HTMLElement | null>(null);
+const paintCanvas = ref<HTMLCanvasElement | null>(null);
+const previewBox = ref<HTMLElement | null>(null);
+const previewCanvas = ref<HTMLCanvasElement | null>(null);
+/** 光标覆盖层：与预览同尺寸叠在上面，只画「即将落笔的那个像素」，不参与模型重绘。 */
+const cursorCanvas = ref<HTMLCanvasElement | null>(null);
+/** 指针是否在画布区域内（空格临时抓手只在此范围内生效）。 */
+const inCanvas = ref(false);
+/** 编辑模式：2d = 展开图逐像素；3d = 在模型上直接画。 */
+const mode = ref<"2d" | "3d">("2d");
+/** 3D 直绘的目标图层：0 = 内层（本体），1 = 第二层（帽子/外套/袖腿）。 */
+const paintLayer = ref<0 | 1>(0);
+
+/** 画布视口变换：scale = 每皮肤像素的 CSS 尺寸，x/y = 画布左上角在视口内的位置。 */
+const view = reactive({ scale: 8, x: 0, y: 0 });
+/** 3D 预览相机（独立于衣柜的预览状态）。 */
+const preview = reactive({
+  yaw: DEFAULT_VIEW_YAW,
+  pitch: DEFAULT_VIEW_PITCH,
+  zoom: 1,
+  animation: "none" as Animation,
+});
+
+let painting = false;
+let panning = false;
+let lastPixel: { x: number; y: number } | null = null;
+let panFrom = { x: 0, y: 0, vx: 0, vy: 0 };
+let frame = 0;
+let previewFrame = 0;
+/** 64×64 中转画布（主视图放大与预览共用，避免每帧新建）。 */
+let source: HTMLCanvasElement | null = null;
+/** 预览专用贴图（透明像素垫棋盘格），与 `source` 分开：展开图不该看到这层底纹。 */
+let previewSource: HTMLCanvasElement | null = null;
+/** 棋盘格贴图（两个中性灰交替，每皮肤像素一格），只生成一次。 */
+let checkerTex: HTMLCanvasElement | null = null;
+let checkerPattern: CanvasPattern | null = null;
+/** 最近一次预览绘制的可拾取面（按绘制顺序：远 → 近），3D 直绘靠它做屏幕 → 贴图反查。 */
+let previewHits: PickFace[] = [];
+/** 指针最近一次的画布设备像素坐标：相机变化后按同一点重算光标。 */
+let lastPointer: { x: number; y: number } | null = null;
+/** 当前悬停命中的贴图像素（null = 未命中或不在 3D 直绘）。 */
+let hoverPick: { face: PickFace; x: number; y: number } | null = null;
+/** 3D 直绘笔画进行中。 */
+let stroking = false;
+/** 视口隐藏期间被请求的「适应窗口」（见 fitToViewport）。 */
+let pendingFit = false;
+/** 笔画上一个命中的面（同面内连线；跨面则直接落新点）。 */
+let strokeFace: PickFace | null = null;
+let strokeLast: { x: number; y: number } | null = null;
+
+/** 把当前像素同步进中转画布并返回它。 */
+function syncSource(): HTMLCanvasElement | null {
+  const px = editorPixels();
+  if (!px) return null;
+  if (!source) {
+    source = document.createElement("canvas");
+    source.width = SKIN_SIZE;
+    source.height = SKIN_SIZE;
+  }
+  const ctx = source.getContext("2d");
+  if (!ctx) return null;
+  ctx.putImageData(new ImageData(new Uint8ClampedArray(px), SKIN_SIZE, SKIN_SIZE), 0, 0);
+  return source;
+}
+
+/** 透明区棋盘衬底（2×2 图案，随视口变换缩放 → 每个皮肤像素恰好一格）。 */
+function checkerOf(ctx: CanvasRenderingContext2D): CanvasPattern | null {
+  if (checkerPattern) return checkerPattern;
+  const tile = document.createElement("canvas");
+  tile.width = 2;
+  tile.height = 2;
+  const g = tile.getContext("2d");
+  if (!g) return null;
+  g.fillStyle = "rgba(128, 138, 152, 0.22)";
+  g.fillRect(0, 0, 1, 1);
+  g.fillRect(1, 1, 1, 1);
+  checkerPattern = ctx.createPattern(tile, "repeat");
+  return checkerPattern;
+}
+
+/** 视口尺寸变化时把画布内部分辨率对齐（含设备像素比）。 */
+function fitCanvas(el: HTMLCanvasElement, box: HTMLElement): CanvasRenderingContext2D | null {
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(box.clientWidth * dpr));
+  const h = Math.max(1, Math.round(box.clientHeight * dpr));
+  if (el.width !== w || el.height !== h) {
+    el.width = w;
+    el.height = h;
+  }
+  return el.getContext("2d");
+}
+
+/** 重绘画布视口：棋盘衬底 → 像素 → 网格 → 部位标注（全部走视口变换）。 */
+function drawEditor() {
+  const el = paintCanvas.value;
+  const box = viewport.value;
+  const src = syncSource();
+  if (!el || !box || !src) return;
+  const ctx = fitCanvas(el, box);
+  if (!ctx) return;
+  const dpr = window.devicePixelRatio || 1;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, el.width, el.height);
+  ctx.imageSmoothingEnabled = false;
+
+  // 视口变换：后续绘制都用皮肤像素坐标（0..64）
+  ctx.setTransform(view.scale * dpr, 0, 0, view.scale * dpr, view.x * dpr, view.y * dpr);
+
+  const pattern = checkerOf(ctx);
+  if (pattern) {
+    ctx.fillStyle = pattern;
+    ctx.fillRect(0, 0, SKIN_SIZE, SKIN_SIZE);
+  }
+  ctx.drawImage(src, 0, 0);
+
+  // 网格 / 标注：线宽按缩放反算，否则放大后线粗得盖住像素
+  const lw = 1 / view.scale;
+  if (skinEditor.showGrid) {
+    ctx.strokeStyle = "rgba(128, 138, 152, 0.5)";
+    ctx.lineWidth = lw;
+    ctx.beginPath();
+    for (let i = 8; i < SKIN_SIZE; i += 8) {
+      ctx.moveTo(i, 0);
+      ctx.lineTo(i, SKIN_SIZE);
+      ctx.moveTo(0, i);
+      ctx.lineTo(SKIN_SIZE, i);
+    }
+    ctx.stroke();
+  }
+  if (skinEditor.showRegions) {
+    // 每块一色（内层深 / 第二层浅）：十几个矩形同色时，相邻两块的分界线认不出归属
+    const labelPx = 10 / view.scale;
+    ctx.font = `600 ${labelPx}px "Microsoft YaHei", "PingFang SC", sans-serif`;
+    ctx.textBaseline = "top";
+    for (const r of EDITOR_REGIONS) {
+      const active = skinEditor.hoverKey === r.key;
+      // 悬停块：淡填充 + 加粗描边，指针在哪一块一目了然
+      ctx.fillStyle = active ? `${r.color}2e` : `${r.color}0a`;
+      ctx.fillRect(r.x, r.y, r.w, r.h);
+      ctx.strokeStyle = r.color;
+      ctx.lineWidth = active ? lw * 2.5 : lw;
+      // 描边内缩半个线宽：贴边描会有一半画在矩形外，裁到邻居身上
+      ctx.strokeRect(r.x + lw / 2, r.y + lw / 2, r.w - lw, r.h - lw);
+      if (view.scale >= LABEL_MIN_SCALE) {
+        // 标签垫同色底：直接压在皮肤图案上读不出来
+        const tw = ctx.measureText(r.label).width;
+        ctx.fillStyle = `${r.color}dd`;
+        ctx.fillRect(r.x + lw, r.y + lw, tw + labelPx * 0.6, labelPx * 1.3);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(r.label, r.x + lw + labelPx * 0.3, r.y + lw + labelPx * 0.15);
+      }
+    }
+  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+}
+
+/** 棋盘格贴图：两个中性灰交替、每皮肤像素一格。
+ *  与主题无关（皮肤编辑器的惯例），固定灰阶在深浅主题下都不刺眼。 */
+function checkerTexture(): HTMLCanvasElement {
+  if (checkerTex) return checkerTex;
+  const c = document.createElement("canvas");
+  c.width = SKIN_SIZE;
+  c.height = SKIN_SIZE;
+  const ctx = c.getContext("2d");
+  if (ctx) {
+    const img = ctx.createImageData(SKIN_SIZE, SKIN_SIZE);
+    const light = [204, 209, 217];
+    const dark = [182, 188, 198];
+    for (let y = 0; y < SKIN_SIZE; y++) {
+      for (let x = 0; x < SKIN_SIZE; x++) {
+        const rgb = ((x + y) & 1) === 0 ? light : dark;
+        const i = (y * SKIN_SIZE + x) * 4;
+        img.data[i] = rgb[0] ?? 0;
+        img.data[i + 1] = rgb[1] ?? 0;
+        img.data[i + 2] = rgb[2] ?? 0;
+        img.data[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+  checkerTex = c;
+  return c;
+}
+
+/** 预览用贴图：空白像素垫棋盘，否则空皮肤在 3D 里完全看不见模型（渲染器直接贴纹理）。
+ *
+ *  只垫**第一层**（本体）：第二层空着时若也垫，那块不透明棋盘会整块盖住内层，
+ *  看着像「第二层已经画过了」，比看不见更糟 —— 第二层空着就该透出内层。
+ *
+ *  皮肤用 source-over 叠上去即可：alpha=0 的像素不覆盖目标（棋盘保留），
+ *  半透明像素与棋盘正常混合。 */
+function syncPreviewSource(): HTMLCanvasElement | null {
+  const src = syncSource();
+  if (!src) return null;
+  if (!previewSource) {
+    previewSource = document.createElement("canvas");
+    previewSource.width = SKIN_SIZE;
+    previewSource.height = SKIN_SIZE;
+  }
+  const ctx = previewSource.getContext("2d");
+  if (!ctx) return null;
+  ctx.clearRect(0, 0, SKIN_SIZE, SKIN_SIZE);
+  ctx.save();
+  ctx.beginPath();
+  // 一次 clip 覆盖全部第一层矩形（十字形角落不属于任何面，垫了也不会被采样）
+  for (const r of EDITOR_REGIONS) {
+    if (r.layer === 0) ctx.rect(r.x, r.y, r.w, r.h);
+  }
+  ctx.clip();
+  ctx.drawImage(checkerTexture(), 0, 0);
+  ctx.restore();
+  ctx.drawImage(src, 0, 0);
+  return previewSource;
+}
+
+/** 重绘 3D 预览（相机由 preview 状态驱动），并回填可拾取面。 */
+function drawPreview() {
+  const el = previewCanvas.value;
+  const src = syncPreviewSource();
+  if (!el || !src) return;
+  const box = previewBox.value;
+  if (!fitCanvas(el, box ?? el)) return;
+  previewHits = [];
+  drawFullCanvas(el, src, {
+    yaw: preview.yaw,
+    pitch: preview.pitch,
+    slim: skinEditor.variant === "SLIM",
+    // 旧版 64×32 皮肤载入到 64×64 画布后下半是空的：不按 legacy 走会用不存在的左臂/左腿 UV
+    legacy: skinEditor.sourceHeight > 0 && skinEditor.sourceHeight < 64,
+    animation: preview.animation,
+    phase: (performance.now() - animStart) / 1000,
+    // 预览框独占高度时宽度是构图瓶颈（renderer 取 min(宽/20, 高/34)）——
+    // 占比给到 0.9 让模型尽量填满可用空间，只留一点呼吸边距
+    fill: 0.9 * preview.zoom,
+    hits: previewHits,
+  });
+  // 相机或模型变了：悬停像素要按新矩阵重算，否则光标停在旧位置
+  hoverPick = lastPointer ? pickAtDevice(lastPointer.x, lastPointer.y) : null;
+  drawCursor();
+}
+
+/** 在覆盖层上标出「即将落到哪个贴图像素」：该面的仿射把 1×1 像素映成一个平行四边形。 */
+function drawCursor() {
+  const el = cursorCanvas.value;
+  const box = previewBox.value;
+  if (!el || !box) return;
+  const ctx = fitCanvas(el, box);
+  if (!ctx) return;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, el.width, el.height);
+  const hit = hoverPick;
+  if (!hit) return;
+  const [a, b, c, d, e, f] = hit.face.m;
+  const at = (ux: number, uy: number): [number, number] => [a * ux + c * uy + e, b * ux + d * uy + f];
+  const quad = [at(hit.x, hit.y), at(hit.x + 1, hit.y), at(hit.x + 1, hit.y + 1), at(hit.x, hit.y + 1)];
+  ctx.beginPath();
+  ctx.moveTo(quad[0]![0], quad[0]![1]);
+  ctx.lineTo(quad[1]![0], quad[1]![1]);
+  ctx.lineTo(quad[2]![0], quad[2]![1]);
+  ctx.lineTo(quad[3]![0], quad[3]![1]);
+  ctx.closePath();
+  ctx.globalAlpha = 0.65;
+  ctx.fillStyle = skinEditor.color;
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = "#ffffff";
+  ctx.stroke();
+}
+
+/** 指针事件 → 预览画布的设备像素坐标（内部分辨率含 devicePixelRatio）。 */
+function devicePoint(e: { clientX: number; clientY: number }): { x: number; y: number } | null {
+  const el = previewCanvas.value;
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  if (r.width <= 0 || r.height <= 0) return null;
+  const dpr = el.width / r.width;
+  return { x: (e.clientX - r.left) * dpr, y: (e.clientY - r.top) * dpr };
+}
+
+/** 设备像素坐标 → 命中的面 + 贴图像素。
+ *
+ *  正交投影下每个面都是平行四边形，该面的仿射矩阵把「贴图像素」映到「画布像素」；
+ *  求逆后落在该面 uv 矩形内即命中 —— 等价于「点在四边形内」，但不必单独做多边形判定。
+ *  面清单按绘制顺序（远 → 近）排列，故从后往前取第一个命中就是最前面的可见面。 */
+function pickAtDevice(dx: number, dy: number): { face: PickFace; x: number; y: number } | null {
+  for (let i = previewHits.length - 1; i >= 0; i--) {
+    const face = previewHits[i]!;
+    if (face.cape || face.layer !== paintLayer.value) continue;
+    const [a, b, c, d, e, f] = face.m;
+    const det = a * d - b * c;
+    if (Math.abs(det) < 1e-9) continue;
+    const ux = ((dx - e) * d - (dy - f) * c) / det;
+    const uy = ((dy - f) * a - (dx - e) * b) / det;
+    const [u, v, uw, uh] = face.uv;
+    if (ux < u || ux >= u + uw || uy < v || uy >= v + uh) continue;
+    return { face, x: Math.floor(ux), y: Math.floor(uy) };
+  }
+  return null;
+}
+
+/** 合并重绘（一帧内多次像素改动只重绘一次）。 */
+function scheduleDraw() {
+  if (frame) return;
+  frame = requestAnimationFrame(() => {
+    frame = 0;
+    drawEditor();
+    if (!previewFrame) {
+      previewFrame = requestAnimationFrame(() => {
+        previewFrame = 0;
+        drawPreview();
+      });
+    }
+  });
+}
+
+/** 视口内坐标（CSS px）。 */
+function viewportPoint(e: { clientX: number; clientY: number }): { x: number; y: number } | null {
+  const el = paintCanvas.value;
+  if (!el) return null;
+  const rect = el.getBoundingClientRect();
+  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+
+/** 视口坐标 → 皮肤像素坐标（越界返回 null）。 */
+function pixelAt(e: { clientX: number; clientY: number }): { x: number; y: number } | null {
+  const p = viewportPoint(e);
+  if (!p) return null;
+  const x = Math.floor((p.x - view.x) / view.scale);
+  const y = Math.floor((p.y - view.y) / view.scale);
+  if (x < 0 || y < 0 || x >= SKIN_SIZE || y >= SKIN_SIZE) return null;
+  return { x, y };
+}
+
+/** 以某个视口点为锚缩放（锚点下的像素保持不动，滚轮缩放才跟手）。 */
+function zoomAt(px: number, py: number, factor: number) {
+  const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, view.scale * factor));
+  if (next === view.scale) return;
+  const skinX = (px - view.x) / view.scale;
+  const skinY = (py - view.y) / view.scale;
+  view.scale = next;
+  view.x = px - skinX * next;
+  view.y = py - skinY * next;
+  drawEditor();
+}
+
+/** 缩放按钮：2D 模式以画布中心为锚，3D 模式作用于预览缩放。 */
+function zoomByButton(factor: number) {
+  if (mode.value === "3d") {
+    preview.zoom = Math.min(PREVIEW_ZOOM_MAX, Math.max(PREVIEW_ZOOM_MIN, preview.zoom * factor));
+    drawPreview();
+    return;
+  }
+  const box = viewport.value;
+  if (!box) return;
+  zoomAt(box.clientWidth / 2, box.clientHeight / 2, factor);
+}
+
+/** 适应视口：整数倍缩放到尽量大并居中（整数倍保证像素边界锐利）。
+ *
+ *  3D 模式下展开图是 `display:none`，量到的尺寸是 0 —— 按它算会把缩放压到最小值、
+ *  偏移算成负数，切回展开图时皮肤整块被推到画布外。此时只记下请求，等视口可见再执行。 */
+function fitToViewport() {
+  const box = viewport.value;
+  if (!box || box.clientWidth === 0 || box.clientHeight === 0) {
+    pendingFit = true;
+    return;
+  }
+  pendingFit = false;
+  const side = Math.min(box.clientWidth / SKIN_SIZE, box.clientHeight / SKIN_SIZE);
+  view.scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, Math.floor(side)));
+  view.x = (box.clientWidth - SKIN_SIZE * view.scale) / 2;
+  view.y = (box.clientHeight - SKIN_SIZE * view.scale) / 2;
+  drawEditor();
+}
+
+/** Bresenham 连线：指针移动快时事件会跳像素，逐点上色才不会断续。 */
+function strokeBetween(from: { x: number; y: number }, to: { x: number; y: number }) {
+  let x0 = from.x;
+  let y0 = from.y;
+  const dx = Math.abs(to.x - x0);
+  const dy = -Math.abs(to.y - y0);
+  const sx = x0 < to.x ? 1 : -1;
+  const sy = y0 < to.y ? 1 : -1;
+  let err = dx + dy;
+  for (;;) {
+    paintAt(x0, y0);
+    if (x0 === to.x && y0 === to.y) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) {
+      err += dy;
+      x0 += sx;
+    }
+    if (e2 <= dx) {
+      err += dx;
+      y0 += sy;
+    }
+  }
+}
+
+function onPointerDown(e: PointerEvent) {
+  const el = paintCanvas.value;
+  const p = viewportPoint(e);
+  if (!el || !p) return;
+  // 抓手工具、中键、右键都用于平移；其余按键才绘制
+  if (skinEditor.tool === "hand" || e.button === 1 || e.button === 2) {
+    panning = true;
+    panFrom = { x: p.x, y: p.y, vx: view.x, vy: view.y };
+    el.setPointerCapture(e.pointerId);
+    return;
+  }
+  if (e.button !== 0) return;
+  const px = pixelAt(e);
+  if (!px) return;
+  if (skinEditor.tool === "picker") {
+    const hex = pickColorAt(px.x, px.y);
+    if (hex) skinEditor.color = hex;
+    return;
+  }
+  if (skinEditor.tool === "fill") {
+    floodFillAt(px.x, px.y);
+    return;
+  }
+  el.setPointerCapture(e.pointerId);
+  painting = true;
+  lastPixel = px;
+  beginStroke();
+  paintAt(px.x, px.y);
+}
+
+function onPointerMove(e: PointerEvent) {
+  const p = viewportPoint(e);
+  const px = p ? pixelAt(e) : null;
+  skinEditor.hoverKey = px ? regionKeyAt(px.x, px.y) : "";
+
+  if (panning && p) {
+    view.x = panFrom.vx + (p.x - panFrom.x);
+    view.y = panFrom.vy + (p.y - panFrom.y);
+    drawEditor();
+    return;
+  }
+  if (!painting || !px) return;
+  if (lastPixel) strokeBetween(lastPixel, px);
+  else paintAt(px.x, px.y);
+  lastPixel = px;
+}
+
+function onPointerUp() {
+  panning = false;
+  if (!painting) return;
+  painting = false;
+  lastPixel = null;
+  endStroke();
+}
+
+function onWheel(e: WheelEvent) {
+  const p = viewportPoint(e);
+  if (!p) return;
+  e.preventDefault();
+  zoomAt(p.x, p.y, e.deltaY < 0 ? 1.15 : 1 / 1.15);
+}
+
+/** 预览拖动旋转。 */
+let previewDrag = false;
+let previewFrom = { x: 0, y: 0, yaw: 0, pitch: 0 };
+/** 动作动画循环句柄（0 = 未运行，静止时不空转）。 */
+let animRaf = 0;
+/** 动画相位基准时刻。 */
+let animStart = 0;
+
+/** 动作切换：起停动画循环；静止时停帧并重绘一张定格图。 */
+function syncAnimation() {
+  if (preview.animation !== "none") {
+    if (!animRaf) {
+      animStart = performance.now();
+      animRaf = requestAnimationFrame(animTick);
+    }
+    return;
+  }
+  if (animRaf) {
+    cancelAnimationFrame(animRaf);
+    animRaf = 0;
+    drawPreview();
+  }
+}
+
+function animTick() {
+  drawPreview();
+  animRaf = requestAnimationFrame(animTick);
+}
+
+function onPreviewDown(e: PointerEvent) {
+  const dev = devicePoint(e);
+  if (!dev) return;
+  lastPointer = dev;
+  // 3D 直绘：左键即落笔；旋转交给抓手工具 / 中键 / 右键（与展开图模式的平移手势一致）
+  if (mode.value === "3d" && e.button === 0 && skinEditor.tool !== "hand") {
+    const hit = pickAtDevice(dev.x, dev.y);
+    if (!hit) return;
+    if (skinEditor.tool === "picker") {
+      const hex = pickColorAt(hit.x, hit.y);
+      if (hex) skinEditor.color = hex;
+      return;
+    }
+    if (skinEditor.tool === "fill") {
+      floodFillAt(hit.x, hit.y);
+      return;
+    }
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    stroking = true;
+    strokeFace = hit.face;
+    strokeLast = { x: hit.x, y: hit.y };
+    beginStroke();
+    paintAt(hit.x, hit.y);
+    return;
+  }
+  previewDrag = true;
+  previewFrom = { x: e.clientX, y: e.clientY, yaw: preview.yaw, pitch: preview.pitch };
+  (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+}
+
+function onPreviewMove(e: PointerEvent) {
+  const dev = devicePoint(e);
+  if (dev) lastPointer = dev;
+
+  // 悬停光标：3D 直绘且用绘图类工具时，标出即将落笔的那个像素
+  if (dev && mode.value === "3d" && skinEditor.tool !== "hand") {
+    hoverPick = pickAtDevice(dev.x, dev.y);
+    drawCursor();
+  } else if (hoverPick) {
+    hoverPick = null;
+    drawCursor();
+  }
+
+  if (dev && stroking) {
+    const hit = pickAtDevice(dev.x, dev.y);
+    if (hit) {
+      // 同一面内按贴图坐标连直线；跨面直接落新点（面的像素在贴图上是分离的，连线会画出别处）
+      if (strokeFace === hit.face && strokeLast) strokeBetween(strokeLast, { x: hit.x, y: hit.y });
+      else paintAt(hit.x, hit.y);
+      strokeFace = hit.face;
+      strokeLast = { x: hit.x, y: hit.y };
+    } else {
+      // 拖出模型：断线，回到模型上时重新落点，不拖出一条横跨模型的直线
+      strokeFace = null;
+      strokeLast = null;
+    }
+  }
+
+  if (!previewDrag) return;
+  // 与衣柜页（skinStudio 的 YAW_SENS / PITCH_SENS）保持完全一致的符号，
+  // 否则同一个模型在两个页面拖起来方向相反
+  preview.yaw = previewFrom.yaw - (e.clientX - previewFrom.x) * 0.6;
+  preview.pitch = Math.min(
+    DEFAULT_VIEW_PITCH + PREVIEW_PITCH_RANGE,
+    Math.max(
+      DEFAULT_VIEW_PITCH - PREVIEW_PITCH_RANGE,
+      previewFrom.pitch + (e.clientY - previewFrom.y) * 0.5,
+    ),
+  );
+  drawPreview();
+}
+
+function onPreviewUp() {
+  previewDrag = false;
+  if (!stroking) return;
+  stroking = false;
+  strokeFace = null;
+  strokeLast = null;
+  endStroke();
+}
+
+function onPreviewLeave() {
+  lastPointer = null;
+  if (!hoverPick) return;
+  hoverPick = null;
+  drawCursor();
+}
+
+function onPreviewWheel(e: WheelEvent) {
+  e.preventDefault();
+  preview.zoom = Math.min(
+    PREVIEW_ZOOM_MAX,
+    Math.max(PREVIEW_ZOOM_MIN, preview.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)),
+  );
+  drawPreview();
+}
+
+async function doImport() {
+  const picked = await open({
+    multiple: false,
+    filters: [{ name: "皮肤图片", extensions: ["png", "jpg", "jpeg", "gif", "webp"] }],
+  });
+  if (!picked || Array.isArray(picked)) return;
+  try {
+    const b64 = await invoke<string>("import_skin_png", { path: picked });
+    const file = picked.split(/[\\/]/).pop() ?? "导入的皮肤";
+    await loadImageIntoEditor(b64, file.replace(/\.[^.]+$/, ""), skinEditor.variant);
+    fitToViewport();
+    showToast(`已导入 ${file}`);
+  } catch (e) {
+    showToast(errMsg(e));
+  }
+}
+
+async function doExport() {
+  const b64 = exportEditorPng();
+  if (!b64) {
+    showToast("画布为空");
+    return;
+  }
+  const target = await save({
+    defaultPath: `${skinEditor.name.trim() || "skin"}.png`,
+    filters: [{ name: "PNG 图片", extensions: ["png"] }],
+  });
+  if (!target) return;
+  try {
+    await invoke("export_skin_png", { path: target, b64 });
+    showToast("已导出 PNG");
+  } catch (e) {
+    showToast(errMsg(e));
+  }
+}
+
+/** 输入框 / 文本域内不接管快捷键（交给原生编辑行为）。 */
+function isEditable(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el) return false;
+  return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable;
+}
+
+/** 空格按住期间的临时工具（松开还原）。 */
+let toolBeforeSpace: string | null = null;
+
+function onKeyDown(e: KeyboardEvent) {
+  if (isEditable(e.target)) return;
+  if (e.ctrlKey || e.metaKey) {
+    const k = e.key.toUpperCase();
+    if (k === "Z" && !e.shiftKey) {
+      e.preventDefault();
+      undo();
+    } else if (k === "Y" || (k === "Z" && e.shiftKey)) {
+      e.preventDefault();
+      redo();
+    }
+    return;
+  }
+  // 空格：指针在画布区域内时临时切抓手（与画图软件一致）
+  if (e.code === "Space" && !e.repeat && inCanvas.value && !toolBeforeSpace) {
+    e.preventDefault();
+    toolBeforeSpace = skinEditor.tool;
+    skinEditor.tool = "hand";
+  }
+}
+
+function onKeyUp(e: KeyboardEvent) {
+  if (e.code !== "Space" || !toolBeforeSpace) return;
+  skinEditor.tool = toolBeforeSpace as typeof skinEditor.tool;
+  toolBeforeSpace = null;
+}
+
+/** 缩放读数：2D 模式是「每皮肤像素多少 CSS px」，3D 模式是预览缩放的百分比。 */
+const zoomLabel = computed(() =>
+  mode.value === "3d" ? `${Math.round(preview.zoom * 100)}%` : `${Math.round(view.scale)}×`,
+);
+
+let ro: ResizeObserver | null = null;
+
+onMounted(() => {
+  // 绘画器：默认给一张空白皮肤画布（不是编辑现有皮肤）
+  if (!skinEditor.ready) newEditorCanvas();
+
+  ro = new ResizeObserver(() => {
+    if (pendingFit) fitToViewport();
+    drawEditor();
+    drawPreview();
+  });
+  if (viewport.value) ro.observe(viewport.value);
+  if (previewBox.value) ro.observe(previewBox.value);
+
+  fitToViewport();
+  drawPreview();
+  window.addEventListener("keydown", onKeyDown);
+  window.addEventListener("keyup", onKeyUp);
+});
+
+onUnmounted(() => {
+  ro?.disconnect();
+  ro = null;
+  if (frame) cancelAnimationFrame(frame);
+  if (previewFrame) cancelAnimationFrame(previewFrame);
+  if (animRaf) cancelAnimationFrame(animRaf);
+  frame = 0;
+  previewFrame = 0;
+  animRaf = 0;
+  toolBeforeSpace = null;
+  window.removeEventListener("keydown", onKeyDown);
+  window.removeEventListener("keyup", onKeyUp);
+});
+
+watch(() => skinEditor.revision, scheduleDraw);
+watch(
+  () => [skinEditor.showGrid, skinEditor.showRegions] as const,
+  () => drawEditor(),
+);
+watch(() => skinEditor.variant, () => drawPreview());
+watch(() => preview.animation, () => syncAnimation());
+// 模式切换改变的是布局（画布 ↔ 预览互换），要等 DOM 重新布局后再按新尺寸重绘
+watch(mode, () => {
+  lastPointer = null;
+  hoverPick = null;
+  void nextTick(() => {
+    if (pendingFit) fitToViewport();
+    drawEditor();
+    drawPreview();
+  });
+});
+</script>
+
+<template>
+  <div class="painter" :class="{ 'mode-3d': mode === '3d' }">
+    <!-- 头部：标题 + 模式 / 图层 / 模型 + 导入 / 导出 -->
+    <header class="pp-hd">
+      <div class="pp-hd-text">
+        <h3>皮肤绘画器</h3>
+        <p v-if="mode === '2d'">滚轮缩放 · 空格或抓手工具 / 中键平移 · Ctrl+Z 撤销</p>
+        <p v-else>左键落笔 · 抓手工具 / 右键拖动旋转 · 滚轮缩放 · Ctrl+Z 撤销</p>
+      </div>
+      <div class="pp-hd-actions">
+        <div class="pp-kind">
+          <button
+            v-for="m in MODE_OPTIONS"
+            :key="m.value"
+            :class="{ on: mode === m.value }"
+            @click="mode = m.value"
+          >
+            {{ m.label }}
+          </button>
+        </div>
+        <!-- 图层：MC 1.8+ 的双层结构，手动指定这次落笔画哪一层（否则外层加厚时永远画不到外层） -->
+        <div v-if="mode === '3d'" class="pp-kind">
+          <button
+            v-for="l in LAYER_OPTIONS"
+            :key="l.value"
+            :class="{ on: String(paintLayer) === l.value }"
+            @click="paintLayer = Number(l.value) as 0 | 1"
+          >
+            {{ l.label }}
+          </button>
+        </div>
+        <!-- 模型：slim 皮肤的手臂贴图只有 3 列宽，按 classic 采样会错位一列 -->
+        <div class="pp-kind">
+          <button
+            v-for="m in MODEL_OPTIONS"
+            :key="m.value"
+            :class="{ on: skinEditor.variant === m.value }"
+            v-tooltip="m.desc"
+            @click="skinEditor.variant = m.value"
+          >
+            {{ m.label }}
+          </button>
+        </div>
+        <button class="pp-ghost" @click="doImport">
+          <Upload :size="14" />
+          导入
+        </button>
+        <button class="pp-primary" @click="doExport">
+          <Download :size="14" />
+          导出
+        </button>
+      </div>
+    </header>
+
+    <div class="pp-body">
+      <!-- 左：竖工具栏 -->
+      <nav class="pp-tools">
+        <button
+          v-for="t in TOOLS"
+          :key="t.value"
+          class="pp-tool"
+          :class="{ on: skinEditor.tool === t.value }"
+          v-tooltip="t.label"
+          @click="skinEditor.tool = t.value"
+        >
+          <component :is="t.icon" :size="16" />
+        </button>
+      </nav>
+
+      <!-- 中：画布视口（展开图模式） -->
+      <div
+        v-show="mode === '2d'"
+        ref="viewport"
+        class="pp-viewport"
+        @pointerenter="inCanvas = true"
+        @pointerleave="inCanvas = false"
+      >
+        <canvas
+          ref="paintCanvas"
+          class="pp-canvas"
+          :class="{ 'is-hand': skinEditor.tool === 'hand' }"
+          @pointerdown="onPointerDown"
+          @pointermove="onPointerMove"
+          @pointerup="onPointerUp"
+          @pointercancel="onPointerUp"
+          @pointerleave="skinEditor.hoverKey = ''"
+          @wheel="onWheel"
+          @contextmenu.prevent
+        />
+      </div>
+
+      <!-- 右：3D 预览（3D 模式下它就是主画面）+ 动作切换 -->
+      <aside class="pp-side">
+        <div
+          ref="previewBox"
+          class="pp-preview-box"
+          :class="{ 'is-paint': mode === '3d' && skinEditor.tool !== 'hand' }"
+          v-tooltip="mode === '3d' ? '左键绘制 · 抓手工具 / 右键拖动旋转 · 滚轮缩放' : '拖动旋转 · 滚轮缩放'"
+          @pointerdown="onPreviewDown"
+          @pointermove="onPreviewMove"
+          @pointerup="onPreviewUp"
+          @pointercancel="onPreviewUp"
+          @pointerleave="onPreviewLeave"
+          @wheel="onPreviewWheel"
+          @contextmenu.prevent
+        >
+          <canvas ref="previewCanvas" class="pp-preview" />
+          <!-- 光标覆盖层：只画「即将落笔的那个像素」，与模型重绘互不干扰 -->
+          <canvas ref="cursorCanvas" class="pp-cursor" />
+        </div>
+
+        <div class="pp-anim">
+          <button
+            v-for="a in ANIM_OPTIONS"
+            :key="a.value"
+            class="pp-anim-btn"
+            :class="{ on: preview.animation === a.value }"
+            @click="preview.animation = a.value"
+          >
+            {{ a.label }}
+          </button>
+        </div>
+      </aside>
+    </div>
+
+    <!-- 底部：视图控制条 -->
+    <footer class="pp-foot">
+      <label class="pp-color" v-tooltip="'画笔颜色'">
+        <span
+          class="pp-swatch"
+          :style="{ background: skinEditor.color, opacity: Math.max(0.15, skinEditor.alpha / 255) }"
+        />
+        <input v-model="skinEditor.color" type="color" />
+      </label>
+      <label class="pp-alpha" v-tooltip="'不透明度'">
+        <span class="pp-foot-label">A</span>
+        <input v-model.number="skinEditor.alpha" type="range" min="0" max="255" />
+      </label>
+
+      <DropSelect
+        :model-value="String(skinEditor.size)"
+        :options="SIZE_OPTIONS"
+        width="88px"
+        @update:model-value="skinEditor.size = Number($event)"
+      />
+
+      <span class="pp-sep" />
+
+      <!-- 网格 / 标注只对展开图有意义 -->
+      <button
+        v-if="mode === '2d'"
+        class="pp-tool flat"
+        :class="{ on: skinEditor.showGrid }"
+        v-tooltip="'像素网格'"
+        @click="skinEditor.showGrid = !skinEditor.showGrid"
+      >
+        <Grid3x3 :size="15" />
+      </button>
+      <button
+        v-if="mode === '2d'"
+        class="pp-tool flat"
+        :class="{ on: skinEditor.showRegions }"
+        v-tooltip="'部位标注'"
+        @click="skinEditor.showRegions = !skinEditor.showRegions"
+      >
+        <Frame :size="15" />
+      </button>
+      <span v-if="mode === '2d'" class="pp-sep" />
+
+      <button
+        class="pp-tool flat"
+        :disabled="!skinEditor.undoDepth"
+        v-tooltip="'撤销（Ctrl+Z）'"
+        @click="undo()"
+      >
+        <Undo2 :size="15" />
+      </button>
+      <button
+        class="pp-tool flat"
+        :disabled="!skinEditor.redoDepth"
+        v-tooltip="'重做（Ctrl+Y）'"
+        @click="redo()"
+      >
+        <Redo2 :size="15" />
+      </button>
+
+      <span class="pp-spacer" />
+
+      <button class="pp-tool flat" v-tooltip="'缩小'" @click="zoomByButton(1 / 1.25)">
+        <ZoomOut :size="15" />
+      </button>
+      <span class="pp-zoom pp-mono">{{ zoomLabel }}</span>
+      <button class="pp-tool flat" v-tooltip="'放大'" @click="zoomByButton(1.25)">
+        <ZoomIn :size="15" />
+      </button>
+      <button
+        v-if="mode === '2d'"
+        class="pp-tool flat"
+        v-tooltip="'适应窗口'"
+        @click="fitToViewport()"
+      >
+        <Maximize :size="15" />
+      </button>
+    </footer>
+  </div>
+</template>
+
+<style scoped>
+.painter {
+  box-sizing: border-box;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ===== 头部 ===== */
+.pp-hd {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pp-hd-text h3 {
+  margin: 0 0 3px;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+/* 头部按钮组变多（模式 / 图层 / 模型 / 导入导出），标题块允许收缩，靠省略号兜底 */
+.pp-hd-text {
+  min-width: 0;
+}
+
+.pp-hd-text p {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+}
+
+.pp-hd-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pp-kind {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  background-color: var(--surface-hover);
+}
+
+.pp-kind button {
+  height: 26px;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background-color: transparent;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.pp-kind button.on {
+  color: var(--color-brand);
+  background-color: var(--surface-card);
+  font-weight: 600;
+}
+
+.pp-ghost,
+.pp-primary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 14px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.pp-ghost {
+  border: 1px solid var(--border-default);
+  background-color: var(--surface-elevated);
+  color: var(--text-secondary);
+}
+
+.pp-ghost:hover {
+  border-color: var(--color-brand);
+  color: var(--color-brand);
+}
+
+.pp-primary {
+  border: none;
+  background: var(--color-brand-gradient);
+  color: var(--text-inverse);
+}
+
+.pp-primary:hover:not(:disabled) {
+  box-shadow: 0 0 0 3px var(--color-brand-glow);
+}
+
+/* ===== 主体：工具 | 画布 | 预览 ===== */
+.pp-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 10px;
+}
+
+.pp-tools {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background-color: var(--surface-elevated);
+}
+
+/* 工具按钮：激活态用实心品牌色，一眼看出当前工具 */
+.pp-tool {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background-color: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.15s, background-color 0.15s, box-shadow 0.15s;
+}
+
+.pp-tool:hover:not(:disabled) {
+  color: var(--color-brand);
+  background-color: var(--color-brand-bg);
+}
+
+.pp-tool.on {
+  background-color: var(--color-brand);
+  color: var(--text-inverse);
+  box-shadow: var(--shadow-sm);
+}
+
+.pp-tool.flat {
+  width: 28px;
+  height: 28px;
+}
+
+.pp-tool:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.pp-viewport {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background-color: var(--surface-page);
+}
+
+.pp-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.pp-canvas.is-hand {
+  cursor: grab;
+}
+
+/* ===== 右侧预览：整列高度独占，下方动作切换 ===== */
+.pp-side {
+  flex: 0 0 210px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* 3D 直绘：预览顶替画布成为主画面（视口已 v-show 隐藏，右栏直接占满余下宽度）。
+ *  展开图模式下 210px 宽的原尺寸点不准单个像素，3D 模式必须给它整个中栏。 */
+.mode-3d .pp-side {
+  flex: 1 1 auto;
+}
+
+.pp-preview-box {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: radial-gradient(circle at 50% 34%, var(--color-brand-bg), transparent 70%),
+    var(--surface-page);
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+}
+
+/* 3D 直绘：左键即落笔，光标换成落笔图标 */
+.pp-preview-box.is-paint {
+  cursor: crosshair;
+}
+
+/* 预览与光标覆盖层叠在同一坐标系里（都按容器尺寸计算内部分辨率） */
+.pp-preview,
+.pp-cursor {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.pp-cursor {
+  pointer-events: none;
+}
+
+.pp-anim {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  background-color: var(--surface-hover);
+}
+
+.pp-anim-btn {
+  flex: 1;
+  height: 24px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background-color: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.pp-anim-btn:hover {
+  color: var(--text-primary);
+}
+
+.pp-anim-btn.on {
+  color: var(--color-brand);
+  background-color: var(--surface-card);
+  font-weight: 600;
+}
+
+/* ===== 底部视图控制条 ===== */
+.pp-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background-color: var(--surface-elevated);
+}
+
+.pp-color {
+  position: relative;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.pp-swatch {
+  position: absolute;
+  inset: 3px;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.pp-color input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.pp-alpha {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 96px;
+}
+
+.pp-alpha input {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--color-brand);
+}
+
+.pp-foot-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.pp-sep {
+  flex: none;
+  width: 1px;
+  height: 20px;
+  background-color: var(--border-default);
+}
+
+.pp-spacer {
+  flex: 1;
+}
+
+.pp-zoom {
+  min-width: 38px;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+}
+
+.pp-mono {
+  font-variant-numeric: tabular-nums;
+}
+</style>

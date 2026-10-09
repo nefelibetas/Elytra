@@ -80,6 +80,30 @@ function delay(ms: number): Promise<void> {
 let lastX = 0;
 let lastY = 0;
 
+/** 披风贴图缓存键（localStorage，内容为 `{ 贴图 url: base64 }`）。 */
+const CAPE_CACHE_KEY = "elytra.capeTextures";
+
+function readCapeCache(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(CAPE_CACHE_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeCapeCache(list: StudioCape[]): void {
+  const map: Record<string, string> = {};
+  for (const c of list) {
+    if (c.url && c.texture) map[c.url] = c.texture;
+  }
+  try {
+    localStorage.setItem(CAPE_CACHE_KEY, JSON.stringify(map));
+  } catch {
+    // 配额不足 / 隐私模式：缓存只是优化项，失败不影响功能
+  }
+}
+
 /** 交互缩放的倍率范围（乘在基础占比上）。 */
 const ZOOM_MIN = 0.4;
 const ZOOM_MAX = 4;
@@ -240,8 +264,16 @@ export const skinStudio = reactive({
     }
     this.capeLoading = true;
     try {
-      this.capes = await invoke<StudioCape[]>("fetch_capes");
-      this.selectedCapeId = this.capes.find((c) => c.active)?.id ?? "";
+      const list = await invoke<StudioCape[]>("fetch_capes");
+      // 后端拉贴图要访问 textures.minecraft.net（冷启动 1~3 秒），贴图按 url 内容不变——
+      // 用本地缓存补齐后端这次没带回的贴图，二次进入即刻可见（随后仍会被新数据覆盖）
+      const cache = readCapeCache();
+      for (const c of list) {
+        if (!c.texture && c.url && cache[c.url]) c.texture = cache[c.url];
+      }
+      this.capes = list;
+      this.selectedCapeId = list.find((c) => c.active)?.id ?? "";
+      writeCapeCache(list);
     } catch (e) {
       this.capesError = `披风列表加载失败\n${String(e)}`;
     } finally {

@@ -199,9 +199,10 @@ const ANIM_OPTIONS = [
 ] as const;
 
 /** 皮肤模型的中文名——与左侧预览的类型标签、模型弹窗用同一套说法（CLASSIC / SLIM 是
- *  后端与官方 API 的取值，不该直接暴露给用户）。 */
-function variantLabel(variant: string): string {
-  return variant.toUpperCase() === "SLIM" ? "纤细" : "经典";
+ *  后端与官方 API 的取值，不该直接暴露给用户）。
+ *  缺失/未知值按「经典」兜底：一个角标不该让整张卡片渲染中断。 */
+function variantLabel(variant?: string | null): string {
+  return variant?.toUpperCase() === "SLIM" ? "纤细" : "经典";
 }
 
 /** 平面皮肤图（3D 缩略图未就绪 / 渲染失败时的兜底）：64×64 纹理里截头部正面 (8,8,8,8) 区域放大

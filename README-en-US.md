@@ -25,8 +25,9 @@
 - 🔐 Accounts: Microsoft login (OAuth PKCE), offline mode
 - 🎭 Offline skin: fixed random-hash Steve/Alex
 - ☕ Automatic JDK scanning and custom configuration
+- 🎨 Skin painter (toolbox): 64×64 pixel-exact unfolded view **and 3D direct painting** modes, brush / eraser / fill / eyedropper, free zoom & pan, per-part colour-coded guides, inner/outer layer switch, undo/redo, live 3D preview
 - 🚀 Multiple game directories, download task management, launch argument building & game process management
-- 🚀 Toolbox: multi-threaded downloader (URL queue concurrency + per-file HTTP Range segmentation, resumable)
+- 📥 Toolbox: multi-threaded downloader (URL queue concurrency + per-file HTTP Range segmentation, resumable)
 
 ## 🛠️ Development
 
@@ -51,7 +52,7 @@ See 📖 [AGENTS.md](AGENTS.md) (repository development guide).
 
 ## 💻 Runtime
 
-- 🪟 Windows (840×540 window, borderless & transparent)
+- 🪟 Windows (1008×648 window, borderless & transparent)
 - ⚙️ Config stored in `Elytra/Settings.toml` next to the executable
 
 ## 📄 License

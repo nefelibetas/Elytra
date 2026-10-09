@@ -13,8 +13,8 @@
     "windows": [
       {
         "title": "Elytra Launcher",
-        "width": 840,
-        "height": 540,
+        "width": 1008,
+        "height": 648,
         "decorations": false,
         "transparent": true,
         "resizable": false,
