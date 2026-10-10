@@ -7,14 +7,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { showToast } from "../utils/toast";
 import { errMsg } from "../utils/error";
-import { resourceDetail, openResourceDetail } from "../store/resourceDetail";
-import { selectedVersion } from "../store/selectedVersion";
-import { dlTranslateMode, dlShowReleaseOnly } from "../store/downloaderConfig";
+import { resourceDetail, openResourceDetail } from "../store/community/resourceDetail";
+import { selectedVersion } from "../store/app/selectedVersion";
+import { dlTranslateMode, dlShowReleaseOnly } from "../store/config/downloaderConfig";
 import {
   fetchVersions, fetchCommunityDetails,
   type CommunityVersion, type CommunityDependencyItem, type CommunityDisplayItem,
-} from "../store/communitySearch";
-import { registerTaskName, type DownloadFileKind } from "../store/download";
+} from "../store/community/communitySearch";
+import { registerTaskName, type DownloadFileKind } from "../store/task/download";
 import { fmtCount, fmtSize, fmtModDate } from "../utils/format";
 import IconImage from "../component/common/IconImage.vue";
 

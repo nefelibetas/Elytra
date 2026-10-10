@@ -1,0 +1,4 @@
+# ts-rs 导出基准目录：#[ts(export)] 的输出相对此目录（相对路径由 relative 指定，
+# 基准为 workspace 根，即 src-tauri/）→ 前端 src/types/。
+[env]
+TS_RS_EXPORT_DIR = { value = "../src/types", relative = true }

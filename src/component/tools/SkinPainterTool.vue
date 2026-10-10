@@ -11,17 +11,18 @@ import {
   Brush, Download, Eraser, Frame, Grid3x3, Hand, Maximize, PaintBucket, Pipette, Redo2,
   Undo2, Upload, ZoomIn, ZoomOut,
 } from "@lucide/vue";
-import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import {
   DEFAULT_VIEW_PITCH, DEFAULT_VIEW_YAW, drawFullCanvas,
-} from "../../store/skinRender";
-import type { Animation, PickFace } from "../../store/skinRender";
+} from "../../store/skin/skinRender";
+import type { Animation, PickFace } from "../../store/skin/skinRender";
 import {
   EDITOR_REGIONS, SKIN_SIZE, beginStroke, editorPixels, endStroke, exportEditorPng,
+  exportSkinPng,
   floodFillAt, loadImageIntoEditor, newEditorCanvas, paintAt, pickColorAt, redo, regionKeyAt,
+  importSkinPng,
   skinEditor, undo,
-} from "../../store/skinEditor";
+} from "../../store/skin/skinEditor";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 import DropSelect from "../common/DropSelect.vue";
@@ -674,7 +675,7 @@ async function doImport() {
   });
   if (!picked || Array.isArray(picked)) return;
   try {
-    const b64 = await invoke<string>("import_skin_png", { path: picked });
+    const b64 = await importSkinPng(picked);
     const file = picked.split(/[\\/]/).pop() ?? "导入的皮肤";
     await loadImageIntoEditor(b64, file.replace(/\.[^.]+$/, ""), skinEditor.variant);
     fitToViewport();
@@ -696,7 +697,7 @@ async function doExport() {
   });
   if (!target) return;
   try {
-    await invoke("export_skin_png", { path: target, b64 });
+    await exportSkinPng(target, b64);
     showToast("已导出 PNG");
   } catch (e) {
     showToast(errMsg(e));

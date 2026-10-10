@@ -4,14 +4,14 @@
 import { computed } from "vue";
 import { useRoute } from "vue-router";
 import { CodeXml, Package } from "@lucide/vue";
-import { loadLastUsername } from "../../store/auth";
-import { exportLaunchScript, exportModpack as exportModpackCommand } from "../../store/versionSetup";
+import { loadLastUsername } from "../../store/auth/auth";
+import { exportLaunchScript, exportModpack as exportModpackCommand } from "../../store/task/versionSetup";
 import { save } from "@tauri-apps/plugin-dialog";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 import {
   authMode, msAccount, loadMsAccount, username as offlineUsername,
-} from "../../store/auth";
+} from "../../store/auth/auth";
 
 const route = useRoute();
 

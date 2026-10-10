@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "launcher/")]
 pub enum GcType {
     PreferZgc,
     PreferGenerationalZgc,
@@ -33,7 +34,8 @@ pub enum AuthMode {
     },
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "launcher/")]
 pub enum MemoryMode {
     #[default]
     Auto,
@@ -41,7 +43,8 @@ pub enum MemoryMode {
 }
 
 /// 游戏进程优先级（Windows 进程优先级类）。
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "launcher/")]
 pub enum ProcessPriority {
     Low,
     /// 中（平衡），默认。
@@ -52,7 +55,8 @@ pub enum ProcessPriority {
 }
 
 /// 游戏窗口大小。
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "launcher/")]
 pub enum WindowSize {
     /// 默认（不传 --width/--height，由游戏自己决定）。
     #[default]
@@ -60,7 +64,8 @@ pub enum WindowSize {
     Custom(u32, u32),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "launcher/")]
 pub struct LaunchOptions {
     pub memory: MemoryMode,
 

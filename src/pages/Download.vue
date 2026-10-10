@@ -18,10 +18,10 @@ import DatapackResultList from "../component/download/DatapackResultList.vue";
 import ModpackSearchBar from "../component/download/ModpackSearchBar.vue";
 import ModpackResultList from "../component/download/ModpackResultList.vue";
 import ScrollTopFab from "../component/common/ScrollTopFab.vue";
-import { vdState } from "../store/versionDownload";
-import { communitySearch } from "../store/communitySearch";
-import { loadDownloadConfig } from "../store/downloaderConfig";
-import { downloadTabState } from "../store/downloadTab";
+import { vdState } from "../store/task/versionDownload";
+import { communitySearch } from "../store/community/communitySearch";
+import { loadDownloadConfig } from "../store/config/downloaderConfig";
+import { downloadTabState } from "../store/task/downloadTab";
 import { Box, Puzzle, Archive, CodeXml, Layers, Sun, Map } from "@lucide/vue";
 import {
   shaderSearch,
@@ -29,7 +29,7 @@ import {
   datapackSearch,
   modpackSearch,
   worldsSearch,
-} from "../store/categorySearch";
+} from "../store/community/categorySearch";
 
 const tab = computed(() => downloadTabState.current);
 /** 右侧滚动容器（切 tab 时复位滚动位置） */

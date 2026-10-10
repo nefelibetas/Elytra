@@ -30,7 +30,8 @@ fn extract_yggdrasil_error(text: &str, status: reqwest::StatusCode) -> String {
 }
 
 /// 第三方账号（含验证服务器地址与短期 access_token）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "auth/")]
 pub struct ExternalAccount {
     /// 验证服务器根地址（如 https://littleskin.cn/api/yggdrasil）
     pub api_url: String,
@@ -55,7 +56,8 @@ pub struct ExternalAccount {
 }
 
 /// 一个 Minecraft 角色（第三方账号可绑定多角色）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "auth/")]
 pub struct ExternalProfile {
     pub id: String,
     pub name: String,
@@ -501,14 +503,16 @@ pub async fn ensure_jar() -> Result<std::path::PathBuf, String> {
 }
 
 /// 预设验证服务器（label 展示名 + value API 地址，第三方登录 UI 预设列表）。
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export_to = "auth/")]
 pub struct ExternalServer {
     pub label: String,
     pub value: String,
 }
 
 /// 第三方登录配置（预设验证服务器列表，label + value）。
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export_to = "auth/")]
 pub struct ExternalConfig {
     /// 常用验证服务器（皮肤站）预设列表
     #[serde(default)]

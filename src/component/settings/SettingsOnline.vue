@@ -7,7 +7,7 @@ import { Save, ExternalLink } from "@lucide/vue";
 import {
   onlinePublicNodes, onlineAdvertiseMotd, onlineNickname,
   loadOnlineConfig, saveOnlineConfig, saveAdvertiseMotd, saveNickname,
-} from "../../store/online";
+} from "../../store/config/online";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 

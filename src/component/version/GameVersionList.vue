@@ -12,8 +12,8 @@ import {
   versions, versionsLoading, versionsError, expanded, allVersions, searchQuery,
   pickVersion, openDelete,
   deleteDialog, deleteTarget, confirmDeleteVersion,
-} from "../../store/gameDirs";
-import { loadVersionIcon, versionIcons } from "../../store/versionIcon";
+} from "../../store/config/gameDirs";
+import { loadVersionIcon, versionIcons } from "../../store/task/versionIcon";
 import { watch } from "vue";
 
 // 整合包安装的版本带平台项目图标（懒加载；缺失回退 loader 图标）

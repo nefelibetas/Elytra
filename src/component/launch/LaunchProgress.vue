@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // 启动进度面板（启动时替换左侧内容，游戏窗口出现后切回）
 import StepDot from "../common/StepDot.vue";
-import { launchState } from "../../store/launch";
-import { selectedVersion } from "../../store/selectedVersion";
+import { launchState } from "../../store/app/launch";
+import { selectedVersion } from "../../store/app/selectedVersion";
 </script>
 
 <template>

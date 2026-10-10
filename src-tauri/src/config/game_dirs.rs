@@ -6,7 +6,8 @@ use crate::util::default_game_dir_base;
 use serde::{Deserialize, Serialize};
 
 /// 一个游戏目录（.minecraft 文件夹）
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ts_rs::TS)]
+#[ts(export_to = "config/")]
 pub struct GameDir {
     /// 列表显示名称
     pub name: String,
@@ -14,7 +15,8 @@ pub struct GameDir {
     pub path: String,
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "config/")]
 pub struct GameDirsConfig {
     pub dirs: Vec<GameDir>,
 }

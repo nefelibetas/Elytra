@@ -4,8 +4,8 @@
 import { computed, ref, onMounted, onUnmounted } from "vue";
 import { useRoute } from "vue-router";
 import { Folder, Trash2, Map } from "@lucide/vue";
-import { deleteWorld } from "../../store/versionDetail";
-import { ensureGameFolder } from "../../store/gameDirs";
+import { deleteWorld } from "../../store/task/versionDetail";
+import { ensureGameFolder } from "../../store/config/gameDirs";
 import { openFolder } from "../../utils/fs";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
@@ -19,7 +19,7 @@ import ErrorState from "../common/ErrorState.vue";
 import {
   worlds, worldsLoading, worldsError, worldIcons, worldsLoadedFor,
   loadWorlds, startWorldsLivePolling, stopWorldsLivePolling,
-} from "../../store/versionDetail";
+} from "../../store/task/versionDetail";
 
 const route = useRoute();
 

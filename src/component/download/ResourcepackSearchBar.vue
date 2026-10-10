@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 资源包搜索表单卡片：薄适配层 → CommunitySearchBar。
-import { resourcepackSearch } from "../../store/categorySearch";
+import { resourcepackSearch } from "../../store/community/categorySearch";
 import CommunitySearchBar from "./CommunitySearchBar.vue";
 </script>
 

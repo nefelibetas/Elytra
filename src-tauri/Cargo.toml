@@ -35,6 +35,9 @@ reqwest = { version = "0.13.4", features = ["json", "stream", "gzip", "http2", "
 tokio = { version = "1", features = ["full"] }
 futures-util = "0.3"
 serde_json = "1"
+# Rust → TypeScript 类型导出（前端 interface 自动生成，替代手写镜像）：
+# #[derive(TS)] + #[ts(export)] 在 cargo test 时输出 .ts 到 src/types/
+ts-rs = "10"
 sha1 = "0.10"
 sha2 = "0.10"
 # 联机房间码（online/scaffold/room.rs）：uuid 生成房间码短码；

@@ -2,8 +2,8 @@
 // 社区资源搜索表单卡片（通用版）：六套 SearchBar（Mod/光影/资源/数据/整合包/地图）收敛于此。
 // 差异全部 props 化：搜索状态实例、标题、来源/加载器筛选开关；整合包「导入本地」走 prepend-actions 插槽。
 import { computed, watch } from "vue";
-import { releases } from "../../store/versionDownload";
-import { modLoaderOptions } from "../../store/communitySearch";
+import { releases } from "../../store/task/versionDownload";
+import { modLoaderOptions } from "../../store/community/communitySearch";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
 
 /** 搜索状态实例的最小结构（communitySearch 与 createCategorySearch 单例均满足）。 */

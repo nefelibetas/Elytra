@@ -4,7 +4,7 @@ import VersionCard from "../download/VersionCard.vue";
 import VersionItem from "../download/VersionItem.vue";
 import {
   vdState, latestRelease, latestSnapshot, releases, snapshots, oldVersions, aprilFools, vanillaIcon,
-} from "../../store/versionDownload";
+} from "../../store/task/versionDownload";
 import { fmtDateTime } from "../../utils/format";
 import LoadingSpinner from "../common/LoadingSpinner.vue";
 import ErrorState from "../common/ErrorState.vue";

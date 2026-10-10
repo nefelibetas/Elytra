@@ -10,7 +10,7 @@ import SettingsOnline from "../component/settings/SettingsOnline.vue";
 import SettingsLog from "../component/settings/SettingsLog.vue";
 import ScrollTopFab from "../component/common/ScrollTopFab.vue";
 import SideNav from "../component/common/SideNav.vue";
-import { settingsTab } from "../store/settingsTab";
+import { settingsTab } from "../store/app/settingsTab";
 </script>
 
 <template>

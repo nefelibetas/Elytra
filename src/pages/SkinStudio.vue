@@ -7,10 +7,10 @@ import { Check, Download, Plus, RefreshCw, RotateCcw, Shirt, Wind, X } from "@lu
 import AlertDialog from "../component/common/AlertDialog.vue";
 import EmptyState from "../component/common/EmptyState.vue";
 import LoadingSpinner from "../component/common/LoadingSpinner.vue";
-import { renderSkinThumb3D } from "../store/avatar";
-import { drawFullCanvas, loadSkinImage } from "../store/skinRender";
-import { ensureAuthReady } from "../store/auth";
-import { skinStudio, type LocalSkin } from "../store/skinStudio";
+import { renderSkinThumb3D } from "../store/auth/avatar";
+import { drawFullCanvas, loadSkinImage } from "../store/skin/skinRender";
+import { ensureAuthReady } from "../store/auth/auth";
+import { skinStudio, type LocalSkin } from "../store/skin/skinStudio";
 import { showToast } from "../utils/toast";
 
 const router = useRouter();

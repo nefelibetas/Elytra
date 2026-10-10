@@ -2,11 +2,11 @@
 import { computed } from "vue";
 import { useRoute } from "vue-router";
 
-import { goBack } from "../../store/nav";
+import { goBack } from "../../store/app/nav";
 import { ArrowLeft, Play, Download, ListChecks, Settings, Minus, X, Feather, Wrench } from "@lucide/vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { detailTitle } from "../../store/resourceDetail";
-import { dlState } from "../../store/download";
+import { detailTitle } from "../../store/community/resourceDetail";
+import { dlState } from "../../store/task/download";
 
 const route = useRoute();
 const appWindow = getCurrentWindow();

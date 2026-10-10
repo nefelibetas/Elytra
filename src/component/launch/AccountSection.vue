@@ -9,13 +9,13 @@ import {
   saveOfflineAccount, removeOfflineAccount,
   externalAccount, loadExternalAccounts, switchExternalRole, refreshExternalAccount,
   type MsAccountInfo,
-} from "../../store/auth";
-import { avatarState, scheduleOfflineRender, renderAccountHead, renderOfflineHead, accountHeads, offlineHeads, renderSkinHead3D, renderExternalAvatar, renderPremiumAvatar } from "../../store/avatar";
-import { accountUi } from "../../store/accountUi";
+} from "../../store/auth/auth";
+import { avatarState, scheduleOfflineRender, renderAccountHead, renderOfflineHead, accountHeads, offlineHeads, renderSkinHead3D, renderExternalAvatar, renderPremiumAvatar } from "../../store/auth/avatar";
+import { accountUi } from "../../store/auth/accountUi";
 import { showToast } from "../../utils/toast";
 import { invoke } from "@tauri-apps/api/core";
-import { showError } from "../../store/alert";
-import { settingsTab } from "../../store/settingsTab";
+import { showError } from "../../store/app/alert";
+import { settingsTab } from "../../store/app/settingsTab";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useRouter } from "vue-router";
 import MenuPopover from "../common/MenuPopover.vue";

@@ -2,14 +2,14 @@
 // 设置-第三方登录：登录（服务器下拉选择）+ 预设管理（label + value）。
 // 下拉选项 = 内置预设 + 用户预设（下面有什么，上面才能选什么）。
 import { computed, onMounted, ref } from "vue";
-import { loadExternalConfig, saveExternalConfig } from "../../store/externalConfig";
+import { loadExternalConfig, saveExternalConfig } from "../../store/config/externalConfig";
 import { Plus, Trash2, ExternalLink } from "@lucide/vue";
 import DropSelect from "../common/DropSelect.vue";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   externalAccount, externalAccounts, loadExternalAccounts,
   loginExternal, removeExternalAccount, switchExternalAccount,
-} from "../../store/auth";
+} from "../../store/auth/auth";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 

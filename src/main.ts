@@ -1,7 +1,7 @@
 import { createApp } from "vue";
 import App from "./App.vue";
 import router from "./router";
-import { applyTheme } from "./store/theme";
+import { applyTheme } from "./store/app/theme";
 import tooltip from "./utils/tooltip";
 import "./styles/transitions.css";
 

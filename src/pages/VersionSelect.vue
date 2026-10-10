@@ -4,7 +4,7 @@ import { onMounted } from "vue";
 import GameDirList from "../component/version/GameDirList.vue";
 import GameVersionList from "../component/version/GameVersionList.vue";
 import ScrollTopFab from "../component/common/ScrollTopFab.vue";
-import { loadDirs, loadVersions } from "../store/gameDirs";
+import { loadDirs, loadVersions } from "../store/config/gameDirs";
 
 onMounted(async () => {
   await loadDirs();

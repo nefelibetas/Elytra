@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Check } from "@lucide/vue";
-import type { StepStatus } from "../../store/download";
+import type { StepStatus } from "../../store/task/download";
 
 defineProps<{ status: StepStatus }>();
 </script>

@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::game::modpack::ModpackRequest;
 
 /// 任务状态（进度事件 payload，前端 ProgressPayload.status 为 string）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default, ts_rs::TS)]
+#[ts(export_to = "task/")]
 #[serde(rename_all = "lowercase")]
 pub enum TaskStatus {
     #[default]
@@ -19,7 +20,8 @@ pub enum TaskStatus {
 }
 
 /// 步骤状态（进度事件 payload）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default, ts_rs::TS)]
+#[ts(export_to = "task/")]
 #[serde(rename_all = "lowercase")]
 pub enum StepStatus {
     #[default]
@@ -29,7 +31,8 @@ pub enum StepStatus {
 }
 
 /// 任务进度快照（task-progress 事件推送体）。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[ts(export_to = "task/")]
 pub struct TaskProgress {
     pub task_id: String,
     pub name: String,
@@ -37,17 +40,21 @@ pub struct TaskProgress {
     pub progress: f64,      // 0.0 – 100.0
     pub speed_bps: f64,
     /// 预计剩余秒数；停滞（>4s 无字节推进）或速度过低时 None。
+    #[ts(type = "number | null")]
     pub eta_seconds: Option<u64>,
     pub completed_files: u32,
     pub total_files: u32,
+    #[ts(type = "number")]
     pub completed_bytes: u64,
+    #[ts(type = "number")]
     pub total_bytes: u64,
     pub current_phase: String,
     pub steps: Vec<StepInfo>,
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[ts(export_to = "task/")]
 pub struct StepInfo {
     pub name: String,
     pub status: StepStatus, // pending | running | done
@@ -55,7 +62,8 @@ pub struct StepInfo {
 }
 
 /// ModLoader 种类。前端传 "fabric"/"forge"/"neoforge"/"quilt"。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "task/")]
 pub enum LoaderKind {
     #[serde(rename = "fabric")]
     Fabric,
@@ -88,20 +96,23 @@ impl LoaderKind {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "task/")]
 pub struct LoaderChoice {
     pub kind: LoaderKind,
     pub version: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "task/")]
 pub struct FabricApi {
     pub url: String,
     pub version: String,
 }
 
 /// 下载游戏本体任务（原版，或带 ModLoader/OptiFine/Fabric API）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "task/")]
 pub struct DownloadTask {
     pub version_id: String,
     pub version_url: String,
@@ -141,7 +152,8 @@ impl DownloadTask {
 }
 
 /// 单文件下载种类。前端传 "mod"/"resourcepack"/"datapack"/"shader"/"world"。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "task/")]
 pub enum DownloadFileKind {
     #[serde(rename = "mod")]
     Mod,

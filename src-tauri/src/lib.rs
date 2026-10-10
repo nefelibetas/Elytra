@@ -15,6 +15,7 @@ mod persist;
 mod server_status;
 pub mod task;
 pub mod tooldl;
+pub mod ts_export;
 pub mod util;
 
 use tauri::Emitter;

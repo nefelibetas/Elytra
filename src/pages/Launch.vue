@@ -8,13 +8,13 @@ import LaunchProgress from "../component/launch/LaunchProgress.vue";
 import AccountSection from "../component/launch/AccountSection.vue";
 import LaunchSection from "../component/launch/LaunchSection.vue";
 import VersionDetailCard from "../component/launch/VersionDetailCard.vue";
-import { alertState } from "../store/alert";
-import { renderOfflineAvatar, renderPremiumAvatar } from "../store/avatar";
+import { alertState } from "../store/app/alert";
+import { renderOfflineAvatar, renderPremiumAvatar } from "../store/auth/avatar";
 import {
   msAccount, username, ensureAuthReady, loadOfflineAccounts, loadLastUsername, ensureLoginListener,
-} from "../store/auth";
-import { launchState, loadVersions, ensureGameExitListener } from "../store/launch";
-import { selectedVersion } from "../store/selectedVersion";
+} from "../store/auth/auth";
+import { launchState, loadVersions, ensureGameExitListener } from "../store/app/launch";
+import { selectedVersion } from "../store/app/selectedVersion";
 
 onMounted(async () => {
   await loadLastUsername();

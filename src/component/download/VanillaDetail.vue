@@ -3,8 +3,8 @@
 import { ArrowLeft, X, ChevronDown } from "@lucide/vue";
 import {
   vdState, displayLoaders, loaderIcon, vanillaIcon,
-} from "../../store/versionDownload";
-import type { VersionMeta } from "../../store/versionDownload";
+} from "../../store/task/versionDownload";
+import type { VersionMeta } from "../../store/task/versionDownload";
 import commandIcon from "../../assets/command.png";
 import cobbleIcon from "../../assets/cobble.png";
 

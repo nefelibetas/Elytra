@@ -2,7 +2,8 @@ use crate::downloader::endpoints;
 use crate::util;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "config/")]
 pub struct DownloadSource {
     pub name: String,
 
@@ -95,7 +96,8 @@ pub fn infer_resource_class(url: &str) -> ResourceClass {
 ///   检测到即走代理；无代理时直连（TUN 模式由网络层接管，无需应用配置）
 /// - system：强制使用系统代理（检测不到时回退直连并告警）
 /// - direct：强制直连（不走应用层代理；TUN 模式仍由网络层生效）
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, ts_rs::TS)]
+#[ts(export_to = "config/")]
 #[serde(rename_all = "camelCase")]
 pub enum NetworkMode {
     #[default]
@@ -108,7 +110,8 @@ pub enum NetworkMode {
 /// - auto（默认）：文件下载按 URL 自动分类，镜像候选即时生成并按健康度排序，
 ///   元数据/清单请求官方优先、超时（4s）自动降级镜像——无需人工指定优先级
 /// - officialOnly / mirrorOnly：单选，只用一个源，不自动回退
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default, ts_rs::TS)]
+#[ts(export_to = "config/")]
 #[serde(rename_all = "camelCase")]
 pub enum DownloadSourceMode {
     /// 仅官方源（版本清单/文件/社区 API 全走官方）
@@ -147,17 +150,20 @@ fn default_sources() -> Vec<DownloadSource> {
     vec![endpoints::official_source(), endpoints::mirror_source()]
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "config/")]
 pub struct DownloaderConfig {
     /// 文件源模板（官方 + 镜像）。代码内置，单一事实源见 `downloader/endpoints.rs`；
     /// **不持久化**：写配置时跳过（Settings.toml 只存模式三态），读配置时忽略旧文件
     /// 里的 URL 快照（防旧版本残留地址覆盖新版本内置拓扑）。
     #[serde(default = "default_sources", skip_serializing, skip_deserializing)]
+    #[ts(skip)]
     pub sources: Vec<DownloadSource>,
     pub concurrency: u32,
     pub minecraft_dir: String,
     /// 全局限速（bytes/s）；0/None = 不限制。fetcher 全局生效。
     #[serde(default)]
+    #[ts(type = "number")]
     pub max_speed: u64,
     /// 游戏下载源模式（版本列表 / 版本 json / 资源索引与对象 / 支持库 /
     /// client JAR / ModLoader 构件与安装器 / Mojang JDK runtime 统一走此源）
@@ -190,7 +196,8 @@ pub struct DownloaderConfig {
 /// - mirrorOnly：仅镜像（Mojang runtime 按文件源模式走镜像 → Adoptium 仅 TUNA
 ///   下载候选、官方 link 不参与）。元数据仍走 Adoptium 官方 API：TUNA 只镜像文件、
 ///   不提供 checksum，属不可绕过的例外
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default, ts_rs::TS)]
+#[ts(export_to = "config/")]
 #[serde(rename_all = "camelCase")]
 pub enum JdkSourceMode {
     /// 仅官方源（Mojang runtime → Azul）

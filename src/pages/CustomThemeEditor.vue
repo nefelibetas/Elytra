@@ -3,13 +3,13 @@
 // 入口：设置-外观「添加自定义」（新建）或自定义卡片「编辑」（query id）；保存后返回设置页。
 import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import { goBack } from "../store/nav";
+import { goBack } from "../store/app/nav";
 import { Check, RotateCcw } from "@lucide/vue";
 import {
   THEMES, customThemes, builtinVars, EDITABLE_VAR_KEYS,
   createCustomTheme, updateCustomTheme, activateCustomTheme,
   type CustomThemeVars, type ThemeId,
-} from "../store/theme";
+} from "../store/app/theme";
 
 const route = useRoute();
 

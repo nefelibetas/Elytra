@@ -2,8 +2,8 @@
 // 启动区：启动按钮（下载游戏入口）+ 版本选择 / 版本设置
 import { useRouter } from "vue-router";
 import { LayoutGrid } from "@lucide/vue";
-import { isLaunching, doLaunch } from "../../store/launch";
-import { selectedVersion } from "../../store/selectedVersion";
+import { isLaunching, doLaunch } from "../../store/app/launch";
+import { selectedVersion } from "../../store/app/selectedVersion";
 
 const router = useRouter();
 

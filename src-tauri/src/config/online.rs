@@ -17,7 +17,8 @@ pub const DEFAULT_PUBLIC_NODES: &[&str] = &[
 ];
 
 /// 联机配置（persist section "online"）。
-#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, ts_rs::TS)]
+#[ts(export_to = "config/")]
 pub struct OnlineConfig {
     /// 协调节点列表（easytier peer URI，如 `tcp://1.2.3.4:11010`）。
     /// host/guest 连同一批节点虚拟网内互发现；跨网（非同一局域网）联机必需。

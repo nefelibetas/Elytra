@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue"
 import { X, Check, LoaderCircle, RotateCcw, HardDriveDownload, Pause } from "@lucide/vue"
-import { dlState, TaskItem, interruptedJobs, resumeAllInterrupted, dismissAllInterrupted } from "../store/download"
+import { dlState, TaskItem, interruptedJobs, resumeAllInterrupted, dismissAllInterrupted } from "../store/task/download"
 import { errMsg } from "../utils/error"
 import { fmtSpeed, fmtEta } from "../utils/format"
 import { showToast } from "../utils/toast"

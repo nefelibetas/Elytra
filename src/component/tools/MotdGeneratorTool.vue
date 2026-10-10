@@ -13,7 +13,7 @@ import {
 } from "../../utils/motd";
 import {
   loadOnlineConfig, saveAdvertiseMotd, onlineAdvertiseMotd,
-} from "../../store/online";
+} from "../../store/config/online";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 import { copyText } from "../../utils/clipboard";

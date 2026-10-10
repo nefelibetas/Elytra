@@ -5,12 +5,12 @@
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { Search, RefreshCw, Upload, Puzzle, Folder, Trash2 } from "@lucide/vue";
-import { ensureGameFolder } from "../../store/gameDirs";
+import { ensureGameFolder } from "../../store/config/gameDirs";
 import { openFolder } from "../../utils/fs";
 import { fmtCount, fmtSize } from "../../utils/format";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
-import { dlTranslateMode } from "../../store/downloaderConfig";
+import { dlTranslateMode } from "../../store/config/downloaderConfig";
 import IconImage from "../common/IconImage.vue";
 import AlertDialog from "../common/AlertDialog.vue";
 import LoadingSpinner from "../common/LoadingSpinner.vue";
@@ -21,7 +21,7 @@ import {
   mods, modsLoading, modsError, modsNetworkError, modsLoadedFor,
   updates, updatesChecked, checkingUpdates, updatesError, updatingFiles,
   loadVersionLoader, loadMods, checkModUpdates, updateMod, deleteMod, toggleMod,
-} from "../../store/versionDetail";
+} from "../../store/task/versionDetail";
 
 const route = useRoute();
 

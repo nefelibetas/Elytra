@@ -7,7 +7,8 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
 /// 任务状态（前端镜像同名小写字符串）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "tooldl/")]
 #[serde(rename_all = "lowercase")]
 pub enum ToolDlStatus {
     /// 已入队，等待空闲槽位
@@ -124,7 +125,8 @@ impl ToolDlTask {
 }
 
 /// 对外快照（前端手写同名 interface）。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[ts(export_to = "tooldl/")]
 pub struct ToolDlSnapshot {
     pub id: String,
     pub url: String,
@@ -133,9 +135,12 @@ pub struct ToolDlSnapshot {
     pub dest: String,
     pub save_dir: String,
     /// 总字节（0 = 未知）
+    #[ts(type = "number")]
     pub total: u64,
+    #[ts(type = "number")]
     pub downloaded: u64,
     /// 字节/秒（0 = 未在下载）
+    #[ts(type = "number")]
     pub speed: u64,
     /// 是否走 Range 分段
     pub ranged: bool,
@@ -143,5 +148,6 @@ pub struct ToolDlSnapshot {
     pub segments: u32,
     pub status: ToolDlStatus,
     pub error: Option<String>,
+    #[ts(type = "number")]
     pub created_at: u64,
 }

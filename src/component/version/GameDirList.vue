@@ -10,7 +10,7 @@ import {
   menuOpen, menuRefresh, menuRemove, menuRename, confirmRename,
   renameDialog, renameInput, renameError,
   addFolder, confirmAdd, addDialog, addInput, addError,
-} from "../../store/gameDirs";
+} from "../../store/config/gameDirs";
 
 onMounted(() => window.addEventListener("click", onWindowClick));
 onUnmounted(() => window.removeEventListener("click", onWindowClick));

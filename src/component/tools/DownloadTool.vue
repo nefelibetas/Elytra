@@ -19,8 +19,8 @@ import {
   clearFinishedToolDl,
   openToolDlFolder,
   toolDlEta,
-} from "../../store/toolDownload";
-import type { ToolDlSnapshot } from "../../store/toolDownload";
+} from "../../store/config/toolDownload";
+import type { ToolDlSnapshot } from "../../store/config/toolDownload";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 import { fmtEta, fmtSize, fmtSpeed } from "../../utils/format";

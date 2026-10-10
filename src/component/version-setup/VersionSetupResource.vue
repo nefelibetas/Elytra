@@ -5,13 +5,13 @@
 import { computed, ref, onMounted } from "vue";
 import { useRoute } from "vue-router";
 import { Folder, Trash2, Palette, Database, Sun } from "@lucide/vue";
-import { deleteResourceFile } from "../../store/versionDetail";
-import { ensureGameFolder } from "../../store/gameDirs";
+import { deleteResourceFile } from "../../store/task/versionDetail";
+import { ensureGameFolder } from "../../store/config/gameDirs";
 import { openFolder } from "../../utils/fs";
 import { fmtCount, fmtSize } from "../../utils/format";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
-import { dlTranslateMode } from "../../store/downloaderConfig";
+import { dlTranslateMode } from "../../store/config/downloaderConfig";
 import { useSelectable } from "../../utils/useSelectable";
 import IconImage from "../common/IconImage.vue";
 import AlertDialog from "../common/AlertDialog.vue";
@@ -22,7 +22,7 @@ import {
   resourceRefs,
   loadResourceDetailed, loadResourceQuick,
   type ResourceKind,
-} from "../../store/versionDetail";
+} from "../../store/task/versionDetail";
 
 const props = defineProps<{ kind: ResourceKind }>();
 

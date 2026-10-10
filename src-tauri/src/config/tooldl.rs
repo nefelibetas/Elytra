@@ -8,7 +8,8 @@ pub const DEFAULT_MAX_FILES: u32 = 3;
 pub const DEFAULT_SEGMENTS: u32 = 8;
 
 /// 工具箱下载器配置（persist section `tooldl`）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "config/")]
 #[serde(default)]
 pub struct ToolDlConfig {
     /// 保存目录（空 = 尚未选择，此时不允许开始下载）

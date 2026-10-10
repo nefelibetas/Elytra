@@ -40,7 +40,8 @@ Elytra Launcher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前�
 | `src-tauri/src/launcher/` | `args.rs`（命令构建）/ `env.rs`（环境准备）/ `process.rs`（进程生命周期与监听）/ `script.rs`（BAT/SH 渲染）/ `skin.rs`（离线皮肤）/ `platform.rs`（平台调节）/ `memory.rs` / `model.rs` |
 | `src-tauri/src/commands/` | 17 个命令模块（123 命令）：account(27) / community(3) / downloader(5) / gamedirs(11) / jdk(4) / launch(5) / launch_options(3) / launch_script(1) / loader(6) / offline_account(5) / online(6) / server_status(1) / skins(4，本地皮肤衣柜) / task(14) / tooldl(9，工具箱下载器) / version(15) / version_icon(4) —— 薄胶水，逻辑在各领域层 |
 | `src/pages/` | Launch / Download（资源中心）/ **DownloadDetail（下载任务中心，顶级路由）** / ResourceDetail（资源详情+依赖链）/ Settings / VersionSelect / VersionSetup（容器化，业务在 store/组件）/ Tools（生成器 + 皮肤绘画器 + 多线程下载器 + 联机等工具集）/ CustomThemeEditor / SkinStudio（皮肤衣柜：3D 预览 + 皮肤/披风/本地衣柜，**仅正版账号可进**） |
-| `src/store/` | 27 个模块级 reactive/ref 单例：`download.ts`（dlState 任务状态机 + `ensureListen` 幂等 + terminalTaskIds 防幽灵）、`communitySearch.ts`/`categorySearch.ts`（聚合/分页/四分类工厂）、`resourceDetail.ts`、`versionDownload.ts`、`versionDetail.ts`、`launch.ts`、`accountUi.ts`、`auth.ts`、`avatar.ts`（FNV-1a 头像）、`alert.ts`、`theme.ts`（四主题）、`nav.ts`、`downloadTab.ts`、`settingsTab.ts`、`selectedVersion.ts`、`jdkConfig.ts`、`launchOptions.ts`、`downloaderConfig.ts`、`gameDirs.ts`、`online.ts`（联机状态机）、`memory.ts`、`versionIcon.ts`、`events.ts`（镜像 Rust `events.rs`）、`skinStudio.ts`（皮肤衣柜：3D 全身预览帧 + 官方皮肤/披风 + 本地衣柜）。**鞘翅预览当前已禁用**：UI 入口（动作栏的羽毛开关 / `elytraPreview` 状态 / `toggleElytra`）已整体移除，等对照资料齐了再开；渲染器侧 `skinRender.buildElytra` 与 `drawFullCanvas` 的 `elytra` 选项保留（暂无 UI 调用）。重开时务必注意：**取披风纹理的 `(22,0)-(46,22)`** —— Mojang 披风纹理是双用途的，左半 `(0,0)` 是披风展开、右半就是鞘翅模型 `texOffs(22,0)` 的图案（实测迁移者/用户披风右半都带独立的鞘翅图案），别改回取披风展开区；**姿态是收拢的**（`rotation.x` 与 `rotation.z` 各 15°，两片近乎垂直、在背后叠成壳状，对齐 skinview3d 的 `ElytraObject.resetJoints`），不是滑翔态的水平展开 —— 张开角一大会把按竖直朝向画的图案整体拧 90°；翅膀贴图只画朝外一面，故该盒子 `noCull`）、`toolDownload.ts`（工具箱多线程下载器：任务列表 + 配置 + 操作命令，与 dlState 完全隔离）、`skinEditor.ts`（皮肤绘画器：64×64 像素缓冲 + 工具 / 撤销栈 / 部位色表，缓冲**刻意非响应式**，视图只订阅 `revision`） |
+| `src/store/` | 模块级 reactive/ref 单例，**按域分包**：`config/`（`downloaderConfig`/`gameDirs`/`online`/`toolDownload`/`externalConfig`/`jdkOptions`/`launchOptions`/`configRecovery`）、`task/`（`download`（dlState 任务状态机 + `ensureListen` 幂等 + terminalTaskIds 防幽灵）/`downloadTab`/`versionDownload`/`versionSetup`/`versionDetail`/`versionIcon`）、`auth/`（`auth`/`accountUi`/`avatar`（FNV-1a 头像））、`skin/`（`skinStudio`（皮肤衣柜：3D 全身预览帧 + 官方皮肤/披风 + 本地衣柜）/`skinEditor`（皮肤绘画器：64×64 像素缓冲**刻意非响应式**，视图只订阅 `revision`）/`skinRender`）、`community/`（`communitySearch`/`categorySearch`（聚合/分页/四分类工厂）/`resourceDetail`）、`app/`（`events`（镜像 Rust `events.rs`）/`alert`/`theme`（四主题）/`nav`/`settingsTab`/`selectedVersion`/`memory`/`appLog`/`launch`）。**鞘翅预览当前已禁用**：UI 入口（动作栏的羽毛开关 / `elytraPreview` 状态 / `toggleElytra`）已整体移除，等对照资料齐了再开；渲染器侧 `skinRender.buildElytra` 与 `drawFullCanvas` 的 `elytra` 选项保留（暂无 UI 调用）。重开时务必注意：**取披风纹理的 `(22,0)-(46,22)`** —— Mojang 披风纹理是双用途的，左半 `(0,0)` 是披风展开、右半就是鞘翅模型 `texOffs(22,0)` 的图案（实测迁移者/用户披风右半都带独立的鞘翅图案），别改回取披风展开区；**姿态是收拢的**（`rotation.x` 与 `rotation.z` 各 15°，两片近乎垂直、在背后叠成壳状，对齐 skinview3d 的 `ElytraObject.resetJoints`），不是滑翔态的水平展开 —— 张开角一大会把按竖直朝向画的图案整体拧 90°；翅膀贴图只画朝外一面，故该盒子 `noCull` |
+| `src/types/` | **自动生成的 TS 类型**（`ts-rs`，勿手改）：按域分包 `config/`、`task/`、`tooldl/`、`launcher/`、`jdk/`、`auth/`。生成命令 `cd src-tauri && cargo run --bin gen_ts`（登记清单 `src-tauri/src/ts_export.rs`，导出路径由 `src-tauri/.cargo/config.toml` 的 `TS_RS_EXPORT_DIR` 决定）。改 Rust 数据结构后必须重跑生成，否则前端类型落后 |
 | `src/component/` | 按域分目录：`common/`（TitleBar / AlertDialog / DialogModal / ScrollTopFab / IconImage / EmptyState / ErrorState / CheckToggle / DropSelect / LoadingSpinner / StepDot / MenuPopover）、`download/`、`launch/`、`settings/`、`tools/`（Give/Potion/Firework/Villager/Motd 生成器 + ModsEditor + ServerStatus/Online 工具 + **DownloadTool（多线程下载器）** + **SkinPainterTool（皮肤绘画器：展开图逐像素 + 3D 直绘双模式，3D 模式下预览撑满中栏、左键落笔 / 抓手或右键拖动旋转、内层外层手动切换；展开图每部位独立配色标注；预览的透明像素垫棋盘底纹，且只垫第一层 —— 第二层空着时要透出内层，垫了就整块盖住）**）、`version/`、`version-setup/` —— 页面组件直接 import store，无 props 链 |
 | `src/utils/` | `error.ts`（**`errMsg()` 取错误首行**，toast/内联错误用）、`format.ts`（fmtCount/fmtSize/fmtModDate/fmtDateTime/fmtSpeed/fmtEta…）、`versionClassify.ts`（目录名 `{mc}-{loader}-{ver}` 解析）、`versionMeta.ts`、`give.ts`/`motd.ts`/`nbt.ts`（生成器算法）、`toast.ts`、`tooltip.ts`、`useConfigSection.ts`、`useSelectable.ts`、`useConfirmDelete.ts` |
 
@@ -53,7 +54,8 @@ pnpm dev            # 仅 vite dev server（:1420 strictPort）
 pnpm build          # vue-tsc --noEmit（全量类型检查）+ vite build → dist/
 cd src-tauri && cargo check              # Rust 编译检查
 cd src-tauri && cargo clippy --lib       # Rust lint（保持零代码警告）
-cd src-tauri && cargo test --lib -- --test-threads=1   # 单元测试（当前 267 passed + 1 ignored；串行防 persist/网络竞争）
+cd src-tauri && cargo test --lib -- --test-threads=1   # 单元测试（当前 272 passed + 1 ignored；串行防 persist/网络竞争）
+cd src-tauri && cargo run --bin gen_ts    # 生成前端 TS 类型 → src/types/（改 Rust 数据结构后必跑；不在测试里生成）
 cd src-tauri && cargo test --test online_diag          # 联机集成测试（host/guest 双实例回环，走真实 easytier）
 cd src-tauri && cargo test --test tool_download        # 工具箱下载器集成测试（本地 HTTP 服务驱动完整链路：分段/暂停续传/取消/回退）
 cd src-tauri && cargo test --test e2e_download -- --ignored   # run_task 端到端（真实网络：取消路径秒级 / 完整下载分钟级）
@@ -69,6 +71,8 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 - **命令命名**：snake_case、动词开头（`get_/save_/set_/fetch_/scan_/launch_/spawn_/start_/cancel_/remove_`…）
 - **返回**：可失败 → `Result<T, String>`；纯读取 → 裸 `T`/`Option<T>`；错误在模块边界 `.map_err(|e| e.to_string())`
 - **错误消息规范**：**中文短文案首行 + `\n` + 技术细节**（如 `下载资源索引失败\n{e}`、`请求失败\nHTTP {status}`）；前端 toast/内联错误经 `errMsg()` 取首行，AlertDialog（带复制）显示全文
+- **错误构造走宏**（`src/macros.rs`，经 `#[macro_use] mod macros` 全局可用）：`common_err_ctx!("短文案")` 生成 `.map_err` 闭包（统一错误格式的唯一入口）；`bail!("短文案\n{e}")` 早返回（等价 `return Err(format!(...))`，仅用于返回 `Result<_, String>` 的函数）。二者用 `$($t:tt)*` 原样转发，支持内联捕获与位置参数；**ctx 含内联捕获时必须走位置参数形态**（`common_err_ctx!("下载 {} 失败", x)`），写成 `common_err_ctx!("下载 {x} 失败")` 会退化为字面量输出（静默错误）
+- **section 读写走宏**（`persist/accessors.rs` 的 `section_accessors!`）：为配置 section 生成 `xxx_config()` / `save_xxx_config()`（支持自定义默认形态 `=> T, SECT, <默认表达式>`）；新增配置 section 优先加进宏，而非手写 `persist::read(SECT).unwrap_or_default()`
 - **async 分布**：网络/IO 重命令 async；配置读写/本地小操作同步；重活（remove_dir_all、rename）走 `spawn_blocking`/`tauri::async_runtime::spawn_blocking`
 - **注册**：新命令 = `commands/<file>.rs` 加 `#[tauri::command] pub fn`，在 `lib.rs` 顶部（`use commands::<模块>::{…}`）追加导入，再把它加到 `generate_handler!` 列表（列**裸名**，不写路径）——`commands/mod.rs` 只有 `pub mod`，re-export 不能代替
 - **持久化**：配置一律 `persist::read::<T>("section").unwrap_or_default()`；结构体实现 `Default`；`save` 前读改写（全局锁串行化）
@@ -84,7 +88,13 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 
 ### 前端 Vue/TS
 
-- **IPC**：命令名与参数/返回值字段全 snake_case；**TS interface 手写镜像 Rust struct，无自动生成**——改 Rust 字段必须同步前端
+- **IPC**：命令名与参数/返回值字段全 snake_case；**`invoke` 一律封装成方法**——`invoke` 只允许出现在 store/封装层（组件、页面禁止裸调），泛型类型也只写在封装层
+- **TS 类型镜像（自动生成，勿手写）**：前端与后端共享的数据类型（config / 事件 payload / 命令 DTO）由 Rust 侧 `#[derive(ts_rs::TS)]` + `#[ts(export_to = "<域>/")]` 生成，产物在 `src/types/<域>/*.ts`。
+  - 生成命令：`cd src-tauri && cargo run --bin gen_ts`（**不在测试里生成**，避免跑测试误改工作区）；新类型登记进 `src-tauri/src/ts_export.rs`
+  - **改了 Rust 字段/类型必须跑一次生成**，否则前端类型落后（生成物 `src/types/` 入库，diff 可 review）
+  - 前端 import 生成类型（`import type { X } from "../types/<域>/X"`）；前端名与 Rust 名不一致时用别名 `export type { RustName as FrontendName }`
+  - 生成注意：`#[serde(skip_serializing)]` 需配 `#[ts(skip)]`；`u64`/`i64` 需 `#[ts(type = "number")]`（否则生成 `bigint`），`Option<u64>` 用 `#[ts(type = "number | null")]`
+  - `invoke` 的泛型用生成类型：`return invoke<X>(...);`（封装层内）
 - **跨组件缓存必须放普通 `<script lang="ts">` 块或 store 模块级**——`<script setup>` 顶层变量每次组件重建（路由切换）重置（Launch.vue 头像缓存、Download.vue manifest 缓存为范例）
 - **状态**：模块级 `reactive()`/`ref()` 单例导出，页面直接 import；无 Pinia/Vuex
 - **事件监听幂等**：`ensureListen()` 用 listening 标志防重复注册；终态（done/cancelled/error）事件用 `terminalTaskIds` 防幽灵卡片复活
@@ -102,7 +112,7 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 | `src-tauri/src/lib.rs` | 入口：`task::init()` / `tooldl::init()`、后台预扫 JDK、**唯一** generate_handler! 注册点（123 个 tauri::command） |
 | `src-tauri/src/main.rs` | 仅 `elytra_lib::run()` |
 | `src-tauri/src/constants.rs` | APP_NAME/UA/MIRROR_CONCURRENCY、`option_env!` 注入 CURSEFORGE_API_KEY / MS_CLIENT_ID（.env 经 build.rs）、persist SECT_* 段名 |
-| `src-tauri/src/events.rs` | 事件名常量（与 `src/store/events.ts` 手写镜像同步） |
+| `src-tauri/src/events.rs` | 事件名常量（与 `src/store/app/events.ts` 手写镜像同步） |
 | `src-tauri/src/task/manager.rs` | TaskManager 单例（create/pause/cancel/fail/remove/list + 挂起决策 + `LazyLock` 单例） |
 | `src-tauri/src/task/emit.rs` | `EMIT_TX` 顺序队列线程 + `emit_event` 泛型派发 + `update_and_emit`（锁外 emit） |
 | `src-tauri/src/task/progress.rs` | 进度上报（EmitLoop/心跳/`set_*`）+ **终态收口唯一入口** `set_done`/`set_error`/`set_cancelled` |
@@ -117,7 +127,7 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 | `src-tauri/src/util.rs` | 跨域纯函数：`config_dir()`/`safe_relative_path`/`sha1_sub_dir`/`unique_child_dir`/`fnv1a64`/`is_simple_name`/`infer_loader_from_json`… |
 | `src-tauri/tauri.conf.json` | 窗口 **1008×648**（840×540 的 1.2 倍）、无边框透明、`beforeDevCommand: pnpm dev`、devUrl :1420 |
 | `src-tauri/capabilities/default.json` | main 窗口权限：core:default + window 控制子集 + opener + dialog |
-| `src/store/download.ts` | 下载任务状态机（事件驱动核心） |
+| `src/store/task/download.ts` | 下载任务状态机（事件驱动核心） |
 
 ## Runtime/Tooling Preferences
 
@@ -139,7 +149,7 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 
 ## Testing & QA
 
-- **无前端测试**；Rust 侧 267 个单元测试，全部内嵌各模块 `#[cfg(test)] mod tests`（含测试与实现同文件的约定），`cargo test --lib -- --test-threads=1` 运行；集成测试 `tests/online_diag.rs`（联机全链路：host/guest 双实例回环 + easytier 日志落盘）与 `tests/tool_download.rs`（工具箱下载器全链路：本地 HTTP 服务驱动入队 / 分段 / 暂停续传 / 取消 / 回退，5 用例，含 1 个真实网络 `#[ignore]`）
+- **无前端测试**；Rust 侧 272 个单元测试，全部内嵌各模块 `#[cfg(test)] mod tests`（含测试与实现同文件的约定），`cargo test --lib -- --test-threads=1` 运行；集成测试 `tests/online_diag.rs`（联机全链路：host/guest 双实例回环 + easytier 日志落盘）与 `tests/tool_download.rs`（工具箱下载器全链路：本地 HTTP 服务驱动入队 / 分段 / 暂停续传 / 取消 / 回退，5 用例，含 1 个真实网络 `#[ignore]`）
 - **单元测试只测纯函数**：PKCE、URL 组装、启动命令构建（`build_launch_command` + `minimal_version_json()` 助手）、离线皮肤 UUID 算法（与 Java `UUID.hashCode() & 1` 一致性）、内存分配公式、util（URL 文件名/版本目录解析/`sha1_sub_dir`/`safe_relative_path`）、maven XML 解析与语义化排序、Mod 双源搜索、修复步骤规划、persist 读写回环、secrets DPAPI、store 快照/恢复、**`store_ops_from_runtime_worker_no_panic`（worker 线程 block_on 回归）**、**`count_assets_all_end_to_end`（真实索引 + 5057 项多线程扫描，网络）**、**`find_java_home_finds_nested_bin`（Azul 布局幂等）**、`downloader/fetcher` 的取消/换源/校验/重定向/并发上限、`downloader/segmented` 的切分覆盖/小文件不分段/分段写一致性/不支持 Range 回退/段级与段内续传/陈旧位图作废、loader 的 profile 合并与继承展开、房间码解析/广播回环（online）
 - **断言风格**：`assert_eq!` 精确值为主（argv 位置、公式值、错误码消息）；行为不变量用 `assert!` + 中文 message
 - **平台隔离**：Windows 专属逻辑（BAT 脚本渲染、DPAPI、注册表代理）用 `#[cfg(target_os = "windows")]`

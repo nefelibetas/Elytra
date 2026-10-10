@@ -9,7 +9,7 @@ import {
   versionIcons, iconSources,
   loadVersionIcon, loadIconSource, setVersionIcon, resetVersionIcon,
   type VersionIconSource,
-} from "../../store/versionIcon";
+} from "../../store/task/versionIcon";
 import { open } from "@tauri-apps/plugin-dialog";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";

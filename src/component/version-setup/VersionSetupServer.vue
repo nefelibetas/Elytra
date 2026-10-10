@@ -2,7 +2,7 @@
 // 版本设置-服务器：快速进服（--server/--port），per-version 存储，启动时优先于全局配置。
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
-import { loadVersionServer, saveVersionServer } from "../../store/versionSetup";
+import { loadVersionServer, saveVersionServer } from "../../store/task/versionSetup";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 

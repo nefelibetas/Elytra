@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 启动选项卡片 + 内存分配卡片
 import { onMounted } from "vue";
-import { memState } from "../../store/memory";
+import { memState } from "../../store/app/memory";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
 import CheckToggle from "../common/CheckToggle.vue";
 import {
@@ -9,7 +9,7 @@ import {
   loMemMode, loMemMb, loMinMem, loMemOptimize, loVerifySsl, launchError,
   memUsedMb, memGameMb, memUsedPct, memGamePct,
   saveLaunchOptions, loadLaunchOptions,
-} from "../../store/launchOptions";
+} from "../../store/config/launchOptions";
 import { memLabelLeft, fmtGb } from "../../utils/format";
 
 onMounted(loadLaunchOptions);

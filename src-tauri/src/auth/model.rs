@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 /// Microsoft 正版账号（含长期 refresh_token 与短期 Minecraft access_token）。
 /// 敏感数据安全：经 persist::secrets 存到 `Elytra/secrets.bin`（Windows DPAPI 加密，
 /// 绑定当前用户账户），**不进 Settings.toml 明文**。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "auth/")]
 pub struct MsAccount {
     /// Minecraft profile uuid（无连字符）
     pub uuid: String,
@@ -18,6 +19,7 @@ pub struct MsAccount {
     /// Xbox User ID（启动参数 --xuid）
     pub xuid: String,
     /// access_token 过期时间（unix 秒）
+    #[ts(type = "number")]
     pub expires_at: u64,
 }
 

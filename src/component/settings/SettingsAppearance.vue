@@ -8,7 +8,7 @@ import {
   THEMES, themeId, customThemes, isCustom,
   deleteCustomTheme, activateCustomTheme, ensureCustomThemesApplied,
   type ThemeId,
-} from "../../store/theme";
+} from "../../store/app/theme";
 import { Trash2, Pencil, Plus } from "@lucide/vue";
 
 // 挂载时注入全部已保存自定义主题样式（页面刷新后 style 不持久），并高亮当前选中

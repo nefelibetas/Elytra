@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // Mod 搜索结果列表：薄适配层 → CommunityResultList（详情回填当前加载器）。
-import { communitySearch, communityTotalPages } from "../../store/communitySearch";
+import { communitySearch, communityTotalPages } from "../../store/community/communitySearch";
 import { Puzzle } from "@lucide/vue";
 import CommunityResultList from "./CommunityResultList.vue";
 </script>

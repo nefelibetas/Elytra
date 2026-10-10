@@ -7,11 +7,11 @@ import {
   jdkList, autoMode, activeJdk, loading, jdkError,
   refreshJdks, selectCustomDir, selectAuto, selectJdk,
   installJdk, loadConfig,
-} from "../../store/jdkOptions";
+} from "../../store/config/jdkOptions";
 import {
   loJvmArgs, loGameArgs, loPreCmd, loGc, loDisableWrapper, loDisableAgent, loHighGpu,
   gcOptions, saveLaunchOptions,
-} from "../../store/launchOptions";
+} from "../../store/config/launchOptions";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 import LoadingSpinner from "../common/LoadingSpinner.vue";

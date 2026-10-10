@@ -18,7 +18,7 @@ import {
   saveDownloadConfig, setGameMode, setCommunityMode, setJdkMode, setNetworkMode,
   setTranslateMode, loadDownloadConfig,
   dlSourceMaster, dlDetailOpen, setSourceMaster,
-} from "../../store/downloaderConfig";
+} from "../../store/config/downloaderConfig";
 
 onMounted(loadDownloadConfig);
 /** 主开关 custom 态显示文案（custom 值不在选项中，经 placeholder 呈现）。 */

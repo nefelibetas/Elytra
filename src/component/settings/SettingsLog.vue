@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 设置-启动器日志：查看启动器自身输出（stdout/stderr 重定向到 exe 旁 Elytra/launcher.log）。
 import { onMounted, ref } from "vue";
-import { loadLauncherLog, openLauncherLogDir } from "../../store/appLog";
+import { loadLauncherLog, openLauncherLogDir } from "../../store/app/appLog";
 import { RefreshCw, FolderOpen } from "@lucide/vue";
 
 const logText = ref("");

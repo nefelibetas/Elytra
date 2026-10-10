@@ -35,8 +35,9 @@ fn file_dest(
 }
 
 /// task-waiting-user 事件 payload（前端 mirror）。
-#[derive(serde::Serialize, Clone)]
-struct WaitingUserPayload {
+#[derive(serde::Serialize, Clone, ts_rs::TS)]
+#[ts(export_to = "task/")]
+pub struct WaitingUserPayload {
     pub task_id: String,
     pub file_name: String,
     pub error: String,

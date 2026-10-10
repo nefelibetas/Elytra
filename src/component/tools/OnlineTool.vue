@@ -12,7 +12,7 @@ import {
   onlineStatus, onlineRoomCode, onlineLocalPort, onlinePlayers,
   onlineErrorHost, onlineErrorGuest,
   startHost, joinRoom, stopOnline, loadOnlineStatus, ensureOnlineListen,
-} from "../../store/online";
+} from "../../store/config/online";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 import { copyText } from "../../utils/clipboard";

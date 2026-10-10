@@ -3,9 +3,9 @@
 // 加载/错误/空态 + 结果行 + 分页器（底部栏计数最右）；差异全部 props 化：
 // 搜索状态实例、总页数、类别文案、空态图标、详情回填加载器。
 import type { Component } from "vue";
-import type { CommunityDisplayItem } from "../../store/communitySearch";
-import { dlTranslateMode } from "../../store/downloaderConfig";
-import { openResourceDetail } from "../../store/resourceDetail";
+import type { CommunityDisplayItem } from "../../store/community/communitySearch";
+import { dlTranslateMode } from "../../store/config/downloaderConfig";
+import { openResourceDetail } from "../../store/community/resourceDetail";
 import { fmtCount } from "../../utils/format";
 import IconImage from "../common/IconImage.vue";
 import LoadingSpinner from "../common/LoadingSpinner.vue";

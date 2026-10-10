@@ -3,10 +3,10 @@
 import { ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { modpackSearch } from "../../store/categorySearch";
+import { modpackSearch } from "../../store/community/categorySearch";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
-import { registerTaskName } from "../../store/download";
+import { registerTaskName } from "../../store/task/download";
 import CommunitySearchBar from "./CommunitySearchBar.vue";
 
 /** 本地导入：选 .mrpack/.zip → install_modpack（后端自动嗅探 Modrinth/CurseForge 清单）。 */

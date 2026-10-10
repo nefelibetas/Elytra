@@ -15,7 +15,7 @@ import VersionSetupResource from "../component/version-setup/VersionSetupResourc
 import {
   loadMods, loadModsQuick,
   loadWorlds, loadResourceDetailed, loadResourceQuick,
-} from "../store/versionDetail";
+} from "../store/task/versionDetail";
 
 type TabKey = "mods" | "saves" | "resourcepacks" | "shaderpacks" | "datapacks" | "export" | "logs" | "server" | "misc";
 

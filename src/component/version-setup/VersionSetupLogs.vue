@@ -3,10 +3,10 @@
 // 与 .minecraft/logs/elytra-launch.log（启动器捕获的启动输出），尾部 200 行。
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
-import { loadGameLog } from "../../store/launch";
+import { loadGameLog } from "../../store/app/launch";
 import { openFolder } from "../../utils/fs";
 import { RefreshCw, FolderOpen } from "@lucide/vue";
-import { activePath } from "../../store/gameDirs";
+import { activePath } from "../../store/config/gameDirs";
 
 const route = useRoute();
 /** 游戏 id（版本目录名），由路由 query 传入。 */

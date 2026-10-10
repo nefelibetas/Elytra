@@ -6,8 +6,8 @@ import { useRouter } from "vue-router";
 import { Pencil, Folder, FolderOpen, CloudDownload, Puzzle, Map, Settings2, Palette, Database, Sun, ImagePlus } from "@lucide/vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import { fmtUnix } from "../../utils/format";
-import { ensureGameFolder, renameVersionDir } from "../../store/gameDirs";
-import { scanMissingFiles, submitMissingDownload } from "../../store/download";
+import { ensureGameFolder, renameVersionDir } from "../../store/config/gameDirs";
+import { scanMissingFiles, submitMissingDownload } from "../../store/task/download";
 import { openFolder } from "../../utils/fs";
 import { classifyVersion } from "../../utils/versionClassify";
 import { LOADER_ICONS, LOADER_TITLES } from "../../utils/versionMeta";
@@ -16,17 +16,17 @@ import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 import {
   versionIcons, loadVersionIcon, setVersionIcon,
-} from "../../store/versionIcon";
-import { isLaunching } from "../../store/launch";
+} from "../../store/task/versionIcon";
+import { isLaunching } from "../../store/app/launch";
 import VersionItem from "../download/VersionItem.vue";
 import AlertDialog from "../common/AlertDialog.vue";
 import IconImage from "../common/IconImage.vue";
 import LoadingSpinner from "../common/LoadingSpinner.vue";
 import EmptyState from "../common/EmptyState.vue";
 import ErrorState from "../common/ErrorState.vue";
-import { dlState } from "../../store/download";
-import { dlTranslateMode } from "../../store/downloaderConfig";
-import { selectedVersion, setSelected } from "../../store/selectedVersion";
+import { dlState } from "../../store/task/download";
+import { dlTranslateMode } from "../../store/config/downloaderConfig";
+import { selectedVersion, setSelected } from "../../store/app/selectedVersion";
 import {
   worlds, worldsLoading, worldsError, worldIcons,
   mods, modsLoading, modsError, modsNetworkError,
@@ -35,7 +35,7 @@ import {
   resetVersionDetail, loadVersionLoader, loadWorlds, loadMods, loadModsQuick, loadResourceLists,
   startWorldsLivePolling, stopWorldsLivePolling,
   type ResourceKind,
-} from "../../store/versionDetail";
+} from "../../store/task/versionDetail";
 
 const versionName = computed(() => selectedVersion.value);
 

@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import { initNavHistory, goBack, goForward } from "./store/nav";
+import { initNavHistory, goBack, goForward } from "./store/app/nav";
 import TitleBar from "./component/common/TitleBar.vue";
 import AlertDialog from "./component/common/AlertDialog.vue";
-import { dlState, ensureListen, checkInterrupted, waitingUser, decideWaitingTask, type TaskKind } from "./store/download";
-import { startMemoryMonitor } from "./store/memory";
-import { ensureConfigRecoveryWatch } from "./store/configRecovery";
-import { setSelected } from "./store/selectedVersion";
+import { dlState, ensureListen, checkInterrupted, waitingUser, decideWaitingTask, type TaskKind } from "./store/task/download";
+import { startMemoryMonitor } from "./store/app/memory";
+import { ensureConfigRecoveryWatch } from "./store/config/configRecovery";
+import { setSelected } from "./store/app/selectedVersion";
 import { toastState, showToast } from "./utils/toast";
 
 const router = useRouter();
