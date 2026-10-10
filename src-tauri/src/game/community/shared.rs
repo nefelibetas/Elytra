@@ -2,9 +2,8 @@
 //! MC 版本号解析/比较助手。
 
 use crate::config::downloader::{DownloadSourceMode, DownloaderConfig};
-use crate::constants;
 use crate::downloader;
-use crate::persist;
+use crate::persist::downloader_config;
 /// 搜索类交互请求超时（默认 client 300s 太长，搜索卡住不该让前端挂 5 分钟）
 pub(super) const QUERY_TIMEOUT_SECS: u64 = 10;
 
@@ -42,7 +41,7 @@ pub(crate) fn api_routes(platform: ApiPlatform, path: &str) -> Vec<String> {
             ),
         ),
     };
-    let cfg: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
+    let cfg: DownloaderConfig = downloader_config();
     match cfg.community_source_mode {
         DownloadSourceMode::OfficialOnly => vec![official],
         DownloadSourceMode::MirrorOnly => vec![mirror],

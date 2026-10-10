@@ -74,7 +74,7 @@ export async function doLaunch(navigateToDownload: () => void) {
   }
 
   const isOffline = authMode.value === "offline";
-  const isThirdParty = authMode.value === "thirdparty";
+  const isExternal = authMode.value === "external";
 
   // 离线模式必须输入用户名
   if (isOffline && !username.value.trim()) {
@@ -84,20 +84,20 @@ export async function doLaunch(navigateToDownload: () => void) {
 
   // 正版模式必须已登录；启动前静默刷新 token
   // （界面切换在前，刷新是网络请求，避免点击后界面无反馈）
-  if (!isOffline && !isThirdParty && !msAccount.value) {
+  if (!isOffline && !isExternal && !msAccount.value) {
     showError("请先登录 Microsoft 账号");
     return;
   }
 
   // 第三方模式必须已登录
-  if (isThirdParty && !externalAccount.value) {
+  if (isExternal && !externalAccount.value) {
     showError("请先登录第三方账号");
     return;
   }
 
   const name = isOffline
     ? username.value.trim()
-    : isThirdParty
+    : isExternal
       ? (externalAccount.value?.name ?? "")
       : (msAccount.value?.name ?? "");
   launchState.phase = "running";
@@ -115,7 +115,7 @@ export async function doLaunch(navigateToDownload: () => void) {
     //   连 refresh 都过期的地步，届时只能报「登录凭据已失效」重新登录（Yggdrasil 不返回
     //   过期时间，无法像正版那样先判过期，故每次启动都刷一次，网络开销可忽略）。
     // 离线：无凭据，跳过。
-    if (isThirdParty) {
+    if (isExternal) {
       const ext = externalAccount.value;
       if (ext) {
         try {
@@ -149,19 +149,19 @@ export async function doLaunch(navigateToDownload: () => void) {
     step("启动游戏", "running");
     const pid = await invoke("spawn_game", {
       versionDirName: selectedVersion.value,
-      authMode: isOffline ? "offline" : isThirdParty ? "external" : "online",
+      authMode: isOffline ? "offline" : isExternal ? "external" : "online",
       username: name,
       accessToken: isOffline
         ? ""
-        : isThirdParty
+        : isExternal
           ? (externalAccount.value?.access_token ?? "")
           : (msAccount.value?.access_token ?? ""),
       uuid: isOffline
         ? ""
-        : isThirdParty
+        : isExternal
           ? (externalAccount.value?.uuid ?? "")
           : (msAccount.value?.uuid ?? ""),
-      xuid: isOffline || isThirdParty ? "" : (msAccount.value?.xuid ?? ""),
+      xuid: isOffline || isExternal ? "" : (msAccount.value?.xuid ?? ""),
     });
     step("启动游戏", "done");
     step("等待游戏窗口", "running");

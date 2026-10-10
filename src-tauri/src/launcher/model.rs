@@ -61,7 +61,7 @@ pub enum WindowSize {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct LauncherConfig {
+pub struct LaunchOptions {
     pub memory: MemoryMode,
 
     /// 最小堆 -Xms（MB）；None = 不设置（JVM 默认，随 -Xmx 的 1/64 起扩）。
@@ -128,7 +128,7 @@ fn default_zh() -> String {
     "auto_zh_CN".into()
 }
 
-impl Default for LauncherConfig {
+impl Default for LaunchOptions {
     fn default() -> Self {
         Self {
             memory: MemoryMode::default(),

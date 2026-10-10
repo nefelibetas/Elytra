@@ -7,7 +7,7 @@ import { MS_LOGIN_COMPLETE } from "./events";
 import { showError } from "./alert";
 import { avatarState, renderPremiumAvatar, renderExternalAvatar } from "./avatar";
 
-export type AuthMode = "premium" | "offline" | "thirdparty";
+export type AuthMode = "premium" | "offline" | "external";
 
 export const AUTH_MODE_KEY = "elytra.authMode";
 
@@ -20,11 +20,13 @@ export interface MsAccountInfo {
   expires_at: number;
 }
 
+/** 持久化的认证模式；旧版本存 "thirdparty"，读取时按 "external" 兼容。 */
+const storedAuthMode = localStorage.getItem(AUTH_MODE_KEY);
 export const authMode = ref<AuthMode>(
-  localStorage.getItem(AUTH_MODE_KEY) === "offline"
+  storedAuthMode === "offline"
     ? "offline"
-    : localStorage.getItem(AUTH_MODE_KEY) === "thirdparty"
-      ? "thirdparty"
+    : storedAuthMode === "external" || storedAuthMode === "thirdparty"
+      ? "external"
       : "premium",
 );
 export interface ExternalProfile {

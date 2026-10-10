@@ -2,6 +2,6 @@
 // 对齐 downloadTabState 先例：tab 切换是纯前端 UI 状态，模块级 ref 单例即可。
 import { ref } from "vue";
 
-export type SettingsTab = "launch" | "download" | "appearance" | "online" | "log" | "thirdparty";
+export type SettingsTab = "launch" | "download" | "appearance" | "online" | "log" | "external";
 
 export const settingsTab = ref<SettingsTab>("launch");

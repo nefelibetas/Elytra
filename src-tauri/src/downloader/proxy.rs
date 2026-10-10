@@ -5,9 +5,8 @@
 #[cfg(target_os = "windows")]
 use winreg::{enums::HKEY_CURRENT_USER, RegKey};
 
-use crate::config::downloader::{DownloaderConfig, NetworkMode};
-use crate::constants;
-use crate::persist;
+use crate::config::downloader::NetworkMode;
+use crate::persist::downloader_config;
 
 /// 解析 Windows 注册表 ProxyServer 值 → (http 代理, https 代理)。
 /// 支持两种格式：
@@ -143,9 +142,7 @@ fn linux_gsettings_proxy_urls() -> (Option<String>, Option<String>) {
 
 /// 当前网络代理模式（persist 配置；缺省 Auto）。
 fn current_network_mode() -> NetworkMode {
-    persist::read::<DownloaderConfig>(constants::SECT_DOWNLOADER)
-        .map(|c| c.network_mode)
-        .unwrap_or_default()
+    downloader_config().network_mode
 }
 
 /// 按网络模式给 ClientBuilder 应用代理：

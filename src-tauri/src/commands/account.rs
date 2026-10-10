@@ -300,12 +300,12 @@ pub fn remove_external_account(api_url: String, uuid: String) -> Result<(), Stri
 /// 读取第三方配置（无配置回默认内置预设）。
 /// 模型与默认值在 auth/external.rs（命令层薄胶水）。
 #[tauri::command]
-pub fn get_third_party_config() -> external::ThirdPartyConfig {
-    external::ThirdPartyConfig::load()
+pub fn get_external_config() -> external::ExternalConfig {
+    external::ExternalConfig::load()
 }
 
 /// 保存第三方配置（预设列表）。
 #[tauri::command]
-pub fn save_third_party_config(config: external::ThirdPartyConfig) -> Result<(), String> {
-    persist::save(constants::SECT_THIRD_PARTY, &config).map_err(|e| format!("保存失败\n{e}"))
+pub fn save_external_config(config: external::ExternalConfig) -> Result<(), String> {
+    persist::save(constants::SECT_EXTERNAL, &config).map_err(|e| format!("保存失败\n{e}"))
 }

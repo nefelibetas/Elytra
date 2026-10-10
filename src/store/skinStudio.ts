@@ -213,7 +213,7 @@ export const skinStudio = reactive({
         });
         this.officialSkin = p.skin;
         this.officialModel = p.model || "classic";
-      } else if (authMode.value === "thirdparty" && ext) {
+      } else if (authMode.value === "external" && ext) {
         const p = await invoke<{ skin: string; model: string }>("fetch_external_skin_profile", {
           apiUrl: ext.api_url,
           uuid: ext.uuid,

@@ -16,7 +16,7 @@ use crate::auth::microsoft::extract_xuid_from_jwt;
 use crate::game::version::model::VersionJson;
 use crate::launcher::args::{ensure_old_style_natives, mc_version_of};
 use crate::launcher::env::{load_launch_config, pre_launch_check};
-use crate::launcher::model::{AuthMode, LauncherConfig, ProcessPriority};
+use crate::launcher::model::{AuthMode, LaunchOptions, ProcessPriority};
 
 /// 启动游戏子进程（cwd/stdio 由调用方在 command 上预设）。
 /// Windows：游戏进程应与启动器生命周期解耦，否则关闭启动器（或其终端）会连游戏一起关闭：
@@ -379,7 +379,7 @@ pub async fn prepare_launch(
         PathBuf,
         VersionJson,
         PathBuf,
-        LauncherConfig,
+        LaunchOptions,
         u32,
     ),
     String,

@@ -15,6 +15,8 @@ export const GAME_WINDOW_VISIBLE = "game-window-visible";
 export const ONLINE_STATE = "online-state";
 /** 工具箱下载器任务快照（ToolDlSnapshot；单任务全量状态，按 id 增量更新） */
 export const TOOL_DL_PROGRESS = "tooldl-progress";
+/** 配置文件损坏已恢复（RecoveryNotice；运行期推送，启动期由命令拉取兜底） */
+export const CONFIG_RECOVERY = "config-recovery";
 
 // ── 事件 payload 类型（集中定义，store 经 re-export 保持既有 import 路径兼容）──
 
@@ -80,4 +82,12 @@ export interface ToolDlSnapshot {
   status: ToolDlStatus;
   error: string | null;
   created_at: number;
+}
+
+/** config-recovery 事件 / take_config_recovery_notice 返回值
+ *  （镜像 Rust persist::config::RecoveryNotice）。 */
+export interface RecoveryNotice {
+  /** 损坏文件备份到的路径（null = 备份失败） */
+  backup_path: string | null;
+  reason: string;
 }

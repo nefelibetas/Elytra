@@ -5,4 +5,4 @@ pub mod download;
 pub mod model;
 pub mod scanner;
 
-pub use config::{init, read, register_scanned, save, SUPPORTED_JAVA_MAJORS};
+pub use config::{init, read, read_cache, register_scanned, save, SUPPORTED_JAVA_MAJORS};

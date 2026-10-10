@@ -6,7 +6,7 @@
 //! - mirrorOnly：Mojang（走文件源镜像）→ Adoptium 仅 TUNA（固定链，不探测）。
 //!
 //! 下载目录：`{minecraft_dir}/runtime/{platform}/{version}/`，完成后经
-//! `scanner::inspect` 校验版本并注册进 persist 的 jdk section（discovered_jdks）。
+//! `scanner::inspect` 校验版本并注册进 persist 的 jdk_scanned section（扫描缓存）。
 
 use std::io::Read;
 use std::path::{Path, PathBuf};

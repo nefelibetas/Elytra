@@ -7,7 +7,7 @@ use tauri::AppHandle;
 use crate::config::tooldl::ToolDlConfig;
 use crate::task::EventSink;
 use crate::tooldl::{self, ToolDlSnapshot};
-use crate::{constants, persist};
+use crate::persist;
 
 /// 入队一批下载链接，返回新任务 id 列表。
 #[tauri::command]
@@ -60,13 +60,13 @@ pub fn tooldl_list() -> Vec<ToolDlSnapshot> {
 
 #[tauri::command]
 pub fn tooldl_get_config() -> ToolDlConfig {
-    persist::read(constants::SECT_TOOL_DL).unwrap_or_default()
+    persist::tooldl_config()
 }
 
 /// 保存配置（保存目录 / 并发文件数 / 分段数）；并发上限同步到调度缓存。
 #[tauri::command]
 pub fn tooldl_save_config(config: ToolDlConfig) -> Result<(), String> {
-    persist::save(constants::SECT_TOOL_DL, &config).map_err(|e| format!("保存配置失败\n{e}"))?;
+    persist::save_tooldl_config(&config).map_err(|e| format!("保存配置失败\n{e}"))?;
     tooldl::set_max_files(config.max_files);
     Ok(())
 }

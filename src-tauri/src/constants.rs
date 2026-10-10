@@ -47,10 +47,12 @@ pub const SECT_DOWNLOADER: &str = "downloader";
 pub const SECT_LAUNCHER: &str = "launcher";
 /// persist section: JDK 配置
 pub const SECT_JDK: &str = "jdk";
+/// JDK 扫描缓存 section（本机发现的 JDK 列表，后端维护）
+pub const SECT_JDK_SCANNED: &str = "jdk_scanned";
 /// persist section: 微软账号列表（secrets.bin 加密存储，按登录时间排序，末尾为当前）
 pub const SECT_MS_ACCOUNTS: &str = "ms_accounts";
 pub const SECT_EXTERNAL_ACCOUNTS: &str = "external_accounts";
-pub const SECT_THIRD_PARTY: &str = "third_party";
+pub const SECT_EXTERNAL: &str = "external";
 /// persist section: 离线账号历史列表（最近使用排序，末尾为当前）
 pub const SECT_OFFLINE_ACCOUNTS: &str = "offline_accounts";
 /// persist section: 游戏目录

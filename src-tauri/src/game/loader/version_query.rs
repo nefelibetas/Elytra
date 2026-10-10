@@ -1,20 +1,18 @@
 // ── ModLoader 版本查询：maven-metadata / meta JSON 解析 + 语义化排序 ──
 // 版本列表查询域（commands/loader.rs 只留命令壳）。URL 模板来自 DownloaderConfig 多源配置。
 
-use std::cmp::Ordering;
-
-use serde::Deserialize;
-
 use crate::config::downloader::{DownloadSource, DownloadSourceMode, DownloaderConfig};
-use crate::constants;
 use crate::downloader::{endpoints, fetcher};
 use crate::game::version::source;
-use crate::persist;
+use crate::persist::downloader_config;
+use serde::Deserialize;
+use std::cmp::Ordering;
 
 #[derive(Deserialize)]
 struct FabricEntry {
     loader: FabricLoader,
 }
+
 #[derive(Deserialize)]
 struct FabricLoader {
     version: String,
@@ -24,6 +22,7 @@ struct FabricLoader {
 struct QuiltEntry {
     loader: QuiltLoader,
 }
+
 #[derive(Deserialize)]
 struct QuiltLoader {
     version: String,
@@ -36,7 +35,7 @@ struct OptiFineEntry {
 }
 
 fn config() -> DownloaderConfig {
-    persist::read(constants::SECT_DOWNLOADER).unwrap_or_default()
+    downloader_config()
 }
 
 async fn fetch_versions<T: serde::de::DeserializeOwned>(

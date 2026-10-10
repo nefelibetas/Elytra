@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { memState } from "./memory";
 import { useConfigSection } from "../utils/useConfigSection";
 
-export interface LauncherOptions {
+export interface LaunchOptions {
   memory: "Auto" | { Custom: number };
   min_memory: number | null;
   window_title: string;
@@ -90,7 +90,7 @@ export const gcOptions: { value: string; label: string }[] = [
 
 export async function loadLaunchOptions() {
   try {
-    const cfg = await invoke<LauncherOptions>("get_launch_options");
+    const cfg = await invoke<LaunchOptions>("get_launch_options");
     loWindowTitle.value = cfg.window_title ?? "";
     loPriority.value = cfg.process_priority;
     if (cfg.window_size === "Default") {
@@ -137,7 +137,7 @@ export async function loadLaunchOptions() {
 /** 保存启动选项（保留 jvm_args 等其余字段，仅覆盖用户可改项）。 */
 export async function saveLaunchOptions() {
   await section.run(async () => {
-    const cfg = await invoke<LauncherOptions>("get_launch_options");
+    const cfg = await invoke<LaunchOptions>("get_launch_options");
     cfg.window_title = loWindowTitle.value.trim();
     cfg.process_priority = loPriority.value;
     cfg.window_size =

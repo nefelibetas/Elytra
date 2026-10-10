@@ -3,7 +3,7 @@
 import { SlidersHorizontal, Download, Palette, Link2, FileText, KeyRound } from "@lucide/vue";
 import SettingsLaunchOptions from "../component/settings/SettingsLaunchOptions.vue";
 import SettingsJdk from "../component/settings/SettingsJdk.vue";
-import SettingsThirdParty from "../component/settings/SettingsThirdParty.vue";
+import SettingsExternal from "../component/settings/SettingsExternal.vue";
 import SettingsDownload from "../component/settings/SettingsDownload.vue";
 import SettingsAppearance from "../component/settings/SettingsAppearance.vue";
 import SettingsOnline from "../component/settings/SettingsOnline.vue";
@@ -20,7 +20,7 @@ import { settingsTab } from "../store/settingsTab";
       title="设置"
       :tabs="[
         { key: 'launch', label: '启动设置', icon: SlidersHorizontal },
-        { key: 'thirdparty', label: '第三方登录', icon: KeyRound },
+        { key: 'external', label: '第三方登录', icon: KeyRound },
         { key: 'download', label: '下载设置', icon: Download },
         { key: 'appearance', label: '外观', icon: Palette },
         { key: 'online', label: '联机设置', icon: Link2 },
@@ -34,8 +34,8 @@ import { settingsTab } from "../store/settingsTab";
       </div>
 
       <!-- 下载设置：管理游戏下载源 -->
-      <div v-else-if="settingsTab === 'thirdparty'" key="thirdparty" class="stg-page">
-        <SettingsThirdParty />
+      <div v-else-if="settingsTab === 'external'" key="external" class="stg-page">
+        <SettingsExternal />
       </div>
 
       <div v-else-if="settingsTab === 'download'" key="download" class="stg-page">

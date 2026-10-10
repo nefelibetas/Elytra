@@ -20,7 +20,6 @@ use parking_lot::Mutex;
 use tauri::AppHandle;
 
 use crate::config::downloader::{DownloadSource, DownloaderConfig};
-use crate::constants;
 use crate::downloader::fetcher;
 use crate::downloader::hash;
 use crate::downloader::progress::ProgressCounters;
@@ -33,6 +32,7 @@ use crate::game::resource::assets::AssetIndexRef;
 use crate::game::resource::{assets, extract, library};
 use crate::game::version::meta;
 use crate::game::version::model::VersionJson;
+use crate::persist;
 use crate::task::progress::{
     cancelled, set_cancelled, set_done, set_error, set_phase, set_total, spawn_heartbeat,
     step_done,
@@ -83,7 +83,7 @@ fn override_rel<'a>(member: &'a str, prefix: &str) -> Option<&'a str> {
 }
 
 fn persist_config() -> DownloaderConfig {
-    crate::persist::read(constants::SECT_DOWNLOADER).unwrap_or_default()
+    persist::downloader_config()
 }
 
 fn write_plan(plan_path: &Path, plan: &PackPlan) -> Result<(), String> {

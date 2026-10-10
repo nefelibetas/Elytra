@@ -2,18 +2,16 @@
 //! 命令层（commands/version.rs / downloader.rs / gamedirs.rs / version_icon.rs）只做参数透传。
 //! 基准 = downloader section 的 minecraft_dir（相对值按平台默认基准解析）。
 
-use std::path::{Path, PathBuf};
-
 use crate::config::downloader::DownloaderConfig;
 use crate::config::game_dirs;
 use crate::launcher::args::find_version_json;
-use crate::persist;
+use crate::persist::downloader_config;
 use crate::util::{infer_loader_from_json, is_simple_name};
+use std::path::{Path, PathBuf};
 
 /// 当前激活游戏目录（versions/ 父目录）绝对路径。
 pub fn active_minecraft_dir() -> PathBuf {
-    let config: DownloaderConfig =
-        persist::read(crate::constants::SECT_DOWNLOADER).unwrap_or_default();
+    let config: DownloaderConfig = downloader_config();
     config.minecraft_dir_abs()
 }
 

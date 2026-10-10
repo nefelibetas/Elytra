@@ -20,7 +20,7 @@ fn http_client(timeout_secs: u64) -> Result<reqwest::Client, String> {
         .user_agent(constants::UA_MOJANG_API)
         .timeout(Duration::from_secs(timeout_secs))
         .build()
-        .map_err(|e| format!("初始化客户端失败\n{e}"))
+        .map_err(common_err_ctx!("初始化客户端失败"))
 }
 
 /// token 刷新余量（秒）：距过期不足此值就提前刷新，避开「刚好过期」竞态。
@@ -50,7 +50,9 @@ pub async fn ensure_valid_account() -> Result<auth::model::MsAccount, String> {
     }
     let refreshed = auth::microsoft::refresh_login(&account)
         .await
-        .map_err(|e| format!("登录凭证已过期，自动刷新失败（请重新登录）\n{e}"))?;
+        .map_err(common_err_ctx!(
+            "登录凭证已过期，自动刷新失败（请重新登录）"
+        ))?;
     auth::model::save(&refreshed)?;
     Ok(refreshed)
 }
@@ -66,14 +68,14 @@ pub async fn fetch_b64(url: &str, err_prefix: &str) -> Result<String, String> {
         .get(url)
         .send()
         .await
-        .map_err(|e| format!("{err_prefix}失败\n{e}"))?;
+        .map_err(common_err_ctx!("{}失败", err_prefix))?;
     if !resp.status().is_success() {
         return Err(format!("{err_prefix}失败\nHTTP {}", resp.status()));
     }
     let bytes = resp
         .bytes()
         .await
-        .map_err(|e| format!("下载数据失败\n{e}"))?;
+        .map_err(common_err_ctx!("下载数据失败"))?;
     Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
 
@@ -217,14 +219,11 @@ pub async fn fetch_capes(access_token: &str) -> Result<Vec<CapeInfo>, String> {
         .bearer_auth(access_token)
         .send()
         .await
-        .map_err(|e| format!("获取披风列表失败\n{e}"))?;
+        .map_err(common_err_ctx!("获取披风列表失败"))?;
     if !resp.status().is_success() {
         return Err(format!("获取披风列表失败\nHTTP {}", resp.status()));
     }
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("解析响应失败\n{e}"))?;
+    let json: serde_json::Value = resp.json().await.map_err(common_err_ctx!("解析响应失败"))?;
     let capes = json["capes"].as_array().cloned().unwrap_or_default();
     let mut list: Vec<CapeInfo> = capes
         .iter()
@@ -262,7 +261,7 @@ pub async fn set_active_cape(access_token: &str, cape_id: &str) -> Result<(), St
         .json(&serde_json::json!({ "capeId": cape_id }))
         .send()
         .await
-        .map_err(|e| format!("切换披风失败\n{e}"))?;
+        .map_err(common_err_ctx!("切换披风失败"))?;
     if !resp.status().is_success() {
         return Err(format!("切换披风失败\nHTTP {}", resp.status()));
     }
@@ -276,7 +275,7 @@ pub async fn disable_cape(access_token: &str) -> Result<(), String> {
         .bearer_auth(access_token)
         .send()
         .await
-        .map_err(|e| format!("移除披风失败\n{e}"))?;
+        .map_err(common_err_ctx!("移除披风失败"))?;
     if !resp.status().is_success() {
         return Err(format!("移除披风失败\nHTTP {}", resp.status()));
     }
@@ -288,7 +287,7 @@ pub async fn disable_cape(access_token: &str) -> Result<(), String> {
 pub async fn upload_skin(access_token: &str, file_path: &str, variant: &str) -> Result<(), String> {
     let bytes = tokio::fs::read(file_path)
         .await
-        .map_err(|e| format!("读取文件失败\n{e}"))?;
+        .map_err(common_err_ctx!("读取文件失败"))?;
     upload_skin_bytes(access_token, bytes, variant).await
 }
 
@@ -308,7 +307,7 @@ pub async fn upload_skin_bytes(
             reqwest::multipart::Part::bytes(bytes)
                 .file_name("image.png")
                 .mime_str("image/png")
-                .map_err(|e| format!("构造上传失败\n{e}"))?,
+                .map_err(common_err_ctx!("构造上传失败"))?,
         );
     // 官方文档实测为 POST（PUT 在认证通过后返回 405 Method Not Allowed）
     let resp = http_client(30)?
@@ -317,7 +316,7 @@ pub async fn upload_skin_bytes(
         .multipart(form)
         .send()
         .await
-        .map_err(|e| format!("上传皮肤失败\n{e}"))?;
+        .map_err(common_err_ctx!("上传皮肤失败"))?;
     if !resp.status().is_success() {
         let status = resp.status();
         let body: serde_json::Value = resp.json().await.unwrap_or_default();

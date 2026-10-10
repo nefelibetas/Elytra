@@ -9,12 +9,18 @@ pub struct JdkInfo {
     pub bits: u8,
 }
 
-/// jdk配置, 含当前选中的jdk与已保存的jdk
+/// JDK 选择配置（`jdk` section）：当前选中的 JDK。
 #[derive(Debug, Serialize, Deserialize, Default)]
-pub struct JdkConfig {
+pub struct JdkOptions {
     #[serde(default)]
-    pub jdk_selection: JdkSelection,
-    pub discovered_jdks: Vec<JdkInfo>,
+    pub selection: JdkSelection,
+}
+
+/// 本机 JDK 扫描缓存（`jdk_scanned` section）：扫描/安装发现的 JDK 列表。
+/// 由后端扫描/安装维护，前端只读。
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct JdkScanCache {
+    pub jdks: Vec<JdkInfo>,
 }
 
 /// jdk选择模式：手动 + 自动, json扁平化处理

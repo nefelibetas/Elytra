@@ -500,11 +500,12 @@ pub(super) async fn wait_for_vanilla_client(
 
 /// 运行补丁工具所需的 Java 可执行文件（与游戏启动同一套 JDK 配置）。
 pub(super) fn resolve_java() -> Result<PathBuf, String> {
-    let cfg = jdk::read();
-    match cfg.jdk_selection {
+    let options = jdk::read();
+    let cache = jdk::read_cache();
+    match options.selection {
         jdk::model::JdkSelection::Manual { path } => Ok(java_bin_path(Path::new(&path))),
         jdk::model::JdkSelection::Auto => {
-            let jdk = cfg.discovered_jdks.first().ok_or(
+            let jdk = cache.jdks.first().ok_or(
                 "未检测到 Java 环境，无法生成 Forge client（需要 JDK 运行官方补丁工具，请先在设置中配置 Java）",
             )?;
             Ok(java_bin_path(Path::new(&jdk.path)))

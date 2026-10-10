@@ -1,5 +1,6 @@
 pub mod account;
 pub mod community;
+pub mod config;
 pub mod downloader;
 pub mod gamedirs;
 pub mod jdk;

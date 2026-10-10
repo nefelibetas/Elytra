@@ -15,9 +15,9 @@ export interface JdkInfo {
 
 type JdkSelection = { mode: "auto" } | { mode: "manual"; path: string };
 
-interface JdkConfig {
-  jdk_selection: JdkSelection;
-  discovered_jdks: JdkInfo[];
+/** JDK 选择配置（镜像 Rust jdk::model::JdkOptions）。 */
+interface JdkOptions {
+  selection: JdkSelection;
 }
 
 const section = useConfigSection();
@@ -30,13 +30,17 @@ export const loading = ref(false);
 
 export async function loadConfig() {
   try {
-    const cfg = await invoke<JdkConfig>("get_jdk_config");
-    const sel = cfg.jdk_selection;
-    jdkList.value = cfg.discovered_jdks ?? [];
+    // 配置与扫描缓存分属两个 section：配置读 jdk，列表读 jdk_scanned
+    const [options, discovered] = await Promise.all([
+      invoke<JdkOptions>("get_jdk_options"),
+      invoke<JdkInfo[]>("get_discovered_jdks"),
+    ]);
+    const sel = options.selection;
+    jdkList.value = discovered ?? [];
     autoMode.value = sel.mode === "auto";
     activeJdk.value =
       sel.mode === "manual"
-        ? cfg.discovered_jdks.find((e) => e.path === sel.path) ?? null
+        ? discovered.find((e) => e.path === sel.path) ?? null
         : null;
   } catch {
     // 忽略
@@ -45,12 +49,11 @@ export async function loadConfig() {
 
 export async function saveConfig() {
   await section.run(async () => {
-    await invoke("save_jdk_config", {
-      config: {
-        jdk_selection: autoMode.value
+    await invoke("save_jdk_options", {
+      options: {
+        selection: autoMode.value
           ? { mode: "auto" }
           : { mode: "manual", path: activeJdk.value?.path ?? "" },
-        discovered_jdks: jdkList.value,
       },
     });
   });

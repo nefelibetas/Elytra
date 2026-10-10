@@ -1,6 +1,5 @@
 use crate::auth;
 use crate::constants;
-use crate::launcher;
 use crate::persist;
 
 use base64::Engine;
@@ -461,9 +460,7 @@ pub fn extract_xuid_from_jwt(token: &str) -> String {
 
 /// 构建正版登录专用 HTTP client；按「启动选项-正版登录时验证 SSL 证书」配置决定是否校验证书。
 fn build_auth_client() -> reqwest::Client {
-    let verify = persist::read::<launcher::model::LauncherConfig>(constants::SECT_LAUNCHER)
-        .map(|c| c.verify_ssl)
-        .unwrap_or(false);
+    let verify = persist::launch_options().verify_ssl;
     reqwest::Client::builder()
         .danger_accept_invalid_certs(!verify)
         .build()

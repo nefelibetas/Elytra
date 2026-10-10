@@ -134,17 +134,14 @@ pub async fn login(
         .timeout(std::time::Duration::from_secs(15))
         .send()
         .await
-        .map_err(|e| format!("登录请求失败\n{e}"))?;
+        .map_err(common_err_ctx!("登录请求失败"))?;
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         let msg = extract_yggdrasil_error(&text, status);
         return Err(format!("登录失败\n{msg}"));
     }
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("响应解析失败\n{e}"))?;
+    let json: serde_json::Value = resp.json().await.map_err(common_err_ctx!("响应解析失败"))?;
     let token = json["accessToken"]
         .as_str()
         .ok_or("登录响应缺少 accessToken")?
@@ -238,7 +235,7 @@ pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccoun
         .timeout(std::time::Duration::from_secs(15))
         .send()
         .await
-        .map_err(|e| format!("刷新请求失败\n{e}"))?;
+        .map_err(common_err_ctx!("刷新请求失败"))?;
     if !resp.status().is_success() {
         let status = resp.status();
         let code = status.as_u16();
@@ -251,12 +248,11 @@ pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccoun
             let _ = remove(api_url, uuid); // 幂等；注销失败也不影响把错误报给前端
             return Err(format!("登录凭据已失效，已退出该账号，请重新登录\n{msg}"));
         }
-        return Err(format!("刷新失败（服务端返回 {status}），账号已保留\n{msg}"));
+        return Err(format!(
+            "刷新失败（服务端返回 {status}），账号已保留\n{msg}"
+        ));
     }
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("响应解析失败\n{e}"))?;
+    let json: serde_json::Value = resp.json().await.map_err(common_err_ctx!("响应解析失败"))?;
     let new_token = json["accessToken"]
         .as_str()
         .ok_or("刷新响应缺少 accessToken")?
@@ -341,17 +337,14 @@ pub async fn switch_role(
         .timeout(std::time::Duration::from_secs(15))
         .send()
         .await
-        .map_err(|e| format!("切换角色请求失败\n{e}"))?;
+        .map_err(common_err_ctx!("切换角色请求失败"))?;
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         let msg = extract_yggdrasil_error(&text, status);
         return Err(format!("切换角色失败\n{msg}"));
     }
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("响应解析失败\n{e}"))?;
+    let json: serde_json::Value = resp.json().await.map_err(common_err_ctx!("响应解析失败"))?;
     let new_token = json["accessToken"]
         .as_str()
         .ok_or("切换响应缺少 accessToken")?
@@ -387,14 +380,11 @@ pub async fn external_skin_info(api_url: &str, uuid: &str) -> Result<(String, St
         .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
-        .map_err(|e| format!("请求皮肤失败\n{e}"))?;
+        .map_err(common_err_ctx!("请求皮肤失败"))?;
     if !resp.status().is_success() {
         return Err(format!("该账号未设置皮肤\nHTTP {}", resp.status()));
     }
-    let json: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("响应解析失败\n{e}"))?;
+    let json: serde_json::Value = resp.json().await.map_err(common_err_ctx!("响应解析失败"))?;
     // properties[0].value = base64 的 {textures:{SKIN:{url}}}（标准格式）
     let prop = json["properties"]
         .as_array()
@@ -403,9 +393,9 @@ pub async fn external_skin_info(api_url: &str, uuid: &str) -> Result<(String, St
         .ok_or("该账号未设置皮肤")?;
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(prop)
-        .map_err(|e| format!("皮肤数据解码失败\n{e}"))?;
+        .map_err(common_err_ctx!("皮肤数据解码失败"))?;
     let textures: serde_json::Value =
-        serde_json::from_slice(&decoded).map_err(|e| format!("皮肤信息解析失败\n{e}"))?;
+        serde_json::from_slice(&decoded).map_err(common_err_ctx!("皮肤信息解析失败"))?;
     let skin = textures["textures"]["SKIN"].clone();
     let skin_url = skin["url"].as_str().ok_or("该账号未设置皮肤")?.to_string();
     let model = skin["metadata"]["model"]
@@ -424,6 +414,7 @@ pub async fn server_name(api_url: &str) -> Option<String> {
         .timeout(std::time::Duration::from_secs(5))
         .send()
         .await
+        .map_err(common_err_ctx!("请求服务器名称失败"))
         .ok()?;
     if !resp.status().is_success() {
         return None;
@@ -499,7 +490,7 @@ pub async fn ensure_jar() -> Result<std::path::PathBuf, String> {
                         continue;
                     }
                 }
-                std::fs::rename(&tmp, &path).map_err(|e| format!("写入失败\n{e}"))?;
+                std::fs::rename(&tmp, &path).map_err(common_err_ctx!("写入失败"))?;
                 return Ok(path);
             }
             Ok(_) => last_err = "元数据请求失败".into(),
@@ -511,26 +502,26 @@ pub async fn ensure_jar() -> Result<std::path::PathBuf, String> {
 
 /// 预设验证服务器（label 展示名 + value API 地址，第三方登录 UI 预设列表）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ThirdPartyServer {
+pub struct ExternalServer {
     pub label: String,
     pub value: String,
 }
 
 /// 第三方登录配置（预设验证服务器列表，label + value）。
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-pub struct ThirdPartyConfig {
+pub struct ExternalConfig {
     /// 常用验证服务器（皮肤站）预设列表
     #[serde(default)]
-    pub servers: Vec<ThirdPartyServer>,
+    pub servers: Vec<ExternalServer>,
 }
 
-impl ThirdPartyConfig {
+impl ExternalConfig {
     /// 读取第三方登录配置；无配置或预设列表为空时注入内置默认预设。
     pub fn load() -> Self {
-        let cfg: Self = persist::read(constants::SECT_THIRD_PARTY).unwrap_or_default();
+        let cfg: Self = persist::read(constants::SECT_EXTERNAL).unwrap_or_default();
         if cfg.servers.is_empty() {
             return Self {
-                servers: default_third_party_servers(),
+                servers: default_external_servers(),
             };
         }
         cfg
@@ -538,13 +529,13 @@ impl ThirdPartyConfig {
 }
 
 /// 默认内置预设（知名 Yggdrasil 兼容站）。
-pub fn default_third_party_servers() -> Vec<ThirdPartyServer> {
+pub fn default_external_servers() -> Vec<ExternalServer> {
     vec![
-        ThirdPartyServer {
+        ExternalServer {
             label: "LittleSkin".into(),
             value: "https://littleskin.cn/api/yggdrasil".into(),
         },
-        ThirdPartyServer {
+        ExternalServer {
             label: "Ely.by".into(),
             value: "https://authserver.ely.by".into(),
         },

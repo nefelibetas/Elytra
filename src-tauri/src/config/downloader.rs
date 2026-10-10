@@ -120,11 +120,7 @@ pub enum DownloadSourceMode {
     Auto,
 }
 
-/// 自定义反序列化（含旧配置迁移）：历史上 preferOfficial/preferChina 两态并入 Auto——
-/// preferOfficial 语义（官方优先+慢降级）与 Auto 完全一致；
-/// preferChina（镜像优先）在 Auto 下由健康度自适应（官方失败/过慢 → 镜像接管）等效实现。
-/// 三态模式共用反序列化：仅识别 officialOnly/mirrorOnly，未知值兜底 Auto
-/// （防手改 TOML 非法值导致整个 downloader section 反序列化失败丢配置）。
+/// 自定义反序列化
 /// 用于 DownloadSourceMode 与 JdkSourceMode，消除两个同构 impl。
 macro_rules! deserialize_mode {
     ($t:ty) => {

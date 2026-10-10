@@ -6,6 +6,7 @@ import TitleBar from "./component/common/TitleBar.vue";
 import AlertDialog from "./component/common/AlertDialog.vue";
 import { dlState, ensureListen, checkInterrupted, waitingUser, decideWaitingTask, type TaskKind } from "./store/download";
 import { startMemoryMonitor } from "./store/memory";
+import { ensureConfigRecoveryWatch } from "./store/configRecovery";
 import { setSelected } from "./store/selectedVersion";
 import { toastState, showToast } from "./utils/toast";
 
@@ -17,7 +18,7 @@ const errorDialog = ref(false);
 const errorMessage = ref("");
 
 dlState.onTaskDone = (message: string, kind?: TaskKind, versionDir?: string) => {
-  // JDK 安装任务：完成处理（自动选中等）由 jdkConfig 专属监听负责，此处不提示不跳转
+  // JDK 安装任务：完成处理（自动选中等）由 jdkOptions 专属监听负责，此处不提示不跳转
   if (kind === "jdk") return;
   // 版本下载完成 → 自动选中该版本（后续 Mod 下载目标即此版本）
   if (versionDir) setSelected(versionDir);
@@ -129,7 +130,7 @@ function onContextMenu(e: MouseEvent) {
 }
 
 onMounted(() => {
-    pinnedHash = location.hash || "#/";
+  pinnedHash = location.hash || "#/";
   router.afterEach(() => {
     pinnedHash = location.hash || "#/";
   });
@@ -147,6 +148,8 @@ onMounted(() => {
   void checkInterrupted();
   // 应用启动即持续监听系统内存（设置页/启动页共用）
   startMemoryMonitor();
+  // 配置损坏恢复提示（启动期拉取 + 运行期订阅事件）
+  void ensureConfigRecoveryWatch();
 });
 
 onUnmounted(() => {

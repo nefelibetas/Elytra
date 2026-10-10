@@ -9,7 +9,6 @@ use std::time::Duration;
 use tauri::AppHandle;
 
 use crate::config::downloader::DownloaderConfig;
-use crate::constants;
 use crate::downloader::fetcher;
 use crate::downloader::path_lock::PathLock;
 use crate::game::resource::extract::extract_zip_safe;
@@ -368,7 +367,7 @@ fn prepare_files(
     progress: &Arc<Mutex<TaskProgress>>,
     task: &DownloadFilesTask,
 ) -> Option<FilesPlan> {
-    let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
+    let config: DownloaderConfig = persist::downloader_config();
     let mc = config.minecraft_dir_abs();
     let task_id = progress.lock().task_id.clone();
 
@@ -562,7 +561,7 @@ pub(crate) fn spawn_files_task(app: AppHandle, task: DownloadFilesTask) -> Resul
     // 前端传入的 version_dir_name 是已安装版本的实际目录名（get_installed_versions
     // 返回目录名，含冲突追加的 _{n}），直接校验目录存在即可；
     // mod / 资源包 / 数据包 / 光影包严格落盘到版本隔离目录 versions/{目录}/{kind_dir}/{filename}。
-    let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
+    let config: DownloaderConfig = persist::downloader_config();
     let dir = config
         .minecraft_dir_abs()
         .join("versions")
@@ -590,7 +589,7 @@ pub(crate) fn spawn_files_task(app: AppHandle, task: DownloadFilesTask) -> Resul
 /// 删除批量文件任务的全部 .elytra-part 残留（恢复社区资源下载前调用）。
 /// worlds 任务清理 `saves/.elytra-worlds/` 临时区（含半截 zip/unpack），替代按 kind_dir 的清理。
 pub(crate) fn cleanup_file_parts(task: &DownloadFilesTask) {
-    let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
+    let config: DownloaderConfig = persist::downloader_config();
     let mc = config.minecraft_dir_abs();
     for f in &task.files {
         if f.kind == DownloadFileKind::World {

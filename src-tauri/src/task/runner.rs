@@ -9,7 +9,6 @@ use super::emit::EventSink;
 use std::path::Path;
 
 use crate::config::downloader::{DownloadSource, DownloaderConfig};
-use crate::constants;
 use crate::downloader::fetcher;
 use crate::downloader::path_lock::PathLock;
 use crate::downloader::{progress, reuse};
@@ -50,7 +49,7 @@ struct TaskRuntime {
 /// 准备阶段：读配置 → 解析目标目录（不依赖 version JSON）→ 本地复用根探测 → 目录互斥占用。
 /// `Err` 为可展示的错误文案（调用方转 `set_error`）。
 fn prepare_runtime(task: &DownloadTask) -> Result<TaskRuntime, String> {
-    let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
+    let config: DownloaderConfig = persist::downloader_config();
     let sources: Vec<DownloadSource> = config.file_sources_list().into_iter().cloned().collect();
     let mc = config.minecraft_dir_abs();
 

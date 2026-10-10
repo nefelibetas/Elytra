@@ -9,7 +9,6 @@ use parking_lot::Mutex;
 use tauri::AppHandle;
 
 use crate::config::downloader::DownloaderConfig;
-use crate::constants;
 use crate::downloader::path_lock::PathLock;
 use crate::jdk::download::{auto_install, runtime_dir, InstallProgress};
 use crate::jdk::model::JdkInfo;
@@ -21,7 +20,7 @@ use crate::task::{self, StepStatus, TaskProgress, TaskStatus};
 
 /// JDK 安装任务主体：按 jdk_source_mode 三态回退链（jdk::download::auto_install：
 /// 官方 → Adoptium[TUNA 镜像] → Azul），
-/// 完成后注册进 jdk 配置（discovered_jdks）。单步任务，进度照 files.rs 心跳模式：
+/// 完成后注册进 jdk 扫描缓存（jdk_scanned section）。单步任务，进度照 files.rs 心跳模式：
 /// 原子计数器（文件数 + 字节增量）+ 150ms 心跳（EMA 速度/ETA），终态由
 /// set_error/set_cancelled/收尾 done 独占发出，心跳随 status 离开 Running 自退出。
 pub async fn run_install_jdk(
@@ -30,7 +29,7 @@ pub async fn run_install_jdk(
     progress: &Arc<Mutex<TaskProgress>>,
     major: u32,
 ) {
-    let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
+    let config: DownloaderConfig = persist::downloader_config();
     let dest_dir = runtime_dir(&config, major);
 
     // 准备阶段：目录互斥 + 清理登记 + Running 相位（锁冲突/已取消时自行收口）
@@ -215,7 +214,7 @@ fn settle_jdk_install(
     }
     match result {
         Ok(info) => {
-            // 注册进 jdk 配置（discovered_jdks 去重），前端完成监听自动选中
+            // 注册进 jdk 扫描缓存（去重），前端完成监听自动选中
             crate::jdk::register_scanned(vec![info]);
             emit_handle.abort();
             task::update_and_emit(app, progress, |p| {

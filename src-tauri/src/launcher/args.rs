@@ -8,7 +8,7 @@ use crate::game::resource::extract::{
 };
 use crate::game::version::model::VersionJson;
 use crate::launcher::memory;
-use crate::launcher::model::{AuthMode, LauncherConfig, MemoryMode, WindowSize};
+use crate::launcher::model::{AuthMode, LaunchOptions, MemoryMode, WindowSize};
 
 // ── 启动协议常量（集中维护，防拼写错误导致静默失败）──
 
@@ -278,7 +278,7 @@ fn extract_args(args: &[serde_json::Value], has_custom_resolution: bool) -> Vec<
 pub struct LaunchRequest<'a> {
     pub version_dir_name: &'a str,
     pub mc_dir: &'a Path,
-    pub config: &'a LauncherConfig,
+    pub config: &'a LaunchOptions,
     pub auth: &'a AuthMode,
     pub java_major_version: u32,
     pub user_properties: &'a str,
@@ -374,7 +374,7 @@ struct LaunchPaths {
 fn resolve_launch_paths(
     version_dir_name: &str,
     mc_dir: &Path,
-    config: &LauncherConfig,
+    config: &LaunchOptions,
 ) -> LaunchPaths {
     // natives 目录按 MC 版本共享（同 MC 的 vanilla/ModLoader 版本 native 库一致，
     // 避免每个版本在 natives/<版本id>/ 各解压一份 LWJGL 运行时产物，约 16MB/份）
@@ -437,7 +437,7 @@ fn build_classpath_string(
 }
 
 /// 主类：禁用 Java Launch Wrapper 时，老版本（1.6-1.12）的 launchwrapper 直接改用客户端主类绕过。
-fn resolve_main_class(version_json: &VersionJson, config: &LauncherConfig) -> String {
+fn resolve_main_class(version_json: &VersionJson, config: &LaunchOptions) -> String {
     let mut main_class = version_json.main_class.clone();
     if config.disable_launch_wrapper && main_class == CLASS_LAUNCHWRAPPER {
         main_class = CLASS_CLIENT_MAIN.to_string();
@@ -536,7 +536,7 @@ fn push_external_auth_args(args: &mut Vec<String>, auth: &AuthMode) {
 }
 
 /// 服务器直连与用户自定义参数（追加到游戏参数末尾，用户自定义 game_args 之前）。
-fn push_server_args(args: &mut Vec<String>, config: &LauncherConfig) {
+fn push_server_args(args: &mut Vec<String>, config: &LaunchOptions) {
     if let Some(server) = config.server.as_deref() {
         let server = server.trim();
         if !server.is_empty() {
@@ -806,7 +806,7 @@ struct JvmArgs<'a> {
     lib_dir: &'a Path,
     classpath_str: &'a str,
     java_major_version: u32,
-    config: &'a LauncherConfig,
+    config: &'a LaunchOptions,
     version_dir: &'a Path,
     has_custom_resolution: bool,
 }

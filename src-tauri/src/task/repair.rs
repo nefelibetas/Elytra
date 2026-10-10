@@ -10,7 +10,6 @@ use parking_lot::Mutex;
 use tauri::AppHandle;
 
 use crate::config::downloader::{DownloadSource, DownloaderConfig};
-use crate::constants;
 use crate::downloader::fetcher;
 use crate::downloader::hash::file_sha1_matches;
 use crate::downloader::progress;
@@ -92,7 +91,7 @@ pub fn natives_missing_bytes(libraries: &[Library], lib_dir: &Path) -> u64 {
 /// 扫描版本缺失文件（client.jar / 支持库 / 资源 / natives），不发起下载。
 /// 支持库与资源按本地 sha1 比对，资源按 assets index 与本地缓存比对（多线程）。
 pub async fn scan_missing(version_dir_name: &str) -> Result<MissingReport, String> {
-    let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
+    let config: DownloaderConfig = persist::downloader_config();
     let mc = config.minecraft_dir_abs();
     let vdir = mc.join("versions").join(version_dir_name);
     let vj = read_version_json(&vdir)?;
@@ -213,7 +212,7 @@ fn prepare_repair<'a>(
     version_dir_name: &'a str,
     report: &MissingReport,
 ) -> Option<RepairCtx<'a>> {
-    let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
+    let config: DownloaderConfig = persist::downloader_config();
     let sources: Vec<DownloadSource> = config.file_sources_list().into_iter().cloned().collect();
     let mc = config.minecraft_dir_abs();
     let vdir = mc.join("versions").join(version_dir_name);

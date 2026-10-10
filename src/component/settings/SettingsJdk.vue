@@ -7,7 +7,7 @@ import {
   jdkList, autoMode, activeJdk, loading, jdkError,
   refreshJdks, selectCustomDir, selectAuto, selectJdk,
   installJdk, loadConfig,
-} from "../../store/jdkConfig";
+} from "../../store/jdkOptions";
 import {
   loJvmArgs, loGameArgs, loPreCmd, loGc, loDisableWrapper, loDisableAgent, loHighGpu,
   gcOptions, saveLaunchOptions,

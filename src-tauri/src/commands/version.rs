@@ -194,7 +194,7 @@ pub async fn update_mod_file(
 }
 
 /// 版本级服务器直连配置（快速进服 --server/--port，per-version 存储）。
-/// 存储于 persist section `version_server_{version_name}`；为空时启动回退全局 LauncherConfig。
+/// 存储于 persist section `version_server_{version_name}`；为空时启动回退全局 LaunchOptions。
 #[derive(Debug, Clone, Default, Serialize, serde::Deserialize)]
 pub struct VersionServer {
     pub server: Option<String>,

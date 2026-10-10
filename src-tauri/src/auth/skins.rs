@@ -110,7 +110,7 @@ pub fn remove(id: &str) -> Result<Vec<LocalSkinView>, String> {
     let mut cfg = read_config();
     cfg.skins.retain(|s| s.id != id);
     persist::save(constants::SECT_LOCAL_SKINS, &cfg)
-        .map_err(|e| format!("保存皮肤索引失败\n{e}"))?;
+        .map_err(common_err_ctx!("保存皮肤索引失败"))?;
     match std::fs::remove_file(&path) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -142,14 +142,14 @@ pub fn export_png(path: &str, b64: &str) -> Result<(), String> {
     }
     let bytes = decode_b64(b64)?;
     ensure_png(&bytes)?;
-    std::fs::write(target, bytes).map_err(|e| format!("写入文件失败\n{e}"))
+    std::fs::write(target, bytes).map_err(common_err_ctx!("写入文件失败"))
 }
 
 /// 读取任意路径的皮肤图片（绘画器的「导入」），返回 base64。
 /// 用 `is_supported_image` 而非 `ensure_png`：编辑器把图片解码成像素，
 /// 用户手边的 png/jpg 都能用。
 pub fn import_png(path: &str) -> Result<String, String> {
-    let bytes = std::fs::read(path.trim()).map_err(|e| format!("读取文件失败\n{e}"))?;
+    let bytes = std::fs::read(path.trim()).map_err(common_err_ctx!("读取文件失败"))?;
     if !util::is_supported_image(&bytes) {
         return Err(format!("不是受支持的图片格式\n{path}"));
     }
@@ -179,8 +179,8 @@ fn save_bytes(
         source: normalize_source(source),
     };
     let path = skin_path(&entry.id)?;
-    std::fs::create_dir_all(skins_dir()).map_err(|e| format!("创建皮肤目录失败\n{e}"))?;
-    std::fs::write(&path, bytes).map_err(|e| format!("保存皮肤文件失败\n{e}"))?;
+    std::fs::create_dir_all(skins_dir()).map_err(common_err_ctx!("创建皮肤目录失败"))?;
+    std::fs::write(&path, bytes).map_err(common_err_ctx!("保存皮肤文件失败"))?;
 
     // 索引 upsert（同 id 覆盖，防重复条目）；写失败则回滚 PNG，
     // 保持「索引是事实来源、无孤儿文件」——新 id 必然无旧文件，回滚不会丢数据。
@@ -290,7 +290,7 @@ fn decode_b64(b64: &str) -> Result<Vec<u8>, String> {
     let raw = raw.rsplit_once("base64,").map_or(raw, |(_, r)| r);
     base64::engine::general_purpose::STANDARD
         .decode(raw)
-        .map_err(|e| format!("皮肤数据不是合法 base64\n{e}"))
+        .map_err(common_err_ctx!("皮肤数据不是合法 base64"))
 }
 
 /// 当前 Unix 秒。

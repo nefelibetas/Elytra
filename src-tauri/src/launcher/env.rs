@@ -12,19 +12,19 @@ use crate::game::resource::assets::AssetsIndex;
 use crate::game::resource::library::missing_libraries;
 use crate::game::version::dir::version_server_section;
 use crate::game::version::model::VersionJson;
-use crate::jdk::model::{JdkConfig, JdkInfo, JdkSelection};
+use crate::jdk::model::{JdkInfo, JdkOptions, JdkScanCache, JdkSelection};
 use crate::launcher::args::{find_file_in_dir, find_version_json};
-use crate::launcher::model::LauncherConfig;
-use crate::persist;
+use crate::launcher::model::LaunchOptions;
+use crate::persist::{self, downloader_config, launch_options};
 use crate::util::{java_bin_path, parse_java_major, sha1_sub_dir};
 
 /// 按 JDK 选择配置解析实际使用的 JDK 版本字符串：
-/// - Manual：在 discovered_jdks 中按 path 匹配，返回其 version；
+/// - Manual：在扫描缓存中按 path 匹配，返回其 version；
 /// - Auto / 未匹配：None（调用方自行给兜底文案）。
-pub fn selected_jdk_version(jdk_config: &JdkConfig) -> Option<String> {
-    match &jdk_config.jdk_selection {
-        JdkSelection::Manual { path } => jdk_config
-            .discovered_jdks
+pub fn selected_jdk_version(options: &JdkOptions, cache: &JdkScanCache) -> Option<String> {
+    match &options.selection {
+        JdkSelection::Manual { path } => cache
+            .jdks
             .iter()
             .find(|e| &e.path == path)
             .map(|e| e.version.clone()),
@@ -41,29 +41,29 @@ pub fn load_launch_config(
         PathBuf,     // java_path
         VersionJson, // version_json
         PathBuf,     // mc_dir
-        LauncherConfig,
+        LaunchOptions,
         u32, // java_major
     ),
     String,
 > {
-    let dl_config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
-    let jdk_config: JdkConfig = persist::read(constants::SECT_JDK).unwrap_or_default();
-    let launcher_config: LauncherConfig =
-        persist::read(constants::SECT_LAUNCHER).unwrap_or_default();
+    let dl_config: DownloaderConfig = downloader_config();
+    let jdk_options: JdkOptions = persist::read(constants::SECT_JDK).unwrap_or_default();
+    let jdk_cache: JdkScanCache = persist::read(constants::SECT_JDK_SCANNED).unwrap_or_default();
+    let launch_option: LaunchOptions = launch_options();
 
-    // 版本级服务器直连（版本设置里配的 --server/--port）优先，覆盖全局 LauncherConfig
+    // 版本级服务器直连（版本设置里配的 --server/--port）优先，覆盖全局 LaunchOptions
     let version_server: VersionServer = version_server_section(version_dir_name)
         .ok()
         .and_then(|s| persist::read(&s).ok())
         .unwrap_or_default();
-    let launcher_config = if version_server.server.is_some() || version_server.port.is_some() {
-        LauncherConfig {
-            server: version_server.server.or(launcher_config.server),
-            port: version_server.port.or(launcher_config.port),
-            ..launcher_config
+    let launch_option = if version_server.server.is_some() || version_server.port.is_some() {
+        LaunchOptions {
+            server: version_server.server.or(launch_option.server),
+            port: version_server.port.or(launch_option.port),
+            ..launch_option
         }
     } else {
-        launcher_config
+        launch_option
     };
 
     // minecraft_dir 可能是相对路径（默认 ".minecraft"），统一转绝对，
@@ -82,22 +82,20 @@ pub fn load_launch_config(
         .major_version
         .as_u64()
         .unwrap_or(0) as u32;
-    let java_env = match jdk_config.jdk_selection {
-        JdkSelection::Manual { path } => jdk_config
-            .discovered_jdks
+    let java_env = match jdk_options.selection {
+        JdkSelection::Manual { path } => jdk_cache
+            .jdks
             .iter()
             .find(|e| e.path == path)
             .cloned()
             .ok_or_else(|| "未找到指定的 JDK".to_string())?,
-        JdkSelection::Auto => {
-            auto_pick_jdk(&jdk_config.discovered_jdks, required).ok_or_else(|| {
-                if required > 0 {
-                    format!("需要 Java {}+，请在设置中选择或刷新 JDK", required)
-                } else {
-                    "未配置 JDK，请先在设置中选择 Java 路径".to_string()
-                }
-            })?
-        }
+        JdkSelection::Auto => auto_pick_jdk(&jdk_cache.jdks, required).ok_or_else(|| {
+            if required > 0 {
+                format!("需要 Java {}+，请在设置中选择或刷新 JDK", required)
+            } else {
+                "未配置 JDK，请先在设置中选择 Java 路径".to_string()
+            }
+        })?,
     };
     // java_env.path 是 JAVA_HOME（目录），需要拼上 bin/java.exe
     let java_home = PathBuf::from(&java_env.path);
@@ -113,7 +111,7 @@ pub fn load_launch_config(
     let java_major = parse_java_major(&java_env.version)
         .ok_or_else(|| format!("无法解析 JDK 版本号\n{}", java_env.version))?;
 
-    Ok((java_path, version_json, mc_dir, launcher_config, java_major))
+    Ok((java_path, version_json, mc_dir, launch_option, java_major))
 }
 
 /// 读取版本 JSON 并展开 inheritsFrom 继承。

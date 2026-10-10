@@ -7,15 +7,13 @@ use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::auth::account;
-use crate::constants;
 use crate::events;
-use crate::jdk::model::JdkConfig;
+use crate::jdk;
 use crate::launcher::args::{build_launch_command, LaunchRequest};
 use crate::launcher::env;
 use crate::launcher::platform;
 use crate::launcher::process;
 use crate::launcher::skin;
-use crate::persist;
 use crate::task;
 use crate::util;
 
@@ -35,9 +33,7 @@ pub async fn check_launch_env(version_dir_name: String) -> Result<String, String
     // 游戏完整性 + 旧式 natives 解压准备
     process::ensure_game_ready(&version_json, &mc_dir, &version_dir_name)?;
 
-    let java_env = persist::read::<JdkConfig>(constants::SECT_JDK)
-        .ok()
-        .and_then(|c| env::selected_jdk_version(&c))
+    let java_env = env::selected_jdk_version(&jdk::read(), &jdk::read_cache())
         .unwrap_or_else(|| "自动选择".into());
     Ok(format!("环境校验通过（JDK: {}）", java_env))
 }
@@ -189,7 +185,7 @@ pub async fn get_launcher_log() -> String {
 mod tests {
     use super::*;
     use crate::game::version::model::VersionJson;
-    use crate::launcher::model::{AuthMode, LauncherConfig, MemoryMode, WindowSize};
+    use crate::launcher::model::{AuthMode, LaunchOptions, MemoryMode, WindowSize};
 
     /// 构造一个最小可用的版本 JSON（旧格式 minecraftArguments，保底参数路径）。
     fn minimal_version_json() -> VersionJson {
@@ -222,7 +218,7 @@ mod tests {
         .unwrap()
     }
 
-    fn build_cmd(config: &LauncherConfig) -> Vec<String> {
+    fn build_cmd(config: &LaunchOptions) -> Vec<String> {
         let vj = minimal_version_json();
         let cmd = build_launch_command(
             std::path::Path::new("C:/java/bin/java.exe"),
@@ -244,7 +240,7 @@ mod tests {
 
     #[test]
     fn test_window_size_default_no_width_args() {
-        let args = build_cmd(&LauncherConfig::default());
+        let args = build_cmd(&LaunchOptions::default());
         assert!(
             !args.iter().any(|a| a == "--width" || a == "--height"),
             "默认窗口大小不应传 --width/--height: {args:?}"
@@ -253,7 +249,7 @@ mod tests {
 
     #[test]
     fn test_window_size_custom_passes_width_height() {
-        let cfg = LauncherConfig {
+        let cfg = LaunchOptions {
             window_size: WindowSize::Custom(1920, 1080),
             ..Default::default()
         };
@@ -267,7 +263,7 @@ mod tests {
     #[test]
     fn test_game_dir_is_version_dir() {
         // 版本隔离（固定行为）：游戏目录 = 版本目录
-        let args = build_cmd(&LauncherConfig::default());
+        let args = build_cmd(&LaunchOptions::default());
         let gi = args.iter().position(|a| a == "--gameDir").unwrap();
         assert_eq!(
             args[gi + 1].replace('\\', "/"),
@@ -278,7 +274,7 @@ mod tests {
     #[test]
     fn test_server_direct_args() {
         // 服务器直连：--server/--port 追加到游戏参数末尾；未配置时不出现
-        let cfg = LauncherConfig {
+        let cfg = LaunchOptions {
             server: Some("1.2.3.4".into()),
             port: Some(25565),
             ..Default::default()
@@ -289,7 +285,7 @@ mod tests {
         assert!(args.contains(&"--port".into()));
         assert!(args.contains(&"25565".into()));
 
-        let args = build_cmd(&LauncherConfig::default());
+        let args = build_cmd(&LaunchOptions::default());
         assert!(
             !args.iter().any(|a| a == "--server" || a == "--port"),
             "未配置服务器直连不应传 --server/--port: {args:?}"
@@ -300,7 +296,7 @@ mod tests {
     fn test_user_properties_appended_new_format() {
         // 新格式（1.17+ json 无 token）：主动追加 camelCase 参数
         let vj = minimal_version_json();
-        let cfg = LauncherConfig::default();
+        let cfg = LaunchOptions::default();
         let props = r#"{"textures":[{"name":"textures","value":"AQID","signature":""}]}"#;
         let cmd = build_launch_command(
             std::path::Path::new("C:/java/bin/java.exe"),
@@ -342,7 +338,7 @@ mod tests {
             "--username ${auth_player_name} --version ${version_name} --accessToken ${auth_access_token} --user-properties ${user_properties} --user-type ${user_type}"
                 .into(),
         );
-        let cfg = LauncherConfig::default();
+        let cfg = LaunchOptions::default();
         let props = r#"{"textures":[{"name":"textures","value":"AQID","signature":""}]}"#;
         let cmd = build_launch_command(
             std::path::Path::new("C:/java/bin/java.exe"),
@@ -382,14 +378,14 @@ mod tests {
 
     #[test]
     fn test_window_title_prop() {
-        let cfg = LauncherConfig {
+        let cfg = LaunchOptions {
             window_title: "我的世界".into(),
             ..Default::default()
         };
         let args = build_cmd(&cfg);
         assert!(args.contains(&"-Dminecraft.window.title=我的世界".into()));
         // 空 = 不传
-        let args = build_cmd(&LauncherConfig::default());
+        let args = build_cmd(&LaunchOptions::default());
         assert!(!args
             .iter()
             .any(|a| a.starts_with("-Dminecraft.window.title")));
@@ -399,7 +395,7 @@ mod tests {
     fn test_disable_launch_wrapper_main_class() {
         let mut vj = minimal_version_json();
         vj.main_class = "net.minecraft.launchwrapper.Launch".into();
-        let cfg = LauncherConfig::default();
+        let cfg = LaunchOptions::default();
         let args = build_launch_command(
             std::path::Path::new("C:/java/bin/java.exe"),
             &vj,
@@ -420,7 +416,7 @@ mod tests {
         assert!(args.contains(&"net.minecraft.launchwrapper.Launch".to_string()));
 
         // 禁用后：直接用客户端主类
-        let cfg = LauncherConfig {
+        let cfg = LaunchOptions {
             disable_launch_wrapper: true,
             ..Default::default()
         };
@@ -446,7 +442,7 @@ mod tests {
 
     #[test]
     fn test_disable_lwjgl_unsafe_agent_filters_javaagent() {
-        let cfg = LauncherConfig {
+        let cfg = LaunchOptions {
             jvm_args: vec![
                 "-javaagent:lwjgl-unsafe-agent.jar".into(),
                 "-XX:-OmitStackTraceInFastThrow".into(),
@@ -459,7 +455,7 @@ mod tests {
         assert!(args.contains(&"-XX:-OmitStackTraceInFastThrow".to_string()));
 
         // 默认不禁用：agent 参数保留
-        let cfg = LauncherConfig {
+        let cfg = LaunchOptions {
             jvm_args: vec!["-javaagent:lwjgl-unsafe-agent.jar".into()],
             ..Default::default()
         };
@@ -485,7 +481,7 @@ mod tests {
 
         let mut vj = minimal_version_json();
         vj.main_class = "net.fabricmc.loader.impl.launch.knot.KnotClient".into();
-        let cfg = LauncherConfig::default();
+        let cfg = LaunchOptions::default();
         let args = build_launch_command(
             std::path::Path::new("C:/java/bin/java.exe"),
             &vj,
@@ -522,7 +518,7 @@ mod tests {
     #[test]
     fn test_min_memory_xms_injection() {
         // Custom + min_memory → 注入 -Xms（clamp 到 -Xmx 内）
-        let cfg = LauncherConfig {
+        let cfg = LaunchOptions {
             memory: MemoryMode::Custom(4096),
             min_memory: Some(2048),
             ..Default::default()
@@ -538,7 +534,7 @@ mod tests {
         );
 
         // min_memory > Xmx → clamp 到 Xmx
-        let cfg = LauncherConfig {
+        let cfg = LaunchOptions {
             memory: MemoryMode::Custom(1024),
             min_memory: Some(8192),
             ..Default::default()
@@ -550,7 +546,7 @@ mod tests {
         );
 
         // Auto 模式忽略 min_memory（-Xmx 动态推测，固定 -Xms 可能超上限）
-        let cfg = LauncherConfig {
+        let cfg = LaunchOptions {
             memory: MemoryMode::Auto,
             min_memory: Some(2048),
             ..Default::default()
@@ -562,7 +558,7 @@ mod tests {
         );
 
         // 默认（无 min_memory）不注入 -Xms
-        let args = build_cmd(&LauncherConfig::default());
+        let args = build_cmd(&LaunchOptions::default());
         assert!(
             !args.iter().any(|a| a.starts_with("-Xms")),
             "默认不应有 -Xms: {args:?}"

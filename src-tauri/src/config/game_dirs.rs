@@ -1,6 +1,7 @@
 use crate::config::downloader::DownloaderConfig;
-use crate::constants;
-use crate::persist;
+use crate::persist::{
+    downloader_config, game_dirs_config, save_downloader_config, save_game_dirs_config,
+};
 use crate::util::default_game_dir_base;
 use serde::{Deserialize, Serialize};
 
@@ -31,9 +32,7 @@ pub fn default_dir() -> Option<GameDir> {
 
 /// 读取已配置的游戏目录列表（纯读，不产生写盘副作用）。
 pub fn read_dirs() -> Vec<GameDir> {
-    persist::read::<GameDirsConfig>(constants::SECT_GAME_DIRS)
-        .unwrap_or_default()
-        .dirs
+    game_dirs_config().dirs
 }
 
 /// 确保目录列表已初始化：为空且存在平台默认基准时，生成默认目录并持久化。
@@ -41,19 +40,16 @@ pub fn read_dirs() -> Vec<GameDir> {
 /// 此时不写盘，下次调用仍返回空。
 /// 写盘失败时仍返回内存目录，但下次启动会重复生成 —— 需可诊断。
 pub fn ensure_initialized() -> Vec<GameDir> {
-    let cfg: GameDirsConfig = persist::read(constants::SECT_GAME_DIRS).unwrap_or_default();
+    let cfg: GameDirsConfig = game_dirs_config();
     if !cfg.dirs.is_empty() {
         return cfg.dirs;
     }
     let Some(d) = default_dir() else {
         return Vec::new();
     };
-    if let Err(e) = persist::save(
-        constants::SECT_GAME_DIRS,
-        &GameDirsConfig {
-            dirs: vec![d.clone()],
-        },
-    ) {
+    if let Err(e) = save_game_dirs_config(&GameDirsConfig {
+        dirs: vec![d.clone()],
+    }) {
         eprintln!("[gamedirs] 默认游戏目录持久化失败: {e}");
     }
     vec![d]
@@ -61,19 +57,16 @@ pub fn ensure_initialized() -> Vec<GameDir> {
 
 /// 保存目录列表到配置。
 pub fn save_dirs(dirs: Vec<GameDir>) -> Result<Vec<GameDir>, String> {
-    persist::save(
-        constants::SECT_GAME_DIRS,
-        &GameDirsConfig { dirs: dirs.clone() },
-    )
-    .map_err(|e| format!("保存配置失败\n{e}"))?;
+    save_game_dirs_config(&GameDirsConfig { dirs: dirs.clone() })
+        .map_err(|e| format!("保存配置失败\n{e}"))?;
     Ok(dirs)
 }
 
 /// 设置当前激活的游戏目录：写入 downloader 配置的 minecraft_dir（版本列表跟随切换）。
 pub fn set_active(path: &str) -> Result<(), String> {
-    let mut cfg: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
+    let mut cfg: DownloaderConfig = downloader_config();
     cfg.minecraft_dir = path.to_string();
-    persist::save(constants::SECT_DOWNLOADER, &cfg).map_err(|e| format!("保存配置失败\n{e}"))
+    save_downloader_config(&cfg).map_err(|e| format!("保存配置失败\n{e}"))
 }
 
 /// 当前激活的游戏目录（同步于 downloader 配置的 `minecraft_dir`）。
@@ -81,7 +74,7 @@ pub fn set_active(path: &str) -> Result<(), String> {
 /// 则返回**空条目**（name/path 均空）——前端据此显示「请添加游戏目录」引导，
 /// 而不是指向一个并不存在的路径。
 pub fn active_dir() -> GameDir {
-    let cfg: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
+    let cfg: DownloaderConfig = downloader_config();
     read_dirs()
         .into_iter()
         .find(|d| d.path == cfg.minecraft_dir)

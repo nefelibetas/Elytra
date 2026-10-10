@@ -16,7 +16,7 @@ use super::runner;
 use crate::config::tooldl::{ToolDlConfig, DEFAULT_MAX_FILES};
 use crate::downloader::segmented;
 use crate::task::EventSink;
-use crate::{constants, persist, util};
+use crate::{persist, util};
 
 /// 全部任务（保持入队顺序）。
 static TASKS: LazyLock<Mutex<Vec<Arc<ToolDlTask>>>> = LazyLock::new(|| Mutex::new(Vec::new()));
@@ -29,7 +29,7 @@ static MAX_FILES: AtomicU32 = AtomicU32::new(DEFAULT_MAX_FILES);
 
 /// 进程启动时把持久化的并发上限载入缓存。
 pub fn init() {
-    let config: ToolDlConfig = persist::read(constants::SECT_TOOL_DL).unwrap_or_default();
+    let config: ToolDlConfig = persist::tooldl_config();
     set_max_files(config.max_files);
 }
 

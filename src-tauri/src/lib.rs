@@ -1,12 +1,13 @@
-#![deny(clippy::undocumented_unsafe_blocks)]
+#[macro_use]
+mod macros;
 
 mod auth;
 mod commands;
 pub mod config;
 pub mod constants;
 pub mod downloader;
-pub mod game;
 mod events;
+pub mod game;
 mod jdk;
 pub mod launcher;
 pub mod online;
@@ -16,17 +17,19 @@ pub mod task;
 pub mod tooldl;
 pub mod util;
 
+use tauri::Emitter;
+
 use commands::account::{
-    cancel_ms_login, disable_cape, external_login, fetch_account_skin, fetch_account_skin_profile,
-    fetch_external_skin, fetch_external_skin_profile, save_external_skin, fetch_capes,
-    fetch_default_skin, get_external_accounts,
-    switch_external_role, refresh_external_account,
-    switch_external_account, get_ms_account, get_ms_accounts,
-    ensure_ms_account, get_third_party_config, refresh_ms_account, remove_external_account, remove_ms_account,
-    save_skin, save_third_party_config, set_active_cape, start_ms_login, switch_ms_account,
+    cancel_ms_login, disable_cape, ensure_ms_account, external_login, fetch_account_skin,
+    fetch_account_skin_profile, fetch_capes, fetch_default_skin, fetch_external_skin,
+    fetch_external_skin_profile, get_external_accounts, get_ms_account, get_ms_accounts,
+    get_external_config, refresh_external_account, refresh_ms_account, remove_external_account,
+    remove_ms_account, save_external_skin, save_skin, save_external_config, set_active_cape,
+    start_ms_login, switch_external_account, switch_external_role, switch_ms_account,
     upload_skin_file,
 };
 use commands::community::{get_community_details, get_community_versions, search_community};
+use commands::config::take_config_recovery_notice;
 use commands::downloader::{
     get_downloader_config, get_installed_versions, get_version_list, resolve_version_name,
     save_downloader_config,
@@ -36,7 +39,9 @@ use commands::gamedirs::{
     get_active_game_dir, get_game_dirs, open_folder, remove_game_dir, rename_game_dir,
     rename_version_dir, set_active_game_dir,
 };
-use commands::jdk::{auto_scan_jdk, get_jdk_config, save_jdk_config, scan_custom_jdk};
+use commands::jdk::{
+    auto_scan_jdk, get_discovered_jdks, get_jdk_options, save_jdk_options, scan_custom_jdk,
+};
 use commands::launch::{
     check_launch_env, get_game_log, get_launcher_log, open_launcher_log_dir, spawn_game,
 };
@@ -92,11 +97,20 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            // 配置损坏恢复：运行期经事件推送（启动期由前端 take_config_recovery_notice 拉取兜底）
+            let handle = app.handle().clone();
+            persist::set_recovery_hook(move |notice| {
+                let _ = handle.emit(events::CONFIG_RECOVERY, notice);
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             auto_scan_jdk,
             scan_custom_jdk,
-            get_jdk_config,
-            save_jdk_config,
+            get_jdk_options,
+            save_jdk_options,
+            get_discovered_jdks,
             submit_install_jdk,
             get_version_list,
             get_game_dirs,
@@ -176,8 +190,8 @@ pub fn run() {
             refresh_external_account,
             switch_external_account,
             remove_external_account,
-            get_third_party_config,
-            save_third_party_config,
+            get_external_config,
+            save_external_config,
             cancel_ms_login,
             get_ms_account,
             get_ms_accounts,
@@ -218,6 +232,7 @@ pub fn run() {
             tooldl_list,
             tooldl_get_config,
             tooldl_save_config,
+            take_config_recovery_notice
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

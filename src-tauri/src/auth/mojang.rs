@@ -2,9 +2,8 @@
 //! 供 commands/account.rs（正版皮肤保存与账号列表头像）共用，
 //! 消除 name→UUID 与 textures property 拉取的多处重复实现。
 
-use base64::Engine;
-
 use crate::downloader::fetcher::http;
+use base64::Engine;
 
 /// 拉取 textures property 的 value（base64 payload，非签名版）。
 /// 统一带 `?unsigned=false`：解码结果与签名版一致，且体积更小。
@@ -15,14 +14,11 @@ pub async fn texture_value(uuid: &str) -> Result<String, String> {
         ))
         .send()
         .await
-        .map_err(|e| format!("获取档案失败\n{e}"))?;
+        .map_err(common_err_ctx!("获取档案失败"))?;
     if !resp.status().is_success() {
         return Err(format!("获取档案失败\nHTTP {}", resp.status()));
     }
-    let profile: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("解析响应失败\n{e}"))?;
+    let profile: serde_json::Value = resp.json().await.map_err(common_err_ctx!("解析响应失败"))?;
     let props = profile
         .get("properties")
         .and_then(|v| v.as_array())
@@ -43,8 +39,8 @@ pub async fn profile_textures(uuid: &str) -> Result<serde_json::Value, String> {
     let value_b64 = texture_value(uuid).await?;
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(value_b64)
-        .map_err(|e| format!("皮肤数据解码失败\n{e}"))?;
-    serde_json::from_slice(&decoded).map_err(|e| format!("皮肤数据解析失败\n{e}"))
+        .map_err(common_err_ctx!("皮肤数据解码失败"))?;
+    serde_json::from_slice(&decoded).map_err(common_err_ctx!("皮肤数据解析失败"))
 }
 
 /// 拉取正版玩家皮肤（含模型类型），官方 sessionserver 失败时回退 minotar

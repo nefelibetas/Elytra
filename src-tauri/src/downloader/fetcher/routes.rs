@@ -5,12 +5,9 @@ use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 
-use crate::config::downloader::{
-    infer_resource_class, DownloadSourceMode, DownloaderConfig, ResourceClass,
-};
-use crate::constants::SECT_DOWNLOADER;
+use crate::config::downloader::{infer_resource_class, DownloadSourceMode, ResourceClass};
 use crate::downloader::endpoints::MIRROR_ROUTES;
-use crate::persist;
+use crate::persist::downloader_config;
 
 /// 真镜像源判定（路由排序/镜像候选用，不含"官方 maven 限流"语义）：
 /// 仅 BMCLAPI / MCIM 域。is_mirror_url 承担限流职责（含官方不稳 maven），
@@ -100,9 +97,7 @@ pub(super) fn record_route_failure(url: &str) {
 
 /// 当前文件下载源模式（Auto 时启用健康度路由；路由层兜底读全局配置）。
 pub(super) fn source_mode() -> DownloadSourceMode {
-    persist::read::<DownloaderConfig>(SECT_DOWNLOADER)
-        .map(|c| c.game_source_mode)
-        .unwrap_or_default()
+    downloader_config().game_source_mode
 }
 
 /// 生成路由序列（fetch_from_sources 入口）：

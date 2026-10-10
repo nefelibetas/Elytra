@@ -12,7 +12,6 @@ use super::steps::{StepKind, StepSpec, TaskSpec};
 use super::store;
 use super::{jdk, runner};
 use crate::config::downloader::DownloaderConfig;
-use crate::constants;
 use crate::downloader;
 use crate::jdk::SUPPORTED_JAVA_MAJORS;
 use crate::persist;
@@ -30,7 +29,7 @@ pub(crate) fn spawn_task(
     let step_names: Vec<&str> = steps.iter().map(|s| s.name.as_str()).collect();
     let tm = global();
     // 每次任务启动同步全局限速（用户改配置后不重启也生效）
-    let cfg: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
+    let cfg: DownloaderConfig = persist::downloader_config();
     downloader::fetcher::set_speed_limit(cfg.max_speed);
     let (task_id, cancel, progress) = tm.create(&name, &step_names);
     // 持久化快照（崩溃/重启恢复依据；DB 故障静默）

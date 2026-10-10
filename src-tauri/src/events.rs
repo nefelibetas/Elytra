@@ -15,3 +15,5 @@ pub const TASK_WAITING_USER: &str = "task-waiting-user";
 pub const ONLINE_STATE: &str = "online-state";
 /// 工具箱下载器任务快照（ToolDlSnapshot：单任务全量状态，前端按 id 增量更新）
 pub const TOOL_DL_PROGRESS: &str = "tooldl-progress";
+/// 配置文件损坏已备份并重置（RecoveryNotice；运行期推送，启动期由命令拉取兜底）
+pub const CONFIG_RECOVERY: &str = "config-recovery";

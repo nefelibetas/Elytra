@@ -1,7 +1,6 @@
 //! 社区资源下载多源候选构造（官方 CDN / 镜像）。
 
 use crate::config::downloader::{DownloadSourceMode, DownloaderConfig};
-use crate::constants;
 use crate::downloader;
 use crate::persist;
 
@@ -19,7 +18,7 @@ pub async fn community_download_urls(url: &str) -> Vec<String> {
     if mirrored == official {
         return vec![official];
     }
-    let cfg: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
+    let cfg: DownloaderConfig = persist::downloader_config();
     match cfg.community_source_mode {
         DownloadSourceMode::OfficialOnly => vec![official],
         DownloadSourceMode::MirrorOnly => vec![mirrored],

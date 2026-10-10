@@ -1,31 +1,26 @@
 use crate::config::downloader::DownloaderConfig;
-use crate::constants;
 use crate::downloader::fetcher;
+use crate::game::version::dir;
+use crate::game::version::dir::resolve_version_dir;
 use crate::game::version::manifest;
 use crate::game::version::model::VersionManifest;
-use crate::game::version::dir::resolve_version_dir;
-use crate::game::version::dir;
-use crate::persist;
+use crate::persist::{self, downloader_config};
 
 #[tauri::command]
 pub async fn get_version_list() -> Result<VersionManifest, String> {
-    let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
+    let config: DownloaderConfig = downloader_config();
     manifest::fetch_version_list(&config).await
 }
 
 #[tauri::command]
 pub fn get_downloader_config() -> DownloaderConfig {
-    persist::read(constants::SECT_DOWNLOADER).unwrap_or_default()
+    downloader_config()
 }
 
 #[tauri::command]
 pub fn save_downloader_config(config: DownloaderConfig) -> Result<(), String> {
-    let old: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
-    persist::save(constants::SECT_DOWNLOADER, &config).map_err(|e| format!("保存配置失败\n{e}"))?;
-    // 网络代理模式（Auto/System/Direct）变化 → 重建全局 http client：
-    // client 的代理配置在构建时固定，LazyLock 单例不重建则切换不生效
-    // （探测与下载全链路共用 http()，行为必须跟随用户设置）。
-    // 全局限速同步（0 = 不限）
+    let old: DownloaderConfig = downloader_config();
+    persist::save_downloader_config(&config).map_err(|e| format!("保存配置失败\n{e}"))?;
     fetcher::set_speed_limit(config.max_speed);
     if old.network_mode != config.network_mode {
         fetcher::reset_http_client();
@@ -41,7 +36,7 @@ pub fn get_installed_versions() -> Result<Vec<dir::InstalledVersionInfo>, String
 
 #[tauri::command]
 pub fn resolve_version_name(base_name: String) -> Result<String, String> {
-    let config: DownloaderConfig = persist::read(constants::SECT_DOWNLOADER).unwrap_or_default();
+    let config: DownloaderConfig = downloader_config();
     let mc = config.minecraft_dir_abs();
     let (name, _) = resolve_version_dir(&mc, &base_name);
     Ok(name)

@@ -25,7 +25,7 @@ const router = useRouter();
 const avatarUrl = computed(() =>
   authMode.value === "premium"
     ? avatarState.premiumAvatar
-    : authMode.value === "thirdparty"
+    : authMode.value === "external"
       ? avatarState.externalAvatar
       : avatarState.offlineAvatar,
 );
@@ -35,7 +35,7 @@ function retryAvatar() {
   avatarState.avatarError = false;
   if (authMode.value === "premium") {
     void renderPremiumAvatar(msAccount.value?.uuid ?? "", true);
-  } else if (authMode.value === "thirdparty") {
+  } else if (authMode.value === "external") {
     void renderExternalAvatar(externalAccount.value?.api_url ?? "", externalAccount.value?.uuid ?? "", true);
   }
 }
@@ -58,8 +58,8 @@ const closeHandler = () => {
   showRoles.value = false;
 };
 
-function goThirdPartyLogin() {
-  settingsTab.value = "thirdparty";
+function goExternalLogin() {
+  settingsTab.value = "external";
   void router.push("/settings");
 }
 /** 能否进启动器衣柜：**只有已登录的正版账号**。
@@ -67,7 +67,7 @@ function goThirdPartyLogin() {
  *  入口必须与衣柜页自身的准入条件一致，否则点进去会被瞬间弹回。 */
 const canOpenSkinStudio = computed(() => authMode.value === "premium" && !!msAccount.value);
 /** 能否打开站点衣柜：第三方模式且已登录第三方账号。 */
-const canOpenSiteCloset = computed(() => authMode.value === "thirdparty" && !!externalAccount.value);
+const canOpenSiteCloset = computed(() => authMode.value === "external" && !!externalAccount.value);
 
 /** 站点衣柜地址：由 authlib-injector 的 API 地址推 origin（Blessing Skin 的衣柜路径固定为 `/user/closet`）。 */
 const siteClosetUrl = computed(() => {
@@ -85,7 +85,7 @@ const siteClosetUrl = computed(() => {
 const avatarTip = computed(() => {
   if (canOpenSiteCloset.value) return "在站点衣柜中管理";
   if (canOpenSkinStudio.value) return "衣柜";
-  if (authMode.value === "thirdparty") return "第三方账号的外观在站点衣柜管理，请先登录第三方账号";
+  if (authMode.value === "external") return "第三方账号的外观在站点衣柜管理，请先登录第三方账号";
   return authMode.value === "offline"
     ? "离线模式没有皮肤来源，登录账号后可用"
     : "登录 Microsoft 账号后可管理皮肤与披风";
@@ -284,8 +284,8 @@ function useOfflineName(name: string) {
         </button>
         <button
           class="auth-btn"
-          :class="{ active: authMode === 'thirdparty' }"
-          @click="setAuthMode('thirdparty')"
+          :class="{ active: authMode === 'external' }"
+          @click="setAuthMode('external')"
         >
           <Link2 :size="16" />
           <span>第三方</span>
@@ -328,7 +328,7 @@ function useOfflineName(name: string) {
           <div v-if="authMode === 'premium'" class="uname" :class="{ 'uname-empty': !msAccount }">
             {{ msAccount?.name || '未登录' }}
           </div>
-          <div v-else-if="authMode === 'thirdparty'" class="uname" :class="{ 'uname-empty': !externalAccount }">
+          <div v-else-if="authMode === 'external'" class="uname" :class="{ 'uname-empty': !externalAccount }">
             <template v-if="externalAccount">
               <div class="ext-name">{{ externalAccount.name }}</div>
               <div class="ext-actions" :class="{ show: extHover || showRoles }">
@@ -360,7 +360,7 @@ function useOfflineName(name: string) {
             </template>
             <div v-else class="ext-status">
               <span class="ext-hint">未登录第三方账号</span>
-              <button class="ext-goto" @click="goThirdPartyLogin">去登录</button>
+              <button class="ext-goto" @click="goExternalLogin">去登录</button>
             </div>
           </div>
           <div v-else class="offline-name">
