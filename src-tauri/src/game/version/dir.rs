@@ -32,7 +32,7 @@ pub fn auto_activate_first_version() -> Result<AutoActivate, String> {
             continue;
         }
         let mut names: Vec<String> = std::fs::read_dir(&vdir)
-            .map_err(|e| format!("读取目录失败\n{e}"))?
+            .map_err(common_err_ctx!("读取目录失败"))?
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
             .map(|e| e.file_name().to_string_lossy().to_string())
@@ -55,7 +55,7 @@ pub fn auto_activate_first_version() -> Result<AutoActivate, String> {
 pub fn version_dir_path(version_name: &str) -> Result<PathBuf, String> {
     let dir = active_minecraft_dir().join("versions").join(version_name);
     if !dir.exists() {
-        return Err(format!("版本目录不存在\n{}", dir.display()));
+        bail!("版本目录不存在\n{}", dir.display());
     }
     Ok(dir)
 }
@@ -87,7 +87,7 @@ pub fn list_installed() -> Result<Vec<InstalledVersionInfo>, String> {
         return Ok(vec![]);
     }
     let mut items: Vec<InstalledVersionInfo> = std::fs::read_dir(&versions_dir)
-        .map_err(|e| format!("读取版本目录失败\n{}", e))?
+        .map_err(common_err_ctx!("读取版本目录失败"))?
         .filter_map(|entry| {
             let entry = entry.ok()?;
             if !entry.file_type().ok()?.is_dir() {
@@ -120,7 +120,7 @@ pub fn ensure_kind_folder(kind: &str, version_name: &str) -> Result<String, Stri
         _ => return Err("未知文件夹类型".to_string()),
     };
     let dir = base.join(sub);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("创建目录失败\n{e}"))?;
+    std::fs::create_dir_all(&dir).map_err(common_err_ctx!("创建目录失败"))?;
     Ok(dir.to_string_lossy().to_string())
 }
 
@@ -130,12 +130,12 @@ pub fn rename_version_dir(version_name: &str, new_name: &str) -> Result<(), Stri
     let from = versions_dir.join(version_name);
     let to = versions_dir.join(new_name);
     if !from.exists() {
-        return Err(format!("版本「{version_name}」不存在"));
+        bail!("版本「{version_name}」不存在");
     }
     if to.exists() {
-        return Err(format!("版本「{new_name}」已存在"));
+        bail!("版本「{new_name}」已存在");
     }
-    std::fs::rename(&from, &to).map_err(|e| format!("重命名失败\n{e}"))
+    std::fs::rename(&from, &to).map_err(common_err_ctx!("重命名失败"))
 }
 
 /// 删除版本文件夹（递归删除 versions/{name}）。
@@ -143,11 +143,11 @@ pub fn rename_version_dir(version_name: &str, new_name: &str) -> Result<(), Stri
 pub async fn delete_version_dir(version_name: &str) -> Result<(), String> {
     let dir = active_minecraft_dir().join("versions").join(version_name);
     if !dir.exists() {
-        return Err(format!("版本「{version_name}」不存在"));
+        bail!("版本「{version_name}」不存在");
     }
     tokio::fs::remove_dir_all(&dir)
         .await
-        .map_err(|e| format!("删除失败\n{e}"))
+        .map_err(common_err_ctx!("删除失败"))
 }
 
 /// 解析版本目录名：`versions/{id}` 冲突时追加 `_{n}`。

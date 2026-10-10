@@ -49,7 +49,7 @@ pub fn enqueue(
     if dir.as_os_str().is_empty() {
         return Err("请先选择保存目录".into());
     }
-    std::fs::create_dir_all(&dir).map_err(|e| format!("创建保存目录失败\n{e}"))?;
+    std::fs::create_dir_all(&dir).map_err(common_err_ctx!("创建保存目录失败"))?;
 
     let segments = segments.clamp(1, 64);
     let mut created = Vec::new();
@@ -59,7 +59,7 @@ pub fn enqueue(
             continue;
         }
         if !(url.starts_with("http://") || url.starts_with("https://")) {
-            return Err(format!("仅支持 http/https 链接\n{url}"));
+            bail!("仅支持 http/https 链接\n{url}");
         }
         let task = Arc::new(build_task(url, &dir, segments));
         created.push(task.id.clone());

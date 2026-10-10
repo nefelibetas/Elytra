@@ -805,7 +805,7 @@ async fn fetch_version_json(
 ) -> Result<(VersionJson, String), String> {
     let text = meta::fetch_version_json_text(version_url, config).await?;
     let vj: VersionJson =
-        serde_json::from_str(&text).map_err(|e| format!("解析 version json 失败\n{}", e))?;
+        serde_json::from_str(&text).map_err(common_err_ctx!("解析 version json 失败"))?;
     Ok((vj, text))
 }
 

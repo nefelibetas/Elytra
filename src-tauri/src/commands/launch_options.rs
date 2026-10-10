@@ -19,5 +19,5 @@ pub fn get_launch_options() -> model::LaunchOptions {
 /// 保存启动选项配置（launcher section）。
 #[tauri::command]
 pub fn save_launch_options(config: model::LaunchOptions) -> Result<(), String> {
-    persist::save_launch_options(&config).map_err(|e| format!("保存配置失败\n{e}"))
+    persist::save_launch_options(&config).map_err(common_err_ctx!("保存配置失败"))
 }

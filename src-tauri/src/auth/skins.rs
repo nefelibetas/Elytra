@@ -138,7 +138,7 @@ pub fn export_png(path: &str, b64: &str) -> Result<(), String> {
         .and_then(|e| e.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case("png"));
     if !is_png {
-        return Err(format!("请用 .png 作为文件名\n{path}"));
+        bail!("请用 .png 作为文件名\n{path}");
     }
     let bytes = decode_b64(b64)?;
     ensure_png(&bytes)?;
@@ -151,7 +151,7 @@ pub fn export_png(path: &str, b64: &str) -> Result<(), String> {
 pub fn import_png(path: &str) -> Result<String, String> {
     let bytes = std::fs::read(path.trim()).map_err(common_err_ctx!("读取文件失败"))?;
     if !util::is_supported_image(&bytes) {
-        return Err(format!("不是受支持的图片格式\n{path}"));
+        bail!("不是受支持的图片格式\n{path}");
     }
     Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
@@ -189,7 +189,7 @@ fn save_bytes(
         if let Err(re) = std::fs::remove_file(&path) {
             eprintln!("[skins] 回滚皮肤文件失败（索引未写入，该文件未被引用）: {re}");
         }
-        return Err(format!("保存皮肤索引失败\n{e}"));
+        bail!("保存皮肤索引失败\n{e}");
     }
     Ok(to_view(entry))
 }

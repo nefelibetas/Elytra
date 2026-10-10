@@ -16,7 +16,7 @@ pub async fn texture_value(uuid: &str) -> Result<String, String> {
         .await
         .map_err(common_err_ctx!("获取档案失败"))?;
     if !resp.status().is_success() {
-        return Err(format!("获取档案失败\nHTTP {}", resp.status()));
+        bail!("获取档案失败\nHTTP {}", resp.status());
     }
     let profile: serde_json::Value = resp.json().await.map_err(common_err_ctx!("解析响应失败"))?;
     let props = profile

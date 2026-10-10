@@ -61,7 +61,7 @@ pub(crate) fn api_urls(
         .map(|base| {
             reqwest::Url::parse_with_params(base, params)
                 .map(|u| u.as_str().to_string())
-                .map_err(|e| format!("URL 构造失败\n{}", e))
+                .map_err(common_err_ctx!("URL 构造失败"))
         })
         .collect::<Result<Vec<_>, String>>()
 }
@@ -97,7 +97,7 @@ where
         };
         // 404 属确定性未命中（镜像同样不会有），不换源
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
-            return Err(format!("请求失败\nHTTP {}", resp.status()));
+            bail!("请求失败\nHTTP {}", resp.status());
         }
         if !resp.status().is_success() {
             last_err = format!("请求失败\nHTTP {}", resp.status());
@@ -106,7 +106,7 @@ where
         return resp
             .json::<serde_json::Value>()
             .await
-            .map_err(|e| format!("解析 JSON 失败\n{}", e));
+            .map_err(common_err_ctx!("解析 JSON 失败"));
     }
     Err(last_err)
 }
@@ -144,7 +144,7 @@ where
             }
         };
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
-            return Err(format!("请求失败\nHTTP {}", resp.status()));
+            bail!("请求失败\nHTTP {}", resp.status());
         }
         if !resp.status().is_success() {
             last_err = format!("请求失败\nHTTP {}", resp.status());
@@ -153,7 +153,7 @@ where
         return resp
             .json::<serde_json::Value>()
             .await
-            .map_err(|e| format!("响应解析失败\n{e}"));
+            .map_err(common_err_ctx!("响应解析失败"));
     }
     Err(last_err)
 }

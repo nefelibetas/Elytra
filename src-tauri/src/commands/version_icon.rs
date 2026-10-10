@@ -17,7 +17,7 @@ const MAX_PACK_ICON_BYTES: u64 = 1024 * 1024;
 /// 校验版本目录名：仅接受简单目录名，防路径穿越。
 fn ensure_simple_dir_name(name: &str) -> Result<(), String> {
     if !util::is_simple_name(name) {
-        return Err(format!("版本目录名不合法\n{name}"));
+        bail!("版本目录名不合法\n{name}");
     }
     Ok(())
 }
@@ -63,14 +63,14 @@ pub fn get_version_icon_source(version_dir_name: String) -> VersionIconInfo {
 pub async fn set_version_icon(version_dir_name: String, source_path: String) -> Result<(), String> {
     ensure_simple_dir_name(&version_dir_name)?;
     let src = PathBuf::from(&source_path);
-    let meta = std::fs::metadata(&src).map_err(|e| format!("读取图片失败\n{e}"))?;
+    let meta = std::fs::metadata(&src).map_err(common_err_ctx!("读取图片失败"))?;
     if !meta.is_file() {
         return Err("所选路径不是文件".into());
     }
     if meta.len() == 0 || meta.len() > MAX_PACK_ICON_BYTES {
-        return Err(format!("图片大小需在 1MB 以内\n当前 {} 字节", meta.len()));
+        bail!("图片大小需在 1MB 以内\n当前 {} 字节", meta.len());
     }
-    let bytes = std::fs::read(&src).map_err(|e| format!("读取图片失败\n{e}"))?;
+    let bytes = std::fs::read(&src).map_err(common_err_ctx!("读取图片失败"))?;
     if !util::is_supported_image(&bytes) {
         return Err("不支持的图片格式（仅支持 png / jpg / webp / gif）".into());
     }
@@ -78,10 +78,10 @@ pub async fn set_version_icon(version_dir_name: String, source_path: String) -> 
     // 复制为固定文件名（内容格式由魔数决定，前端按嗅探渲染）
     tokio::task::spawn_blocking(move || {
         std::fs::write(vdir.join("version-icon.png"), &bytes)
-            .map_err(|e| format!("写入图标失败\n{e}"))
+            .map_err(common_err_ctx!("写入图标失败"))
     })
     .await
-    .map_err(|e| format!("写入任务失败\n{e}"))?
+    .map_err(common_err_ctx!("写入任务失败"))?
 }
 
 /// 还原为默认图标：删除自定义图标（versions/{dir}/version-icon.png）。
@@ -95,10 +95,10 @@ pub async fn reset_version_icon(version_dir_name: String) -> Result<(), String> 
         return Ok(()); // 幂等：本就无自定义图
     }
     tokio::task::spawn_blocking(move || {
-        std::fs::remove_file(target).map_err(|e| format!("删除图标失败\n{e}"))
+        std::fs::remove_file(target).map_err(common_err_ctx!("删除图标失败"))
     })
     .await
-    .map_err(|e| format!("删除任务失败\n{e}"))?
+    .map_err(common_err_ctx!("删除任务失败"))?
 }
 
 #[cfg(test)]

@@ -37,7 +37,7 @@ pub(super) async fn download_neoforge_universal(
     let name = uni["name"].as_str().ok_or("NeoForge universal 坐标缺失")?;
     let parts: Vec<&str> = name.split(':').collect();
     if parts.len() < 4 {
-        return Err(format!("NeoForge universal 坐标格式异常\n{name}"));
+        bail!("NeoForge universal 坐标格式异常\n{name}");
     }
     let (group, artifact, version, classifier) = (parts[0], parts[1], parts[2], parts[3]);
     let file = format!("{artifact}-{version}-{classifier}.jar");
@@ -64,7 +64,7 @@ pub(super) async fn download_neoforge_universal(
         .collect();
     fetcher::fetch_fallback(&urls, &dest, None::<fn(u64, u64)>)
         .await
-        .map_err(|e| format!("下载 NeoForge universal 失败\n{e}"))?;
+        .map_err(common_err_ctx!("下载 NeoForge universal 失败"))?;
     Ok(())
 }
 
@@ -94,21 +94,21 @@ pub(super) async fn extract_neoforge_client(
 
     // 1. 提取 data/client.lzma
     let tmp = mc_dir.join(".elytra").join("tmp");
-    std::fs::create_dir_all(&tmp).map_err(|e| format!("创建临时目录失败\n{e}"))?;
+    std::fs::create_dir_all(&tmp).map_err(common_err_ctx!("创建临时目录失败"))?;
     let client_lzma = tmp.join("client.lzma");
     {
         let mut found = false;
         for i in 0..archive.len() {
             let mut entry = archive
                 .by_index(i)
-                .map_err(|e| format!("读取安装程序条目失败\n{e}"))?;
+                .map_err(common_err_ctx!("读取安装程序条目失败"))?;
             if !entry.name().ends_with("client.lzma") {
                 continue;
             }
             let mut out =
-                std::fs::File::create(&client_lzma).map_err(|e| format!("创建文件失败\n{e}"))?;
+                std::fs::File::create(&client_lzma).map_err(common_err_ctx!("创建文件失败"))?;
             std::io::copy(&mut entry, &mut out)
-                .map_err(|e| format!("提取 client.lzma 失败\n{e}"))?;
+                .map_err(common_err_ctx!("提取 client.lzma 失败"))?;
             found = true;
             break;
         }
@@ -123,7 +123,7 @@ pub(super) async fn extract_neoforge_client(
 
     // 3. 下载 installertools fatjar（maven.neoforged.net + 镜像）
     let tools = tmp.join("neoforge-tools");
-    std::fs::create_dir_all(&tools).map_err(|e| format!("创建目录失败\n{e}"))?;
+    std::fs::create_dir_all(&tools).map_err(common_err_ctx!("创建目录失败"))?;
     let tool_path =
         "net/neoforged/installertools/installertools/4.0.12/installertools-4.0.12-fatjar.jar";
     let tool_dest = tools.join("installertools-fatjar.jar");
@@ -141,7 +141,7 @@ pub(super) async fn extract_neoforge_client(
             .collect();
         fetcher::fetch_fallback(&urls, &tool_dest, None::<fn(u64, u64)>)
             .await
-            .map_err(|e| format!("下载 installertools 工具失败\n{e}"))?;
+            .map_err(common_err_ctx!("下载 installertools 工具失败"))?;
     }
 
     // 4. 运行 PROCESS_MINECRAFT_JAR（轮询取消：cancel 置位时 kill 工具进程）
@@ -166,17 +166,17 @@ pub(super) async fn extract_neoforge_client(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .map_err(|e| format!("启动 NeoForge 补丁工具失败\n{e}"))?;
+        .map_err(common_err_ctx!("启动 NeoForge 补丁工具失败"))?;
     let output = super::run_installer_command(child, cancel, "NeoForge 补丁工具").await?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let tail: Vec<&str> = stderr.lines().rev().take(15).collect();
         let tail = tail.iter().rev().cloned().collect::<Vec<_>>().join("\n");
-        return Err(format!(
+        bail!(
             "NeoForge 补丁工具退出码 {:?}\n{}",
             output.status.code().unwrap_or(-1),
             tail
-        ));
+        );
     }
     if !dest.exists() || dest.metadata().map(|m| m.len() < 1_000_000).unwrap_or(true) {
         return Err("NeoForge patched client 生成失败".into());

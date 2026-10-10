@@ -381,9 +381,9 @@ async fn install_mojang_runtime(
             s.mirror_url(JdkEndpoints::RUNTIME_ALL_JSON)
         })
         .await
-        .map_err(|e| format!("获取 Java runtime 索引失败\n{e}"))?;
+        .map_err(common_err_ctx!("获取 Java runtime 索引失败"))?;
     let all: serde_json::Value =
-        serde_json::from_str(&all_text).map_err(|e| format!("解析 runtime 索引失败\n{e}"))?;
+        serde_json::from_str(&all_text).map_err(common_err_ctx!("解析 runtime 索引失败"))?;
 
     // 2. 平台 → 组件 → 版本列表（取最新一条的 manifest）。
     // 注意实际结构：顶层键是平台（windows-x64/mac-os-arm64/...），
@@ -421,12 +421,12 @@ async fn install_mojang_runtime(
         &manifest_sha1,
     )
     .await
-    .map_err(|e| format!("下载 runtime manifest 失败\n{e}"))?;
+    .map_err(common_err_ctx!("下载 runtime manifest 失败"))?;
     let manifest_text =
-        std::fs::read_to_string(&manifest_path).map_err(|e| format!("读取 manifest 失败\n{e}"))?;
+        std::fs::read_to_string(&manifest_path).map_err(common_err_ctx!("读取 manifest 失败"))?;
     let _ = std::fs::remove_file(&manifest_path);
     let manifest: serde_json::Value =
-        serde_json::from_str(&manifest_text).map_err(|e| format!("解析 manifest 失败\n{e}"))?;
+        serde_json::from_str(&manifest_text).map_err(common_err_ctx!("解析 manifest 失败"))?;
 
     // 4. 统计文件条目与总字节（进度基线），逐文件下载到 runtime 目录
     //（目录条目建目录，文件条目 sha1 校验下载，link 条目跳过）
@@ -454,7 +454,7 @@ async fn install_mojang_runtime(
         let dest = dest_root.join(safe_relative_path(path)?);
         match ftype {
             "directory" => {
-                std::fs::create_dir_all(&dest).map_err(|e| format!("创建目录失败\n{e}"))?;
+                std::fs::create_dir_all(&dest).map_err(common_err_ctx!("创建目录失败"))?;
             }
             "file" => {
                 let raw = meta["downloads"]["raw"]
@@ -475,7 +475,7 @@ async fn install_mojang_runtime(
                 let cb = delta_callback(hook.on_bytes);
                 fetcher::fetch_verified_c(&urls, &dest, Some(cb), sha1, hook.cancel)
                     .await
-                    .map_err(|e| format!("下载 {path} 失败\n{e}"))?;
+                    .map_err(common_err_ctx!("下载 {} 失败", path))?;
                 if let Some(f) = hook.on_file_done {
                     f();
                 }
@@ -485,18 +485,18 @@ async fn install_mojang_runtime(
                 // 此处跳过（Java 运行所需实体文件均已逐一下载）。
             }
             other => {
-                return Err(format!("未知 runtime 文件类型\n{other:?}（{path}）"));
+                bail!("未知 runtime 文件类型\n{other:?}（{path}）");
             }
         }
     }
 
     // 5. 校验：inspect 版本 + major 匹配
-    let info = scanner::inspect(&dest_root).map_err(|e| format!("安装后校验失败\n{e}"))?;
+    let info = scanner::inspect(&dest_root).map_err(common_err_ctx!("安装后校验失败"))?;
     if parse_java_major(&info.version) != Some(major) {
-        return Err(format!(
+        bail!(
             "安装的 Java 版本异常（需要 {}，实际 {}）",
             major, info.version
-        ));
+        );
     }
     Ok(info)
 }
@@ -522,14 +522,14 @@ async fn install_adoptium_runtime(
         .get(&api_url)
         .send()
         .await
-        .map_err(|e| format!("查询 Adoptium 包失败\n{e}"))?;
+        .map_err(common_err_ctx!("查询 Adoptium 包失败"))?;
     if !resp.status().is_success() {
-        return Err(format!("Adoptium API 返回 {}", resp.status()));
+        bail!("Adoptium API 返回 {}", resp.status());
     }
     let assets: serde_json::Value = resp
         .json()
         .await
-        .map_err(|e| format!("解析 Adoptium 响应失败\n{e}"))?;
+        .map_err(common_err_ctx!("解析 Adoptium 响应失败"))?;
     let asset = assets
         .as_array()
         .and_then(|a| {
@@ -584,7 +584,7 @@ async fn install_adoptium_runtime(
     let cb = delta_callback(hook.on_bytes);
     fetcher::fetch_verified_c(&urls, &pkg_path, Some(cb), "", hook.cancel)
         .await
-        .map_err(|e| format!("下载 Adoptium 包失败\n{e}"))?;
+        .map_err(common_err_ctx!("下载 Adoptium 包失败"))?;
     if let Some(f) = hook.on_file_done {
         f();
     }
@@ -597,17 +597,17 @@ async fn install_adoptium_runtime(
     }
 
     let dest_root = runtime_dir(config, major);
-    std::fs::create_dir_all(&dest_root).map_err(|e| format!("创建目录失败\n{e}"))?;
+    std::fs::create_dir_all(&dest_root).map_err(common_err_ctx!("创建目录失败"))?;
     extract_archive(&pkg_path, &dest_root)?;
     let _ = std::fs::remove_file(&pkg_path);
 
     let home = find_java_home(&dest_root).ok_or("解压后未找到 JDK 根目录")?;
-    let info = scanner::inspect(&home).map_err(|e| format!("校验 Adoptium JDK 失败\n{e}"))?;
+    let info = scanner::inspect(&home).map_err(common_err_ctx!("校验 Adoptium JDK 失败"))?;
     if parse_java_major(&info.version) != Some(major) {
-        return Err(format!(
+        bail!(
             "Adoptium 安装版本异常（需要 {}，实际 {}）",
             major, info.version
-        ));
+        );
     }
     Ok(info)
 }
@@ -658,12 +658,12 @@ fn extract_archive(package: &Path, dest_root: &Path) -> Result<(), String> {
 
 /// zip 解压（Mojang/Azul/Adoptium 共用的包级解压；zip 内顶层目录保留）。
 fn extract_zip(package: &Path, dest_root: &Path) -> Result<(), String> {
-    let file = std::fs::File::open(package).map_err(|e| format!("打开 JDK 包失败\n{e}"))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取 JDK 包失败\n{e}"))?;
+    let file = std::fs::File::open(package).map_err(common_err_ctx!("打开 JDK 包失败"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(common_err_ctx!("读取 JDK 包失败"))?;
     for i in 0..archive.len() {
         let mut entry = archive
             .by_index(i)
-            .map_err(|e| format!("读取条目失败\n{e}"))?;
+            .map_err(common_err_ctx!("读取条目失败"))?;
         let name = entry.name().to_string();
         let out = dest_root.join(safe_relative_path(&name)?);
         if entry.is_dir() {
@@ -674,9 +674,9 @@ fn extract_zip(package: &Path, dest_root: &Path) -> Result<(), String> {
             std::fs::create_dir_all(parent).ok();
         }
         let mut file_out =
-            std::fs::File::create(&out).map_err(|e| format!("创建 {} 失败\n{e}", out.display()))?;
+            std::fs::File::create(&out).map_err(common_err_ctx!("创建 {} 失败", out.display()))?;
         std::io::copy(&mut entry, &mut file_out)
-            .map_err(|e| format!("解压 {} 失败\n{e}", out.display()))?;
+            .map_err(common_err_ctx!("解压 {} 失败", out.display()))?;
     }
     Ok(())
 }
@@ -684,17 +684,17 @@ fn extract_zip(package: &Path, dest_root: &Path) -> Result<(), String> {
 /// tar.gz 解压（Adoptium mac/linux 包格式）。条目路径先剥 `./` 前缀再过
 /// safe_runtime_path；符号链接等特殊条目跳过（JDK 包内实体文件已逐一下载，无链接依赖）。
 fn extract_tar_gz(package: &Path, dest_root: &Path) -> Result<(), String> {
-    let file = std::fs::File::open(package).map_err(|e| format!("打开 JDK 包失败\n{e}"))?;
+    let file = std::fs::File::open(package).map_err(common_err_ctx!("打开 JDK 包失败"))?;
     let gz = flate2::read::GzDecoder::new(file);
     let mut archive = tar::Archive::new(gz);
     let entries = archive
         .entries()
-        .map_err(|e| format!("读取 JDK 包失败\n{e}"))?;
+        .map_err(common_err_ctx!("读取 JDK 包失败"))?;
     for entry in entries {
-        let mut entry = entry.map_err(|e| format!("读取条目失败\n{e}"))?;
+        let mut entry = entry.map_err(common_err_ctx!("读取条目失败"))?;
         let mut name = entry
             .path()
-            .map_err(|e| format!("读取条目路径失败\n{e}"))?
+            .map_err(common_err_ctx!("读取条目路径失败"))?
             .to_string_lossy()
             .into_owned();
         while let Some(stripped) = name.strip_prefix("./") {
@@ -712,9 +712,9 @@ fn extract_tar_gz(package: &Path, dest_root: &Path) -> Result<(), String> {
             std::fs::create_dir_all(parent).ok();
         }
         let mut file_out =
-            std::fs::File::create(&out).map_err(|e| format!("创建 {} 失败\n{e}", out.display()))?;
+            std::fs::File::create(&out).map_err(common_err_ctx!("创建 {} 失败", out.display()))?;
         std::io::copy(&mut entry, &mut file_out)
-            .map_err(|e| format!("解压 {} 失败\n{e}", out.display()))?;
+            .map_err(common_err_ctx!("解压 {} 失败", out.display()))?;
     }
     Ok(())
 }
@@ -745,14 +745,14 @@ async fn install_azul_runtime(
         .get(&api_url)
         .send()
         .await
-        .map_err(|e| format!("查询 Azul 包失败\n{e}"))?;
+        .map_err(common_err_ctx!("查询 Azul 包失败"))?;
     if !resp.status().is_success() {
-        return Err(format!("Azul API 返回 {}", resp.status()));
+        bail!("Azul API 返回 {}", resp.status());
     }
     let packages: serde_json::Value = resp
         .json()
         .await
-        .map_err(|e| format!("解析 Azul 响应失败\n{e}"))?;
+        .map_err(common_err_ctx!("解析 Azul 响应失败"))?;
     let pkg = packages
         .as_array()
         .and_then(|a| a.first())
@@ -775,7 +775,7 @@ async fn install_azul_runtime(
     let cb = delta_callback(hook.on_bytes);
     fetcher::fetch_verified_c(&urls, &zip_path, Some(cb), "", hook.cancel)
         .await
-        .map_err(|e| format!("下载 Azul 包失败\n{e}"))?;
+        .map_err(common_err_ctx!("下载 Azul 包失败"))?;
     if let Some(f) = hook.on_file_done {
         f();
     }
@@ -789,18 +789,18 @@ async fn install_azul_runtime(
 
     // 解压到 runtime 目录（zip 内顶层目录保留，如 zulu17.x-ca-jdk17.x-win_x64/）
     let dest_root = runtime_dir(config, major);
-    std::fs::create_dir_all(&dest_root).map_err(|e| format!("创建目录失败\n{e}"))?;
+    std::fs::create_dir_all(&dest_root).map_err(common_err_ctx!("创建目录失败"))?;
     extract_archive(&zip_path, &dest_root)?;
     let _ = std::fs::remove_file(&zip_path);
 
     // 找到含 bin/java(.exe) 的 JDK 根目录（zip 顶层目录名不定）
     let home = find_java_home(&dest_root).ok_or("解压后未找到 JDK 根目录")?;
-    let info = scanner::inspect(&home).map_err(|e| format!("校验 Azul JDK 失败\n{e}"))?;
+    let info = scanner::inspect(&home).map_err(common_err_ctx!("校验 Azul JDK 失败"))?;
     if parse_java_major(&info.version) != Some(major) {
-        return Err(format!(
+        bail!(
             "Azul 安装版本异常（需要 {}，实际 {}）",
             major, info.version
-        ));
+        );
     }
     Ok(info)
 }

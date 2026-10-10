@@ -699,7 +699,7 @@ pub fn ensure_old_style_natives(
     natives_dir: &Path,
 ) -> Result<(), String> {
     // 所有版本：确保 natives 根目录存在（LWJGL/Netty 运行时在其中创建子目录）
-    std::fs::create_dir_all(natives_dir).map_err(|e| format!("创建 natives 目录失败\n{}", e))?;
+    std::fs::create_dir_all(natives_dir).map_err(common_err_ctx!("创建 natives 目录失败"))?;
 
     if !has_old_style_natives(version_json) {
         return Ok(());
@@ -739,7 +739,7 @@ pub fn ensure_old_style_natives(
 
     if errors.is_empty() {
         std::fs::write(&ready_marker, "")
-            .map_err(|e| format!("写入 natives 完成标记失败\n{}", e))?;
+            .map_err(common_err_ctx!("写入 natives 完成标记失败"))?;
         Ok(())
     } else {
         // 第一行为大类短句（dialog 正文显示），细节进复制区

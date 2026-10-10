@@ -70,7 +70,7 @@ pub async fn fetch_b64(url: &str, err_prefix: &str) -> Result<String, String> {
         .await
         .map_err(common_err_ctx!("{}失败", err_prefix))?;
     if !resp.status().is_success() {
-        return Err(format!("{err_prefix}失败\nHTTP {}", resp.status()));
+        bail!("{err_prefix}失败\nHTTP {}", resp.status());
     }
     let bytes = resp
         .bytes()
@@ -221,7 +221,7 @@ pub async fn fetch_capes(access_token: &str) -> Result<Vec<CapeInfo>, String> {
         .await
         .map_err(common_err_ctx!("获取披风列表失败"))?;
     if !resp.status().is_success() {
-        return Err(format!("获取披风列表失败\nHTTP {}", resp.status()));
+        bail!("获取披风列表失败\nHTTP {}", resp.status());
     }
     let json: serde_json::Value = resp.json().await.map_err(common_err_ctx!("解析响应失败"))?;
     let capes = json["capes"].as_array().cloned().unwrap_or_default();
@@ -263,7 +263,7 @@ pub async fn set_active_cape(access_token: &str, cape_id: &str) -> Result<(), St
         .await
         .map_err(common_err_ctx!("切换披风失败"))?;
     if !resp.status().is_success() {
-        return Err(format!("切换披风失败\nHTTP {}", resp.status()));
+        bail!("切换披风失败\nHTTP {}", resp.status());
     }
     Ok(())
 }
@@ -277,7 +277,7 @@ pub async fn disable_cape(access_token: &str) -> Result<(), String> {
         .await
         .map_err(common_err_ctx!("移除披风失败"))?;
     if !resp.status().is_success() {
-        return Err(format!("移除披风失败\nHTTP {}", resp.status()));
+        bail!("移除披风失败\nHTTP {}", resp.status());
     }
     Ok(())
 }
@@ -320,10 +320,10 @@ pub async fn upload_skin_bytes(
     if !resp.status().is_success() {
         let status = resp.status();
         let body: serde_json::Value = resp.json().await.unwrap_or_default();
-        return Err(format!(
+        bail!(
             "上传皮肤失败\n{}",
             auth::microsoft::extract_api_error(&body, status)
-        ));
+        );
     }
     Ok(())
 }

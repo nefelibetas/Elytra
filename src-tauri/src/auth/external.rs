@@ -86,7 +86,7 @@ pub fn switch(api_url: &str, uuid: &str) -> Result<(), String> {
         .iter()
         .position(|a| a.api_url == api_url && a.uuid == uuid)
     else {
-        return Err(format!("账号不存在\n{api_url} {uuid}"));
+        bail!("账号不存在\n{api_url} {uuid}");
     };
     let acc = list.remove(idx);
     list.push(acc);
@@ -139,7 +139,7 @@ pub async fn login(
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         let msg = extract_yggdrasil_error(&text, status);
-        return Err(format!("登录失败\n{msg}"));
+        bail!("登录失败\n{msg}");
     }
     let json: serde_json::Value = resp.json().await.map_err(common_err_ctx!("响应解析失败"))?;
     let token = json["accessToken"]
@@ -210,7 +210,7 @@ pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccoun
         .iter()
         .position(|a| a.api_url == api_url && a.uuid == uuid)
     else {
-        return Err(format!("账号不存在\n{api_url} {uuid}"));
+        bail!("账号不存在\n{api_url} {uuid}");
     };
     let acc = list[idx].clone();
     let client_token = acc
@@ -246,11 +246,11 @@ pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccoun
         // 其它非 2xx（5xx / 网关错误）只是服务端一时的问题 → 保留账号，别误踢。
         if code == 401 || code == 403 {
             let _ = remove(api_url, uuid); // 幂等；注销失败也不影响把错误报给前端
-            return Err(format!("登录凭据已失效，已退出该账号，请重新登录\n{msg}"));
+            bail!("登录凭据已失效，已退出该账号，请重新登录\n{msg}");
         }
-        return Err(format!(
+        bail!(
             "刷新失败（服务端返回 {status}），账号已保留\n{msg}"
-        ));
+        );
     }
     let json: serde_json::Value = resp.json().await.map_err(common_err_ctx!("响应解析失败"))?;
     let new_token = json["accessToken"]
@@ -310,7 +310,7 @@ pub async fn switch_role(
         .iter()
         .position(|a| a.api_url == api_url && a.uuid == uuid)
     else {
-        return Err(format!("账号不存在\n{api_url} {uuid}"));
+        bail!("账号不存在\n{api_url} {uuid}");
     };
     let acc = list[idx].clone();
     let client_token = acc
@@ -342,7 +342,7 @@ pub async fn switch_role(
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         let msg = extract_yggdrasil_error(&text, status);
-        return Err(format!("切换角色失败\n{msg}"));
+        bail!("切换角色失败\n{msg}");
     }
     let json: serde_json::Value = resp.json().await.map_err(common_err_ctx!("响应解析失败"))?;
     let new_token = json["accessToken"]
@@ -382,7 +382,7 @@ pub async fn external_skin_info(api_url: &str, uuid: &str) -> Result<(String, St
         .await
         .map_err(common_err_ctx!("请求皮肤失败"))?;
     if !resp.status().is_success() {
-        return Err(format!("该账号未设置皮肤\nHTTP {}", resp.status()));
+        bail!("该账号未设置皮肤\nHTTP {}", resp.status());
     }
     let json: serde_json::Value = resp.json().await.map_err(common_err_ctx!("响应解析失败"))?;
     // properties[0].value = base64 的 {textures:{SKIN:{url}}}（标准格式）

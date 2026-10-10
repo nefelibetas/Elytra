@@ -5,6 +5,7 @@
 
 use crate::config::online::OnlineConfig;
 use crate::online::{self, OnlineSnapshot};
+use crate::persist;
 
 /// 开启联机（作为 host）。立即返回 Waiting 快照（房间码为身份段）；
 /// 检测到游戏端口后经 `online-state` 事件推送 Hosting + 完整房间码。
@@ -34,11 +35,11 @@ pub async fn online_status() -> OnlineSnapshot {
 /// 读取联机配置（协调节点列表）。
 #[tauri::command]
 pub fn get_online_config() -> OnlineConfig {
-    OnlineConfig::from_persist()
+    persist::online_config()
 }
 
 /// 保存联机配置（协调节点列表）。
 #[tauri::command]
 pub fn save_online_config(config: OnlineConfig) -> Result<(), String> {
-    config.save()
+    persist::save_online_config(&config).map_err(common_err_ctx!("保存联机配置失败"))
 }

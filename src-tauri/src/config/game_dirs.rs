@@ -58,7 +58,7 @@ pub fn ensure_initialized() -> Vec<GameDir> {
 /// 保存目录列表到配置。
 pub fn save_dirs(dirs: Vec<GameDir>) -> Result<Vec<GameDir>, String> {
     save_game_dirs_config(&GameDirsConfig { dirs: dirs.clone() })
-        .map_err(|e| format!("保存配置失败\n{e}"))?;
+        .map_err(common_err_ctx!("保存配置失败"))?;
     Ok(dirs)
 }
 
@@ -66,7 +66,7 @@ pub fn save_dirs(dirs: Vec<GameDir>) -> Result<Vec<GameDir>, String> {
 pub fn set_active(path: &str) -> Result<(), String> {
     let mut cfg: DownloaderConfig = downloader_config();
     cfg.minecraft_dir = path.to_string();
-    save_downloader_config(&cfg).map_err(|e| format!("保存配置失败\n{e}"))
+    save_downloader_config(&cfg).map_err(common_err_ctx!("保存配置失败"))
 }
 
 /// 当前激活的游戏目录（同步于 downloader 配置的 `minecraft_dir`）。

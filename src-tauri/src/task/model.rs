@@ -124,7 +124,7 @@ impl DownloadTask {
         }
         if let Some(loader) = &self.loader {
             if loader.version.trim().is_empty() {
-                return Err(format!("{} 版本不能为空", loader.kind.display_name()));
+                bail!("{} 版本不能为空", loader.kind.display_name());
             }
         }
         if let Some(api) = &self.fabric_api {

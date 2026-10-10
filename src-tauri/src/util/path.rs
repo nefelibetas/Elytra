@@ -22,13 +22,13 @@ pub fn sha1_sub_dir(hash: &str) -> &str {
 pub fn safe_relative_path(rel: &str) -> Result<PathBuf, String> {
     let rel = rel.trim();
     if rel.is_empty() || rel.starts_with('/') || rel.starts_with('\\') {
-        return Err(format!("非法文件路径\n{rel:?}"));
+        bail!("非法文件路径\n{rel:?}");
     }
     if rel
         .split(['/', '\\'])
         .any(|seg| seg == ".." || seg.is_empty())
     {
-        return Err(format!("文件路径含非法段\n{rel:?}"));
+        bail!("文件路径含非法段\n{rel:?}");
     }
     Ok(PathBuf::from(rel))
 }

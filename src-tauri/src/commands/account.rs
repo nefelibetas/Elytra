@@ -30,7 +30,7 @@ pub async fn start_ms_login(app: AppHandle) -> Result<String, String> {
 
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", microsoft::CALLBACK_PORT))
         .await
-        .map_err(|e| format!("回调端口 {} 被占用\n{e}", microsoft::CALLBACK_PORT))?;
+        .map_err(common_err_ctx!("回调端口 {} 被占用", microsoft::CALLBACK_PORT))?;
 
     let auth_url = microsoft::build_auth_url(&state, &pkce).map_err(|e| e.to_string())?;
 
@@ -44,7 +44,7 @@ pub async fn start_ms_login(app: AppHandle) -> Result<String, String> {
     // 打开系统浏览器
     app.opener()
         .open_url(auth_url.clone(), None::<&str>)
-        .map_err(|e| format!("打开浏览器失败\n{e}"))?;
+        .map_err(common_err_ctx!("打开浏览器失败"))?;
 
     Ok(auth_url)
 }
@@ -168,10 +168,10 @@ pub async fn fetch_external_skin_profile(
 async fn write_b64_file(b64: &str, path: &str) -> Result<(), String> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(b64)
-        .map_err(|e| format!("皮肤数据解码失败\n{e}"))?;
+        .map_err(common_err_ctx!("皮肤数据解码失败"))?;
     tokio::fs::write(path, bytes)
         .await
-        .map_err(|e| format!("写入文件失败\n{e}"))
+        .map_err(common_err_ctx!("写入文件失败"))
 }
 
 /// 第三方账号皮肤下载：拉 skin.png → 写指定路径（base64 解出）。
@@ -193,10 +193,10 @@ pub async fn save_skin(uuid: String, path: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn upload_skin_file(file_path: String, variant: String) -> Result<(), String> {
     if !matches!(variant.as_str(), "CLASSIC" | "SLIM") {
-        return Err(format!(
+        bail!(
             "未知皮肤模型
 {variant}"
-        ));
+        );
     }
     let token = account::valid_access_token().await?;
     account::upload_skin(&token, &file_path, &variant).await
@@ -307,5 +307,5 @@ pub fn get_external_config() -> external::ExternalConfig {
 /// 保存第三方配置（预设列表）。
 #[tauri::command]
 pub fn save_external_config(config: external::ExternalConfig) -> Result<(), String> {
-    persist::save(constants::SECT_EXTERNAL, &config).map_err(|e| format!("保存失败\n{e}"))
+    persist::save(constants::SECT_EXTERNAL, &config).map_err(common_err_ctx!("保存失败"))
 }

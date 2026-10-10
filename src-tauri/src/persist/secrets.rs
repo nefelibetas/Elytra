@@ -63,7 +63,7 @@ pub fn save_json_list<T: serde::Serialize>(key: &str, list: &[T]) -> Result<(), 
     if list.is_empty() {
         return remove_secret(key);
     }
-    let bytes = serde_json::to_vec(list).map_err(|e| format!("序列化数据失败\n{e}"))?;
+    let bytes = serde_json::to_vec(list).map_err(common_err_ctx!("序列化数据失败"))?;
     save_secret(key, &bytes)
 }
 
@@ -78,9 +78,9 @@ fn load_map() -> std::collections::HashMap<String, String> {
 fn write_map(map: &std::collections::HashMap<String, String>) -> Result<(), String> {
     let path = secrets_path();
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败\n{e}"))?;
+        std::fs::create_dir_all(parent).map_err(common_err_ctx!("创建配置目录失败"))?;
     }
-    let content = serde_json::to_string(map).map_err(|e| format!("序列化 secrets 失败\n{e}"))?;
+    let content = serde_json::to_string(map).map_err(common_err_ctx!("序列化 secrets 失败"))?;
     #[cfg(not(target_os = "windows"))]
     {
         if let Err(e) = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)) {
@@ -88,7 +88,7 @@ fn write_map(map: &std::collections::HashMap<String, String>) -> Result<(), Stri
             eprintln!("[secrets] 密钥文件权限设置失败（应为 0o600）: {e}");
         }
     }
-    std::fs::write(&path, content).map_err(|e| format!("写入 secrets 失败\n{e}"))
+    std::fs::write(&path, content).map_err(common_err_ctx!("写入 secrets 失败"))
 }
 
 /// 加密（Windows DPAPI / Linux-macOS 钥匙串主密钥 ChaCha20 / 钥匙串不可用降级明文）。
@@ -131,7 +131,7 @@ const MAGIC: &[u8] = b"ELY1";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn key_encrypt(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, String> {
     let mut nonce_bytes = [0u8; 12];
-    getrandom::getrandom(&mut nonce_bytes).map_err(|e| format!("生成随机数失败\n{e}"))?;
+    getrandom::getrandom(&mut nonce_bytes).map_err(common_err_ctx!("生成随机数失败"))?;
     // 定长来源走 fallible 转换（长度由类型保证，错误分支仅为消除 panic 路径）
     let key_ref = Key::try_from(key.as_slice())
         .map_err(|_| "内部错误：主密钥长度异常".to_string())?;
@@ -140,7 +140,7 @@ fn key_encrypt(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, String> {
     let cipher = ChaCha20Poly1305::new(&key_ref);
     let ct = cipher
         .encrypt(&nonce_ref, data)
-        .map_err(|e| format!("加密失败\n{e}"))?;
+        .map_err(common_err_ctx!("加密失败"))?;
     let mut out = Vec::with_capacity(MAGIC.len() + nonce_bytes.len() + ct.len());
     out.extend_from_slice(MAGIC);
     out.extend_from_slice(&nonce_bytes);
@@ -164,7 +164,7 @@ fn key_decrypt(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, String> {
     let cipher = ChaCha20Poly1305::new(&key_ref);
     cipher
         .decrypt(&nonce_ref, ct)
-        .map_err(|e| format!("解密失败\n{e}"))
+        .map_err(common_err_ctx!("解密失败"))
 }
 
 /// Linux Secret Service（GNOME Keyring / KWallet kwalletd5）：主密钥存 default collection，
@@ -211,22 +211,22 @@ mod key_utils {
     async fn fetch_key() -> Result<Option<[u8; 32]>, String> {
         let ss = SecretService::connect(EncryptionType::Dh)
             .await
-            .map_err(|e| format!("连接 Secret Service 失败\n{e}"))?;
+            .map_err(common_err_ctx!("连接 Secret Service 失败"))?;
         let collection = ss
             .get_default_collection()
             .await
-            .map_err(|e| format!("获取默认钥匙串失败\n{e}"))?;
+            .map_err(common_err_ctx!("获取默认钥匙串失败"))?;
         let items = collection
             .search_items(attrs())
             .await
-            .map_err(|e| format!("查询钥匙串失败\n{e}"))?;
+            .map_err(common_err_ctx!("查询钥匙串失败"))?;
         let Some(item) = items.first() else {
             return Ok(None);
         };
         let secret = item
             .get_secret()
             .await
-            .map_err(|e| format!("读取钥匙串失败\n{e}"))?;
+            .map_err(common_err_ctx!("读取钥匙串失败"))?;
         let key: [u8; 32] = secret
             .as_slice()
             .try_into()
@@ -237,11 +237,11 @@ mod key_utils {
     async fn store_key(key: &[u8; 32]) -> Result<(), String> {
         let ss = SecretService::connect(EncryptionType::Dh)
             .await
-            .map_err(|e| format!("连接 Secret Service 失败\n{e}"))?;
+            .map_err(common_err_ctx!("连接 Secret Service 失败"))?;
         let collection = ss
             .get_default_collection()
             .await
-            .map_err(|e| format!("获取默认钥匙串失败\n{e}"))?;
+            .map_err(common_err_ctx!("获取默认钥匙串失败"))?;
         collection
             .create_item(
                 KEYCHAIN_MASTER_KEY_LABEL,
@@ -251,7 +251,7 @@ mod key_utils {
                 "application/octet-stream",
             )
             .await
-            .map_err(|e| format!("写入钥匙串失败\n{e}"))?;
+            .map_err(common_err_ctx!("写入钥匙串失败"))?;
         Ok(())
     }
 

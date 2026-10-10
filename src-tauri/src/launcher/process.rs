@@ -40,7 +40,7 @@ pub fn spawn_game_child(
             Err(e) if e.raw_os_error() == Some(5) && flags & CREATE_BREAKAWAY_FROM_JOB != 0 => {
                 flags &= !CREATE_BREAKAWAY_FROM_JOB; // 最多重试一次
             }
-            Err(e) => return Err(format!("启动游戏失败\n{e}")),
+            Err(e) => bail!("启动游戏失败\n{e}"),
         }
     }
 }
@@ -49,7 +49,7 @@ pub fn spawn_game_child(
 pub fn spawn_game_child(
     command: &mut std::process::Command,
 ) -> Result<std::process::Child, String> {
-    command.spawn().map_err(|e| format!("启动游戏失败\n{}", e))
+    command.spawn().map_err(common_err_ctx!("启动游戏失败"))
 }
 
 /// 读取子进程输出并追加写入日志文件，直到 EOF 或出错。
@@ -86,13 +86,13 @@ pub fn run_pre_launch_command(command: &str) -> Result<(), String> {
         let mut cmd = std::process::Command::new("cmd");
         cmd.args(["/C", command]);
         cmd.creation_flags(0x08000000);
-        cmd.status().map_err(|e| format!("启动进程失败\n{e}"))?
+        cmd.status().map_err(common_err_ctx!("启动进程失败"))?
     };
     #[cfg(not(target_os = "windows"))]
     let status = std::process::Command::new("sh")
         .args(["-c", command])
         .status()
-        .map_err(|e| format!("启动进程失败\n{e}"))?;
+        .map_err(common_err_ctx!("启动进程失败"))?;
 
     if status.success() {
         Ok(())

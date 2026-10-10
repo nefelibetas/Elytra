@@ -10,6 +10,14 @@ macro_rules! common_err_ctx {
     };
 }
 
+/// 快速返回错误
+/// bail!("{err_prefix}失败\nHTTP {}", resp.status())
+macro_rules! bail {
+    ($($t: tt)*) => {
+        return Err(format!($($t)*))
+    };
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

@@ -136,7 +136,7 @@ pub async fn search_community(
             )
             .await?
         }
-        other => return Err(format!("未知 Mod 来源\n{other}")),
+        other => bail!("未知 Mod 来源\n{other}"),
     };
     if translate {
         // 标题译名/mcmod_id：搜索构造时已由内置百科表填充（无网络开销）；
@@ -179,7 +179,7 @@ pub async fn get_community_details(
     let mut items = match source {
         "modrinth" => modrinth::modrinth_details(ids).await?,
         "curseforge" => curseforge::curseforge_details(ids).await?,
-        other => return Err(format!("未知 Mod 来源\n{other}")),
+        other => bail!("未知 Mod 来源\n{other}"),
     };
     if translate {
         let tr = fetch_translations(source, ids).await;

@@ -544,10 +544,10 @@ impl<'a> PackInstall<'a> {
         .await
         {
             Ok(t) => t,
-            Err(e) => return Err(format!("拉取版本清单失败\n{e}")),
+            Err(e) => bail!("拉取版本清单失败\n{e}"),
         };
         let vj: VersionJson =
-            serde_json::from_str(&parent_text).map_err(|e| format!("解析版本清单失败\n{e}"))?;
+            serde_json::from_str(&parent_text).map_err(common_err_ctx!("解析版本清单失败"))?;
         // 补齐 B 段总量估算：client + 库 + 资源索引声明总量
         let lib_est: u64 = vj
             .libraries
@@ -565,11 +565,11 @@ impl<'a> PackInstall<'a> {
         // 写盘失败必须报错：假成功会让版本缺 json、启动时报"未找到版本 JSON"。
         if self.plan.loader.is_none() {
             let json = serde_json::to_string_pretty(&vj)
-                .map_err(|e| format!("序列化版本 JSON 失败\n{e}"))?;
+                .map_err(common_err_ctx!("序列化版本 JSON 失败"))?;
             let jp = self
                 .vdir
                 .join(format!("{}.json", self.plan.version_dir_name));
-            std::fs::write(&jp, &json).map_err(|e| format!("写入版本 JSON 失败\n{e}"))?;
+            std::fs::write(&jp, &json).map_err(common_err_ctx!("写入版本 JSON 失败"))?;
         }
         finish_step(self.app, self.progress, self.idx.i_json, &self.c);
         if cancelled(self.cancel) {
@@ -612,7 +612,7 @@ impl<'a> PackInstall<'a> {
                 )
                 .await
                 {
-                    return Err(format!("下载游戏主文件失败\n{e}"));
+                    bail!("下载游戏主文件失败\n{e}");
                 }
                 self.c.bytes.fetch_add(cl.size, Ordering::Relaxed);
             }
@@ -648,7 +648,7 @@ impl<'a> PackInstall<'a> {
         )
         .await
         {
-            return Err(format!("下载依赖库失败\n{}", e.join("; ")));
+            bail!("下载依赖库失败\n{}", e.join("; "));
         }
         finish_step(self.app, self.progress, self.idx.i_libs, &self.c);
 
@@ -674,7 +674,7 @@ impl<'a> PackInstall<'a> {
         )
         .await
         {
-            return Err(format!("下载资源文件失败\n{}", e.join("; ")));
+            bail!("下载资源文件失败\n{}", e.join("; "));
         }
         finish_step(self.app, self.progress, self.idx.i_asst, &self.c);
 
@@ -695,7 +695,7 @@ impl<'a> PackInstall<'a> {
         )
         .await
         {
-            return Err(format!("处理原生库失败\n{}", e.join("; ")));
+            bail!("处理原生库失败\n{}", e.join("; "));
         }
         finish_step(self.app, self.progress, self.idx.i_nat, &self.c);
         Ok(())
@@ -749,7 +749,7 @@ impl<'a> PackInstall<'a> {
                     if !cfg_marked { if let Some(idx) = self.idx.i_cfg { finish_step(self.app, self.progress, idx, &self.c); } }
                     if !lbs_marked { if let Some(idx) = self.idx.i_lbs { finish_step(self.app, self.progress, idx, &self.c); } }
                     if let Err(e) = res {
-                        return Err(format!("ModLoader 安装失败\n{e}"));
+                        bail!("ModLoader 安装失败\n{e}");
                     }
                     break;
                 }
@@ -810,7 +810,7 @@ impl<'a> PackInstall<'a> {
                         Some(ar) => extract_member(ar, &member, &dest),
                         None => Ok(()),
                     };
-                    res.map_err(|e| format!("释放包内资源失败\n{e}"))?;
+                    res.map_err(common_err_ctx!("释放包内资源失败"))?;
                     self.c.est_bytes.fetch_sub(f.size, Ordering::Relaxed);
                     finish_step(self.app, self.progress, step_idx, &self.c);
                 }
@@ -857,7 +857,7 @@ impl<'a> PackInstall<'a> {
                 ));
                 if let Some(parent) = dest.parent() {
                     if let Err(e) = std::fs::create_dir_all(parent) {
-                        return Err(format!("创建目录失败\n{e}\n{}", parent.display()));
+                        bail!("创建目录失败\n{e}\n{}", parent.display());
                     }
                 }
                 set_phase(
@@ -923,7 +923,7 @@ impl<'a> PackInstall<'a> {
                         finish_step(self.app, self.progress, idx, &self.c);
                     }
                     Ok(Err((_, msg))) => return Err(msg),
-                    Err(e) => return Err(format!("下载工作线程异常\n{e}")),
+                    Err(e) => bail!("下载工作线程异常\n{e}"),
                 }
             }
         }
@@ -948,7 +948,7 @@ impl<'a> PackInstall<'a> {
         race_cancel(self.cancel, async move {
             tokio::task::spawn_blocking(move || extract_overrides(&ov, &vd))
                 .await
-                .map_err(|e| format!("解压工作线程异常\n{e}"))?
+                .map_err(common_err_ctx!("解压工作线程异常"))?
         })
         .await?;
         finish_step(self.app, self.progress, idx, &self.c);
@@ -1033,7 +1033,7 @@ async fn phase_fetch_pack(
             if let Err(e) =
                 fetcher::fetch_verified_c(&urls, zip_path, Some(dl_cb), sha1, Some(cancel)).await
             {
-                return Err(format!("下载整合包失败\n{e}"));
+                bail!("下载整合包失败\n{e}");
             }
             pack_bytes_est = std::fs::metadata(zip_path)
                 .map(|m| m.len())
@@ -1065,7 +1065,7 @@ async fn phase_parse_plan(
     );
     let plan = race_cancel(cancel, build_plan(zip_path, request, config)).await?;
     if let Err(e) = write_plan(&plan_path_for(request), &plan) {
-        return Err(format!("写入安装计划失败\n{e}"));
+        bail!("写入安装计划失败\n{e}");
     }
     step_done(app, progress, parse_idx);
     Ok(plan)
@@ -1100,7 +1100,7 @@ fn extract_member(
 ) -> Result<(), String> {
     let mut entry = archive
         .by_name(name)
-        .map_err(|e| format!("读取包内资源失败\n{e}"))?;
+        .map_err(common_err_ctx!("读取包内资源失败"))?;
     extract::extract_entry_to(&mut entry, out)
 }
 
@@ -1110,17 +1110,17 @@ fn extract_overrides(ov: &OverridesRef, vdir: &Path) -> Result<(), String> {
     for i in 0..archive.len() {
         let mut entry = archive
             .by_index(i)
-            .map_err(|e| format!("读取条目失败\n{e}"))?;
+            .map_err(common_err_ctx!("读取条目失败"))?;
         let Some(rel) = override_rel(entry.name(), &ov.prefix) else {
             continue;
         };
         let out = vdir.join(safe_relative_path(rel)?);
         if entry.is_dir() {
-            std::fs::create_dir_all(&out).map_err(|e| format!("创建目录失败\n{e}"))?;
+            std::fs::create_dir_all(&out).map_err(common_err_ctx!("创建目录失败"))?;
             continue;
         }
         if let Some(parent) = out.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败\n{e}"))?;
+            std::fs::create_dir_all(parent).map_err(common_err_ctx!("创建目录失败"))?;
         }
         extract::extract_entry_to(&mut entry, &out)?;
     }

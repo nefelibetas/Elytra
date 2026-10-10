@@ -15,7 +15,7 @@ use super::service::{
     OnlineServiceInner, SERVICE,
 };
 use super::session::{EasyTierSession, SessionConfig, SessionRole};
-use crate::config::online::OnlineConfig;
+use crate::persist::online_config;
 
 /// 开启联机（作为 host）：建虚拟网（hostname + 白名单 [scaffold_port]）+
 /// 起信息服务器（OS 监听 scaffold_port，guest 经 proxy NAT 直连）。
@@ -56,7 +56,7 @@ async fn start_host_session(
             Err(_) => free_tcp_port()?,
         };
     let room = create_room()?;
-    let public_nodes = OnlineConfig::from_persist().public_nodes;
+    let public_nodes = online_config().public_nodes;
     let cfg = SessionConfig {
         role: SessionRole::Host,
         room: room.clone(),
@@ -165,7 +165,7 @@ async fn sync_host_session(
         room,
         local_port: None,
         mc_port,
-        public_nodes: OnlineConfig::from_persist().public_nodes,
+        public_nodes: online_config().public_nodes,
         scaffold_port: Some(svc.scaffold_port.unwrap_or(0)),
     };
     match EasyTierSession::start(cfg).await {

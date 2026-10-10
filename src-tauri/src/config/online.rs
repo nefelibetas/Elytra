@@ -35,19 +35,11 @@ pub struct OnlineConfig {
 }
 
 impl OnlineConfig {
-    /// 从 persist 读取。从未保存过配置 → 默认备用节点（开箱即用跨网）；
-    /// 保存过（含清空）→ 用户值。
-    pub fn from_persist() -> Self {
-        crate::persist::read::<OnlineConfig>(crate::constants::SECT_ONLINE).unwrap_or_else(|_| Self {
+    pub fn with_defaults() -> Self {
+        Self {
             public_nodes: DEFAULT_PUBLIC_NODES.iter().map(|s| s.to_string()).collect(),
             advertise_motd: None,
             nickname: None,
-        })
-    }
-
-    /// 写入 persist。
-    pub fn save(&self) -> Result<(), String> {
-        crate::persist::save::<OnlineConfig>(crate::constants::SECT_ONLINE, self)
-            .map_err(|e| format!("保存联机配置失败\n{e}"))
+        }
     }
 }

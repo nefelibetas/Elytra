@@ -18,7 +18,7 @@ pub fn add_game_dir(name: String, path: String) -> Result<Vec<GameDir>, String> 
     }
     let mut dirs = game_dirs::ensure_initialized();
     if dirs.iter().any(|d| d.name == name) {
-        return Err(format!("名称「{name}」已存在"));
+        bail!("名称「{name}」已存在");
     }
     if dirs.iter().any(|d| d.path == path) {
         return Err("该路径已在列表中".to_string());
@@ -44,7 +44,7 @@ pub fn rename_game_dir(path: String, new_name: String) -> Result<Vec<GameDir>, S
         .enumerate()
         .any(|(i, d)| d.name == new_name && i != idx)
     {
-        return Err(format!("名称「{new_name}」已存在"));
+        bail!("名称「{new_name}」已存在");
     }
     dirs[idx].name = new_name;
     game_dirs::save_dirs(dirs)
@@ -88,11 +88,11 @@ pub fn rename_version_dir(version_name: String, new_name: String) -> Result<(), 
 #[tauri::command]
 pub fn open_folder(app: tauri::AppHandle, path: String) -> Result<(), String> {
     if !std::path::Path::new(&path).exists() {
-        return Err(format!("目录不存在\n{path}"));
+        bail!("目录不存在\n{path}");
     }
     app.opener()
         .open_path(path, None::<&str>)
-        .map_err(|e| format!("打开文件夹失败\n{e}"))
+        .map_err(common_err_ctx!("打开文件夹失败"))
 }
 
 /// 检测所有已配置的游戏目录，激活第一个存在游戏版本的目录，并返回其第一个版本。

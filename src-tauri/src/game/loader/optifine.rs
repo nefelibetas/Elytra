@@ -64,7 +64,7 @@ async fn download_optifabric(
         ],
     )
     .await
-    .map_err(|e| format!("查询 OptiFabric 项目失败\n{e}"))?;
+    .map_err(common_err_ctx!("查询 OptiFabric 项目失败"))?;
     let mod_id = search["data"]
         .as_array()
         .and_then(|a| a.first())
@@ -81,19 +81,19 @@ async fn download_optifabric(
         ],
     )
     .await
-    .map_err(|e| format!("查询 OptiFabric 版本失败\n{e}"))?;
+    .map_err(common_err_ctx!("查询 OptiFabric 版本失败"))?;
     let Some((filename, download_url, _sha1)) = pick_curseforge_file(&files) else {
-        return Err(format!(
+        bail!(
             "下载 OptiFabric 失败\nMC {mc_version} 暂无兼容的 OptiFabric 版本（OptiFabric 仅支持至 1.20.x）"
-        ));
+        );
     };
 
     // 3. forgecdn 直链下载（与单文件下载同一通道；x-api-key 由查询环节承担，下载可匿名）
-    std::fs::create_dir_all(mods_dir).map_err(|e| format!("创建 mods 目录失败\n{e}"))?;
+    std::fs::create_dir_all(mods_dir).map_err(common_err_ctx!("创建 mods 目录失败"))?;
     let dest = mods_dir.join(&filename);
     fetcher::fetch_bounded(&[download_url], &dest, Some(pc.step_progress()))
         .await
-        .map_err(|e| format!("下载 OptiFabric 失败\n{e}"))?;
+        .map_err(common_err_ctx!("下载 OptiFabric 失败"))?;
     Ok(())
 }
 
@@ -164,7 +164,7 @@ pub async fn install_optifine(
         }
     };
     if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败\n{e}"))?;
+        std::fs::create_dir_all(parent).map_err(common_err_ctx!("创建目录失败"))?;
     }
 
     // 字节级进度：ProgressCounters::step_progress 工厂（增量累加进全局计数与
@@ -172,7 +172,7 @@ pub async fn install_optifine(
     // 后者不写 step_total，而 OptiFine jar 下载需要步骤分母显示总字节。
     fetcher::fetch(&jar_url, &dest, Some(pc.step_progress()))
         .await
-        .map_err(|e| format!("下载 OptiFine 失败\n{e}"))?;
+        .map_err(common_err_ctx!("下载 OptiFine 失败"))?;
 
     match mode {
         OptifineMode::Vanilla => {
@@ -184,9 +184,9 @@ pub async fn install_optifine(
             let json_path = vdir.join(format!("{dir_name}.json"));
             std::fs::write(
                 &json_path,
-                serde_json::to_string_pretty(&json).map_err(|e| format!("序列化失败\n{e}"))?,
+                serde_json::to_string_pretty(&json).map_err(common_err_ctx!("序列化失败"))?,
             )
-            .map_err(|e| format!("写入 version.json 失败\n{e}"))?;
+            .map_err(common_err_ctx!("写入 version.json 失败"))?;
         }
         OptifineMode::ForgeLike => {
             // loader 的合并 version.json 由 install_forge/neoforge 生成，OptiFine 不写 json——

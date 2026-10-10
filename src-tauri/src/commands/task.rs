@@ -125,7 +125,7 @@ pub fn dismiss_interrupted_task(task_id: String) {
 #[tauri::command]
 pub fn pause_task(task_id: String) -> Result<(), String> {
     if !task::global().pause(&task_id) {
-        return Err(format!("任务不存在或已结束{task_id}"));
+        bail!("任务不存在或已结束{task_id}");
     }
     Ok(())
 }
@@ -153,7 +153,7 @@ pub fn decide_waiting_task(task_id: String, action: String) -> Result<(), String
         "skip" => task::WaitingDecision::Skip,
         "retry" => task::WaitingDecision::Retry,
         "cancel" => task::WaitingDecision::Cancel,
-        _ => return Err(format!("未知决策\n{action}")),
+        _ => bail!("未知决策\n{action}"),
     };
     if task::global().decide(&task_id, decision) {
         Ok(())
@@ -190,7 +190,7 @@ pub async fn install_modpack(app: AppHandle, request: ModpackRequest) -> Result<
     }
     if let PackSource::Local { path } = &request.source {
         if !Path::new(path).is_file() {
-            return Err(format!("整合包文件不存在\n{path}"));
+            bail!("整合包文件不存在\n{path}");
         }
     }
 

@@ -14,7 +14,7 @@ use super::service::{
     OnlineServiceInner, SERVICE,
 };
 use super::session::{EasyTierSession, SessionConfig, SessionRole};
-use crate::config::online::OnlineConfig;
+use crate::persist::online_config;
 use easytier_core::gateway::DataPlaneTcpStream;
 
 /// 加入联机（作为 guest）：解析房间码 → 建网 → 发现中心 → 心跳 → 协商 →
@@ -48,7 +48,7 @@ async fn start_join_session(room_code: &str) -> Result<(EasyTierSession, u64), S
         .ok_or_else(|| "房间码无效\n请检查格式（U/XXXX-XXXX-XXXX-XXXX）".to_string())?;
     svc.generation += 1;
     let gen = svc.generation;
-    let public_nodes = OnlineConfig::from_persist().public_nodes;
+    let public_nodes = online_config().public_nodes;
     let cfg = SessionConfig {
         role: SessionRole::Guest,
         room: room.clone(),
@@ -96,7 +96,7 @@ async fn connect_center(
             rollback_join(&mut svc);
             let snap = snapshot_inner(&svc);
             emit_snapshot(app, &snap);
-            return Err(format!("连接联机中心失败\n{e}"));
+            bail!("连接联机中心失败\n{e}");
         }
     };
     Ok((stream, center_addr, center_ip))
@@ -122,16 +122,16 @@ async fn negotiate_guest_session(
     });
     write_request_async(&mut stream, "c", "player_ping", ping_body.to_string().as_bytes())
         .await
-        .map_err(|e| format!("发送心跳失败\n{e}"))?;
+        .map_err(common_err_ctx!("发送心跳失败"))?;
     let _ = read_response_async(&mut stream).await;
 
     // 协议协商：c:protocols
     write_request_async(&mut stream, "c", "protocols", b"")
         .await
-        .map_err(|e| format!("协议协商失败\n{e}"))?;
+        .map_err(common_err_ctx!("协议协商失败"))?;
     let protocols_resp = read_response_async(&mut stream)
         .await
-        .map_err(|e| format!("协议协商失败\n{e}"))?;
+        .map_err(common_err_ctx!("协议协商失败"))?;
     let supports_easytier_id = protocols_resp.status == 0 && {
         let server = String::from_utf8_lossy(&protocols_resp.body);
         server.split('\0').any(|p| p == "c:player_easytier_id")
@@ -140,10 +140,10 @@ async fn negotiate_guest_session(
     // c:server_port（返回游戏端口；proxy NAT 直连 host 本机 MC 监听）
     write_request_async(&mut stream, "c", "server_port", b"")
         .await
-        .map_err(|e| format!("获取服务器端口失败\n{e}"))?;
+        .map_err(common_err_ctx!("获取服务器端口失败"))?;
     let port_resp = read_response_async(&mut stream)
         .await
-        .map_err(|e| format!("获取服务器端口失败\n{e}"))?;
+        .map_err(common_err_ctx!("获取服务器端口失败"))?;
     if port_resp.status != 0 || port_resp.body.len() != 2 {
         let mut svc = SERVICE.lock().await;
         rollback_join(&mut svc);
@@ -172,7 +172,7 @@ async fn activate_guest_join(
     });
 
     // MC 广播模拟（guest 端局域网标签页看到服务器）
-    let advertise_motd = OnlineConfig::from_persist()
+    let advertise_motd = online_config()
         .advertise_motd
         .filter(|s| !s.trim().is_empty());
     let motd = advertise_motd.unwrap_or_else(|| "Elytra 联机".to_string());

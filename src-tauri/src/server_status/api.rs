@@ -148,7 +148,7 @@ async fn ping_java_with_timeout(
         let addr = resolve(host, port).await?;
         let mut stream = TcpStream::connect(addr)
             .await
-            .map_err(|e| format!("连接失败\n{e}"))?;
+            .map_err(common_err_ctx!("连接失败"))?;
         // 握手：packet 0x00 + protocol(-1) + host + port + next_state(1)
         let mut buf = Vec::with_capacity(64);
         write_varint(0, &mut buf);
@@ -159,16 +159,16 @@ async fn ping_java_with_timeout(
         stream
             .write_all(&buf)
             .await
-            .map_err(|e| format!("发送握手失败\n{e}"))?;
+            .map_err(common_err_ctx!("发送握手失败"))?;
         // status 请求：packet 0x00
         stream
             .write_all(&[0x00])
             .await
-            .map_err(|e| format!("发送状态请求失败\n{e}"))?;
+            .map_err(common_err_ctx!("发送状态请求失败"))?;
         // 响应：packet id + JSON 字符串
         let packet_id = read_varint(&mut stream).await?;
         if packet_id != 0 {
-            return Err(format!("服务器响应异常\n未知包 id {packet_id}"));
+            bail!("服务器响应异常\n未知包 id {packet_id}");
         }
         let json = read_string(&mut stream, MAX_RESPONSE_BYTES).await?;
         parse_java_status(&json)
@@ -191,7 +191,7 @@ async fn resolve(host: &str, port: u16) -> Result<SocketAddr, String> {
     tokio::time::timeout(CONNECT_TIMEOUT, async {
         tokio::net::lookup_host((host, port))
             .await
-            .map_err(|e| format!("域名解析失败\n{e}"))?
+            .map_err(common_err_ctx!("域名解析失败"))?
             .next()
             .ok_or_else(|| "域名解析失败\n无可用地址".to_string())
     })
@@ -202,7 +202,7 @@ async fn resolve(host: &str, port: u16) -> Result<SocketAddr, String> {
 /// 解析 SLP status JSON（宽松：description 兼容字符串/组件对象）。
 fn parse_java_status(json: &str) -> Result<ServerStatus, String> {
     let value: serde_json::Value =
-        serde_json::from_str(json).map_err(|e| format!("响应解析失败\n{e}"))?;
+        serde_json::from_str(json).map_err(common_err_ctx!("响应解析失败"))?;
     let version = value.get("version").and_then(|v| v.as_object());
     let version_name = version
         .and_then(|v| v.get("name"))
@@ -289,12 +289,12 @@ async fn ping_bedrock_with_timeout(
     tokio::time::timeout(timeout, async {
         let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))
             .await
-            .map_err(|e| format!("UDP 套接字创建失败\n{e}"))?;
+            .map_err(common_err_ctx!("UDP 套接字创建失败"))?;
         let addr = resolve(host, port).await?;
         socket
             .connect(addr)
             .await
-            .map_err(|e| format!("连接失败\n{e}"))?;
+            .map_err(common_err_ctx!("连接失败"))?;
         // UNCONNECTED_PING：id + 时间戳 + magic + client GUID(0)
         let mut payload = Vec::with_capacity(32);
         payload.push(RAKNET_PING_ID);
@@ -304,12 +304,12 @@ async fn ping_bedrock_with_timeout(
         socket
             .send(&payload)
             .await
-            .map_err(|e| format!("发送探测包失败\n{e}"))?;
+            .map_err(common_err_ctx!("发送探测包失败"))?;
         let mut buf = [0u8; 2048];
         let n = socket
             .recv(&mut buf)
             .await
-            .map_err(|e| format!("接收响应失败\n{e}"))?;
+            .map_err(common_err_ctx!("接收响应失败"))?;
         parse_raknet_pong(&buf[..n])
     })
     .await
@@ -331,7 +331,7 @@ fn parse_raknet_pong(data: &[u8]) -> Result<ServerStatus, String> {
         return Err("响应格式错误\n数据过短".to_string());
     }
     if data[0] != RAKNET_PONG_ID {
-        return Err(format!("响应格式错误\n未知包 id {}", data[0]));
+        bail!("响应格式错误\n未知包 id {}", data[0]);
     }
     let magic_start = 1 + 8 + 8;
     if data[magic_start..magic_start + 16] != RAKNET_MAGIC {
@@ -382,7 +382,7 @@ async fn read_varint<R: AsyncRead + Unpin>(r: &mut R) -> Result<i32, String> {
         let mut byte = [0u8; 1];
         r.read_exact(&mut byte)
             .await
-            .map_err(|e| format!("读取数据失败\n{e}"))?;
+            .map_err(common_err_ctx!("读取数据失败"))?;
         let b = byte[0];
         result |= ((b & 0x7F) as i32) << (i * 7);
         if b & 0x80 == 0 {
@@ -394,7 +394,7 @@ async fn read_varint<R: AsyncRead + Unpin>(r: &mut R) -> Result<i32, String> {
 
 fn write_string(s: &str, out: &mut Vec<u8>) -> Result<(), String> {
     if s.len() > MAX_STRING {
-        return Err(format!("文本过长\n{} 字节", s.len()));
+        bail!("文本过长\n{} 字节", s.len());
     }
     write_varint(s.len() as i32, out);
     out.extend_from_slice(s.as_bytes());
@@ -404,12 +404,12 @@ fn write_string(s: &str, out: &mut Vec<u8>) -> Result<(), String> {
 async fn read_string<R: AsyncRead + Unpin>(r: &mut R, max: usize) -> Result<String, String> {
     let len = read_varint(r).await?;
     if len < 0 || len as usize > max {
-        return Err(format!("响应格式错误\n字符串长度异常 {len}"));
+        bail!("响应格式错误\n字符串长度异常 {len}");
     }
     let mut buf = vec![0u8; len as usize];
     r.read_exact(&mut buf)
         .await
-        .map_err(|e| format!("读取数据失败\n{e}"))?;
+        .map_err(common_err_ctx!("读取数据失败"))?;
     String::from_utf8(buf).map_err(|e| format!("响应格式错误\n非 UTF-8 文本：{e}"))
 }
 

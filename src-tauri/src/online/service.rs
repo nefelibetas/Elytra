@@ -9,8 +9,8 @@ use super::model::{OnlineSnapshot, OnlineStatus};
 use super::scaffold::profiles::ProfileTable;
 use super::scaffold::room::RoomCredential;
 use super::session::{EasyTierSession, SessionRole};
-use crate::config::online::OnlineConfig;
 use crate::events::ONLINE_STATE;
+use crate::persist::online_config;
 use crate::task::emit_event;
 
 /// host 共享状态（信息服务器 handler + 代理任务用）。
@@ -116,12 +116,12 @@ pub(super) fn free_tcp_port() -> Result<u16, String> {
     std::net::TcpListener::bind(("127.0.0.1", 0))
         .and_then(|l| l.local_addr())
         .map(|a| a.port())
-        .map_err(|e| format!("分配本地端口失败\n{e}"))
+        .map_err(common_err_ctx!("分配本地端口失败"))
 }
 
 /// 联机昵称：读配置（OnlineConfig.nickname），空则回退系统用户名。
 pub(super) fn online_player_name() -> String {
-    let cfg = OnlineConfig::from_persist();
+    let cfg = online_config();
     if let Some(name) = cfg.nickname.as_ref().filter(|s| !s.trim().is_empty()) {
         name.clone()
     } else {

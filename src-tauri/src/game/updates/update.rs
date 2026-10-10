@@ -70,9 +70,9 @@ pub fn delete_mod_file(mods_dir: &Path, file_name: &str) -> Result<(), String> {
     }
     let path = mods_dir.join(file_name);
     if !path.exists() {
-        return Err(format!("文件不存在\n{file_name}"));
+        bail!("文件不存在\n{file_name}");
     }
-    std::fs::remove_file(&path).map_err(|e| format!("删除失败\n{e}"))?;
+    std::fs::remove_file(&path).map_err(common_err_ctx!("删除失败"))?;
     Ok(())
 }
 
@@ -91,11 +91,11 @@ pub async fn delete_resource_file(
     }
     let path = version_dir.join(kind).join(file_name);
     if !path.is_file() {
-        return Err(format!("文件不存在\n{file_name}"));
+        bail!("文件不存在\n{file_name}");
     }
     tokio::fs::remove_file(&path)
         .await
-        .map_err(|e| format!("删除失败\n{e}"))
+        .map_err(common_err_ctx!("删除失败"))
 }
 
 /// 切换 mods 目录下单个 mod 文件的启用/禁用状态（Mod 管理禁用按钮）。
@@ -108,12 +108,12 @@ pub fn toggle_mod_file(mods_dir: &Path, file_name: &str) -> Result<bool, String>
     let path = mods_dir.join(file_name);
     if path.exists() && file_name.ends_with(".jar") {
         let disabled = mods_dir.join(format!("{file_name}.disabled"));
-        std::fs::rename(&path, &disabled).map_err(|e| format!("禁用失败\n{e}"))?;
+        std::fs::rename(&path, &disabled).map_err(common_err_ctx!("禁用失败"))?;
         return Ok(true);
     }
     let disabled = mods_dir.join(format!("{file_name}.disabled"));
     if disabled.exists() {
-        std::fs::rename(&disabled, &path).map_err(|e| format!("启用失败\n{e}"))?;
+        std::fs::rename(&disabled, &path).map_err(common_err_ctx!("启用失败"))?;
         return Ok(false);
     }
     Err(format!("Mod 文件不存在\n{file_name}"))
@@ -198,13 +198,13 @@ pub async fn update_mod_file(
         file_sha1,
     )
     .await
-    .map_err(|e| format!("下载更新失败\n{e}"))?;
+    .map_err(common_err_ctx!("下载更新失败"))?;
 
     // 替换：先删旧文件再改名（Windows 上 rename 覆盖已存在目标会失败）
     if target.exists() {
-        std::fs::remove_file(&target).map_err(|e| format!("删除旧文件失败\n{e}"))?;
+        std::fs::remove_file(&target).map_err(common_err_ctx!("删除旧文件失败"))?;
     }
-    std::fs::rename(&tmp, &target).map_err(|e| format!("替换文件失败\n{e}"))?;
+    std::fs::rename(&tmp, &target).map_err(common_err_ctx!("替换文件失败"))?;
     Ok(())
 }
 

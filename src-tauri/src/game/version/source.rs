@@ -135,11 +135,11 @@ impl DownloaderConfig {
             let req = http().get(&url).timeout(limit);
             eprintln!("[meta] 请求开始: {url}（limit={limit:?}）");
             let fut = async {
-                let resp = req.send().await.map_err(|e| format!("请求失败\n{e}"))?;
+                let resp = req.send().await.map_err(common_err_ctx!("请求失败"))?;
                 if !resp.status().is_success() {
-                    return Err(format!("HTTP {}", resp.status()));
+                    bail!("HTTP {}", resp.status());
                 }
-                resp.text().await.map_err(|e| format!("读取响应失败\n{e}"))
+                resp.text().await.map_err(common_err_ctx!("读取响应失败"))
             };
             match tokio::time::timeout(limit, fut).await {
                 Ok(Ok(text)) => return Ok(text),
@@ -165,7 +165,7 @@ impl DownloaderConfig {
         make_url: impl Fn(&DownloadSource) -> String,
     ) -> Result<T, String> {
         let text = self.fetch_with_fallback(mode, cache, make_url).await?;
-        serde_json::from_str(&text).map_err(|e| format!("解析 JSON 失败\n{}", e))
+        serde_json::from_str(&text).map_err(common_err_ctx!("解析 JSON 失败"))
     }
 }
 

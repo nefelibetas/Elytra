@@ -134,11 +134,11 @@ pub async fn delete_world(version_name: String, world_name: String) -> Result<()
     let vdir = version_dir_path(&version_name)?;
     let path = vdir.join("saves").join(&world_name);
     if !path.is_dir() {
-        return Err(format!("存档不存在\n{}", world_name));
+        bail!("存档不存在\n{}", world_name);
     }
     tokio::fs::remove_dir_all(&path)
         .await
-        .map_err(|e| format!("删除失败\n{e}"))
+        .map_err(common_err_ctx!("删除失败"))
 }
 
 /// 列出 mods 目录下的 mod 详情（.jar 扫描 + Modrinth 元数据识别；网络失败降级本地信息）。
@@ -256,7 +256,7 @@ pub async fn export_modpack(version_name: String, save_path: String) -> Result<(
         pack_modpack(&vdir, &name, &save_path, &hosted, &hosted_names)
     })
     .await
-    .map_err(|e| format!("打包任务失败\n{e}"))?
+    .map_err(common_err_ctx!("打包任务失败"))?
 }
 
 #[cfg(test)]

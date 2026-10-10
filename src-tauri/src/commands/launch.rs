@@ -99,7 +99,7 @@ pub async fn spawn_game(
     // 启动前执行命令（非空时运行；失败则中止启动）
     if !launcher_config.pre_launch_cmd.trim().is_empty() {
         process::run_pre_launch_command(&launcher_config.pre_launch_cmd)
-            .map_err(|e| format!("启动前命令执行失败\n{e}"))?;
+            .map_err(common_err_ctx!("启动前命令执行失败"))?;
     }
 
     // 启动前内存优化：清理启动器自身工作集，为游戏腾出内存（仅 Windows）
@@ -162,11 +162,11 @@ pub fn open_launcher_log_dir(app: AppHandle) -> Result<(), String> {
     let path = dir.to_string_lossy().to_string();
     // 与 gamedirs::open_folder 同机制，但直接调 plugin 而非调另一个命令（命令间不互调）
     if !dir.exists() {
-        return Err(format!("目录不存在\n{path}"));
+        bail!("目录不存在\n{path}");
     }
     app.opener()
         .open_path(path, None::<&str>)
-        .map_err(|e| format!("打开文件夹失败\n{e}"))
+        .map_err(common_err_ctx!("打开文件夹失败"))
 }
 
 /// 读取启动器日志尾部（最多 200 行）：exe 旁 Elytra/launcher.log（stdout/stderr 重定向落盘）。
