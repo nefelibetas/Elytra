@@ -51,8 +51,12 @@ pub(crate) fn merge_loader_profile(
         merged["mainClass"] = serde_json::Value::String(mc.to_string());
     }
 
+    // loader（子级）库合成下载信息后**前置**，vanilla 同键条目丢弃：
+    // classpath 里 loader 版本必须先被 JVM 命中（asm / mixin 等坐标与 vanilla 重叠），
+    // 且避免同坐标两份 jar 让"缺库计数/完整性检查"双计。
+    let mut loader_out: Vec<serde_json::Value> = Vec::new();
     if let Some(loader_libs) = profile["libraries"].as_array() {
-        if let Some(libs) = merged["libraries"].as_array_mut() {
+        {
             for lib in loader_libs {
                 let name = match lib["name"].as_str() {
                     Some(n) if !n.is_empty() => n,
@@ -80,15 +84,84 @@ pub(crate) fn merge_loader_profile(
                         "size": size,
                     }
                 });
-                libs.push(new_lib);
+                loader_out.push(new_lib);
             }
         }
     }
+    if !loader_out.is_empty() {
+        let loader_keys: std::collections::HashSet<String> = loader_out
+            .iter()
+            .filter_map(|l| l["name"].as_str())
+            .map(library_key)
+            .collect();
+        let mut combined = loader_out;
+        if let Some(parent_libs) = merged["libraries"].as_array() {
+            for l in parent_libs {
+                let key = l["name"].as_str().map(library_key).unwrap_or_default();
+                if !loader_keys.contains(&key) {
+                    combined.push(l.clone());
+                }
+            }
+        }
+        merged["libraries"] = serde_json::Value::Array(combined);
+    }
+    unify_game_arg_form(
+        &mut merged,
+        profile["minecraftArguments"].as_str().unwrap_or("").trim(),
+        profile["arguments"]["game"]
+            .as_array()
+            .map(|a| !a.is_empty())
+            .unwrap_or(false),
+    );
 
     if let Some(obj) = merged.as_object_mut() {
         obj.remove("inheritsFrom");
     }
     Ok(merged)
+}
+
+/// 库去重键：`group:artifact[:classifier]`（**版本不参与**——同坐标不同版本应子级优先；
+/// classifier 必须参与，否则 native 分类器会被当成主 jar 的同名条目而互相顶掉）。
+fn library_key(name: &str) -> String {
+    let name = name.split('@').next().unwrap_or(name);
+    let parts: Vec<&str> = name.split(':').collect();
+    if parts.len() < 2 {
+        return name.to_string();
+    }
+    match parts.get(3).filter(|c| !c.is_empty()) {
+        Some(classifier) => format!("{}:{}:{}", parts[0], parts[1], classifier),
+        None => format!("{}:{}", parts[0], parts[1]),
+    }
+}
+
+/// 游戏参数的两种形态：`arguments.game`（1.13+ 数组）与 `minecraftArguments`（旧式模板串）。
+///
+/// `launcher::args::build_game_args` 在两者并存时按"新格式优先"取 `arguments.game`。
+/// 于是"子级只声明旧式串 + 父级提供 arguments.game"这种情况，子级整串参数会被
+/// **静默丢弃**（父级覆盖了子级）。这里在合并阶段消歧：
+/// - 子级**只有**旧式串 → 丢弃继承来的 `arguments.game`（子级参数才用得上）
+/// - 子级**只有**新式数组 → 丢弃继承来的旧式串
+/// - 子级两种都声明（真实 Forge 的 version.json 就是如此）/ 都没声明 → 原样保留，
+///   让 `build_game_args` 的"新格式优先"自然生效（子级的 game 数组已被追加进去）
+///
+/// 注意：标志必须在合并 `.take()` **之前**从子级取出，否则读到的是被置空的字段。
+fn unify_game_arg_form(
+    merged: &mut serde_json::Value,
+    child_legacy_args: &str,
+    child_has_game_args: bool,
+) {
+    let legacy_only = !child_legacy_args.is_empty() && !child_has_game_args;
+    let modern_only = child_has_game_args && child_legacy_args.is_empty();
+    if legacy_only {
+        if let Some(obj) = merged["arguments"].as_object_mut() {
+            obj.remove("game");
+        }
+        merged["minecraftArguments"] = serde_json::Value::String(child_legacy_args.to_string());
+    } else if modern_only {
+        if let Some(obj) = merged.as_object_mut() {
+            obj.remove("minecraftArguments");
+        }
+    }
 }
 
 /// 展开 inheritsFrom 继承（Forge/NeoForge 的 version.json 只有自身库 + 父指针）：
@@ -107,6 +180,7 @@ pub(crate) fn expand_inheritance(
 
     let mut merged: serde_json::Value =
         serde_json::from_str(parent_text).map_err(common_err_ctx!("解析原版版本 JSON 失败"))?;
+    let parent_inherits = merged.get("inheritsFrom").cloned();
 
     // libraries：子 + 父 拼接（子在前——继承式版本的通用惯例，官方启动器/HMCL 均子库
     // 前置；OptiFine 纯净版依赖此顺序：预补丁客户端 jar 必须先于 vanilla 库出现在
@@ -114,14 +188,35 @@ pub(crate) fn expand_inheritance(
     // 原版类，OptiFine 不生效）
     let child_libs = child["libraries"].take();
     if let Some(libs) = child_libs.as_array() {
-        if let Some(parent_libs) = merged["libraries"].as_array_mut() {
-            let mut combined = libs.clone();
-            combined.append(parent_libs);
-            merged["libraries"] = serde_json::Value::Array(combined);
-        } else {
-            merged["libraries"] = child_libs.clone();
+        // 子级库在前，父级同键条目丢弃（同坐标不同版本时子级优先；避免同坐标两份
+        // jar 同时进 classpath 与缺库计数）
+        let child_keys: std::collections::HashSet<String> = libs
+            .iter()
+            .filter_map(|l| l["name"].as_str())
+            .map(library_key)
+            .collect();
+        let mut combined: Vec<serde_json::Value> = libs.clone();
+        if let Some(parent_libs) = merged["libraries"].as_array() {
+            for l in parent_libs {
+                let key = l["name"].as_str().map(library_key).unwrap_or_default();
+                if !child_keys.contains(&key) {
+                    combined.push(l.clone());
+                }
+            }
         }
+        merged["libraries"] = serde_json::Value::Array(combined);
     }
+
+    // 参数形态标志要在下面 `.take()` 之前取（take 会把子级字段置空）
+    let child_legacy_args = child["minecraftArguments"]
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let child_has_game_args = child["arguments"]["game"]
+        .as_array()
+        .map(|a| !a.is_empty())
+        .unwrap_or(false);
 
     // arguments：父 + 子 拼接（jvm/game）
     for key in ["jvm", "game"] {
@@ -152,9 +247,20 @@ pub(crate) fn expand_inheritance(
         }
     }
 
+    unify_game_arg_form(&mut merged, &child_legacy_args, child_has_game_args);
+
     merged["id"] = serde_json::Value::String(dir_name.to_string());
-    if let Some(obj) = merged.as_object_mut() {
-        obj.remove("inheritsFrom");
+    // 关键：把**父级自己的** inheritsFrom 留在结果里。调用方（`launcher::env`）靠它
+    // 继续向上展开多级链（整合包 → Forge → vanilla）；直接 remove 会让多级继承
+    // 退化成单级，祖父版本的 libraries/arguments/mainClass 会被整体丢掉。
+    // 父级无继承时才是真正的链尾，此时删除该字段。
+    match parent_inherits {
+        Some(v) => merged["inheritsFrom"] = v,
+        None => {
+            if let Some(obj) = merged.as_object_mut() {
+                obj.remove("inheritsFrom");
+            }
+        }
     }
     Ok(merged)
 }
@@ -418,5 +524,118 @@ mod tests {
     fn expand_inheritance_invalid_parent_returns_err() {
         let r = expand_inheritance("not json", forge_child(), "id");
         assert!(r.is_err(), "父 JSON 损坏时应返回 Err");
+    }
+
+    /// 多级继承（A→B→C）：连续展开后祖先的库/参数必须在结果里。
+    ///
+    /// 回归：`expand_inheritance` 曾直接删掉 inheritsFrom，使 `launcher::env` 的
+    /// `while let Some(parent_id) = vj.get("inheritsFrom")` 循环一轮即退出 ——
+    /// 多级链（整合包 → Forge → vanilla）的祖父版本被整体丢弃，启动缺库/主类错。
+    #[test]
+    fn expand_inheritance_survives_multi_level_chain() {
+        let grandparent = r#"{"id":"1.20.1","mainClass":"net.minecraft.client.main.Main",
+            "libraries":[{"name":"com.example:gp:1"}],"arguments":{"game":["--gp"]}}"#;
+        let parent = r#"{"id":"1.20.1-forge","inheritsFrom":"1.20.1",
+            "mainClass":"cpw.mods.bootstraplauncher.BootstrapLauncher",
+            "libraries":[{"name":"com.example:parent:1"}],"arguments":{"game":["--parent"]}}"#;
+        let child = r#"{"id":"pack-1.20.1","inheritsFrom":"1.20.1-forge",
+            "libraries":[{"name":"com.example:child:1"}],"arguments":{"game":["--child"]}}"#;
+
+        let child: serde_json::Value = serde_json::from_str(child).unwrap();
+        let lvl1 = expand_inheritance(parent, child, "pack-1.20.1").unwrap();
+        assert_eq!(
+            lvl1["inheritsFrom"], "1.20.1",
+            "合并后必须保留父级自己的 inheritsFrom，调用方才能继续向上展开"
+        );
+
+        let lvl2 = expand_inheritance(grandparent, lvl1, "pack-1.20.1").unwrap();
+        let libs: Vec<String> = lvl2["libraries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|l| l["name"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            libs,
+            vec![
+                "com.example:child:1",
+                "com.example:parent:1",
+                "com.example:gp:1"
+            ],
+            "三级库都应保留，且子级在前（classpath 优先级）"
+        );
+        let args: Vec<String> = lvl2["arguments"]["game"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a.as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(args, vec!["--gp", "--parent", "--child"], "参数应为 祖先→子 顺序");
+        assert_eq!(
+            lvl2["mainClass"], "cpw.mods.bootstraplauncher.BootstrapLauncher",
+            "子级 mainClass 必须覆盖父级"
+        );
+        assert!(lvl2.get("inheritsFrom").is_none(), "链尾应清掉 inheritsFrom");
+        assert_eq!(lvl2["id"], "pack-1.20.1");
+    }
+
+    /// 库去重：同坐标（group:artifact[:classifier]）**子级/loader 优先**，父级同键条目丢弃。
+    #[test]
+    fn libraries_dedup_child_wins() {
+        let parent =
+            r#"{"id":"1.20.1","libraries":[{"name":"org.ow2.asm:asm:9.3"},{"name":"keep:me:1"}]}"#;
+        let child = r#"{"id":"v","inheritsFrom":"1.20.1","libraries":[{"name":"org.ow2.asm:asm:9.10.1"}]}"#;
+        let merged = expand_inheritance(parent, serde_json::from_str(child).unwrap(), "v").unwrap();
+        let names: Vec<String> = merged["libraries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|l| l["name"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["org.ow2.asm:asm:9.10.1", "keep:me:1"],
+            "子级版本保留、父级同坐标丢弃、无关键照旧"
+        );
+    }
+
+    /// classifier 必须参与去重键：主 jar 与 native 分类器不能互相顶掉。
+    #[test]
+    fn library_key_includes_classifier() {
+        assert_eq!(library_key("org.lwjgl:lwjgl:3.3.1"), "org.lwjgl:lwjgl");
+        assert_eq!(
+            library_key("org.lwjgl:lwjgl:3.3.1:natives-windows"),
+            "org.lwjgl:lwjgl:natives-windows"
+        );
+        assert_eq!(library_key("g:a:1@zip"), "g:a");
+    }
+
+    /// 游戏参数形态二选一（子级旧式 vs 继承来的新式）。
+    #[test]
+    fn child_legacy_args_win_over_inherited_modern_args() {
+        let parent = r#"{"id":"1.20.1","arguments":{"game":["--parent-game"]}}"#;
+        let child = r#"{"id":"v","inheritsFrom":"1.20.1","minecraftArguments":"--child ${auth_player_name}"}"#;
+        let merged = expand_inheritance(parent, serde_json::from_str(child).unwrap(), "v").unwrap();
+        assert!(
+            merged["arguments"].get("game").is_none(),
+            "子级声明旧式参数时，继承来的 arguments.game 必须丢弃（否则子级参数永远用不上）"
+        );
+        assert!(merged["minecraftArguments"]
+            .as_str()
+            .unwrap()
+            .contains("--child"));
+    }
+
+    /// 反向：子级声明新式 arguments.game 时，继承来的旧式串必须丢弃。
+    #[test]
+    fn child_modern_args_win_over_inherited_legacy_string() {
+        let parent = r#"{"id":"1.20.1","minecraftArguments":"--parent-legacy"}"#;
+        let child = r#"{"id":"v","inheritsFrom":"1.20.1","arguments":{"game":["--child-game"]}}"#;
+        let merged = expand_inheritance(parent, serde_json::from_str(child).unwrap(), "v").unwrap();
+        assert!(
+            merged.get("minecraftArguments").is_none(),
+            "子级声明新式参数时，继承来的旧式串必须丢弃"
+        );
+        assert_eq!(merged["arguments"]["game"][0], "--child-game");
     }
 }
