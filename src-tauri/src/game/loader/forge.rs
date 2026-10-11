@@ -107,6 +107,8 @@ pub(super) async fn download_and_extract(
     // spec-1 legacy 安装器（如 Forge 1.12.2）的构件内嵌在 zip 的 maven/ 下，
     // version.json 里 URL 为空 —— 必须在下载支持库之前解出，否则会误报"网络无法下载"
     install_embedded_maven(&mut archive, &profile_ref, &lib_dir)?;
+    // spec-0 老 installer：install.filePath（zip 根）按 install.path 坐标落位
+    install_profile_file(&mut archive, &profile_ref, &lib_dir)?;
     let files = LoaderFiles {
         dir_name,
         mc_dir: &mc_dir,
@@ -334,6 +336,55 @@ fn install_embedded_maven(
         std::io::copy(&mut member, &mut out)
             .map_err(common_err_ctx!("解出安装器内嵌构件失败"))?;
     }
+    Ok(())
+}
+
+/// spec-0 老 installer（Forge 1.7.10 / 1.8.9 等）的 `install` 段：
+/// `install.path` 是要安装的 maven 坐标，`install.filePath` 是 zip 内（根目录）的文件名。
+///
+/// 这些版本的 maven 上**没有同名普通构件**（实测只有 `-universal` / `-userdev` /
+/// `-installer`），而 `versionInfo.libraries` 却按普通坐标声明（带 url）→ 直接下会 404。
+/// 官方安装器就是把 zip 内的 filePath 复制成该坐标，这里照做（无 sha1 可校验，存在即跳过）。
+fn install_profile_file(
+    archive: &mut zip::ZipArchive<std::fs::File>,
+    profile: &serde_json::Value,
+    lib_dir: &Path,
+) -> Result<(), String> {
+    let install = &profile["install"];
+    let (Some(coord), Some(file)) = (install["path"].as_str(), install["filePath"].as_str()) else {
+        return Ok(());
+    };
+    let mut parts = coord.split(':');
+    let (Some(group), Some(artifact), Some(version)) = (parts.next(), parts.next(), parts.next())
+    else {
+        return Ok(());
+    };
+    let classifier = parts.next().unwrap_or("");
+    let ext = Path::new(file)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("jar");
+    let name = if classifier.is_empty() {
+        format!("{artifact}-{version}.{ext}")
+    } else {
+        format!("{artifact}-{version}-{classifier}.{ext}")
+    };
+    let dest = lib_dir
+        .join(group.replace('.', "/"))
+        .join(artifact)
+        .join(version)
+        .join(name);
+    if dest.is_file() {
+        return Ok(());
+    }
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(common_err_ctx!("创建目录失败"))?;
+    }
+    let mut member = archive
+        .by_name(file)
+        .map_err(common_err_ctx!("安装程序内缺少 {} ", file))?;
+    let mut out = std::fs::File::create(&dest).map_err(common_err_ctx!("创建文件失败"))?;
+    std::io::copy(&mut member, &mut out).map_err(common_err_ctx!("解出安装器内嵌文件失败"))?;
     Ok(())
 }
 
@@ -730,6 +781,107 @@ mod tests {
             content,
             "sha1 不匹配（损坏）时应重新解出"
         );
+    }
+
+    /// spec-0 `install` 段：zip 根的 `filePath` 按 `path` 坐标落位。
+    #[test]
+    fn install_section_file_placed_by_coordinate() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib_dir = dir.path().join("libraries");
+        let installer = dir.path().join("forge-installer.jar");
+        let bytes = b"universal-jar-bytes";
+        {
+            let mut z = zip::ZipWriter::new(std::fs::File::create(&installer).unwrap());
+            z.start_file(
+                "forge-1.7.10-10.13.4.1614-1.7.10-universal.jar",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            std::io::Write::write_all(&mut z, bytes).unwrap();
+            z.finish().unwrap();
+        }
+        let profile: serde_json::Value = serde_json::from_str(
+            r#"{ "install": { "path": "net.minecraftforge:forge:1.7.10-10.13.4.1614-1.7.10",
+                 "filePath": "forge-1.7.10-10.13.4.1614-1.7.10-universal.jar" } }"#,
+        )
+        .unwrap();
+        let mut archive = zip::ZipArchive::new(std::fs::File::open(&installer).unwrap()).unwrap();
+        install_profile_file(&mut archive, &profile, &lib_dir).unwrap();
+        let dest = lib_dir
+            .join("net/minecraftforge/forge/1.7.10-10.13.4.1614-1.7.10")
+            .join("forge-1.7.10-10.13.4.1614-1.7.10.jar");
+        assert_eq!(std::fs::read(&dest).unwrap(), bytes, "应按坐标落位为普通构件名");
+
+        // 无 install 段（新版）→ 空转
+        let mut a2 = zip::ZipArchive::new(std::fs::File::open(&installer).unwrap()).unwrap();
+        install_profile_file(&mut a2, &serde_json::json!({}), &lib_dir).unwrap();
+    }
+
+    /// 真实 installer 验证（**真实网络**，默认 `#[ignore]`）：spec-0 老代（MC 1.7.10）的
+    /// maven 上没有普通构件，安装器靠 `install.filePath` 提供，必须落位成普通坐标。
+    ///
+    /// ```text
+    /// cargo test --lib -- --ignored forge_1710_install_section --nocapture
+    /// ```
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn forge_1710_install_section_from_real_installer() {
+        use crate::config::downloader::DownloaderConfig;
+        use crate::downloader::fetcher;
+
+        const MC_VERSION: &str = "1.7.10";
+        const FORGE_VERSION: &str = "10.13.4.1614-1.7.10";
+
+        let cfg = DownloaderConfig::default();
+        let dir = std::env::temp_dir().join("elytra_e2e_forge_1710");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let installer = dir.join("forge-installer.jar");
+        let source = cfg.file_primary_source().expect("无可用下载源");
+        let url = source.url(
+            &source.forge_installer_url,
+            &[("mc", MC_VERSION), ("ver", FORGE_VERSION)],
+        );
+        fetcher::fetch_fallback(&[url], &installer, None::<fn(u64, u64)>)
+            .await
+            .expect("下载 Forge 1.7.10 installer 失败（URL 模板对老代是否可用）");
+
+        let profile_json =
+            processors::read_profile_from_installer(&installer).expect("读 install_profile 失败");
+        let profile: serde_json::Value =
+            serde_json::from_str(&profile_json).expect("解析 install_profile 失败");
+        assert!(
+            profile["versionInfo"].is_object(),
+            "1.7.10 是 spec-0：版本 json 在 versionInfo 里"
+        );
+        assert_eq!(
+            profile["install"]["filePath"].as_str(),
+            Some("forge-1.7.10-10.13.4.1614-1.7.10-universal.jar")
+        );
+
+        let lib_dir = dir.join("libraries");
+        std::fs::create_dir_all(&lib_dir).unwrap();
+        let mut archive = zip::ZipArchive::new(std::fs::File::open(&installer).unwrap()).unwrap();
+        install_profile_file(&mut archive, &profile, &lib_dir).unwrap();
+
+        let dest = lib_dir
+            .join("net/minecraftforge/forge/1.7.10-10.13.4.1614-1.7.10")
+            .join("forge-1.7.10-10.13.4.1614-1.7.10.jar");
+        let size = dest
+            .metadata()
+            .unwrap_or_else(|e| panic!("未落位 {}：{e}", dest.display()))
+            .len();
+        assert!(size > 1_000_000, "落位的构件过小：{size}");
+        // 与 zip 根的同名 universal 字节一致
+        let mut z = zip::ZipArchive::new(std::fs::File::open(&installer).unwrap()).unwrap();
+        let mut src = Vec::new();
+        std::io::Read::read_to_end(
+            &mut z.by_name("forge-1.7.10-10.13.4.1614-1.7.10-universal.jar").unwrap(),
+            &mut src,
+        )
+        .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), src, "落位内容应与 zip 内文件一致");
+        eprintln!("✅ 1.7.10 spec-0 install 段落位：{}（{size} 字节）", dest.display());
     }
 
     /// 真实 installer 验证（**真实网络**，默认 `#[ignore]`）：Forge 1.12.2 的版本 json 里
