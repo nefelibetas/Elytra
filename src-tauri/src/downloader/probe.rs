@@ -138,7 +138,7 @@ async fn probe_url_uncached(url: &str) -> ProbeResult {
             .await
             .map_err(common_err_ctx!("请求失败"))?;
         if !resp.status().is_success() {
-            bail!("HTTP {}", resp.status());
+            bail!("请求失败\nHTTP {}", resp.status());
         }
         Ok::<(), String>(())
     };

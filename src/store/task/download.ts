@@ -30,29 +30,13 @@ export interface TaskItem {
   kind?: TaskKind
 }
 
-// ── 任务入参（镜像 Rust task 模块；字段名必须 snake_case，tauri 键名严格匹配）──
+// ── 任务入参（类型来自 ts-rs 生成，勿手写镜像；字段名 snake_case 与 Rust 严格一致）──
 
-export interface LoaderChoice {
-  kind: "fabric" | "forge" | "neoforge" | "quilt"
-  version: string
-}
-
-export interface FabricApi {
-  url: string
-  version: string
-}
-
-export interface DownloadTask {
-  version_id: string
-  version_url: string
-  mc_version: string
-  loader: LoaderChoice | null
-  optifine_patch: string | null
-  version_dir_name: string | null
-  fabric_api: FabricApi | null
-}
-
-export type DownloadFileKind = "mod" | "resourcepack" | "datapack" | "shader" | "world";
+import type { DownloadTask } from "../../types/task/DownloadTask";
+import type { FabricApi } from "../../types/task/FabricApi";
+import type { LoaderChoice } from "../../types/task/LoaderChoice";
+export type { DownloadTask, FabricApi, LoaderChoice };
+export type { DownloadFileKind } from "../../types/task/DownloadFileKind";
 
 /** 任务资源名映射：taskId → 资源名（社区资源单文件下载注册，完成提示用）。
  *  模块级（非 dlState 内）避免响应式开销；done 事件消费后即删除。 */

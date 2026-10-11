@@ -42,7 +42,7 @@ pub async fn run(
 
     for item in items {
         if max_errors.is_some_and(|max| errors.len() >= max) {
-            errors.push("too many errors, stopping".into());
+            errors.push("失败过多，已停止".into());
             break;
         }
         let BatchItem {

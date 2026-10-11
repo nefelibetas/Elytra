@@ -60,9 +60,7 @@ fn free_port() -> u16 {
 async fn host_guest_scaffolding_roundtrip() {
     let mc_port = free_port();
     let scaffold_port = free_port();
-    eprintln!(
-        "== 端口：mc={mc_port} scaffold={scaffold_port}"
-    );
+    eprintln!("== 端口：mc={mc_port} scaffold={scaffold_port}");
     spawn_echo_server(mc_port);
 
     // 同一房间：host 建，guest 解析同一凭据
@@ -163,7 +161,10 @@ async fn host_guest_scaffolding_roundtrip() {
         }
     }
     let (center_ip, center_port) = center.expect("应发现中心（hostname scaffolding-mc-server-*）");
-    assert_eq!(center_port, scaffold_port, "中心端口应为 host 的 scaffold_port");
+    assert_eq!(
+        center_port, scaffold_port,
+        "中心端口应为 host 的 scaffold_port"
+    );
     eprintln!("== 测试 1 OK：中心 = {center_ip}:{center_port}");
 
     // 2) 信息协议：guest 数据面连中心 scaffold_port → c:ping 回显 + c:server_port
@@ -199,16 +200,16 @@ async fn host_guest_scaffolding_roundtrip() {
         .await
         .unwrap();
         assert_eq!(resp.status, 0);
-        let resp = req(&mut s, ("c", "player_profiles_list"), b"").await.unwrap();
+        let resp = req(&mut s, ("c", "player_profiles_list"), b"")
+            .await
+            .unwrap();
         assert_eq!(resp.status, 0);
         let profiles: serde_json::Value = serde_json::from_slice(&resp.body).unwrap();
         assert_eq!(profiles.as_array().unwrap().len(), 2, "host + 1 guest");
     })
     .await;
-    match t2 {
-        Ok(_) => eprintln!("== 测试 2 OK：信息协议全通"),
-        Err(e) => eprintln!("== 测试 2 失败: {e}"),
-    }
+    t2.expect("测试 2 失败：信息协议未全通（超时 20s，或连接/断言失败）");
+    eprintln!("== 测试 2 OK：信息协议全通");
 
     // 3) 游戏流量：guest 数据面连 centerIP:entry_port（应用层代理 → 本机 echo）
     eprintln!("== 测试 3：guest 数据面 → host 游戏端口 → echo");
@@ -226,10 +227,8 @@ async fn host_guest_scaffolding_roundtrip() {
         assert_eq!(&buf, b"t3");
     })
     .await;
-    match t3 {
-        Ok(_) => eprintln!("== 测试 3 OK：guest → 虚拟网 → host 代理 → echo 全链路通"),
-        Err(e) => eprintln!("== 测试 3 失败：guest → host 链路不通: {e}"),
-    }
+    t3.expect("测试 3 失败：guest → host 游戏链路不通（超时 20s）");
+    eprintln!("== 测试 3 OK：guest → 虚拟网 → host 代理 → echo 全链路通");
 
     // 4) 大数据传输（模拟 MC 登录配置同步 registry；smoltcp 数据面曾在此中断，
     //    kcp feature + enable_kcp_proxy 后数据面走 KCP 应稳定）
@@ -260,10 +259,8 @@ async fn host_guest_scaffolding_roundtrip() {
         assert_eq!(read_back, total, "回读字节数不符");
     })
     .await;
-    match t4 {
-        Ok(_) => eprintln!("== 测试 4 OK：5MB 大数据传输完整（数据面正常）"),
-        Err(e) => eprintln!("== 测试 4 失败：大数据传输中断: {e}"),
-    }
+    t4.expect("测试 4 失败：5MB 大数据传输中断（超时 60s）");
+    eprintln!("== 测试 4 OK：5MB 大数据传输完整（数据面正常）");
 
     // 5) easytier 日志落盘验证（文件懒创建：首条日志事件才建）
     tokio::time::sleep(Duration::from_secs(1)).await;

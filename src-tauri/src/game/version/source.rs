@@ -137,7 +137,7 @@ impl DownloaderConfig {
             let fut = async {
                 let resp = req.send().await.map_err(common_err_ctx!("请求失败"))?;
                 if !resp.status().is_success() {
-                    bail!("HTTP {}", resp.status());
+                    bail!("请求失败\nHTTP {}", resp.status());
                 }
                 resp.text().await.map_err(common_err_ctx!("读取响应失败"))
             };
