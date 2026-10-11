@@ -333,7 +333,7 @@ mod tests {
     fn test_user_properties_substituted() {
         // 旧式 minecraftArguments（1.19.2 以下）应注入 --user-properties 与 legacy user_type
         let mut vj = minimal_version_json();
-        vj.arguments.game = None; // 走旧格式 minecraftArguments 分支
+        vj.arguments = None; // 走旧格式 minecraftArguments 分支
         vj.minecraft_arguments = Some(
             "--username ${auth_player_name} --version ${version_name} --accessToken ${auth_access_token} --user-properties ${user_properties} --user-type ${user_type}"
                 .into(),

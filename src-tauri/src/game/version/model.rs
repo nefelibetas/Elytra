@@ -35,8 +35,10 @@ pub struct VersionMeta {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionJson {
-    #[serde(default)]
-    pub arguments: Arguments,
+    /// 游戏参数：1.13+ 用对象形态；**老版本（≤1.12）没有该字段，部分合并/第三方写入的是 null**，
+    /// 故按 Option 解析（`#[serde(default)]` 只兜住"缺失"，兜不住显式 null）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<Arguments>,
     pub asset_index: AssetIndex,
     pub assets: serde_json::Value,
     pub compliance_level: serde_json::Value,
@@ -138,6 +140,18 @@ pub struct Arguments {
     pub jvm: Option<Vec<serde_json::Value>>,
 }
 
+impl VersionJson {
+    /// `arguments.jvm`（新式；老版本无 → None）。
+    pub fn jvm_args(&self) -> Option<&Vec<serde_json::Value>> {
+        self.arguments.as_ref().and_then(|a| a.jvm.as_ref())
+    }
+
+    /// `arguments.game`（新式；老版本无 → None，由 `minecraftArguments` 兜底）。
+    pub fn game_args(&self) -> Option<&Vec<serde_json::Value>> {
+        self.arguments.as_ref().and_then(|a| a.game.as_ref())
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AssetJson {
     pub objects: HashMap<String, AssetObject>,
@@ -151,6 +165,36 @@ pub struct AssetObject {
 
 #[cfg(test)]
 mod tests {
+    /// 回归：老版本（≤1.12）的版本 json **没有 arguments 字段**，部分合并/第三方写入的是
+    /// `"arguments": null` —— 二者都必须能解析（此前显式 null 会报
+    /// `invalid type: null, expected struct Arguments`，1.7.10/1.8.9 Forge 因此装完打不开）。
+    #[test]
+    fn legacy_arguments_null_or_missing_both_parse() {
+        let base = |args_field: &str| {
+            format!(
+                r#"{{ {args_field} "assetIndex": {{ "id": "legacy", "sha1": "x", "size": 1, "totalSize": 2, "url": "u" }},
+                   "assets": "legacy", "complianceLevel": 1, "downloads": {{}}, "id": "1.7.10",
+                   "javaVersion": {{ "component": "jre-legacy", "majorVersion": 8 }},
+                   "libraries": [], "mainClass": "net.minecraft.launchwrapper.Launch",
+                   "minecraftArguments": "--username ${{auth_player_name}}", "minimumLauncherVersion": 4,
+                   "releaseTime": "2014-05-14T00:00:00+00:00", "time": "2014-05-14T00:00:00+00:00", "type": "release" }}"#
+            )
+        };
+        // 字段缺失（原始原版 json 形态）
+        let vj: VersionJson = serde_json::from_str(&base("")).expect("缺 arguments 字段应能解析");
+        assert!(vj.arguments.is_none());
+        assert!(vj.jvm_args().is_none() && vj.game_args().is_none());
+        assert!(vj.minecraft_arguments.is_some());
+        // 显式 null（此前合并写坏了的形态 / 第三方启动器写入）
+        let vj2: VersionJson =
+            serde_json::from_str(&base(r#""arguments": null,"#)).expect("arguments: null 应能解析");
+        assert!(vj2.arguments.is_none());
+        // 新式对象形态仍照常
+        let vj3: VersionJson = serde_json::from_str(&base(r#""arguments": { "game": ["--demo"] },"#))
+            .expect("新式 arguments 应能解析");
+        assert_eq!(vj3.game_args().map(Vec::len), Some(1));
+    }
+
     use super::*;
 
     /// 最小可用版本 JSON（覆盖全部必填字段）。
@@ -178,9 +222,9 @@ mod tests {
         assert_eq!(vj.id, "1.18.2");
         assert_eq!(vj.main_class, "net.minecraft.client.main.Main");
         assert!(vj.libraries.is_empty());
+        assert_eq!(vj.jvm_args().map(Vec::len), Some(0));
         let c = vj.downloads.client.unwrap();
         assert_eq!(c.size, 1);
-        assert_eq!(vj.arguments.jvm.as_ref().map(Vec::len), Some(0));
     }
 
     #[test]

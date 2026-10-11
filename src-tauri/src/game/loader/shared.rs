@@ -10,13 +10,73 @@ use tokio::process::Child;
 
 
 fn maven_path(name: &str) -> String {
-    let parts: Vec<&str> = name.split(':').collect();
+    // 坐标形态：`group:artifact:version[:classifier][@ext]`（classifier 与扩展名都必须进路径，
+    // 否则 native 分类器条目会指向错误文件名）
+    let (coord, ext) = match name.split_once('@') {
+        Some((c, e)) if !e.is_empty() => (c, e),
+        _ => (name, "jar"),
+    };
+    let parts: Vec<&str> = coord.split(':').collect();
     if parts.len() < 3 {
-        return format!("{}.jar", name.replace(':', "_"));
+        return format!("{}.{ext}", coord.replace(':', "_"));
     }
     let (group, artifact, version) = (parts[0], parts[1], parts[2]);
     let group_path = group.replace('.', "/");
-    format!("{group_path}/{artifact}/{version}/{artifact}-{version}.jar")
+    match parts.get(3).copied().filter(|c| !c.is_empty()) {
+        Some(classifier) => {
+            format!("{group_path}/{artifact}/{version}/{artifact}-{version}-{classifier}.{ext}")
+        }
+        None => format!("{group_path}/{artifact}/{version}/{artifact}-{version}.{ext}"),
+    }
+}
+
+/// 老式库条目补全下载信息：spec-0 安装器（Forge 1.7.10~1.11.2 等）的 `versionInfo.libraries`
+/// 只有 `{name, url}`，没有 `downloads.artifact` —— classpath 构建与缺库检查都从 artifact.path
+/// 取路径，缺了就是**静默丢失**（实测：1.7.10 的 forge jar 与 launchwrapper 都不进 classpath，
+/// 装得下但起不来）。这里按坐标补出 path/url/sha1/size；`url` 为空的老式条目
+/// （如 `net.minecraft:launchwrapper:1.12`）按 Mojang libraries 兜底。
+fn normalize_legacy_libraries(libs: &mut [serde_json::Value]) {
+    for lib in libs.iter_mut() {
+        // 已有 artifact（普通构件）或 classifiers（老版本 natives 只有 classifiers，
+        // 没有普通构件——按坐标合成会得到一个 CDN 上不存在的普通 jar，实测 404）→ 都不动
+        let has_download_info = lib
+            .get("downloads")
+            .and_then(|d| d.as_object())
+            .is_some_and(|d| {
+                d.get("artifact").is_some_and(|a| !a.is_null()) || d.contains_key("classifiers")
+            });
+        if has_download_info || lib.get("natives").is_some() {
+            continue;
+        }
+        let Some(name) = lib.get("name").and_then(|n| n.as_str()).map(str::to_string) else {
+            continue;
+        };
+        let path = maven_path(&name);
+        let base = lib
+            .get("url")
+            .and_then(|u| u.as_str())
+            .unwrap_or("")
+            .trim_end_matches('/')
+            .to_string();
+        let url = if base.is_empty() {
+            format!(
+                "{}/{}",
+                crate::downloader::endpoints::MOJANG_LIBRARIES,
+                path
+            )
+        } else {
+            format!("{base}/{path}")
+        };
+        let sha1 = lib
+            .get("sha1")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let size = lib.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
+        lib["downloads"] = serde_json::json!({
+            "artifact": { "path": path, "url": url, "sha1": sha1, "size": size }
+        });
+    }
 }
 
 /// 合并 loader profile 到原版 JSON（Fabric/Quilt 官方 profile 接口）：
@@ -35,7 +95,11 @@ pub(crate) fn merge_loader_profile(
         let loader_args = profile["arguments"][key].as_array();
         if let Some(loader_args) = loader_args {
             if !loader_args.is_empty() {
-                if let Some(args) = merged["arguments"][key].as_array_mut() {
+                if let Some(args) = merged
+                    .get_mut("arguments")
+                    .and_then(|a| a.get_mut(key))
+                    .and_then(|v| v.as_array_mut())
+                {
                     args.extend(loader_args.iter().cloned());
                 } else {
                     merged["arguments"][key] = serde_json::Value::Array(loader_args.clone());
@@ -93,7 +157,7 @@ pub(crate) fn merge_loader_profile(
             .map(library_key)
             .collect();
         let mut combined = loader_out;
-        if let Some(parent_libs) = merged["libraries"].as_array() {
+        if let Some(parent_libs) = merged.get("libraries").and_then(|v| v.as_array()) {
             for l in parent_libs {
                 let key = l["name"].as_str().map(library_key).unwrap_or_default();
                 if !loader_keys.contains(&key) {
@@ -101,6 +165,7 @@ pub(crate) fn merge_loader_profile(
                 }
             }
         }
+        normalize_legacy_libraries(&mut combined);
         merged["libraries"] = serde_json::Value::Array(combined);
     }
     unify_game_arg_form(
@@ -132,6 +197,12 @@ fn library_key(name: &str) -> String {
     }
 }
 
+/// 注意：`serde_json` 的**字符串索引在读时会插入 `null`**（`v["missing"]` 会写进 `"missing": null`），
+/// 所以本文件所有"只看一眼"的探测一律走 `get`/`get_mut`；只有确实要写入时才用索引赋值。
+/// 踩过的坑：`merged["arguments"].as_object_mut()` 让老版本（1.7.10 等）合并出的 JSON 多出
+/// `"arguments": null`，读取端 `VersionJson.arguments` 反序列化直接报
+/// `invalid type: null, expected struct Arguments`。
+///
 /// 游戏参数的两种形态：`arguments.game`（1.13+ 数组）与 `minecraftArguments`（旧式模板串）。
 ///
 /// `launcher::args::build_game_args` 在两者并存时按"新格式优先"取 `arguments.game`。
@@ -151,7 +222,7 @@ fn unify_game_arg_form(
     let legacy_only = !child_legacy_args.is_empty() && !child_has_game_args;
     let modern_only = child_has_game_args && child_legacy_args.is_empty();
     if legacy_only {
-        if let Some(obj) = merged["arguments"].as_object_mut() {
+        if let Some(obj) = merged.get_mut("arguments").and_then(|v| v.as_object_mut()) {
             obj.remove("game");
         }
         merged["minecraftArguments"] = serde_json::Value::String(child_legacy_args.to_string());
@@ -184,7 +255,17 @@ pub(crate) fn expand_inheritance(
     // 前置；OptiFine 纯净版依赖此顺序：预补丁客户端 jar 必须先于 vanilla 库出现在
     // classpath，JVM 加载同名类时先命中 OptiFine 版本实现类覆盖。父在前会静默加载
     // 原版类，OptiFine 不生效）
-    let child_libs = child["libraries"].take();
+    let child_libs = child
+        .get_mut("libraries")
+        .map(|v| v.take())
+        .unwrap_or(serde_json::Value::Null);
+    // 父级库也要走规范化：老式条目（只有 name/url、无 downloads.artifact）可能只在父级
+    // （spec-0 Forge 的 versionInfo 就全是这种形态，缺 path 会静默丢出 classpath）
+    let mut combined: Vec<serde_json::Value> = merged
+        .get("libraries")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
     if let Some(libs) = child_libs.as_array() {
         // 子级库在前，父级同键条目丢弃（同坐标不同版本时子级优先；避免同坐标两份
         // jar 同时进 classpath 与缺库计数）
@@ -193,37 +274,48 @@ pub(crate) fn expand_inheritance(
             .filter_map(|l| l["name"].as_str())
             .map(library_key)
             .collect();
-        let mut combined: Vec<serde_json::Value> = libs.clone();
-        if let Some(parent_libs) = merged["libraries"].as_array() {
-            for l in parent_libs {
-                let key = l["name"].as_str().map(library_key).unwrap_or_default();
-                if !child_keys.contains(&key) {
-                    combined.push(l.clone());
-                }
+        let mut out: Vec<serde_json::Value> = libs.clone();
+        for l in &combined {
+            let key = l["name"].as_str().map(library_key).unwrap_or_default();
+            if !child_keys.contains(&key) {
+                out.push(l.clone());
             }
         }
-        merged["libraries"] = serde_json::Value::Array(combined);
+        combined = out;
     }
+    normalize_legacy_libraries(&mut combined);
+    merged["libraries"] = serde_json::Value::Array(combined);
 
     // 参数形态标志要在下面 `.take()` 之前取（take 会把子级字段置空）
-    let child_legacy_args = child["minecraftArguments"]
-        .as_str()
+    let child_legacy_args = child
+        .get("minecraftArguments")
+        .and_then(|v| v.as_str())
         .unwrap_or("")
         .trim()
         .to_string();
-    let child_has_game_args = child["arguments"]["game"]
-        .as_array()
+    let child_has_game_args = child
+        .get("arguments")
+        .and_then(|a| a.get("game"))
+        .and_then(|v| v.as_array())
         .map(|a| !a.is_empty())
         .unwrap_or(false);
 
     // arguments：父 + 子 拼接（jvm/game）
     for key in ["jvm", "game"] {
-        let child_args = child["arguments"][key].take();
-        if let Some(args) = child_args.as_array() {
-            if let Some(parent_args) = merged["arguments"][key].as_array_mut() {
+        let child_args = child
+            .get_mut("arguments")
+            .and_then(|a| a.get_mut(key))
+            .map(|v| v.take());
+        if let Some(args) = child_args.as_ref().and_then(|v| v.as_array()) {
+            if let Some(parent_args) = merged
+                .get_mut("arguments")
+                .and_then(|a| a.get_mut(key))
+                .and_then(|v| v.as_array_mut())
+            {
                 parent_args.extend(args.iter().cloned());
             } else {
-                merged["arguments"][key] = child_args.clone();
+                // 确实要写入时才用索引赋值（会按需创建 arguments 对象）
+                merged["arguments"][key] = serde_json::Value::Array(args.clone());
             }
         }
     }
@@ -323,6 +415,63 @@ mod tests {
         assert_eq!(
             maven_path("net.fabricmc:fabric-loader:0.15.11"),
             "net/fabricmc/fabric-loader/0.15.11/fabric-loader-0.15.11.jar"
+        );
+    }
+
+    /// 老式条目（无 downloads.artifact）必须补出路径，否则 classpath 静默丢失 loader 本体。
+    #[test]
+    fn legacy_library_entries_get_artifact() {
+        // 父级同时含：老式无下载信息条目（launchwrapper）、老式 natives-only 条目（只有 classifiers）
+        let parent = r#"{"id":"p","libraries":[
+            {"name":"net.minecraft:launchwrapper:1.12","url":"https://libraries.minecraft.net/"},
+            {"name":"org.lwjgl.lwjgl:lwjgl-platform:2.9.1","natives":{"windows":"natives-windows"},
+             "downloads":{"classifiers":{"natives-windows":{"path":"org/lwjgl/lwjgl/lwjgl-platform/2.9.1/lwjgl-platform-2.9.1-natives-windows.jar","sha1":"","size":1,"url":"https://libraries.minecraft.net/org/lwjgl/lwjgl/lwjgl-platform/2.9.1/lwjgl-platform-2.9.1-natives-windows.jar"}}}}
+        ]}"#;
+        let child = serde_json::json!({
+            "id": "c", "inheritsFrom": "p", "mainClass": "net.minecraft.launchwrapper.Launch"
+        });
+        let out = expand_inheritance(parent, child, "1.7.10-forge-x").expect("展开失败");
+        let libs = out["libraries"].as_array().unwrap();
+        let lw = libs
+            .iter()
+            .find(|l| l["name"].as_str().unwrap_or("").contains("launchwrapper"))
+            .expect("缺 launchwrapper");
+        assert_eq!(
+            lw["downloads"]["artifact"]["path"],
+            "net/minecraft/launchwrapper/1.12/launchwrapper-1.12.jar"
+        );
+        assert!(lw["downloads"]["artifact"]["url"]
+            .as_str()
+            .unwrap()
+            .ends_with("/net/minecraft/launchwrapper/1.12/launchwrapper-1.12.jar"));
+        // natives-only 条目不得被合成普通构件（否则会去下 CDN 上不存在的 -platform 普通 jar → 404）
+        let plat = libs
+            .iter()
+            .find(|l| l["name"].as_str().unwrap_or("").contains("lwjgl-platform"))
+            .expect("缺 lwjgl-platform");
+        assert!(
+            plat["downloads"].get("artifact").is_none(),
+            "natives-only 条目不应被合成 artifact"
+        );
+        assert!(plat["downloads"]["classifiers"]["natives-windows"]["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("-natives-windows.jar"));
+    }
+
+    #[test]
+    fn maven_path_classifier_and_ext() {
+        assert_eq!(
+            maven_path("net.minecraftforge:forge:1.7.10-10.13.4.1614-1.7.10"),
+            "net/minecraftforge/forge/1.7.10-10.13.4.1614-1.7.10/forge-1.7.10-10.13.4.1614-1.7.10.jar"
+        );
+        assert_eq!(
+            maven_path("net.minecraft:lwjgl:2.9.4:natives-windows"),
+            "net/minecraft/lwjgl/2.9.4/lwjgl-2.9.4-natives-windows.jar"
+        );
+        assert_eq!(
+            maven_path("de.oceanlabs.mcp:mcp_config:1.12.2@zip"),
+            "de/oceanlabs/mcp/mcp_config/1.12.2/mcp_config-1.12.2.zip"
         );
     }
 

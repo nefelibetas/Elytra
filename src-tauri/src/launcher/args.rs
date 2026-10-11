@@ -930,7 +930,7 @@ fn collect_jvm_args(req: &JvmArgs<'_>) -> (Vec<String>, Vec<String>, Vec<String>
     let classpath_sep = if cfg!(windows) { ";" } else { ":" };
 
     // 从版本 JSON 的 arguments.jvm 提取
-    if let Some(jvm_args) = &version_json.arguments.jvm {
+    if let Some(jvm_args) = version_json.jvm_args() {
         let raw = extract_args(jvm_args, has_custom_resolution);
         for arg in raw {
             // 跳过 -cp / -classpath / ${classpath}（classpath 由我们自行构建，
@@ -1047,7 +1047,7 @@ fn build_game_args(
     has_custom_resolution: bool,
     user_properties: &str,
 ) -> Vec<String> {
-    let mut game_args = match &version_json.arguments.game {
+    let mut game_args = match version_json.game_args() {
         Some(game_arr) if !game_arr.is_empty() => {
             // 新格式：arguments.game 数组
             let raw = extract_args(game_arr, has_custom_resolution);
