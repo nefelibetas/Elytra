@@ -82,7 +82,7 @@ async fn download_optifabric(
     )
     .await
     .map_err(common_err_ctx!("查询 OptiFabric 版本失败"))?;
-    let Some((filename, download_url, _sha1)) = pick_curseforge_file(&files) else {
+    let Some((filename, download_url, sha1)) = pick_curseforge_file(&files) else {
         bail!(
             "下载 OptiFabric 失败\nMC {mc_version} 暂无兼容的 OptiFabric 版本（OptiFabric 仅支持至 1.20.x）"
         );
@@ -91,9 +91,17 @@ async fn download_optifabric(
     // 3. forgecdn 直链下载（与单文件下载同一通道；x-api-key 由查询环节承担，下载可匿名）
     std::fs::create_dir_all(mods_dir).map_err(common_err_ctx!("创建 mods 目录失败"))?;
     let dest = mods_dir.join(&filename);
-    fetcher::fetch_bounded(&[download_url], &dest, Some(pc.step_progress()))
-        .await
-        .map_err(common_err_ctx!("下载 OptiFabric 失败"))?;
+    // CurseForge 文件条目自带 sha1，用它校验（此前丢弃 → 镜像/CDN 截断内容会被静默接受）
+    let sha1 = sha1.unwrap_or_default();
+    if sha1.is_empty() {
+        fetcher::fetch_bounded(&[download_url], &dest, Some(pc.step_progress()))
+            .await
+            .map_err(common_err_ctx!("下载 OptiFabric 失败"))?;
+    } else {
+        fetcher::fetch_verified(&[download_url], &dest, Some(pc.step_progress()), &sha1)
+            .await
+            .map_err(common_err_ctx!("下载 OptiFabric 失败"))?;
+    }
     Ok(())
 }
 

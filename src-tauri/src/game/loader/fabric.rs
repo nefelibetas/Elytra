@@ -22,22 +22,30 @@ async fn install_loader_via_profile(
 ) -> Result<(), String> {
     let VersionTarget { dir_name, vdir } = target;
     let InstallCtx { config, pc, hook, .. } = ctx;
-    let source = config.file_primary_source().ok_or("no active source")?;
     let mc = config.minecraft_dir_abs();
 
-    let profile_url = source.url(
-        profile_url_tpl,
-        &[("mc", mc_version), ("loaderVer", loader_version)],
-    );
-    let resp = http()
-        .get(&profile_url)
-        .send()
-        .await
-        .map_err(common_err_ctx!("获取 profile 失败"))?;
-    let profile: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(common_err_ctx!("解析 profile 失败"))?;
+    // profile 逐源回退：官方 maven 在国内网络常不可达，镜像提供同一路径
+    // （此前只用主源单发请求，主源挂了 Fabric/Quilt 安装直接失败）
+    let mut fetched: Option<(serde_json::Value, &DownloadSource)> = None;
+    let mut last_err = String::new();
+    for src in config.file_sources_list() {
+        let url = src.url(
+            profile_url_tpl,
+            &[("mc", mc_version), ("loaderVer", loader_version)],
+        );
+        match http().get(&url).send().await {
+            Ok(resp) => match resp.json::<serde_json::Value>().await {
+                Ok(v) => {
+                    fetched = Some((v, src));
+                    break;
+                }
+                Err(e) => last_err = format!("解析 profile 失败\n{e}"),
+            },
+            Err(e) => last_err = format!("获取 profile 失败\n{e}"),
+        }
+    }
+    let (profile, source) = fetched
+        .ok_or_else(|| format!("获取 profile 失败（所有下载源均不可用）\n{last_err}"))?;
 
     let merged = merge_loader_profile(parent_text, &profile, dir_name, &source.maven_url)?;
 

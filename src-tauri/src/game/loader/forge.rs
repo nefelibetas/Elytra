@@ -84,7 +84,8 @@ pub(super) async fn download_and_extract(
     )
     .await?;
 
-    let _ = std::fs::remove_file(&installer_path);
+    // installer 保留到安装结束：processors 引擎需要 {INSTALLER}（此前在补丁前就删除，
+    // Windows 下仅因文件句柄占用而侥幸留下）
     if !found_json {
         return Err("未找到 version.json".into());
     }
@@ -127,12 +128,23 @@ pub(super) async fn download_and_extract(
             config,
             cancel,
         };
-        install_neoforge_universal(uni, &mut archive, &libraries, &files, pc, hook).await?;
+        install_neoforge_universal(
+            uni,
+            &mut archive,
+            &installer_path,
+            &libraries,
+            &files,
+            pc,
+            hook,
+        )
+        .await?;
+        let _ = std::fs::remove_file(&installer_path);
         return Ok(());
     }
     // 其余库走统一下载（多源回退 + sha1 校验；URL 为空的库在此被跳过）
     download_loader_libraries(&libraries, &lib_dir, dir_name, config, pc).await?;
 
+    let _ = std::fs::remove_file(&installer_path);
     if let Some(h) = hook {
         h(LoaderEvent::LibsDone);
     }
@@ -233,6 +245,7 @@ async fn download_loader_libraries(
 async fn install_neoforge_universal(
     uni: &serde_json::Value,
     archive: &mut zip::ZipArchive<std::fs::File>,
+    installer_path: &Path,
     libraries: &[model::Library],
     files: &LoaderFiles<'_>,
     pc: &crate::downloader::progress::ProgressCounters,
@@ -257,10 +270,10 @@ async fn install_neoforge_universal(
     // 运行 installertools 生成 patched（前置：等待 vanilla 下载完成）
     extract_neoforge_client(
         archive,
+        installer_path,
         lib_dir,
         mc_dir,
         dir_name,
-        &neo_version,
         InstallCtx {
             config,
             pc,
@@ -505,10 +518,19 @@ pub(super) fn resolve_java() -> Result<PathBuf, String> {
     match options.selection {
         jdk::model::JdkSelection::Manual { path } => Ok(java_bin_path(Path::new(&path))),
         jdk::model::JdkSelection::Auto => {
-            let jdk = cache.jdks.first().ok_or(
-                "未检测到 Java 环境，无法生成 Forge client（需要 JDK 运行官方补丁工具，请先在设置中配置 Java）",
-            )?;
-            Ok(java_bin_path(Path::new(&jdk.path)))
+            if let Some(jdk) = cache.jdks.first() {
+                return Ok(java_bin_path(Path::new(&jdk.path)));
+            }
+            // 兜底：装了 JDK 但还没让启动器扫描过（JAVA_HOME 指向的目录直接可用）
+            if let Ok(home) = std::env::var("JAVA_HOME") {
+                let java = java_bin_path(Path::new(&home));
+                if java.is_file() {
+                    return Ok(java);
+                }
+            }
+            Err(
+                "未检测到 Java 环境，无法运行 ModLoader 安装工具（需要 JDK，请在设置中配置 Java 或设置 JAVA_HOME）".into(),
+            )
         }
     }
 }

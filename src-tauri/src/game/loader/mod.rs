@@ -7,12 +7,14 @@
 //! - [`shared`]：profile 合并 / 继承展开 / 幂等判定 / 安装器进程管理；
 //! - [`dispatch`]：按种类分派的统一入口；
 //! - [`fabric`] / [`forge`] / [`neoforge`] / [`optifine`]：各安装器实现；
+//! - [`processors`]：按 installer 声明的 install_profile.processors 执行（不写死工具/配方）；
 //! - [`version_query`]：各 ModLoader 可用版本列表查询。
 
 pub mod fabric;
 pub mod forge;
 pub mod neoforge;
 pub mod optifine;
+pub mod processors;
 pub mod version_query;
 
 mod ctx;
