@@ -13,7 +13,7 @@ use crate::game::resource::library::missing_libraries;
 use crate::game::version::dir::version_server_section;
 use crate::game::version::model::VersionJson;
 use crate::jdk::model::{JdkInfo, JdkOptions, JdkScanCache, JdkSelection};
-use crate::launcher::args::{find_file_in_dir, find_version_json};
+use crate::launcher::args::find_version_json;
 use crate::launcher::model::LaunchOptions;
 use crate::persist::{self, downloader_config, launch_options};
 use crate::util::{java_bin_path, parse_java_major, sha1_sub_dir};
@@ -159,14 +159,16 @@ pub fn pre_launch_check(
 
     // 1. client JAR（存在但 0 字节视为损坏）
     let vdir = mc_dir.join("versions").join(version_dir_name);
-    let client_jar = vdir.join(format!("{}.jar", version_dir_name));
     let jar_ok = |p: &std::path::Path| p.metadata().map(|m| m.len() > 0).unwrap_or(false);
-    if !(client_jar.exists() && jar_ok(&client_jar)) {
-        // 目录内扫描 .jar 兜底（文件名可能不等于目录名）
-        let found = find_file_in_dir(&vdir, "jar").filter(|p| jar_ok(p));
-        if found.is_none() {
-            missing.push(format!("客户端 JAR: {}", client_jar.display()));
-        }
+    // 与 classpath 用同一套解析规则（否则"检查通过但启动用错 jar"）
+    if super::args::resolve_client_jar(&vdir, version_dir_name)
+        .filter(|p| jar_ok(p))
+        .is_none()
+    {
+        missing.push(format!(
+            "客户端 JAR: {}",
+            vdir.join(format!("{}.jar", version_dir_name)).display()
+        ));
     }
 
     // 2. libraries（复用下载侧过滤 + sha1 校验：缺失/损坏都算）

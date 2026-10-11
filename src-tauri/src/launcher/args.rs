@@ -392,8 +392,9 @@ fn resolve_launch_paths(
             (DEFAULT_RESOLUTION_WIDTH, DEFAULT_RESOLUTION_HEIGHT, false)
         }
     };
-    // JAR 文件名不一定等于目录名（目录可能因冲突被重命名）
-    let client_jar = find_file_in_dir(&version_dir, EXT_JAR)
+    // JAR 文件名不一定等于目录名（目录可能因冲突被重命名）；
+    // 与启动前完整性检查共用 resolve_client_jar，避免两处选中不同文件
+    let client_jar = resolve_client_jar(&version_dir, version_dir_name)
         .unwrap_or_else(|| version_dir.join(format!("{}.{}", version_dir_name, EXT_JAR)));
     // classpath 分隔符按平台区分：Windows 用 ';'，Unix（Linux/macOS）用 ':'。
     // 硬编码 ';' 会让 Java 把整串 jar 当成单个路径，导致 ClassNotFoundException
@@ -760,6 +761,34 @@ fn add_native_props(props: &mut Vec<String>, natives_dir: &Path, version_json: &
     ));
 }
 
+/// 解析版本目录里的客户端 jar —— **classpath 与启动前完整性检查共用同一条规则**。
+///
+/// 优先级：`{dir_name}.jar` → 目录内唯一的 .jar（导入的实例文件名常与目录名不同）
+/// → 体积最大的 .jar（client jar 通常最大，且结果确定）。
+/// 不取"第一个"：`read_dir` 顺序不保证，两处各取一次会选中不同文件 ——
+/// 表现为"完整性检查通过，但启动用的不是客户端 jar"。
+pub fn resolve_client_jar(version_dir: &Path, version_dir_name: &str) -> Option<PathBuf> {
+    let named = version_dir.join(format!("{version_dir_name}.{EXT_JAR}"));
+    if named.is_file() {
+        return Some(named);
+    }
+    let mut jars: Vec<PathBuf> = std::fs::read_dir(version_dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_file() && p.extension().map(|x| x == EXT_JAR).unwrap_or(false))
+        .collect();
+    if jars.len() <= 1 {
+        return jars.pop();
+    }
+    jars.sort_by(|a, b| {
+        let sa = a.metadata().map(|m| m.len()).unwrap_or(0);
+        let sb = b.metadata().map(|m| m.len()).unwrap_or(0);
+        sb.cmp(&sa).then_with(|| a.file_name().cmp(&b.file_name()))
+    });
+    jars.into_iter().next()
+}
+
 /// 在目录中扫描第一个指定扩展名的文件（文件名可能与目录名不同，如目录被重命名）。
 pub fn find_file_in_dir(dir: &Path, ext: &str) -> Option<PathBuf> {
     std::fs::read_dir(dir)
@@ -1011,4 +1040,42 @@ fn build_game_args(
         game_args.push(user_properties.to_string());
     }
     game_args
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_client_jar_prefers_named_then_largest() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        std::fs::write(d.join("other.jar"), vec![0u8; 32]).unwrap();
+        std::fs::write(d.join("big.jar"), vec![0u8; 4096]).unwrap();
+        assert_eq!(
+            resolve_client_jar(d, "v").unwrap().file_name().unwrap(),
+            "big.jar",
+            "无同名 jar 时取体积最大者（read_dir 顺序不保证，取第一个会让两处选中不同文件）"
+        );
+        std::fs::write(d.join("v.jar"), vec![0u8; 8]).unwrap();
+        assert_eq!(
+            resolve_client_jar(d, "v").unwrap().file_name().unwrap(),
+            "v.jar",
+            "有同名 jar 时优先它，即使更小"
+        );
+
+        let single = tempfile::tempdir().unwrap();
+        std::fs::write(single.path().join("solo.jar"), vec![0u8; 8]).unwrap();
+        assert_eq!(
+            resolve_client_jar(single.path(), "v")
+                .unwrap()
+                .file_name()
+                .unwrap(),
+            "solo.jar",
+            "唯一 jar 直接用"
+        );
+
+        let empty = tempfile::tempdir().unwrap();
+        assert!(resolve_client_jar(empty.path(), "v").is_none(), "无 jar 应返回 None");
+    }
 }
