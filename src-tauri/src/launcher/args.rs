@@ -571,9 +571,13 @@ fn build_classpath(version_json: &VersionJson, lib_dir: &Path, client_jar: &Path
         }
         let Some(dls) = &lib.downloads else { continue };
 
-        // artifact JAR（通用 JAR）
+        // artifact JAR（通用 JAR）——按落地路径去重：下面 classifiers 分支可能指向
+        // 同一个 native jar（历史 lwjgl3 早期数据），重复进 classpath 无意义
         if let Some(artifact) = &dls.artifact {
-            cp.push(lib_dir.join(&artifact.path));
+            let p = lib_dir.join(&artifact.path);
+            if !cp.contains(&p) {
+                cp.push(p);
+            }
         }
 
         // 新式 natives 且带 classifiers：取当前平台 JAR（历史兼容分支，现代数据无此结构）
@@ -581,7 +585,10 @@ fn build_classpath(version_json: &VersionJson, lib_dir: &Path, client_jar: &Path
             if let Some(classifiers) = &dls.classifiers {
                 if let Some(key) = modern_natives_key() {
                     if let Some(artifact) = classifiers.get(&key) {
-                        cp.push(lib_dir.join(&artifact.path));
+                        let p = lib_dir.join(&artifact.path);
+                        if !cp.contains(&p) {
+                            cp.push(p);
+                        }
                     }
                 }
             }
