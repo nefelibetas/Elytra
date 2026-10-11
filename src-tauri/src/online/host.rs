@@ -23,8 +23,18 @@ use crate::task::EventSink;
 /// 状态 `Waiting`；后台等游戏"对局域网开放"，检测到端口后**重建实例**
 /// 白名单补游戏端口（proxy NAT 直连本机 MC 监听）→ `Hosting`。
 pub async fn start_host(sink: Arc<dyn EventSink>) -> Result<OnlineSnapshot, String> {
+    // 阶段一（锁内、短）：校验 + 代际递增 + 占端口/房间码，随即释放锁
+    let (gen, scaffold_port, room, cfg) = prepare_host_session().await?;
+    // 阶段二（锁外、慢）：建虚拟网（秒级）。持锁会让 status()/stop() 一起卡住
+    // （UI 冻结、用户无法取消），故必须在锁外执行。
+    let session = EasyTierSession::start(cfg).await?;
+    // 阶段三（锁内、短）：代际校验——期间被 stop/重建抢先则丢弃刚建的会话
     let mut svc = SERVICE.lock().await;
-    let (gen, scaffold_port, room, session) = start_host_session(&mut svc).await?;
+    if svc.generation != gen {
+        drop(svc);
+        session.stop().await;
+        bail!("联机启动已取消");
+    }
     let (profiles, shared) = start_info_server(scaffold_port);
     let snap = publish_host_ready(
         sink.as_ref(),
@@ -40,11 +50,10 @@ pub async fn start_host(sink: Arc<dyn EventSink>) -> Result<OnlineSnapshot, Stri
     Ok(snap)
 }
 
-/// 阶段一：校验状态、启动扫描器、占信息服务器端口、建虚拟网。
-/// 返回 (generation, scaffold_port, room, session)；锁由调用方持有。
-async fn start_host_session(
-    svc: &mut OnlineServiceInner,
-) -> Result<(u64, u16, RoomCredential, EasyTierSession), String> {
+/// 阶段一：校验状态、启动扫描器、占信息服务器端口、组装建网配置。
+/// 返回 (generation, scaffold_port, room, cfg)；**建网留给调用方在锁外做**。
+async fn prepare_host_session() -> Result<(u64, u16, RoomCredential, SessionConfig), String> {
+    let mut svc = SERVICE.lock().await;
     if svc.session.is_some() {
         return Err("联机已在运行中\n请先停止当前联机会话".to_string());
     }
@@ -72,8 +81,7 @@ async fn start_host_session(
         public_nodes,
         scaffold_port: Some(scaffold_port),
     };
-    let s = EasyTierSession::start(cfg).await?;
-    Ok((gen, scaffold_port, room, s))
+    Ok((gen, scaffold_port, room, cfg))
 }
 
 /// 阶段二：构建房主玩家表 + 起信息服务器。
@@ -128,23 +136,26 @@ fn spawn_host_discovery(sink: Arc<dyn EventSink>, shared: Arc<HostShared>, gen: 
 async fn host_discovery_loop(sink: &dyn EventSink, shared: &HostShared, gen: u64) {
     loop {
         tokio::time::sleep(DISCOVER_POLL).await;
-        let mut svc = SERVICE.lock().await;
-        if svc.generation != gen {
-            return;
-        }
-        if svc.role() != SessionRole::Host {
-            return;
-        }
-        let mc_port = svc.scanner.as_ref().and_then(|sc| sc.get_port());
-        // Waiting+有端口 → 重建实例补白名单（proxy NAT 直连本机 MC 监听）；
-        // Hosting+端口消失 → 降回 Waiting（重建实例去布白名单）。
-        let sync_target = match (svc.status, mc_port) {
-            (OnlineStatus::Waiting, Some(port)) => Some(Some(port)),
-            (OnlineStatus::Hosting, None) => Some(None),
-            _ => None,
+        // 锁内只读状态、判定是否需要重建；重建（秒级）在锁外做
+        let sync_target = {
+            let svc = SERVICE.lock().await;
+            if svc.generation != gen {
+                return;
+            }
+            if svc.role() != SessionRole::Host {
+                return;
+            }
+            let mc_port = svc.scanner.as_ref().and_then(|sc| sc.get_port());
+            // Waiting+有端口 → 重建实例补白名单（proxy NAT 直连本机 MC 监听）；
+            // Hosting+端口消失 → 降回 Waiting（重建实例去布白名单）。
+            match (svc.status, mc_port) {
+                (OnlineStatus::Waiting, Some(port)) => Some(Some(port)),
+                (OnlineStatus::Hosting, None) => Some(None),
+                _ => None,
+            }
         };
-        if let Some(port) = sync_target {
-            if !sync_host_session(sink, &mut svc, shared, port).await {
+        if let Some(mc_port) = sync_target {
+            if !sync_host_session(sink, shared, gen, mc_port).await {
                 return;
             }
         }
@@ -153,28 +164,53 @@ async fn host_discovery_loop(sink: &dyn EventSink, shared: &HostShared, gen: u64
 
 /// 重建联机会话以匹配当前游戏端口（`None` = 去游戏端口白名单）。
 /// 返回 `false` 表示调用方应结束后台任务。
+///
+/// `old.stop()` 与 `EasyTierSession::start()` 都是秒级操作，全部放在**锁外**：
+/// 持锁做会让 status()（UI 轮询）与 stop()（用户点停止）一起卡住。
+/// 期间可能被 stop/新会话抢先 → 用代际校验兜住（见收尾处）。
 async fn sync_host_session(
     sink: &dyn EventSink,
-    svc: &mut OnlineServiceInner,
     shared: &HostShared,
+    gen: u64,
     mc_port: Option<u16>,
 ) -> bool {
-    let Some(old) = svc.session.take() else {
-        return false;
+    // 锁内：摘出旧会话 + 组装新配置
+    let (old, cfg) = {
+        let mut svc = SERVICE.lock().await;
+        if svc.generation != gen {
+            return false;
+        }
+        let Some(old) = svc.session.take() else {
+            return false;
+        };
+        let Some(room) = svc.room.clone() else {
+            return false;
+        };
+        let cfg = SessionConfig {
+            role: SessionRole::Host,
+            room,
+            local_port: None,
+            mc_port,
+            public_nodes: online_config().public_nodes,
+            scaffold_port: Some(svc.scaffold_port.unwrap_or(0)),
+        };
+        (old, cfg)
     };
+
     old.stop().await;
-    let Some(room) = svc.room.clone() else {
+    let started = EasyTierSession::start(cfg).await;
+
+    // 锁内：代际校验后回写
+    let mut svc = SERVICE.lock().await;
+    if svc.generation != gen {
+        drop(svc);
+        // 期间被 stop / 新会话抢占 → 丢弃刚建的会话（它不是当前状态的一部分）
+        if let Ok(s) = started {
+            s.stop().await;
+        }
         return false;
-    };
-    let cfg = SessionConfig {
-        role: SessionRole::Host,
-        room,
-        local_port: None,
-        mc_port,
-        public_nodes: online_config().public_nodes,
-        scaffold_port: Some(svc.scaffold_port.unwrap_or(0)),
-    };
-    match EasyTierSession::start(cfg).await {
+    }
+    match started {
         Ok(new_s) => {
             svc.session = Some(new_s);
             *shared.mc_port.write() = mc_port;
@@ -192,7 +228,7 @@ async fn sync_host_session(
             svc.scanner = None;
         }
     }
-    let snap = snapshot_inner(svc);
+    let snap = snapshot_inner(&svc);
     emit_snapshot(sink, &snap);
     true
 }

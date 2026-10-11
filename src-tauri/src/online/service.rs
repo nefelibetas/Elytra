@@ -88,18 +88,24 @@ pub(super) fn emit_snapshot(sink: &dyn EventSink, snap: &OnlineSnapshot) {
 
 /// 停止联机（幂等）。
 pub async fn stop(sink: &dyn EventSink) -> Result<(), String> {
-    let mut svc = SERVICE.lock().await;
-    svc.generation += 1;
-    if let Some(s) = svc.session.take() {
+    // 锁内（短）：先递增代际——在途的 start/重建据此认输并丢弃自己刚建的会话；
+    // 随后摘出会话与资源、复位状态。
+    let (session, snap) = {
+        let mut svc = SERVICE.lock().await;
+        svc.generation += 1;
+        let session = svc.session.take();
+        svc.scanner = None; // Drop → 组播线程退出（非阻塞：只发退出信号）
+        svc.advertiser = None; // Drop → 广播线程退出
+        svc.status = OnlineStatus::Idle;
+        svc.room = None;
+        svc.scaffold_port = None;
+        svc.profiles = None;
+        (session, snapshot_inner(&svc))
+    };
+    // 锁外（慢）：停会话（秒级）——持锁做会让 status()/stop() 一起卡住
+    if let Some(s) = session {
         s.stop().await;
     }
-    svc.scanner = None; // Drop → 组播线程退出
-    svc.advertiser = None; // Drop → 广播线程退出
-    svc.status = OnlineStatus::Idle;
-    svc.room = None;
-    svc.scaffold_port = None;
-    svc.profiles = None;
-    let snap = snapshot_inner(&svc);
     emit_snapshot(sink, &snap);
     Ok(())
 }

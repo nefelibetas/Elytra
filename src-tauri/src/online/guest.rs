@@ -40,26 +40,38 @@ pub async fn join(sink: Arc<dyn EventSink>, room_code: &str) -> Result<u16, Stri
 }
 
 /// 阶段一：校验状态、解析房间码、建虚拟网并写入初始状态。
-/// 返回会话与 generation；返回前释放锁（探测期间不持锁）。
+/// 返回会话与 generation。**建网在锁外做**（秒级；持锁会让 status()/stop() 一起卡住）。
 async fn start_join_session(room_code: &str) -> Result<(EasyTierSession, u64), String> {
-    let mut svc = SERVICE.lock().await;
-    if svc.session.is_some() {
-        return Err("联机已在运行中\n请先停止当前联机会话".to_string());
-    }
-    let room = parse_room_code(room_code)
-        .ok_or_else(|| "房间码无效\n请检查格式（U/XXXX-XXXX-XXXX-XXXX）".to_string())?;
-    svc.generation += 1;
-    let gen = svc.generation;
-    let public_nodes = online_config().public_nodes;
-    let cfg = SessionConfig {
-        role: SessionRole::Guest,
-        room: room.clone(),
-        local_port: None,
-        mc_port: None,
-        public_nodes,
-        scaffold_port: None,
+    let (gen, room, cfg) = {
+        let mut svc = SERVICE.lock().await;
+        if svc.session.is_some() {
+            return Err("联机已在运行中\n请先停止当前联机会话".to_string());
+        }
+        let room = parse_room_code(room_code)
+            .ok_or_else(|| "房间码无效\n请检查格式（U/XXXX-XXXX-XXXX-XXXX）".to_string())?;
+        svc.generation += 1;
+        let gen = svc.generation;
+        let public_nodes = online_config().public_nodes;
+        let cfg = SessionConfig {
+            role: SessionRole::Guest,
+            room: room.clone(),
+            local_port: None,
+            mc_port: None,
+            public_nodes,
+            scaffold_port: None,
+        };
+        (gen, room, cfg)
     };
+
     let s = EasyTierSession::start(cfg).await?;
+
+    // 锁内：代际校验（期间被 stop 抢先则丢弃刚建的会话）后回写状态
+    let mut svc = SERVICE.lock().await;
+    if svc.generation != gen {
+        drop(svc);
+        s.stop().await;
+        bail!("加入联机已取消");
+    }
     svc.session = Some(s.clone());
     svc.status = OnlineStatus::Joining;
     svc.room = Some(room);
@@ -78,10 +90,7 @@ async fn connect_center(
     let (center_ip, center_port) = match discover_center(session, gen).await {
         Some(v) => v,
         None => {
-            let mut svc = SERVICE.lock().await;
-            rollback_join(&mut svc);
-            let snap = snapshot_inner(&svc);
-            emit_snapshot(sink, &snap);
+            rollback_join_and_emit(sink).await;
             return Err("联机中心发现失败\n请确认主机已开启联机".to_string());
         }
     };
@@ -94,10 +103,7 @@ async fn connect_center(
     {
         Ok(st) => st,
         Err(e) => {
-            let mut svc = SERVICE.lock().await;
-            rollback_join(&mut svc);
-            let snap = snapshot_inner(&svc);
-            emit_snapshot(sink, &snap);
+            rollback_join_and_emit(sink).await;
             bail!("连接联机中心失败\n{e}");
         }
     };
@@ -152,10 +158,7 @@ async fn negotiate_guest_session(
         .await
         .map_err(common_err_ctx!("获取服务器端口失败"))?;
     if port_resp.status != 0 || port_resp.body.len() != 2 {
-        let mut svc = SERVICE.lock().await;
-        rollback_join(&mut svc);
-        let snap = snapshot_inner(&svc);
-        emit_snapshot(sink, &snap);
+        rollback_join_and_emit(sink).await;
         return Err("服务器未启动\n请让主机先在游戏里开启局域网世界".to_string());
     }
     let game_port = u16::from_be_bytes([port_resp.body[0], port_resp.body[1]]);
@@ -366,15 +369,32 @@ async fn discover_center(session: &EasyTierSession, gen: u64) -> Option<(Ipv4Add
     None
 }
 
-/// 回滚 guest 加入（失败时清理会话/广播器）。
-fn rollback_join(svc: &mut OnlineServiceInner) {
+/// 回滚加入流程（锁内、非阻塞）：递增代际、摘出会话与广播器、复位状态，
+/// 返回待停止的会话。
+///
+/// `EasyTierSession::stop` 是秒级操作，故**不在这里**执行——原实现在持锁时
+/// `block_on(stop)`，会把 status()/stop() 一起卡住（UI 冻结）。调用方在锁外停。
+fn rollback_join(svc: &mut OnlineServiceInner) -> Option<EasyTierSession> {
     svc.generation += 1;
-    if let Some(s) = svc.session.take() {
-        tauri::async_runtime::block_on(s.stop());
-    }
+    let session = svc.session.take();
     svc.advertiser = None;
     svc.status = OnlineStatus::Idle;
     svc.room = None;
     svc.profiles = None;
     svc.scaffold_port = None;
+    session
+}
+
+/// 回滚加入流程：锁内复位状态 + 广播快照，锁外停会话。
+async fn rollback_join_and_emit(sink: &dyn EventSink) {
+    let session = {
+        let mut svc = SERVICE.lock().await;
+        let session = rollback_join(&mut svc);
+        let snap = snapshot_inner(&svc);
+        emit_snapshot(sink, &snap);
+        session
+    };
+    if let Some(s) = session {
+        s.stop().await;
+    }
 }
