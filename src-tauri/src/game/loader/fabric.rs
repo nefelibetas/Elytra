@@ -21,7 +21,7 @@ async fn install_loader_via_profile(
     ctx: InstallCtx<'_>,
 ) -> Result<(), String> {
     let VersionTarget { dir_name, vdir } = target;
-    let InstallCtx { config, pc, hook, .. } = ctx;
+    let InstallCtx { config, pc, hook, cancel, .. } = ctx;
     let mc = config.minecraft_dir_abs();
 
     // profile 逐源回退：官方 maven 在国内网络常不可达，镜像提供同一路径
@@ -78,7 +78,7 @@ async fn install_loader_via_profile(
         &sources,
         None, // loader 安装内库下载不走本地运行时复用（run_task 主流程才探测复用根）
         &pc_lib,
-        None, // fabric 安装无取消检查（下载循环由 read_timeout 兜底）
+        Some(cancel),
     )
     .await
     .map_err(|e| format!("下载库失败:\n{}", e.join("\n")))?;

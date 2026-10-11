@@ -54,6 +54,7 @@ async fn download_optifabric(
     mc_version: &str,
     mods_dir: &std::path::Path,
     pc: &progress::ProgressCounters,
+    cancel: &std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
     // 1. 项目 ID（slug 查，避免硬编码 ID 随项目迁移失效）
     let search = community::curseforge_get(
@@ -94,12 +95,23 @@ async fn download_optifabric(
     // CurseForge 文件条目自带 sha1，用它校验（此前丢弃 → 镜像/CDN 截断内容会被静默接受）
     let sha1 = sha1.unwrap_or_default();
     if sha1.is_empty() {
-        fetcher::fetch_bounded(&[download_url], &dest, Some(pc.step_progress()))
-            .await
-            .map_err(common_err_ctx!("下载 OptiFabric 失败"))?;
+        fetcher::fetch_bounded_c(
+            &[download_url],
+            &dest,
+            Some(pc.step_progress()),
+            Some(cancel),
+        )
+        .await
+        .map_err(common_err_ctx!("下载 OptiFabric 失败"))?;
     } else {
-        fetcher::fetch_verified(&[download_url], &dest, Some(pc.step_progress()), &sha1)
-            .await
+        fetcher::fetch_verified_c(
+            &[download_url],
+            &dest,
+            Some(pc.step_progress()),
+            &sha1,
+            Some(cancel),
+        )
+        .await
             .map_err(common_err_ctx!("下载 OptiFabric 失败"))?;
     }
     Ok(())
@@ -146,7 +158,7 @@ pub async fn install_optifine(
     ctx: InstallCtx<'_>,
 ) -> Result<(), String> {
     let VersionTarget { dir_name, vdir } = target;
-    let InstallCtx { config, pc, .. } = ctx;
+    let InstallCtx { config, pc, cancel, .. } = ctx;
     let config = config.clone();
     let source = config
         .file_primary_source()
@@ -201,7 +213,7 @@ pub async fn install_optifine(
             // 旧实现无条件覆盖 minimal json，会把 forge 生成的 json 顶掉。
         }
         OptifineMode::FabricLike => {
-            download_optifabric(mc_version, &vdir.join("mods"), pc).await?;
+            download_optifabric(mc_version, &vdir.join("mods"), pc, cancel).await?;
         }
     }
 

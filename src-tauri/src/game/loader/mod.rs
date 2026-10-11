@@ -30,5 +30,5 @@ pub use hook::{LoaderEvent, LoaderHook};
 pub use neoforge::install_neoforge;
 pub use optifine::{install_optifine, OptifineMode};
 pub(crate) use shared::{
-    expand_inheritance, merge_loader_profile, processor_outputs_are_current, run_installer_command,
+    expand_inheritance, merge_loader_profile, run_installer_command,
 };

@@ -35,6 +35,7 @@ pub(super) async fn download_neoforge_universal(
     uni: &serde_json::Value,
     lib_dir: &Path,
     config: &DownloaderConfig,
+    cancel: &std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
     let name = uni["name"].as_str().ok_or("NeoForge universal 坐标缺失")?;
     let parts: Vec<&str> = name.split(':').collect();
@@ -76,11 +77,11 @@ pub(super) async fn download_neoforge_universal(
         std::fs::create_dir_all(parent).map_err(common_err_ctx!("创建目录失败"))?;
     }
     if sha1.is_empty() {
-        fetcher::fetch_fallback(&urls, &dest, None::<fn(u64, u64)>)
+        fetcher::fetch_fallback_c(&urls, &dest, None::<fn(u64, u64)>, Some(cancel))
             .await
             .map_err(common_err_ctx!("下载 NeoForge universal 失败"))?;
     } else {
-        fetcher::fetch_verified(&urls, &dest, None::<fn(u64, u64)>, sha1)
+        fetcher::fetch_verified_c(&urls, &dest, None::<fn(u64, u64)>, sha1, Some(cancel))
             .await
             .map_err(common_err_ctx!("下载 NeoForge universal 失败"))?;
     }
@@ -125,7 +126,7 @@ pub(super) async fn extract_neoforge_client(
     //    数十秒 JVM 开销；半成品/截断文件不算完好，会被重跑覆盖（此前用"存在且 ≥1MB"
     //    粗校验，中途失败的半成品会被误判为已完成并永久跳过）。
     let patched = processors::output_path(&profile, "PATCHED", lib_dir, mc_dir)?;
-    if intact_archive(&patched) {
+    if processors::intact_archive(&patched) {
         return Ok(());
     }
 
@@ -145,7 +146,7 @@ pub(super) async fn extract_neoforge_client(
     };
     processors::run_client_processors(&profile, &pctx).await?;
 
-    if !intact_archive(&patched) {
+    if !processors::intact_archive(&patched) {
         bail!(
             "NeoForge 安装链执行完毕但未生成客户端\n{}",
             patched.display()
@@ -154,13 +155,4 @@ pub(super) async fn extract_neoforge_client(
     Ok(())
 }
 
-/// 产物是否可信：存在、≥1MB 且能被当作 zip 打开。
-fn intact_archive(p: &Path) -> bool {
-    if !p.metadata().map(|m| m.len() >= 1_000_000).unwrap_or(false) {
-        return false;
-    }
-    std::fs::File::open(p)
-        .ok()
-        .and_then(|f| zip::ZipArchive::new(f).ok())
-        .is_some()
-}
+

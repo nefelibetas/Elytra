@@ -1,7 +1,6 @@
 //! ModLoader 安装的公共纯函数：profile 合并 / 继承展开 / 幂等判定 / 安装器进程管理。
 //! 被 fabric（profile 式）、forge / neoforge（installer 式）与 optifine 共用。
 
-use std::path::Path;
 use std::process::Output;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -9,7 +8,6 @@ use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio::process::Child;
 
-use crate::downloader::hash::file_sha1_matches;
 
 fn maven_path(name: &str) -> String {
     let parts: Vec<&str> = name.split(':').collect();
@@ -265,19 +263,6 @@ pub(crate) fn expand_inheritance(
     Ok(merged)
 }
 
-/// 声明式处理器输出校验（Forge/NeoForge 安装幂等）：
-/// 运行 Java 补丁工具**之前**判定"输出是否已是最新"，全部命中则跳过 JVM 调用——
-/// 重装/修复场景不再白白跑 binarypatcher/installertools（数秒～数十秒 + 杀软误报风险）。
-/// - 期望 sha1 已知（Forge：version.json 的 `forge:{ver}:client` 库 sha1）→ 存在且 sha1 匹配；
-/// - 期望 sha1 未知（NeoForge patched jar 无公开 hash）→ 存在且体积 ≥1MB 粗校验（对齐旧行为，
-///   部分写入的残留不会误判）。
-pub(crate) fn processor_outputs_are_current(outputs: &[(&Path, Option<&str>)]) -> bool {
-    outputs.iter().all(|(p, sha1)| match sha1 {
-        Some(h) => file_sha1_matches(p, h),
-        None => p.metadata().map(|m| m.len() >= 1_000_000).unwrap_or(false),
-    })
-}
-
 /// 运行安装器 Java 工具并收集输出（stdout/stderr 完整返回），轮询取消标志：
 /// cancel 置位时 kill 子进程——用户取消任务后 binarypatcher/installertools 不再白跑。
 /// 使用 tokio::select! 同时等待进程退出与排空输出 pipe（避免大输出撑满 pipe 阻塞子进程）。
@@ -321,7 +306,6 @@ pub(crate) async fn run_installer_command(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::downloader::hash::sha1_hex;
 
     const PARENT: &str = r#"{
         "id": "26.2",
@@ -333,36 +317,6 @@ mod tests {
         },
         "type": "release"
     }"#;
-
-    #[test]
-    fn processor_outputs_are_current_sha1_or_size() {
-        let dir = std::env::temp_dir().join("elytra_test_processor_outputs");
-        std::fs::create_dir_all(&dir).unwrap();
-        let p = dir.join("out.jar");
-        std::fs::write(&p, b"data").unwrap();
-        // sha1 已知：匹配 → 最新（跳过运行）；不匹配 → 需重跑
-        let sha = sha1_hex(b"data");
-        assert!(processor_outputs_are_current(&[(&p, Some(&sha))]));
-        assert!(
-            !processor_outputs_are_current(&[(
-                &p,
-                Some("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
-            )]),
-            "sha1 不匹配必须判定需重跑"
-        );
-        // 无 sha1 来源：体积阈值粗校验（≥1MB 视为就绪，对齐 NeoForge 旧行为）
-        assert!(
-            !processor_outputs_are_current(&[(&p, None)]),
-            "不足 1MB 不应判定就绪"
-        );
-        std::fs::write(&p, vec![0u8; 1_100_000]).unwrap();
-        assert!(processor_outputs_are_current(&[(&p, None)]));
-        // 文件缺失 → 需重跑（两种校验都失败）
-        let missing = dir.join("missing.jar");
-        assert!(!processor_outputs_are_current(&[(&missing, Some(&sha))]));
-        assert!(!processor_outputs_are_current(&[(&missing, None)]));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
 
     #[test]
     fn maven_path_full_coordinate() {

@@ -141,6 +141,23 @@ pub fn read_profile_from_installer(installer: &Path) -> Result<String, String> {
     Ok(text)
 }
 
+/// 由已解析的 JSON 值构造 profile（Forge 分支拿到的就是 `serde_json::Value`）。
+pub fn parse_profile_value(value: &serde_json::Value) -> Result<InstallProfile, String> {
+    serde_json::from_value(value.clone()).map_err(|e| format!("解析 install_profile 失败\n{e}"))
+}
+
+/// 产物是否可信：存在、≥1MB 且能被当作 zip 打开。
+/// 半成品/截断文件不算（否则中途失败的产物会被当成"已完成"永久跳过）。
+pub fn intact_archive(p: &Path) -> bool {
+    if !p.metadata().map(|m| m.len() >= 1_000_000).unwrap_or(false) {
+        return false;
+    }
+    std::fs::File::open(p)
+        .ok()
+        .and_then(|f| zip::ZipArchive::new(f).ok())
+        .is_some()
+}
+
 /// 取某侧可用的 data 值。
 fn data_value<'a>(profile: &'a InstallProfile, key: &str, side: &str) -> Option<&'a str> {
     profile.data.get(key)?.for_side(side)
@@ -682,6 +699,108 @@ mod tests {
             .expect("处理器链执行失败");
 
         // 4) 产物必须存在、够大、且是完整 zip/jar
+        let size = patched
+            .metadata()
+            .unwrap_or_else(|e| panic!("未生成 PATCHED 产物（{}）：{e}", patched.display()))
+            .len();
+        assert!(size > 1_000_000, "产物过小：{size}");
+        zip::ZipArchive::new(std::fs::File::open(&patched).expect("打开产物失败"))
+            .expect("产物应是完整 zip/jar");
+        eprintln!("✅ 已生成 {}（{size} 字节）", patched.display());
+    }
+
+    /// Forge 链端到端（**真实网络 + 真实 JDK**，默认 `#[ignore]`）。
+    ///
+    /// ```text
+    /// JAVA_HOME=<jdk> cargo test --lib -- --ignored forge_chain_end_to_end --nocapture
+    /// ```
+    ///
+    /// 覆盖：Forge 分支切到 processors 引擎后，能按 installer 声明（1.20.1-47.1.0 声明的是
+    /// binarypatcher **1.1.1**/srgutils 0.4.x，而旧代码写死 1.3.4/0.6.6）跑完整条链并产出
+    /// `{PATCHED}`（`forge-<ver>-client.jar`）。
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn forge_chain_end_to_end() {
+        use crate::config::downloader::DownloaderConfig;
+        use crate::downloader::{fetcher, hash};
+        use crate::game::version::manifest::fetch_version_list;
+        use crate::game::version::meta::fetch_version_json_text;
+
+        const MC_VERSION: &str = "1.20.1";
+        const FORGE_VERSION: &str = "47.1.0";
+
+        let cfg = DownloaderConfig::default();
+        let root = std::env::temp_dir().join("elytra_e2e_forge");
+        let _ = std::fs::remove_dir_all(&root);
+        let mc_dir = root.join(".minecraft");
+        let lib_dir = mc_dir.join("libraries");
+        let work_dir = mc_dir.join(".elytra").join("tmp").join("loader");
+        std::fs::create_dir_all(&lib_dir).expect("创建 libraries 失败");
+
+        // 1) installer（官方 maven）
+        let installer = root.join(format!("forge-{MC_VERSION}-{FORGE_VERSION}-installer.jar"));
+        let source = cfg.file_primary_source().expect("无可用下载源");
+        let url = source.url(
+            &source.forge_installer_url,
+            &[("mc", MC_VERSION), ("ver", FORGE_VERSION)],
+        );
+        fetcher::fetch_fallback(&[url], &installer, None::<fn(u64, u64)>)
+            .await
+            .expect("下载 Forge installer 失败");
+
+        let profile = parse_profile(
+            &read_profile_from_installer(&installer).expect("读 install_profile 失败"),
+        )
+        .expect("解析 install_profile 失败");
+        assert!(!profile.processors.is_empty(), "该 installer 应声明 processors");
+        eprintln!("Forge installer 声明的处理器数：{}", profile.processors.len());
+
+        // 2) vanilla client.jar
+        let dir_name = format!("{MC_VERSION}-forge-{FORGE_VERSION}");
+        let vanilla = mc_dir
+            .join("versions")
+            .join(&dir_name)
+            .join(format!("{dir_name}.jar"));
+        std::fs::create_dir_all(vanilla.parent().unwrap()).unwrap();
+        let manifest = fetch_version_list(&cfg).await.expect("拉取版本清单失败");
+        let vurl = manifest
+            .versions
+            .iter()
+            .find(|v| v.id == MC_VERSION)
+            .expect("清单中找不到 1.20.1")
+            .url
+            .clone();
+        let vjson = fetch_version_json_text(&vurl, &cfg).await.expect("拉取版本 JSON 失败");
+        let v: serde_json::Value = serde_json::from_str(&vjson).expect("解析版本 JSON 失败");
+        let client = &v["downloads"]["client"];
+        let (curl, csha1) = (
+            client["url"].as_str().expect("缺少 client.url").to_string(),
+            client["sha1"].as_str().expect("缺少 client.sha1").to_string(),
+        );
+        if !hash::file_sha1_matches(&vanilla, &csha1) {
+            fetcher::fetch_verified(&[curl], &vanilla, None::<fn(u64, u64)>, &csha1)
+                .await
+                .expect("下载原版 client.jar 失败");
+        }
+
+        // 3) 跑声明链
+        let patched =
+            output_path(&profile, "PATCHED", &lib_dir, &mc_dir).expect("profile 缺少 {PATCHED}");
+        eprintln!("期望产物：{}", patched.display());
+        let cancel = Arc::new(AtomicBool::new(false));
+        let pctx = ProcessorCtx {
+            installer: &installer,
+            mc_dir: &mc_dir,
+            vanilla_jar: &vanilla,
+            lib_dir: &lib_dir,
+            work_dir: &work_dir,
+            config: &cfg,
+            cancel: &cancel,
+        };
+        run_client_processors(&profile, &pctx)
+            .await
+            .expect("Forge 处理器链执行失败");
+
         let size = patched
             .metadata()
             .unwrap_or_else(|e| panic!("未生成 PATCHED 产物（{}）：{e}", patched.display()))
