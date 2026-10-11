@@ -698,6 +698,59 @@ pub fn has_old_style_natives(version_json: &VersionJson) -> bool {
 /// 版本 native 库一致，避免每个版本在 natives/<版本id>/ 各解压一份（LWJGL 运行时解压产物约 16MB/份）。
 pub(crate) use crate::util::mc_version_from_dir as mc_version_of;
 
+/// natives 就绪标记的指纹：本次参与解压的旧式 native 库（名字 + 落地路径 + 提取规则）。
+///
+/// 顺序无关（排序后哈希）；任一库增删、换版本、改提取规则都会改变指纹 → 触发重建。
+fn natives_fingerprint(version_json: &VersionJson) -> String {
+    let mut parts: Vec<String> = version_json
+        .libraries
+        .iter()
+        .filter_map(|lib| {
+            let artifact = legacy_classifier_artifact(lib)?;
+            let extract = lib
+                .extract
+                .as_ref()
+                .map(|e| e.exclude.join(","))
+                .unwrap_or_default();
+            Some(format!("{}|{}|{}", lib.name, artifact.path, extract))
+        })
+        .collect();
+    parts.sort_unstable();
+    crate::downloader::hash::sha1_hex(parts.join("\n").as_bytes())
+}
+
+/// 清空目录内容（保留目录本身），用于 natives 集合变更时重建。
+fn clear_dir_contents(dir: &Path) -> Result<(), String> {
+    let entries = std::fs::read_dir(dir).map_err(common_err_ctx!("读取 natives 目录失败"))?;
+    for entry in entries {
+        let path = entry
+            .map_err(common_err_ctx!("读取 natives 目录项失败"))?
+            .path();
+        let res = if path.is_dir() {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+        if let Err(e) = res {
+            // 目录里可能残留游戏运行中占用的 .dll：明确指出是哪一项删不掉
+            return Err(format!("清理旧 natives 失败\n{}\n{e}", path.display()));
+        }
+    }
+    Ok(())
+}
+
+/// 原子写标记：先写临时文件再改名，避免半写内容被当成有效指纹。
+fn write_marker(marker: &Path, fingerprint: &str) -> Result<(), String> {
+    let tmp = marker.with_extension("tmp");
+    std::fs::write(&tmp, fingerprint).map_err(common_err_ctx!("写入 natives 标记失败"))?;
+    if marker.exists() {
+        // Windows 的 rename 不覆盖已存在文件；先删旧标记（删后崩溃 → 无标记 → 下次重建，安全）
+        std::fs::remove_file(marker).map_err(common_err_ctx!("清理旧 natives 标记失败"))?;
+    }
+    std::fs::rename(&tmp, marker).map_err(common_err_ctx!("提交 natives 标记失败"))?;
+    Ok(())
+}
+
 /// 确保 natives 目录就绪：所有版本都创建 `.minecraft/natives/<mc>/` 根目录
 /// （官方 arguments.jvm 的 SharedLibraryExtractPath 等参数指向它，LWJGL 需要目录存在）。
 /// 旧式版本（lwjgl 2.x）额外把 natives classifier JAR 解压到该目录。
@@ -713,13 +766,22 @@ pub fn ensure_old_style_natives(
         return Ok(());
     }
 
-    // 旧式：解压完成标记（.elytra-ready）存在 → 直接复用。
-    // 只查“目录非空”不可靠：上次解压中断会留下部分文件，误判为已就绪，
-    // 启动后缺原生库才暴露。marker 在全部解压成功后写入。
+    // 标记的语义是「**本版本**需要的 native 集合已就绪」，而不是「这个目录解压过」：
+    // natives 目录按 MC 版本共享（vanilla / Forge / OptiFine 同名一份），若换来的
+    // 版本 native 集合不同，旧标记会让新版本直接跳过解压 → 缺原生库
+    // （UnsatisfiedLibraryError，且报错完全指不到这里）。因此标记内容存指纹。
+    let fingerprint = natives_fingerprint(version_json);
     let ready_marker = natives_dir.join(NATIVES_READY_MARKER);
-    if ready_marker.exists() {
+    let marker_ok = std::fs::read_to_string(&ready_marker)
+        .map(|c| c.trim() == fingerprint)
+        .unwrap_or(false);
+    if marker_ok {
         return Ok(());
     }
+
+    // 指纹不一致（或旧版遗留的空标记）：清空目录再解压 —— 不清会留下别的版本集合
+    // 的旧 .dll，Windows 的 DLL 搜索顺序可能加载到旧的那份。
+    clear_dir_contents(natives_dir)?;
 
     let mut errors: Vec<String> = Vec::new();
     for lib in &version_json.libraries {
@@ -746,8 +808,7 @@ pub fn ensure_old_style_natives(
     }
 
     if errors.is_empty() {
-        std::fs::write(&ready_marker, "")
-            .map_err(common_err_ctx!("写入 natives 完成标记失败"))?;
+        write_marker(&ready_marker, &fingerprint)?;
         Ok(())
     } else {
         // 第一行为大类短句（dialog 正文显示），细节进复制区
@@ -1084,5 +1145,100 @@ mod tests {
 
         let empty = tempfile::tempdir().unwrap();
         assert!(resolve_client_jar(empty.path(), "v").is_none(), "无 jar 应返回 None");
+    }
+
+    /// 版本 JSON 构造器（旧式 native 库列表可变）。
+    fn natives_vj(libs_json: &str) -> VersionJson {
+        serde_json::from_str(&format!(
+            r#"{{
+                "id": "1.12.2",
+                "mainClass": "net.minecraft.client.main.Main",
+                "assets": "1.12",
+                "assetIndex": {{ "id": "1.12", "url": "x", "sha1": "y", "size": 1, "totalSize": 1 }},
+                "downloads": {{ "client": {{ "url": "x", "sha1": "y", "size": 1 }} }},
+                "arguments": {{ "game": [], "jvm": [] }},
+                "libraries": [{libs_json}],
+                "complianceLevel": 0,
+                "minimumLauncherVersion": 21,
+                "javaVersion": {{ "majorVersion": 8 }},
+                "releaseTime": "2021-11-30T00:00:00Z",
+                "time": "2021-11-30T00:00:00Z",
+                "type": "release"
+            }}"#
+        ))
+        .expect("构造版本 JSON 失败")
+    }
+
+    /// 旧式 native 库（natives 字段 + classifiers）。
+    fn legacy_native_lib(name: &str, path: &str) -> String {
+        format!(
+            r#"{{ "name": "{name}", "natives": {{ "windows": "natives-windows" }},
+                 "downloads": {{ "classifiers": {{ "natives-windows": {{ "path": "{path}", "url": "u", "sha1": "s", "size": 1 }} }} }} }}"#
+        )
+    }
+
+    /// 指纹：native 集合变化必须改变；与顺序无关。
+    #[test]
+    fn natives_fingerprint_tracks_native_set() {
+        let a = legacy_native_lib("org.lwjgl.lwjgl:lwjgl-platform:2.9.4", "n1.jar");
+        let b = legacy_native_lib("org.lwjgl.lwjgl:jinput-platform:2.0.5", "n2.jar");
+        let f1 = natives_fingerprint(&natives_vj(&a));
+        let f2 = natives_fingerprint(&natives_vj(&format!("{a},{b}")));
+        assert_ne!(f1, f2, "增加 native 库必须改变指纹（否则新版本会跳过解压）");
+        assert_eq!(
+            f2,
+            natives_fingerprint(&natives_vj(&format!("{b},{a}"))),
+            "指纹应与库顺序无关"
+        );
+        assert_eq!(f1, natives_fingerprint(&natives_vj(&a)), "同一集合指纹稳定");
+    }
+
+    /// 标记语义回归：同 MC 版本换了 native 集合必须**重新解压**，而不是看到旧标记就跳过。
+    ///
+    /// 此前标记是空文件、只看"存在与否"，而 natives 目录按 MC 版本共享
+    /// （vanilla / Forge / OptiFine 同名一份）→ 新版本直接跳过解压 → 缺原生库。
+    #[test]
+    fn natives_marker_rebuilds_when_native_set_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib_dir = dir.path().join("libraries");
+        let natives_dir = dir.path().join("natives").join("1.12.2");
+        std::fs::create_dir_all(&lib_dir).unwrap();
+
+        let mk_jar = |rel: &str, file: &str| {
+            let p = lib_dir.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            let mut z = zip::ZipWriter::new(std::fs::File::create(&p).unwrap());
+            z.start_file(file, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            std::io::Write::write_all(&mut z, b"x").unwrap();
+            z.finish().unwrap();
+        };
+        mk_jar("n1.jar", "a.dll");
+        mk_jar("n2.jar", "b.dll");
+
+        let lib1 = legacy_native_lib("org.lwjgl.lwjgl:lwjgl-platform:2.9.4", "n1.jar");
+        let lib2 = legacy_native_lib("org.lwjgl.lwjgl:jinput-platform:2.0.5", "n2.jar");
+
+        // 第一次：只解出 a.dll，并写指纹标记
+        ensure_old_style_natives(&natives_vj(&lib1), &lib_dir, &natives_dir).unwrap();
+        assert!(natives_dir.join("a.dll").is_file(), "应解出 a.dll");
+        assert!(!natives_dir.join("b.dll").exists());
+
+        // 同指纹 → 走复用快路径：删掉 a.dll 也不会被补回来（证明没重复解压）
+        std::fs::remove_file(natives_dir.join("a.dll")).unwrap();
+        ensure_old_style_natives(&natives_vj(&lib1), &lib_dir, &natives_dir).unwrap();
+        assert!(
+            !natives_dir.join("a.dll").exists(),
+            "指纹一致时应复用，不应重新解压"
+        );
+
+        // 指纹变化 → 清空重建：a.dll 与 b.dll 都在
+        ensure_old_style_natives(&natives_vj(&format!("{lib1},{lib2}")), &lib_dir, &natives_dir)
+            .unwrap();
+        assert!(natives_dir.join("a.dll").is_file(), "重建后 a.dll 应回来");
+        assert!(
+            natives_dir.join("b.dll").is_file(),
+            "回归：native 集合变化时必须重新解压，否则缺 b.dll"
+        );
     }
 }
