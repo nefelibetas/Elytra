@@ -54,11 +54,12 @@ pnpm dev            # 仅 vite dev server（:1420 strictPort）
 pnpm build          # vue-tsc --noEmit（全量类型检查）+ vite build → dist/
 cd src-tauri && cargo check              # Rust 编译检查
 cd src-tauri && cargo clippy --lib       # Rust lint（保持零代码警告）
-cd src-tauri && cargo test --lib -- --test-threads=1   # 单元测试（当前 298 passed + 6 ignored（OptiFabric 真实下载 + NeoForge 21.x/26.x 与 Forge 1.20.1/1.12.2/1.7.10 安装链端到端）；串行防 persist/网络竞争）
+cd src-tauri && cargo test --lib -- --test-threads=1   # 单元测试（当前 301 passed + 8 ignored（OptiFabric 真实下载 + NeoForge 21.x/26.x 与 Forge 1.20.1/1.12.2/1.7.10 安装链端到端 + 安装矩阵 2 个：loader 9 形态 / OptiFine 5 组合）；串行防 persist/网络竞争）
 cd src-tauri && cargo run --bin gen_ts    # 生成前端 TS 类型 → src/types/（改 Rust 数据结构后必跑；不在测试里生成）
 cd src-tauri && cargo test --test online_diag          # 联机集成测试（host/guest 双实例回环，走真实 easytier）
 cd src-tauri && cargo test --test tool_download        # 工具箱下载器集成测试（本地 HTTP 服务驱动完整链路：分段/暂停续传/取消/回退）
 cd src-tauri && cargo test --test e2e_download -- --ignored   # run_task 端到端（真实网络：取消路径秒级 / 完整下载分钟级）
+cd src-tauri && JAVA_HOME=<jdk> cargo test --lib -- --ignored --test-threads=1 matrix   # ModLoader 安装矩阵（loader 9 形态 + OptiFine 5 组合；报告落 target/e2e-loader/report-*.md，单跑某几条用 ELY_E2E_CASES=名字,名字）
 npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 ```
 
@@ -84,6 +85,8 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 - **分层不变量**：`downloader/` 是纯传输层，不得 `use crate::{task, launcher, jdk, game}`；特化场景（版本装配 / 资源 / ModLoader / 社区 / 整合包 / 更新）一律放 `game/`
 - **下载**：`fetch_with`（3 次重试+退避）/`fetch_fallback`（多源）/`fetch_verified(_c)`（逐源 sha1 校验，空 sha1 跳过）；`_c` 变体带取消（每块检查，Cancelled 立即传播不重试）；批量场景走 `downloader::batch::run`（`BatchItem` + 并发上限 + 复用降级 + 路径互斥）；全局 `http()` client 带 2s connect + 30s read 超时 + 系统代理 + 镜像并发信号量
 - **版本目录**：`versions/{id}` 冲突时 `{id}_{n}`；目录内 jar/json 文件名可能 ≠ 目录名，一律扫描兜底
+- **serde_json 的字符串索引在"读"时也会写入**：`value["missing"]` 会把 `"missing": null` 插进对象。凡"只看一眼"的探测一律 `get`/`get_mut`，只有确实要赋值时才用索引。踩过的坑：`merged["arguments"].as_object_mut()` 让老版本（1.7.10/1.8.9）合并出的版本 JSON 多出 `"arguments": null`，读取端 `VersionJson.arguments`（老版本本就没有该字段）反序列化直接失败——`无效类型 null`。故该字段为 `Option<Arguments>` + `jvm_args()/game_args()` 访问口（`#[serde(default)]` 只兜"缺失"，兜不住显式 null）
+- **loader 库条目的两种形态都要能进 classpath**：老式 profile/spec-0 条目标 `{name, url}`、spec-0 的 `versionInfo.libraries` 甚至只有 `{name}`，都没有 `downloads.artifact`（classpath 与缺库检查都从 `artifact.path` 取路径 → 缺失即静默丢出 classpath）。`shared::normalize_legacy_libraries` 按坐标补 path/url（无 url 走 `MOJANG_LIBRARIES` 兜底）；**只有 `classifiers` 的 natives 条目绝不合成普通构件**（实测会去下 CDN 上不存在的 `*-platform-x.y.jar` → 404）
 - **外部输入的落盘路径**一律过 `util::safe_relative_path`（拒绝绝对路径 / `..` / 空段），sha1 前两位子目录走 `util::sha1_sub_dir`（不裸切 `hash[..2]`）
 
 ### 前端 Vue/TS
@@ -149,7 +152,7 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 
 ## Testing & QA
 
-- **无前端测试**；Rust 侧 298 个单元测试，全部内嵌各模块 `#[cfg(test)] mod tests`（含测试与实现同文件的约定），`cargo test --lib -- --test-threads=1` 运行；集成测试 `tests/online_diag.rs`（联机全链路：host/guest 双实例回环 + easytier 日志落盘）与 `tests/tool_download.rs`（工具箱下载器全链路：本地 HTTP 服务驱动入队 / 分段 / 暂停续传 / 取消 / 回退，5 用例，含 1 个真实网络 `#[ignore]`）
+- **无前端测试**；Rust 侧 301 个单元测试，全部内嵌各模块 `#[cfg(test)] mod tests`（含测试与实现同文件的约定），`cargo test --lib -- --test-threads=1` 运行；集成测试 `tests/online_diag.rs`（联机全链路：host/guest 双实例回环 + easytier 日志落盘）与 `tests/tool_download.rs`（工具箱下载器全链路：本地 HTTP 服务驱动入队 / 分段 / 暂停续传 / 取消 / 回退，5 用例，含 1 个真实网络 `#[ignore]`）
 - **单元测试只测纯函数**：PKCE、URL 组装、启动命令构建（`build_launch_command` + `minimal_version_json()` 助手）、离线皮肤 UUID 算法（与 Java `UUID.hashCode() & 1` 一致性）、内存分配公式、util（URL 文件名/版本目录解析/`sha1_sub_dir`/`safe_relative_path`）、maven XML 解析与语义化排序、Mod 双源搜索、修复步骤规划、persist 读写回环、secrets DPAPI、store 快照/恢复、**`store_ops_from_runtime_worker_no_panic`（worker 线程 block_on 回归）**、**`count_assets_all_end_to_end`（真实索引 + 5057 项多线程扫描，网络）**、**`find_java_home_finds_nested_bin`（Azul 布局幂等）**、`downloader/fetcher` 的取消/换源/校验/重定向/并发上限、`downloader/segmented` 的切分覆盖/小文件不分段/分段写一致性/不支持 Range 回退/段级与段内续传/陈旧位图作废、loader 的 profile 合并与继承展开、房间码解析/广播回环（online）、**`task/emit` 的派发器（进度帧按 `(事件, 任务)` 合并 / 低频事件 FIFO / 同任务帧严格保序 / 等待决策帧不被进度帧顶替）**、`task/progress` 的 `StepRef::percent`（文件口径优先 / 无分母或步骤结束返回 `None`）与整合包 `Counters` 的进入/离开步骤、**步骤索引↔名字对齐**（整合包 `step_index_points_at_matching_names`：Online/Local 两种前缀、`replace_steps_keeps_done_steps_at_100`：已完成步骤不得被重置；修复 `test_repair_indices_align_with_steps`：穷举 16 种缺失组合）
 - **断言风格**：`assert_eq!` 精确值为主（argv 位置、公式值、错误码消息）；行为不变量用 `assert!` + 中文 message
 - **平台隔离**：Windows 专属逻辑（BAT 脚本渲染、DPAPI、注册表代理）用 `#[cfg(target_os = "windows")]`
@@ -157,6 +160,8 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 - **安全命令**：`cargo test --lib -- --test-threads=1`——日常验证用这个；**并行跑会偶发竞争**（persist 共用 Settings.toml + 网络测试抖动），必须串行
 - **clippy 红线**：`cargo clippy --lib` 保持零代码警告（`too_many_arguments` 已通过上下文结构体全部消除；仅余 `type_complexity` ×2 与 `upper_case_acronyms` ×3（Win32 类型），均为显式 allow）
 - **端到端测试**：`tests/e2e_download.rs`（`#[ignore]`，需真实网络）驱动 `run_task`（下载主流程）——任务层的事件出口已抽象为 `task::emit::EventSink`（`impl<R: Runtime> EventSink for AppHandle<R>`），测试注入记录型实现即可跑完整流程且不触碰 IPC。两个用例分别覆盖「阶段 A/B 真实执行 + 阶段 C 取消收口」与「真实完整下载 Minecraft 1.20.1」；另有第三个用例 `spawn_task_with_sink_registers_and_runs`（**不需要网络**）从 `spawn_task_with_sink` 入口进入，覆盖「注册 → 写恢复快照 → 执行闭包」，补上直接调 `run_task` 绕过入口的空缺。**注意**：须用 `#[tokio::test(flavor = "multi_thread")]` —— 终态收口经 `store::update_status` 走 `util::block_on` 的 `block_in_place` 分支，current_thread runtime 下会 panic（与生产 tauri runtime 一致）。
+- **ModLoader 安装矩阵**（`game/loader/mod.rs` 的 `#[cfg(test)] mod matrix`，2 个 `#[ignore]` 用例）：直接调安装入口（`install_loader` / `install_optifine`，均不依赖 `AppHandle`），真实网络 + 真实 JDK 跑「形态」而非「版本」——loader 侧 9 条（Fabric / Quilt / Forge 1.7.10·1.8.9 spec-0 / Forge 1.12.2 legacy-maven / Forge 1.16.5 processors+maven / Forge 1.20.1 / NeoForge 20.4.237 / NeoForge 1.21.1）+ OptiFine 侧 5 条（1.20.1·1.12.2 的纯净版 / Forge 组合 / Fabric 组合，后者含 CurseForge 取 OptiFabric 桥接）。每个用例除产物清单外，还把安装出的版本 JSON **按真实模型解析并构造启动命令**（检查 classpath 项数、`${}` 占位符残留、loader 本体是否在 `-cp`/`--module-path`、natives 标志）——`arguments: null`、loader 不进 classpath 这两类问题就是这一步抓到的。结果同时落 `target/e2e-loader/<用例>.json` 与 `report-loader.md` / `report-optifine.md`（可直接当测试记录）。
+
 - **工具箱下载器测试**：`tests/tool_download.rs` 走本地 HTTP 服务（可控 206/200 + 按块节流），验证入队调度、分段写一致性、暂停保留位图、续传完成、取消清理、不支持 Range 回退。`tooldl` 域同样只依赖 `task::EventSink` 而非 `AppHandle`（`enqueue`/`resume` 的第一个参数是 `Arc<dyn EventSink>`），故无需 mock app 即可驱动。用例共享进程级全局（注册表 / 并发上限），文件内有 `TEST_LOCK` 串行闸，默认可与并行测试框架共存。
 
 ## Known Debt（已知遗留，待处理）
