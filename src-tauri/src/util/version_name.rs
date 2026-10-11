@@ -73,7 +73,11 @@ pub fn parse_java_major(version: &str) -> Option<u32> {
 /// 特征名匹配优先级 fabric → neoforge → forge → optifine（neoforge 在 forge 前，
 /// 避免 "neoforged" 子串误匹配）；无特征视为原版。
 pub fn infer_loader_from_json(text: &str) -> String {
-    if text.contains("net.fabricmc") {
+    // quilt 必须最先判：Quilt 的 version json 同时含 net.fabricmc（sponge-mixin / intermediary）
+    // 与 org.quiltmc，若先判 fabric 会把 Quilt 版本误认成 Fabric（图标/徽章/loader 版本都错）
+    if text.contains("org.quiltmc") {
+        "quilt".into()
+    } else if text.contains("net.fabricmc") {
         "fabric".into()
     } else if text.contains("net.neoforged") {
         "neoforge".into()
@@ -169,6 +173,14 @@ mod tests {
         assert_eq!(
             infer_loader_from_json(r#"{"mainClass":"net.minecraft.client.main.Main"}"#),
             "vanilla"
+        );
+        // 回归：Quilt 的 json 同时含 net.fabricmc（sponge-mixin / intermediary）与 org.quiltmc，
+        // 必须判为 quilt 而不是 fabric
+        assert_eq!(
+            infer_loader_from_json(
+                r#"{"mainClass":"org.quiltmc.loader.impl.launch.knot.KnotClient","libraries":[{"name":"org.quiltmc:quilt-loader:0.23.1"},{"name":"net.fabricmc:sponge-mixin:0.12.5"}]}"#
+            ),
+            "quilt"
         );
     }
 }
