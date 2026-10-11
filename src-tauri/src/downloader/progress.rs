@@ -22,6 +22,12 @@ pub struct ProgressCounters {
     pub step_bytes: Arc<AtomicU64>,
     /// 本步骤总字节（进度条步骤分母；下载前 `store` 一次）
     pub step_total: Arc<AtomicU64>,
+    /// 本步骤**待下载文件数**（批量步骤的进度分母）。
+    ///
+    /// 与 `step_total` 分开的原因：后者是**逐文件**语义（每次回调写入当前文件的
+    /// content-length），批量步骤用它当分母会得到"下载进度 / 单个文件大小"的
+    /// 无意义比值。批量辅助函数在起跑前写入一次待下载条目数，心跳据此算步骤百分比。
+    pub step_files_total: Arc<AtomicU32>,
 }
 
 impl ProgressCounters {

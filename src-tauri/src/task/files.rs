@@ -289,6 +289,8 @@ pub async fn run_files_task(
             total_files,
             bytes: Arc::clone(&counts.total_bytes),
             est_total_bytes: Arc::clone(&counts.est_bytes),
+            // 该任务的步骤级进度由下载回调节流写入（见 file_progress_callback）
+            step: None,
         },
     );
     let ctx = FilesCtx {

@@ -149,16 +149,25 @@ pub async fn process_natives(
 ) -> Result<(), Vec<String>> {
     let mut errors: Vec<String> = Vec::new();
 
+    // 先单次遍历筛出候选：既作为进度分母（任务层心跳据此算该步骤百分比），
+    // 也让"跳过条件"只有一处实现（此前只有执行循环，改条件时容易与分母漂移）。
+    let mut pending: Vec<(&Library, &Artifact)> = Vec::new();
     for lib in libraries {
         // 仅旧式（natives 字段 + classifiers）参与；新式 natives 作为普通库由 should_download 覆盖
         let Some(artifact) = legacy_classifier_artifact(lib) else {
             continue;
         };
-
         let dest = libraries_dir.join(&artifact.path);
         if dest.exists() && file_sha1_matches(&dest, &artifact.sha1) {
             continue;
         }
+        pending.push((lib, artifact));
+    }
+    pc.step_files_total
+        .store(pending.len() as u32, Ordering::Relaxed);
+
+    for (lib, artifact) in pending {
+        let dest = libraries_dir.join(&artifact.path);
         if let Some(parent) = dest.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
                 errors.push(format!("创建目录失败\n{}: {}", lib.name, e));

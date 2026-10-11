@@ -12,7 +12,7 @@
 // 字节计数仅供速度/ETA 展示。
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -35,7 +35,7 @@ use crate::persist;
 use crate::task::progress::{
     cancelled, set_cancelled, set_done, set_error, set_phase, set_total, spawn_heartbeat,
     step_done,
-    HeartbeatStats,
+    HeartbeatStats, StepRef,
 };
 use crate::task::{global, update_and_emit, EventSink, StepInfo, StepStatus, TaskProgress, TaskStatus};
 use crate::util::safe_relative_path;
@@ -105,6 +105,17 @@ struct Counters {
     est_bytes: Arc<AtomicU64>,
     /// 总步骤数
     total_steps: u32,
+    /// 当前运行步骤索引（`usize::MAX` = 无）——心跳据此填 `steps[idx].progress`。
+    /// 各阶段长步骤（游戏主文件、依赖库、资源文件）此前无人写百分比，
+    /// 卡片会一直显示 0% 直到该步完成。
+    step_idx: Arc<AtomicUsize>,
+    /// 当前步骤的字节进度（分子/分母）：单文件步骤（游戏主文件）用。
+    step_bytes: Arc<AtomicU64>,
+    step_total: Arc<AtomicU64>,
+    /// 当前步骤的文件数进度（分子/分母）：批量步骤（依赖库/资源文件）用，
+    /// 分母由下载辅助函数在起跑前写入 `ProgressCounters::step_files_total`。
+    step_files: Arc<AtomicU32>,
+    step_files_total: Arc<AtomicU32>,
 }
 
 impl Counters {
@@ -114,23 +125,65 @@ impl Counters {
             bytes: Arc::new(AtomicU64::new(0)),
             est_bytes: Arc::new(AtomicU64::new(est_bytes)),
             total_steps,
+            step_idx: Arc::new(AtomicUsize::new(usize::MAX)),
+            step_bytes: Arc::new(AtomicU64::new(0)),
+            step_total: Arc::new(AtomicU64::new(0)),
+            step_files: Arc::new(AtomicU32::new(0)),
+            step_files_total: Arc::new(AtomicU32::new(0)),
         }
     }
 
+    /// 进入字节型步骤（单文件、总量已知）并重置该步骤计数。
+    fn enter_step_bytes(&self, idx: usize, total: u64) {
+        self.step_files_total.store(0, Ordering::Relaxed);
+        self.step_bytes.store(0, Ordering::Relaxed);
+        self.step_total.store(total, Ordering::Relaxed);
+        self.step_idx.store(idx, Ordering::Relaxed);
+    }
+
+    /// 进入文件数型步骤（批量下载）并重置该步骤计数；
+    /// 分母由下载辅助函数随后写入 `step_files_total`。
+    fn enter_step_files(&self, idx: usize) {
+        self.step_files.store(0, Ordering::Relaxed);
+        self.step_files_total.store(0, Ordering::Relaxed);
+        self.step_total.store(0, Ordering::Relaxed);
+        self.step_idx.store(idx, Ordering::Relaxed);
+    }
+
+    /// 离开当前步骤（步骤结束后不再刷新其百分比）。
+    fn leave_step(&self) {
+        self.step_idx.store(usize::MAX, Ordering::Relaxed);
+    }
+
+    /// 心跳用的分步进度视图（共享同一组原子）。
+    fn step_ref(&self) -> StepRef {
+        StepRef {
+            idx: Arc::clone(&self.step_idx),
+            step_bytes: Arc::clone(&self.step_bytes),
+            step_total: Arc::clone(&self.step_total),
+            files: Arc::clone(&self.step_files),
+            files_total: Arc::clone(&self.step_files_total),
+        }
+    }
+
+    /// 下载辅助函数的计数器视图：整任务字节与**当前步骤**的计数共享同一组原子
+    /// （此前每次调用新建，步骤计数无人读取，进度条因此只能靠步骤数公式）。
     fn counter(&self) -> ProgressCounters {
         ProgressCounters {
-            files: Arc::new(AtomicU32::new(0)),
+            files: Arc::clone(&self.step_files),
             bytes: Arc::clone(&self.bytes),
-            step_bytes: Arc::new(AtomicU64::new(0)),
-            step_total: Arc::new(AtomicU64::new(0)),
+            step_bytes: Arc::clone(&self.step_bytes),
+            step_total: Arc::clone(&self.step_total),
+            step_files_total: Arc::clone(&self.step_files_total),
         }
     }
 }
 
-/// 完成一步：步骤状态置 done + 完成计数 +1。
+/// 完成一步：步骤状态置 done + 完成计数 +1 + 结束该步骤的分步进度上报。
 fn finish_step(app: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>, idx: usize, c: &Counters) {
     step_done(app, progress, idx);
     c.done_steps.fetch_add(1, Ordering::Relaxed);
+    c.leave_step();
 }
 
 /// 失败收口：错误消息区分用户取消；全新目录随失败整删（对齐 run_task 语义，
@@ -173,12 +226,14 @@ fn replace_steps(
             .enumerate()
             .map(|(i, n)| StepInfo {
                 name: n.clone(),
+                // 已完成步骤（A 段前缀）保持 Done + 100%：此前一律写 0.0，
+                // 导致 B 段重写步骤表后"下载整合包/解析整合包"变成"已完成却 0%"。
                 status: if i < done_count {
                     StepStatus::Done
                 } else {
                     StepStatus::Pending
                 },
-                progress: 0.0,
+                progress: if i < done_count { 100.0 } else { 0.0 },
             })
             .collect();
         p.total_files = names.len() as u32;
@@ -286,6 +341,15 @@ async fn phase_a_fetch_and_parse(
     let app = sink.as_ref();
     let a_bytes = Arc::new(AtomicU64::new(0));
     let a_est = Arc::new(AtomicU64::new(0));
+    // 在线包的「下载整合包」是长步骤（包体常达数百 MB），按字节报分步进度；
+    // 本地包没有下载步（步骤 0 是"解析整合包"），不报。
+    let a_step = online.then(|| StepRef {
+        idx: Arc::new(AtomicUsize::new(0)),
+        step_bytes: Arc::clone(&a_bytes),
+        step_total: Arc::clone(&a_est),
+        files: Arc::new(AtomicU32::new(0)),
+        files_total: Arc::new(AtomicU32::new(0)),
+    });
     let a_heartbeat = spawn_heartbeat(
         Arc::clone(sink),
         progress,
@@ -294,6 +358,7 @@ async fn phase_a_fetch_and_parse(
             total_files: u32::from(online) + 1,
             bytes: Arc::clone(&a_bytes),
             est_total_bytes: Arc::clone(&a_est),
+            step: a_step,
         },
     );
 
@@ -359,6 +424,8 @@ fn prepare_pack_install(
             total_files: c.total_steps,
             bytes: Arc::clone(&c.bytes),
             est_total_bytes: Arc::clone(&c.est_bytes),
+            // 分步进度：B/C 段长步骤（游戏主文件/依赖库/资源文件）据此刷新
+            step: Some(c.step_ref()),
         },
     );
     PackPrep { c, emit, idx }
@@ -431,21 +498,25 @@ fn build_step_plan(request: &ModpackRequest, plan: &PackPlan) -> (Vec<String>, S
         .iter()
         .map(|s| s.to_string())
         .collect();
+    // A 段步骤（下载/解析整合包）排在最终步骤表最前面，B/C 段各步的下标必须整体
+    // 后移这个前缀长度，否则每个阶段都会写到"错一行"的步骤上（表现为：某一步
+    // 从 0% 直接跳到 100%，而动的那一行其实是别的阶段）。
+    let prefix = full_names.len();
     full_names.extend(names.iter().cloned());
     let content_bytes: u64 = plan.files.iter().map(|f| f.size).sum();
     let override_bytes = plan.overrides.as_ref().map(sum_override_bytes).unwrap_or(0);
     (
         full_names,
         StepIndex {
-            i_json,
-            i_jar,
-            i_libs,
-            i_asst,
-            i_nat,
-            i_cfg,
-            i_lbs,
-            content_start,
-            i_overrides,
+            i_json: i_json + prefix,
+            i_jar: i_jar + prefix,
+            i_libs: i_libs + prefix,
+            i_asst: i_asst + prefix,
+            i_nat: i_nat + prefix,
+            i_cfg: i_cfg.map(|i| i + prefix),
+            i_lbs: i_lbs.map(|i| i + prefix),
+            content_start: content_start + prefix,
+            i_overrides: i_overrides.map(|i| i + prefix),
         },
         content_bytes + override_bytes,
     )
@@ -594,6 +665,9 @@ impl<'a> PackInstall<'a> {
         );
         let vj = self.vj()?;
         if let Some(cl) = &vj.downloads.client {
+            // 该步此前既无步骤级进度（回调传 None）也只在完成时一次性加字节 →
+            // 卡片全程 0%、速度/ETA 静止。改为：分母取清单 size，字节由回调增量累加。
+            self.c.enter_step_bytes(self.idx.i_jar, cl.size);
             let jar_path = self
                 .vdir
                 .join(format!("{}.jar", self.plan.version_dir_name));
@@ -605,10 +679,11 @@ impl<'a> PackInstall<'a> {
                     .iter()
                     .map(|src| src.mirror_url(&cl.url))
                     .collect();
+                let counters = self.c.counter();
                 if let Err(e) = fetcher::fetch_verified_c(
                     &urls,
                     &jar_path,
-                    None::<fn(u64, u64)>,
+                    Some(counters.step_progress()),
                     &cl.sha1,
                     Some(self.cancel),
                 )
@@ -616,7 +691,6 @@ impl<'a> PackInstall<'a> {
                 {
                     bail!("下载游戏主文件失败\n{e}");
                 }
-                self.c.bytes.fetch_add(cl.size, Ordering::Relaxed);
             }
         }
         finish_step(self.app, self.progress, self.idx.i_jar, &self.c);
@@ -639,6 +713,8 @@ impl<'a> PackInstall<'a> {
             self.idx.i_libs,
             StepStatus::Running,
         );
+        // 分步进度：分母由 download_libraries 起跑前写入（待下载条目数）
+        self.c.enter_step_files(self.idx.i_libs);
         if let Err(e) = library::download_libraries(
             &vj.libraries,
             &self.lib_dir,
@@ -662,6 +738,8 @@ impl<'a> PackInstall<'a> {
             self.idx.i_asst,
             StepStatus::Running,
         );
+        // 分步进度：分母由 download_assets 起跑前写入（待下载条目数）
+        self.c.enter_step_files(self.idx.i_asst);
         if let Err(e) = assets::download_assets(
             AssetIndexRef {
                 url: &vj.asset_index.url,
@@ -688,6 +766,8 @@ impl<'a> PackInstall<'a> {
             self.idx.i_nat,
             StepStatus::Running,
         );
+        // 分步进度：分母由 process_natives 起跑前写入（待处理候选数）
+        self.c.enter_step_files(self.idx.i_nat);
         if let Err(e) = extract::process_natives(
             &vj.libraries,
             &self.lib_dir,
@@ -709,6 +789,32 @@ impl<'a> PackInstall<'a> {
         let Some(loader) = &self.plan.loader else {
             return Ok(());
         };
+        // 进入 loader 两步就置 Running：`install_loader` 是外部安装器（Fabric 配置/库、
+        // Forge 的 installer 子进程），进度只能由安装器钩子报里程碑、拿不到可信百分比。
+        // 此前这两步**从不**置 Running、只在结束时 finish_step，前端对 pending 行不显示
+        // 百分比 → 观感是"连 0% 都没有、直接从 100% 冒出来"。这里让它们与其它无百分比
+        // 步骤（原生库 / 内容文件）一致：Running 0% → 完成 100%。
+        let label = loader.kind.display_name();
+        if let Some(idx) = self.idx.i_cfg {
+            set_phase(
+                self.app,
+                self.progress,
+                None,
+                &format!("{label} 配置"),
+                idx,
+                StepStatus::Running,
+            );
+        }
+        if let Some(idx) = self.idx.i_lbs {
+            set_phase(
+                self.app,
+                self.progress,
+                None,
+                &format!("{label} 文件"),
+                idx,
+                StepStatus::Running,
+            );
+        }
         let cfg_flag = AtomicBool::new(false);
         let lbs_flag = AtomicBool::new(false);
         let hook = |ev: LoaderEvent| match ev {
@@ -901,6 +1007,8 @@ impl<'a> PackInstall<'a> {
                         bytes,
                         step_bytes: Arc::new(AtomicU64::new(0)),
                         step_total: Arc::new(AtomicU64::new(0)),
+                        // 内容文件并发下载：各自独立计数，不做步骤级百分比
+                        step_files_total: Arc::new(AtomicU32::new(0)),
                     };
                     let cb = counters.byte_callback();
                     let result =
@@ -1151,6 +1259,7 @@ fn sum_override_bytes(ov: &OverridesRef) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::task::{LoaderChoice, LoaderKind};
     use std::io::Write as _;
 
     fn opts() -> zip::write::SimpleFileOptions {
@@ -1253,6 +1362,136 @@ mod tests {
         assert_eq!(initial_steps(&online), vec!["下载整合包", "解析整合包"]);
         assert_eq!(initial_steps(&local), vec!["解析整合包"]);
     }
+
+    /// `replace_steps` 必须让已完成步骤保持 **Done + 100%**。
+    ///
+    /// 回归：B 段重写步骤表时曾把每一步都写成 `progress: 0.0`，UI 于是显示
+    /// 「下载整合包 / 解析整合包：已完成但 0%」（用户实测反馈）。
+    #[test]
+    fn replace_steps_keeps_done_steps_at_100() {
+        struct NullSink;
+        impl EventSink for NullSink {
+            fn send(&self, _event: &'static str, _payload: serde_json::Value) {}
+        }
+
+        let progress = Arc::new(Mutex::new(TaskProgress {
+            task_id: "t1".into(),
+            name: "整合包：D".into(),
+            status: TaskStatus::Running,
+            progress: 0.0,
+            speed_bps: 0.0,
+            eta_seconds: None,
+            completed_files: 0,
+            total_files: 2,
+            completed_bytes: 0,
+            total_bytes: 0,
+            current_phase: "解析整合包".into(),
+            steps: vec![
+                StepInfo {
+                    name: "下载整合包".into(),
+                    status: StepStatus::Done,
+                    progress: 100.0,
+                },
+                StepInfo {
+                    name: "解析整合包".into(),
+                    status: StepStatus::Done,
+                    progress: 100.0,
+                },
+            ],
+            error: None,
+        }));
+        let sink: Arc<dyn EventSink> = Arc::new(NullSink);
+        let names: Vec<String> = ["下载整合包", "解析整合包", "版本清单", "游戏主文件"]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+
+        replace_steps(sink.as_ref(), &progress, &names, 2);
+
+        let p = progress.lock();
+        assert_eq!(p.steps.len(), 4);
+        for (i, expect) in [(0, "下载整合包"), (1, "解析整合包")] {
+            assert_eq!(p.steps[i].name, expect);
+            assert_eq!(p.steps[i].status, StepStatus::Done, "A 段步骤应保持 Done");
+            assert_eq!(p.steps[i].progress, 100.0, "已完成步骤不得被重置为 0%");
+        }
+        assert_eq!(p.steps[2].status, StepStatus::Pending);
+        assert_eq!(p.steps[2].progress, 0.0);
+        assert_eq!(p.total_files, 4, "总步骤数应随新步骤表更新");
+    }
+
+    /// 步骤索引必须落在**同名**步骤上。
+    ///
+    /// 回归测试：`StepIndex` 的索引过去按「只含 B/C 段」的列表算，却用在拼接了
+    /// A 段前缀的最终步骤表上 → 整体错位（每个阶段都写到错一行的步骤，表现为
+    /// 「某步 0% 直接跳到 100%」）。
+    #[test]
+    fn step_index_points_at_matching_names() {
+        for (label, source, prefix) in [
+            (
+                "在线包（A 段 2 步）",
+                PackSource::Online {
+                    url: "u".into(),
+                    sha1: String::new(),
+                    size: 0,
+                },
+                2,
+            ),
+            ("本地包（A 段 1 步）", PackSource::Local { path: "p".into() }, 1),
+        ] {
+            let request = ModpackRequest {
+                name: "D".into(),
+                icon_url: None,
+                source,
+            };
+            let plan = PackPlan {
+                name: "D".into(),
+                mc_version: "1.20.1".into(),
+                // 带 loader：把 i_cfg / i_lbs 也纳入断言
+                loader: Some(LoaderChoice {
+                    kind: LoaderKind::Fabric,
+                    version: "0.15.0".into(),
+                }),
+                version_url: "v".into(),
+                version_dir_name: "D-1.20.1".into(),
+                cache_key: "c".into(),
+                files: vec![
+                    PackFile {
+                        path: "mods/a.jar".into(),
+                        url: "u1".into(),
+                        sha1: String::new(),
+                        size: 10,
+                    },
+                    PackFile {
+                        path: "config/b.json".into(),
+                        url: "u2".into(),
+                        sha1: String::new(),
+                        size: 20,
+                    },
+                ],
+                restricted: Vec::new(),
+                overrides: None,
+            };
+
+            let (names, idx, est) = build_step_plan(&request, &plan);
+
+            // A 段前缀保持原样（A 阶段自己用 0/1 推进）
+            assert_eq!(names[0], initial_steps(&request)[0], "{label}");
+            assert_eq!(names.len(), prefix + 5 + 2 + 2, "{label}：A + 5 固定步 + loader 2 + 内容 2");
+            // 各阶段索引必须落在同名步骤上
+            assert_eq!(names[idx.i_json], "版本清单", "{label}");
+            assert_eq!(names[idx.i_jar], "游戏主文件", "{label}");
+            assert_eq!(names[idx.i_libs], "依赖库", "{label}");
+            assert_eq!(names[idx.i_asst], "资源文件", "{label}");
+            assert_eq!(names[idx.i_nat], "原生库", "{label}");
+            assert_eq!(names[idx.i_cfg.unwrap()], "Fabric 配置", "{label}");
+            assert_eq!(names[idx.i_lbs.unwrap()], "Fabric 文件", "{label}");
+            // 内容步起始位与内容文件名对得上
+            assert_eq!(names[idx.content_start], "下载 mods/a.jar", "{label}");
+            assert_eq!(names[idx.content_start + 1], "下载 config/b.json", "{label}");
+            assert_eq!(est, 30, "{label}：内容字节估算");
+        }
+    }
     #[test]
     fn member_sha1_and_extract_member_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
@@ -1271,5 +1510,34 @@ mod tests {
         let out = dir.path().join("out").join("dup.jar");
         extract_member(&mut ar, "overrides/mods/a.jar", &out).unwrap();
         assert_eq!(std::fs::read(&out).unwrap(), b"jar-bytes");
+    }
+
+    /// 分步进度：进入/离开步骤与心跳视图（整合包长步骤百分比的唯一来源）。
+    #[test]
+    fn counters_track_current_step() {
+        let c = Counters::new(10, 0);
+        let step = c.step_ref();
+        // 初始：无运行中步骤 → 心跳不刷新任何步骤
+        assert_eq!(step.idx.load(Ordering::Relaxed), usize::MAX);
+        assert_eq!(step.percent(), None);
+
+        // 字节型步骤（游戏主文件）：分母已知，分子随下载回调累加
+        c.enter_step_bytes(4, 200);
+        assert_eq!(step.idx.load(Ordering::Relaxed), 4);
+        c.step_bytes.store(50, Ordering::Relaxed);
+        assert_eq!(step.percent(), Some(25.0));
+
+        // 文件型步骤（依赖库/资源文件）：切换时字节分母必须清零，否则口径混用
+        c.enter_step_files(6);
+        assert_eq!(step.idx.load(Ordering::Relaxed), 6);
+        assert_eq!(step.percent(), None, "分母未写入前不应给出百分比");
+        c.step_files_total.store(4, Ordering::Relaxed);
+        c.step_files.store(1, Ordering::Relaxed);
+        assert_eq!(step.percent(), Some(25.0));
+
+        // 完成 → 离开步骤
+        c.leave_step();
+        assert_eq!(step.idx.load(Ordering::Relaxed), usize::MAX);
+        assert_eq!(step.percent(), None);
     }
 }

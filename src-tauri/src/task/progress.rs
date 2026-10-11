@@ -1,7 +1,7 @@
 // ── 进度上报基础设施：EmitLoop 主循环 + 收尾心跳 + set_* 状态助手 ──
 // 三个任务（run_task / run_files_task / run_repair_task）共用，唯一依赖方向：任务主体 → 本模块。
 
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -512,13 +512,54 @@ pub fn set_cancelled(sink: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>) 
 
 // ── 共享简易心跳（files / modpack 等顺序+块式任务复用）──
 
+/// 当前运行步骤的分步进度来源（供不走 [`EmitLoop`] 的任务复用同一套展示逻辑）。
+///
+/// `EmitLoop` 是版本下载特化（jar/lib/asst/natives/loader/optifine 七八套步骤字段
+/// 加初始扫描），整合包安装塞进去不划算，故抽这个轻量视图：心跳每拍据此填
+/// `steps[idx].progress`。公式优先级：文件数（`files_total > 0`）→ 字节
+/// （`step_total > 0`）→ 不更新（分母未知时保持前端现值，避免显示假的 0%）。
+#[derive(Clone)]
+pub struct StepRef {
+    /// 当前步骤索引；`usize::MAX` = 无运行中步骤。
+    pub idx: Arc<AtomicUsize>,
+    pub step_bytes: Arc<AtomicU64>,
+    pub step_total: Arc<AtomicU64>,
+    pub files: Arc<AtomicU32>,
+    pub files_total: Arc<AtomicU32>,
+}
+
+impl StepRef {
+    /// 当前步骤百分比；无运行中步骤或分母未知时 `None`（调用方保持原值，
+    /// 避免把"总量未知"显示成假的 0%）。
+    pub fn percent(&self) -> Option<f64> {
+        if self.idx.load(Ordering::Relaxed) == usize::MAX {
+            return None;
+        }
+        let files_total = self.files_total.load(Ordering::Relaxed);
+        if files_total > 0 {
+            return percent(self.files.load(Ordering::Relaxed) as u64, files_total as u64);
+        }
+        percent(
+            self.step_bytes.load(Ordering::Relaxed),
+            self.step_total.load(Ordering::Relaxed),
+        )
+    }
+}
+
+/// 分步百分比（上限 100）；分母为 0 时 `None`。
+fn percent(done: u64, total: u64) -> Option<f64> {
+    (total > 0).then(|| (done as f64 / total as f64 * 100.0).min(100.0))
+}
+
 /// 心跳输入计数器束：完成文件数（进度分子）/ 总文件数 /
-/// 累计字节（速度来源）/ 总量估算（可运行中增长，ETA 分母）。
+/// 累计字节（速度来源）/ 总量估算（可运行中增长，ETA 分母）/ 当前步骤进度（可选）。
 pub struct HeartbeatStats {
     pub done_files: Arc<AtomicU32>,
     pub total_files: u32,
     pub bytes: Arc<AtomicU64>,
     pub est_total_bytes: Arc<AtomicU64>,
+    /// 提供则每拍刷新 `steps[idx].progress`（整合包安装用；版本下载走 `EmitLoop`）。
+    pub step: Option<StepRef>,
 }
 
 /// 150ms 共享心跳：刷新状态 Running、文件/字节进度、EMA 速度（0.6/0.4，
@@ -534,6 +575,7 @@ pub fn spawn_heartbeat(
     let bytes = stats.bytes;
     let est = stats.est_total_bytes;
     let total_files = stats.total_files;
+    let step = stats.step;
     tauri::async_runtime::spawn({
         let sink = sink.clone();
         let progress = progress.clone();
@@ -564,9 +606,132 @@ pub fn spawn_heartbeat(
                     p.total_bytes = total_bytes;
                     p.speed_bps = speed_bps;
                     p.eta_seconds = eta;
+                    // 分步进度（整合包等批量任务）：只改"运行中"的那一步，
+                    // 已 done 的步骤不得被覆写回退
+                    if let Some(step) = &step {
+                        let idx = step.idx.load(Ordering::Relaxed);
+                        if idx != usize::MAX {
+                            if let Some(pct) = step.percent() {
+                                if let Some(st) = p.steps.get_mut(idx) {
+                                    if st.status == StepStatus::Running {
+                                        st.progress = pct;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     update_progress(p);
                 });
             }
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::task::StepInfo;
+
+    /// 分步百分比：分母未知 → None（保持前端现值，不显示假的 0%）。
+    #[test]
+    fn percent_needs_a_denominator() {
+        assert_eq!(percent(5, 0), None);
+        assert_eq!(percent(0, 0), None);
+        assert_eq!(percent(5, 10), Some(50.0));
+        // 字节口径可能略超估算（实测 size 与 content-length 有出入）→ 封顶 100
+        assert_eq!(percent(20, 10), Some(100.0));
+    }
+
+    /// 文件数分母优先于字节分母（批量步骤必须走文件口径）；无运行中步骤时恒 None。
+    #[test]
+    fn step_ref_prefers_file_denominator() {
+        let step = StepRef {
+            idx: Arc::new(AtomicUsize::new(3)),
+            step_bytes: Arc::new(AtomicU64::new(1)),
+            step_total: Arc::new(AtomicU64::new(100)),
+            files: Arc::new(AtomicU32::new(1)),
+            files_total: Arc::new(AtomicU32::new(4)),
+        };
+        // 字节口径会得出 1%、文件口径 25%——两者绝不能混用
+        assert_eq!(step.percent(), Some(25.0));
+
+        // 无文件分母时回退字节口径
+        step.files_total.store(0, Ordering::Relaxed);
+        assert_eq!(step.percent(), Some(1.0));
+
+        // 无运行中步骤（idx = usize::MAX）→ None
+        step.idx.store(usize::MAX, Ordering::Relaxed);
+        assert_eq!(step.percent(), None);
+    }
+
+    /// 心跳每拍把当前步骤的进度写进 `steps[idx]`（整合包长步骤百分比的实际通路）。
+    #[tokio::test]
+    async fn heartbeat_fills_running_step_progress() {
+        struct NullSink;
+        impl EventSink for NullSink {
+            fn send(&self, _event: &'static str, _payload: serde_json::Value) {}
+        }
+
+        let progress = Arc::new(Mutex::new(TaskProgress {
+            task_id: "t1".into(),
+            name: "整合包".into(),
+            status: TaskStatus::Pending,
+            progress: 0.0,
+            speed_bps: 0.0,
+            eta_seconds: None,
+            completed_files: 0,
+            total_files: 2,
+            completed_bytes: 0,
+            total_bytes: 0,
+            current_phase: "游戏主文件".into(),
+            steps: vec![
+                StepInfo {
+                    name: "游戏主文件".into(),
+                    status: StepStatus::Running,
+                    progress: 0.0,
+                },
+                StepInfo {
+                    name: "依赖库".into(),
+                    status: StepStatus::Pending,
+                    progress: 0.0,
+                },
+            ],
+            error: None,
+        }));
+        let step_bytes = Arc::new(AtomicU64::new(0));
+        let handle = spawn_heartbeat(
+            Arc::new(NullSink),
+            &progress,
+            HeartbeatStats {
+                done_files: Arc::new(AtomicU32::new(0)),
+                total_files: 2,
+                bytes: Arc::clone(&step_bytes),
+                est_total_bytes: Arc::new(AtomicU64::new(0)),
+                step: Some(StepRef {
+                    idx: Arc::new(AtomicUsize::new(0)),
+                    step_bytes: Arc::clone(&step_bytes),
+                    step_total: Arc::new(AtomicU64::new(200)),
+                    files: Arc::new(AtomicU32::new(0)),
+                    files_total: Arc::new(AtomicU32::new(0)),
+                }),
+            },
+        );
+
+        step_bytes.store(50, Ordering::Relaxed);
+        // 轮询等待而非固定 sleep：机器负载高时 150ms 心跳可能晚到，
+        // 固定等待会让断言偶发失败（测试必须确定性地通过或失败）。
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline {
+            if progress.lock().steps[0].progress >= 25.0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        handle.abort();
+
+        let p = progress.lock();
+        assert_eq!(p.steps[0].progress, 25.0, "运行中步骤应按字节刷新");
+        assert_eq!(p.steps[1].progress, 0.0, "未运行的步骤不得被改写");
+        assert_eq!(p.status, TaskStatus::Running, "心跳应把 Pending 置为 Running");
+    }
 }

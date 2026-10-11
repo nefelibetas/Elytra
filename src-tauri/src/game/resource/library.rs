@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use super::extract::{matches_rules, modern_native_matches, NativesKind};
@@ -189,6 +190,8 @@ pub async fn download_libraries(
         return Err(internal_missing);
     }
 
+    // 本步骤的进度分母（待下载条目数）：任务层心跳据此算该步骤百分比
+    pc.step_files_total.store(items.len() as u32, Ordering::Relaxed);
     let errors = batch::run(items, concurrency, pc, cancel, None).await;
     if errors.is_empty() {
         Ok(())

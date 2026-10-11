@@ -726,6 +726,59 @@ mod tests {
     use crate::game::version::model::{Artifact, Library, LibraryDownloads};
     use std::collections::HashMap;
 
+    /// 步骤索引必须与 `repair_steps` 生成的名字**逐一对齐**。
+    ///
+    /// 两者是"同一顺序的两处手写实现"（jar → libs → assets → natives），
+    /// 任一侧改了过滤条件或顺序而另一侧没跟上，就会把进度写到错名的那一步
+    /// （整合包那边已经踩过一次同类坑）。这里穷举 16 种缺失组合锁死契约。
+    #[test]
+    fn test_repair_indices_align_with_steps() {
+        for mask in 0u8..16 {
+            let report = MissingReport {
+                client_jar: mask & 1 != 0,
+                libraries: u32::from(mask & 2 != 0),
+                assets: u32::from(mask & 4 != 0),
+                natives: u32::from(mask & 8 != 0),
+            };
+            let names = repair_steps(&report);
+            let (jar, libs, asst, natives) = repair_step_indices(&report);
+
+            for (idx, expect) in [
+                (jar, "下载客户端文件"),
+                (libs, "下载支持库文件"),
+                (asst, "下载资源文件"),
+                (natives, "处理 native 库"),
+            ] {
+                match idx {
+                    Some(i) => assert_eq!(
+                        names.get(i).map(String::as_str),
+                        Some(expect),
+                        "mask={mask}：索引 {i} 应落在「{expect}」"
+                    ),
+                    None => assert!(
+                        !names.iter().any(|n| n == expect),
+                        "mask={mask}：无「{expect}」步骤却给出了索引"
+                    ),
+                }
+            }
+
+            // 出现的步骤按顺序占据 0..n 连续下标，无空洞
+            let mut next = 0usize;
+            for (idx, present) in [
+                (jar, report.client_jar),
+                (libs, report.libraries > 0),
+                (asst, report.assets > 0),
+                (natives, report.natives > 0),
+            ] {
+                if present {
+                    assert_eq!(idx, Some(next), "mask={mask}：下标应连续");
+                    next += 1;
+                }
+            }
+            assert_eq!(names.len(), next, "mask={mask}：步骤表长度应与出现的维度数一致");
+        }
+    }
+
     #[test]
     fn test_repair_steps_all_missing() {
         let steps = repair_steps(&MissingReport {
