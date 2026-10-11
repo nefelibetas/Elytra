@@ -4,7 +4,7 @@
 // 加载状态由独立 Image() 探针驱动（先绑监听再赋 src，事件必达）；
 // 实测 Modrinth CDN 图标当前网络失败率高（307 目标节点概率性黑洞）：
 // 探针带 6s 超时 + 失败重试 2 次（共 3 次尝试），仍失败才显示占位。
-import { ref, watch } from "vue";
+import { onBeforeUnmount, ref, watch } from "vue";
 import { Box } from "@lucide/vue";
 
 const props = defineProps<{ src?: string | null; size?: number }>();
@@ -15,16 +15,42 @@ const failed = ref(false);
 const PROBE_TIMEOUT_MS = 6000;
 const PROBE_RETRIES = 2;
 
+// 探针取消机制：src 变化或组件卸载时 token 自增，旧探针的回调只在 token
+// 仍匹配时才写状态——否则上一张图的超时结果会覆盖新图（列表翻页后图标错乱），
+// 卸载后探针还会继续重试到 18s。
+let probeToken = 0;
+let probeTimer: ReturnType<typeof setTimeout> | null = null;
+
+function cancelProbe() {
+  probeToken++;
+  if (probeTimer !== null) {
+    clearTimeout(probeTimer);
+    probeTimer = null;
+  }
+}
+
+function clearProbeTimer() {
+  if (probeTimer !== null) {
+    clearTimeout(probeTimer);
+    probeTimer = null;
+  }
+}
+
 watch(
   () => props.src,
   (src) => {
+    cancelProbe();
     loaded.value = false;
     failed.value = false;
     if (!src) return;
+    const token = probeToken;
     let attempt = 0;
     const tryLoad = () => {
+      if (token !== probeToken) return;
       const probe = new Image();
-      const timer = setTimeout(() => {
+      probeTimer = setTimeout(() => {
+        probeTimer = null;
+        if (token !== probeToken) return;
         if (attempt < PROBE_RETRIES) {
           attempt++;
           tryLoad();
@@ -33,11 +59,13 @@ watch(
         }
       }, PROBE_TIMEOUT_MS);
       probe.onload = () => {
-        clearTimeout(timer);
+        if (token !== probeToken) return;
+        clearProbeTimer();
         loaded.value = true;
       };
       probe.onerror = () => {
-        clearTimeout(timer);
+        if (token !== probeToken) return;
+        clearProbeTimer();
         if (attempt < PROBE_RETRIES) {
           attempt++;
           tryLoad();
@@ -51,6 +79,8 @@ watch(
   },
   { immediate: true }
 );
+
+onBeforeUnmount(cancelProbe);
 </script>
 
 <template>

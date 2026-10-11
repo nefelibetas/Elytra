@@ -22,7 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-pnpm-lock.yaml
 # 本项目仅用 pnpm；npm:pnpm 后端安装会误产 package-lock.json，不跟踪
 package-lock.json
 .vscode/

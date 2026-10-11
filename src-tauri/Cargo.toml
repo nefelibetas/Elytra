@@ -6,6 +6,11 @@ authors = ["BridgeFishDev"]
 edition = "2021"
 license = "MIT"
 
+# 显式默认 bin：`src/bin/gen_ts.rs` 让包内出现两个 bin（elytra / gen_ts），
+# 而 tauri-cli 的 dev 只发 `cargo run --no-default-features`（不带 --bin），
+# 缺 default-run 时 cargo 会以 "could not determine which binary to run" 失败。
+default-run = "elytra"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
@@ -89,13 +94,10 @@ core-foundation = "0.10"
 secret-service = { version = "5.1", features = ["rt-tokio-crypto-rust"] }
 
 [dev-dependencies]
-# 解压/安装流程单测用临时目录（仅测试，不进入产物）
+# 解压/安装流程单测用临时目录（仅测试，不进入产物）。
+# 注：serde_json / tokio / parking_lot 无需在此重复声明——集成测试同样能使用
+# [dependencies]（tokio 主依赖的 "full" 已覆盖 macros / rt-multi-thread）。
 tempfile = "3"
-# 端到端测试（tests/e2e_download.rs）驱动 run_task：需 tokio 宏、serde_json 的 Value
-# 与 parking_lot 锁（仓库约定：不用 std Mutex 的 unwrap 路径）
-serde_json = "1"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-parking_lot = "0.12"
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]

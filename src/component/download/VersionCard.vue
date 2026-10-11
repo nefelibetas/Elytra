@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { ref, watch } from "vue";
 import { ChevronDown } from "@lucide/vue";
 
 const props = defineProps<{
@@ -10,12 +10,26 @@ const props = defineProps<{
 
 const emit = defineEmits<{ toggle: [] }>();
 
-// 单行 VersionItem 的保守上界高度（px）：padding 10×2 + 内容块。
-// 内容块 = max(32px 图标, ver-id 13px + gap 2 + ver-sub 11px ≈ 38px) ≈ 38px → 实际行高 ≈ 58px。
-// 取 80px 预留折行 / 更大行高的余量；上界偏大只会让过渡略快，不会裁切。
-const ROW_H = 80;
-// 展开目标高度 = 条目数 × 单行上界 + 顶部 1px 分割线与余量。优先保证不裁切（宁可过渡略长）。
-const expandHeight = computed(() => props.count * ROW_H + 24 + "px");
+// 惰性挂载：折叠分组在**首次展开前不渲染任何条目**（原版 manifest 全量 1000+
+// 条，四组折叠时全部常驻 DOM 会让下载页首帧创建上千节点）。首次展开后保持挂载
+// （配合 v-show 切换 display），避免反复重建列表。
+const everExpanded = ref(props.expanded);
+watch(
+  () => props.expanded,
+  (v) => {
+    if (v) everExpanded.value = true;
+  }
+);
+
+// 展开高度用真实内容高度驱动（过渡前后各量一次），不再按 count × ROW_H 估算——
+// 估算值在 snapshots 组可达数万 px，max-height 过渡会提前"跑完"（后半段无视觉变化）
+// 且过渡期间仍要为大列表布局。
+// before-enter / enter 都量一次：before-enter 时元素尚未布局（scrollHeight=0）也无妨，
+// enter 钩子在同一帧（enter-to 已加、尚未绘制）补齐真实高度。
+function measure(el: Element) {
+  const h = el as HTMLElement;
+  if (h.scrollHeight > 0) h.style.setProperty("--expand-h", `${h.scrollHeight}px`);
+}
 </script>
 
 <template>
@@ -25,9 +39,8 @@ const expandHeight = computed(() => props.count * ROW_H + 24 + "px");
       <span class="card-count">{{ count }}</span>
       <ChevronDown class="chevron" :size="14" />
     </div>
-    <!-- v-show 而非 v-if：条目可能很多，保持列表常驻避免反复重建；折叠时 display:none 不参与布局 -->
-    <Transition name="expand">
-      <div v-show="expanded" class="card-body" :style="{ '--expand-h': expandHeight }">
+    <Transition name="expand" @before-enter="measure" @enter="measure" @before-leave="measure">
+      <div v-if="everExpanded" v-show="expanded" class="card-body">
         <slot />
       </div>
     </Transition>

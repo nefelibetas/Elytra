@@ -1,0 +1,51 @@
+name: CI
+
+# 覆盖 AGENTS.md「Testing & QA」里的验证门：
+#   前端 npx vue-tsc --noEmit ／ 后端 cargo check --lib + cargo clippy（零警告）
+#   + cargo test --lib -- --test-threads=1（必须串行：persist 共用 Settings.toml、网络测试抖动）
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  frontend:
+    name: 前端类型检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: npx vue-tsc --noEmit
+
+  backend:
+    name: 后端 check / clippy / test
+    # Windows 与主开发环境一致（webview2 预装；easytier 的 kcp-sys 走 bindgen 需 libclang，
+    # runner 自带 LLVM，显式给 LIBCLANG_PATH）。
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: cargo check
+        working-directory: src-tauri
+        run: cargo check --lib
+      - name: cargo clippy（零警告）
+        working-directory: src-tauri
+        run: cargo clippy --lib -- -D warnings
+      - name: cargo test（串行）
+        working-directory: src-tauri
+        run: cargo test --lib -- --test-threads=1
+        env:
+          LIBCLANG_PATH: C:\Program Files\LLVM\bin

@@ -4,12 +4,12 @@
 
 Elytra Launcher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前端）** 的 Minecraft 启动器。功能：游戏版本下载（官方/国内镜像多源）、ModLoader 安装（Fabric/Quilt/Forge/NeoForge/OptiFine）、微软正版登录（OAuth PKCE）、离线模式（固定随机默认皮肤）、**皮肤衣柜**（3D 全身预览 + 正版皮肤/披风管理 + 本地皮肤收藏；第三方站点衣柜不内置，点头像用浏览器打开站点衣柜）、**JDK 扫描 + managed runtime 自动下载**（Mojang 官方 → Azul 双源回退）、Mod 双源搜索与**依赖解析**、下载任务管理、启动参数构建与游戏进程管理、**局域网联机**（easytier 库内嵌虚拟局域网 + 端口转发，房间码互连，无需公网服务器）、**工具箱多线程下载器**（URL 队列并发 + 单文件 HTTP Range 分段，断点续传，独立于启动器下载任务）。
 
-后端 **123 个 `#[tauri::command]`**（分布于 17 个命令模块），前端 **10 个页面**（`src/pages/`），无状态管理库（模块级 `reactive()` 单例）。
+后端 **127 个 `#[tauri::command]`**（分布于 18 个命令模块），前端 **10 个页面**（`src/pages/`），无状态管理库（模块级 `reactive()` 单例）。
 
 ## Architecture & Data Flow
 
 ```
-前端 Vue3 (src/)  ──invoke(snake_case)──▶  commands/（薄胶水层，17 模块 / 123 命令）
+前端 Vue3 (src/)  ──invoke(snake_case)──▶  commands/（薄胶水层，18 模块 / 127 命令）
     ▲                                          │ 读 persist 配置、调领域函数
     │ task-progress / ms-login-complete /     ▼
     │ game-exited 事件（emit 顺序队列线程）  downloader/（传输层）  game/（内容与装配）  auth/
@@ -17,8 +17,8 @@ Elytra Launcher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前�
                                               config/（纯数据）persist/（TOML + secrets）
 ```
 
-- **后端分层**：`commands/` 只做胶水（读配置 → 调领域函数 → `map_err` 展平 String）；领域逻辑按域归位——**传输层 `downloader/`**（`fetcher/{api,core,routes,redirect}.rs` 下载核心与公开入口、`batch.rs` 并发批处理、`probe.rs` 源探测 TTFB/吞吐、`path_lock.rs` 跨任务路径互斥、`hash/progress/proxy/reuse/endpoints`；**不得依赖 `task`/`launcher`/`jdk`/`game`**），**内容与装配 `game/`**（`version/` 版本元数据与本地目录、`resource/` 资源与支持库装配、`loader/` ModLoader 安装、`community/` 社区资源搜索、`modpack.rs` 整合包、`updates/` Mod 更新），任务编排 `task/`（`manager.rs` TaskManager 单例 / `emit.rs` 事件队列 / `spawn.rs` 任务注册 / `runner.rs` 下载主体 / `progress.rs` 进度与终态收口 / `store.rs` SQLite 快照），启动 `launcher/`（`args.rs` 命令构建 / `env.rs` 环境准备 / `process.rs` 进程生命周期与监听 / `script.rs` 启动脚本渲染 / `skin.rs` 离线皮肤 / `platform.rs` 平台调节），账号 `auth/`（`microsoft.rs` OAuth / `mojang.rs` 官方 API / `account.rs` 回调与披风 / `external.rs` 第三方皮肤站 / `model.rs` MsAccount），纯数据 `config/`；统一持久化 `persist/`（`config.rs` section 读写 / `store.rs` 低层文件 IO / `secrets.rs` 密钥；`util::config_dir()` 平台感知：Windows exe 旁 `Elytra/`（便携），macOS `~/Library/Application Support/Elytra`，Linux `$XDG_DATA_HOME/Elytra` 缺省 `~/.local/share/Elytra`——dev/test 进程在 cargo target 下走 exe 旁保持隔离；TOML 分 section，全局 Mutex 串行化）；联机 `online/`（`service.rs` 单例与共享状态 / `host.rs` / `guest.rs` / `session.rs` easytier 会话 / `scaffold/` 协议编解码与房间码）；跨域小工具 `util.rs`（纯函数）
-- **事件推送**：`task/emit.rs` 的 `EMIT_TX`（LazyLock + 独立 `task-progress-emit` 线程 + mpsc）**顺序派发全部事件**（task-progress / task-waiting-user / ms-login-complete / game-exited / game-window-visible / online-state / tooldl-progress）——`app.emit` 若因 webview 未消费而阻塞只占队列线程，任务线程/进度锁永不碰 IPC（卡死与取消失效的根治）
+- **后端分层**：`commands/` 只做胶水（读配置 → 调领域函数 → `map_err` 展平 String）；领域逻辑按域归位——**传输层 `downloader/`**（`fetcher/{api,core,routes,redirect}.rs` 下载核心与公开入口、`batch.rs` 并发批处理、`probe.rs` 源探测 TTFB/吞吐、`path_lock.rs` 跨任务路径互斥、`hash/progress/proxy/reuse/endpoints`；**不得依赖 `task`/`launcher`/`jdk`/`game`**），**内容与装配 `game/`**（`version/` 版本元数据与本地目录、`resource/` 资源与支持库装配、`loader/` ModLoader 安装、`community/` 社区资源搜索、`modpack.rs` 整合包、`updates/` Mod 更新），任务编排 `task/`（`manager.rs` TaskManager 单例 / `emit.rs` 事件队列 / `spawn.rs` 任务注册 / `runner.rs` 下载主体 / `progress.rs` 进度与终态收口 / `store.rs` SQLite 快照），启动 `launcher/`（`args.rs` 命令构建 / `env.rs` 环境准备 / `process.rs` 进程生命周期与监听 / `script.rs` 启动脚本渲染 / `skin.rs` 离线皮肤 / `platform.rs` 平台调节），账号 `auth/`（`microsoft.rs` OAuth / `mojang.rs` 官方 API / `account.rs` 回调与披风 / `external.rs` 第三方皮肤站 / `model.rs` MsAccount），纯数据 `config/`；统一持久化 `persist/`（`config.rs` section 读写 / `store.rs` 低层文件 IO / `secrets.rs` 密钥；`util::config_dir()` 平台感知：Windows exe 旁 `Elytra/`（便携），macOS `~/Library/Application Support/Elytra`，Linux `$XDG_DATA_HOME/Elytra` 缺省 `~/.local/share/Elytra`——dev/test 进程在 cargo target 下走 exe 旁保持隔离；TOML 分 section，全局 Mutex 串行化）；联机 `online/`（`service.rs` 单例与共享状态 / `host.rs` / `guest.rs` / `session.rs` easytier 会话 / `scaffold/` 协议编解码与房间码）；跨域小工具 `util/`（纯函数，按职责拆子模块）
+- **事件推送**：`task/emit.rs` 的 `DISPATCH`（LazyLock + 独立 `task-progress-emit` 线程）**顺序派发全部事件**（task-progress / task-waiting-user / ms-login-complete / game-exited / game-window-visible / online-state / tooldl-progress）——`app.emit` 若因 webview 未消费而阻塞只占派发线程，任务线程/进度锁永不碰 IPC（卡死与取消失效的根治）。其中**高频快照类**（`task-progress` / `tooldl-progress`）按 `(事件名, 任务 id)` **只保留最新一帧**（payload 是完整快照、非增量，终态即最后一次写入故不会被丢；键含事件名是为避免进度帧顶掉 `task-waiting-user` 的弹窗帧），余下低频事件 FIFO 直投 —— 这样 webview 卡住时内存有界（否则整合包安装场景按「时长 × 频率 × 帧大小」线性上涨）
 - **锁约定**：全后端 `parking_lot`；**统一 inner→progress 锁序**（cancel/list/fail 先 inner 后 progress），调用 `fail()` 前必须 `drop` progress 锁（防重入死锁）；跨任务路径互斥独立为 `downloader::path_lock`（自持全局表，不挂 TaskManager）；`cancel()` 的 DB 持久化移出锁；DB（sqlite）写统一 2s 超时
 - **终态收口唯一入口**：`task/progress.rs` 的 `set_done` / `set_error` / `set_cancelled`——三者内部统一「发终态事件 → 移除任务注册」，且 `set_error`/`set_cancelled` 会取走此前 `set_cleanup_path` 登记的目录做**后台**整删（禁止在任务线程里同步 `remove_dir_all` 大目录）
 - **配置联动**：`gamedirs::set_active_game_dir` 写 downloader section 的 `minecraft_dir`，launch/downloader 都读该字段
@@ -30,7 +30,7 @@ Elytra Launcher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前�
 | --- | --- |
 | `src-tauri/src/downloader/` | **传输层**（URL → 校验过的字节，不认资源类型）：`fetcher/{api,core,routes,redirect}.rs`（公开 fetch 变体 / 多源下载核心 / 镜像候选与健康度排序 / 黑洞 302 拒绝与安全跟随）、`batch.rs`（并发批处理：本地复用优先 + sha1 校验 + 路径互斥 + 逐文件进度）、`probe.rs`（HEAD 测 TTFB 与流式测吞吐，共用 TTL 缓存）、`path_lock.rs`（跨任务目标路径互斥）、`hash.rs`（sha1/sha512/流式）、`progress.rs`（`ProgressCounters`）、`proxy.rs`（系统代理探测）、`reuse.rs`（本地运行时复用）、`segmented.rs`（**单文件 HTTP Range 分段下载**：206 探测 / 多段并发随机写 / 段内字节级断点续传 / 跨段共享限速；镜像源与小文件自动回退单连接）、`endpoints.rs`（网络拓扑单一事实源） |
 | `src-tauri/src/game/` | **内容与装配**（特化场景，依赖 `downloader` 的传输能力）：`version/`（`model.rs` 版本 JSON serde / `meta.rs` 元数据获取 / `manifest.rs` 清单 / `dir.rs` 已安装版本目录域 / `source.rs` 源与镜像重写）、`resource/`（`assets.rs` 资源索引与批量下载 / `library.rs` 支持库 / `extract.rs` rules 匹配与 natives 解压，`TARGET_OS` 唯一实现）、`loader/`（`dispatch.rs` 统一入口 / `ctx.rs` 参数结构 / `shared.rs` profile 合并与继承展开 / fabric·forge·neoforge·optifine·version_query）、`community/`（`api.rs` 出参与分派 / modrinth / curseforge / shared / translation / wiki_entry）、`modpack.rs`（整合包清单解析与安装计划）、`updates/`（Mod 扫描/识别/更新） |
-| `src-tauri/src/task/` | 任务系统：`manager.rs`（TaskManager 单例 + 终态收口）、`emit.rs`（`EMIT_TX` 队列线程 + 锁外 emit）、`spawn.rs`（任务注册与 spawn）、`ctx.rs`（`TaskCtx` 句柄结构）、`model.rs`（serde 任务配置 + `TaskProgress`/`StepInfo` 唯一定义）、`steps.rs`（StepSpec 分析）、`progress.rs`（EmitLoop/心跳/`set_done`/`set_error`/`set_cancelled`）、`runner.rs`（完整下载主体）、`repair.rs`（缺失扫描/`count_assets_all`）、`files.rs`（批量下载 + WaitingForUser）、`jdk.rs`（JDK 安装任务）、`modpack.rs`（整合包安装编排）、`store.rs`（SQLite 快照/恢复） |
+| `src-tauri/src/task/` | 任务系统：`manager.rs`（TaskManager 单例 + 终态收口）、`emit.rs`（`DISPATCH` 派发线程 + 进度帧按任务合并 + 锁外 emit）、`spawn.rs`（任务注册与 spawn）、`ctx.rs`（`TaskCtx` 句柄结构）、`model.rs`（serde 任务配置 + `TaskProgress`/`StepInfo` 唯一定义）、`steps.rs`（StepSpec 分析）、`progress.rs`（EmitLoop/心跳/`set_done`/`set_error`/`set_cancelled`）、`runner.rs`（完整下载主体）、`repair.rs`（缺失扫描/`count_assets_all`）、`files.rs`（批量下载 + WaitingForUser）、`jdk.rs`（JDK 安装任务）、`modpack.rs`（整合包安装编排）、`store.rs`（SQLite 快照/恢复） |
 | `src-tauri/src/tooldl/` | **工具箱多线程下载器域**（独立于 `task/` 的启动器下载任务）：`model.rs`（任务状态 + 对外快照）、`manager.rs`（任务注册表 + 并发槽位调度 + 暂停/继续/取消/清除）、`runner.rs`（单任务执行体：分段下载 + 250ms 进度心跳 + 终态收口）。复用 `downloader::segmented` 内核；事件出口走 `task::EventSink`（域层不依赖 `AppHandle`，可注入测试），进度以单任务快照事件 `tooldl-progress` 推送 |
 | `src-tauri/src/config/` | 纯数据模型（无逻辑）：`downloader.rs`（多源/三态/`NetworkMode`/`DownloaderConfig`/`DownloadSource`）、`online.rs`、`game_dirs.rs` |
 | `src-tauri/src/auth/` | 微软 OAuth PKCE（`microsoft.rs`）+ 官方 API（`mojang.rs`）+ 账号服务（`account.rs`）+ 第三方皮肤站（`external.rs`，authlib-injector）+ 本地皮肤收藏（`skins.rs`）+ MsAccount（`model.rs`，多账号列表，secrets.bin 加密） |
@@ -38,7 +38,7 @@ Elytra Launcher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前�
 | `src-tauri/src/online/` | **局域网联机**：`service.rs`（单例 + 共享状态 + 快照/终止）、`host.rs`（建网 + 信息服务器 6 协议 + 游戏端口发现与实例重建）、`guest.rs`（加入/中心发现/本地代理）、`session.rs`（easytier 会话：no_tun+smoltcp+KCP 数据面、host 固定虚拟 IP 10.144.144.1、guest DHCP、白名单 ACL）、`model.rs`（状态模型与协议常量）、`scaffold/`（`room.rs` 房间码 base34+模 7、`codec.rs` 帧编解码、`profiles.rs` 玩家表、`server.rs` 信息服务器、`identity.rs` machine_id）、`mc_discover.rs`（组播 224.0.2.60:4445 解析游戏端口）、`mc_advertise.rs`（guest 端模拟 MC LAN 广播，绕过 MC 26.2 离线会话校验） |
 | `src-tauri/src/persist/` | `config.rs`（TOML section 读写 + 全局锁）、`store.rs`（低层文件 IO + 路径）、`secrets.rs`（密钥加密：DPAPI / Keychain / Secret Service + ChaCha20-Poly1305） |
 | `src-tauri/src/launcher/` | `args.rs`（命令构建）/ `env.rs`（环境准备）/ `process.rs`（进程生命周期与监听）/ `script.rs`（BAT/SH 渲染）/ `skin.rs`（离线皮肤）/ `platform.rs`（平台调节）/ `memory.rs` / `model.rs` |
-| `src-tauri/src/commands/` | 17 个命令模块（123 命令）：account(27) / community(3) / downloader(5) / gamedirs(11) / jdk(4) / launch(5) / launch_options(3) / launch_script(1) / loader(6) / offline_account(5) / online(6) / server_status(1) / skins(4，本地皮肤衣柜) / task(14) / tooldl(9，工具箱下载器) / version(15) / version_icon(4) —— 薄胶水，逻辑在各领域层 |
+| `src-tauri/src/commands/` | 18 个命令模块（127 命令）：account(27) / community(3) / config(1) / downloader(5) / gamedirs(11) / jdk(5) / launch(5) / launch_options(3) / launch_script(1) / loader(6) / offline_account(5) / online(6) / server_status(1) / skins(6，本地皮肤衣柜) / task(14) / tooldl(9，工具箱下载器) / version(15) / version_icon(4) —— 薄胶水，逻辑在各领域层 |
 | `src/pages/` | Launch / Download（资源中心）/ **DownloadDetail（下载任务中心，顶级路由）** / ResourceDetail（资源详情+依赖链）/ Settings / VersionSelect / VersionSetup（容器化，业务在 store/组件）/ Tools（生成器 + 皮肤绘画器 + 多线程下载器 + 联机等工具集）/ CustomThemeEditor / SkinStudio（皮肤衣柜：3D 预览 + 皮肤/披风/本地衣柜，**仅正版账号可进**） |
 | `src/store/` | 模块级 reactive/ref 单例，**按域分包**：`config/`（`downloaderConfig`/`gameDirs`/`online`/`toolDownload`/`externalConfig`/`jdkOptions`/`launchOptions`/`configRecovery`）、`task/`（`download`（dlState 任务状态机 + `ensureListen` 幂等 + terminalTaskIds 防幽灵）/`downloadTab`/`versionDownload`/`versionSetup`/`versionDetail`/`versionIcon`）、`auth/`（`auth`/`accountUi`/`avatar`（FNV-1a 头像））、`skin/`（`skinStudio`（皮肤衣柜：3D 全身预览帧 + 官方皮肤/披风 + 本地衣柜）/`skinEditor`（皮肤绘画器：64×64 像素缓冲**刻意非响应式**，视图只订阅 `revision`）/`skinRender`）、`community/`（`communitySearch`/`categorySearch`（聚合/分页/四分类工厂）/`resourceDetail`）、`app/`（`events`（镜像 Rust `events.rs`）/`alert`/`theme`（四主题）/`nav`/`settingsTab`/`selectedVersion`/`memory`/`appLog`/`launch`）。**鞘翅预览当前已禁用**：UI 入口（动作栏的羽毛开关 / `elytraPreview` 状态 / `toggleElytra`）已整体移除，等对照资料齐了再开；渲染器侧 `skinRender.buildElytra` 与 `drawFullCanvas` 的 `elytra` 选项保留（暂无 UI 调用）。重开时务必注意：**取披风纹理的 `(22,0)-(46,22)`** —— Mojang 披风纹理是双用途的，左半 `(0,0)` 是披风展开、右半就是鞘翅模型 `texOffs(22,0)` 的图案（实测迁移者/用户披风右半都带独立的鞘翅图案），别改回取披风展开区；**姿态是收拢的**（`rotation.x` 与 `rotation.z` 各 15°，两片近乎垂直、在背后叠成壳状，对齐 skinview3d 的 `ElytraObject.resetJoints`），不是滑翔态的水平展开 —— 张开角一大会把按竖直朝向画的图案整体拧 90°；翅膀贴图只画朝外一面，故该盒子 `noCull` |
 | `src/types/` | **自动生成的 TS 类型**（`ts-rs`，勿手改）：按域分包 `config/`、`task/`、`tooldl/`、`launcher/`、`jdk/`、`auth/`。生成命令 `cd src-tauri && cargo run --bin gen_ts`（登记清单 `src-tauri/src/ts_export.rs`，导出路径由 `src-tauri/.cargo/config.toml` 的 `TS_RS_EXPORT_DIR` 决定）。改 Rust 数据结构后必须重跑生成，否则前端类型落后 |
@@ -54,7 +54,7 @@ pnpm dev            # 仅 vite dev server（:1420 strictPort）
 pnpm build          # vue-tsc --noEmit（全量类型检查）+ vite build → dist/
 cd src-tauri && cargo check              # Rust 编译检查
 cd src-tauri && cargo clippy --lib       # Rust lint（保持零代码警告）
-cd src-tauri && cargo test --lib -- --test-threads=1   # 单元测试（当前 272 passed + 1 ignored；串行防 persist/网络竞争）
+cd src-tauri && cargo test --lib -- --test-threads=1   # 单元测试（当前 277 passed + 1 ignored；串行防 persist/网络竞争）
 cd src-tauri && cargo run --bin gen_ts    # 生成前端 TS 类型 → src/types/（改 Rust 数据结构后必跑；不在测试里生成）
 cd src-tauri && cargo test --test online_diag          # 联机集成测试（host/guest 双实例回环，走真实 easytier）
 cd src-tauri && cargo test --test tool_download        # 工具箱下载器集成测试（本地 HTTP 服务驱动完整链路：分段/暂停续传/取消/回退）
@@ -109,12 +109,12 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 
 | 文件 | 说明 |
 | --- | --- |
-| `src-tauri/src/lib.rs` | 入口：`task::init()` / `tooldl::init()`、后台预扫 JDK、**唯一** generate_handler! 注册点（123 个 tauri::command） |
+| `src-tauri/src/lib.rs` | 入口：`task::init()` / `tooldl::init()`、后台预扫 JDK、**唯一** generate_handler! 注册点（127 个 tauri::command） |
 | `src-tauri/src/main.rs` | 仅 `elytra_lib::run()` |
 | `src-tauri/src/constants.rs` | APP_NAME/UA/MIRROR_CONCURRENCY、`option_env!` 注入 CURSEFORGE_API_KEY / MS_CLIENT_ID（.env 经 build.rs）、persist SECT_* 段名 |
 | `src-tauri/src/events.rs` | 事件名常量（与 `src/store/app/events.ts` 手写镜像同步） |
 | `src-tauri/src/task/manager.rs` | TaskManager 单例（create/pause/cancel/fail/remove/list + 挂起决策 + `LazyLock` 单例） |
-| `src-tauri/src/task/emit.rs` | `EMIT_TX` 顺序队列线程 + `emit_event` 泛型派发 + `update_and_emit`（锁外 emit） |
+| `src-tauri/src/task/emit.rs` | `DISPATCH` 派发线程（进度帧按 `(事件, 任务)` 合并 + 低频事件 FIFO）+ `emit_event` 泛型派发 + `update_and_emit`（锁外 emit） |
 | `src-tauri/src/task/progress.rs` | 进度上报（EmitLoop/心跳/`set_*`）+ **终态收口唯一入口** `set_done`/`set_error`/`set_cancelled` |
 | `src-tauri/src/task/store.rs` | SQLite `install_jobs` 快照 + `block_on`（RuntimeFlavor 分支防 worker panic）+ 2s DB 写超时 + crash→interrupted 恢复 |
 | `src-tauri/src/downloader/fetcher/core.rs` | 多源下载核心：`FetchOptions`/`download_core`/重试与换源/黑洞拒绝/镜像并发信号量 |
@@ -124,14 +124,14 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 | `src-tauri/src/auth/microsoft.rs` | 微软 OAuth（授权码/refresh/XBL/XSTS/MC login）、回调服务 127.0.0.1:27205 |
 | `src-tauri/src/online/session.rs` | easytier 会话封装：no_tun+smoltcp+KCP 数据面、bind_device=false、enable_kcp_proxy=true（KCP 数据面首选，缺则 smoltcp 传大数中断） |
 | `src-tauri/src/online/mc_advertise.rs` | guest 端 MC 局域网广播模拟（224.0.2.60:4445，绕过 MC 26.2 离线会话校验） |
-| `src-tauri/src/util.rs` | 跨域纯函数：`config_dir()`/`safe_relative_path`/`sha1_sub_dir`/`unique_child_dir`/`fnv1a64`/`is_simple_name`/`infer_loader_from_json`… |
+| `src-tauri/src/util/` | 跨域纯函数（按职责拆分子模块，`mod.rs` 重导出、`crate::util::xxx` 路径不变）：`dirs.rs`（`config_dir()`/平台目录基准）/`path.rs`（`safe_relative_path`/`sha1_sub_dir`/`unique_child_dir`）/`text.rs`（`fnv1a64`/`is_simple_name`）/`version_name.rs`（`infer_loader_from_json`）/`net.rs`/`icon.rs`/`log.rs`/`time.rs`/`rt.rs` |
 | `src-tauri/tauri.conf.json` | 窗口 **1008×648**（840×540 的 1.2 倍）、无边框透明、`beforeDevCommand: pnpm dev`、devUrl :1420 |
 | `src-tauri/capabilities/default.json` | main 窗口权限：core:default + window 控制子集 + opener + dialog |
 | `src/store/task/download.ts` | 下载任务状态机（事件驱动核心） |
 
 ## Runtime/Tooling Preferences
 
-- **包管理器必须 pnpm**：`beforeDevCommand` 硬编码 `pnpm dev`；`pnpm-lock.yaml` 被 gitignore（依赖版本不锁定）
+- **包管理器必须 pnpm**：`beforeDevCommand` 硬编码 `pnpm dev`；`pnpm-lock.yaml` **入库**（工具链前沿，锁版本保证构建可复现；CI 与本地一律 `pnpm install --frozen-lockfile`）。pnpm 版本见 `mise.toml`（node 22 / pnpm 11）
 - **工具链很新**：vite 8、typescript 6、vue-tsc 3、vue-router 5——新增依赖前确认兼容（@lucide/vue 图标库已引入）
 - **窗口**：1008×648（840×540 的 1.2 倍）、`decorations:false` + `transparent:true` + `resizable:false`——前端自绘 TitleBar（`startDragging`）
 - **Rust 变更需重启 `pnpm tauri dev`**（vite `watch.ignored` 忽略 src-tauri）；前端改动 HMR 即时生效
@@ -149,8 +149,8 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 
 ## Testing & QA
 
-- **无前端测试**；Rust 侧 272 个单元测试，全部内嵌各模块 `#[cfg(test)] mod tests`（含测试与实现同文件的约定），`cargo test --lib -- --test-threads=1` 运行；集成测试 `tests/online_diag.rs`（联机全链路：host/guest 双实例回环 + easytier 日志落盘）与 `tests/tool_download.rs`（工具箱下载器全链路：本地 HTTP 服务驱动入队 / 分段 / 暂停续传 / 取消 / 回退，5 用例，含 1 个真实网络 `#[ignore]`）
-- **单元测试只测纯函数**：PKCE、URL 组装、启动命令构建（`build_launch_command` + `minimal_version_json()` 助手）、离线皮肤 UUID 算法（与 Java `UUID.hashCode() & 1` 一致性）、内存分配公式、util（URL 文件名/版本目录解析/`sha1_sub_dir`/`safe_relative_path`）、maven XML 解析与语义化排序、Mod 双源搜索、修复步骤规划、persist 读写回环、secrets DPAPI、store 快照/恢复、**`store_ops_from_runtime_worker_no_panic`（worker 线程 block_on 回归）**、**`count_assets_all_end_to_end`（真实索引 + 5057 项多线程扫描，网络）**、**`find_java_home_finds_nested_bin`（Azul 布局幂等）**、`downloader/fetcher` 的取消/换源/校验/重定向/并发上限、`downloader/segmented` 的切分覆盖/小文件不分段/分段写一致性/不支持 Range 回退/段级与段内续传/陈旧位图作废、loader 的 profile 合并与继承展开、房间码解析/广播回环（online）
+- **无前端测试**；Rust 侧 277 个单元测试，全部内嵌各模块 `#[cfg(test)] mod tests`（含测试与实现同文件的约定），`cargo test --lib -- --test-threads=1` 运行；集成测试 `tests/online_diag.rs`（联机全链路：host/guest 双实例回环 + easytier 日志落盘）与 `tests/tool_download.rs`（工具箱下载器全链路：本地 HTTP 服务驱动入队 / 分段 / 暂停续传 / 取消 / 回退，5 用例，含 1 个真实网络 `#[ignore]`）
+- **单元测试只测纯函数**：PKCE、URL 组装、启动命令构建（`build_launch_command` + `minimal_version_json()` 助手）、离线皮肤 UUID 算法（与 Java `UUID.hashCode() & 1` 一致性）、内存分配公式、util（URL 文件名/版本目录解析/`sha1_sub_dir`/`safe_relative_path`）、maven XML 解析与语义化排序、Mod 双源搜索、修复步骤规划、persist 读写回环、secrets DPAPI、store 快照/恢复、**`store_ops_from_runtime_worker_no_panic`（worker 线程 block_on 回归）**、**`count_assets_all_end_to_end`（真实索引 + 5057 项多线程扫描，网络）**、**`find_java_home_finds_nested_bin`（Azul 布局幂等）**、`downloader/fetcher` 的取消/换源/校验/重定向/并发上限、`downloader/segmented` 的切分覆盖/小文件不分段/分段写一致性/不支持 Range 回退/段级与段内续传/陈旧位图作废、loader 的 profile 合并与继承展开、房间码解析/广播回环（online）、**`task/emit` 的派发器（进度帧按 `(事件, 任务)` 合并 / 低频事件 FIFO / 同任务帧严格保序 / 等待决策帧不被进度帧顶替）**
 - **断言风格**：`assert_eq!` 精确值为主（argv 位置、公式值、错误码消息）；行为不变量用 `assert!` + 中文 message
 - **平台隔离**：Windows 专属逻辑（BAT 脚本渲染、DPAPI、注册表代理）用 `#[cfg(target_os = "windows")]`
 - **persist 测试隔离**：测试进程下配置落在 `target/debug/deps/Elytra/Settings.toml`（config_dir 基于 current_exe 推导，测试进程在 deps/ 下），与正式运行隔离；每个测试先 remove_file 再 save（串行依赖）
