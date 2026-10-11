@@ -15,19 +15,21 @@ use super::service::{
 };
 use super::session::{EasyTierSession, SessionConfig, SessionRole};
 use crate::persist::online_config;
+use crate::task::EventSink;
 use easytier_core::gateway::DataPlaneTcpStream;
+use std::sync::Arc;
 
 /// 加入联机（作为 guest）：解析房间码 → 建网 → 发现中心 → 心跳 → 协商 →
 /// server_port → 建游戏代理（本地 → 中心游戏端口）→ MC 广播。返回本地端口。
-pub async fn join(app: &tauri::AppHandle, room_code: &str) -> Result<u16, String> {
+pub async fn join(sink: Arc<dyn EventSink>, room_code: &str) -> Result<u16, String> {
     let (session, gen) = start_join_session(room_code).await?;
-    let (stream, center_addr, center_ip) = connect_center(app, &session, gen).await?;
+    let (stream, center_addr, center_ip) = connect_center(sink.as_ref(), &session, gen).await?;
     let (local_profile, supports_easytier_id, game_port) =
-        negotiate_guest_session(app, stream).await?;
+        negotiate_guest_session(sink.as_ref(), stream).await?;
     let local_port =
-        activate_guest_join(app, &session, center_ip, game_port, &local_profile).await?;
+        activate_guest_join(sink.as_ref(), &session, center_ip, game_port, &local_profile).await?;
     spawn_guest_sync(
-        app,
+        sink,
         session,
         center_addr,
         gen,
@@ -68,7 +70,7 @@ async fn start_join_session(room_code: &str) -> Result<(EasyTierSession, u64), S
 /// 阶段二：发现联机中心并连上信息服务器（数据面）。
 /// 失败时回滚会话、广播快照并返回错误文案。
 async fn connect_center(
-    app: &tauri::AppHandle,
+    sink: &dyn EventSink,
     session: &EasyTierSession,
     gen: u64,
 ) -> Result<(DataPlaneTcpStream, SocketAddr, Ipv4Addr), String> {
@@ -79,7 +81,7 @@ async fn connect_center(
             let mut svc = SERVICE.lock().await;
             rollback_join(&mut svc);
             let snap = snapshot_inner(&svc);
-            emit_snapshot(app, &snap);
+            emit_snapshot(sink, &snap);
             return Err("联机中心发现失败\n请确认主机已开启联机".to_string());
         }
     };
@@ -95,7 +97,7 @@ async fn connect_center(
             let mut svc = SERVICE.lock().await;
             rollback_join(&mut svc);
             let snap = snapshot_inner(&svc);
-            emit_snapshot(app, &snap);
+            emit_snapshot(sink, &snap);
             bail!("连接联机中心失败\n{e}");
         }
     };
@@ -105,7 +107,7 @@ async fn connect_center(
 /// 阶段三：信息协议握手（立即心跳 → 协议协商 → server_port）。
 /// 返回本地玩家资料、是否支持 easytier_id、游戏端口。
 async fn negotiate_guest_session(
-    app: &tauri::AppHandle,
+    sink: &dyn EventSink,
     mut stream: DataPlaneTcpStream,
 ) -> Result<(Profile, bool, u16), String> {
     // 立即心跳（协商前也要发，协议要求）
@@ -120,9 +122,14 @@ async fn negotiate_guest_session(
         "machine_id": local_profile.machine_id,
         "vendor": local_profile.vendor,
     });
-    write_request_async(&mut stream, "c", "player_ping", ping_body.to_string().as_bytes())
-        .await
-        .map_err(common_err_ctx!("发送心跳失败"))?;
+    write_request_async(
+        &mut stream,
+        "c",
+        "player_ping",
+        ping_body.to_string().as_bytes(),
+    )
+    .await
+    .map_err(common_err_ctx!("发送心跳失败"))?;
     let _ = read_response_async(&mut stream).await;
 
     // 协议协商：c:protocols
@@ -148,7 +155,7 @@ async fn negotiate_guest_session(
         let mut svc = SERVICE.lock().await;
         rollback_join(&mut svc);
         let snap = snapshot_inner(&svc);
-        emit_snapshot(app, &snap);
+        emit_snapshot(sink, &snap);
         return Err("服务器未启动\n请让主机先在游戏里开启局域网世界".to_string());
     }
     let game_port = u16::from_be_bytes([port_resp.body[0], port_resp.body[1]]);
@@ -158,7 +165,7 @@ async fn negotiate_guest_session(
 
 /// 阶段四：建本地游戏代理 + MC 局域网广播，回写状态并广播快照。返回本地端口。
 async fn activate_guest_join(
-    app: &tauri::AppHandle,
+    sink: &dyn EventSink,
     session: &EasyTierSession,
     center_ip: Ipv4Addr,
     game_port: u16,
@@ -186,21 +193,20 @@ async fn activate_guest_join(
     }
     svc.profiles = Some(ProfileTable::with_host(local_profile.clone()));
     let snap = snapshot_inner(&svc);
-    emit_snapshot(app, &snap);
+    emit_snapshot(sink, &snap);
     drop(svc);
     Ok(local_port)
 }
 
 /// 阶段五：起后台心跳 + 玩家列表同步任务（每 5s）。
 fn spawn_guest_sync(
-    app: &tauri::AppHandle,
+    sink: Arc<dyn EventSink>,
     session: EasyTierSession,
     center_addr: SocketAddr,
     gen: u64,
     local_profile: Profile,
     supports_easytier_id: bool,
 ) {
-    let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let mut stream = match session
             .data_plane_tcp_connect(center_addr, Duration::from_secs(10))
@@ -209,13 +215,13 @@ fn spawn_guest_sync(
             Ok(st) => st,
             Err(_) => return,
         };
-        guest_sync_loop(&app, &mut stream, local_profile, supports_easytier_id, gen).await;
+        guest_sync_loop(sink.as_ref(), &mut stream, local_profile, supports_easytier_id, gen).await;
     });
 }
 
 /// 后台心跳 + 玩家列表同步循环。
 async fn guest_sync_loop(
-    app: &tauri::AppHandle,
+    sink: &dyn EventSink,
     stream: &mut DataPlaneTcpStream,
     local_profile: Profile,
     supports_easytier_id: bool,
@@ -261,7 +267,7 @@ async fn guest_sync_loop(
                 }
                 svc.profiles = Some(profiles);
                 let snap = snapshot_inner(&svc);
-                emit_snapshot(app, &snap);
+                emit_snapshot(sink, &snap);
             }
         }
     }

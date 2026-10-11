@@ -19,7 +19,7 @@
 //! - `run_task_cancel_path`：秒级（只拉一次版本清单 + 本地扫描后即取消）
 //! - `run_task_full_download`：分钟级（真实下载一整个版本，数百 MB）
 
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -28,7 +28,7 @@ use elytra_lib::config::downloader::DownloaderConfig;
 use elytra_lib::game::version::manifest::fetch_version_list;
 use elytra_lib::task::model::{DownloadTask, TaskStatus};
 use elytra_lib::task::runner::run_task;
-use elytra_lib::task::{self, EventSink};
+use elytra_lib::task::{self, EventSink, TaskSpec};
 
 /// 事件出口的空实现：只记录事件名，不触达任何 IPC。
 #[derive(Default)]
@@ -106,6 +106,48 @@ async fn run_task_cancel_path() {
         rec.saw("task-progress"),
         "应至少发出一次进度事件（阶段 A/B 的 set_phase/step_done）"
     );
+}
+
+/// spawn 入口集成（**不需要网络**）：验证 `spawn_task_with_sink` 完成
+/// 「注册 → 写恢复快照 → 执行闭包」，且事件出口正是注入的 sink。
+///
+/// 这条用例覆盖此前只能手工验证的 TaskManager 注册路径：`run_task_*` 两个用例
+/// 直接调任务体、绕过了 spawn；这里从入口进入，`run` 闭包同步执行后检查注册表。
+#[test]
+fn spawn_task_with_sink_registers_and_runs() {
+    let rec = Arc::new(RecordingSink::default());
+    let sink: Arc<dyn EventSink> = rec.clone();
+    let ran = Arc::new(AtomicBool::new(false));
+
+    // 不需要真实 URL：闭包自行收口，网络阶段不执行
+    let task = vanilla_task("1.20.1", "https://invalid.example/1.20.1.json".into());
+    task.validate().expect("任务配置应合法");
+
+    let flag = Arc::clone(&ran);
+    let task_id = task::spawn_task_with_sink(
+        sink,
+        task.name().to_string(),
+        task.steps(),
+        task::store::JobSpec::Download(task.clone()),
+        move |_sink, cancel, progress| {
+            flag.store(true, Ordering::SeqCst);
+            assert!(!cancel.load(Ordering::SeqCst), "新任务不应处于取消态");
+            // create 后为 Pending；Running 由任务体首帧设置（此闭包未跑任务体）
+            assert_eq!(progress.lock().status, TaskStatus::Pending);
+        },
+    )
+    .expect("spawn 应成功");
+
+    assert!(ran.load(Ordering::SeqCst), "执行闭包应被同步调用");
+    assert!(task::global().exists(&task_id), "闭包未收口时任务应仍在注册表");
+    assert!(
+        task::store::load_spec(&task_id).is_some(),
+        "spawn 应写入恢复快照（load_spec 命中）"
+    );
+
+    // 收口清理，避免注册表残留影响同文件其它用例
+    task::global().fail(&task_id);
+    assert!(!task::global().exists(&task_id), "fail 应移除任务注册");
 }
 
 /// 成功路径端到端：真实下载一整个原版版本（数百 MB，分钟级）。

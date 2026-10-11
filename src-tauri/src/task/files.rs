@@ -177,15 +177,9 @@ async fn install_world(
     let unpack = stage.join("unpack");
     // 下载（含静默重试/WaitingForUser，与普通 kind 一致），成功后 rename 到临时区 zip
     let zip_for_rename = zip_path.clone();
-    download_with_decision(
-        ctx,
-        &f.filename,
-        &f.url,
-        &tmp,
-        cb,
-        emit_handle,
-        |tmp| std::fs::rename(tmp, &zip_for_rename).map_err(|e| e.to_string()),
-    )
+    download_with_decision(ctx, &f.filename, &f.url, &tmp, cb, emit_handle, |tmp| {
+        std::fs::rename(tmp, &zip_for_rename).map_err(|e| e.to_string())
+    })
     .await?;
     // 解压（zip slip 防护 + 逐条目取消检查）
     if let Err(e) = extract_zip_safe(&zip_path, &unpack, cancel) {
@@ -581,7 +575,7 @@ pub(crate) fn spawn_files_task(app: AppHandle, task: DownloadFilesTask) -> Resul
         task::store::JobSpec::Files(task.clone()),
         move |a, cancel, progress| {
             tauri::async_runtime::spawn(async move {
-                run_files_task(Arc::new(a), &cancel, &progress, &task).await;
+                run_files_task(a, &cancel, &progress, &task).await;
             });
         },
     )

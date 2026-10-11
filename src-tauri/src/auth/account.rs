@@ -4,10 +4,11 @@
 use crate::auth;
 use crate::constants;
 use crate::events;
-use crate::task;
+use crate::task::{self, EventSink};
 
 use base64::Engine;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -82,20 +83,21 @@ pub async fn fetch_b64(url: &str, err_prefix: &str) -> Result<String, String> {
 /// 启动 Microsoft 登录的浏览器回调等待（含超时），完成后端口自动释放。
 /// 结果经 `ms-login-complete` 事件推送。
 pub async fn wait_callback(
-    app: tauri::AppHandle,
+    sink: Arc<dyn EventSink>,
     listener: tokio::net::TcpListener,
     state: &str,
     pkce: &auth::microsoft::Pkce,
 ) {
+    let app = sink.as_ref();
     match tokio::time::timeout(CALLBACK_TIMEOUT, listener.accept()).await {
         Ok(Ok((stream, _))) => {
-            handle_callback(stream, state, pkce, &app).await;
+            handle_callback(stream, state, pkce, app).await;
         }
         Ok(Err(e)) => {
-            let _ = emit_result(&app, false, None, Some(format!("回调服务错误\n{e}")));
+            let _ = emit_result(app, false, None, Some(format!("回调服务错误\n{e}")));
         }
         Err(_) => {
-            let _ = emit_result(&app, false, None, Some("登录超时，请重新尝试".into()));
+            let _ = emit_result(app, false, None, Some("登录超时，请重新尝试".into()));
         }
     }
 }
@@ -105,7 +107,7 @@ async fn handle_callback(
     mut stream: tokio::net::TcpStream,
     state: &str,
     pkce: &auth::microsoft::Pkce,
-    app: &tauri::AppHandle,
+    app: &dyn EventSink,
 ) {
     // 从流中最多读取4096字节
     let mut buf = [0u8; 4096];
@@ -162,7 +164,7 @@ async fn handle_callback(
 }
 
 fn emit_result(
-    app: &tauri::AppHandle,
+    app: &dyn EventSink,
     ok: bool,
     account: Option<auth::model::MsAccount>,
     error: Option<String>,

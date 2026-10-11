@@ -15,6 +15,7 @@ use crate::config::downloader::DownloaderConfig;
 use crate::downloader;
 use crate::jdk::SUPPORTED_JAVA_MAJORS;
 use crate::persist;
+use crate::task::EventSink;
 
 /// 注册任务并 spawn 执行（任务域统一入口，命令层只传参数与执行闭包）。
 /// `spec`：恢复凭证（JobSpec），spawn 时写入快照（running）；
@@ -24,7 +25,23 @@ pub(crate) fn spawn_task(
     name: String,
     steps: Vec<StepSpec>,
     spec: store::JobSpec,
-    run: impl FnOnce(AppHandle, Arc<AtomicBool>, Arc<Mutex<TaskProgress>>) + Send + 'static,
+    run: impl FnOnce(Arc<dyn EventSink>, Arc<AtomicBool>, Arc<Mutex<TaskProgress>>) + Send + 'static,
+) -> Result<String, String> {
+    let sink: Arc<dyn EventSink> = Arc::new(app);
+    spawn_task_with_sink(sink, name, steps, spec, run)
+}
+
+/// 与 [`spawn_task`] 同逻辑，但事件出口由调用方注入。
+///
+/// 生产路径经 `spawn_task`（`AppHandle` 是 [`EventSink`] 的 blanket impl，包一次即得 sink）；
+/// 集成测试直接注入记录型 sink，从而覆盖「注册 → running 快照 → 执行闭包」整条路径，
+/// 而不必绕过入口直接调任务体。
+pub fn spawn_task_with_sink(
+    sink: Arc<dyn EventSink>,
+    name: String,
+    steps: Vec<StepSpec>,
+    spec: store::JobSpec,
+    run: impl FnOnce(Arc<dyn EventSink>, Arc<AtomicBool>, Arc<Mutex<TaskProgress>>) + Send + 'static,
 ) -> Result<String, String> {
     let step_names: Vec<&str> = steps.iter().map(|s| s.name.as_str()).collect();
     let tm = global();
@@ -34,7 +51,7 @@ pub(crate) fn spawn_task(
     let (task_id, cancel, progress) = tm.create(&name, &step_names);
     // 持久化快照（崩溃/重启恢复依据；DB 故障静默）
     store::save_snapshot(&task_id, &name, &spec, TaskStatus::Running);
-    run(app, cancel, progress);
+    run(sink, cancel, progress);
     Ok(task_id)
 }
 
@@ -60,7 +77,7 @@ pub fn spawn_download(app: AppHandle, task: DownloadTask) -> Result<String, Stri
         store::JobSpec::Download(task.clone()),
         move |a, cancel, progress| {
             tauri::async_runtime::spawn(async move {
-                runner::run_task(Arc::new(a), &cancel, &progress, &task).await;
+                runner::run_task(a, &cancel, &progress, &task).await;
             });
         },
     )

@@ -7,7 +7,6 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
-use tauri::AppHandle;
 
 use crate::config::downloader::{DownloadSource, DownloaderConfig};
 use crate::downloader::fetcher;
@@ -434,14 +433,13 @@ async fn repair_natives(ctx: &RepairCtx<'_>) -> Result<(), Vec<String>> {
 /// `report` 为提交时扫描结果（步骤数与其一致），运行中按对应步骤索引更新。
 /// 仅保留编排：准备 → 并行下载 → 收尾心跳/步骤落章 → natives → 终态收口。
 pub async fn run_repair_task(
-    app: AppHandle,
+    sink: Arc<dyn EventSink>,
     cancel: &Arc<AtomicBool>,
     progress: &Arc<Mutex<TaskProgress>>,
     version_dir_name: &str,
     report: MissingReport,
 ) {
     // 事件出口：仅心跳循环需要克隆 Arc，其余阶段以 &dyn EventSink 贯穿
-    let sink: Arc<dyn EventSink> = Arc::new(app.clone());
     let app = sink.as_ref();
 
     // 准备（配置/版本 JSON/缺失总量/步骤索引）；JSON 缺失或无需修复时已自行收口

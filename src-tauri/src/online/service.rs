@@ -1,8 +1,5 @@
 //! 联机会话单例：状态机共享状态、快照派生、会话终止与本地小工具。
 
-use std::sync::LazyLock;
-use tokio::sync::Mutex;
-
 use super::mc_advertise::McAdvertiser;
 use super::mc_discover::MinecraftScanner;
 use super::model::{OnlineSnapshot, OnlineStatus};
@@ -11,7 +8,9 @@ use super::scaffold::room::RoomCredential;
 use super::session::{EasyTierSession, SessionRole};
 use crate::events::ONLINE_STATE;
 use crate::persist::online_config;
-use crate::task::emit_event;
+use crate::task::{emit_event, EventSink};
+use std::sync::LazyLock;
+use tokio::sync::Mutex;
 
 /// host 共享状态（信息服务器 handler + 代理任务用）。
 pub(super) struct HostShared {
@@ -83,12 +82,12 @@ pub(super) fn snapshot_inner(svc: &OnlineServiceInner) -> OnlineSnapshot {
     }
 }
 
-pub(super) fn emit_snapshot(app: &tauri::AppHandle, snap: &OnlineSnapshot) {
-    emit_event(app, ONLINE_STATE, snap.clone());
+pub(super) fn emit_snapshot(sink: &dyn EventSink, snap: &OnlineSnapshot) {
+    emit_event(sink, ONLINE_STATE, snap.clone());
 }
 
 /// 停止联机（幂等）。
-pub async fn stop(app: &tauri::AppHandle) -> Result<(), String> {
+pub async fn stop(sink: &dyn EventSink) -> Result<(), String> {
     let mut svc = SERVICE.lock().await;
     svc.generation += 1;
     if let Some(s) = svc.session.take() {
@@ -101,7 +100,7 @@ pub async fn stop(app: &tauri::AppHandle) -> Result<(), String> {
     svc.scaffold_port = None;
     svc.profiles = None;
     let snap = snapshot_inner(&svc);
-    emit_snapshot(app, &snap);
+    emit_snapshot(sink, &snap);
     Ok(())
 }
 

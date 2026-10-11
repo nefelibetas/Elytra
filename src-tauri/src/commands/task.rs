@@ -209,7 +209,7 @@ pub async fn install_modpack(app: AppHandle, request: ModpackRequest) -> Result<
         }),
         move |a, cancel, progress| {
             tauri::async_runtime::spawn(async move {
-                modpack::run_install(&a, &cancel, &progress, &request).await;
+                modpack::run_install(a, &cancel, &progress, &request).await;
             });
         },
     )

@@ -1,5 +1,7 @@
 //! 账号与皮肤命令（薄胶水层）：逻辑在 auth/（microsoft=协议、mojang=API、account=服务）。
 
+use std::sync::Arc;
+
 use base64::Engine;
 use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
@@ -11,6 +13,7 @@ use crate::auth::model;
 use crate::auth::mojang;
 use crate::constants;
 use crate::persist;
+use crate::task::EventSink;
 
 /// 当前进行中的登录回调等待任务（取消登录时 abort 以释放回调端口；完成后残留无害，下次启动覆盖）。
 static LOGIN_TASK: std::sync::LazyLock<parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>>> =
@@ -35,9 +38,9 @@ pub async fn start_ms_login(app: AppHandle) -> Result<String, String> {
     let auth_url = microsoft::build_auth_url(&state, &pkce).map_err(|e| e.to_string())?;
 
     // 后台等待一次回调（含超时），完成后端口自动释放
-    let app_handle = app.clone();
+    let sink: Arc<dyn EventSink> = Arc::new(app.clone());
     let handle = tokio::task::spawn(async move {
-        account::wait_callback(app_handle, listener, &state, &pkce).await;
+        account::wait_callback(sink, listener, &state, &pkce).await;
     });
     *LOGIN_TASK.lock() = Some(handle);
 

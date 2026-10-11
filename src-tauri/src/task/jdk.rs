@@ -6,7 +6,6 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
-use tauri::AppHandle;
 
 use crate::config::downloader::DownloaderConfig;
 use crate::downloader::path_lock::PathLock;
@@ -16,7 +15,7 @@ use crate::persist;
 use crate::task::progress::{
     cancelled, set_cancelled, set_error, set_phase, set_total, update_progress,
 };
-use crate::task::{self, StepStatus, TaskProgress, TaskStatus};
+use crate::task::{self, EventSink, StepStatus, TaskProgress, TaskStatus};
 
 /// JDK 安装任务主体：按 jdk_source_mode 三态回退链（jdk::download::auto_install：
 /// 官方 → Adoptium[TUNA 镜像] → Azul），
@@ -24,7 +23,7 @@ use crate::task::{self, StepStatus, TaskProgress, TaskStatus};
 /// 原子计数器（文件数 + 字节增量）+ 150ms 心跳（EMA 速度/ETA），终态由
 /// set_error/set_cancelled/收尾 done 独占发出，心跳随 status 离开 Running 自退出。
 pub async fn run_install_jdk(
-    app: AppHandle,
+    sink: Arc<dyn EventSink>,
     cancel: &Arc<AtomicBool>,
     progress: &Arc<Mutex<TaskProgress>>,
     major: u32,
@@ -33,25 +32,25 @@ pub async fn run_install_jdk(
     let dest_dir = runtime_dir(&config, major);
 
     // 准备阶段：目录互斥 + 清理登记 + Running 相位（锁冲突/已取消时自行收口）
-    let Some(_lock) = begin_jdk_install(&app, progress, cancel, &dest_dir, major) else {
+    let Some(_lock) = begin_jdk_install(sink.as_ref(), progress, cancel, &dest_dir, major) else {
         return;
     };
 
     // 原子计数器（下载回调写入，心跳读取）
     let counts = JdkCounters::new();
 
-    let emit_handle = spawn_jdk_heartbeat(app.clone(), progress.clone(), &counts);
+    let emit_handle = spawn_jdk_heartbeat(sink.clone(), progress.clone(), &counts);
 
     // 下载 + 安装（按 jdk_source_mode 回退链；取消/失败由 auto_install 返回）
     let hook = InstallProgress {
         cancel: Some(cancel),
         on_total: Some(&{
-            let app = app.clone();
+            let app = sink.clone();
             let progress = progress.clone();
             let files_total = counts.files_total.clone();
             move |files: u32, bytes: u64| {
                 files_total.store(files, Ordering::Relaxed);
-                set_total(&app, &progress, files, bytes);
+                set_total(app.as_ref(), &progress, files, bytes);
             }
         }),
         on_bytes: Some(&{
@@ -69,14 +68,14 @@ pub async fn run_install_jdk(
     };
     let result = auto_install(major, &config, &hook).await;
 
-    settle_jdk_install(&app, progress, cancel, &dest_dir, emit_handle, result);
+    settle_jdk_install(sink.as_ref(), progress, cancel, &dest_dir, emit_handle, result);
 }
 
 /// 准备阶段：同目录互斥 + 半截目录清理登记 + Running 相位。
 /// 锁冲突（另一任务正装同 major）或已取消时自行收口并返回 None；
 /// 返回的锁由调用方持有至任务结束。
 fn begin_jdk_install(
-    app: &AppHandle,
+    app: &dyn EventSink,
     progress: &Arc<Mutex<TaskProgress>>,
     cancel: &Arc<AtomicBool>,
     dest_dir: &Path,
@@ -149,7 +148,7 @@ impl JdkCounters {
 /// 3) 不覆写 total_bytes（由 on_total 钩子经 set_total 设置），也不写 p.status，
 ///    spawn_heartbeat 每拍以 est_total_bytes 覆写总量并强置 Running。
 fn spawn_jdk_heartbeat(
-    app: AppHandle,
+    sink: Arc<dyn EventSink>,
     progress: Arc<Mutex<TaskProgress>>,
     counts: &JdkCounters,
 ) -> tauri::async_runtime::JoinHandle<()> {
@@ -174,7 +173,7 @@ fn spawn_jdk_heartbeat(
             let cur = acc_bytes.load(Ordering::Relaxed) + cb;
             let total_bytes = progress.lock().total_bytes;
             let (speed_bps, eta) = sampler.sample(cur, total_bytes);
-            task::update_and_emit(&app, &progress, |p| {
+            task::update_and_emit(sink.as_ref(), &progress, |p| {
                 p.speed_bps = speed_bps;
                 p.eta_seconds = eta;
                 p.completed_files = fd;
@@ -200,7 +199,7 @@ fn spawn_jdk_heartbeat(
 
 /// 收尾：取消优先；成功注册进 jdk 配置并置 done，失败后台整删半截目录并置 error。
 fn settle_jdk_install(
-    app: &AppHandle,
+    app: &dyn EventSink,
     progress: &Arc<Mutex<TaskProgress>>,
     cancel: &Arc<AtomicBool>,
     dest_dir: &Path,

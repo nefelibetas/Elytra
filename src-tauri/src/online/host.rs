@@ -16,19 +16,27 @@ use super::service::{
 };
 use super::session::{EasyTierSession, SessionConfig, SessionRole};
 use crate::persist::online_config;
+use crate::task::EventSink;
 
 /// 开启联机（作为 host）：建虚拟网（hostname + 白名单 [scaffold_port]）+
 /// 起信息服务器（OS 监听 scaffold_port，guest 经 proxy NAT 直连）。
 /// 状态 `Waiting`；后台等游戏"对局域网开放"，检测到端口后**重建实例**
 /// 白名单补游戏端口（proxy NAT 直连本机 MC 监听）→ `Hosting`。
-pub async fn start_host(app: &tauri::AppHandle) -> Result<OnlineSnapshot, String> {
+pub async fn start_host(sink: Arc<dyn EventSink>) -> Result<OnlineSnapshot, String> {
     let mut svc = SERVICE.lock().await;
     let (gen, scaffold_port, room, session) = start_host_session(&mut svc).await?;
     let (profiles, shared) = start_info_server(scaffold_port);
-    let snap = publish_host_ready(app, &mut svc, session, room, scaffold_port, profiles);
+    let snap = publish_host_ready(
+        sink.as_ref(),
+        &mut svc,
+        session,
+        room,
+        scaffold_port,
+        profiles,
+    );
     drop(svc);
-    spawn_host_discovery(app, Arc::clone(&shared), gen);
-    spawn_host_heartbeat(app, shared, gen);
+    spawn_host_discovery(Arc::clone(&sink), Arc::clone(&shared), gen);
+    spawn_host_heartbeat(sink, shared, gen);
     Ok(snap)
 }
 
@@ -47,14 +55,13 @@ async fn start_host_session(
         svc.scanner = Some(MinecraftScanner::start());
     }
     // 信息服务器端口：优先 13448（参考 Terracotta），占用则随机
-    let scaffold_port =
-        match std::net::TcpListener::bind(("0.0.0.0", DEFAULT_SCAFFOLD_PORT)) {
-            Ok(l) => {
-                drop(l);
-                DEFAULT_SCAFFOLD_PORT
-            }
-            Err(_) => free_tcp_port()?,
-        };
+    let scaffold_port = match std::net::TcpListener::bind(("0.0.0.0", DEFAULT_SCAFFOLD_PORT)) {
+        Ok(l) => {
+            drop(l);
+            DEFAULT_SCAFFOLD_PORT
+        }
+        Err(_) => free_tcp_port()?,
+    };
     let room = create_room()?;
     let public_nodes = online_config().public_nodes;
     let cfg = SessionConfig {
@@ -93,7 +100,7 @@ fn start_info_server(scaffold_port: u16) -> (ProfileTable, Arc<HostShared>) {
 
 /// 阶段三：回写状态为 `Waiting` 并广播快照。
 fn publish_host_ready(
-    app: &tauri::AppHandle,
+    sink: &dyn EventSink,
     svc: &mut OnlineServiceInner,
     session: EasyTierSession,
     room: RoomCredential,
@@ -106,20 +113,19 @@ fn publish_host_ready(
     svc.scaffold_port = Some(scaffold_port);
     svc.profiles = Some(profiles);
     let snap = snapshot_inner(svc);
-    emit_snapshot(app, &snap);
+    emit_snapshot(sink, &snap);
     snap
 }
 
 /// 阶段四：后台发现任务：Waiting → Hosting（游戏端口出现 → 重建实例补白名单）。
-fn spawn_host_discovery(app: &tauri::AppHandle, shared: Arc<HostShared>, gen: u64) {
-    let app = app.clone();
+fn spawn_host_discovery(sink: Arc<dyn EventSink>, shared: Arc<HostShared>, gen: u64) {
     tauri::async_runtime::spawn(async move {
-        host_discovery_loop(&app, &shared, gen).await;
+        host_discovery_loop(sink.as_ref(), &shared, gen).await;
     });
 }
 
 /// 后台发现循环：轮询游戏端口，按需重建联机会话。
-async fn host_discovery_loop(app: &tauri::AppHandle, shared: &HostShared, gen: u64) {
+async fn host_discovery_loop(sink: &dyn EventSink, shared: &HostShared, gen: u64) {
     loop {
         tokio::time::sleep(DISCOVER_POLL).await;
         let mut svc = SERVICE.lock().await;
@@ -138,7 +144,7 @@ async fn host_discovery_loop(app: &tauri::AppHandle, shared: &HostShared, gen: u
             _ => None,
         };
         if let Some(port) = sync_target {
-            if !sync_host_session(app, &mut svc, shared, port).await {
+            if !sync_host_session(sink, &mut svc, shared, port).await {
                 return;
             }
         }
@@ -148,7 +154,7 @@ async fn host_discovery_loop(app: &tauri::AppHandle, shared: &HostShared, gen: u
 /// 重建联机会话以匹配当前游戏端口（`None` = 去游戏端口白名单）。
 /// 返回 `false` 表示调用方应结束后台任务。
 async fn sync_host_session(
-    app: &tauri::AppHandle,
+    sink: &dyn EventSink,
     svc: &mut OnlineServiceInner,
     shared: &HostShared,
     mc_port: Option<u16>,
@@ -187,13 +193,12 @@ async fn sync_host_session(
         }
     }
     let snap = snapshot_inner(svc);
-    emit_snapshot(app, &snap);
+    emit_snapshot(sink, &snap);
     true
 }
 
 /// 阶段五：后台心跳维护任务：剔除超时 guest + 玩家表变化推前端。
-fn spawn_host_heartbeat(app: &tauri::AppHandle, shared: Arc<HostShared>, gen: u64) {
-    let app = app.clone();
+fn spawn_host_heartbeat(sink: Arc<dyn EventSink>, shared: Arc<HostShared>, gen: u64) {
     tauri::async_runtime::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(2)).await;
@@ -207,7 +212,7 @@ fn spawn_host_heartbeat(app: &tauri::AppHandle, shared: Arc<HostShared>, gen: u6
             };
             if changed {
                 let snap = snapshot_inner(&svc);
-                emit_snapshot(&app, &snap);
+                emit_snapshot(sink.as_ref(), &snap);
             }
         }
     });
@@ -245,11 +250,9 @@ fn build_host_handlers(shared: Arc<HostShared>) -> Handlers {
         handlers.register(
             "c",
             "server_port",
-            Arc::new(move |_req: &Request| {
-                match *shared.mc_port.read() {
-                    Some(port) => Ok(Response::ok(port.to_be_bytes().to_vec())),
-                    None => Ok(Response::fail(32, Vec::new())),
-                }
+            Arc::new(move |_req: &Request| match *shared.mc_port.read() {
+                Some(port) => Ok(Response::ok(port.to_be_bytes().to_vec())),
+                None => Ok(Response::fail(32, Vec::new())),
             }),
         );
     }
@@ -321,21 +324,39 @@ mod tests {
         let handlers = build_host_handlers(shared.clone());
 
         // c:ping 回显
-        let req = Request { namespace: "c".into(), value: "ping".into(), body: b"abc".to_vec() };
+        let req = Request {
+            namespace: "c".into(),
+            value: "ping".into(),
+            body: b"abc".to_vec(),
+        };
         let resp = handlers.dispatch(&req).unwrap();
         assert_eq!(resp.status, 0);
         assert_eq!(resp.body, b"abc");
 
         // c:protocols 含全部标准协议
-        let req = Request { namespace: "c".into(), value: "protocols".into(), body: vec![] };
+        let req = Request {
+            namespace: "c".into(),
+            value: "protocols".into(),
+            body: vec![],
+        };
         let resp = handlers.dispatch(&req).unwrap();
         let list = String::from_utf8(resp.body).unwrap();
-        for p in ["c:ping", "c:protocols", "c:server_port", "c:player_ping", "c:player_profiles_list"] {
+        for p in [
+            "c:ping",
+            "c:protocols",
+            "c:server_port",
+            "c:player_ping",
+            "c:player_profiles_list",
+        ] {
             assert!(list.split('\0').any(|x| x == p), "缺协议 {p}");
         }
 
         // c:server_port：无游戏端口 → 32；有 → 返回端口
-        let req = Request { namespace: "c".into(), value: "server_port".into(), body: vec![] };
+        let req = Request {
+            namespace: "c".into(),
+            value: "server_port".into(),
+            body: vec![],
+        };
         let resp = handlers.dispatch(&req).unwrap();
         assert_eq!(resp.status, 32, "未检测到游戏端口应报错");
         *shared.mc_port.write() = Some(25565);
@@ -353,7 +374,11 @@ mod tests {
         assert_eq!(resp.status, 0);
 
         // c:player_profiles_list：host + alice
-        let req = Request { namespace: "c".into(), value: "player_profiles_list".into(), body: vec![] };
+        let req = Request {
+            namespace: "c".into(),
+            value: "player_profiles_list".into(),
+            body: vec![],
+        };
         let resp = handlers.dispatch(&req).unwrap();
         let profiles: serde_json::Value = serde_json::from_slice(&resp.body).unwrap();
         let arr = profiles.as_array().unwrap();
@@ -362,7 +387,11 @@ mod tests {
         assert_eq!(arr[1]["name"], "alice");
 
         // 未知协议 → 255
-        let req = Request { namespace: "c".into(), value: "nope".into(), body: vec![] };
+        let req = Request {
+            namespace: "c".into(),
+            value: "nope".into(),
+            body: vec![],
+        };
         let resp = handlers.dispatch(&req).unwrap();
         assert_eq!(resp.status, 255);
     }

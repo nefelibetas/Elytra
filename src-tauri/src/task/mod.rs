@@ -30,7 +30,7 @@ pub use model::{
     FabricApi, LoaderChoice, LoaderKind, ModpackInstallSpec, StepInfo, StepStatus, TaskProgress,
     TaskStatus,
 };
-pub use spawn::{spawn_download, spawn_install_jdk};
+pub use spawn::{spawn_download, spawn_install_jdk, spawn_task_with_sink};
 pub use steps::{StepKind, StepSpec, TaskSpec};
 
 pub(crate) use ctx::TaskCtx;

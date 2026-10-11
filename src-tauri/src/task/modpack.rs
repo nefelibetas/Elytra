@@ -17,7 +17,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use parking_lot::Mutex;
-use tauri::AppHandle;
 
 use crate::config::downloader::{DownloadSource, DownloaderConfig};
 use crate::downloader::fetcher;
@@ -38,7 +37,7 @@ use crate::task::progress::{
     step_done,
     HeartbeatStats,
 };
-use crate::task::{global, update_and_emit, StepInfo, StepStatus, TaskProgress, TaskStatus};
+use crate::task::{global, update_and_emit, EventSink, StepInfo, StepStatus, TaskProgress, TaskStatus};
 use crate::util::safe_relative_path;
 
 /// 包体缓存目录（config_dir()/modpacks，与 Settings.toml 同根）。
@@ -129,7 +128,7 @@ impl Counters {
 }
 
 /// 完成一步：步骤状态置 done + 完成计数 +1。
-fn finish_step(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, idx: usize, c: &Counters) {
+fn finish_step(app: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>, idx: usize, c: &Counters) {
     step_done(app, progress, idx);
     c.done_steps.fetch_add(1, Ordering::Relaxed);
 }
@@ -137,7 +136,7 @@ fn finish_step(app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>, idx: usize,
 /// 失败收口：错误消息区分用户取消；全新目录随失败整删（对齐 run_task 语义，
 /// 取消路径的删除由 TaskManager cleanup 移交异步处理，不在此重复删）。
 fn fail_or_cancel(
-    app: &AppHandle,
+    app: &dyn EventSink,
     progress: &Arc<Mutex<TaskProgress>>,
     cancel: &Arc<AtomicBool>,
     msg: String,
@@ -163,7 +162,7 @@ fn fail_or_cancel(
 
 /// 重写步骤表：前 `done_count` 步置 done，其余 pending（A 段完成后追加 B/C 段）。
 fn replace_steps(
-    app: &AppHandle,
+    app: &dyn EventSink,
     progress: &Arc<Mutex<TaskProgress>>,
     names: &[String],
     done_count: usize,
@@ -207,23 +206,24 @@ where
 
 /// 安装主体（单卡片）。返回是否成功。
 pub async fn run_install(
-    app: &AppHandle,
+    sink: Arc<dyn EventSink>,
     cancel: &Arc<AtomicBool>,
     progress: &Arc<Mutex<TaskProgress>>,
     request: &ModpackRequest,
 ) -> bool {
+    let app = sink.as_ref();
     let config = persist_config();
     let online = matches!(request.source, PackSource::Online { .. });
     let zip_path = zip_cache_path(request);
 
     // ── A 段（包体 → 清单 → 计划）：失败/取消已在内部收口 → 直接返回 ──
     let Some((plan, pack_bytes_est, a_done)) =
-        phase_a_fetch_and_parse(app, cancel, progress, request, &config, &zip_path, online).await
+        phase_a_fetch_and_parse(&sink, cancel, progress, request, &config, &zip_path, online).await
     else {
         return false;
     };
     let PackPrep { c, emit, idx } =
-        prepare_pack_install(app, progress, request, &plan, pack_bytes_est, a_done);
+        prepare_pack_install(&sink, progress, request, &plan, pack_bytes_est, a_done);
 
     // ── 目标目录：预指定名保证解析期/安装期一致 ──
     let (vdir, vdir_existed_before) = prepare_version_dir(progress, &config, request, &plan);
@@ -275,7 +275,7 @@ struct PackPrep {
 /// A 段若无心跳则包体下载全程 0%（无速度/ETA/百分比）。临时心跳只覆盖
 /// A1/A2：est = 包体大小，进度走字节公式；A 段结束后 abort，正式心跳接管。
 async fn phase_a_fetch_and_parse(
-    app: &AppHandle,
+    sink: &Arc<dyn EventSink>,
     cancel: &Arc<AtomicBool>,
     progress: &Arc<Mutex<TaskProgress>>,
     request: &ModpackRequest,
@@ -283,10 +283,11 @@ async fn phase_a_fetch_and_parse(
     zip_path: &Path,
     online: bool,
 ) -> Option<(PackPlan, u64, usize)> {
+    let app = sink.as_ref();
     let a_bytes = Arc::new(AtomicU64::new(0));
     let a_est = Arc::new(AtomicU64::new(0));
     let a_heartbeat = spawn_heartbeat(
-        Arc::new(app.clone()),
+        Arc::clone(sink),
         progress,
         HeartbeatStats {
             done_files: Arc::new(AtomicU32::new(0)),
@@ -337,20 +338,21 @@ async fn phase_a_fetch_and_parse(
 /// 版本清单获取后仍可运行中增长）；进度百分比由 update_progress 按
 /// completed_files/total_files（即完成步骤数）计算。收尾前 abort。
 fn prepare_pack_install(
-    app: &AppHandle,
+    sink: &Arc<dyn EventSink>,
     progress: &Arc<Mutex<TaskProgress>>,
     request: &ModpackRequest,
     plan: &PackPlan,
     pack_bytes_est: u64,
     a_done: usize,
 ) -> PackPrep {
+    let app = sink.as_ref();
     let (full_names, idx, content_est) = build_step_plan(request, plan);
     replace_steps(app, progress, &full_names, a_done);
     let c = Counters::new(full_names.len() as u32, pack_bytes_est + content_est);
     set_total(app, progress, c.total_steps, 0);
 
     let emit = spawn_heartbeat(
-        Arc::new(app.clone()),
+        Arc::clone(sink),
         progress,
         HeartbeatStats {
             done_files: Arc::clone(&c.done_steps),
@@ -481,7 +483,7 @@ fn prepare_version_dir(
 
 /// B/C 段各阶段的共享状态包（A 段完成后一次性装配，阶段间按序推进）。
 struct PackInstall<'a> {
-    app: &'a AppHandle,
+    app: &'a dyn EventSink,
     cancel: &'a Arc<AtomicBool>,
     progress: &'a Arc<Mutex<TaskProgress>>,
     config: &'a DownloaderConfig,
@@ -977,7 +979,7 @@ impl<'a> PackInstall<'a> {
     }
 
     /// 收尾：停正式心跳 → 受限文件提示（有则失败收口）→ done。
-    fn finish_install(self, app: &AppHandle, progress: &Arc<Mutex<TaskProgress>>) -> bool {
+    fn finish_install(self, app: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>) -> bool {
         self.emit.abort();
         // ── 受限文件收口：其余内容已全部就位，明确列出需手动下载的文件 ──
         if !self.restricted.is_empty() {
@@ -991,7 +993,7 @@ impl<'a> PackInstall<'a> {
 /// A1：获取包体（在线源：下载 + sha1 强校验，缓存命中幂等跳过；本地源直取）。
 /// 返回包体字节数估算（累计进 A 段临时心跳）。
 async fn phase_fetch_pack(
-    app: &AppHandle,
+    app: &dyn EventSink,
     cancel: &Arc<AtomicBool>,
     progress: &Arc<Mutex<TaskProgress>>,
     request: &ModpackRequest,
@@ -1047,7 +1049,7 @@ async fn phase_fetch_pack(
 
 /// A2：解析清单并生成计划（写入计划 JSON 供恢复/展示）。
 async fn phase_parse_plan(
-    app: &AppHandle,
+    app: &dyn EventSink,
     cancel: &Arc<AtomicBool>,
     progress: &Arc<Mutex<TaskProgress>>,
     zip_path: &Path,
