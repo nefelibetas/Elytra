@@ -104,6 +104,9 @@ pub(super) async fn download_and_extract(
     // 客户端 patched jar：按 installer 自己声明的 processors 生成
     // （Forge 1.17+ 为 binarypatcher 链；1.12- 无 processors → 跳过，由 universal 提供）
     let profile_ref = profile.clone().unwrap_or(serde_json::Value::Null);
+    // spec-1 legacy 安装器（如 Forge 1.12.2）的构件内嵌在 zip 的 maven/ 下，
+    // version.json 里 URL 为空 —— 必须在下载支持库之前解出，否则会误报"网络无法下载"
+    install_embedded_maven(&mut archive, &profile_ref, &lib_dir)?;
     let files = LoaderFiles {
         dir_name,
         mc_dir: &mc_dir,
@@ -287,6 +290,71 @@ async fn install_neoforge_universal(
     }
     Ok(())
 }
+/// 安装器内嵌的 maven 构件：spec-1 legacy 安装器（如 Forge 1.12.2）把要安装的
+/// 构件放在 zip 的 `maven/<group>/<artifact>/<ver>/<file>` 下，version.json 里对应
+/// 库的 URL 为空（官方部署由安装器解出）。此前我们只报「该库由安装器内嵌提供，
+/// 网络无法下载，请重新安装对应版本」→ legacy Forge 安装必然失败。
+///
+/// 按 profile 声明的 sha1（有则校验）解到 `libraries/<相对路径>`；已就绪则跳过。
+fn install_embedded_maven(
+    archive: &mut zip::ZipArchive<std::fs::File>,
+    profile: &serde_json::Value,
+    lib_dir: &Path,
+) -> Result<(), String> {
+    let mut entries: Vec<String> = Vec::new();
+    for i in 0..archive.len() {
+        let entry = archive
+            .by_index(i)
+            .map_err(common_err_ctx!("读取安装程序条目失败"))?;
+        if entry.is_dir() {
+            continue;
+        }
+        if let Some(rel) = entry.name().strip_prefix("maven/") {
+            if !rel.is_empty() {
+                entries.push(rel.to_string());
+            }
+        }
+    }
+    for rel in entries {
+        let dest = lib_dir.join(&rel);
+        let sha1 = declared_sha1(profile, &rel);
+        if !sha1.is_empty() && crate::downloader::hash::file_sha1_matches(&dest, &sha1) {
+            continue;
+        }
+        if sha1.is_empty() && dest.is_file() {
+            continue;
+        }
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).map_err(common_err_ctx!("创建目录失败"))?;
+        }
+        let mut member = archive
+            .by_name(&format!("maven/{rel}"))
+            .map_err(common_err_ctx!("读取安装程序条目失败"))?;
+        let mut out = std::fs::File::create(&dest).map_err(common_err_ctx!("创建文件失败"))?;
+        std::io::copy(&mut member, &mut out)
+            .map_err(common_err_ctx!("解出安装器内嵌构件失败"))?;
+    }
+    Ok(())
+}
+
+/// 从 install_profile.libraries 里按 maven 相对路径取声明的 sha1（无声明返回空串）。
+fn declared_sha1(profile: &serde_json::Value, maven_rel_path: &str) -> String {
+    profile["libraries"]
+        .as_array()
+        .and_then(|libs| {
+            libs.iter().find_map(|l| {
+                let p = l["downloads"]["artifact"]["path"].as_str()?;
+                (p == maven_rel_path).then(|| {
+                    l["downloads"]["artifact"]["sha1"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string()
+                })
+            })
+        })
+        .unwrap_or_default()
+}
+
 /// Forge：按 installer 声明的 `install_profile.processors` 生成 patched client
 /// （与 NeoForge 同源）。旧式 installer（1.12-，只有 install/versionInfo 字段）
 /// 没有 processors → 直接返回，其客户端由 universal jar 提供。
@@ -614,4 +682,119 @@ async fn resolve_jar_from_manifest(
         .await
         .map_err(common_err_ctx!("下载 client.jar 失败"))?;
     Ok(())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// legacy 安装器内嵌构件：按 `maven/` 相对路径解到 `libraries/`，并按声明 sha1 幂等。
+    #[test]
+    fn embedded_maven_extracted_and_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib_dir = dir.path().join("libraries");
+        std::fs::create_dir_all(&lib_dir).unwrap();
+        let rel = "net/minecraftforge/forge/1.12.2-14.23.5.2864/forge-1.12.2-14.23.5.2864.jar";
+        let content = b"legacy-universal-jar-bytes";
+        let sha1 = crate::downloader::hash::sha1_hex(content);
+
+        // 假 installer：内嵌 maven/<rel> + profile 声明其 sha1
+        let installer = dir.path().join("forge-installer.jar");
+        {
+            let mut z = zip::ZipWriter::new(std::fs::File::create(&installer).unwrap());
+            z.start_file(
+                format!("maven/{rel}"),
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            std::io::Write::write_all(&mut z, content).unwrap();
+            z.finish().unwrap();
+        }
+        let profile: serde_json::Value = serde_json::from_str(&format!(
+            r#"{{ "libraries": [ {{ "name": "net.minecraftforge:forge:1.12.2-14.23.5.2864",
+                 "downloads": {{ "artifact": {{ "path": "{rel}", "sha1": "{sha1}" }} }} }} ] }}"#
+        ))
+        .unwrap();
+
+        let mut archive = zip::ZipArchive::new(std::fs::File::open(&installer).unwrap()).unwrap();
+        install_embedded_maven(&mut archive, &profile, &lib_dir).unwrap();
+        let dest = lib_dir.join(rel);
+        assert_eq!(std::fs::read(&dest).unwrap(), content, "应解出声明路径下的构件");
+
+        // 幂等：删掉后内容被改动（sha1 不匹配）→ 重新解出正确内容
+        std::fs::write(&dest, b"corrupted").unwrap();
+        install_embedded_maven(&mut archive, &profile, &lib_dir).unwrap();
+        assert_eq!(
+            std::fs::read(&dest).unwrap(),
+            content,
+            "sha1 不匹配（损坏）时应重新解出"
+        );
+    }
+
+    /// 真实 installer 验证（**真实网络**，默认 `#[ignore]`）：Forge 1.12.2 的版本 json 里
+    /// `net.minecraftforge:forge` 库 URL 为空，构件内嵌在 installer 的 maven/ 下。
+    ///
+    /// ```text
+    /// cargo test --lib -- --ignored forge_1122_embedded_maven --nocapture
+    /// ```
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn forge_1122_embedded_maven_from_real_installer() {
+        use crate::config::downloader::DownloaderConfig;
+        use crate::downloader::fetcher;
+
+        const MC_VERSION: &str = "1.12.2";
+        const FORGE_VERSION: &str = "14.23.5.2864";
+
+        let cfg = DownloaderConfig::default();
+        let dir = std::env::temp_dir().join("elytra_e2e_forge_legacy");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let installer = dir.join("forge-installer.jar");
+        let source = cfg.file_primary_source().expect("无可用下载源");
+        let url = source.url(
+            &source.forge_installer_url,
+            &[("mc", MC_VERSION), ("ver", FORGE_VERSION)],
+        );
+        fetcher::fetch_fallback(&[url], &installer, None::<fn(u64, u64)>)
+            .await
+            .expect("下载 Forge 1.12.2 installer 失败");
+
+        let profile_json =
+            processors::read_profile_from_installer(&installer).expect("读 install_profile 失败");
+        let profile: serde_json::Value =
+            serde_json::from_str(&profile_json).expect("解析 install_profile 失败");
+        assert!(
+            processors::parse_profile_value(&profile)
+                .expect("解析 profile 失败")
+                .processors
+                .is_empty(),
+            "1.12.2 是 spec-1 legacy：应无 processors（引擎据此跳过 patching）"
+        );
+
+        let lib_dir = dir.join("libraries");
+        std::fs::create_dir_all(&lib_dir).unwrap();
+        let mut archive =
+            zip::ZipArchive::new(std::fs::File::open(&installer).unwrap()).unwrap();
+        install_embedded_maven(&mut archive, &profile, &lib_dir).unwrap();
+
+        // 断言：version.json 里 URL 为空的 forge client 库被真正解出且 sha1 命中
+        let rel = format!(
+            "net/minecraftforge/forge/{MC_VERSION}-{FORGE_VERSION}/forge-{MC_VERSION}-{FORGE_VERSION}.jar"
+        );
+        let dest = lib_dir.join(&rel);
+        let size = dest
+            .metadata()
+            .unwrap_or_else(|e| panic!("未解出 {rel}：{e}"))
+            .len();
+        assert!(size > 1_000_000, "解出的构件过小：{size}");
+        let declared = declared_sha1(&profile, &rel);
+        assert!(!declared.is_empty(), "profile 应声明该构件的 sha1");
+        assert!(
+            crate::downloader::hash::file_sha1_matches(&dest, &declared),
+            "解出的构件应匹配 profile 声明的 sha1"
+        );
+        eprintln!("✅ 1.12.2 legacy 内嵌构件已解出：{rel}（{size} 字节）");
+    }
 }

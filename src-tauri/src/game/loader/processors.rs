@@ -189,6 +189,22 @@ fn coord_rel_path(coord: &str, ext: Option<&str>) -> Option<String> {
     ))
 }
 
+/// installer 内条目的解包缓存路径：**按 installer（文件名）分目录**。
+///
+/// 只按条目名缓存会跨 installer 复用陈旧内容 —— 实测：先装 NeoForge 21.x、再装
+/// 26.x 时，`work_dir/data_client.lzma` 里躺着 21.x 的补丁包，被喂给 26.x 的工具
+/// 就报 `Invalid bundle signature`（配方与工具版本都对，文件是错的）。
+fn installer_entry_cache_path(work_dir: &Path, installer: &Path, entry: &str) -> PathBuf {
+    let tag: String = installer
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("installer")
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    work_dir.join(tag).join(entry.replace('/', "_"))
+}
+
 /// 从 installer jar 解出内部条目到 `dest`（zip 内名不含前导 `/`）。
 fn extract_installer_entry(installer: &Path, entry: &str, dest: &Path) -> Result<(), String> {
     if let Some(parent) = dest.parent() {
@@ -234,7 +250,7 @@ fn resolve_data(raw: &str, ctx: &ProcessorCtx<'_>) -> Resolved {
     if let Some(entry) = raw.strip_prefix('/') {
         // installer 内条目（如 /data/client.lzma）：解包到 work_dir 后返回该路径；
         // 解不出（不是 installer 内部条目）时按原始路径理解（绝对路径语义）
-        let cached = ctx.work_dir.join(entry.replace('/', "_"));
+        let cached = installer_entry_cache_path(ctx.work_dir, ctx.installer, entry);
         if cached.is_file() || extract_installer_entry(ctx.installer, entry, &cached).is_ok() {
             return Resolved::Path(cached);
         }
@@ -800,6 +816,152 @@ mod tests {
         run_client_processors(&profile, &pctx)
             .await
             .expect("Forge 处理器链执行失败");
+
+        let size = patched
+            .metadata()
+            .unwrap_or_else(|e| panic!("未生成 PATCHED 产物（{}）：{e}", patched.display()))
+            .len();
+        assert!(size > 1_000_000, "产物过小：{size}");
+        zip::ZipArchive::new(std::fs::File::open(&patched).expect("打开产物失败"))
+            .expect("产物应是完整 zip/jar");
+        eprintln!("✅ 已生成 {}（{size} 字节）", patched.display());
+    }
+
+    /// 回归：installer 内条目的解包**必须按 installer 区分**，不能跨 installer 复用陈旧内容。
+    ///
+    /// 实测故障：先装 NeoForge 21.x 再装 26.x，`work_dir/data_client.lzma` 里是 21.x 的
+    /// 补丁包被喂给 26.x 的工具 → `Invalid bundle signature`（配方与工具都对，文件是错的）。
+    #[test]
+    fn installer_entries_are_cached_per_installer() {
+        use crate::config::downloader::DownloaderConfig;
+        let dir = tempfile::tempdir().unwrap();
+        let work = dir.path().join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let mk_installer = |name: &str, content: &[u8]| -> PathBuf {
+            let path = dir.path().join(name);
+            let mut z = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+            z.start_file("data/client.lzma", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            std::io::Write::write_all(&mut z, content).unwrap();
+            z.finish().unwrap();
+            path
+        };
+        let old_installer = mk_installer("neoforge-21.1.248-installer.jar", b"OLD-BUNDLE");
+        let new_installer = mk_installer("neoforge-26.2.0.90-installer.jar", b"NEW-BUNDLE");
+
+        let cfg = DownloaderConfig::default();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let vanilla = dir.path().join("v.jar");
+        let read_entry = |installer: &Path| -> String {
+            let ctx = ProcessorCtx {
+                installer,
+                mc_dir: dir.path(),
+                vanilla_jar: &vanilla,
+                lib_dir: dir.path(),
+                work_dir: &work,
+                config: &cfg,
+                cancel: &cancel,
+            };
+            match resolve_data("/data/client.lzma", &ctx) {
+                Resolved::Path(p) => std::fs::read_to_string(p).unwrap(),
+                other => panic!("应解析为路径，得到 {other:?}"),
+            }
+        };
+
+        assert_eq!(read_entry(&old_installer), "OLD-BUNDLE");
+        assert_eq!(
+            read_entry(&new_installer),
+            "NEW-BUNDLE",
+            "换 installer 后必须解出它自己的条目，而不是复用旧缓存"
+        );
+    }
+
+    /// NeoForge 26.x 链端到端（**真实网络 + 真实 JDK**，默认 `#[ignore]`）。
+    ///
+    /// ```text
+    /// JAVA_HOME=<jdk> cargo test --lib -- --ignored neoforge_26_chain_end_to_end --nocapture
+    /// ```
+    ///
+    /// 26.x 的 profile 是「2 个处理器、单任务 PROCESS_MINECRAFT_JAR」形态（无 mapping 链），
+    /// 与 21.x 的 10 处理器链完全不同；这条也覆盖 installer 内条目缓存按 installer 区分
+    /// （先装 21.x 再装 26.x 时旧 `data/client.lzma` 被复用的故障）。
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn neoforge_26_chain_end_to_end() {
+        use crate::config::downloader::DownloaderConfig;
+        use crate::downloader::{fetcher, hash};
+        use crate::game::version::manifest::fetch_version_list;
+        use crate::game::version::meta::fetch_version_json_text;
+
+        const NEOFORGE_VERSION: &str = "26.2.0.90";
+        const MC_VERSION: &str = "26.2";
+
+        let cfg = DownloaderConfig::default();
+        let root = std::env::temp_dir().join("elytra_e2e_neoforge26");
+        let _ = std::fs::remove_dir_all(&root);
+        let mc_dir = root.join(".minecraft");
+        let lib_dir = mc_dir.join("libraries");
+        let work_dir = mc_dir.join(".elytra").join("tmp").join("loader");
+        std::fs::create_dir_all(&lib_dir).expect("创建 libraries 失败");
+
+        let installer = root.join(format!("neoforge-{NEOFORGE_VERSION}-installer.jar"));
+        let source = cfg.file_primary_source().expect("无可用下载源");
+        let url = source.url(&source.neoforge_installer_url, &[("ver", NEOFORGE_VERSION)]);
+        fetcher::fetch_fallback(&[url], &installer, None::<fn(u64, u64)>)
+            .await
+            .expect("下载 installer 失败");
+        let profile = parse_profile(
+            &read_profile_from_installer(&installer).expect("读 install_profile 失败"),
+        )
+        .expect("解析 install_profile 失败");
+        eprintln!("26.x 声明的处理器数：{}", profile.processors.len());
+        assert!(!profile.processors.is_empty());
+
+        // 原版 client.jar（{MINECRAFT_JAR}）
+        let dir_name = format!("neoforge-{NEOFORGE_VERSION}");
+        let vanilla = mc_dir
+            .join("versions")
+            .join(&dir_name)
+            .join(format!("{dir_name}.jar"));
+        std::fs::create_dir_all(vanilla.parent().unwrap()).unwrap();
+        let manifest = fetch_version_list(&cfg).await.expect("拉取版本清单失败");
+        let vurl = manifest
+            .versions
+            .iter()
+            .find(|v| v.id == MC_VERSION)
+            .unwrap_or_else(|| panic!("清单中找不到 {MC_VERSION}"))
+            .url
+            .clone();
+        let vjson = fetch_version_json_text(&vurl, &cfg)
+            .await
+            .expect("拉取版本 JSON 失败");
+        let v: serde_json::Value = serde_json::from_str(&vjson).expect("解析版本 JSON 失败");
+        let client = &v["downloads"]["client"];
+        let (curl, csha1) = (
+            client["url"].as_str().expect("缺少 client.url").to_string(),
+            client["sha1"].as_str().expect("缺少 client.sha1").to_string(),
+        );
+        if !hash::file_sha1_matches(&vanilla, &csha1) {
+            fetcher::fetch_verified(&[curl], &vanilla, None::<fn(u64, u64)>, &csha1)
+                .await
+                .expect("下载原版 client.jar 失败");
+        }
+
+        let patched =
+            output_path(&profile, "PATCHED", &lib_dir, &mc_dir).expect("profile 缺少 {PATCHED}");
+        let cancel = Arc::new(AtomicBool::new(false));
+        let pctx = ProcessorCtx {
+            installer: &installer,
+            mc_dir: &mc_dir,
+            vanilla_jar: &vanilla,
+            lib_dir: &lib_dir,
+            work_dir: &work_dir,
+            config: &cfg,
+            cancel: &cancel,
+        };
+        run_client_processors(&profile, &pctx)
+            .await
+            .expect("26.x 处理器链执行失败");
 
         let size = patched
             .metadata()
