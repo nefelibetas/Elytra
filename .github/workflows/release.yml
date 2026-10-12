@@ -1,11 +1,19 @@
 name: Release
 
-# 三平台发布产物（工具链版本与 ci.yml 同源，取自 mise.toml）：
-#   Windows  便携 zip + NSIS 安装器 + MSI 安装器
-#   macOS    universal dmg（ad-hoc 签名：Apple Silicon 上未签名的二进制无法启动）
-#   Linux    AppImage（免安装）+ deb + rpm + 便携 tar.gz
-# 触发：推 v* tag → 构建并建 GitHub Release（先建草稿，三平台产物收齐后由 publish job 取消草稿）；
-#       手动 dispatch → 只构建并上传 Actions artifacts（90 天）。
+# 唯一触发方式：推 v* tag（手动 dispatch 仅供维护者按需重跑，产物只落 Actions artifacts）。
+# 工具链版本一律取自 mise.toml（node / pnpm / rust / protoc），本文件不写死版本号。
+#
+# 三个 job：
+#   check   验证门（Windows）：vue-tsc + cargo check / clippy -D warnings / test（串行）——与本地门一致
+#   build   三平台并行打包：
+#             Windows  便携 zip + NSIS + MSI
+#             macOS    universal dmg（ad-hoc 签名：Apple Silicon 上未签名二进制无法启动）
+#             Linux    AppImage + deb + rpm + 便携 tar.gz（固定 ubuntu-22.04，取该发行版的 glibc 下限）
+#   publish needs [check, build]：三平台产物齐了且验证门通过，才把草稿 Release 转正
+#             —— 门禁失败或任一平台构建失败时 Release 停在草稿，不会对外可见
+#
+# 想重跑同版本：`git tag -f v1.0.0 <新提交> && git push -f origin v1.0.0`
+# （版本校验要求 tag 与 tauri.conf.json 的版本一致，故不能随便换个新 tag 号重跑）
 on:
   push:
     tags: ["v*"]
@@ -15,6 +23,41 @@ permissions:
   contents: write # gh release create/upload/edit 需要
 
 jobs:
+  check:
+    name: 验证门
+    runs-on: windows-latest
+    env:
+      # mise 经 rustup 装 rust，工具链实体在 rustup home；放进 mise 数据目录（mise-action 缓存的就是它）
+      # 才能跟缓存一起恢复 —— 否则缓存命中时 mise 认为已装、rustup home 却是空的
+      MISE_RUSTUP_HOME: C:\Users\runneradmin\AppData\Local\mise\rustup
+      # kcp-sys 走 bindgen 需 libclang：check / clippy / test 三步都会编译它，故放在 job 级
+      LIBCLANG_PATH: C:\Program Files\LLVM\bin
+    steps:
+      - uses: actions/checkout@v5
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: "node npm:pnpm rust protoc"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - uses: actions/cache@v6
+        with:
+          path: ${{ runner.os == 'Windows' && '~/AppData/Local/pnpm/store' || '~/.local/share/pnpm/store' }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-${{ runner.os }}-
+      - run: pnpm install --frozen-lockfile
+      - name: 前端类型检查
+        run: npx vue-tsc --noEmit
+      - name: cargo check
+        working-directory: src-tauri
+        run: cargo check --lib
+      - name: cargo clippy（零警告）
+        working-directory: src-tauri
+        run: cargo clippy --lib -- -D warnings
+      - name: cargo test（串行：persist 共用 Settings.toml、网络测试抖动）
+        working-directory: src-tauri
+        run: cargo test --lib -- --test-threads=1
+
   build:
     name: 打包 ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
@@ -36,8 +79,6 @@ jobs:
             bundles: deb,rpm,appimage
             mise_rustup_home: /home/runner/.local/share/mise/rustup
     env:
-      # mise 经 rustup 装 rust，工具链实体在 rustup home；放进 mise 数据目录（mise-action 缓存的就是它）
-      # 才能跟缓存一起恢复 —— 否则缓存命中时 mise 认为已装、rustup home 却是空的
       MISE_RUSTUP_HOME: ${{ matrix.mise_rustup_home }}
       # macOS 无证书时的 ad-hoc 签名；Windows/Linux 忽略此变量
       APPLE_SIGNING_IDENTITY: '-'
@@ -65,6 +106,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+
+      - uses: actions/cache@v6
+        with:
+          path: ${{ runner.os == 'Windows' && '~/AppData/Local/pnpm/store' || '~/.local/share/pnpm/store' }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-${{ runner.os }}-
 
       - name: 写入 .env（构建期密钥）
         # src-tauri/build.rs 会读仓库根 .env，逐行 rustc-env=KEY=VALUE 注入（constants.rs 用 option_env! 取）
@@ -161,11 +208,11 @@ jobs:
 
   publish:
     name: 发布 Release
-    needs: build
+    needs: [check, build]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     steps:
-      - name: 取消草稿（三平台产物都传完才对外可见）
+      - name: 取消草稿（验证门与三平台产物都通过才对外可见）
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release edit "$GITHUB_REF_NAME" --draft=false
