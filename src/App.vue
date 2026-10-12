@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from "vue";
+import { onMounted, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { initNavHistory, goBack, goForward } from "./store/app/nav";
 import TitleBar from "./component/common/TitleBar.vue";
@@ -7,6 +7,7 @@ import AlertDialog from "./component/common/AlertDialog.vue";
 import { dlState, ensureListen, checkInterrupted, waitingUser, decideWaitingTask, type TaskKind } from "./store/task/download";
 import { startMemoryMonitor } from "./store/app/memory";
 import { ensureConfigRecoveryWatch } from "./store/config/configRecovery";
+import { ensureAutoTasksListen, lastAutoTasksFinished } from "./store/config/autoTasks";
 import { setSelected } from "./store/app/selectedVersion";
 import { toastState, showToast } from "./utils/toast";
 
@@ -16,6 +17,17 @@ const router = useRouter();
 /** 下载失败错误 dialog（body 只放短提示，完整错误由复制按钮带走）。 */
 const errorDialog = ref(false);
 const errorMessage = ref("");
+
+/** 自动任务失败（pre_launch / on_crash / post_exit）：跨页面提示，避免用户错过。 */
+const autoTaskFailDialog = ref(false);
+const autoTaskFailMessage = ref("");
+watch(lastAutoTasksFinished, (finished) => {
+  if (!finished || !finished.failures.length) return;
+  autoTaskFailMessage.value = finished.failures
+    .map((f) => `[${f.action}] ${f.message}`)
+    .join("\n");
+  autoTaskFailDialog.value = true;
+});
 
 dlState.onTaskDone = (message: string, kind?: TaskKind, versionDir?: string) => {
   // JDK 安装任务：完成处理（自动选中等）由 jdkOptions 专属监听负责，此处不提示不跳转
@@ -150,6 +162,8 @@ onMounted(() => {
   startMemoryMonitor();
   // 配置损坏恢复提示（启动期拉取 + 运行期订阅事件）
   void ensureConfigRecoveryWatch();
+  // 自动任务事件（进度 + 阶段结束汇总）
+  ensureAutoTasksListen();
 });
 
 onUnmounted(() => {
@@ -180,6 +194,10 @@ onUnmounted(() => {
     </Transition>
     <AlertDialog v-model="errorDialog" title="下载失败" :message="errorMessage" copyable>
       <p>下载失败，已清理该任务下载的文件，请重试</p>
+    </AlertDialog>
+
+    <AlertDialog v-model="autoTaskFailDialog" title="自动任务执行失败" :message="autoTaskFailMessage" copyable>
+      <p>部分自动任务动作未成功（游戏启动/退出不受影响）</p>
     </AlertDialog>
 
     <!-- 批量文件下载失败挂起：用户决策 跳过/重试/取消（WaitingForUser） -->

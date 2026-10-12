@@ -55,7 +55,6 @@ watch(
 // Java 高级项
 export const loJvmArgs = ref("");
 export const loGameArgs = ref("");
-export const loPreCmd = ref("");
 export const loGc = ref("TunedG1Gc");
 export const loDisableWrapper = ref(false);
 export const loDisableAgent = ref(false);
@@ -84,7 +83,6 @@ export async function loadLaunchOptions() {
     }
     loJvmArgs.value = (cfg.jvm_args ?? []).join("\n");
     loGameArgs.value = (cfg.game_args ?? []).join("\n");
-    loPreCmd.value = cfg.pre_launch_cmd ?? "";
     loGc.value = cfg.gc_type ?? "TunedG1Gc";
     loDisableWrapper.value = !!cfg.disable_launch_wrapper;
     loDisableAgent.value = !!cfg.disable_lwjgl_unsafe_agent;
@@ -128,7 +126,6 @@ export async function saveLaunchOptions() {
         : "Default";
     cfg.jvm_args = loJvmArgs.value.split(/\n/).map(s => s.trim()).filter(Boolean);
     cfg.game_args = loGameArgs.value.split(/\n/).map(s => s.trim()).filter(Boolean);
-    cfg.pre_launch_cmd = loPreCmd.value.trim();
     cfg.memory = loMemMode.value === "Custom" ? { Custom: loMemMb.value } : "Auto";
     cfg.min_memory = loMinMem.value;
     cfg.pre_launch_memory_optimize = loMemOptimize.value;

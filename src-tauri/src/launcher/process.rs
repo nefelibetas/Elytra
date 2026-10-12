@@ -79,28 +79,6 @@ pub fn drain_output(reader: &mut impl std::io::Read, path: &Path, is_stderr: boo
     }
 }
 
-/// 执行启动前命令（Windows: cmd /C；其他平台: sh -c）。失败时返回错误。
-pub fn run_pre_launch_command(command: &str) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    let status = {
-        let mut cmd = std::process::Command::new("cmd");
-        cmd.args(["/C", command]);
-        cmd.creation_flags(0x08000000);
-        cmd.status().map_err(common_err_ctx!("启动进程失败"))?
-    };
-    #[cfg(not(target_os = "windows"))]
-    let status = std::process::Command::new("sh")
-        .args(["-c", command])
-        .status()
-        .map_err(common_err_ctx!("启动进程失败"))?;
-
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("退出码 {}", status.code().unwrap_or(-1)))
-    }
-}
-
 /// 启动前完整性与 natives 准备（check_launch_env 与 spawn_game 共用）。
 pub fn ensure_game_ready(
     version_json: &VersionJson,
@@ -167,20 +145,57 @@ fn process_has_visible_window(_pid: u32) -> bool {
     true
 }
 
-/// 返回目录下最新的 `crash-*.txt` 文件路径（崩溃报告）。
-fn latest_crash_report(dir: &Path) -> Option<String> {
+/// 返回目录下**本次启动之后**产生的最新 `crash-*.txt` 文件路径（崩溃报告）。
+/// 时间窗 `since` 用于排除历史残留报告（否则上次崩溃会被误判成本次）。
+fn latest_crash_report(dir: &Path, since: SystemTime) -> Option<String> {
     let mut latest: Option<(SystemTime, String)> = None;
     for entry in std::fs::read_dir(dir).ok()?.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("txt") {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.starts_with("crash-") || path.extension().and_then(|e| e.to_str()) != Some("txt") {
             continue;
         }
-        let modified = path.metadata().ok()?.modified().ok()?;
+        let Ok(modified) = path.metadata().and_then(|m| m.modified()) else {
+            continue;
+        };
+        if modified < since {
+            continue;
+        }
         if latest.as_ref().is_none_or(|(t, _)| modified > *t) {
             latest = Some((modified, path.display().to_string()));
         }
     }
     latest.map(|(_, p)| p)
+}
+
+/// `logs/latest.log` 在时间窗内是否含崩溃特征。
+/// 覆盖 OOM 等"直接退出、不写 crash-report"的崩溃（只看尾部，避免整读大文件）。
+fn has_crash_signature(log: &Path, since: SystemTime) -> bool {
+    let Ok(modified) = std::fs::metadata(log).and_then(|m| m.modified()) else {
+        return false;
+    };
+    if modified < since {
+        return false;
+    }
+    let Ok(text) = std::fs::read_to_string(log) else {
+        return false;
+    };
+    let tail = crate::util::tail_lines(&text);
+    tail.contains("---- Minecraft Crash Report ----")
+        || tail.contains("OutOfMemoryError")
+        || tail.contains("A fatal error has been detected")
+}
+
+/// 崩溃判定：非零退出码 + 窗口内出现崩溃证据 → 返回证据路径（崩溃报告或 latest.log）。
+fn detect_crash(game_dir: &Path, exit_code: Option<i32>, since: SystemTime) -> Option<String> {
+    if matches!(exit_code, Some(0)) {
+        return None;
+    }
+    if let Some(report) = latest_crash_report(&game_dir.join("crash-reports"), since) {
+        return Some(report);
+    }
+    let log = game_dir.join("logs").join("latest.log");
+    has_crash_signature(&log, since).then(|| log.display().to_string())
 }
 
 /// 游戏窗口首次可见的轮询间隔（毫秒）。
@@ -239,12 +254,12 @@ where
         let lp = log_path.to_path_buf();
         std::thread::spawn(move || drain_output(&mut se, &lp, true));
     }
-    let crash_dir = game_dir.join("crash-reports");
+    let game_dir_owned = game_dir.to_path_buf();
     let mut on_window_visible = on_window_visible;
     watch_game_process(
         child,
         pid,
-        crash_dir,
+        game_dir_owned,
         WINDOW_POLL_MS,
         move || on_window_visible(pid),
         move |exit_code, crash_report| on_exit(pid, exit_code, crash_report),
@@ -253,11 +268,11 @@ where
 }
 
 /// 合一监听循环（后台线程）：try_wait 非阻塞查退出 + 可见窗口轮询；
-/// 进程退出后回调 on_exit（含崩溃报告定位），窗口首次可见回调 on_window_visible。
+/// 进程退出后回调 on_exit（含崩溃判定与证据定位），窗口首次可见回调 on_window_visible。
 pub fn watch_game_process<W, E>(
     mut child: std::process::Child,
     pid: u32,
-    crash_dir: PathBuf,
+    game_dir: PathBuf,
     window_poll_ms: u64,
     mut on_window_visible: W,
     on_exit: E,
@@ -267,18 +282,16 @@ pub fn watch_game_process<W, E>(
 {
     std::thread::spawn(move || {
         let mut window_notified = false;
+        // 判定时间窗起点：监听开始时（早于游戏产生任何日志，晚于 pre_launch 钩子）
+        let watch_started = SystemTime::now();
         loop {
             // 进程已退出：回调退出事件（含崩溃报告）并结束
             match child.try_wait() {
                 Ok(Some(status)) => {
                     // 退出码随回调送出：调用方据此区分正常退出与崩溃（非 0 → 错误级提示）
                     let exit_code = status.code();
-                    // 崩溃时定位最新 crash report 文件
-                    let crash_report = if !matches!(exit_code, Some(0)) {
-                        latest_crash_report(&crash_dir)
-                    } else {
-                        None
-                    };
+                    // 崩溃时定位**本次**启动后的崩溃证据（报告或 latest.log 特征）
+                    let crash_report = detect_crash(&game_dir, exit_code, watch_started);
                     on_exit(exit_code, crash_report);
                     return;
                 }
@@ -404,4 +417,97 @@ pub async fn prepare_launch(
         launcher_config,
         java_major,
     ))
+}
+
+#[cfg(test)]
+mod crash_tests {
+    use super::*;
+    use std::fs;
+    use std::time::Duration;
+
+    fn tmp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("elytra-crash-{name}"));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write(path: &Path, content: &str) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, content).unwrap();
+    }
+
+    #[test]
+    fn clean_exit_never_reports_crash() {
+        let game = tmp_dir("clean");
+        write(
+            &game.join("crash-reports/crash-2026-01-01_00.00.00-client.txt"),
+            "---- Minecraft Crash Report ----",
+        );
+        let since = SystemTime::now() - Duration::from_secs(60);
+        assert_eq!(
+            detect_crash(&game, Some(0), since),
+            None,
+            "退出码 0 即使存在报告文件也不算崩溃"
+        );
+    }
+
+    #[test]
+    fn fresh_crash_report_detected() {
+        let game = tmp_dir("fresh");
+        let report = game.join("crash-reports/crash-2026-10-12_08.00.00-client.txt");
+        write(&report, "---- Minecraft Crash Report ----");
+        let since = SystemTime::now() - Duration::from_secs(60);
+        let detected = detect_crash(&game, Some(1), since).expect("本次窗口内的报告应被判定为崩溃");
+        assert!(detected.contains("crash-2026-10-12"), "应返回报告路径: {detected}");
+    }
+
+    #[test]
+    fn stale_crash_report_ignored() {
+        let game = tmp_dir("stale");
+        write(
+            &game.join("crash-reports/crash-2026-01-01_00.00.00-client.txt"),
+            "---- Minecraft Crash Report ----",
+        );
+        // 窗口起点取未来：模拟"本窗口之前的旧报告"
+        let since = SystemTime::now() + Duration::from_secs(60);
+        assert_eq!(
+            detect_crash(&game, Some(1), since),
+            None,
+            "旧报告不得误判成本次崩溃"
+        );
+    }
+
+    #[test]
+    fn non_report_txt_ignored() {
+        let game = tmp_dir("other");
+        write(&game.join("crash-reports/notes.txt"), "just a note");
+        let since = SystemTime::now() - Duration::from_secs(60);
+        assert_eq!(detect_crash(&game, Some(1), since), None);
+    }
+
+    #[test]
+    fn crash_signature_in_latest_log_without_report() {
+        let game = tmp_dir("logsig");
+        write(
+            &game.join("logs/latest.log"),
+            "[12:00:00] [main/INFO]: Starting\njava.lang.OutOfMemoryError: Java heap space\n",
+        );
+        let since = SystemTime::now() - Duration::from_secs(60);
+        let detected = detect_crash(&game, Some(1), since).expect("OOM 应被日志特征判定为崩溃");
+        assert!(detected.ends_with("latest.log"), "应回退到 latest.log: {detected}");
+    }
+
+    #[test]
+    fn normal_log_without_signature_is_not_crash() {
+        let game = tmp_dir("normallog");
+        write(
+            &game.join("logs/latest.log"),
+            "[12:00:00] [main/INFO]: Stopping!\n",
+        );
+        let since = SystemTime::now() - Duration::from_secs(60);
+        assert_eq!(detect_crash(&game, Some(1), since), None);
+    }
 }

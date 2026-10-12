@@ -70,6 +70,12 @@ pub fn load_launch_config(
     // 避免 classpath / natives 路径基于 java 进程 cwd 解析出错
     let mc_dir = dl_config.minecraft_dir_abs();
 
+    // 实例级自动任务覆盖（实例文件存在则完全采用其自动任务，否则沿用全局）
+    let launch_option = match persist::instance::read_auto_tasks(&mc_dir, version_dir_name) {
+        Some(auto_tasks) => LaunchOptions { auto_tasks, ..launch_option },
+        None => launch_option,
+    };
+
     // 读取版本 JSON（扫描目录，文件名不一定是目录名），并展开 inheritsFrom 继承
     let vdir = mc_dir.join("versions").join(version_dir_name);
     if !vdir.is_dir() {

@@ -9,7 +9,7 @@ import {
   installJdk, loadConfig,
 } from "../../store/config/jdkOptions";
 import {
-  loJvmArgs, loGameArgs, loPreCmd, loGc, loDisableWrapper, loDisableAgent, loHighGpu,
+  loJvmArgs, loGameArgs, loGc, loDisableWrapper, loDisableAgent, loHighGpu,
   gcOptions, saveLaunchOptions,
 } from "../../store/config/launchOptions";
 import { showToast } from "../../utils/toast";
@@ -147,19 +147,6 @@ function onJdkPick(value: string) {
           @change="saveLaunchOptions"
           autocomplete="off"
         ></textarea>
-      </div>
-
-      <div class="lo-row">
-        <label class="lo-label" for="lo-pre">启动前执行命令</label>
-        <input
-          id="lo-pre"
-          v-model="loPreCmd"
-          class="lo-input"
-          type="text"
-          placeholder="启动游戏前执行的命令"
-          @change="saveLaunchOptions"
-          autocomplete="off"
-        />
       </div>
 
       <div class="lo-row">

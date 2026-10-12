@@ -32,7 +32,7 @@ pub use path::{
 };
 pub use rt::block_on;
 pub use text::{fnv1a64, tail_lines};
-pub use time::modified_secs;
+pub use time::{modified_secs, utc_stamp};
 pub use version_name::{
     infer_loader_from_json, loader_from_dir, mc_version_from_dir, parse_java_major,
 };

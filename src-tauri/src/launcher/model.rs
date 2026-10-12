@@ -119,7 +119,9 @@ pub struct LaunchOptions {
     pub jvm_args: Vec<String>,
     pub game_args: Vec<String>,
 
-    pub pre_launch_cmd: String,
+    /// 自动任务（pre_launch / on_crash / post_exit）。实例文件存在时由实例配置覆盖。
+    #[serde(default)]
+    pub auto_tasks: crate::launcher::auto_tasks::model::AutoTasks,
 
     #[serde(default)]
     pub gc_type: GcType,
@@ -156,7 +158,7 @@ impl Default for LaunchOptions {
                 "-Dfml.ignorePatchDiscrepancies=True".into(),
             ],
             game_args: vec![],
-            pre_launch_cmd: String::new(),
+            auto_tasks: Default::default(),
             gc_type: GcType::default(),
         }
     }

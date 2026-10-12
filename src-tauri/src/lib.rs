@@ -40,6 +40,9 @@ use commands::gamedirs::{
     get_active_game_dir, get_game_dirs, open_folder, remove_game_dir, rename_game_dir,
     rename_version_dir, set_active_game_dir,
 };
+use commands::auto_tasks::{
+    get_instance_auto_tasks, run_auto_tasks_now, save_global_auto_tasks, save_instance_auto_tasks,
+};
 use commands::jdk::{
     auto_scan_jdk, get_discovered_jdks, get_jdk_options, save_jdk_options, scan_custom_jdk,
 };
@@ -179,6 +182,10 @@ pub fn run() {
             get_memory_info,
             get_launch_options,
             save_launch_options,
+            get_instance_auto_tasks,
+            save_instance_auto_tasks,
+            save_global_auto_tasks,
+            run_auto_tasks_now,
             get_last_offline_username,
             save_last_offline_username,
             get_offline_accounts,

@@ -17,6 +17,10 @@ export const ONLINE_STATE = "online-state";
 export const TOOL_DL_PROGRESS = "tooldl-progress";
 /** 配置文件损坏已恢复（RecoveryNotice；运行期推送，启动期由命令拉取兜底） */
 export const CONFIG_RECOVERY = "config-recovery";
+/** 自动任务进度（AutoTaskProgress；按（实例, 阶段）合并为最新帧） */
+export const AUTO_TASK_PROGRESS = "auto-task-progress";
+/** 自动任务阶段结束（AutoTasksFinished；failures 非空时前端弹 dialog 提示） */
+export const AUTO_TASKS_FINISHED = "auto-tasks-finished";
 
 // ── 事件 payload 类型（前端类型由 Rust 生成，见 src/types/）──
 
@@ -41,3 +45,12 @@ export interface RecoveryNotice {
   backup_path: string | null;
   reason: string;
 }
+
+// ── 自动任务事件 payload（生成类型，见 src/types/launcher/）──
+
+/** auto-task-progress 事件 payload。 */
+export type { AutoTaskProgress } from "../../types/launcher/AutoTaskProgress";
+/** auto-tasks-finished 事件 payload。 */
+export type { AutoTasksFinished } from "../../types/launcher/AutoTasksFinished";
+/** 单条自动任务失败记录。 */
+export type { AutoTaskFailureInfo } from "../../types/launcher/AutoTaskFailureInfo";

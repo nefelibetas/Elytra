@@ -11,6 +11,7 @@ use crate::events;
 use crate::jdk;
 use crate::launcher::args::{build_launch_command, LaunchRequest};
 use crate::launcher::env;
+use crate::launcher::auto_tasks;
 use crate::launcher::platform;
 use crate::launcher::process;
 use crate::launcher::skin;
@@ -96,10 +97,31 @@ pub async fn spawn_game(
         },
     );
 
-    // 启动前执行命令（非空时运行；失败则中止启动）
-    if !launcher_config.pre_launch_cmd.trim().is_empty() {
-        process::run_pre_launch_command(&launcher_config.pre_launch_cmd)
-            .map_err(common_err_ctx!("启动前命令执行失败"))?;
+    // 启动前自动任务（内置动作 + 自定义命令）；失败时按配置决定中止还是继续启动
+    let game_dir = mc_dir.join("versions").join(&version_dir_name);
+    let config_dir = util::config_dir();
+    let failures = auto_tasks::runner::run_auto_tasks(
+        &app,
+        &auto_tasks::ctx::AutoTaskCtx {
+            mc_dir: &mc_dir,
+            game_dir: &game_dir,
+            version_id: &version_dir_name,
+            config_dir: &config_dir,
+            username: &username,
+            exit_code: None,
+            crash_report: None,
+        },
+        auto_tasks::model::AutoTaskPhase::PreLaunch,
+        &launcher_config.auto_tasks,
+    );
+    if !failures.is_empty() && launcher_config.auto_tasks.pre_on_failure == auto_tasks::model::AutoTaskFailure::Abort
+    {
+        let detail = failures
+            .iter()
+            .map(|f| format!("[{}] {}", f.action, f.message))
+            .collect::<Vec<_>>()
+            .join("\n");
+        bail!("启动前自动任务执行失败\n{detail}");
     }
 
     // 启动前内存优化：清理启动器自身工作集，为游戏腾出内存（仅 Windows）
@@ -115,12 +137,17 @@ pub async fn spawn_game(
     // 装配（cwd/stdio/优先级/日志排空/后台监听）全在 launcher/process.rs（域层），
     // 此处只注入事件派发——队列线程派发（与 task-progress 同机制），
     // 游戏监听线程不因 webview 未消费而阻塞。
-    let game_dir = mc_dir.join("versions").join(&version_dir_name);
     let log_path = mc_dir.join("logs").join("elytra-launch.log");
     let app_window = app.clone();
     let app_exit = app.clone();
     let label_window = version_dir_name.clone();
     let label_exit = version_dir_name.clone();
+    // 退出后自动任务所需数据（后台线程执行，全部 move 进去）
+    let auto_tasks_exit = launcher_config.auto_tasks.clone();
+    let mc_dir_exit = mc_dir.clone();
+    let game_dir_exit = game_dir.clone();
+    let version_exit = version_dir_name.clone();
+    let username_exit = username.clone();
     let pid = process::spawn_and_watch(
         process::SpawnRequest {
             args: &cmd.args,
@@ -140,8 +167,36 @@ pub async fn spawn_game(
             task::emit_event(
                 &app_exit,
                 events::GAME_EXITED,
-                (pid, label_exit, exit_code, crash_report),
+                (pid, label_exit, exit_code, crash_report.clone()),
             );
+            // 退出后自动任务：崩溃时先跑 on_crash，再总是跑 post_exit。
+            // 后台阻塞线程执行，不阻塞进程监听线程（备份/打包可能数十秒）。
+            tauri::async_runtime::spawn_blocking(move || {
+                let config_dir = util::config_dir();
+                let ctx = auto_tasks::ctx::AutoTaskCtx {
+                    mc_dir: &mc_dir_exit,
+                    game_dir: &game_dir_exit,
+                    version_id: &version_exit,
+                    config_dir: &config_dir,
+                    username: &username_exit,
+                    exit_code,
+                    crash_report: crash_report.as_deref(),
+                };
+                if crash_report.is_some() {
+                    auto_tasks::runner::run_auto_tasks(
+                        &app_exit,
+                        &ctx,
+                        auto_tasks::model::AutoTaskPhase::OnCrash,
+                        &auto_tasks_exit,
+                    );
+                }
+                auto_tasks::runner::run_auto_tasks(
+                    &app_exit,
+                    &ctx,
+                    auto_tasks::model::AutoTaskPhase::PostExit,
+                    &auto_tasks_exit,
+                );
+            });
         },
     )?;
 

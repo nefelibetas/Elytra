@@ -3,6 +3,7 @@
 import { onMounted } from "vue";
 import { memState } from "../../store/app/memory";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
+import AutoTasksEditor from "./AutoTasksEditor.vue";
 import CheckToggle from "../common/CheckToggle.vue";
 import {
   loWindowTitle, loPriority, loWinMode, loWinW, loWinH, loGameLang,
@@ -183,6 +184,8 @@ const winsizeOptions: SelOption[] = [
       </div>
     </div>
   </div>
+
+  <AutoTasksEditor mode="global" />
 </template>
 
 <style>

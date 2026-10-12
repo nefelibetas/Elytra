@@ -2,6 +2,7 @@
 //! + 密钥存储（`secrets`）。路径由 `util::config_dir()` 决定。
 mod accessors;
 pub mod config;
+pub mod instance;
 pub mod secrets;
 pub(crate) mod store;
 

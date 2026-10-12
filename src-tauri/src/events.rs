@@ -17,3 +17,7 @@ pub const ONLINE_STATE: &str = "online-state";
 pub const TOOL_DL_PROGRESS: &str = "tooldl-progress";
 /// 配置文件损坏已备份并重置（RecoveryNotice；运行期推送，启动期由命令拉取兜底）
 pub const CONFIG_RECOVERY: &str = "config-recovery";
+/// 自动任务进度（AutoTaskProgress：{ version_id, phase, step_index, step_total, action, message, done }）
+pub const AUTO_TASK_PROGRESS: &str = "auto-task-progress";
+/// 自动任务阶段结束（AutoTasksFinished：{ version_id, phase, failures }，前端据此弹 dialog）
+pub const AUTO_TASKS_FINISHED: &str = "auto-tasks-finished";

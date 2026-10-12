@@ -3,9 +3,10 @@
 import { computed, ref } from "vue";
 import type { Component } from "vue";
 import { useRoute } from "vue-router";
-import { Puzzle, Map, Palette, Sun, Database, Upload, ImagePlus, FileText, Server } from "@lucide/vue";
+import { Puzzle, Map, Palette, Sun, Database, Upload, ImagePlus, FileText, Server, Play } from "@lucide/vue";
 import SideNav from "../component/common/SideNav.vue";
 import VersionSetupMisc from "../component/version-setup/VersionSetupMisc.vue";
+import AutoTasksEditor from "../component/settings/AutoTasksEditor.vue";
 import VersionSetupLogs from "../component/version-setup/VersionSetupLogs.vue";
 import VersionSetupServer from "../component/version-setup/VersionSetupServer.vue";
 import VersionSetupExport from "../component/version-setup/VersionSetupExport.vue";
@@ -17,7 +18,7 @@ import {
   loadWorlds, loadResourceDetailed, loadResourceQuick,
 } from "../store/task/versionDetail";
 
-type TabKey = "mods" | "saves" | "resourcepacks" | "shaderpacks" | "datapacks" | "export" | "logs" | "server" | "misc";
+type TabKey = "mods" | "saves" | "resourcepacks" | "shaderpacks" | "datapacks" | "export" | "logs" | "server" | "auto_tasks" | "misc";
 
 const tabs: { key: TabKey; label: string; icon: Component }[] = [
   { key: "mods", label: "Mod 管理", icon: Puzzle },
@@ -26,6 +27,7 @@ const tabs: { key: TabKey; label: string; icon: Component }[] = [
   { key: "shaderpacks", label: "光影包管理", icon: Sun },
   { key: "datapacks", label: "数据包管理", icon: Database },
   { key: "server", label: "服务器", icon: Server },
+  { key: "auto_tasks", label: "自动任务", icon: Play },
   { key: "misc", label: "图标", icon: ImagePlus },
   { key: "logs", label: "游戏日志", icon: FileText },
   { key: "export", label: "导出", icon: Upload },
@@ -62,6 +64,7 @@ const REFRESHERS: Record<TabKey, () => void> = {
   export: () => {},
   logs: () => {},
   server: () => {},
+  auto_tasks: () => {},
   misc: () => {},
 };
 </script>
@@ -105,6 +108,8 @@ const REFRESHERS: Record<TabKey, () => void> = {
       <VersionSetupLogs v-else-if="activeTab === 'logs'" key="logs" />
 
       <VersionSetupServer v-else-if="activeTab === 'server'" key="server" />
+
+      <AutoTasksEditor v-else-if="activeTab === 'auto_tasks'" key="auto_tasks" />
 
       <VersionSetupMisc v-else key="misc" />
     </SideNav>

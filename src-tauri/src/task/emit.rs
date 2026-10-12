@@ -156,15 +156,22 @@ fn frame_key(event: &str, id: &str) -> String {
 /// 只认高频快照类事件，且必须能从 payload 取到任务 id —— 取不到就返回 `None`
 /// （宁可多投一帧，也不能把不同东西塞进同一个槽位）。
 fn coalesce_key(event: &str, payload: &serde_json::Value) -> Option<String> {
-    if event != events::TASK_PROGRESS && event != events::TOOL_DL_PROGRESS {
-        return None;
+    if event == events::TASK_PROGRESS || event == events::TOOL_DL_PROGRESS {
+        // 任务进度用 `task_id`，工具箱下载用 `id`（各自完整快照的标识字段）。
+        let id = payload
+            .get("task_id")
+            .or_else(|| payload.get("id"))?
+            .as_str()?;
+        return Some(frame_key(event, id));
     }
-    // 任务进度用 `task_id`，工具箱下载用 `id`（各自完整快照的标识字段）。
-    let id = payload
-        .get("task_id")
-        .or_else(|| payload.get("id"))?
-        .as_str()?;
-    Some(frame_key(event, id))
+    if event == events::AUTO_TASK_PROGRESS {
+        // 自动任务进度按「实例 + 阶段」合并：同实例三个阶段互不顶替，
+        // 且新阶段开始时旧阶段的残留帧不会复活。
+        let id = payload.get("version_id")?.as_str()?;
+        let phase = payload.get("phase")?.as_str()?;
+        return Some(frame_key(event, &format!("{id}\u{2}{phase}")));
+    }
+    None
 }
 
 /// 派发一条事件（不阻塞调用方）。payload 先序列化，发送端只做投递。
@@ -254,6 +261,42 @@ mod tests {
         assert!(coalesce_key(events::MS_LOGIN_COMPLETE, &json!({"ok": true})).is_none());
         // 快照类但取不到 id → 不合并（宁可多投，不能顶错槽）。
         assert!(coalesce_key(events::TASK_PROGRESS, &json!({"status": "running"})).is_none());
+
+        // 自动任务进度按（实例 + 阶段）合并：同实例不同阶段必须分槽，
+        // 否则 pre_launch 的残留帧会顶掉 post_exit 的进度。
+        assert_eq!(
+            coalesce_key(
+                events::AUTO_TASK_PROGRESS,
+                &json!({"version_id": "v1", "phase": "pre_launch"})
+            )
+            .as_deref(),
+            Some(key(events::AUTO_TASK_PROGRESS, "v1\u{2}pre_launch").as_str())
+        );
+        assert_ne!(
+            coalesce_key(
+                events::AUTO_TASK_PROGRESS,
+                &json!({"version_id": "v1", "phase": "pre_launch"})
+            ),
+            coalesce_key(
+                events::AUTO_TASK_PROGRESS,
+                &json!({"version_id": "v1", "phase": "post_exit"})
+            ),
+            "同实例的不同阶段必须分槽"
+        );
+        assert_ne!(
+            coalesce_key(
+                events::AUTO_TASK_PROGRESS,
+                &json!({"version_id": "v1", "phase": "pre_launch"})
+            ),
+            coalesce_key(
+                events::AUTO_TASK_PROGRESS,
+                &json!({"version_id": "v2", "phase": "pre_launch"})
+            ),
+            "不同实例必须分槽"
+        );
+        assert!(coalesce_key(events::AUTO_TASK_PROGRESS, &json!({"action": "record_mods"})).is_none());
+        // 阶段结束汇总是低频终态，直投不合并。
+        assert!(coalesce_key(events::AUTO_TASKS_FINISHED, &json!({"version_id": "v1"})).is_none());
     }
 
     /// 同一任务的连帧只留最新一帧（内存有界的根据）。

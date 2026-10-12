@@ -18,6 +18,11 @@ use crate::config::online::OnlineConfig;
 use crate::config::tooldl::ToolDlConfig;
 use crate::jdk::model::{JdkInfo, JdkOptions, JdkScanCache, JdkSelection};
 use crate::launcher::model::{GcType, LaunchOptions, MemoryMode, ProcessPriority, WindowSize};
+use crate::launcher::auto_tasks::model::{
+    BackupScope, AutoTaskAction, AutoTaskFailure, AutoTaskFailureInfo, AutoTasksFinished, AutoTaskPhase, AutoTaskProgress,
+    AutoTaskStep, AutoTasks,
+};
+use crate::commands::auto_tasks::InstanceAutoTasksState;
 use crate::task::files::WaitingUserPayload;
 use crate::task::model::{
     DownloadFileKind, DownloadTask, FabricApi, LoaderChoice, LoaderKind, StepInfo, StepStatus,
@@ -52,6 +57,16 @@ pub fn export_all() {
     ProcessPriority::export().unwrap();
     WindowSize::export().unwrap();
     GcType::export().unwrap();
+    BackupScope::export().unwrap();
+    AutoTaskAction::export().unwrap();
+    AutoTaskStep::export().unwrap();
+    AutoTaskFailure::export().unwrap();
+    AutoTaskPhase::export().unwrap();
+    AutoTasks::export().unwrap();
+    AutoTaskProgress::export().unwrap();
+    AutoTaskFailureInfo::export().unwrap();
+    AutoTasksFinished::export().unwrap();
+    InstanceAutoTasksState::export().unwrap();
     JdkInfo::export().unwrap();
     JdkOptions::export().unwrap();
     JdkScanCache::export().unwrap();

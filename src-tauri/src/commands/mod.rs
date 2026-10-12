@@ -3,6 +3,7 @@ pub mod community;
 pub mod config;
 pub mod downloader;
 pub mod gamedirs;
+pub mod auto_tasks;
 pub mod jdk;
 pub mod launch;
 pub mod launch_options;
