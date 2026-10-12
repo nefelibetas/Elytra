@@ -16,13 +16,13 @@ jobs:
     name: 前端类型检查
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: jdx/mise-action@v5
         with:
           # 只装前端需要的工具（mise install <工具…>，版本仍取自 mise.toml）
           install_args: "node npm:pnpm"
       # pnpm store：与 setup-node 的 cache: pnpm 等价，避免每次全量重下依赖
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.local/share/pnpm/store
           key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
@@ -44,7 +44,7 @@ jobs:
       # kcp-sys 走 bindgen 需 libclang：check / clippy / test 三步都会编译它，故放在 job 级
       LIBCLANG_PATH: C:\Program Files\LLVM\bin
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: jdx/mise-action@v5
         with:
           # node/pnpm 在 mise.toml 里有定义但本 job 用不到，不装
