@@ -215,4 +215,6 @@ jobs:
       - name: 取消草稿（验证门与三平台产物都通过才对外可见）
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release edit "$GITHUB_REF_NAME" --draft=false
+        # 本 job 不 checkout，gh 无法从 git 推断仓库 → 必须显式 -R，否则回退执行 git 报
+        # "fatal: not a git repository"（build 里的 gh 调用有 checkout 故不需要）
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false -R "$GITHUB_REPOSITORY"
