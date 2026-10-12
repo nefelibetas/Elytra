@@ -311,13 +311,15 @@ mod keychain {
             .account(KEYCHAIN_MASTER_KEY_ACCOUNT)
             .load_data(true)
             .search()
-            .map_err(|e| format!("读取钥匙串失败\n{e:?}"))?;
+            .map_err(common_err_ctx!("读取钥匙串失败"))?;
         let Some(SearchResult::Data(data)) = results.into_iter().next() else {
             return Ok(None);
         };
-        data.as_slice()
+        let key: [u8; 32] = data
+            .as_slice()
             .try_into()
-            .map_err(|_| "主密钥长度异常".to_string())
+            .map_err(common_err_ctx!("主密钥长度异常"))?;
+        Ok(Some(key))
     }
 
     fn store_key(key: &[u8; 32]) -> Result<(), String> {
@@ -334,7 +336,7 @@ mod keychain {
         .set_service(KEYCHAIN_SERVICE)
         .set_account_name(KEYCHAIN_MASTER_KEY_ACCOUNT)
         .add()
-        .map_err(|e| format!("写入钥匙串失败\n{e:?}"))
+        .map_err(common_err_ctx!("写入钥匙串失败"))
     }
 
     fn master_key() -> Option<&'static [u8; 32]> {

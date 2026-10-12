@@ -1,7 +1,7 @@
 // ── 平台级运行调节：GPU 偏好 / 内存优化 / 进程优先级 ──
 // 纯逻辑无命令依赖，由 spawn_game 在启动前后调用。
 
-use crate::launcher::model::{ProcessPriority, ProcessPriority as P};
+use crate::launcher::model::ProcessPriority;
 
 /// 设置 Windows DirectX 用户 GPU 偏好（HKCU\Software\Microsoft\DirectX\UserGpuPreferences）。
 /// 开启：java.exe → GpuPreference=2;（高性能独显）；关闭：删除该项。
@@ -157,10 +157,10 @@ pub fn set_process_priority(pid: u32, priority: ProcessPriority) {
     #[cfg(target_os = "windows")]
     {
         let class = match priority {
-            P::Normal => return,        // 中（平衡）= 系统默认，无需设置
-            P::Low => 0x0000_4000,      // BELOW_NORMAL_PRIORITY_CLASS
-            P::High => 0x0000_0080,     // HIGH_PRIORITY_CLASS
-            P::RealTime => 0x0000_0100, // REALTIME_PRIORITY_CLASS
+            ProcessPriority::Normal => return,        // 中（平衡）= 系统默认，无需设置
+            ProcessPriority::Low => 0x0000_4000,      // BELOW_NORMAL_PRIORITY_CLASS
+            ProcessPriority::High => 0x0000_0080,     // HIGH_PRIORITY_CLASS
+            ProcessPriority::RealTime => 0x0000_0100, // REALTIME_PRIORITY_CLASS
         };
         #[link(name = "Kernel32")]
         extern "system" {
@@ -187,10 +187,10 @@ pub fn set_process_priority(pid: u32, priority: ProcessPriority) {
     {
         // nice 值映射（-20 最高优先级，19 最低；Normal = 0 默认无需设置）
         let nice = match priority {
-            P::Normal => return,
-            P::Low => 10,
-            P::High => -5,
-            P::RealTime => -10, // 负 nice 需要 CAP_SYS_NICE/root，失败静默忽略
+            ProcessPriority::Normal => return,
+            ProcessPriority::Low => 10,
+            ProcessPriority::High => -5,
+            ProcessPriority::RealTime => -10, // 负 nice 需要 CAP_SYS_NICE/root，失败静默忽略
         };
         extern "C" {
             fn setpriority(which: i32, who: u32, prio: i32) -> i32;
