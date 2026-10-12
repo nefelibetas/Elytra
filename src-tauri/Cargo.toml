@@ -27,6 +27,21 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 name = "elytra"
 path = "src/main.rs"
 
+[[bin]]
+# TS 类型生成工具，默认不构建：tauri-cli 会把包内所有 bin（含 src/bin/* 扫描结果）
+# 当作要打进安装包的附加二进制，macOS bundler 逐个 copy 进 Contents/MacOS；
+# 而 universal 构建只产出主二进制 → 「Failed to copy binary from .../gen_ts」打包失败。
+# 用 required-features 让它进 tauri-cli 的 disabled_bins（tauri-cli rust.rs:939 + matches_src_bin，
+# 上游有同名测试 get_binaries_ignores_src_bin_with_disabled_required_features）。
+# 需要时：`cargo run --bin gen_ts --features gen-ts`
+name = "gen_ts"
+path = "src/bin/gen_ts.rs"
+required-features = ["gen-ts"]
+
+[features]
+# 仅用于开启 TS 类型生成工具；应用自身不依赖任何 feature
+gen-ts = []
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

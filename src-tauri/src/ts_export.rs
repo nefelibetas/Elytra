@@ -1,4 +1,4 @@
-//! TypeScript 类型导出入口（**非测试路径**）：`cargo run --bin gen_ts`。
+//! TypeScript 类型导出入口（**非测试路径**）：`cargo run --bin gen_ts --features gen-ts`。
 //!
 //! 所有需要镜像到前端的 Rust 类型在此登记（新增类型加一行）。漏登记不会静默：
 //! 前端 import 该类型时会编译报错（`src/types/<域>/<Type>.ts` 不存在）。
