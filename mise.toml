@@ -1,9 +1,11 @@
 [tools]
-# Tauri 2 项目工具链：前端 (Node + pnpm) + 后端 (Rust)
+# Tauri 2 项目工具链：前端 (Node + pnpm) + 后端 (Rust + protoc)
 node = "22"
 # 使用 npm 后端安装 pnpm，避免 aqua 后端在部分版本上的 asset 命名问题
 "npm:pnpm" = "11"
-rust = "1.95"
+rust = "1.99"
+# easytier-proto / prost-wkt-types 的 build.rs 需调 protoc，缺了直接 panic（Could not find protoc）
+protoc = "36"
 
 [env]
 # 确保使用 pnpm 作为唯一包管理器

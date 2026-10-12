@@ -135,6 +135,7 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 ## Runtime/Tooling Preferences
 
 - **包管理器必须 pnpm**：`beforeDevCommand` 硬编码 `pnpm dev`；`pnpm-lock.yaml` **入库**（工具链前沿，锁版本保证构建可复现；CI 与本地一律 `pnpm install --frozen-lockfile`）。pnpm 版本见 `mise.toml`（node 22 / pnpm 11）
+- **工具链版本唯一来源是 `mise.toml`**（node / pnpm / rust / protoc）：本地 `mise install`，CI（`.github/workflows/ci.yml`）用 `jdx/mise-action` 读同一份文件、**不写死任何版本号**。改动工具链 = 改 `mise.toml` 一处。后端 job 另设 `MISE_RUSTUP_HOME` 指向 mise 数据目录——rust 实体在 rustup home 里，不放进被缓存的 mise 目录会出现「缓存命中但工具链缺失」
 - **工具链很新**：vite 8、typescript 6、vue-tsc 3、vue-router 5——新增依赖前确认兼容（@lucide/vue 图标库已引入）
 - **窗口**：1008×648（840×540 的 1.2 倍）、`decorations:false` + `transparent:true` + `resizable:false`——前端自绘 TitleBar（`startDragging`）
 - **Rust 变更需重启 `pnpm tauri dev`**（vite `watch.ignored` 忽略 src-tauri）；前端改动 HMR 即时生效
@@ -146,7 +147,7 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 - **capabilities 是 v2 权限门**：新增 JS 侧 window/fs/dialog API 必须先在 `default.json` 加权限
 - **打包与卸载**：`bundle.targets` 含 `nsis` + `msi`。Tauri 的 NSIS 卸载器是**逐文件 `Delete` + `RMDir "$INSTDIR"`（非递归，只删空目录）**——游戏目录（`.minecraft`）虽在安装目录内但非空，**卸载不会删游戏数据**；`src-tauri/windows/hooks.nsh` 的 `PREUNINSTALL` 仅做告知（`IfSilent` 跳过，避免静默卸载卡住）。另一处坑：`identifier`（`xyz.bridgefish.elytra`）与配置目录名（`constants::CONFIG_DIR = "Elytra"`）不同，Tauri 原生「删除应用数据」复选框实际删的是 `%APPDATA%\<identifier>` 这个并不存在的目录，故 `POSTUNINSTALL` 按真实路径补删，避免「说删没删」。**MSI 默认装 `Program Files`（只读）**，`default_game_dir_base` 对其做了回退；NSIS 默认装 `%LOCALAPPDATA%\Programs`（可写），游戏目录照旧在 exe 旁。另：卸载后 `HKCU\Software\<manufacturer>\<product>` 会保留（Tauri 用它记住上次安装位置，重装时恢复），仅在勾选「删除应用数据」时才清除——这是有意行为，不是残留 bug
 - **系统代理**：Windows 读注册表（`winreg`，仅 windows 依赖）→ env；Linux env → GNOME gsettings；reqwest 默认不读系统代理，开启系统代理（Clash 等）时官方源直连会被劫持/黑洞
-- **联机编译**：easytier `kcp` feature 依赖 kcp-sys（bindgen 需 libclang）——构建机须装 LLVM（`winget install LLVM.LLVM`）并设 `LIBCLANG_PATH`
+- **联机编译**：easytier `kcp` feature 依赖 kcp-sys（bindgen 需 libclang）——构建机须装 LLVM（`winget install LLVM.LLVM`）并设 `LIBCLANG_PATH`；另 `easytier-proto` / `prost-wkt-types` 的 build.rs 会调 `protoc`，PATH 上没有就 panic（`Could not find protoc`）——`mise.toml` 已把 `protoc` 列为工具，本地 `mise install` 即装，CI 同源（勿再往 workflow 里塞单独的 protoc 安装步骤）
 - 敏感信息（token/client secret）不硬编码、不打印日志、不提交 git
 - 全局事件拦截：App.vue 禁 F12/DevTools/全选/Tab/ESC 快捷键——调试注意
 

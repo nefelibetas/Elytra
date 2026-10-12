@@ -1,5 +1,7 @@
 name: CI
 
+# 工具链版本的唯一来源是 mise.toml（node / pnpm / rust / protoc）：CI 与本地 `mise install`
+# 完全一致，本文件不写死任何版本号，升级工具链只改 mise.toml。
 # 覆盖 AGENTS.md「Testing & QA」里的验证门：
 #   前端 npx vue-tsc --noEmit ／ 后端 cargo check --lib + cargo clippy（零警告）
 #   + cargo test --lib -- --test-threads=1（必须串行：persist 共用 Settings.toml、网络测试抖动）
@@ -15,26 +17,38 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: jdx/mise-action@v5
         with:
-          version: 11
-      - uses: actions/setup-node@v4
+          # 只装前端需要的工具（mise install <工具…>，版本仍取自 mise.toml）
+          install_args: "node npm:pnpm"
+      # pnpm store：与 setup-node 的 cache: pnpm 等价，避免每次全量重下依赖
+      - uses: actions/cache@v4
         with:
-          node-version: 22
-          cache: pnpm
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-${{ runner.os }}-
       - run: pnpm install --frozen-lockfile
       - run: npx vue-tsc --noEmit
 
   backend:
     name: 后端 check / clippy / test
     # Windows 与主开发环境一致（webview2 预装；easytier 的 kcp-sys 走 bindgen 需 libclang，
-    # runner 自带 LLVM，显式给 LIBCLANG_PATH）。
+    # runner 自带 LLVM，显式给 LIBCLANG_PATH）。rust + protoc 都由 mise 按 mise.toml 装。
     runs-on: windows-latest
+    env:
+      # mise 经 rustup 装 rust，工具链实体在 rustup home 而非 mise 数据目录；放进 mise 数据目录
+      # （mise-action 缓存的就是它）才能跟缓存一起恢复 —— 否则缓存命中时 mise 认为已装、
+      # rustup home 却是空的，后续 cargo/clippy 会因找不到工具链失败。
+      # 路径取自 jdx/mise-action README 对 GitHub 托管 Windows runner 的写法（%LOCALAPPDATA%\mise\rustup）。
+      MISE_RUSTUP_HOME: C:\Users\runneradmin\AppData\Local\mise\rustup
+      # kcp-sys 走 bindgen 需 libclang：check / clippy / test 三步都会编译它，故放在 job 级
+      LIBCLANG_PATH: C:\Program Files\LLVM\bin
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: jdx/mise-action@v5
         with:
-          components: clippy
+          # node/pnpm 在 mise.toml 里有定义但本 job 用不到，不装
+          install_args: "rust protoc"
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
@@ -47,5 +61,3 @@ jobs:
       - name: cargo test（串行）
         working-directory: src-tauri
         run: cargo test --lib -- --test-threads=1
-        env:
-          LIBCLANG_PATH: C:\Program Files\LLVM\bin
