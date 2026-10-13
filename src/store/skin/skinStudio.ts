@@ -109,6 +109,11 @@ const ZOOM_MIN = 0.4;
 const ZOOM_MAX = 4;
 
 export const skinStudio = reactive({
+  // ── 加载状态机 ──
+  /** `loading` = 首帧或刷新中（右侧整体展示刷新态，不与旧列表共存）；
+   *  `ready` = 三方数据已就绪，右侧展示列表。 */
+  phase: "loading" as "loading" | "ready",
+
   // ── 3D 预览 ──
   /** 拖动中（页面据此切换抓手光标；渲染由常驻 viewer 负责，不经此处） */
   dragging: false,
@@ -124,19 +129,16 @@ export const skinStudio = reactive({
   officialSkin: "",
   /** "classic" | "slim"（后端 fetch_*_skin_profile 原样返回） */
   officialModel: "classic",
-  officialLoading: false,
   officialError: "",
 
   // ── 本地衣柜 ──
   skins: [] as LocalSkin[],
-  skinsLoading: false,
   skinsError: "",
   /** 右侧 tab：皮肤 / 披风 */
   tab: "skins" as StudioTab,
 
   // ── 官方披风 ──
   capes: [] as StudioCape[],
-  capeLoading: false,
   capesError: "",
   capeBusy: false,
 
@@ -188,18 +190,19 @@ export const skinStudio = reactive({
 
   // ── 加载 ──
 
-  /** 页面挂载：并发拉取官方皮肤 / 本地衣柜 / 官方披风，然后渲染首帧。 */
+  /** 页面挂载：并发拉取官方皮肤 / 本地衣柜 / 官方披风，全部就绪后由页面统一渲染首帧。 */
   async load() {
     this.yaw = DEFAULT_VIEW_YAW;
     this.pitch = DEFAULT_VIEW_PITCH;
     this.zoom = 1;
+    this.phase = "loading";
     await Promise.allSettled([this.loadOfficial(), this.loadSkins(), this.loadCapes()]);
+    this.phase = "ready";
     void this.cacheCurrent(); // 自动缓存当前皮肤（后台进行，不阻塞首帧）
   },
 
   /** 拉取账号当前皮肤（正版 / 第三方 / 离线各自来源）；失败回退内置 Steve 保证预览可用。 */
   async loadOfficial() {
-    this.officialLoading = true;
     this.officialError = "";
     // 账号列表是异步 IPC：未就绪就判定来源会把正版 / 第三方账号当成离线，
     // 先渲染出一张带「默认」角标的 Steve 实时卡（随后才被真实皮肤替换）。
@@ -233,13 +236,11 @@ export const skinStudio = reactive({
         this.officialSkin = "";
       }
     } finally {
-      this.officialLoading = false;
     }
   },
 
   /** 拉取本地衣柜列表（后端按加入时间倒序）。 */
   async loadSkins() {
-    this.skinsLoading = true;
     this.skinsError = "";
     try {
       this.skins = await invoke<LocalSkin[]>("list_local_skins");
@@ -250,7 +251,6 @@ export const skinStudio = reactive({
     } catch (e) {
       this.skinsError = `读取本地衣柜失败\n${String(e)}`;
     } finally {
-      this.skinsLoading = false;
     }
   },
 
@@ -262,7 +262,6 @@ export const skinStudio = reactive({
       this.selectedCapeId = "";
       return;
     }
-    this.capeLoading = true;
     try {
       const list = await invoke<StudioCape[]>("fetch_capes");
       // 后端拉贴图要访问 textures.minecraft.net（冷启动 1~3 秒），贴图按 url 内容不变——
@@ -277,13 +276,14 @@ export const skinStudio = reactive({
     } catch (e) {
       this.capesError = `披风列表加载失败\n${String(e)}`;
     } finally {
-      this.capeLoading = false;
     }
   },
 
-  /** 刷新：重新拉取三方数据并重渲当前帧。 */
+  /** 刷新：重新拉取三方数据（并发），期间右侧整体切到刷新态。 */
   async refresh() {
+    this.phase = "loading";
     await Promise.allSettled([this.loadOfficial(), this.loadSkins(), this.loadCapes()]);
+    this.phase = "ready";
     void this.cacheCurrent();
     showToast("已刷新");
   },

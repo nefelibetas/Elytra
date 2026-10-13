@@ -24,6 +24,9 @@ let stageImg: HTMLImageElement | null = null;
 let stageCape: HTMLImageElement | null = null;
 /** 动画帧句柄（0 = 未运行）。静止时停掉循环，不空转。 */
 let animRaf = 0;
+/** 首帧是否已就绪：三方数据全部到齐并解码完之前，watch 触发的重绘一律抑制——
+ *  否则皮肤先到、披风还在路上时会先画出一张没披风的中间图。 */
+let stageReady = false;
 /** 动画起始时刻（相位基准）。 */
 let animStart = 0;
 
@@ -107,8 +110,9 @@ function syncAnimation(): void {
   }
 }
 
-/** 解码皮肤并重绘（皮肤变化时调用）。 */
-async function refreshSkin(): Promise<void> {
+/** 解码当前皮肤（不重绘）。拆分出来是为了首帧能「皮肤 + 披风都解码完再画一次」，
+ *  避免出现只有皮肤、披风还在路上的中间帧。 */
+async function decodeSkin(): Promise<void> {
   const skin = skinStudio.currentSkin;
   if (!skin) {
     stageImg = null;
@@ -118,17 +122,14 @@ async function refreshSkin(): Promise<void> {
     stageImg = await loadSkinImage(skin.startsWith("data:") ? skin : `data:image/png;base64,${skin}`);
   } catch {
     stageImg = null;
-    return;
   }
-  drawStage();
 }
 
-/** 解码披风贴图并重绘（披风选择变化时调用；无披风则清空）。 */
-async function refreshCape(): Promise<void> {
+/** 解码当前披风贴图（不重绘；无披风则清空）。 */
+async function decodeCape(): Promise<void> {
   const cape = skinStudio.currentCapeTexture;
   if (!cape) {
     stageCape = null;
-    if (!animRaf) drawStage();
     return;
   }
   try {
@@ -136,12 +137,25 @@ async function refreshCape(): Promise<void> {
   } catch {
     stageCape = null;
   }
-  if (!animRaf) drawStage();
+}
+
+/** 皮肤变化 → 解码并重绘（首帧未就绪时只解码不画）。 */
+async function refreshSkin(): Promise<void> {
+  await decodeSkin();
+  if (stageReady && !animRaf) drawStage();
+}
+
+/** 披风变化 → 解码并重绘（同上）。 */
+async function refreshCape(): Promise<void> {
+  await decodeCape();
+  if (stageReady && !animRaf) drawStage();
 }
 
 /** 衣柜只服务正版账号：第三方账号的外观一律在站点网页管理（点头像直接跳过去），
  *  离线没有任何皮肤来源。两个入口都已在 AccountSection 拦住，这里兜底直接改 URL / 历史前进后退。 */
 onMounted(async () => {
+  // 进入即切刷新态：store 是模块级单例，否则上一次会话的缓存列表会先闪一帧
+  skinStudio.phase = "loading";
   // 账号列表是异步 IPC：未就绪就判定来源，会把正版账号当成离线而误拦（store 的 loadOfficial 同样先 await）。
   await ensureAuthReady();
   if (!skinStudio.premium) {
@@ -149,17 +163,22 @@ onMounted(async () => {
     void router.replace("/");
     return;
   }
-  void skinStudio.load();
   await nextTick(); // 等 canvas 挂载
   stageImg = null;
   stageCape = null;
-  await Promise.all([refreshSkin(), refreshCape()]);
+  // 皮肤与披风**都**就绪后再渲染首帧：先等三方数据（load 内部已是并发拉取），
+  // 再并发解码两张图，最后只画一次 —— 不会先冒出一张没披风的中间图。
+  await skinStudio.load();
+  await Promise.all([decodeSkin(), decodeCape()]);
+  stageReady = true; // 数据齐 + 两张图解码完 → 放行重绘（含首帧）
+  if (!animRaf) drawStage();
   syncAnimation();
 });
 
 onUnmounted(() => {
   cancelAnimationFrame(animRaf);
   animRaf = 0;
+  stageReady = false;
   stageImg = null;
   stageCape = null;
   skinStudio.dispose();
@@ -383,8 +402,8 @@ function savePickedSkin() {
         <!-- 等距渲染画布：皮肤 / 模型 / 视角 / 缩放 / 动作变化后重绘一帧 -->
         <canvas v-show="!!skinStudio.currentSkin" ref="stageCanvas" class="frame"></canvas>
         <LoadingSpinner
-          v-if="!skinStudio.currentSkin && skinStudio.officialLoading"
-          text="正在加载…"
+          v-if="!skinStudio.currentSkin && skinStudio.phase === 'loading'"
+          text="正在加载皮肤与披风…"
         />
         <EmptyState v-else-if="!skinStudio.currentSkin">
           <p>暂无可预览的皮肤</p>
@@ -491,6 +510,11 @@ function savePickedSkin() {
 
         <!-- 皮肤 tab：3D 侧视缩略图网格（3 列 × 2 行，超出滚动；末尾一格为上传卡片） -->
         <div v-if="skinStudio.tab === 'skins'" class="panel-body">
+          <!-- 刷新态：整个右侧只显示刷新中，不与旧列表共存 -->
+          <div v-if="skinStudio.phase === 'loading'" class="panel-loading">
+            <LoadingSpinner text="正在获取皮肤与披风…" />
+          </div>
+          <template v-else>
           <div class="grid skins">
             <div
               v-for="c in skinCards"
@@ -530,18 +554,21 @@ function savePickedSkin() {
             </div>
           </div>
 
-          <LoadingSpinner v-if="skinStudio.skinsLoading" text="读取本地衣柜…" />
           <!-- 空态只看「有没有实时卡」：账号当前皮肤即使没进本地衣柜也已有卡片，算不得空 -->
-          <EmptyState v-else-if="!visibleSkinCount && !skinStudio.officialSkin">
+          <EmptyState v-if="!visibleSkinCount && !skinStudio.officialSkin">
             <p>衣柜还是空的</p>
             <p>点下方「上传本地皮肤」把皮肤文件收进来</p>
           </EmptyState>
           <p v-if="skinStudio.skinsError" class="err">{{ skinStudio.skinsError }}</p>
+          </template>
         </div>
 
         <!-- 披风 tab -->
         <div v-else class="panel-body">
-          <template v-if="skinStudio.premium">
+          <div v-if="skinStudio.premium && skinStudio.phase === 'loading'" class="panel-loading">
+            <LoadingSpinner text="正在获取披风…" />
+          </div>
+          <template v-else-if="skinStudio.premium">
             <div class="grid">
               <div
                 class="card"
@@ -567,8 +594,7 @@ function savePickedSkin() {
               </div>
             </div>
 
-            <LoadingSpinner v-if="skinStudio.capeLoading" text="读取披风列表…" />
-            <EmptyState v-else-if="!skinStudio.capes.length">
+            <EmptyState v-if="!skinStudio.capes.length">
               <p>该账号暂无可用披风</p>
             </EmptyState>
             <p v-if="skinStudio.capesError" class="err">{{ skinStudio.capesError }}</p>
@@ -618,6 +644,13 @@ function savePickedSkin() {
 </template>
 
 <style scoped>
+/* 刷新态：占满面板主体并居中（刷新时右侧不残留旧列表） */
+.panel-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 180px;
+}
 .studio {
   display: flex;
   height: 100%;

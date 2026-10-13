@@ -402,6 +402,10 @@ interface PaintOpts {
   nominalH?: number;
   /** 披风贴图（独立 64×32 纹理）。 */
   capeTex?: CanvasImageSource;
+  /** 画面平移量（设备像素）。只作用在投影原点，`hits` 的仿射矩阵与绘制同源，
+   *  因此拾取会随平移一起走，不会错位。 */
+  offsetX?: number;
+  offsetY?: number;
   /** 传入则回填本次绘制的可拾取面（清空后按绘制顺序追加），供 3D 直绘反查。 */
   hits?: PickFace[];
 }
@@ -521,6 +525,9 @@ function paint(
     offX = (canvas.width - spanX * scale) / 2 - minX * scale;
     offY = (canvas.height - spanY * scale) / 2 - minY * scale;
   }
+  // 用户平移（3D 预览拖动视角）：只动投影原点
+  offX += opts.offsetX ?? 0;
+  offY += opts.offsetY ?? 0;
 
   faces.sort((a, b) => a.depth - b.depth); // 画家算法：depth 小 = 远，先画
 
@@ -688,6 +695,9 @@ export function drawFullCanvas(
     fill?: number;
     capeTex?: CanvasImageSource;
     elytra?: boolean;
+    /** 画面平移量（设备像素，供预览拖动视角用）。 */
+    offsetX?: number;
+    offsetY?: number;
     /** 传入则回填本次绘制的可拾取面（供 3D 直绘反查贴图像素）。 */
     hits?: PickFace[];
   },
@@ -715,6 +725,8 @@ export function drawFullCanvas(
     nominalW: BODY_VOXEL_W,
     nominalH: BODY_VOXEL_H,
     capeTex: opts.capeTex,
+    offsetX: opts.offsetX,
+    offsetY: opts.offsetY,
     hits: opts.hits,
   });
 }

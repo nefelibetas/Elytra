@@ -9,7 +9,7 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import {
   Brush, Download, Eraser, Frame, Grid3x3, Hand, Maximize, PaintBucket, Pipette, Redo2,
-  Undo2, Upload, ZoomIn, ZoomOut,
+  RotateCcw, Undo2, Upload, ZoomIn, ZoomOut,
 } from "@lucide/vue";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import {
@@ -100,6 +100,9 @@ const preview = reactive({
   yaw: DEFAULT_VIEW_YAW,
   pitch: DEFAULT_VIEW_PITCH,
   zoom: 1,
+  /** 画面平移量（设备像素）：左键拖动视角的结果，重置视角时归零。 */
+  offsetX: 0,
+  offsetY: 0,
   animation: "none" as Animation,
 });
 
@@ -120,8 +123,8 @@ let checkerPattern: CanvasPattern | null = null;
 let previewHits: PickFace[] = [];
 /** 指针最近一次的画布设备像素坐标：相机变化后按同一点重算光标。 */
 let lastPointer: { x: number; y: number } | null = null;
-/** 当前悬停命中的贴图像素（null = 未命中或不在 3D 直绘）。 */
-let hoverPick: { face: PickFace; x: number; y: number } | null = null;
+/** 当前悬停命中的贴图像素（响应式：命中与否决定预览光标是十字准星还是手型）。 */
+const hoverPick = ref<{ face: PickFace; x: number; y: number } | null>(null);
 /** 3D 直绘笔画进行中。 */
 let stroking = false;
 /** 视口隐藏期间被请求的「适应窗口」（见 fitToViewport）。 */
@@ -314,10 +317,12 @@ function drawPreview() {
     // 预览框独占高度时宽度是构图瓶颈（renderer 取 min(宽/20, 高/34)）——
     // 占比给到 0.9 让模型尽量填满可用空间，只留一点呼吸边距
     fill: 0.9 * preview.zoom,
+    offsetX: preview.offsetX,
+    offsetY: preview.offsetY,
     hits: previewHits,
   });
   // 相机或模型变了：悬停像素要按新矩阵重算，否则光标停在旧位置
-  hoverPick = lastPointer ? pickAtDevice(lastPointer.x, lastPointer.y) : null;
+  hoverPick.value = lastPointer ? pickAtDevice(lastPointer.x, lastPointer.y) : null;
   drawCursor();
 }
 
@@ -330,7 +335,7 @@ function drawCursor() {
   if (!ctx) return;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, el.width, el.height);
-  const hit = hoverPick;
+  const hit = hoverPick.value;
   if (!hit) return;
   const [a, b, c, d, e, f] = hit.face.m;
   const at = (ux: number, uy: number): [number, number] => [a * ux + c * uy + e, b * ux + d * uy + f];
@@ -424,6 +429,16 @@ function zoomAt(px: number, py: number, factor: number) {
   view.x = px - skinX * next;
   view.y = py - skinY * next;
   drawEditor();
+}
+
+/** 重置 3D 预览相机（视角 / 缩放 / 平移）——拖动视角后可能需要一键回到默认构图。 */
+function resetPreview() {
+  preview.yaw = DEFAULT_VIEW_YAW;
+  preview.pitch = DEFAULT_VIEW_PITCH;
+  preview.zoom = 1;
+  preview.offsetX = 0;
+  preview.offsetY = 0;
+  drawPreview();
 }
 
 /** 缩放按钮：2D 模式以画布中心为锚，3D 模式作用于预览缩放。 */
@@ -545,6 +560,9 @@ function onWheel(e: WheelEvent) {
 /** 预览拖动旋转。 */
 let previewDrag = false;
 let previewFrom = { x: 0, y: 0, yaw: 0, pitch: 0 };
+/** 3D 预览「拖动视角」（pan）会话：起点设备像素 + 起始平移量。 */
+let previewPan = false;
+let previewPanFrom = { x: 0, y: 0, ox: 0, oy: 0 };
 /** 动作动画循环句柄（0 = 未运行，静止时不空转）。 */
 let animRaf = 0;
 /** 动画相位基准时刻。 */
@@ -575,29 +593,38 @@ function onPreviewDown(e: PointerEvent) {
   const dev = devicePoint(e);
   if (!dev) return;
   lastPointer = dev;
-  // 3D 直绘：左键即落笔；旋转交给抓手工具 / 中键 / 右键（与展开图模式的平移手势一致）
+  // 3D 直绘：左键落在皮肤上即落笔（取色 / 填充 / 绘制）
   if (mode.value === "3d" && e.button === 0 && skinEditor.tool !== "hand") {
     const hit = pickAtDevice(dev.x, dev.y);
-    if (!hit) return;
-    if (skinEditor.tool === "picker") {
-      const hex = pickColorAt(hit.x, hit.y);
-      if (hex) skinEditor.color = hex;
+    if (hit) {
+      if (skinEditor.tool === "picker") {
+        const hex = pickColorAt(hit.x, hit.y);
+        if (hex) skinEditor.color = hex;
+        return;
+      }
+      if (skinEditor.tool === "fill") {
+        floodFillAt(hit.x, hit.y);
+        return;
+      }
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      stroking = true;
+      strokeFace = hit.face;
+      strokeLast = { x: hit.x, y: hit.y };
+      beginStroke();
+      paintAt(hit.x, hit.y);
       return;
     }
-    if (skinEditor.tool === "fill") {
-      floodFillAt(hit.x, hit.y);
-      return;
-    }
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    stroking = true;
-    strokeFace = hit.face;
-    strokeLast = { x: hit.x, y: hit.y };
-    beginStroke();
-    paintAt(hit.x, hit.y);
-    return;
+    // 未命中皮肤：不落笔，落到下面的「拖动视角」
   }
-  previewDrag = true;
-  previewFrom = { x: e.clientX, y: e.clientY, yaw: preview.yaw, pitch: preview.pitch };
+  // 3D：左键（含模型外空白与抓手工具）= 拖动视角，右键 = 旋转视角；
+  // 2D 预览：左键仍是旋转（与衣柜页手势一致）。
+  if (mode.value === "3d" && e.button === 0) {
+    previewPan = true;
+    previewPanFrom = { x: dev.x, y: dev.y, ox: preview.offsetX, oy: preview.offsetY };
+  } else {
+    previewDrag = true;
+    previewFrom = { x: e.clientX, y: e.clientY, yaw: preview.yaw, pitch: preview.pitch };
+  }
   (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
 }
 
@@ -607,11 +634,17 @@ function onPreviewMove(e: PointerEvent) {
 
   // 悬停光标：3D 直绘且用绘图类工具时，标出即将落笔的那个像素
   if (dev && mode.value === "3d" && skinEditor.tool !== "hand") {
-    hoverPick = pickAtDevice(dev.x, dev.y);
+    hoverPick.value = pickAtDevice(dev.x, dev.y);
     drawCursor();
-  } else if (hoverPick) {
-    hoverPick = null;
+  } else if (hoverPick.value) {
+    hoverPick.value = null;
     drawCursor();
+  }
+
+  if (dev && previewPan) {
+    preview.offsetX = previewPanFrom.ox + (dev.x - previewPanFrom.x);
+    preview.offsetY = previewPanFrom.oy + (dev.y - previewPanFrom.y);
+    drawPreview();
   }
 
   if (dev && stroking) {
@@ -645,6 +678,7 @@ function onPreviewMove(e: PointerEvent) {
 
 function onPreviewUp() {
   previewDrag = false;
+  previewPan = false;
   if (!stroking) return;
   stroking = false;
   strokeFace = null;
@@ -654,8 +688,8 @@ function onPreviewUp() {
 
 function onPreviewLeave() {
   lastPointer = null;
-  if (!hoverPick) return;
-  hoverPick = null;
+  if (!hoverPick.value) return;
+  hoverPick.value = null;
   drawCursor();
 }
 
@@ -790,7 +824,7 @@ watch(() => preview.animation, () => syncAnimation());
 // 模式切换改变的是布局（画布 ↔ 预览互换），要等 DOM 重新布局后再按新尺寸重绘
 watch(mode, () => {
   lastPointer = null;
-  hoverPick = null;
+  hoverPick.value = null;
   void nextTick(() => {
     if (pendingFit) fitToViewport();
     drawEditor();
@@ -895,8 +929,7 @@ watch(mode, () => {
         <div
           ref="previewBox"
           class="pp-preview-box"
-          :class="{ 'is-paint': mode === '3d' && skinEditor.tool !== 'hand' }"
-          v-tooltip="mode === '3d' ? '左键绘制 · 抓手工具 / 右键拖动旋转 · 滚轮缩放' : '拖动旋转 · 滚轮缩放'"
+          :class="{ 'on-skin': mode === '3d' && skinEditor.tool !== 'hand' && !!hoverPick }"
           @pointerdown="onPreviewDown"
           @pointermove="onPreviewMove"
           @pointerup="onPreviewUp"
@@ -1001,6 +1034,14 @@ watch(mode, () => {
         @click="fitToViewport()"
       >
         <Maximize :size="15" />
+      </button>
+      <button
+        v-if="mode === '3d'"
+        class="pp-tool flat"
+        v-tooltip="'重置视角'"
+        @click="resetPreview"
+      >
+        <RotateCcw :size="15" />
       </button>
     </footer>
   </div>
@@ -1215,8 +1256,9 @@ watch(mode, () => {
   touch-action: none;
 }
 
-/* 3D 直绘：左键即落笔，光标换成落笔图标 */
-.pp-preview-box.is-paint {
+/* 3D 直绘：光标落在模型皮肤上时换成十字准星（表示此处可落笔），
+ *  移出皮肤则回到手型（可拖动旋转）—— 靠 .pp-preview-box 自身的 grab 兜底。 */
+.pp-preview-box.on-skin {
   cursor: crosshair;
 }
 
