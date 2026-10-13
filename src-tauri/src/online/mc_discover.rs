@@ -72,8 +72,15 @@ impl MinecraftScanner {
     }
 
     /// 当前监测到的 MC 端口（None = 尚未发现/已过期）。
+    ///
+    /// 取**最新入表**的条目：世界关掉再开（新端口）时旧端口条目仍在 5s TTL 内，
+    /// 若返回最先入表的旧端口，host 侧会误判"端口未变"而不重建会话。
     pub fn get_port(&self) -> Option<u16> {
-        self.entries.lock().iter().map(|(p, _, _)| *p).next()
+        self.entries
+            .lock()
+            .iter()
+            .max_by_key(|(_, _, at)| *at)
+            .map(|(p, _, _)| *p)
     }
 }
 
@@ -130,5 +137,23 @@ mod tests {
         assert_eq!(parse_motd(b"[AD]25565[/AD]"), None, "无 MOTD 段");
         assert_eq!(parse_motd(b"[MOTD]  [/MOTD][AD]1[/AD]"), None, "空 MOTD");
         assert_eq!(parse_motd(b"nope"), None);
+    }
+
+    /// 回归：世界关掉再开后，旧端口条目仍在 TTL 内——`get_port` 必须返回最新入表
+    /// 的端口，否则 host 侧会判定"端口未变"而不重建会话。
+    #[test]
+    fn get_port_returns_newest_entry() {
+        let (quit_tx, _quit_rx) = std::sync::mpsc::channel();
+        let now = std::time::Instant::now();
+        let entries = std::sync::Arc::new(parking_lot::Mutex::new(vec![
+            (
+                25565u16,
+                String::new(),
+                now - std::time::Duration::from_secs(3),
+            ),
+            (25566u16, String::new(), now),
+        ]));
+        let scanner = MinecraftScanner { entries, quit_tx };
+        assert_eq!(scanner.get_port(), Some(25566));
     }
 }

@@ -5,10 +5,12 @@ use super::mc_discover::MinecraftScanner;
 use super::model::{OnlineSnapshot, OnlineStatus};
 use super::scaffold::profiles::ProfileTable;
 use super::scaffold::room::RoomCredential;
+use super::scaffold::server::InfoServer;
 use super::session::{EasyTierSession, SessionRole};
 use crate::events::ONLINE_STATE;
 use crate::persist::online_config;
 use crate::task::{emit_event, EventSink};
+use std::future::Future;
 use std::sync::LazyLock;
 use tokio::sync::Mutex;
 
@@ -20,6 +22,42 @@ pub(super) struct HostShared {
     pub(super) profiles: parking_lot::Mutex<ProfileTable>,
 }
 
+/// guest 本地游戏代理句柄：包住后台代理任务，drop/停止时中止它并释放本地监听端口。
+///
+/// 旧实现拿 `JoinHandle` 直接丢弃：停止联机后 `run_guest_proxy` 无人通知，
+/// `0.0.0.0:<local_port>` 会一直处于 LISTEN。
+pub(super) struct GuestProxy {
+    handle: Option<tauri::async_runtime::JoinHandle<()>>,
+}
+
+impl GuestProxy {
+    /// 启动代理任务并返回可停止句柄。
+    pub(super) fn spawn<F>(task: F) -> Self
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        Self {
+            handle: Some(tauri::async_runtime::spawn(task)),
+        }
+    }
+
+    /// 中止代理任务并等待其真正结束（保证监听端口已释放）。
+    pub(super) async fn shutdown(mut self) {
+        if let Some(handle) = self.handle.take() {
+            handle.abort();
+            let _ = handle.await;
+        }
+    }
+}
+
+impl Drop for GuestProxy {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            handle.abort();
+        }
+    }
+}
+
 /// OnlineService 单例（对齐 TaskManager：进程内唯一，模块级 LazyLock）。
 pub(super) struct OnlineServiceInner {
     pub(super) session: Option<EasyTierSession>,
@@ -29,6 +67,10 @@ pub(super) struct OnlineServiceInner {
     pub(super) scanner: Option<MinecraftScanner>,
     /// 组播广播器（guest 用：模拟 MC 局域网服务器；drop 即停线程）。
     pub(super) advertiser: Option<McAdvertiser>,
+    /// guest 本地游戏代理任务（drop/停止即中止并释放本地监听端口）。
+    pub(super) proxy: Option<GuestProxy>,
+    /// host 信息服务器（drop/停止即停 accept 线程并释放端口）。
+    pub(super) info_server: Option<InfoServer>,
     /// 会话代际：stop/start_host 递增，旧的后台任务据此自杀。
     pub(super) generation: u64,
     /// 信息服务器端口（host；guest 侧为空）。
@@ -45,6 +87,8 @@ impl Default for OnlineServiceInner {
             room: None,
             scanner: None,
             advertiser: None,
+            proxy: None,
+            info_server: None,
             generation: 0,
             scaffold_port: None,
             profiles: None,
@@ -90,19 +134,26 @@ pub(super) fn emit_snapshot(sink: &dyn EventSink, snap: &OnlineSnapshot) {
 pub async fn stop(sink: &dyn EventSink) -> Result<(), String> {
     // 锁内（短）：先递增代际——在途的 start/重建据此认输并丢弃自己刚建的会话；
     // 随后摘出会话与资源、复位状态。
-    let (session, snap) = {
+    let (session, proxy, info_server, snap) = {
         let mut svc = SERVICE.lock().await;
         svc.generation += 1;
         let session = svc.session.take();
         svc.scanner = None; // Drop → 组播线程退出（非阻塞：只发退出信号）
         svc.advertiser = None; // Drop → 广播线程退出
+        let proxy = svc.proxy.take(); // 中止代理任务 → 释放 guest 本地监听端口
+        let info_server = svc.info_server.take(); // 停 accept 线程 → 释放 host 信息端口
         svc.status = OnlineStatus::Idle;
         svc.room = None;
         svc.scaffold_port = None;
         svc.profiles = None;
-        (session, snapshot_inner(&svc))
+        (session, proxy, info_server, snapshot_inner(&svc))
     };
-    // 锁外（慢）：停会话（秒级）——持锁做会让 status()/stop() 一起卡住
+    if let Some(p) = proxy {
+        p.shutdown().await;
+    }
+    // InfoServer::drop 会 join accept 线程：放锁外，避免阻塞 status()/stop()
+    drop(info_server);
+    // 会话停止是秒级；放最后，端口/线程先释放
     if let Some(s) = session {
         s.stop().await;
     }

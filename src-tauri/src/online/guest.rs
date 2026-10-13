@@ -10,7 +10,7 @@ use super::scaffold::identity::get_machine_id;
 use super::scaffold::profiles::{Profile, ProfileKind, ProfileTable};
 use super::scaffold::room::parse_room_code;
 use super::service::{
-    emit_snapshot, free_tcp_port, online_player_name, snapshot_inner, vendor_string,
+    emit_snapshot, free_tcp_port, online_player_name, snapshot_inner, vendor_string, GuestProxy,
     OnlineServiceInner, SERVICE,
 };
 use super::session::{EasyTierSession, SessionConfig, SessionRole};
@@ -25,9 +25,16 @@ pub async fn join(sink: Arc<dyn EventSink>, room_code: &str) -> Result<u16, Stri
     let (session, gen) = start_join_session(room_code).await?;
     let (stream, center_addr, center_ip) = connect_center(sink.as_ref(), &session, gen).await?;
     let (local_profile, supports_easytier_id, game_port) =
-        negotiate_guest_session(sink.as_ref(), stream).await?;
-    let local_port =
-        activate_guest_join(sink.as_ref(), &session, center_ip, game_port, &local_profile).await?;
+        negotiate_guest_session(sink.as_ref(), stream, gen).await?;
+    let local_port = activate_guest_join(
+        sink.as_ref(),
+        &session,
+        center_ip,
+        game_port,
+        &local_profile,
+        gen,
+    )
+    .await?;
     spawn_guest_sync(
         sink,
         session,
@@ -90,7 +97,7 @@ async fn connect_center(
     let (center_ip, center_port) = match discover_center(session, gen).await {
         Some(v) => v,
         None => {
-            rollback_join_and_emit(sink).await;
+            rollback_join_and_emit(sink, gen).await;
             return Err("联机中心发现失败\n请确认主机已开启联机".to_string());
         }
     };
@@ -103,7 +110,7 @@ async fn connect_center(
     {
         Ok(st) => st,
         Err(e) => {
-            rollback_join_and_emit(sink).await;
+            rollback_join_and_emit(sink, gen).await;
             bail!("连接联机中心失败\n{e}");
         }
     };
@@ -115,6 +122,7 @@ async fn connect_center(
 async fn negotiate_guest_session(
     sink: &dyn EventSink,
     mut stream: DataPlaneTcpStream,
+    gen: u64,
 ) -> Result<(Profile, bool, u16), String> {
     // 立即心跳（协商前也要发，协议要求）
     let local_profile = Profile::new(
@@ -158,7 +166,7 @@ async fn negotiate_guest_session(
         .await
         .map_err(common_err_ctx!("获取服务器端口失败"))?;
     if port_resp.status != 0 || port_resp.body.len() != 2 {
-        rollback_join_and_emit(sink).await;
+        rollback_join_and_emit(sink, gen).await;
         return Err("服务器未启动\n请让主机先在游戏里开启局域网世界".to_string());
     }
     let game_port = u16::from_be_bytes([port_resp.body[0], port_resp.body[1]]);
@@ -167,18 +175,31 @@ async fn negotiate_guest_session(
 }
 
 /// 阶段四：建本地游戏代理 + MC 局域网广播，回写状态并广播快照。返回本地端口。
+///
+/// 先锁内校验代际：发现/协商可能长达 15s，期间用户点停止（generation 已递增）时
+/// 不得回写 `advertiser`/`profiles`/`local_port`——否则状态已 idle，却仍有线程向
+/// 224.0.2.60 广播、本地代理端口也无人回收。代际不符直接放弃，不创建任何资源。
 async fn activate_guest_join(
     sink: &dyn EventSink,
     session: &EasyTierSession,
     center_ip: Ipv4Addr,
     game_port: u16,
     local_profile: &Profile,
+    gen: u64,
 ) -> Result<u16, String> {
-    // 建游戏代理：本地 OS 监听 local_port → 数据面连 centerIP:game_port
+    let mut svc = SERVICE.lock().await;
+    if svc.generation != gen {
+        bail!("加入联机已取消");
+    }
+
+    // 建游戏代理：本地 OS 监听 local_port → 数据面连 centerIP:game_port。
+    // 句柄交给单例：stop()/回滚时中止任务，释放本地监听端口。
     let local_port = free_tcp_port()?;
-    let proxy_session = session.clone();
-    tauri::async_runtime::spawn(async move {
-        run_guest_proxy(proxy_session, local_port, center_ip, game_port).await;
+    let proxy = GuestProxy::spawn({
+        let proxy_session = session.clone();
+        async move {
+            run_guest_proxy(proxy_session, local_port, center_ip, game_port).await;
+        }
     });
 
     // MC 广播模拟（guest 端局域网标签页看到服务器）
@@ -189,7 +210,7 @@ async fn activate_guest_join(
     let advertiser = McAdvertiser::start_with_motd(local_port, &motd);
 
     // 回写状态
-    let mut svc = SERVICE.lock().await;
+    svc.proxy = Some(proxy);
     svc.advertiser = Some(advertiser);
     if let Some(s) = svc.session.as_mut() {
         s.local_port = local_port;
@@ -197,7 +218,6 @@ async fn activate_guest_join(
     svc.profiles = Some(ProfileTable::with_host(local_profile.clone()));
     let snap = snapshot_inner(&svc);
     emit_snapshot(sink, &snap);
-    drop(svc);
     Ok(local_port)
 }
 
@@ -369,31 +389,41 @@ async fn discover_center(session: &EasyTierSession, gen: u64) -> Option<(Ipv4Add
     None
 }
 
-/// 回滚加入流程（锁内、非阻塞）：递增代际、摘出会话与广播器、复位状态，
-/// 返回待停止的会话。
+/// 回滚加入流程（锁内、非阻塞）：递增代际、摘出会话/代理/广播器、复位状态，
+/// 返回待停止的会话与代理。
 ///
 /// `EasyTierSession::stop` 是秒级操作，故**不在这里**执行——原实现在持锁时
 /// `block_on(stop)`，会把 status()/stop() 一起卡住（UI 冻结）。调用方在锁外停。
-fn rollback_join(svc: &mut OnlineServiceInner) -> Option<EasyTierSession> {
+fn rollback_join(svc: &mut OnlineServiceInner) -> (Option<EasyTierSession>, Option<GuestProxy>) {
     svc.generation += 1;
     let session = svc.session.take();
+    let proxy = svc.proxy.take();
     svc.advertiser = None;
     svc.status = OnlineStatus::Idle;
     svc.room = None;
     svc.profiles = None;
     svc.scaffold_port = None;
-    session
+    (session, proxy)
 }
 
-/// 回滚加入流程：锁内复位状态 + 广播快照，锁外停会话。
-async fn rollback_join_and_emit(sink: &dyn EventSink) {
-    let session = {
+/// 回滚加入流程：锁内复位状态 + 广播快照，锁外停会话与代理。
+///
+/// 锁内先校验代际：若已被 stop/新会话抢先（generation 已变），状态不归我们管，
+/// 直接放弃——否则会把别人的新会话连带清掉。
+async fn rollback_join_and_emit(sink: &dyn EventSink, gen: u64) {
+    let (session, proxy) = {
         let mut svc = SERVICE.lock().await;
-        let session = rollback_join(&mut svc);
+        if svc.generation != gen {
+            return;
+        }
+        let cleaned = rollback_join(&mut svc);
         let snap = snapshot_inner(&svc);
         emit_snapshot(sink, &snap);
-        session
+        cleaned
     };
+    if let Some(p) = proxy {
+        p.shutdown().await;
+    }
     if let Some(s) = session {
         s.stop().await;
     }

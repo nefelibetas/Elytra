@@ -9,7 +9,7 @@ use super::scaffold::codec::{Request, Response};
 use super::scaffold::identity::get_machine_id;
 use super::scaffold::profiles::{Profile, ProfileKind, ProfileTable};
 use super::scaffold::room::{create_room, RoomCredential};
-use super::scaffold::server::{start, Handlers};
+use super::scaffold::server::{start, Handlers, InfoServer};
 use super::service::{
     emit_snapshot, free_tcp_port, online_player_name, snapshot_inner, vendor_string, HostShared,
     OnlineServiceInner, SERVICE,
@@ -35,7 +35,7 @@ pub async fn start_host(sink: Arc<dyn EventSink>) -> Result<OnlineSnapshot, Stri
         session.stop().await;
         bail!("联机启动已取消");
     }
-    let (profiles, shared) = start_info_server(scaffold_port);
+    let (profiles, shared, info_server) = start_info_server(scaffold_port);
     let snap = publish_host_ready(
         sink.as_ref(),
         &mut svc,
@@ -43,6 +43,7 @@ pub async fn start_host(sink: Arc<dyn EventSink>) -> Result<OnlineSnapshot, Stri
         room,
         scaffold_port,
         profiles,
+        info_server,
     );
     drop(svc);
     spawn_host_discovery(Arc::clone(&sink), Arc::clone(&shared), gen);
@@ -85,7 +86,8 @@ async fn prepare_host_session() -> Result<(u64, u16, RoomCredential, SessionConf
 }
 
 /// 阶段二：构建房主玩家表 + 起信息服务器。
-fn start_info_server(scaffold_port: u16) -> (ProfileTable, Arc<HostShared>) {
+/// 返回服务器句柄（None = 启动失败），调用方须存进单例以便停止时释放端口。
+fn start_info_server(scaffold_port: u16) -> (ProfileTable, Arc<HostShared>, Option<InfoServer>) {
     // host 玩家表：房主
     let host_profile = Profile::new(
         online_player_name(),
@@ -100,10 +102,21 @@ fn start_info_server(scaffold_port: u16) -> (ProfileTable, Arc<HostShared>) {
     });
     // 起信息服务器（OS 监听 0.0.0.0:scaffold_port，blocking 线程）
     let handlers = build_host_handlers(shared.clone());
-    if let Err(e) = start(handlers, scaffold_port) {
-        eprintln!("[online] Scaffolding 信息服务器启动失败: {e}");
-    }
-    (profiles, shared)
+    let info_server = match start(handlers, scaffold_port) {
+        Ok(server) => {
+            // 端口可能因占用回退到随机值，落一行日志便于与 guest 侧现象对照排查
+            eprintln!(
+                "[online] Scaffolding 信息服务器监听 0.0.0.0:{}",
+                server.port()
+            );
+            Some(server)
+        }
+        Err(e) => {
+            eprintln!("[online] Scaffolding 信息服务器启动失败: {e}");
+            None
+        }
+    };
+    (profiles, shared, info_server)
 }
 
 /// 阶段三：回写状态为 `Waiting` 并广播快照。
@@ -114,15 +127,38 @@ fn publish_host_ready(
     room: RoomCredential,
     scaffold_port: u16,
     profiles: ProfileTable,
+    info_server: Option<InfoServer>,
 ) -> OnlineSnapshot {
     svc.session = Some(session);
     svc.status = OnlineStatus::Waiting;
     svc.room = Some(room);
     svc.scaffold_port = Some(scaffold_port);
     svc.profiles = Some(profiles);
+    svc.info_server = info_server;
     let snap = snapshot_inner(svc);
     emit_snapshot(sink, &snap);
     snap
+}
+
+/// 发现循环的重建判定：外层 `None` = 无需动作；内层值 = 需重建到的游戏端口
+/// （`None` = 从白名单去掉游戏端口）。
+///
+/// - `Waiting` + 有端口 → 补白名单并升 `Hosting`；
+/// - `Hosting` + 端口消失 → 降回 `Waiting`；
+/// - `Hosting` + 端口变化 → 重建指向新端口。MC 关掉再 5s 内重开时，旧端口条目
+///   仍在扫描器 TTL 内，只靠"消失/出现"判定会漏掉新端口，白名单与 `shared.mc_port`
+///   会一直指向旧端口（guest 加入必失败），故须显式比对当前端口。
+fn host_sync_target(
+    status: OnlineStatus,
+    mc_port: Option<u16>,
+    current: Option<u16>,
+) -> Option<Option<u16>> {
+    match (status, mc_port) {
+        (OnlineStatus::Waiting, Some(port)) => Some(Some(port)),
+        (OnlineStatus::Hosting, None) => Some(None),
+        (OnlineStatus::Hosting, Some(port)) if current != Some(port) => Some(Some(port)),
+        _ => None,
+    }
 }
 
 /// 阶段四：后台发现任务：Waiting → Hosting（游戏端口出现 → 重建实例补白名单）。
@@ -146,13 +182,7 @@ async fn host_discovery_loop(sink: &dyn EventSink, shared: &HostShared, gen: u64
                 return;
             }
             let mc_port = svc.scanner.as_ref().and_then(|sc| sc.get_port());
-            // Waiting+有端口 → 重建实例补白名单（proxy NAT 直连本机 MC 监听）；
-            // Hosting+端口消失 → 降回 Waiting（重建实例去布白名单）。
-            match (svc.status, mc_port) {
-                (OnlineStatus::Waiting, Some(port)) => Some(Some(port)),
-                (OnlineStatus::Hosting, None) => Some(None),
-                _ => None,
-            }
+            host_sync_target(svc.status, mc_port, *shared.mc_port.read())
         };
         if let Some(mc_port) = sync_target {
             if !sync_host_session(sink, shared, gen, mc_port).await {
@@ -201,34 +231,41 @@ async fn sync_host_session(
     let started = EasyTierSession::start(cfg).await;
 
     // 锁内：代际校验后回写
-    let mut svc = SERVICE.lock().await;
-    if svc.generation != gen {
-        drop(svc);
-        // 期间被 stop / 新会话抢占 → 丢弃刚建的会话（它不是当前状态的一部分）
-        if let Ok(s) = started {
-            s.stop().await;
+    let mut stale_info: Option<InfoServer> = None;
+    let snap = {
+        let mut svc = SERVICE.lock().await;
+        if svc.generation != gen {
+            drop(svc);
+            // 期间被 stop / 新会话抢占 → 丢弃刚建的会话（它不是当前状态的一部分）
+            if let Ok(s) = started {
+                s.stop().await;
+            }
+            return false;
         }
-        return false;
-    }
-    match started {
-        Ok(new_s) => {
-            svc.session = Some(new_s);
-            *shared.mc_port.write() = mc_port;
-            svc.status = if mc_port.is_some() {
-                OnlineStatus::Hosting
-            } else {
-                OnlineStatus::Waiting
-            };
+        match started {
+            Ok(new_s) => {
+                svc.session = Some(new_s);
+                *shared.mc_port.write() = mc_port;
+                svc.status = if mc_port.is_some() {
+                    OnlineStatus::Hosting
+                } else {
+                    OnlineStatus::Waiting
+                };
+            }
+            Err(e) => {
+                eprintln!("[online] 重建联机会话失败: {e}");
+                svc.status = OnlineStatus::Idle;
+                svc.room = None;
+                svc.scaffold_port = None;
+                svc.scanner = None;
+                // 会话已不可用：信息服务器一并关闭，端口留给下次会话复用
+                stale_info = svc.info_server.take();
+            }
         }
-        Err(e) => {
-            eprintln!("[online] 重建联机会话失败: {e}");
-            svc.status = OnlineStatus::Idle;
-            svc.room = None;
-            svc.scaffold_port = None;
-            svc.scanner = None;
-        }
-    }
-    let snap = snapshot_inner(&svc);
+        snapshot_inner(&svc)
+    };
+    // 锁外 drop：join accept 线程，避免阻塞 status()/stop()
+    drop(stale_info);
     emit_snapshot(sink, &snap);
     true
 }
@@ -430,5 +467,40 @@ mod tests {
         };
         let resp = handlers.dispatch(&req).unwrap();
         assert_eq!(resp.status, 255);
+    }
+
+    /// 回归：Hosting 期间游戏端口变化必须触发重建（否则白名单/端口一直指向旧值，
+    /// guest 拿到旧端口加入失败）；端口未变则不得重复重建。
+    #[test]
+    fn host_sync_target_handles_port_change() {
+        // Waiting 拿到端口 → 重建（升 Hosting）
+        assert_eq!(
+            host_sync_target(OnlineStatus::Waiting, Some(25565), None),
+            Some(Some(25565))
+        );
+        // Hosting 端口消失 → 重建去白名单
+        assert_eq!(
+            host_sync_target(OnlineStatus::Hosting, None, Some(25565)),
+            Some(None)
+        );
+        // Hosting 端口变化（旧条目仍在 TTL 内）→ 重建到新端口
+        assert_eq!(
+            host_sync_target(OnlineStatus::Hosting, Some(25566), Some(25565)),
+            Some(Some(25566))
+        );
+        // Hosting 端口未变 → 不重建（避免每 poll 重复重建）
+        assert_eq!(
+            host_sync_target(OnlineStatus::Hosting, Some(25565), Some(25565)),
+            None
+        );
+        // Idle/Joining → 不动作
+        assert_eq!(
+            host_sync_target(OnlineStatus::Idle, Some(25565), None),
+            None
+        );
+        assert_eq!(
+            host_sync_target(OnlineStatus::Joining, Some(25565), None),
+            None
+        );
     }
 }
