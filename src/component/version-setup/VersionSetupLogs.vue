@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// 版本设置-游戏日志：读取该版本 logs/latest.log（游戏自身日志，游戏 cwd 是版本目录）
-// 与 .minecraft/logs/elytra-launch.log（启动器捕获的启动输出），尾部 200 行。
+// 版本设置-游戏日志：logs/latest.log（游戏 cwd 为版本目录）与 .minecraft/logs/elytra-launch.log，尾部 200 行。
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { loadGameLog } from "../../store/app/launch";
@@ -9,7 +8,6 @@ import { RefreshCw, FolderOpen } from "@lucide/vue";
 import { activePath } from "../../store/config/gameDirs";
 
 const route = useRoute();
-/** 游戏 id（版本目录名），由路由 query 传入。 */
 const versionName = computed(() => String(route.query.name ?? ""));
 
 const logText = ref("");

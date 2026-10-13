@@ -1,11 +1,8 @@
-//! 启动脚本导出命令（薄胶水）：渲染在 launcher/script.rs（PCL 风格 .bat/.sh）。
-
 use crate::launcher::args;
 use crate::launcher::process;
 use crate::launcher::script;
 
-/// 导出启动脚本：按 PCL 风格生成平台对应脚本（Windows .bat / macOS/Linux .sh）写入指定路径。
-/// 返回写入的文件路径。
+/// 导出 PCL 风格启动脚本（Windows .bat / macOS/Linux .sh）到指定路径，返回该路径。
 #[tauri::command]
 pub async fn export_launch_script(
     save_path: String,

@@ -1,39 +1,31 @@
-// NBT 构造器：自定义药水 / 烟花 / 村民交易，双版本语法命令构建。
-//
-// 与 give.ts 同构：legacy = 1.13–1.20.4 NBT；modern = 1.20.5+ 组件格式。
-// 数据来源：
-// - 效果表：minecraft-data 1.21.4 effects.json（数字 ID 0–38，1.13–1.20.4 NBT 用）
-// - 烟花/村民结构：Minecraft Wiki 当前版本 Data values（实体 NBT 未组件化，
-//   1.20.5 组件化仅影响物品槽格式：{id,count} 无 b 后缀）
+// NBT 构造器：药水/烟花/村民交易，双版本命令（legacy = 1.13–1.20.4 NBT；modern = 1.20.5+ 组件，仅物品槽格式变化：{id,count} 无 b 后缀）。
 
 import { GIVE_ITEMS, buildTradeItem, EMPTY_MODS, type ItemMods, type GiveFormat } from "./give";
 
 // ── 公共助手 ──
 
-/** 十六进制色（#RRGGBB）→ RGB packed int（NBT Colors / custom_color 用）。 */
 export function rgbToInt(hex: string): number {
   const m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim());
   if (!m) return 0;
   return parseInt(m[1], 16);
 }
 
-/** 物品 ID 是否存在（交易物品输入校验）。 */
 export function isKnownItem(id: string): boolean {
   return GIVE_ITEMS.some((i) => i.id === id) || id === "emerald";
 }
 
 // ── 药水 ──
 
-/** 状态效果（数字 ID = 1.13–1.20.4 NBT 用；命名空间 = 1.20.5+ 组件用）。 */
+/** 状态效果（numId 用于 legacy NBT，命名空间用于 modern 组件）。 */
 export interface PotionEffect {
   id: string;
   name: string;
   numId: number;
-  /** 引入主版本（如 1.21 风击；缺省 13）。 */
+  /** 引入主版本，缺省 13。 */
   since?: number;
 }
 
-/** 按命令格式过滤效果版本可用性：legacy = ≤1.20.4；modern = ≤1.21。 */
+/** 按格式过滤：legacy ≤1.20.4；modern ≤1.21。 */
 export function filterEffectsByVersion(effects: PotionEffect[], format: GiveFormat): PotionEffect[] {
   const max = format === "legacy" ? 20 : 21;
   return effects.filter((e) => (e.since ?? 13) <= max);
@@ -81,7 +73,7 @@ export const POTION_EFFECTS: PotionEffect[] = [
   { id: "infested", name: "寄生", numId: 38 , since: 21},
 ];
 
-/** 基础药水（potion 标签值；1.20.5+ 需 minecraft: 前缀）。 */
+/** 1.20.5+ 需 minecraft: 前缀。 */
 export const POTION_BASES: { id: string; name: string }[] = [
   { id: "swiftness", name: "迅捷" },
   { id: "slowness", name: "缓慢" },
@@ -105,7 +97,6 @@ export const POTION_BASES: { id: string; name: string }[] = [
   { id: "infestation", name: "寄生" },
 ];
 
-/** 药水物品变体。 */
 export const POTION_ITEM_KINDS: { id: string; name: string }[] = [
   { id: "potion", name: "药水" },
   { id: "splash_potion", name: "喷溅药水" },
@@ -113,20 +104,18 @@ export const POTION_ITEM_KINDS: { id: string; name: string }[] = [
   { id: "tipped_arrow", name: "药水箭" },
 ];
 
-/** 自定义效果条目。 */
 export interface PotionEffectInput {
   id: string;
   amplifier: number;
-  /** 时长（tick；0 = 瞬时效果自动 1 tick）。 */
+  /** 时长（tick；0 = 瞬时效果按 1 tick）。 */
   duration: number;
 }
 
 export interface PotionOptions {
   itemKind: string;
-  /** 基础药水 id（'' = 无）。 */
   potionId: string;
   effects: PotionEffectInput[];
-  /** 自定义颜色（RGB packed int；null = 不设置）。 */
+  /** null = 不设置。 */
   customColor: number | null;
   customName: string;
   colorCode: string;
@@ -200,7 +189,7 @@ function buildPotionModern(id: string, opts: PotionOptions): string {
 
 // ── 烟花 ──
 
-/** 爆炸形状（legacy Type 数字 / modern shape 名）。 */
+/** legacy Type 数字 / modern shape 名。 */
 export interface FireworkShape {
   id: string;
   name: string;
@@ -215,22 +204,18 @@ export const FIREWORK_SHAPES: FireworkShape[] = [
   { id: "burst", name: "爆裂", numId: 4 },
 ];
 
-/** 单次爆炸。 */
 export interface FireworkExplosion {
   shape: string;
-  /** 初始颜色（RGB packed int 数组）。 */
   colors: number[];
-  /** 渐隐颜色。 */
   fadeColors: number[];
   trail: boolean;
-  /** 1.20.5+ 组件名 has_twinkle；legacy NBT 为 Flicker。 */
+  /** modern 组件名 has_twinkle；legacy NBT 为 Flicker。 */
   twinkle: boolean;
 }
 
 export interface FireworkOptions {
-  /** firework_rocket / firework_star。 */
   itemKind: string;
-  /** 飞行时长 1–3（仅火箭）。 */
+  /** 1–3（仅火箭）。 */
   flight: number;
   explosions: FireworkExplosion[];
   count: number;
@@ -311,13 +296,11 @@ export const VILLAGER_TYPES: { id: string; name: string }[] = [
   { id: "swamp", name: "沼泽" },
 ];
 
-/** 单笔交易。 */
 export interface VillagerTrade {
   buyId: string;
   buyCount: number;
-  /** 购买物品修饰（名称/附魔等；空 = 不自定义）。 */
+  /** 空 = 不自定义。 */
   buyMods?: ItemMods;
-  /** 第二购买物品（'' = 无）。 */
   buyBId: string;
   buyBCount: number;
   buyBMods?: ItemMods;

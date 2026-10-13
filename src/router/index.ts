@@ -1,8 +1,6 @@
 import { createRouter, createWebHashHistory } from "vue-router";
-// 顶级 Tab（启动/资源中心/任务中心/设置）静态导入：首屏即加载、切换零延迟、
-// 导航高亮稳定；其 store 依赖链不含 router（无循环）。
-// 深层页面（资源详情/版本选择/版本设置）经 store → router 依赖，保留懒加载
-// 以解除 router→页面→store→router 的静态环。
+// 顶级 Tab（启动/资源中心/任务中心/设置）静态导入：首屏即加载、切换零延迟、导航高亮稳定，其 store 依赖链不含 router（无循环）；
+// 深层页面（资源详情/版本选择/版本设置）经 store → router 依赖，保留懒加载以解除 router→页面→store→router 的静态环。
 import Launch from "../pages/Launch.vue";
 import Download from "../pages/Download.vue";
 import Settings from "../pages/Settings.vue";

@@ -33,7 +33,6 @@ export async function loadConfig() {
         ? discovered.find((e) => e.path === sel.path) ?? null
         : null;
   } catch {
-    // 忽略
   }
 }
 
@@ -67,9 +66,7 @@ export async function selectCustomDir() {
   loading.value = false;
 }
 
-/** 提交缺失 JDK 下载任务到任务中心（官方 runtime → Azul 回退在后端），
- *  完成后经 dlState 统一监听的 done 分发（registerTaskDoneHook）自动选中新装的 JDK。
- *  本函数只负责提交与预注册，不阻塞等待下载。 */
+/** 提交缺失 JDK 下载任务（官方 runtime→Azul 回退在后端）；完成后经 dlState 的 done 钩子自动选中。 */
 export async function installJdk(major: number): Promise<void> {
   loading.value = true;
   try {
@@ -81,8 +78,7 @@ export async function installJdk(major: number): Promise<void> {
       pendingInstall.delete(taskId);
       if (m !== undefined) void onJdkInstalled(m);
     });
-    // 预注册任务卡片（kind 标记：App.vue 的完成回调据此跳过 toast/跳转）
-    // 并做统一竞态校正；silentFastExit：本函数已有"已提交"提示，不叠加中性提示。
+    // 预注册任务卡片（kind=jdk：App.vue 完成回调据此跳过 toast/跳转）并做统一竞态校正；silentFastExit：已有「已提交」提示，不叠加中性提示。
     await dlState.adoptTask(
       taskId,
       { name: `下载 Java ${major}`, kind: "jdk" as TaskKind },
@@ -105,7 +101,6 @@ function parseMajor(version: string): number | null {
   return m ? Number(m[1]) : null;
 }
 
-/** 安装完成：重新加载 JDK 列表（后端已注册 persist）并自动选中新装的版本。 */
 async function onJdkInstalled(major: number) {
   try {
     await loadConfig();

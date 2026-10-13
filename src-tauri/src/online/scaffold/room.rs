@@ -1,29 +1,21 @@
-//! Scaffolding 房间码：`U/XXXX-XXXX-XXXX-XXXX`（34 字符集 + 模 7 校验），
-//! 网络名/密钥由房间码**明文映射**（非 HMAC 派生）。
+//! Scaffolding 房间码：`U/XXXX-XXXX-XXXX-XXXX`（34 字符集 + 模 7 校验），网络名/密钥由房间码**明文映射**（非 HMAC 派生）。
 //!
-//! 协议（Scaffolding-MC/Scaffolding-MC README）：
-//! - 字符集：0-9、A-H、J-N、P-Z（剔 I/O），共 34 字符，映射 [0, 33]；
-//! - 按"小端序"读得的整型必须能被 7 整除（防手输错/串台的校验码）；
-//! - 前 8 字符（`NNNN-NNNN`）→ EasyTier 网络名 `scaffolding-mc-NNNN-NNNN`；
-//! - 后 8 字符（`SSSS-SSSS`）→ 网络密钥 `SSSS-SSSS`。
-//!
-//! 参考实现 Terracotta（AGPL，仅参考行为不复制代码）：
-//! 生成 = 随机 [0, 34^16) 减到能被 7 整除，base34 编码；字符 I/O 容错解析。
+//! 字符集 0-9、A-H、J-N、P-Z（剔 I/O）共 34 字符、映射 [0, 33]；按"小端序"读得的整型须能被 7 整除（防手输错/串台的校验码）；
+//! 前 8 字符（`NNNN-NNNN`）→ 网络名 `scaffolding-mc-NNNN-NNNN`，后 8 字符（`SSSS-SSSS`）→ 网络密钥；
+//! 生成 = 随机 [0, 34^16) 减到能被 7 整除再 base34 编码；字符 I/O 容错解析。
 
 use getrandom::getrandom;
 
-/// 码字符数（不含 `U/` 与分隔符）。
 const CODE_CHARS: usize = 16;
 const SEGMENT_LEN: usize = 4;
 
 /// 字符集：34 字符（0-9、A-H、J-N、P-Z），映射 [0, 33]。
 const ALPHABET: &[u8] = b"0123456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 
-/// 网络名前缀（协议固定）。
 const NETWORK_PREFIX: &str = "scaffolding-mc-";
 
-/// 生成新房间码（密码学随机 → 模 7 对齐）。
-/// 随机源不可用时返回错误：失败静默会让 bytes 全零，房间码与网络密钥退化为可预测值。
+/// 生成新房间码（密码学随机 → 模 7 对齐）。随机源不可用时返回错误：
+/// 静默失败会让 bytes 全零，房间码/网络密钥退化为可预测值。
 pub fn create_room() -> Result<RoomCredential, String> {
     // 随机 16 字符 base34 值，减到能被 7 整除（保证校验通过）。
     let mut bytes = [0u8; 16];
@@ -42,8 +34,7 @@ pub fn create_room() -> Result<RoomCredential, String> {
 pub fn parse_room_code(code: &str) -> Option<RoomCredential> {
     let code = code.trim();
     let code: Vec<char> = code.to_ascii_uppercase().chars().collect();
-    // 要求完整 `U/XXXX-XXXX-XXXX-XXXX`（允许尾部有多余内容？协议严格——这里要求精确长度，
-    // 与 Terracotta 的滑动窗口不同：Elytra 只接受完整码，避免误吞）。
+    // 要求精确长度 `U/XXXX-XXXX-XXXX-XXXX`（Elytra 只接受完整码，不做 Terracotta 式滑动窗口）。
     if code.len() != 2 + CODE_CHARS + (CODE_CHARS / SEGMENT_LEN - 1) {
         return None;
     }
@@ -85,8 +76,7 @@ fn char_value(c: char) -> Option<u8> {
     ALPHABET.iter().position(|&a| a as char == c).map(|p| p as u8)
 }
 
-/// value（< 34^16，能被 7 整除）→ 房间码 / 网络名 / 密钥。
-/// 前 8 字符 → 网络名，后 8 字符 → 密钥。
+/// value（< 34^16，能被 7 整除）→ 房间码 / 网络名（前 8 字符）/ 密钥（后 8 字符）。
 fn from_value(mut value: u128) -> (String, String, String) {
     let mut code = String::with_capacity(2 + CODE_CHARS + 3);
     code.push_str("U/");
@@ -146,7 +136,6 @@ mod tests {
         let segs: Vec<&str> = body.split('-').collect();
         assert_eq!(segs.len(), 4);
         assert!(segs.iter().all(|s| s.len() == SEGMENT_LEN));
-        // 网络名/密钥与房间码切分一致
         assert_eq!(
             room.network_name,
             format!("scaffolding-mc-{}-{}", segs[0], segs[1])
@@ -159,7 +148,6 @@ mod tests {
 
     #[test]
     fn modulus_seven_check() {
-        // 协议校验：整串 base34 小端序读值 % 7 == 0
         let room = create_room().unwrap();
         let value = parse_code_value(&room.code).unwrap();
         assert_eq!(value % 7, 0, "房间码值应能被 7 整除");
@@ -187,7 +175,6 @@ mod tests {
     #[test]
     fn ambiguous_char_tolerance() {
         let room = create_room().unwrap();
-        // I→1、O→0 容错：替换后应仍能解析（若原码含这些字符）
         let tolerant = room.code.replace('O', "0").replace('I', "1");
         if tolerant != room.code {
             let parsed = parse_room_code(&tolerant).expect("容错字符应可解析");
@@ -203,7 +190,6 @@ mod tests {
         assert_eq!(parsed.code, room.code);
     }
 
-    /// 解析房间码为数值（测试助手）。
     fn parse_code_value(code: &str) -> Option<u128> {
         let code: Vec<char> = code.trim().to_ascii_uppercase().chars().collect();
         if code.len() != 2 + CODE_CHARS + 3 || code[0] != 'U' || code[1] != '/' {

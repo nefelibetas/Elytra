@@ -1,8 +1,4 @@
-//! 内置动作：备份存档。
-//!
-//! 目标 `versions/{id}/back/saves/{时间戳}/`，按时间戳目录保留最近 `keep` 份
-//! （覆盖制在"炸档后启动过一次"的场景会丢掉可回滚点，故按份数而非单份覆盖）。
-//! 排除游戏运行期锁文件与临时文件（复制会失败或无意义）。
+//! 内置动作：备份存档到 `versions/{id}/back/saves/{时间戳}/`，按时间戳目录保留最近 `keep` 份；排除游戏运行期锁文件与临时文件。
 
 use std::path::{Path, PathBuf};
 
@@ -119,9 +115,7 @@ fn cleanup_old(root: &Path, keep: u32) -> usize {
     removed
 }
 
-/// 备份选定世界到新的 timepoint 目录，随后清理超出的旧份数。
-///
-/// `on_step(done, total)` 在每个文件复制完成后回调（`total` 为 0 时表示没有文件）。
+/// 备份选定世界到新的 timepoint 目录，随后清理超出的旧份数；`on_step(done, total)` 每复制完一个文件回调（total=0 表示无文件）。
 pub fn backup_saves(
     game_dir: &Path,
     scope: &BackupScope,

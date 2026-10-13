@@ -14,8 +14,7 @@ static TRANSLATION_CACHE: std::sync::LazyLock<
     parking_lot::Mutex<HashMap<String, (std::time::Instant, String)>>,
 > = std::sync::LazyLock::new(|| parking_lot::Mutex::new(HashMap::new()));
 
-/// 解析 MCIM 翻译响应（两源字段名不同：modrinth 用 project_id 字符串、curseforge 用 modid 数字），
-/// 返回 id → 中文简介；空简介条目跳过。
+/// 解析 MCIM 翻译响应（modrinth 用 project_id 字符串、curseforge 用 modid 数字）；空简介跳过。
 fn parse_translations(source: &str, data: &serde_json::Value) -> HashMap<String, String> {
     let Some(arr) = data.as_array() else {
         return HashMap::new();
@@ -40,10 +39,8 @@ fn parse_translations(source: &str, data: &serde_json::Value) -> HashMap<String,
         .collect()
 }
 
-/// 构造 MCIM 翻译批量请求体。
-/// 注意：两源字段与类型不同——modrinth 的 `project_ids` 是字符串数组；
-/// curseforge 的 `modids` 要求**整数数组**（字符串数组会被 MCIM 400 拒绝，
-/// 曾导致 CF 侧全部简介翻译静默丢失）。非数字 id 防御性过滤，全过滤返回 None（跳过请求）。
+/// 构造 MCIM 翻译批量请求体：modrinth 的 `project_ids` 是字符串数组；curseforge 的 `modids`
+/// 必须为**整数数组**（字符串数组会被 MCIM 400 拒绝）。非数字 id 过滤，全过滤则返回 None。
 fn translation_body(source: &str, ids: &[String]) -> Option<serde_json::Value> {
     if source == "modrinth" {
         if ids.is_empty() {
@@ -58,9 +55,8 @@ fn translation_body(source: &str, ids: &[String]) -> Option<serde_json::Value> {
     Some(serde_json::json!({ "modids": modids }))
 }
 
-/// 批量查 MCIM 中文简介翻译（POST /translate/{source}）。先查内存缓存（10 分钟 TTL），
-/// 只请求未命中的 id；网络失败/无翻译静默降级（返回空 map，不阻塞搜索结果）。
-/// pub(crate)：本地 Mod 详情识别（downloader/mod_updates/identify.rs）复用同一翻译通道。
+/// 批量查 MCIM 中文简介（POST /translate/{source}）：先查内存缓存（10 分钟 TTL），只请求未命中的
+/// id；网络失败/无翻译静默降级返回空 map。pub(crate)：updates/identify.rs 复用同一通道。
 pub(crate) async fn fetch_translations(source: &str, ids: &[String]) -> HashMap<String, String> {
     if ids.is_empty() {
         return HashMap::new();
@@ -118,7 +114,6 @@ pub(crate) async fn fetch_translations(source: &str, ids: &[String]) -> HashMap<
 mod tests {
     use super::*;
 
-    /// 翻译响应解析：Modrinth 用 project_id（字符串），CurseForge 用 modid（数字）。
     #[test]
     fn parse_translations_two_sources() {
         let mr = serde_json::json!([
@@ -143,7 +138,6 @@ mod tests {
         );
     }
 
-    /// 翻译响应解析容错：非数组 / 空简介 / 缺字段都跳过，不 panic。
     #[test]
     fn parse_translations_tolerates_bad_input() {
         assert!(
@@ -165,7 +159,6 @@ mod tests {
         );
     }
 
-    /// 翻译请求体：Modrinth 用字符串数组；CurseForge 必须整数数组（字符串数组会被 MCIM 400）。
     #[test]
     fn translation_body_source_formats() {
         let mr = translation_body(
@@ -192,7 +185,6 @@ mod tests {
         );
     }
 
-    /// 翻译请求体容错：空 ids / 全非数字 id 返回 None（跳过请求）。
     #[test]
     fn translation_body_tolerates_bad_ids() {
         assert!(translation_body("modrinth", &[]).is_none(), "空 ids 不请求");
@@ -224,7 +216,6 @@ mod tests {
         );
     }
 
-    /// MCIM 翻译 API 真实请求（需网络）：CurseForge 侧用字符串 id 应正常返回（回归：曾 400）。
     #[tokio::test]
     async fn mcim_translation_curseforge_works() {
         let tr = fetch_translations("curseforge", &["238222".to_string()]).await;

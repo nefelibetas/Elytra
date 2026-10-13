@@ -1,5 +1,4 @@
-//! 社区资源的对外 API：公共出参类型定义 + 按来源分派入口。
-//! 平台实现分别在 `curseforge` / `modrinth`，本文件只做归一与分发。
+//! 社区资源对外 API：公共出参类型 + 按来源分派入口（实现分别在 curseforge / modrinth）。
 
 use serde::Serialize;
 
@@ -13,28 +12,26 @@ use crate::downloader::fetcher;
 pub struct CommunitySearchResult {
     pub id: String,
     pub title: String,
-    /// MC百科内置条目表提供的中文译名（英文标题 → 中文名；未收录为 None）
+    /// MC百科内置表的中文译名（未收录为 None）
     pub title_zh: Option<String>,
     /// MC百科条目 id（内置表 slug 匹配；未收录为 None）→ https://www.mcmod.cn/class/{id}.html
     pub mcmod_id: Option<u32>,
     pub description: String,
-    /// MCIM 中文简介翻译（无翻译/翻译失败为 None；仅社区搜索开启翻译时填充）
+    /// MCIM 中文简介翻译（无/失败为 None；仅开启翻译时填充）
     pub translated: Option<String>,
     /// 支持的 ModLoader（fabric/forge/neoforge/quilt，去重保序；未知/无则为空）
     pub loaders: Vec<String>,
-    /// 支持的 MC 游戏版本范围（"最低 ~ 最高"，如 "1.17.1 ~ 1.21.1"；
-    /// 仅一个有效版本时显示单个；无版本/无法解析为 None）
+    /// 支持的 MC 版本范围（"最低 ~ 最高"，单版本显示单个；无法解析为 None）
     pub game_version_range: Option<String>,
     pub author: String,
     pub downloads: u64,
     pub icon_url: Option<String>,
     pub page_url: String,
-    /// 搜索结果所属分类（shader/worlds 等，由查询条件透传；普通 mod 搜索为 None）。
-    /// 供详情页按类别裁剪操作（如光影/地图不显示 MC百科链接）。
+    /// 所属分类（由查询条件透传；普通 mod 为 None）。供详情页按类别裁剪操作。
     pub category: Option<String>,
 }
 
-/// 搜索分页结果（两平台分页语义不同：Modrinth offset / CurseForge index，统一透传页码起点）。
+/// 搜索分页结果（Modrinth offset / CurseForge index，统一透传页码起点）。
 #[derive(Debug, Clone, Serialize)]
 pub struct CommunitySearchPage {
     pub items: Vec<CommunitySearchResult>,
@@ -61,15 +58,13 @@ pub struct CommunityVersion {
     pub sha1: Option<String>,
     pub date_published: String,
     pub downloads: u64,
-    /// 版本类型（Modrinth version_type / CurseForge releaseType 归一）：
-    /// release | beta | alpha | unknown
+    /// 版本类型（两源归一）：release | beta | alpha | unknown
     pub version_type: String,
     /// 该版本文件的依赖列表（Modrinth dependencies / CurseForge dependencies 归一）
     pub dependencies: Vec<CommunityDependency>,
 }
 
-/// 依赖项目详情（图标/标题/简介），供详情页前置依赖卡片展示。
-/// 与所属项目同源查询（Modrinth 依赖 project_id / CurseForge 依赖 modId）。
+/// 依赖项目详情（图标/标题/简介），与所属项目同源查询（MR project_id / CF modId）。
 #[derive(Debug, Clone, Serialize)]
 pub struct CommunityDependencyItem {
     pub id: String,
@@ -80,12 +75,8 @@ pub struct CommunityDependencyItem {
     pub translated: Option<String>,
 }
 
-/// 社区资源搜索条件（统一入参：前端表单 + 分页）。
-/// 命令层直接收该结构体（前端 invoke 传命名对象，字段 camelCase），
-/// 领域层解包分派给两平台实现。
-/// 例外说明：本结构体刻意 `rename_all = "camelCase"`，与全仓「字段全 snake_case」相反——
-/// 它是 Tauri 命令 `search_community` 的入参，字段名即前端 invoke 传入 JS 对象的键
-/// （前端固定写 `gameVersion` / `pageSize`），改回 snake_case 会破坏 IPC 契约，故保留。
+/// 社区资源搜索条件（前端表单 + 分页）。刻意 `rename_all = "camelCase"`：作 Tauri 命令 `search_community` 入参，
+/// 字段名即前端 invoke 的 JS 键（`gameVersion`/`pageSize`），改回 snake_case 破坏 IPC 契约。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchQuery {
@@ -97,12 +88,8 @@ pub struct SearchQuery {
     pub page_size: u32,
 }
 
-/// 搜索（按来源分派）。`category` 为项目类型（如 shader）或 None（普通 mod）；
-/// `page_size` 每源条数（聚合模式前端传减半值，单源默认 30）；
-/// `translate` 为 true 时对结果批量查 MCIM 中文简介（失败静默降级为英文）。
-///
-/// 中文查询会先经内置百科表反查英文查询词再搜：Modrinth/CurseForge 都只认英文，
-/// 原样把中文发过去只会得到「按热度排的无关结果」（实测搜「实体」返回 3D Maps）。
+/// 搜索（按来源分派）。`page_size` 每源条数（聚合模式前端传减半值，单源默认 30）；`translate` 批量查 MCIM 简介（失败静默降级）。
+/// 中文查询先经内置百科表反查英文词：两平台只认英文，直发中文只会得到按热度排的无关结果。
 pub async fn search_community(
     source: &str,
     q: &SearchQuery,
@@ -139,8 +126,7 @@ pub async fn search_community(
         other => bail!("未知 Mod 来源\n{other}"),
     };
     if translate {
-        // 标题译名/mcmod_id：搜索构造时已由内置百科表填充（无网络开销）；
-        // 此处仅补 MCIM 简介翻译（失败静默降级）
+        // 标题译名/mcmod_id 已由内置百科表填充（无网络开销），此处仅补 MCIM 简介翻译
         if !page.items.is_empty() {
             let ids: Vec<String> = page.items.iter().map(|i| i.id.clone()).collect();
             let tr = fetch_translations(source, &ids).await;
@@ -152,7 +138,6 @@ pub async fn search_community(
     Ok(page)
 }
 
-/// 版本列表（按来源分派）。
 pub async fn get_community_versions(
     source: &str,
     project_id: &str,
@@ -166,8 +151,7 @@ pub async fn get_community_versions(
     }
 }
 
-/// 批量查询项目详情（按来源分派）。空 ids 直接返回空列表；单条失败跳过。
-/// `translate` 为 true 时对结果批量查 MCIM 中文简介（失败静默降级为英文）。
+/// 批量查询项目详情（按来源分派）。空 ids 直接返回空列表；单条失败跳过；`translate` 批量查 MCIM 简介（失败静默降级）。
 pub async fn get_community_details(
     source: &str,
     ids: &[String],
@@ -190,9 +174,7 @@ pub async fn get_community_details(
     Ok(items)
 }
 
-/// 按 sha1 批量查询 Modrinth 文件（POST /v2/version_files，mrpack 导出 files[] 用）。
-/// 响应：`{sha1: {files: [{url, hashes:{sha1,sha512}, size}]}}`；官方源优先，失败降级 MCIM 镜像。
-/// 全部失败返回 Err（调用方降级为全量物理打包）。
+/// 按 sha1 批量查 Modrinth 文件（POST /v2/version_files，mrpack 导出 files[] 用）；响应 `{sha1:{files:[{url,hashes:{sha1,sha512},size}]}}`；官方源优先、失败降级 MCIM 镜像、全失败返回 Err（调用方改全量打包）。
 pub async fn modrinth_version_files(hashes: &[String]) -> Result<serde_json::Value, String> {
     if hashes.is_empty() {
         return Ok(serde_json::json!({}));

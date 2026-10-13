@@ -1,6 +1,4 @@
-//! 下载源网络行为：多源回退的 HTTP 请求（元数据 JSON/XML 拉取）+ 列表 TTL 缓存。
-//! 纯数据（DownloaderConfig 字段）留在 `config/downloader/model.rs`，
-//! 网络请求逻辑归此文件——impl 跨文件不改变调用方写法。
+//! 下载源网络行为：多源回退元数据拉取 + 列表 TTL 缓存（纯数据模型在 config/downloader/model.rs）。
 
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -10,10 +8,8 @@ use crate::config::downloader::{DownloadSource, DownloadSourceMode, DownloaderCo
 use crate::downloader::endpoints::{BMCLAPI, MIRROR_ROUTES};
 use crate::downloader::fetcher::http;
 
-/// 元数据请求的缓存/网络行为（离线模式 strict cache-only 的语义载体）：
-/// - `DefaultTtl`：缓存优先（TTL 内命中直接返回），未命中发网络并写缓存——默认行为；
-/// - `CacheOnly`：只读缓存——命中返回，未命中直接报错，**绝不发网络请求**（离线模式）；
-/// - `MustRevalidate`：忽略缓存读，强制网络并写缓存（在线场景显式刷新）。
+/// 元数据请求缓存行为：`DefaultTtl` 命中即返回否则网络写缓存；`CacheOnly` 只读缓存、
+/// 未命中直接报错且绝不发网络（离线模式）；`MustRevalidate` 忽略缓存读强制网络。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CacheBehaviour {
     #[default]
@@ -23,9 +19,7 @@ pub enum CacheBehaviour {
 }
 
 impl DownloadSource {
-    /// 镜像 URL 重写：仅镜像源模板生效（manifest_url 即 endpoints::BMCLAPI），
-    /// 把官方域 URL 按 MIRROR_ROUTES（单一表，见 downloader/endpoints.rs）
-    /// 重写到 BMCLAPI 镜像前缀。
+    /// 镜像 URL 重写：仅 manifest_url == BMCLAPI 的源生效，按 MIRROR_ROUTES 重写到镜像前缀。
     pub fn mirror_url(&self, original: &str) -> String {
         if self.manifest_url != BMCLAPI {
             return original.to_string();
@@ -41,9 +35,8 @@ impl DownloadSource {
 }
 
 impl DownloaderConfig {
-    /// 按模式返回依次尝试的源列表。
-    /// Auto（自适应路由）：源顺序仅作 URL 模板构造兜底，实际路由由 fetcher 层
-    /// 按资源类 + 健康度决定（官方 → 镜像候选即时生成），此处官方优先（4s 降级）。
+    /// 按模式返回依次尝试的源列表。Auto 下顺序仅作 URL 模板兜底，
+    /// 实际路由由 fetcher 层按资源类 + 健康度决定（官方优先，4s 降级）。
     pub(crate) fn sources_in_order(&self, mode: DownloadSourceMode) -> Vec<&DownloadSource> {
         match mode {
             DownloadSourceMode::OfficialOnly => vec![&self.sources[0]],
@@ -52,7 +45,7 @@ impl DownloaderConfig {
         }
     }
 
-    /// 文件下载主源（按 game_source_mode 选择），文件下载失败不会跨源回退。
+    /// 文件下载主源（按 game_source_mode）；文件下载失败不跨源回退。
     pub fn file_primary_source(&self) -> Option<&DownloadSource> {
         match self.game_source_mode {
             DownloadSourceMode::OfficialOnly | DownloadSourceMode::Auto => self.sources.first(),
@@ -65,16 +58,11 @@ impl DownloaderConfig {
         self.sources_in_order(self.game_source_mode)
     }
 
-    /// 优先模式下主源判慢时限（秒）：超时即降级到备用源。
-    /// 4s：官方 maven/metadata 实测 2.5-4.7s 能完成，2s 阈值频繁误判降级到更差的镜像路径；
-    /// 国内环境官方源连接/响应普遍慢，过长则镜像源接管慢。
+    /// 主源判慢时限（秒），超时即降级备用源；取 4s（官方 maven/metadata 实测 2.5-4.7s，2s 会误判降级）。
     const SLOW_SOURCE_TIMEOUT_SECS: u64 = 4;
 
-    /// Try fetching from each source in order; returns first success.
-    /// 优先模式：主源超过 SLOW_SOURCE_TIMEOUT_SECS 未完成（过慢）即降级到备用源，不等待失败。
-    /// 结果按主源 URL 缓存 TTL 10 分钟（maven-metadata / loader 列表等低频变化数据，
-    /// 冷启动后二次访问免网络等待）。
-    /// `cache` 为 `CacheOnly` 时只读缓存、绝不发网络（离线模式语义）。
+    /// 依次尝试各源返回首个成功；优先模式下主源超过 SLOW_SOURCE_TIMEOUT_SECS 即降级备用源。
+    /// 结果按主源 URL 缓存 TTL 10 分钟（低频变化数据，冷启动后二次访问免网络）。
     pub async fn fetch_with_fallback(
         &self,
         mode: DownloadSourceMode,
@@ -109,8 +97,7 @@ impl DownloaderConfig {
     ) -> Result<String, String> {
         let order = self.sources_in_order(mode);
         let mut last_err = String::new();
-        // 无镜像源的备用 URL 与主源相同（如 quilt 无 BMCLAPI 镜像）：
-        // 跳过重复请求，避免"主源 4s 超时 → 备用源同 URL 再等 15s"的白等。
+        // 无镜像源的备用 URL 与主源相同（如 quilt），跳过重复请求避免同 URL 二次等待。
         let mut tried: Vec<String> = Vec::new();
         for (i, source) in order.iter().enumerate() {
             let url = make_url(source);
@@ -122,11 +109,8 @@ impl DownloaderConfig {
                 continue;
             }
             tried.push(url.clone());
-            // 每个源显式限时（双保险）：
-            //  ① reqwest RequestBuilder::timeout——请求级超时（连接+TLS+body）
-            //  ② tokio::time::timeout 包整个请求——独立计时器，reqwest 超时在
-            //     TLS 黑洞/代理接管场景若失效仍能掐断。
-            // 主源 4s 过慢降级；备用源 15s（元数据都是小文件，黑洞/假死立即掐断换下一源）。
+            // 双保险限时：① reqwest 请求级 timeout（连接+TLS+body）；② tokio::time::timeout 独立计时器，
+            // 在 TLS 黑洞/代理接管场景 reqwest 超时失效时仍能掐断。主源 4s 降级，备用源 15s。
             let limit = if i == 0 && order.len() > 1 {
                 Duration::from_secs(Self::SLOW_SOURCE_TIMEOUT_SECS)
             } else {
@@ -156,8 +140,7 @@ impl DownloaderConfig {
         Err(last_err)
     }
 
-    /// Try fetching JSON from each source; returns first success（经文本层缓存复用）。
-    /// `cache` 为 `CacheOnly` 时只读缓存、绝不发网络（离线模式语义）。
+    /// 依次尝试各源拉取并解析 JSON，返回首个成功（复用文本层缓存，离线语义同 `fetch_with_fallback`）。
     pub async fn fetch_json_with_fallback<T: serde::de::DeserializeOwned>(
         &self,
         mode: DownloadSourceMode,
@@ -169,7 +152,7 @@ impl DownloaderConfig {
     }
 }
 
-// ── 列表 TTL 缓存：元数据拉取结果按主源 URL 缓存（纯内存，TTL 自动过期）──
+// ── 列表 TTL 缓存：元数据拉取结果按主源 URL 缓存（纯内存，自动过期）──
 
 const LIST_CACHE_TTL_SECS: u64 = 600;
 const LIST_CACHE_MAX: usize = 64;
@@ -217,7 +200,7 @@ mod tests {
         let cfg = DownloaderConfig::default();
         let make = |s: &DownloadSource| format!("{}/cacheonly-key.json", s.manifest_url);
         let key = make(cfg.sources_in_order(DownloadSourceMode::Auto)[0]);
-        // 未命中：CacheOnly 直接报错（绝不发网络请求——即使 URL 不可达也只报缓存缺失）
+        // 未命中：CacheOnly 直接报错，绝不发网络（URL 不可达也只报缓存缺失）
         let err = cfg
             .fetch_with_fallback(DownloadSourceMode::Auto, CacheBehaviour::CacheOnly, make)
             .await
@@ -241,8 +224,7 @@ mod tests {
         let make = |s: &DownloadSource| format!("{}/mustrevalidate-key.json", s.manifest_url);
         let key = make(cfg.sources_in_order(DownloadSourceMode::Auto)[0]);
         list_cache_set(key, "stale".into());
-        // MustRevalidate 忽略缓存读，强制发网络（该路径不存在 → HTTP 404 / 网络错误），
-        // 不会返回缓存中的 stale 内容；离线环境同样报网络错误，测试不依赖网络可用性。
+        // MustRevalidate 忽略缓存读强制发网络，不返回 stale；测试不依赖网络可用性。
         let err = cfg
             .fetch_with_fallback(
                 DownloadSourceMode::Auto,
@@ -254,9 +236,7 @@ mod tests {
         assert!(!err.is_empty());
     }
 
-    /// 黑洞源（accept 连接但不响应）必须被主源 4s 超时掐断并降级——
-    /// 国内网络实测卡死场景（asset index 经 TUN 黑洞），若此测试挂起
-    /// 说明 reqwest 的 per-request timeout 在该场景失效（需换请求层方案）。
+    /// 黑洞源（accept 但不响应）必须被主源 4s 超时掐断降级；挂起则说明 reqwest timeout 失效。
     #[tokio::test]
     async fn fallback_primary_blackhole_times_out() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

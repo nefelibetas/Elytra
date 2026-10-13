@@ -7,7 +7,7 @@ import { fmtSpeed, fmtEta } from "../utils/format"
 import { showToast } from "../utils/toast"
 import ScrollTopFab from "../component/common/ScrollTopFab.vue"
 
-/** 批量文件任务步骤可能很多，默认折叠到前 N 个。 */
+/** 批量任务的步骤可能很多，默认只显示前 N 个。 */
 const MAX_VISIBLE_STEPS = 8
 const expandedSteps = ref<Set<string>>(new Set())
 
@@ -38,14 +38,13 @@ async function handleCancel(task: TaskItem) {
   try {
     await dlState.cancelTask(task.taskId)
   } catch {
-    // 任务已结束（后端无此任务）：不阻塞本地清理
+    // 后端已无此任务：不阻塞本地清理
   } finally {
-    // 无论 cancel 成败都移除卡片：cancel 抛错（任务已终态）时卡片不得残留
+    // 无论 cancel 成败都移除卡片，避免抛错（任务已终态）时残留
     dlState.removeTask(task.taskId)
   }
   showToast(`${name} 已取消`)
-  // 不自动退出任务中心：与任务完成一致（顶级 tab，停留本页查看状态），
-  // 取消后列表空则显示"暂无下载任务"
+  // 取消后停留本页（与完成一致，任务中心为顶级 tab）
 }
 
 async function handleResume(task: TaskItem) {
@@ -65,7 +64,7 @@ async function handleDismissPaused(task: TaskItem) {
 
 <template>
   <div class="dd">
-    <!-- 顶部总览条：任务存在时展示聚合进度 -->
+    <!-- 顶部总览条 -->
     <section v-if="dlState.tasks.length > 0" class="dd-overview">
       <div class="ov-main">
         <div class="ov-pct mono">{{ Math.floor(dlState.totalProgress) }}<span class="ov-unit">%</span></div>
@@ -94,7 +93,7 @@ async function handleDismissPaused(task: TaskItem) {
     </section>
 
     <main class="dd-body">
-      <!-- 崩溃/重启恢复横幅：上次未完成的任务可一键恢复（幂等重跑） -->
+      <!-- 崩溃/重启恢复横幅：可一键恢复上次未完成的任务（幂等重跑） -->
       <div v-if="interruptedJobs.length" class="resume-banner">
         <span class="rb-text">
           检测到 {{ interruptedJobs.length }} 个上次未完成的任务
@@ -142,7 +141,6 @@ async function handleDismissPaused(task: TaskItem) {
             </template>
           </div>
 
-          <!-- 任务级总进度条 -->
           <div v-if="task.status === 'running'" class="tc-progress">
             <div class="tc-progress-bar">
               <div class="tc-progress-fill" :style="{ width: task.progress + '%' }"></div>
@@ -156,8 +154,7 @@ async function handleDismissPaused(task: TaskItem) {
           </div>
 
           <div class="tc-steps-wrap">
-            <!-- 展开态：步骤列表在卡片内滚动（.scroll），收起按钮因此恒定可见；
-                 此前按钮是列表末项，展开几十步后必须滚到卡片最底下才能收起 -->
+            <!-- 展开态：步骤列表在卡片内滚动，收起按钮恒可见 -->
             <div class="tc-steps" :class="{ scroll: expandedSteps.has(task.taskId) }">
               <div v-for="st in visibleSteps(task)" :key="st.name" class="tc-step">
                 <span class="tc-st-icon" :class="st.status">
@@ -478,8 +475,7 @@ async function handleDismissPaused(task: TaskItem) {
   gap: 3px;
 }
 
-/* 展开态：步骤列表在卡片内滚动（约 12 行上限），收起按钮因此恒定可见 ——
-   此前按钮是列表末项，展开几十步后必须滚到卡片最底下才能点「收起」 */
+/* 展开态：步骤列表在卡片内滚动（约 12 行上限） */
 .tc-steps.scroll {
   max-height: 260px;
   overflow-y: auto;
@@ -567,7 +563,7 @@ async function handleDismissPaused(task: TaskItem) {
 
 .tc-more:hover { color: var(--color-brand); }
 
-/* TransitionGroup 卡片增删动画 */
+/* 卡片增删动画 */
 .task-enter-active { transition: all 0.22s ease; }
 .task-leave-active { transition: all 0.18s ease; position: absolute; }
 .task-enter-from { opacity: 0; transform: translateY(10px); }

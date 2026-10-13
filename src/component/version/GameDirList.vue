@@ -34,11 +34,9 @@ async function menuImportPack() {
 
 <template>
   <div class="vs-left">
-    <!-- 游戏列表 -->
     <div class="vs-group-label">游戏列表</div>
     <div class="vs-dir-list">
-      <!-- 无目录：macOS/Linux 无平台默认，Windows 只在只读安装位置才为空，
-           此时下方「添加已有游戏目录」就是唯一入口，需给出明确引导 -->
+      <!-- 无目录：macOS/Linux 无平台默认，Windows 仅只读安装位置为空 -->
       <div v-if="!dirs.length" class="vs-dir-empty">
         尚未添加游戏目录<br />
         <span class="vs-dir-empty-hint">游戏本体、版本与模组都存在游戏目录里，请先添加一个</span>
@@ -65,7 +63,6 @@ async function menuImportPack() {
       </div>
     </div>
 
-    <!-- 添加或导入 -->
     <div class="vs-group-label">添加或导入</div>
     <div class="vs-add-list">
       <div class="vs-add-item" @click="addFolder">
@@ -159,7 +156,6 @@ async function menuImportPack() {
   gap: 4px;
 }
 
-/* 空状态：无游戏目录时的引导文案（此时下方「添加已有游戏目录」是唯一入口） */
 .vs-dir-empty {
   padding: 12px;
   font-size: 12px;
@@ -205,7 +201,7 @@ async function menuImportPack() {
   color: var(--text-tertiary);
   cursor: pointer;
   opacity: 0;
-  visibility: hidden; /* 隐藏态彻底移出命中测试（WebView2 下 pointer-events 过渡不可靠） */
+  visibility: hidden; /* 隐藏态移出命中测试（WebView2 pointer-events 过渡不可靠） */
   transition: opacity 0.12s, visibility 0.12s;
 }
 
@@ -242,7 +238,6 @@ async function menuImportPack() {
   white-space: nowrap;
 }
 
-/* 添加或导入 */
 .vs-add-list {
   display: flex;
   flex-direction: column;
@@ -272,10 +267,9 @@ async function menuImportPack() {
   padding: 6px 8px;
 }
 
-/* 目录项菜单：壳与 .menu-item 样式收敛在 MenuPopover */
+/* 目录项菜单：壳样式在 MenuPopover */
 
 
-/* dialog 内容 */
 .vs-dialog-body {
   display: flex;
   flex-direction: column;

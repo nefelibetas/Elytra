@@ -1,26 +1,9 @@
-//! Installer **processors 引擎**：按 installer 自己声明的 `install_profile.json` 执行安装。
-//!
-//! # 为什么需要它
-//!
-//! 不同代的 Forge/NeoForge 补丁链完全不同：
-//! - NeoForge 26.x：`installertools` 单个 `PROCESS_MINECRAFT_JAR` 任务；
-//! - NeoForge 21.x：`installertools`/`jarsplitter`/`AutoRenamingTool` 一串处理器，
-//!   最后 `binarypatcher` 打补丁，且工具版本（`installertools:2.1.2` 等）由 installer 声明。
-//!
-//! 写死其中一代的配方，在另一代上必然失败（实测：拿 21.1.248 的 `data/client.lzma`
-//! 喂给写死的 `installertools:4.0.12` → `Invalid bundle signature`；而 2.1.2 里根本
-//! 没有 `PROCESS_MINECRAFT_JAR` 这个 task）。因此这里只认 profile 声明：
+//! Installer **processors 引擎**：按 installer 声明的 `install_profile.json` 执行安装。
+//! 各代 Forge/NeoForge 补丁链与工具版本不同，写死某代配方在另一代必失败，故只认 profile 声明：
 //! `data`（占位符）→ `libraries`（工具构件与 URL/sha1）→ `processors`（顺序与参数）。
-//!
-//! # 已实现的 profile 语义
-//!
-//! - data 值三种形态：`'literal'`（字面量）、`/rel`（installer 内条目或绝对路径）、
-//!   `[group:artifact:version[:classifier][@ext]]`（maven 本地布局路径）
-//! - data 值可写成 `{ "client": ..., "server": ... }`，按 `side` 取
-//! - 处理器参数里出现 `[coord@ext]` 表示**输入构件**：下载（优先 profile.libraries
-//!   声明的 URL/sha1，其次按 maven 布局拼接 + 镜像回退），必要时从构件内解出 `@ext` 成员
-//! - 处理器 `sides` 不含 `client` 时跳过；主类取处理器 JAR 的 `META-INF/MANIFEST.MF`
-//! - 每个处理器独立 classpath（`classpath` 项 + `jar`），逐个 `java -cp … <main> <args…>`
+//! data 值三形态：`'literal'`、`/rel`（installer 内条目/绝对路径）、`[group:artifact:version[:classifier][@ext]]`（maven 布局）；
+//! 可写成 `{client,server}` 按 side 取；参数 `[coord@ext]` 为输入构件（下载 + 按需解出成员）；`sides` 不含 client 时跳过；
+//! 主类取 JAR 的 `META-INF/MANIFEST.MF`；每处理器独立 classpath，逐个 `java -cp … <main> <args…>`。
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -124,7 +107,6 @@ pub struct ProcessorCtx<'a> {
     pub cancel: &'a Arc<AtomicBool>,
 }
 
-/// 解析清单文本。
 pub fn parse_profile(json: &str) -> Result<InstallProfile, String> {
     serde_json::from_str(json).map_err(|e| format!("解析 install_profile.json 失败\n{e}"))
 }
@@ -147,8 +129,7 @@ pub fn parse_profile_value(value: &serde_json::Value) -> Result<InstallProfile, 
     serde_json::from_value(value.clone()).map_err(|e| format!("解析 install_profile 失败\n{e}"))
 }
 
-/// 产物是否可信：存在、≥1MB 且能被当作 zip 打开。
-/// 半成品/截断文件不算（否则中途失败的产物会被当成"已完成"永久跳过）。
+/// 产物是否可信：存在、≥1MB 且能当 zip 打开（半成品/截断不算，否则中途失败产物会被永久跳过）。
 pub fn intact_archive(p: &Path) -> bool {
     if !p.metadata().map(|m| m.len() >= 1_000_000).unwrap_or(false) {
         return false;
@@ -159,15 +140,12 @@ pub fn intact_archive(p: &Path) -> bool {
         .is_some()
 }
 
-/// 取某侧可用的 data 值。
 fn data_value<'a>(profile: &'a InstallProfile, key: &str, side: &str) -> Option<&'a str> {
     profile.data.get(key)?.for_side(side)
 }
 
-/// `[group:artifact:version[:classifier][@ext]]` → maven 本地布局相对路径。
-///
-/// 例：`net.neoforged:neoform:1.21.1-20240808.144430:mappings@txt`
-/// → `net/neoforged/neoform/1.21.1-20240808.144430/neoform-1.21.1-20240808.144430-mappings.txt`
+/// `[group:artifact:version[:classifier][@ext]]` → maven 本地布局相对路径（如
+/// `net.neoforged:neoform:1.21.1-…:mappings@txt` → `net/neoforged/neoform/1.21.1-…/neoform-1.21.1-…-mappings.txt`）。
 fn coord_rel_path(coord: &str, ext: Option<&str>) -> Option<String> {
     let (coord, ext_in_coord) = match coord.split_once('@') {
         Some((c, e)) => (c, Some(e)),
@@ -191,10 +169,7 @@ fn coord_rel_path(coord: &str, ext: Option<&str>) -> Option<String> {
 }
 
 /// installer 内条目的解包缓存路径：**按 installer（文件名）分目录**。
-///
-/// 只按条目名缓存会跨 installer 复用陈旧内容 —— 实测：先装 NeoForge 21.x、再装
-/// 26.x 时，`work_dir/data_client.lzma` 里躺着 21.x 的补丁包，被喂给 26.x 的工具
-/// 就报 `Invalid bundle signature`（配方与工具版本都对，文件是错的）。
+/// 只按条目名缓存会跨 installer 复用陈旧内容（工具版本对、文件错，报 `Invalid bundle signature`）。
 fn installer_entry_cache_path(work_dir: &Path, installer: &Path, entry: &str) -> PathBuf {
     let tag: String = installer
         .file_name()
@@ -249,8 +224,7 @@ fn resolve_data(raw: &str, ctx: &ProcessorCtx<'_>) -> Resolved {
         }
     }
     if let Some(entry) = raw.strip_prefix('/') {
-        // installer 内条目（如 /data/client.lzma）：解包到 work_dir 后返回该路径；
-        // 解不出（不是 installer 内部条目）时按原始路径理解（绝对路径语义）
+        // installer 内条目（如 /data/client.lzma）：解包到 work_dir；解不出则按原始路径理解
         let cached = installer_entry_cache_path(ctx.work_dir, ctx.installer, entry);
         if cached.is_file() || extract_installer_entry(ctx.installer, entry, &cached).is_ok() {
             return Resolved::Path(cached);
@@ -283,9 +257,7 @@ async fn resolve_arg(arg: &str, profile: &InstallProfile, ctx: &ProcessorCtx<'_>
 }
 
 /// 确保构件存在于 `libraries/`（按 maven 布局），返回本地路径。
-///
-/// URL 优先取 profile.libraries 里同名（忽略 `@ext`）条目的官方地址与 sha1；
-/// 否则按 `coord` 布局拼接官方 maven 基址，逐源镜像回退。
+/// URL 优先取 profile.libraries 同名（忽略 `@ext`）条目的官方地址与 sha1，否则按 coord 布局拼 maven 基址 + 镜像回退。
 async fn ensure_artifact(
     coord: &str,
     profile: &InstallProfile,
@@ -415,11 +387,8 @@ fn main_class_of(jar: &Path) -> Result<String, String> {
     bail!("处理器 MANIFEST 未声明 Main-Class\n{}", jar.display())
 }
 
-/// 目标版本声明的 Java 主版本（`javaVersion.majorVersion`），供 `resolve_java` 按需选 JDK。
-///
-/// 处理器链运行前，调用方已把展开继承后的 loader version.json 写在与 `vanilla_jar`
-/// 同目录同名处（`versions/<dir>/<dir>.json`，见 forge.rs 的 `resolve_version_json`），
-/// 因此可直接读取；读不到/未声明时返回 0，由 `resolve_java` 走缓存首项兜底。
+/// 目标版本声明的 Java 主版本（`javaVersion.majorVersion`），供 `resolve_java` 按需选 JDK。调用方已把展开继承后
+/// 的 loader version.json 写在与 `vanilla_jar` 同目录同名处（见 forge.rs `resolve_version_json`）；读不到返回 0。
 fn required_java_major(ctx: &ProcessorCtx<'_>) -> u32 {
     std::fs::read_to_string(ctx.vanilla_jar.with_extension("json"))
         .ok()
@@ -449,8 +418,7 @@ pub async fn run_client_processors(
                 continue;
             }
         }
-        // 主 JAR 单独解析：Main-Class 必须取自**处理器自己的 jar**，
-        // 而不是 classpath 的末项（classpath 里还挂着传递依赖，末项常是 commons-*）。
+        // 主 JAR 单独解析：Main-Class 必须取自处理器自己的 jar（classpath 末项常是传递依赖 commons-*）
         let main_jar = ensure_artifact(&proc.jar, profile, ctx).await?;
         let main = main_class_of(&main_jar)?;
         // classpath：声明项 + 主 JAR（去重、保序）
@@ -474,8 +442,7 @@ pub async fn run_client_processors(
         }
 
         let mut cmd = tokio::process::Command::new(&java);
-        // 应用运行期不得弹出控制台窗口：安装器工具（installertools/jarsplitter/…）
-        // 逐个 java 进程跑，漏掉这行就是「装 Forge 时连弹多个命令行窗口」
+        // 禁止弹出控制台窗口：处理器逐个 java 进程跑，漏掉这行装 Forge 会连弹多个命令行窗口
         cmd.no_window();
         cmd.arg("-cp")
             .arg(&classpath)
@@ -505,10 +472,7 @@ pub async fn run_client_processors(
     Ok(())
 }
 
-/// data 项（如 `PATCHED`）在本地对应的产物路径——用于幂等判断与启动期定位。
-///
-/// 只依赖 `libraries/` 与游戏目录，不需要先拿到 vanilla jar（幂等判断要在
-/// 等待 vanilla 下载之前就能做完）。
+/// data 项（如 `PATCHED`）本地对应产物路径；仅依赖 `libraries/` 与游戏目录（幂等判断须早于 vanilla 下载）。
 pub fn output_path(
     profile: &InstallProfile,
     key: &str,
@@ -637,15 +601,9 @@ mod tests {
         assert!(resolve_arg("{NOPE}", &profile, &ctx).await.is_err(), "缺 data 项应报错");
     }
 
-    /// NeoForge 21.x 安装链端到端（**真实网络 + 真实 JDK**，默认 `#[ignore]`）。
-    ///
-    /// ```text
-    /// JAVA_HOME=<jdk> cargo test --lib -- --ignored neoforge_21_chain_end_to_end --nocapture
-    /// ```
-    ///
-    /// 覆盖：下载 installer → 解析其声明的 processors → 下载全部工具构件（sha1 校验）→
-    /// 下载原版 client.jar → 按声明串行跑完整条链 → 校验 `{PATCHED}` 产物。
-    /// 这是修 `Invalid bundle signature`（写死 `installertools 4.0.12` 配方）的验证。
+    /// NeoForge 21.x 安装链端到端（真实网络 + 真实 JDK，默认 `#[ignore]`）：下载 installer → 按声明下载
+    /// 工具构件（sha1 校验）与原版 client.jar → 串行跑完整条链 → 校验 `{PATCHED}` 产物。
+    /// 运行：`JAVA_HOME=<jdk> cargo test --lib -- --ignored neoforge_21_chain_end_to_end --nocapture`
     #[tokio::test(flavor = "multi_thread")]
     #[ignore]
     async fn neoforge_21_chain_end_to_end() {
@@ -743,15 +701,9 @@ mod tests {
         eprintln!("✅ 已生成 {}（{size} 字节）", patched.display());
     }
 
-    /// Forge 链端到端（**真实网络 + 真实 JDK**，默认 `#[ignore]`）。
-    ///
-    /// ```text
-    /// JAVA_HOME=<jdk> cargo test --lib -- --ignored forge_chain_end_to_end --nocapture
-    /// ```
-    ///
-    /// 覆盖：Forge 分支切到 processors 引擎后，能按 installer 声明（1.20.1-47.1.0 声明的是
-    /// binarypatcher **1.1.1**/srgutils 0.4.x，而旧代码写死 1.3.4/0.6.6）跑完整条链并产出
-    /// `{PATCHED}`（`forge-<ver>-client.jar`）。
+    /// Forge 链端到端（真实网络 + 真实 JDK，默认 `#[ignore]`）：按 installer 声明（1.20.1-47.1.0 为
+    /// binarypatcher 1.1.1/srgutils 0.4.x）跑完整条链，产出 `{PATCHED}`（`forge-<ver>-client.jar`）。
+    /// 运行：`JAVA_HOME=<jdk> cargo test --lib -- --ignored forge_chain_end_to_end --nocapture`
     #[tokio::test(flavor = "multi_thread")]
     #[ignore]
     async fn forge_chain_end_to_end() {
@@ -845,10 +797,7 @@ mod tests {
         eprintln!("✅ 已生成 {}（{size} 字节）", patched.display());
     }
 
-    /// 回归：installer 内条目的解包**必须按 installer 区分**，不能跨 installer 复用陈旧内容。
-    ///
-    /// 实测故障：先装 NeoForge 21.x 再装 26.x，`work_dir/data_client.lzma` 里是 21.x 的
-    /// 补丁包被喂给 26.x 的工具 → `Invalid bundle signature`（配方与工具都对，文件是错的）。
+    /// installer 内条目的解包必须按 installer 区分：换 installer 后须解出它自己的条目，不得复用旧缓存。
     #[test]
     fn installer_entries_are_cached_per_installer() {
         use crate::config::downloader::DownloaderConfig;
@@ -894,15 +843,9 @@ mod tests {
         );
     }
 
-    /// NeoForge 26.x 链端到端（**真实网络 + 真实 JDK**，默认 `#[ignore]`）。
-    ///
-    /// ```text
-    /// JAVA_HOME=<jdk> cargo test --lib -- --ignored neoforge_26_chain_end_to_end --nocapture
-    /// ```
-    ///
-    /// 26.x 的 profile 是「2 个处理器、单任务 PROCESS_MINECRAFT_JAR」形态（无 mapping 链），
-    /// 与 21.x 的 10 处理器链完全不同；这条也覆盖 installer 内条目缓存按 installer 区分
-    /// （先装 21.x 再装 26.x 时旧 `data/client.lzma` 被复用的故障）。
+    /// NeoForge 26.x 链端到端（真实网络 + 真实 JDK，默认 `#[ignore]`）：profile 为「2 处理器、单任务
+    /// PROCESS_MINECRAFT_JAR」形态（与 21.x 的 10 处理器链不同）。
+    /// 运行：`JAVA_HOME=<jdk> cargo test --lib -- --ignored neoforge_26_chain_end_to_end --nocapture`
     #[tokio::test(flavor = "multi_thread")]
     #[ignore]
     async fn neoforge_26_chain_end_to_end() {

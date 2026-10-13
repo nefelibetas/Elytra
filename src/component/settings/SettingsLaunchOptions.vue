@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 启动选项卡片 + 内存分配卡片
+// 启动选项 + 内存分配卡片
 import { onMounted } from "vue";
 import { memState } from "../../store/app/memory";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
@@ -15,13 +15,12 @@ import { memLabelLeft, fmtGb } from "../../utils/format";
 
 onMounted(loadLaunchOptions);
 
-/** 最小内存开关：null = 不设置（JVM 默认）；开启默认取 512MB。 */
+/** 最小内存开关：null = 不设置（JVM 默认），开启取 512MB。 */
 function toggleMinMem() {
   loMinMem.value = loMinMem.value === null ? Math.min(512, loMemMb.value) : null;
   saveLaunchOptions();
 }
 
-/** 进程优先级选项（DropSelect 用）。 */
 const priorityOptions: SelOption[] = [
   { value: "Low", label: "低" },
   { value: "Normal", label: "中（平衡）" },
@@ -29,7 +28,6 @@ const priorityOptions: SelOption[] = [
   { value: "RealTime", label: "实时" },
 ];
 
-/** 窗口大小选项（DropSelect 用）。 */
 const winsizeOptions: SelOption[] = [
   { value: "Default", label: "默认（不设置）" },
   { value: "Custom", label: "自定义" },
@@ -227,7 +225,7 @@ const winsizeOptions: SelOption[] = [
 
 .mem-bar-label {
   position: absolute;
-  /* 左对齐：文本起始紧贴色条左侧 */
+  /* 文本起始紧贴色条左侧 */
   font-size: 10.5px;
   color: var(--text-tertiary);
   white-space: nowrap;
@@ -264,7 +262,6 @@ const winsizeOptions: SelOption[] = [
   color: var(--text-secondary);
 }
 
-/* 窗口大小 Custom 输入组（保持行内横排，切换淡入淡出） */
 .lo-win-custom {
   display: flex;
   align-items: center;

@@ -1,7 +1,6 @@
 <script setup lang="ts">
-// MOTD 生成器：编辑含 § 格式码的 MOTD 文本（16 色/样式/1.16+ 渐变），实时预览，
-// 复制原始文本或 server.properties 转义形式；可一键设为联机广播名
-// （guest 端 MC 局域网标签页显示的名字，支持 § 颜色渲染）。
+// MOTD 生成器：编辑含 § 格式码的文本（16 色/样式/1.16+ 渐变），实时预览，可复制原始文本或 server.properties 转义。
+// 可一键设为联机广播名（guest 端 MC 局域网标签页显示名，支持 § 颜色渲染）。
 import { onMounted, ref } from "vue";
 import {
   Bold, Italic, Underline, Strikethrough, Sparkles, Eraser, Copy, Save, Server,
@@ -40,7 +39,7 @@ function insertText(s: string) {
   if (start !== end) {
     // 有选区：格式码作用于选区（插在选区起点）
     text.value = text.value.slice(0, start) + prefix + text.value.slice(start);
-    // 选区已被格式码"覆盖"（作用于其后字符），光标保持原选区起点后
+    // 选区已被格式码覆盖（作用于其后字符），光标停在原选区起点后
     requestAnimationFrame(() => {
       ta.focus();
       ta.selectionStart = ta.selectionEnd = start + prefix.length;
@@ -108,7 +107,6 @@ const charCount = () => visibleLength(text.value);
       <div class="tool-card-sub">编辑服务器欢迎语 / 联机广播名，支持 16 色、样式与 1.16+ 渐变（§x 代码）</div>
     </div>
 
-    <!-- 编辑区 -->
     <textarea
       ref="taRef"
       v-model="text"
@@ -119,7 +117,6 @@ const charCount = () => visibleLength(text.value);
       autocomplete="off"
     ></textarea>
 
-    <!-- 工具栏 -->
     <div class="motd-toolbar">
       <div class="motd-toolbar-row">
         <span class="motd-tool-label">颜色</span>
@@ -170,14 +167,12 @@ const charCount = () => visibleLength(text.value);
       </div>
     </div>
 
-    <!-- 预览 -->
     <div class="motd-preview-label">
       <span>预览</span>
       <span class="motd-count">{{ charCount() }} 字符</span>
     </div>
     <MotdPreview :motd="text" />
 
-    <!-- 输出 -->
     <div class="motd-output">
       <button class="tool-btn" @click="copyRaw">
         <Copy :size="14" />
@@ -189,7 +184,6 @@ const charCount = () => visibleLength(text.value);
       </button>
     </div>
 
-    <!-- 联机广播名 -->
     <div class="motd-online">
       <Server :size="14" class="motd-online-icon" />
       <span class="motd-online-text">

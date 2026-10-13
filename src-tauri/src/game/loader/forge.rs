@@ -204,15 +204,9 @@ fn read_libraries(json_path: &Path) -> Result<Vec<model::Library>, String> {
     Ok(serde_json::from_value(merged["libraries"].clone()).unwrap_or_default())
 }
 
-/// install_profile 声明里可网络下载的构件（URL 为空的内嵌构件由 `install_embedded_maven` /
-/// `install_profile_file` 落盘，交给批量下载会被判"网络无法下载"而中止安装）。
-///
-/// **必须与 version.json 的库一并落盘**：Forge 1.17+ 的运行时模块 jar（`fmlcore` /
-/// `javafmllanguage` / `lowcodelanguage` / `mclanguage`）只在 install_profile 里声明，
-/// version.json 没有——FMLLoader 的 `LibraryFinder` 启动时按 `-DlibraryDirectory` 直接取这几个
-/// 文件，缺一个即 `Invalid paths argument, contained no existing paths` 秒退（退出码 1）。
-/// 官方 installer 正是把整份 `install_profile.libraries` 装进 `libraries/`（实测官方 1.20.1
-/// 安装产物里 universal 与四个模块 jar 都在，而 version.json 只声明 fmlloader/fmlearlydisplay）。
+/// install_profile 里可网络下载的构件（URL 为空的内嵌构件由 `install_embedded_maven` / `install_profile_file` 落盘，不走批量下载）。
+/// Forge 1.17+ 运行时模块 jar（`fmlcore` / `javafmllanguage` / `lowcodelanguage` / `mclanguage`）只在 install_profile 声明，
+/// version.json 只声明 fmlloader/fmlearlydisplay；缺一即 `Invalid paths argument, contained no existing paths` 秒退（退出码 1）。
 pub(super) fn profile_libraries(profile: &serde_json::Value) -> Vec<model::Library> {
     profile["libraries"]
         .as_array()
@@ -266,11 +260,8 @@ fn extend_with_profile_libraries(libraries: &mut Vec<model::Library>, profile: &
     }
 }
 
-/// 安装收尾核对：install_profile 声明的**每一个**构件都必须落在 `libraries/`（含 version.json
-/// 未声明、只由 profile 声明的运行时模块 jar，以及 URL 为空、由 installer 内嵌流程落盘的条目）。
-///
-/// 下载/解包环节的静默漏项（sha1 缺失、内嵌条目没解出来、镜像 404 被当作"可选"）在这里变成
-/// **安装期错误**：否则表现为"安装成功、启动秒退"——Forge 1.17+ 缺 `fmlcore` 就是这一形态。
+/// 安装收尾核对：install_profile 声明的**每一个**构件都必须落在 `libraries/`（含 version.json 未声明、只由 profile 声明的运行时模块 jar，以及 URL 为空、由 installer 内嵌流程落盘的条目）。
+/// 下载/解包环节的静默漏项（sha1 缺失、内嵌条目没解出来、镜像 404 被当作"可选"）在此变成**安装期错误**；否则表现为"安装成功、启动秒退"。
 fn verify_profile_artifacts(profile: &serde_json::Value, lib_dir: &Path) -> Result<(), String> {
     let mut missing: Vec<String> = Vec::new();
     for lib in profile["libraries"].as_array().into_iter().flatten() {

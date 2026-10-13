@@ -16,11 +16,9 @@ export const loWinW = ref(1280);
 export const loWinH = ref(720);
 export const loGameLang = ref("auto_zh_CN");
 
-// 服务器直连（快速进服）
 export const loServer = ref("");
 export const loPort = ref("");
 
-// 内存分配（状态由全局 startMemoryMonitor 持续刷新）
 export const loMemMode = ref<"Auto" | "Custom">("Auto");
 export const loMemMb = ref(4096);
 export const loMinMem = ref<number | null>(null);
@@ -52,7 +50,6 @@ watch(
   },
 );
 
-// Java 高级项
 export const loJvmArgs = ref("");
 export const loGameArgs = ref("");
 export const loGc = ref("TunedG1Gc");
@@ -103,14 +100,12 @@ export async function loadLaunchOptions() {
         memState.totalMb = total;
         memState.availMb = avail;
       } catch {
-        // 忽略
       }
     }
     if (loMemMode.value === "Auto") {
       loMemMb.value = Math.max(2048, Math.min(Math.floor(memState.availMb * 0.60), memState.availMb || Number.MAX_SAFE_INTEGER));
     }
   } catch {
-    // 无配置时保持默认
   }
 }
 

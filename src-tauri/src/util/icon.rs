@@ -4,8 +4,7 @@ use std::path::Path;
 
 use base64::{engine, Engine as _};
 
-/// 魔数嗅探受支持的图片格式（png/jpeg/webp/gif）——前端 data URL 渲染与
-/// 自定义图标落盘共用同一判定，两侧语义必须一致。
+/// 魔数嗅探受支持图片格式（png/jpeg/webp/gif）；前端 data URL 渲染与图标落盘共用同一判定集。
 pub fn is_supported_image(bytes: &[u8]) -> bool {
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         return true; // png
@@ -41,8 +40,7 @@ pub fn to_base64(bytes: &[u8]) -> String {
     engine::general_purpose::STANDARD.encode(bytes)
 }
 
-/// 图标 IPC 载荷：mime 由魔数嗅探，data 为 base64。
-/// （替代 JSON 数字数组——后者每个字节膨胀 3~5 倍，大图标拖慢 IPC。）
+/// 图标 IPC 载荷：mime 由魔数嗅探，data 为 base64（替代 JSON 数字数组——后者每字节膨胀 3~5 倍）。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct IconData {
     pub mime: String,

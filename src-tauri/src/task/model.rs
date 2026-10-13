@@ -36,7 +36,7 @@ pub enum StepStatus {
 pub struct TaskProgress {
     pub task_id: String,
     pub name: String,
-    pub status: TaskStatus, // pending | running | done | error | cancelled（serde lowercase）
+    pub status: TaskStatus,
     pub progress: f64,      // 0.0 – 100.0
     pub speed_bps: f64,
     /// 预计剩余秒数；停滞（>4s 无字节推进）或速度过低时 None。
@@ -57,7 +57,7 @@ pub struct TaskProgress {
 #[ts(export_to = "task/")]
 pub struct StepInfo {
     pub name: String,
-    pub status: StepStatus, // pending | running | done
+    pub status: StepStatus,
     pub progress: f64,      // 0–100, meaningful only when status=running
 }
 
@@ -206,8 +206,7 @@ pub struct DownloadFileItem {
     pub filename: String,
 }
 
-/// 批量下载任务（一次下载多个 mod / 资源包 / 数据包 / 光影包）。
-/// 步骤 = 每文件一步，create 时按文件数动态生成。
+/// 批量下载任务；步骤 = 每文件一步，create 时按文件数动态生成。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadFilesTask {
     pub version_dir_name: String,
@@ -241,8 +240,7 @@ fn validate_file_item(url: &str, filename: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// 整合包安装任务（单卡片全流程：解析 → 本体 → 内容）。
-/// 恢复语义 = 重跑整卡，各环节幂等。
+/// 整合包安装任务（单卡片全流程：解析 → 本体 → 内容）；恢复 = 重跑整卡，各环节幂等。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModpackInstallSpec {
     pub request: ModpackRequest,

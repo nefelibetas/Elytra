@@ -1,4 +1,4 @@
-//! 更新检查与文件管理：按 MC 版本 + loader 过滤最新版本、校验下载替换、删除单个 mod 文件。
+//! 更新检查与文件管理：按 MC 版本 + loader 取最新版、校验下载替换、删除/启停 mod。
 
 use std::path::{Path, PathBuf};
 
@@ -11,7 +11,7 @@ use super::identify::QUERY_CONCURRENCY;
 use crate::game::community::{api_routes, api_urls, get_json_multi, ApiPlatform};
 use crate::downloader::fetcher;
 
-/// 单个 mod 的更新信息（check_updates 命中 Modrinth 且存在新版本时产出）。
+/// 单个 mod 的更新信息（命中 Modrinth 且有新版本时产出）。
 #[derive(Debug, Clone, Serialize)]
 pub struct ModUpdate {
     pub file_name: String,
@@ -20,12 +20,12 @@ pub struct ModUpdate {
     pub latest_version: String,
     /// 最新版本文件的直链（cdn.modrinth.com）
     pub file_url: String,
-    /// 最新版本文件的 sha1（下载校验用）
+    /// 最新版本文件 sha1（下载校验用）
     pub file_sha1: String,
 }
 
-/// 查询项目在兼容 MC 版本 + loader 下的最新版本（Modrinth 返回按 date_published 降序，
-/// 过滤后取首个即最新）。返回 (version_number, file_url, file_sha1)。
+/// 查询兼容 MC 版本 + loader 的最新版本（按 date_published 降序，过滤后首个即最新）；
+/// 返回 (version_number, file_url, file_sha1)。
 async fn latest_version(
     project_id: &str,
     mc_version: &str,
@@ -62,8 +62,7 @@ async fn latest_version(
     Some((version_number, file_url, file_sha1))
 }
 
-/// 删除 mods 目录下的单个 mod 文件（Mod 管理删除按钮）。
-/// 仅接受纯文件名（防路径穿越），不存在报错。
+/// 删除 mods 目录下单个文件；仅接受纯文件名（防路径穿越），不存在报错。
 pub fn delete_mod_file(mods_dir: &Path, file_name: &str) -> Result<(), String> {
     if !crate::util::is_simple_name(file_name) {
         return Err("非法文件名".to_string());
@@ -76,8 +75,7 @@ pub fn delete_mod_file(mods_dir: &Path, file_name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// 删除资源目录（resourcepacks / datapacks / shaderpacks）下的单个文件。
-/// `kind` 白名单 + 纯文件名（防路径穿越），文件不存在报错。
+/// 删除资源目录（resourcepacks/datapacks/shaderpacks）下单个文件；kind 白名单 + 纯文件名（防穿越），不存在报错。
 pub async fn delete_resource_file(
     version_dir: &Path,
     kind: &str,
@@ -98,9 +96,8 @@ pub async fn delete_resource_file(
         .map_err(common_err_ctx!("删除失败"))
 }
 
-/// 切换 mods 目录下单个 mod 文件的启用/禁用状态（Mod 管理禁用按钮）。
-/// 禁用：`name.jar` → `name.jar.disabled`（扫描按扩展名过滤自动隐藏）；启用：反向重命名。
-/// 仅接受纯文件名（防路径穿越），目标不存在报错。返回 true=已禁用，false=已启用。
+/// 切换 mod 启用/禁用：`name.jar` → `name.jar.disabled`（扫描按扩展名自动隐藏），反向即启用。
+/// 仅接受纯文件名（防穿越），不存在报错；返回 true=已禁用，false=已启用。
 pub fn toggle_mod_file(mods_dir: &Path, file_name: &str) -> Result<bool, String> {
     if !crate::util::is_simple_name(file_name) {
         return Err("非法文件名".to_string());
@@ -119,8 +116,7 @@ pub fn toggle_mod_file(mods_dir: &Path, file_name: &str) -> Result<bool, String>
     Err(format!("Mod 文件不存在\n{file_name}"))
 }
 
-/// 检查一批本地 mod 是否有可用更新（Modrinth 源）。
-/// 命中项目但无新版本 / 不在 Modrinth 的 mod 不进入结果。
+/// 检查一批本地 mod 更新（Modrinth）；命中但无新版本/不在 Modrinth 的不进结果。
 pub async fn check_updates(
     mods_dir: &Path,
     files: &[LocalModFile],
@@ -130,9 +126,8 @@ pub async fn check_updates(
     let dir = mods_dir.to_path_buf();
     let mc = mc_version.to_string();
     let ld = loader.to_string();
-    // 先提取拥有所有权的输入：闭包参数借用 slice 时 async block 的返回类型
-    // 会被推断绑定到该引用生命周期（HRTB 报错）；mc/ld 也必须随 tuple move，
-    // 否则被多个 async block 捕获冲突（E0507）
+    // 提取拥有所有权的输入：借用 slice 时 async block 返回类型会绑定该引用生命周期（HRTB 报错）；
+    // mc/ld 必须随 tuple move，否则被多个 async block 捕获冲突（E0507）
     let inputs: Vec<(String, PathBuf, String, String)> = files
         .iter()
         .map(|m| (m.file_name.clone(), dir.clone(), mc.clone(), ld.clone()))
@@ -177,17 +172,14 @@ pub async fn check_updates(
     results.into_iter().flatten().collect()
 }
 
-/// 下载更新文件并替换 mods 目录中的旧文件。
-/// 先下载到同目录临时文件（fetch_verified 逐源校验 sha1，失败不触碰旧文件），
-/// 校验通过后删旧文件再原子改名。
+/// 下载更新替换旧文件：先下到同目录临时文件（逐源校验 sha1，失败不触碰旧文件），通过后删旧再改名。
 pub async fn update_mod_file(
     mods_dir: &Path,
     file_name: &str,
     file_url: &str,
     file_sha1: &str,
 ) -> Result<(), String> {
-    // 与 delete_mod_file / toggle_mod_file 一致：文件名不得含分隔符或 `..`，
-    // 否则 target / tmp 会被 `join` 带出 mods 目录，造成越界写删。
+    // 同 delete/toggle：文件名不得含分隔符或 `..`，否则 join 会越界写删。
     if !crate::util::is_simple_name(file_name) {
         bail!("非法的文件名");
     }
@@ -205,7 +197,7 @@ pub async fn update_mod_file(
     .await
     .map_err(common_err_ctx!("下载更新失败"))?;
 
-    // 替换：先删旧文件再改名（Windows 上 rename 覆盖已存在目标会失败）
+    // 先删旧再改名（Windows 上 rename 覆盖已存在目标会失败）
     if target.exists() {
         std::fs::remove_file(&target).map_err(common_err_ctx!("删除旧文件失败"))?;
     }
@@ -223,7 +215,6 @@ mod tests {
         let jar = dir.path().join("a.jar");
         std::fs::write(&jar, b"x").unwrap();
 
-        // 禁用：a.jar → a.jar.disabled，返回 true
         assert!(toggle_mod_file(dir.path(), "a.jar").unwrap());
         assert!(!jar.exists());
         assert!(
@@ -231,7 +222,7 @@ mod tests {
             "禁用应改名 .disabled"
         );
 
-        // 重复禁用：现在文件是 a.jar.disabled（不是 .jar 结尾）→ 走启用分支改名回去
+        // 重复禁用 → 走启用分支
         assert!(
             !toggle_mod_file(dir.path(), "a.jar").unwrap(),
             "应回退为启用"
@@ -239,13 +230,11 @@ mod tests {
         assert!(jar.exists());
         assert!(!dir.path().join("a.jar.disabled").exists());
 
-        // 不存在报错
         assert!(
             toggle_mod_file(dir.path(), "missing.jar").is_err(),
             "不存在应报错"
         );
 
-        // 路径穿越拒绝
         assert!(
             toggle_mod_file(dir.path(), "../b.jar").is_err(),
             "穿越路径拒绝"
@@ -258,17 +247,14 @@ mod tests {
         let jar = dir.path().join("a.jar");
         std::fs::write(&jar, b"x").unwrap();
 
-        // 正常删除
         delete_mod_file(dir.path(), "a.jar").unwrap();
         assert!(!jar.exists());
 
-        // 重复删除报错
         assert!(
             delete_mod_file(dir.path(), "a.jar").is_err(),
             "文件不存在应报错"
         );
 
-        // 路径穿越拒绝
         std::fs::write(dir.path().join("b.jar"), b"y").unwrap();
         assert!(
             delete_mod_file(dir.path(), "../b.jar").is_err(),

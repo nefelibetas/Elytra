@@ -1,7 +1,5 @@
-//! 实例级配置读写：`versions/{id}/.elytra-instance.toml`。
-//!
-//! 一期只承载 `[auto_tasks]`（其余启动选项仍走全局 section）；**文件不存在 = 用全局**，
-//! 文件存在则该实例完全采用自己的自动任务（与非空覆盖语义一致）。
+//! 实例级配置读写：`versions/{id}/.elytra-instance.toml`，一期只承载 `[auto_tasks]`
+//! （其余启动选项仍走全局 section）。**文件不存在 = 用全局**；存在则完全采用自己的自动任务。
 
 use std::path::{Path, PathBuf};
 

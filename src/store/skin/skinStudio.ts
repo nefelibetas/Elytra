@@ -1,8 +1,4 @@
-// 衣柜 store（模块级 reactive 单例，项目约定无 Pinia）：
-//   左：等距 3D 全身预览（自研渲染器 `skinRender.ts` 直接画到 canvas，见 SkinStudio.vue ——
-//       本 store 只提供皮肤/披风/视角状态，页面 watch 后重绘一帧）
-//   右：皮肤 / 披风 tab（皮肤 = 官方当前 + 本地衣柜 + 自动缓存；披风 = 官方列表）
-// 拖动旋转：pointer 事件累加 yaw/pitch（俯仰以默认视角为基准限 ±40°）。
+// 衣柜 store（模块级 reactive 单例，无 Pinia）：提供皮肤/披风/视角状态（渲染由页面 watch 后重绘）；拖动旋转：pointer 累加 yaw/pitch（pitch 以默认视角为基准限 ±40°）。
 import { reactive } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -17,11 +13,8 @@ import { showToast } from "../../utils/toast";
 export interface LocalSkin {
   id: string;
   name: string;
-  /** 皮肤模型（后端归一化为大写；与官方皮肤 API 的 variant 字符串一致） */
   variant: "CLASSIC" | "SLIM";
-  /** 加入时间（Unix 秒） */
   added_at: number;
-  /** 来源：`microsoft` / 第三方站点名 / `upload`（旧数据默认 upload） */
   source: string;
   /** 衣柜内绝对路径（可直接交给 upload_skin_file 应用） */
   path: string;
@@ -29,7 +22,6 @@ export interface LocalSkin {
   skin: string;
 }
 
-/** 衣柜右侧 tab：皮肤 / 披风。 */
 export type StudioTab = "skins" | "capes";
 
 /** 官方披风条目（后端 CapeInfo）。 */
@@ -42,29 +34,22 @@ export interface StudioCape {
   texture: string;
 }
 
-/** 俯仰角相对默认视角的拖动范围（±40°；越过默认值两侧都能拖，且不会让模型上下翻转）。 */
+/** 俯仰角相对默认视角限 ±40°（不会让模型上下翻转）。 */
 const PITCH_RANGE = 40;
-/** 俯仰角拖动下限 / 上限（默认视角上下各 [PITCH_RANGE] 度）。 */
 const PITCH_MIN = DEFAULT_VIEW_PITCH - PITCH_RANGE;
 const PITCH_MAX = DEFAULT_VIEW_PITCH + PITCH_RANGE;
-/** 拖动灵敏度（度/像素）。yaw 的符号与 viewer 的相机朝向配套：向左拖 → 模型向左转；
- *  pitch 保持正号：向下拖 → 视角下移（看到更多头顶）。 */
+/** 拖动灵敏度（度/像素）。yaw 符号与 viewer 相机配套（左拖 → 模型左转）；pitch 正号（下拖 → 视角下移）。 */
 const YAW_SENS = -0.6;
 const PITCH_SENS = 0.5;
 /** 上传官方账号后等待 Mojang 处理新纹理生效的时间。 */
 const APPLY_SETTLE_MS = 3000;
 
-/** `Promise.withResolvers` 是 ES2024 新增，当前 tsconfig lib 为 ES2020 未收录，
- *  故在此声明其形状；运行时仍可能缺失（旧 WebKitGTK），调用前用 `typeof` 守卫。 */
+/** `Promise.withResolvers` 为 ES2024 新增，tsconfig lib 为 ES2020 未收录，故声明其形状；运行时可能缺失（旧 WebKitGTK），调用前用 `typeof` 守卫。 */
 const promiseCtor = Promise as unknown as {
   withResolvers?: <T>() => { promise: Promise<T>; resolve: (value: T) => void };
 };
 
-/** 延时等待。优先 `Promise.withResolvers`（线性控制流、无回调嵌套）；
- *  Linux WebKitGTK（如 Ubuntu 22.04 的 2.40）没有该 API，回退到 executor 形式——
- *  三端 WebView 一致性的红线优先于单一写法。
- *  **必须写成 `promiseCtor.withResolvers()`**：该静态方法依赖 `this` 指向 Promise 构造器，
- *  提取到局部变量再调用会抛 `TypeError: Promise.withResolvers called on non-object`。 */
+/** 延时等待：优先 `Promise.withResolvers`（WebKitGTK 无此 API 则回退 executor）。必须写成 `promiseCtor.withResolvers()`——该静态方法依赖 `this` 指向 Promise 构造器。 */
 function delay(ms: number): Promise<void> {
   if (typeof promiseCtor.withResolvers === "function") {
     const { promise, resolve } = promiseCtor.withResolvers<void>();
@@ -104,25 +89,21 @@ function writeCapeCache(list: StudioCape[]): void {
   }
 }
 
-/** 交互缩放的倍率范围（乘在基础占比上）。 */
 const ZOOM_MIN = 0.4;
 const ZOOM_MAX = 4;
 
 export const skinStudio = reactive({
   // ── 加载状态机 ──
-  /** `loading` = 首帧或刷新中（右侧整体展示刷新态，不与旧列表共存）；
-   *  `ready` = 三方数据已就绪，右侧展示列表。 */
+  /** `loading` = 首帧或刷新中（右侧整体展示刷新态，不与旧列表共存）；`ready` = 三方数据已就绪、右侧展示列表。 */
   phase: "loading" as "loading" | "ready",
 
   // ── 3D 预览 ──
-  /** 拖动中（页面据此切换抓手光标；渲染由常驻 viewer 负责，不经此处） */
   dragging: false,
   /** 预览动作：`none` = 静止站姿，`idle` = 待机呼吸，`walk` = 行走 */
   animation: "none" as Animation,
-  /** 初始视角见 avatar 的 DEFAULT_VIEW_*：3/4 正面 + 微俯，看得到脸与一点头顶 */
+  /** 初始视角见 DEFAULT_VIEW_*：3/4 正面 + 微俯。 */
   yaw: DEFAULT_VIEW_YAW,
   pitch: DEFAULT_VIEW_PITCH,
-  /** 交互缩放倍率（滚轮 / 双指捏合调整；1 = 默认占比）。 */
   zoom: 1,
 
   // ── 账号当前皮肤 ──
@@ -134,7 +115,6 @@ export const skinStudio = reactive({
   // ── 本地衣柜 ──
   skins: [] as LocalSkin[],
   skinsError: "",
-  /** 右侧 tab：皮肤 / 披风 */
   tab: "skins" as StudioTab,
 
   // ── 官方披风 ──
@@ -159,38 +139,32 @@ export const skinStudio = reactive({
     return authMode.value === "premium" && !!msAccount.value;
   },
 
-  /** 当前选中的本地条目（选中官方皮肤时为 null）。 */
   get selectedLocal(): LocalSkin | null {
     if (this.selectedKey === "official") return null;
     return this.skins.find((s) => s.id === this.selectedKey) ?? null;
   },
 
-  /** 预览用皮肤 base64（选中本地项优先）。 */
   get currentSkin(): string {
     return this.selectedLocal?.skin || this.officialSkin;
   },
 
-  /** 预览是否按纤细模型渲染。 */
   get currentSlim(): boolean {
     const local = this.selectedLocal;
     if (local) return local.variant === "SLIM";
     return this.officialModel.toLowerCase() === "slim";
   },
 
-  /** 预览披风贴图 base64（无披风 / 贴图缺失时为空串）。 */
   get currentCapeTexture(): string {
     if (!this.selectedCapeId) return "";
     return this.capes.find((c) => c.id === this.selectedCapeId)?.texture ?? "";
   },
 
-  /** 「应用为当前皮肤」是否可用。 */
   get canApply(): boolean {
     return this.premium && !!this.selectedLocal && !this.applyBusy;
   },
 
   // ── 加载 ──
 
-  /** 页面挂载：并发拉取官方皮肤 / 本地衣柜 / 官方披风，全部就绪后由页面统一渲染首帧。 */
   async load() {
     this.yaw = DEFAULT_VIEW_YAW;
     this.pitch = DEFAULT_VIEW_PITCH;
@@ -204,8 +178,7 @@ export const skinStudio = reactive({
   /** 拉取账号当前皮肤（正版 / 第三方 / 离线各自来源）；失败回退内置 Steve 保证预览可用。 */
   async loadOfficial() {
     this.officialError = "";
-    // 账号列表是异步 IPC：未就绪就判定来源会把正版 / 第三方账号当成离线，
-    // 先渲染出一张带「默认」角标的 Steve 实时卡（随后才被真实皮肤替换）。
+    // 账号列表是异步 IPC，未就绪会误判为离线：先渲染一张带「默认」角标的 Steve 卡，随后被真实皮肤替换。
     await ensureAuthReady();
     const acc = msAccount.value;
     const ext = externalAccount.value;
@@ -239,7 +212,6 @@ export const skinStudio = reactive({
     }
   },
 
-  /** 拉取本地衣柜列表（后端按加入时间倒序）。 */
   async loadSkins() {
     this.skinsError = "";
     try {
@@ -254,7 +226,6 @@ export const skinStudio = reactive({
     }
   },
 
-  /** 拉取官方披风并把预览同步到当前启用披风（非正版账号跳过）。 */
   async loadCapes() {
     this.capesError = "";
     if (!this.premium) {
@@ -264,8 +235,7 @@ export const skinStudio = reactive({
     }
     try {
       const list = await invoke<StudioCape[]>("fetch_capes");
-      // 后端拉贴图要访问 textures.minecraft.net（冷启动 1~3 秒），贴图按 url 内容不变——
-      // 用本地缓存补齐后端这次没带回的贴图，二次进入即刻可见（随后仍会被新数据覆盖）
+      // 后端拉贴图需访问 textures.minecraft.net（冷启动 1~3 秒）；贴图按 url 不变，用本地缓存补齐缺失，二次进入即刻可见。
       const cache = readCapeCache();
       for (const c of list) {
         if (!c.texture && c.url && cache[c.url]) c.texture = cache[c.url];
@@ -279,7 +249,6 @@ export const skinStudio = reactive({
     }
   },
 
-  /** 刷新：重新拉取三方数据（并发），期间右侧整体切到刷新态。 */
   async refresh() {
     this.phase = "loading";
     await Promise.allSettled([this.loadOfficial(), this.loadSkins(), this.loadCapes()]);
@@ -288,7 +257,6 @@ export const skinStudio = reactive({
     showToast("已刷新");
   },
 
-  /** 注销：常驻 viewer 由页面负责 dispose，这里只复位拖动状态（模块级单例状态留给下次进入复用）。 */
   dispose() {
     this.dragging = false;
   },
@@ -328,25 +296,19 @@ export const skinStudio = reactive({
     }
   },
 
-  /** 重置视角与缩放（回到默认视角 + 默认占比）。 */
   resetView() {
     this.yaw = DEFAULT_VIEW_YAW;
     this.pitch = DEFAULT_VIEW_PITCH;
     this.zoom = 1;
   },
 
-  /** 按倍率缩放预览（`factor` > 1 放大，< 1 缩小），夹在 [ZOOM_MIN, ZOOM_MAX]。 */
   zoomBy(factor: number) {
     this.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, this.zoom * factor));
   },
 
   // ── 衣柜操作 ──
 
-  /** 自动缓存当前皮肤：把正版账号的当前皮肤存进衣柜（进入页面、刷新时调用）。
-   *  **只缓存正版账号**：第三方账号的外观在站点网页管理（衣柜入口也不再进启动器），
-   *  缓存进来既应用不了（站点没有上传 API），名字又只能是站点名 / `external` 这类
-   *  对用户毫无意义的技术标识。离线（内置默认皮肤）同样不入柜。
-   *  按来源 + 贴图去重：同一账号的同一份皮肤只存一条。 */
+  /** 自动缓存当前皮肤进衣柜。**只缓存正版账号**（第三方在站点网页管理、离线默认不入柜）；按来源 + 贴图去重。 */
   async cacheCurrent() {
     const skin = this.officialSkin;
     const acc = msAccount.value;
@@ -366,13 +328,11 @@ export const skinStudio = reactive({
     }
   },
 
-  /** 选中皮肤（'official' 或本地条目 id）→ 立即预览。 */
   selectSkin(key: string) {
     if (this.selectedKey === key) return;
     this.selectedKey = key;
   },
 
-  /** 上传本地文件到衣柜：先选 PNG，再确认模型。 */
   async pickSkinFile() {
     const path = await open({
       multiple: false,
@@ -383,10 +343,7 @@ export const skinStudio = reactive({
     this.skinModelDialog = true;
   },
 
-  /** 确认模型 → **直接上传到账号**。本地文件换肤的目的就是换皮肤本身，不是收藏，
-   *  所以不落本地衣柜（先落一份再让人点「应用」是多余的一步，还会和实时卡撞成两张卡）。
-   *  上传成功后账号当前皮肤即变成它，实时卡自然更新；随后它会作为一条历史缓存进衣柜，
-   *  供日后从衣柜切回。 */
+  /** 确认模型 → 直接上传到账号（不落本地衣柜）；成功后作为历史缓存进衣柜供日后切回。 */
   async confirmSaveSkin(variant: "CLASSIC" | "SLIM") {
     this.skinModelDialog = false;
     const path = this.pendingSkinPath;
@@ -405,7 +362,6 @@ export const skinStudio = reactive({
     }
   },
 
-  /** 从衣柜删除（后端返回删除后的完整列表）。 */
   async removeSkin(item: LocalSkin) {
     try {
       this.skins = await invoke<LocalSkin[]>("remove_local_skin", { id: item.id });
@@ -418,7 +374,6 @@ export const skinStudio = reactive({
     }
   },
 
-  /** 把选中的本地条目应用为账号当前皮肤（在衣柜里「切换」皮肤）。 */
   async applySelected() {
     const local = this.selectedLocal;
     const acc = msAccount.value;
@@ -435,8 +390,7 @@ export const skinStudio = reactive({
     }
   },
 
-  /** 换肤成功后的共同尾段：等 Mojang 生效 → 重拉账号皮肤 → 把新皮肤缓存进衣柜
-   *  （作为一条历史，日后可从衣柜切回）→ 回落实时卡 → 同步启动页头像。 */
+  /** 换肤成功后的共同尾段：等 Mojang 生效 → 重拉账号皮肤 → 缓存进衣柜 → 回落实时卡 → 同步启动页头像。 */
   async settleAfterSkinChange(uuid: string) {
     await delay(APPLY_SETTLE_MS);
     await this.loadOfficial();
@@ -446,7 +400,6 @@ export const skinStudio = reactive({
     showToast("皮肤已更新");
   },
 
-  /** 导出账号当前皮肤到用户选定路径。 */
   async saveSkinFile() {
     const acc = msAccount.value;
     if (!this.premium || !acc) return;

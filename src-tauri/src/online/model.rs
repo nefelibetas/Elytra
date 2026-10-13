@@ -17,13 +17,11 @@ pub(super) const SCAFFOLD_HOSTNAME_PREFIX: &str = "scaffolding-mc-server-";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OnlineStatus {
-    /// 未联机。
     Idle,
     /// host 虚拟网已建、等待游戏开放局域网（未拿到游戏端口）。
     Waiting,
     /// host 联机中（已检测到游戏端口，代理生效）。
     Hosting,
-    /// guest 已加入。
     Joining,
 }
 

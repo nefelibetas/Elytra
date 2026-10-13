@@ -1,9 +1,6 @@
 <script setup lang="ts">
-/**
- * 统一 checkbox / radio 开关（appearance:none 完全自定义）。
- * 消除 UA 默认部件跨平台差异：Win WebView2 / macOS WKWebView / Linux WebKitGTK 原生渲染不一致。
- * 勾选态用 label + :checked + 相邻选择器实现（不依赖 :has()，兼容 WebKitGTK 2.40）。
- */
+// 统一 checkbox / radio 开关（appearance:none），消除 UA 部件跨平台渲染差异（WebView2 / WKWebView / WebKitGTK）。
+// 勾选态用 label + :checked + 相邻选择器（不依赖 :has()，兼容 WebKitGTK 2.40）。
 const props = withDefaults(
   defineProps<{
     /** checkbox：boolean；radio：当前选中值（字符串） */
@@ -28,7 +25,7 @@ const emit = defineEmits<{
 function onChange(e: Event) {
   const el = e.target as HTMLInputElement;
   if (props.type === "radio") {
-    // radio：选中时 v-model 值 = 自身 value（与原生 radio 语义一致；radio 不可取消选中）
+    // radio：选中时 v-model = 自身 value（radio 不可取消选中）
     const v = el.checked ? props.value : props.modelValue;
     emit("update:modelValue", v ?? "");
     emit("change", v ?? "");

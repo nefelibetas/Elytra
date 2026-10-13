@@ -1,7 +1,5 @@
 <script setup lang="ts">
-// 版本设置-资源管理 tab（材质包/数据包/光影包）：标题卡（打开文件夹）+ 列表卡。
-// 双态表现：Modrinth 识别到 → 社区详情；未识别 → 本地文件 + 通用类型图标。
-// 多选交互：点击 item 选中，底部 action 栏全选/取消 + 批量删除。
+// 版本设置-资源管理 tab（材质包/数据包/光影包）：标题卡 + 列表卡；双态：识别到 Modrinth → 社区详情，未识别 → 本地文件 + 类型图标。
 import { computed, ref, onMounted } from "vue";
 import { useRoute } from "vue-router";
 import { Folder, Trash2, Palette, Database, Sun } from "@lucide/vue";
@@ -28,7 +26,6 @@ const props = defineProps<{ kind: ResourceKind }>();
 
 const route = useRoute();
 
-/** 游戏 id（版本目录名），由路由 query 传入。 */
 const versionName = computed(() => String(route.query.name ?? ""));
 
 const META = {
@@ -39,7 +36,7 @@ const META = {
 
 const meta = computed(() => META[props.kind]);
 
-/** 当前类型对应的列表状态（store 按 kind 取 ref，此处解包供模板直用）。 */
+/** 当前类型的列表状态（store 按 kind 取 ref，此处解包供模板直用）。 */
 const res = computed(() => {
   const r = resourceRefs(props.kind);
   return {
@@ -50,20 +47,15 @@ const res = computed(() => {
   };
 });
 
-/** 当前类型已加载缓存的版本名。 */
 const loadedFor = computed(() => resourceRefs(props.kind).loadedFor.value);
 
-/** 多选状态：点击 item 切换选中，底部 action 栏批量操作。 */
 const { selected, selectedSet, selecting, allVisibleSelected, toggle, toggleAll, clear } =
   useSelectable(computed(() => res.value.list.map(f => f.file_name)));
 
-/** 删除确认弹窗：目标名（选中单项时）或"N 项"批量文案。 */
 const deleteDialog = ref(false);
 const deleteLabel = ref("");
-/** 待删除列表（确认后逐个消费）。 */
 const deletePending = ref<string[]>([]);
 
-/** 批量删除选中项：一次确认后逐个删除。 */
 function doBatchDelete() {
   const names = [...selected.value];
   if (names.length === 0) return;
@@ -72,7 +64,6 @@ function doBatchDelete() {
   deleteDialog.value = true;
 }
 
-/** 确认删除：逐个执行，完成后刷新列表并清空选中。 */
 async function confirmDelete() {
   const names = [...deletePending.value];
   deleteDialog.value = false;
@@ -86,7 +77,7 @@ async function confirmDelete() {
     }
   }
   if (names.length > 0) {
-    // 刷新详细列表 + 快速扫描（主页卡片图标判定保持同步）
+    // 刷新详细列表 + 快速扫描（同步主页卡片图标判定）
     await loadResourceDetailed(versionName.value, props.kind);
     await loadResourceQuick(versionName.value, props.kind);
     clear();
@@ -95,7 +86,7 @@ async function confirmDelete() {
 
 onMounted(async () => {
   if (!versionName.value) return;
-  // 缓存命中（切 Tab 回来/刚从主页进入）不重新加载，避免 loading 闪烁
+  // 缓存命中则跳过加载，避免 loading 闪烁
   if (loadedFor.value !== versionName.value) {
     await loadResourceDetailed(versionName.value, props.kind);
   }
@@ -176,7 +167,7 @@ async function openResourceFolder() {
       </div>
        </div>
 
-    <!-- 底部 action 栏：选中 ≥1 时滑出，全选/取消 + 批量删除 -->
+    <!-- 底部 action 栏：选中 ≥1 时出现 -->
     <Transition name="fade">
       <div v-if="selecting" class="vs-actions-bar vs-bar-attached">
         <button class="vs-ab-btn" @click="toggleAll">
@@ -267,7 +258,7 @@ async function openResourceFolder() {
   color: var(--color-brand);
 }
 
-/* 列表卡（占满剩余高度，内容区内滚动） */
+/* 列表卡：占满剩余高度，内容滚动 */
 .vsr-list-card {
   flex: 1;
   min-height: 0;

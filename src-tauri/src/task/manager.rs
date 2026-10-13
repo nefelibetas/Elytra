@@ -11,8 +11,7 @@ use super::store;
 /// 全局任务管理器（首次访问即构造，无独立初始化路径）。
 static TM: LazyLock<Arc<TaskManager>> = LazyLock::new(|| Arc::new(TaskManager::default()));
 
-/// 启动期钩子（`lib.rs` 调一次）：崩溃恢复（#6）——上次进程退出时残留
-/// running 快照 → interrupted，前端启动后经 list_interrupted_tasks 拉取并询问恢复。
+/// 启动期钩子（`lib.rs` 调一次）：残留 running 快照 → interrupted（前端拉取后询问恢复）。
 pub fn init() {
     store::mark_crashed_as_interrupted();
 }
@@ -21,14 +20,11 @@ pub fn global() -> &'static Arc<TaskManager> {
     &TM
 }
 
-/// 挂起任务的用户决策（WaitingForUser：批量下载单文件失败时暂停，用户选跳过/重试/取消）。
+/// 挂起任务的用户决策（批量下载单文件失败时暂停，用户选跳过/重试/取消）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WaitingDecision {
-    /// 跳过该文件，继续剩余文件
     Skip,
-    /// 重试该文件
     Retry,
-    /// 取消整个任务
     Cancel,
 }
 
@@ -61,11 +57,8 @@ struct TaskHandle {
     cleanup_path: Option<std::path::PathBuf>,
 }
 
-/// 进程级唯一前缀（启动毫秒 + pid 的十六进制）。
-///
-/// 进程内 counter 重启后从 0 开始，若任务 id 直接用 `t{n}`，新任务会与上次崩溃残留在
-/// `install_jobs` 里的同名行撞主键（`INSERT OR REPLACE` 直接覆盖）→ 用户点「恢复」时
-/// 按 id 查到的已是**另一个任务**的 spec，恢复错作业、原作业的恢复凭证丢失。
+/// 进程级唯一前缀（启动毫秒 + pid 十六进制）：counter 从 0 起，无前缀则新 id `t{n}` 与崩溃残留的
+/// install_jobs 行撞主键（INSERT OR REPLACE 覆盖），恢复时执行错 spec。
 fn process_prefix() -> &'static str {
     static PREFIX: LazyLock<String> = LazyLock::new(|| {
         let ms = std::time::SystemTime::now()
@@ -78,7 +71,7 @@ fn process_prefix() -> &'static str {
 }
 
 impl TaskManager {
-    /// Register a new task, return (task_id, cancel_token, progress_guard).
+    /// 新建任务，返回 (task_id, 取消标志, 进度锁)。
     pub fn create(
         &self,
         name: &str,
@@ -127,17 +120,14 @@ impl TaskManager {
         }
     }
 
-    /// 暂停任务：设取消标志停下载 + 取走清理路径（保留已下载目录，恢复时文件级
-    /// sha1 幂等只补缺失） + 状态标 Paused + 移除内存注册。DB 快照保留（status=paused），
-    /// 供前端列表/恢复（resume_task 复用崩溃恢复路径重跑快照）。
-    /// 任务线程随后检测到 cancel flag 退出，其 set_cancelled 收尾因注册已移除而 no-op；
-    /// 它仍会 emit 一次 cancelled 事件，前端以 paused 状态为准忽略之。
+    /// 暂停：置取消标志停下载 + 取走清理路径（保留已下载目录，恢复只补缺失）+ 标 Paused + 移除内存注册；DB 快照保留
+    /// （paused），resume_task 复用崩溃恢复路径重跑。任务线程随 cancel flag 退出，其 set_cancelled 因注册已移除 no-op 但仍 emit cancelled，前端以 paused 为准。
     pub fn pause(&self, id: &str) -> bool {
         let paused = {
             let mut inner = self.inner.lock();
             if let Some(h) = inner.tasks.get_mut(id) {
                 h.cancel.store(true, Ordering::SeqCst);
-                // 取走清理路径：暂停不清目录（下载产物保留，恢复只补缺失文件）
+                // 取走清理路径：暂停不清目录，恢复只补缺失文件
                 let _ = h.cleanup_path.take();
                 if let Some(mut p) = h.progress.try_lock() {
                     p.status = TaskStatus::Paused;
@@ -150,7 +140,7 @@ impl TaskManager {
         if paused {
             // DB 标 paused（快照保留）；不持任何锁
             store::update_status(id, TaskStatus::Paused);
-            // 移除内存注册（与终态收口一致）；runner 线程随 cancel flag 自然退出
+            // 移除内存注册；runner 线程随 cancel flag 退出
             self.inner.lock().tasks.remove(id);
         }
         paused
@@ -161,11 +151,8 @@ impl TaskManager {
             let inner = self.inner.lock();
             if let Some(h) = inner.tasks.get(id) {
                 h.cancel.store(true, Ordering::SeqCst);
-                // 目录清理移交任务侧 set_cancelled 收口：此处同步 remove_dir_all
-                // 会阻塞 worker 线程（大版本目录删除数十秒）致前端"取消卡住"，
-                // 且删除与仍在跑的下载竞争写文件。
-                // progress 锁内只改内存状态；DB 写移到锁外——DB（sqlite）若因
-                // 文件锁/连接池卡住，不会持有 progress/inner 锁阻塞任务与取消。
+                // 目录清理移交任务侧 set_cancelled 收口：同步 remove_dir_all 会阻塞 worker（大目录数十秒）
+                // 且与仍在跑的下载竞争写文件。DB 写在 progress 锁外（DB 卡住不阻塞取消）。
                 if let Some(mut p) = h.progress.try_lock() {
                     p.status = TaskStatus::Cancelled;
                 }
@@ -175,24 +162,21 @@ impl TaskManager {
             }
         };
         if cancelled {
-            // 终态快照持久化（与 fail 收口一致）；不持任何锁
+            // 终态快照持久化；不持任何锁
             store::update_status(id, TaskStatus::Cancelled);
         }
         cancelled
     }
 
-    /// 取走任务清理路径（取消收口用）：任务侧退出、下载停止后异步整删，
-    /// 避免取消时与仍在写的下载竞争。
+    /// 取走任务清理路径（取消收口用）：任务侧退出后异步整删，避免与仍在写的下载竞争。
     pub fn take_cleanup_path(&self, id: &str) -> Option<std::path::PathBuf> {
         let mut inner = self.inner.lock();
         inner.tasks.get_mut(id).and_then(|h| h.cleanup_path.take())
     }
 
     pub fn fail(&self, id: &str) {
-        // 终态快照持久化：移除内存注册前记录 status（崩溃/重启后恢复依据）。
-        // 所有终态（done/error/cancelled）统一收口此处——DB 故障静默，不影响任务。
-        // 锁序统一 inner→progress（与 cancel/list 一致）；DB 写在 progress 锁
-        // 释放后进行——DB（sqlite）卡住不持有任何锁阻塞任务/取消。
+        // 终态（done/error/cancelled）唯一收口入口：移除内存注册前落 status 快照。
+        // 锁序 inner→progress；DB 写在 progress 锁释放后（DB 卡住不持锁阻塞任务/取消）。
         let status = self
             .inner
             .lock()
@@ -214,16 +198,13 @@ impl TaskManager {
             .collect()
     }
 
-    /// 任务是否仍注册（存在 = 运行中；终态已由 fail/remove 移除）。
-    /// 前端用于校正"预注册与终态事件竞态"：查不到即任务已结束。
+    /// 任务是否仍注册（存在 = 运行中；终态已由 fail/remove 移除）；前端据此校正预注册与终态事件竞态。
     pub fn exists(&self, id: &str) -> bool {
         self.inner.lock().tasks.contains_key(id)
     }
 
     pub fn remove(&self, id: &str) {
-        // 终态快照持久化（与 fail 收口一致）：完成/取消/失败统一写回终态 status，
-        // 否则完成任务快照残留 running，下次启动被 mark_crashed_as_interrupted
-        // 误标为"未完成任务"（横幅误报 + 忽略按钮泛滥）。
+        // 终态快照持久化：否则完成任务残留 running，下次启动被 mark_crashed_as_interrupted 误标为中断。
         // 锁序 inner→progress；DB 写在 progress 锁释放后进行（sqlite 2s 超时静默）。
         let status = self
             .inner
@@ -276,8 +257,7 @@ impl TaskManager {
 mod tests {
     use super::*;
 
-    /// 任务 id 跨进程唯一（带启动前缀）：否则重启后 `t0` 会与崩溃残留行撞主键，
-    /// `INSERT OR REPLACE` 覆盖后点「恢复」执行的将是另一个任务的 spec。
+    /// 任务 id 跨进程唯一（带启动前缀），否则重启后 `t0` 撞崩溃残留行主键。
     #[test]
     fn task_ids_carry_process_prefix_and_increment() {
         let tm = TaskManager::default();
@@ -291,8 +271,7 @@ mod tests {
         assert!(!process_prefix().is_empty());
     }
 
-    /// WaitingForUser：begin_wait 后轮询无决策；decide 后轮询命中；end_wait 清理；
-    /// 未挂起任务 decide 返回 false。
+    /// WaitingForUser：begin_wait 后轮询无决策 → decide 命中 → end_wait 清理；未挂起 decide 返回 false。
     #[test]
     fn waiting_decision_flow() {
         let tm = Arc::new(TaskManager::default());
@@ -324,8 +303,7 @@ mod tests {
         );
     }
 
-    /// remove 收口必须写回终态快照：完成任务若残留 running 快照，
-    /// 下次启动被 mark_crashed_as_interrupted 误标为"未完成任务"（横幅误报）。
+    /// remove 收口必须写回终态快照：否则完成任务残留 running，下次启动被误标为中断（横幅误报）。
     #[test]
     fn remove_persists_terminal_status_to_snapshot() {
         let tm = Arc::new(TaskManager::default());

@@ -9,24 +9,21 @@ pub fn url_file_name(url: &str) -> Option<&str> {
     url.rsplit('/').next().filter(|s| !s.is_empty())
 }
 
-/// sha1 前两位（assets/objects 子目录名）。长度不足 2 时回退 `"00"`：
-/// hash 来自远程索引或本地 JSON，裸切片 `&hash[..2]` 在畸形输入下会 panic
-/// （字节切片还可能落在多字节边界）。
+/// sha1 前两位（assets/objects 子目录名）；长度不足 2 回退 `"00"`（裸切片 `&hash[..2]`
+/// 在畸形输入 / 多字节边界会 panic）。
 pub fn sha1_sub_dir(hash: &str) -> &str {
     hash.get(..2).unwrap_or("00")
 }
 
-/// 相对路径安全校验（路径穿越防护）：拒绝空路径、绝对路径、含 `..` 或空段的输入。
-/// 返回校验后的相对路径，调用方自行 `join` 到目标根目录。
-/// 用于整合包清单条目名、zip 成员名、JDK runtime 条目名等**外部输入**的落盘路径。
+/// 相对路径安全校验（路径穿越防护）：拒绝空、绝对路径、含 `..` 或空段的输入；返回相对路径，
+/// 调用方自行 join 到目标根。用于整合包清单条目 / zip 成员 / JDK runtime 条目等外部输入的落盘路径。
 pub fn safe_relative_path(rel: &str) -> Result<PathBuf, String> {
     let rel = rel.trim();
     if rel.is_empty() || rel.starts_with('/') || rel.starts_with('\\') {
         bail!("非法文件路径\n{rel:?}");
     }
-    // Windows 盘符形态（`C:\evil` / `C:/evil` / `C:evil`）同样带前缀：`PathBuf::join`
-    // 遇到带前缀的路径会**清空已有根**，于是 `root.join("C:/evil")` 直接落到 `C:/evil`——
-    // 外部输入（zip 成员名 / 整合包清单 / JDK 包条目）可借此越过目标目录。
+    // Windows 盘符（`C:\evil` / `C:/evil` / `C:evil`）带前缀：`PathBuf::join` 遇带前缀路径会清空已有根，
+    // 外部输入（zip 成员 / 整合包清单 / JDK 包条目）可借此越过目标目录。
     if rel.as_bytes().get(1) == Some(&b':') {
         bail!("文件路径含盘符\n{rel:?}");
     }
@@ -39,21 +36,19 @@ pub fn safe_relative_path(rel: &str) -> Result<PathBuf, String> {
     Ok(PathBuf::from(rel))
 }
 
-/// JAVA_HOME 下 java 可执行文件的路径（bin/java(.exe)）。
-/// 扫描与启动共用，避免平台判定散落两处。
+/// JAVA_HOME 下 java 可执行文件路径（bin/java(.exe)）；扫描与启动共用。
 pub fn java_bin_path(home: &Path) -> PathBuf {
     let exe = if cfg!(windows) { "java.exe" } else { "java" };
     home.join("bin").join(exe)
 }
 
 /// 简单文件名/目录名判定（防路径穿越）：仅接受无路径分隔符、无 `..` 段的非空名。
-/// 供版本/存档/资源/图标等「读路径由调用方拼接」的命令前置校验统一使用。
 pub fn is_simple_name(name: &str) -> bool {
     !name.is_empty() && !name.contains(['/', '\\']) && !name.contains("..")
 }
 
-/// 目录条目枚举（文件或子目录，取决于 want_dir）：返回 (名称, 字节大小, 修改时间秒)。
-/// 目录不存在/不可读返回空 Vec（调用方多为列表类命令，静默空列表语义）。
+/// 目录条目枚举（want_dir 选文件或子目录）：返回 (名称, 字节大小, 修改时间秒)。
+/// 目录不存在/不可读返回空 Vec（列表类命令的静默空列表语义）。
 pub fn dir_entries(dir: &Path, want_dir: bool) -> Vec<(String, u64, u64)> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();

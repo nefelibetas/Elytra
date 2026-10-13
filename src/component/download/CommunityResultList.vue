@@ -1,7 +1,4 @@
 <script setup lang="ts">
-// 社区资源搜索结果列表（通用版）：六套 ResultList 收敛于此。
-// 加载/错误/空态 + 结果行 + 分页器（底部栏计数最右）；差异全部 props 化：
-// 搜索状态实例、总页数、类别文案、空态图标、详情回填加载器。
 import type { Component } from "vue";
 import type { CommunityDisplayItem } from "../../store/community/communitySearch";
 import { dlTranslateMode } from "../../store/config/downloaderConfig";
@@ -30,13 +27,10 @@ const props = withDefaults(
   defineProps<{
     /** 搜索状态实例（reactive 单例，只读展示 + 翻页调用 search） */
     search: CommunityResultState;
-    /** 总页数（computed 传入） */
     totalPages: number;
-    /** 类别名词（加载/空态文案复用），如「光影包」 */
     label: string;
-    /** 空态图标组件 */
     emptyIcon: Component;
-    /** 打开详情时回填的加载器（Mod 传 search.loader 保持响应式，其余缺省空串） */
+    /** 打开详情回填的加载器（Mod 传 search.loader 保持响应式） */
     detailLoader?: string;
   }>(),
   {
@@ -80,14 +74,13 @@ const props = withDefaults(
           </div>
         </div>
       </div>
-      <!-- 底部栏：分页器居中，结果计数固定最右侧 -->
       <div class="cs-footer">
         <div v-if="totalPages > 1" class="cs-pager">
           <button class="cs-pager-btn" :disabled="search.page <= 1" @click="search.search(search.page - 1)">上一页</button>
           <span class="cs-pager-info">{{ search.page }} / {{ totalPages }}</span>
           <button class="cs-pager-btn" :disabled="search.page >= totalPages" @click="search.search(search.page + 1)">下一页</button>
         </div>
-        <!-- 聚合（all）模式的 total 是去重后的已知下限而非精确总数，用「至少」避免误导；单源为精确值用「共」 -->
+        <!-- 聚合 all 的 total 是去重后下限，故用「至少」；单源精确用「共」 -->
         <span class="cs-result-count">{{ search.source === "all" ? "至少" : "共" }} {{ search.total }} 个结果</span>
       </div>
     </template>
@@ -121,7 +114,6 @@ const props = withDefaults(
 .cs-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; text-align: left; }
 .cs-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .cs-title { font-weight: 600; font-size: 13px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* 原名：与译名样式不一致（弱化、更小、常规字重） */
 .cs-title-en {
   font-size: 11px; font-weight: 400; color: var(--text-tertiary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -140,15 +132,13 @@ const props = withDefaults(
   flex-shrink: 0; font-size: 10px; font-weight: 600; padding: 0 5px;
   border-radius: 6px; background: var(--color-brand-bg); color: var(--color-brand);
 }
-/* 按加载器区分配色：与详情页 .md-ld-* 共用同一套 --ld-* token；
-   未匹配到的加载器（未来新增/第三方）保留品牌色兜底。 */
+/* 加载器配色：与详情页 .md-ld-* 共用 --ld-* token；未匹配的加载器保留品牌色兜底。 */
 .cs-ld.fabric { color: var(--ld-fabric); }
 .cs-ld.forge { color: var(--ld-forge); }
 .cs-ld.neoforge { color: var(--ld-neoforge); }
 .cs-ld.quilt { color: var(--ld-quilt); }
 .cs-ld.optifine { color: var(--ld-optifine); }
-/* 徽章底色：color-mix 需 WebKitGTK ≥ 2.42（Ubuntu 22.04 的 2.40 不支持）。
- * 不支持的平台降级为纯文字色徽章，避免整条声明失效丢色（与详情页同款降级）。 */
+/* 徽章底色用 color-mix，需 WebKitGTK ≥ 2.42（Ubuntu 22.04 的 2.40 不支持）；不支持时降级为纯文字色徽章，避免整条声明失效（与详情页同款降级）。 */
 @supports (color-mix(in srgb, red 12%, transparent)) {
   .cs-ld.fabric { background: color-mix(in srgb, var(--ld-fabric) 12%, transparent); }
   .cs-ld.forge { background: color-mix(in srgb, var(--ld-forge) 12%, transparent); }
@@ -161,9 +151,7 @@ const props = withDefaults(
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-/* 底部栏：分页器居中，结果计数固定最右侧。
- *  min-height 不能省：只有计数没有分页器时（结果不足一页）footer 会塌陷到纯 padding，
- *  绝对定位的计数就会紧贴最后一个条目，看起来像列表项而不是卡片右下角。 */
+/* 分页器居中、计数固定最右；min-height 不能省：仅计数时 footer 会塌陷，绝对定位的计数紧贴末条目。 */
 .cs-footer {
   position: relative;
   display: flex;

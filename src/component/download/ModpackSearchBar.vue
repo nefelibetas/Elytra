@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// 整合包搜索表单卡片：薄适配层 → CommunitySearchBar；「导入本地」为本类特例，经插槽注入。
 import { ref } from "vue";
 import { modpackSearch } from "../../store/community/categorySearch";
 import { importLocalModpack } from "../../store/task/modpack";
@@ -26,7 +25,7 @@ async function importLocal() {
 </template>
 
 <style scoped>
-/* 插槽内容编译于本组件作用域，通用组件的 scoped .cs-btn 不命中，此处复制按钮样式保持视觉一致 */
+/* 插槽内容编译于本组件作用域，通用组件的 scoped .cs-btn 不命中，故复制样式保持一致 */
 .cs-btn {
   padding: 6px 24px;
   border: 1px solid var(--border-default); border-radius: var(--radius-md);

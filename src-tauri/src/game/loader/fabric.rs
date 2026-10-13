@@ -9,10 +9,8 @@ use crate::downloader::fetcher::http;
 use crate::game::resource::library;
 use crate::game::version::model;
 
-/// profile 模板按源选取：Fabric/Quilt 各源模板不同（镜像只在 `fabric_profile_url`
-/// 上体现 BMCLAPI fabric-meta），循环内必须用**当前源自己的**模板构造 URL。
-/// `DownloadSource::url` 本身不使用 `self`、只替换传入模板，故若统一传主源模板，
-/// 每个源都会得到同一个 URL → 镜像永远拿不到请求、官方不可达时安装必然失败。
+/// profile 模板按源选取：Fabric/Quilt 各源模板不同（镜像只在 `fabric_profile_url` 上体现 BMCLAPI fabric-meta），循环内
+/// 必须用**当前源自己的**模板。`DownloadSource::url` 不用 self、只替换传入模板；统一传主源模板会让每源得到同一 URL。
 #[derive(Clone, Copy)]
 enum ProfileKind {
     Fabric,
@@ -28,8 +26,7 @@ impl ProfileKind {
     }
 }
 
-/// 逐源候选 `(源, URL)`，保持源顺序并跳过重复 URL（Quilt 两源模板相同 → 只请求一次，
-/// 避免"主源失败后对同一 URL 再等一遍"）。
+/// 逐源候选 `(源, URL)`，保持源顺序并跳过重复 URL（Quilt 两源模板相同 → 只请求一次，避免对同一 URL 再等一遍）。
 fn profile_candidates<'a>(
     kind: ProfileKind,
     sources: &[&'a DownloadSource],
@@ -50,9 +47,7 @@ fn profile_candidates<'a>(
     out
 }
 
-/// `dir_name`/`vdir` 由 runner 的目标目录解析传入（含冲突重命名 `{id}_n`）——
-/// 安装器自行计算会与 runner 的目标分裂：冲突场景 json/jar 写到原始目录而
-/// 新目录缺 json（启动报"未找到版本 JSON"）。
+/// `dir_name`/`vdir` 由 runner 传入（含冲突重命名 `{id}_n`）；自行计算会与 runner 目标分裂（新目录缺 json → 启动报"未找到版本 JSON"）。
 async fn install_loader_via_profile(
     mc_version: &str,
     loader_version: &str,
@@ -65,8 +60,7 @@ async fn install_loader_via_profile(
     let InstallCtx { config, pc, hook, cancel, .. } = ctx;
     let mc = config.minecraft_dir_abs();
 
-    // profile 逐源回退：官方 maven 在国内网络常不可达，镜像提供同一路径
-    // （此前循环内替换的是同一个主源模板，镜像 URL 从未被请求）
+    // profile 逐源回退：官方 maven 国内常不可达，镜像提供同一路径
     let mut fetched: Option<(serde_json::Value, &DownloadSource)> = None;
     let mut last_err = String::new();
     for (src, url) in profile_candidates(
@@ -181,9 +175,7 @@ mod tests {
     use super::*;
     use crate::downloader::endpoints;
 
-    /// 回归：多源回退必须使用**每个源自己的** profile 模板。
-    /// 此前循环内统一替换主源模板 → 官方与镜像得到同一个 URL，镜像从未被请求，
-    /// 官方 meta 不可达时 Fabric 安装直接失败（注释却声称可回退）。
+    /// 多源回退必须使用每个源自己的 profile 模板：官方与镜像得到同一 URL 时镜像从未被请求，官方不可达即安装失败。
     #[test]
     fn fabric_profile_candidates_include_mirror() {
         let sources = vec![endpoints::official_source(), endpoints::mirror_source()];

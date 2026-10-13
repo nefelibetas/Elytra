@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// 原版版本详情页：版本信息头 + ModLoader 选择卡片组（含 Fabric API）+ 下载
 import { ArrowLeft, X, ChevronDown } from "@lucide/vue";
 import {
   vdState, displayLoaders, loaderIcon, vanillaIcon,
@@ -16,8 +15,7 @@ function startDownload() {
   vdState.startDownload();
 }
 
-// 详情页仅选中版本时挂载，但切版本/退出时组件可能多存活一帧（Transition 离场），
-// 此时 selectedVersion 已置 null：用空对象兜底，模板 sv().id 取 "" 不产生白屏/报错。
+// Transition 离场期组件可能多存活一帧且 selectedVersion 已为 null，用空对象兜底避免模板报错。
 const EMPTY_VERSION: VersionMeta = {
   id: "", type: "", url: "", time: "", releaseTime: "", sha1: "", complianceLevel: 0,
 };
@@ -49,8 +47,7 @@ const sv = () => vdState.selectedVersion ?? EMPTY_VERSION;
               <template v-else-if="vdState.loaderLoading[ld.key]">正在加载...</template>
               <template v-else-if="vdState.getLoaderVersions(ld.key, sv().id).length">可以添加</template>
               <template v-else>无</template>
-              <!-- Fabric/Quilt 的 loader 版本无关（meta 不按 MC 版本过滤），
-                   列表内任何版本（含最新）与当前 MC 的兼容性均未验证，需手动确认 -->
+              <!-- Fabric/Quilt loader 版本无关（meta 不按 MC 版本过滤）：任何版本兼容性均未验证，需手动确认 -->
               <span v-if="ld.key === 'fabric' || ld.key === 'quilt'" class="det-ld-warn" v-tooltip="'该加载器为版本无关构建，meta 不按 MC 版本过滤；最新版也可能与当前 MC 不兼容，安装前请确认'">兼容性需确认</span>
             </span>
           </span>
@@ -195,8 +192,7 @@ const sv = () => vdState.selectedVersion ?? EMPTY_VERSION;
 .dl-btn:active:not(:disabled) { transform: scale(0.97); }
 .dl-done { font-size: 14px; font-weight: 600; color: var(--color-success); text-align: center; padding: 10px 40px; }
 
-/* expand：目标高度由共享骨架（styles/transitions.css）提供，此处仅注入 --expand-h。
-   与展开区自身 max-height 一致（320px），内容超高时内部滚动不撑出窗口 */
+/* expand 目标高度由共享骨架（styles/transitions.css）提供；须与 max-height 320px 一致，超高时内部滚动 */
 .det-ld-body { border-top: 1px solid var(--border-default); max-height: 320px; overflow-y: auto; --expand-h: 320px; }
 
 /* loader cards */

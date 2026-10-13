@@ -1,5 +1,4 @@
-//! 启动环境准备：加载配置、解析版本 JSON、完整性检查、JDK 匹配、游戏语言。
-//! 命令层（commands/launch.rs）的启动前置逻辑集中于此。
+//! 启动前置（commands/launch.rs 调用）：加载配置、解析版本 JSON、完整性检查、JDK 匹配、游戏语言。
 
 use std::path::PathBuf;
 
@@ -18,9 +17,7 @@ use crate::launcher::model::LaunchOptions;
 use crate::persist::{self, downloader_config, launch_options};
 use crate::util::{java_bin_path, parse_java_major, sha1_sub_dir};
 
-/// 按 JDK 选择配置解析实际使用的 JDK 版本字符串：
-/// - Manual：在扫描缓存中按 path 匹配，返回其 version；
-/// - Auto / 未匹配：None（调用方自行给兜底文案）。
+/// 按 JDK 选择配置解析实际使用的 JDK 版本字符串；Manual 在扫描缓存中按 path 匹配，Auto/未匹配返回 None。
 pub fn selected_jdk_version(options: &JdkOptions, cache: &JdkScanCache) -> Option<String> {
     match &options.selection {
         JdkSelection::Manual { path } => cache
@@ -66,8 +63,7 @@ pub fn load_launch_config(
         launch_option
     };
 
-    // minecraft_dir 可能是相对路径（默认 ".minecraft"），统一转绝对，
-    // 避免 classpath / natives 路径基于 java 进程 cwd 解析出错
+    // minecraft_dir 可能是相对路径（默认 ".minecraft"），统一转绝对，避免 classpath/natives 基于 java cwd 解析出错
     let mc_dir = dl_config.minecraft_dir_abs();
 
     // 实例级自动任务覆盖（实例文件存在则完全采用其自动任务，否则沿用全局）
@@ -113,18 +109,13 @@ pub fn load_launch_config(
         bail!("未找到 Java 可执行文件\n{}", java_path.display());
     }
 
-    // 解析 Java 主版本号
     let java_major = parse_java_major(&java_env.version)
         .ok_or_else(|| format!("无法解析 JDK 版本号\n{}", java_env.version))?;
 
     Ok((java_path, version_json, mc_dir, launch_option, java_major))
 }
 
-/// 读取版本 JSON 并展开 inheritsFrom 继承。
-/// HMCL/官方安装器等生成的 ModLoader 版本 json 常为继承式（只含自身库 +
-/// inheritsFrom 指向原版，父库在父版本 json 里）——直接解析会缺父库导致
-/// 启动失败。Elytra 自装版本（merge_loader_profile）已是完整 json 无继承，
-/// 原样返回；父版本 json 缺失时明确报错（引导补装原版）。
+/// 读取版本 JSON 并展开 inheritsFrom 继承（ModLoader json 常为继承式，直接解析缺父库；父版本 json 缺失时报错）。
 fn load_version_json_with_inheritance(
     mc_dir: &std::path::Path,
     version_dir_name: &str,
@@ -137,7 +128,6 @@ fn load_version_json_with_inheritance(
     let mut vj_value: serde_json::Value =
         serde_json::from_str(&vj_text).map_err(common_err_ctx!("解析版本 JSON 失败"))?;
 
-    // 展开继承链：子库 + 父库合并、子关键字段覆盖、删 inheritsFrom
     while let Some(parent_id) = vj_value.get("inheritsFrom").and_then(|v| v.as_str()) {
         let parent_path = mc_dir
             .join("versions")
@@ -191,10 +181,7 @@ pub fn pre_launch_check(
         missing.push(msg);
     }
 
-    // 3. assets index（存在 + sha1 校验）+ 资源对象扫描。
-    // 此前仅检查索引文件是否存在——索引损坏（镜像返回错误页/半截文件）或资源对象
-    // 缺失/被截断（BMCLAPI minio 存储异常时返回 567/429 错误页覆盖对象）都会"通过"
-    // 完整性检查，游戏启动后表现为无声音/无语言文件/贴图缺失。此处补齐两层校验。
+    // 3. assets index（存在 + sha1 校验）+ 资源对象扫描（索引损坏或对象缺失/被截断会漏检 → 无声音/无语言/贴图缺失）。
     let assets_dir = mc_dir.join("assets");
     let index_path = assets_dir
         .join("indexes")
@@ -212,10 +199,7 @@ pub fn pre_launch_check(
                     index_path.display()
                 ));
             } else {
-                // 索引可信 → 扫描资源对象（objects/{sub}/{hash}）。
-                // 对象数可达数千，逐个 sha1 会让每次启动多花数秒；改为存在 + 文件大小校验
-                // （metadata 极廉价）：缺失/被截断/错误页覆盖（大小不符）都能可靠捕获，
-                // 正好覆盖镜像存储异常这一实际故障场景。
+                // 对象数可达数千，逐个 sha1 每启动多花数秒；改为存在 + 文件大小校验（可捕获缺失/截断/错误页）。
                 match serde_json::from_slice::<AssetsIndex>(&index_bytes) {
                     Err(e) => {
                         missing.push(format!("资源索引解析失败（文件已损坏）: {e}"));
@@ -261,14 +245,12 @@ pub fn pre_launch_check(
     }
 }
 
-/// options.txt 行 upsert：替换以 `key:` 开头的行，不存在则追加（文件不存在时创建）。
-/// apply_game_language（lang）与 skin.rs（resourcePacks）共用。
+/// options.txt 行 upsert：替换以 `key:` 开头的行，不存在则追加（文件不存在时创建）；与 skin.rs（resourcePacks）共用。
 pub fn upsert_option(options_path: &std::path::Path, key: &str, value: &str) {
     let line = format!("{key}:{value}");
     let content = match std::fs::read_to_string(options_path) {
         Ok(c) => c,
         Err(_) => {
-            // 文件不存在：预写，游戏首次启动沿用
             if let Some(parent) = options_path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
@@ -296,16 +278,12 @@ pub fn upsert_option(options_path: &std::path::Path, key: &str, value: &str) {
     let _ = std::fs::write(options_path, out);
 }
 
-/// 游戏语言：自动设置为中文。
-/// 1.13+ 游戏启动时读取 gameDir/options.txt 的 `lang` 字段，
-/// 存在则替换，否则追加（文件不存在时创建，游戏启动后保留该值）。
+/// 游戏语言：自动中文；1.13+ 启动时读 gameDir/options.txt 的 `lang` 字段，存在则替换否则追加。
 pub fn apply_game_language(game_dir: &std::path::Path) {
     upsert_option(&game_dir.join("options.txt"), "lang", "zh_cn");
 }
 
-/// 从已扫描的 JDK 列表中自动选择最合适的版本。
-/// 优先精确匹配需求版本；否则选最低但满足需求的版本；再不行选最高版本。
-/// （`pub(crate)`：启动侧与 ModLoader 安装器 processors 链共用同一套按需选择。）
+/// 从已扫描 JDK 列表选最合适者：优先精确匹配，否则最低但满足需求，再不行取最高（列表可空 → None）；pub(crate) 与 ModLoader 安装器 processors 共用。
 pub(crate) fn auto_pick_jdk(discovered: &[JdkInfo], required: u32) -> Option<JdkInfo> {
     let mut candidates: Vec<(u32, &JdkInfo)> = discovered
         .iter()
@@ -355,19 +333,14 @@ mod tests {
                 bits: 64,
             },
         ];
-        // 精确匹配
         assert_eq!(auto_pick_jdk(&list, 21).unwrap().path, "/jdk21");
-        // 无精确匹配时选最低但满足的
         assert_eq!(auto_pick_jdk(&list, 17).unwrap().path, "/jdk17");
         assert_eq!(auto_pick_jdk(&list, 11).unwrap().path, "/jdk17");
-        // 都不满足时用最高版本
         assert_eq!(auto_pick_jdk(&list, 22).unwrap().path, "/jdk21");
-        // 空列表
         assert!(auto_pick_jdk(&[], 8).is_none());
     }
 
-    /// 继承式版本（HMCL/官方安装器风格）：子 json 只有自身库 + inheritsFrom 父指针，
-    /// 展开后应合并父库、子关键字段覆盖、父版本缺失时明确报错。
+    /// 继承式版本（HMCL/官方安装器风格）：展开后合并父库、子关键字段覆盖、父缺失时报错。
     #[test]
     fn version_json_expands_inheritance() {
         let tmp = std::env::temp_dir().join(format!("elytra_inh_{}", std::process::id()));
@@ -397,7 +370,6 @@ mod tests {
             "子 mainClass 应覆盖父"
         );
 
-        // 父版本缺失：明确报错
         std::fs::remove_dir_all(&parent).unwrap();
         let err = load_version_json_with_inheritance(&tmp, "1.20.1-forge-47.1.0").unwrap_err();
         assert!(err.contains("父版本 JSON"), "应提示父版本缺失: {err}");
@@ -405,8 +377,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// find_version_json：PCL2 版本隔离实例目录混有游戏数据 json（字典序在前），
-    /// 应跳过它们取到真正的版本 json（优先同名；否则含 mainClass 的）。
+    /// find_version_json：PCL2 隔离实例目录混有游戏数据 json（字典序在前），应跳过取真正版本 json。
     #[test]
     fn find_version_json_picks_real_version_json() {
         let tmp = std::env::temp_dir().join(format!("elytra_vj_{}", std::process::id()));
@@ -428,7 +399,6 @@ mod tests {
             .to_string();
         assert_eq!(name, "愚者.json", "应跳过游戏数据 json 取到版本 json");
 
-        // 标准布局：同名 json 优先
         let dir2 = tmp.join("versions/1.20.1");
         std::fs::create_dir_all(&dir2).unwrap();
         std::fs::write(
@@ -443,21 +413,15 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// pre_launch_check 资源完整性：
-    ///  ① 索引 + 对象齐全（大小匹配）→ 通过；
-    ///  ② 对象被截断（大小不符）→ 报"缺失/损坏资源文件"；
-    ///  ③ 索引本身 sha1 不匹配（损坏）→ 报"资源索引校验失败"。
-    /// 覆盖此前"仅检查索引文件存在"导致镜像坏内容/缺失对象漏检的场景。
+    /// pre_launch_check 资源完整性：① 索引 + 对象齐全 → 通过；② 对象截断 → 报"缺失/损坏资源文件"；③ 索引 sha1 不匹配 → 报校验失败。
     #[test]
     fn pre_launch_check_detects_asset_corruption() {
         let tmp = std::env::temp_dir().join(format!("elytra_assetchk_{}", std::process::id()));
         let mc = &tmp;
         let vdir = mc.join("versions/1.20.1");
         std::fs::create_dir_all(&vdir).unwrap();
-        // 客户端 JAR（非 0 字节）
         std::fs::write(vdir.join("1.20.1.jar"), b"CLIENTJAR").unwrap();
 
-        // 资源对象：一个 "hello world" 内容，hash 即其 sha1
         let obj_body = b"hello world";
         let obj_hash = sha1_hex(obj_body);
         let obj_size = obj_body.len() as u64;
@@ -465,7 +429,6 @@ mod tests {
         std::fs::create_dir_all(&objects_dir).unwrap();
         std::fs::write(objects_dir.join(&obj_hash), obj_body).unwrap();
 
-        // 资源索引 JSON（引用上面的对象），并计算其 sha1
         let index_json =
             format!(r#"{{"objects":{{"minecraft/x":{{"hash":"{obj_hash}","size":{obj_size}}}}}}}"#);
         let index_sha1 = sha1_hex(index_json.as_bytes());
@@ -473,7 +436,6 @@ mod tests {
         std::fs::create_dir_all(&index_dir).unwrap();
         std::fs::write(index_dir.join("5.json"), &index_json).unwrap();
 
-        // 版本 JSON：assetIndex 指向 id=5、上面算出的 sha1；无 libraries、client 走目录扫描兜底
         let vj: VersionJson = serde_json::from_str(&format!(
             r#"{{
                 "id":"1.20.1","mainClass":"net.minecraft.client.main.Main","assets":"5",
@@ -487,23 +449,19 @@ mod tests {
         ))
         .unwrap();
 
-        // ① 全齐 → 通过
         assert!(
             pre_launch_check(&vj, mc, "1.20.1").is_ok(),
             "索引 + 对象齐全应通过完整性检查"
         );
 
-        // ② 对象被截断（大小不符）→ 应报缺失/损坏
         std::fs::write(objects_dir.join(&obj_hash), b"short").unwrap();
         let err = pre_launch_check(&vj, mc, "1.20.1").unwrap_err();
         assert!(
             err.contains("缺失/损坏资源文件"),
             "对象大小不符应被捕获: {err}"
         );
-        // 恢复对象
         std::fs::write(objects_dir.join(&obj_hash), obj_body).unwrap();
 
-        // ③ 索引损坏（内容改动 → sha1 不匹配）→ 应报索引校验失败
         std::fs::write(index_dir.join("5.json"), format!("{index_json} ")).unwrap();
         let err = pre_launch_check(&vj, mc, "1.20.1").unwrap_err();
         assert!(

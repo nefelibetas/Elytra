@@ -1,5 +1,3 @@
-//! ModLoader 版本查询命令（薄胶水，业务在 downloader/mod_loader/version_query.rs）。
-
 use crate::game::loader::version_query;
 
 #[tauri::command]

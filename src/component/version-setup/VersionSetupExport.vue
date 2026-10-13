@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// 版本设置-导出 tab：导出启动脚本（PCL 风格 .bat/.sh）+ 导出整合包（mods/config 等 → zip）。
-// 启动脚本逻辑从原概览页迁移；整合包为版本内容打包。
+// 版本设置-导出 tab：启动脚本（PCL 风格 .bat/.sh）+ 整合包（MRPACK zip）。
 import { computed } from "vue";
 import { useRoute } from "vue-router";
 import { CodeXml, Package } from "@lucide/vue";
@@ -22,7 +21,6 @@ const scriptExt = isWin ? "bat" : "sh";
 /** 游戏 id（版本目录名），由路由 query 传入。 */
 const versionName = computed(() => String(route.query.name ?? ""));
 
-/** 导出启动脚本：保存对话框选路径 → 后端按 PCL 风格生成平台对应脚本。 */
 async function exportScript() {
   try {
     const path = await save({
@@ -31,8 +29,7 @@ async function exportScript() {
     });
     if (!path) return; // 用户取消
 
-    // 收集当前登录态，生成可直接启动的命令
-    // 注意：auth store 的 AuthMode 是 "premium" | "offline"，后端命令参数约定是 "online" | "offline"
+    // auth store 的 AuthMode 为 premium|offline；后端命令参数用 online|offline
     let username = "";
     let accessToken = "";
     let uuid = "";
@@ -49,7 +46,6 @@ async function exportScript() {
       uuid = acc.uuid;
       xuid = acc.xuid;
     } else {
-      // 优先当前输入框用户名（未启动过也正确），回退上次保存，最后 Steve
       username =
         offlineUsername.value.trim() ||
         (await loadLastUsername()) ||
@@ -71,9 +67,7 @@ async function exportScript() {
   }
 }
 
-/** 导出整合包：把版本的 mods/config/shaderpacks/resourcepacks/datapacks 打包为
- * 标准 MRPACK（Modrinth 格式 v1，overrides 物理打包 + 空 files），
- * 任意支持 mrpack 的启动器可导入（存档不打包）。 */
+/** 导出整合包：mods/config/shaderpacks/resourcepacks/datapacks 打包为标准 MRPACK（Modrinth v1，overrides 物理打包 + 空 files，存档不打包）。 */
 async function exportModpack() {
   try {
     const path = await save({
@@ -91,7 +85,6 @@ async function exportModpack() {
 
 <template>
   <div class="vs-page">
-    <!-- 导出启动脚本 -->
     <div class="setup-card">
       <div class="setup-card-title">导出启动脚本</div>
       <div class="setup-desc">
@@ -106,7 +99,6 @@ async function exportModpack() {
       </div>
     </div>
 
-    <!-- 导出整合包 -->
     <div class="setup-card">
       <div class="setup-card-title">导出整合包</div>
       <div class="setup-desc">
@@ -124,7 +116,6 @@ async function exportModpack() {
 </template>
 
 <style scoped>
-/* 导出页：占满右侧剩余空间，内容超出自身滚动 */
 .vs-page {
   flex: 1;
   min-height: 0;
@@ -132,7 +123,6 @@ async function exportModpack() {
   overflow-x: hidden;
 }
 
-/* 卡片 */
 .setup-card {
   background: var(--surface-card);
   border: 1px solid var(--border-default);

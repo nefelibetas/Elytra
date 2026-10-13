@@ -1,5 +1,4 @@
-// ── JDK 安装任务（下载缺失 Java 运行时）──
-// 从 runner.rs 拆出：单步任务主体，与完整下载 runner 解耦。
+// ── JDK 安装任务（下载缺失 Java 运行时）── 单步任务主体。
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -17,11 +16,8 @@ use crate::task::progress::{
 };
 use crate::task::{self, EventSink, StepStatus, TaskProgress, TaskStatus};
 
-/// JDK 安装任务主体：按 jdk_source_mode 三态回退链（jdk::download::auto_install：
-/// 官方 → Adoptium[TUNA 镜像] → Azul），
-/// 完成后注册进 jdk 扫描缓存（jdk_scanned section）。单步任务，进度照 files.rs 心跳模式：
-/// 原子计数器（文件数 + 字节增量）+ 150ms 心跳（EMA 速度/ETA），终态由
-/// set_error/set_cancelled/收尾 done 独占发出，心跳随 status 离开 Running 自退出。
+/// JDK 安装主体：按 jdk_source_mode 三态回退链（auto_install：官方 → Adoptium[TUNA 镜像] → Azul），完成后注册进 jdk 扫描缓存。
+/// 单步任务，进度照 files.rs 心跳模式：原子计数器 + 150ms 心跳（EMA 速度/ETA）；终态由 set_error/set_cancelled/收尾 done 独占发出，心跳随 status 离开 Running 自退出。
 pub async fn run_install_jdk(
     sink: Arc<dyn EventSink>,
     cancel: &Arc<AtomicBool>,
@@ -36,7 +32,7 @@ pub async fn run_install_jdk(
         return;
     };
 
-    // 原子计数器（下载回调写入，心跳读取）
+    // 原子计数器（回调写入，心跳读取）
     let counts = JdkCounters::new();
 
     let emit_handle = spawn_jdk_heartbeat(sink.clone(), progress.clone(), &counts);
@@ -71,9 +67,7 @@ pub async fn run_install_jdk(
     settle_jdk_install(sink.as_ref(), progress, cancel, &dest_dir, emit_handle, result);
 }
 
-/// 准备阶段：同目录互斥 + 半截目录清理登记 + Running 相位。
-/// 锁冲突（另一任务正装同 major）或已取消时自行收口并返回 None；
-/// 返回的锁由调用方持有至任务结束。
+/// 同目录互斥 + 半截目录清理登记 + Running 相位；锁冲突或已取消时自行收口返回 None，返回的锁由调用方持有至任务结束。
 fn begin_jdk_install(
     app: &dyn EventSink,
     progress: &Arc<Mutex<TaskProgress>>,
@@ -81,7 +75,7 @@ fn begin_jdk_install(
     dest_dir: &Path,
     major: u32,
 ) -> Option<PathLock> {
-    // 同目录互斥：另一任务正安装同 major 时拒绝（可预期，不半途而废）
+    // 同目录互斥：另一任务正安装同 major 时拒绝
     let lock = match PathLock::try_acquire(dest_dir) {
         Some(l) => l,
         None => {
@@ -94,10 +88,8 @@ fn begin_jdk_install(
         }
     };
 
-    // 取消/失败时整删半截 runtime 目录：managed 目录程序专属（可重下），
-    // 半截残留会误导 auto_install 的幂等检查（bin/java.exe 已存在即误判已装）。
-    // 先取 task_id 释放 progress 守卫再调 set_cleanup_path（后者取 inner 锁），
-    // 否则构成 progress→inner 反向锁序（与 fail/list 的 inner→progress 成 ABBA）。
+    // 取消/失败时整删半截 runtime 目录：半截残留会误导 auto_install 幂等检查（bin/java.exe 存在即误判已装）。先取 task_id
+    // 释放 progress 守卫再调 set_cleanup_path（后者取 inner 锁），否则构成 progress→inner 反向锁序（与 fail/list 的 inner→progress 成 ABBA）。
     let cleanup_task_id = progress.try_lock().map(|p| p.task_id.clone());
     if let Some(task_id) = cleanup_task_id {
         task::global().set_cleanup_path(&task_id, dest_dir.to_path_buf());
@@ -139,14 +131,7 @@ impl JdkCounters {
     }
 }
 
-/// 进度心跳：150ms，速度按相邻采样差分 + EMA 平滑；status 离开 Running 即退出。
-/// 未换用 progress::spawn_heartbeat——语义有差异：
-/// 1) 字节口径为 acc_bytes + cur_bytes（累计 + 当前文件）双计数器合成，
-///    spawn_heartbeat 只接受单一 bytes 计数器；
-/// 2) 额外维护 steps[0] 的当前文件字节占比（步骤级进度），
-///    spawn_heartbeat 无步骤进度逻辑；
-/// 3) 不覆写 total_bytes（由 on_total 钩子经 set_total 设置），也不写 p.status，
-///    spawn_heartbeat 每拍以 est_total_bytes 覆写总量并强置 Running。
+/// 进度心跳（150ms，相邻采样差分 + EMA 平滑；status 离开 Running 即退出）。与 progress::spawn_heartbeat 语义不同故未复用：字节口径为 acc_bytes+cur_bytes 双计数器，额外维护 steps[0] 占比，不覆写 total_bytes/status。
 fn spawn_jdk_heartbeat(
     sink: Arc<dyn EventSink>,
     progress: Arc<Mutex<TaskProgress>>,

@@ -1,10 +1,8 @@
 // ── 平台级运行调节：GPU 偏好 / 内存优化 / 进程优先级 ──
-// 纯逻辑无命令依赖，由 spawn_game 在启动前后调用。
 
 use crate::launcher::model::ProcessPriority;
 
-/// 设置 Windows DirectX 用户 GPU 偏好（HKCU\Software\Microsoft\DirectX\UserGpuPreferences）。
-/// 开启：java.exe → GpuPreference=2;（高性能独显）；关闭：删除该项。
+/// 设置 Windows DirectX 用户 GPU 偏好（HKCU\...\DirectX\UserGpuPreferences）；开启 java.exe → GpuPreference=2，关闭则删项。
 pub fn apply_gpu_preference(enabled: bool) {
     #[cfg(target_os = "windows")]
     {
@@ -87,8 +85,7 @@ pub fn apply_gpu_preference(enabled: bool) {
             'j' as u16, 'a' as u16, 'v' as u16, 'a' as u16, '.' as u16, 'e' as u16, 'x' as u16,
             'e' as u16, 0,
         ];
-        // SAFETY: KEY_PATH/VALUE_NAME/DATA 均为含结尾 0 的静态 UTF-16 切片，指针与长度一致；
-        // key 由 RegCreateKeyExW 输出且已判空，RegSetValueExW 的字节数按 u16 个数 ×2 传入，最后关闭句柄。
+        // SAFETY: KEY_PATH/VALUE_NAME/DATA 是含结尾 0 的静态 UTF-16 切片，指针与长度一致；key 由 RegCreateKeyExW 输出且已判空，RegSetValueExW 按 u16 个数 ×2 传字节数，最后关闭句柄。
         unsafe {
             let mut key: *mut std::ffi::c_void = std::ptr::null_mut();
             let r = RegCreateKeyExW(
@@ -134,8 +131,7 @@ pub fn apply_gpu_preference(enabled: bool) {
 /// 启动前内存优化：将启动器进程工作集降至最低（Windows SetProcessWorkingSetSize）。
 pub fn optimize_launcher_memory() {
     #[cfg(target_os = "windows")]
-    // SAFETY: GetCurrentProcess 返回的伪句柄恒为当前进程、无需且不可关闭；
-    // 两参数取 usize::MAX 是 Win32 约定的“清空工作集”，句柄有效，调用无指针解引用风险。
+    // SAFETY: GetCurrentProcess 返回的伪句柄恒为当前进程、无需且不可关闭；两参数取 usize::MAX 是 Win32 约定的"清空工作集"，调用无指针解引用风险。
     unsafe {
         #[link(name = "Kernel32")]
         extern "system" {
@@ -173,8 +169,7 @@ pub fn set_process_priority(pid: u32, priority: ProcessPriority) {
             fn CloseHandle(h_object: *mut std::ffi::c_void) -> i32;
         }
         const PROCESS_SET_INFORMATION: u32 = 0x0200;
-        // SAFETY: OpenProcess 返回的句柄已判空，非空时为有效进程句柄；SetPriorityClass/CloseHandle
-        // 均在该句柄有效期内调用，CloseHandle 只释放一次。
+        // SAFETY: OpenProcess 句柄已判空，非空时为有效进程句柄；SetPriorityClass/CloseHandle 均在该句柄有效期内调用，CloseHandle 只释放一次。
         unsafe {
             let handle = OpenProcess(PROCESS_SET_INFORMATION, 0, pid);
             if !handle.is_null() {

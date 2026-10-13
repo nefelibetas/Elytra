@@ -1,9 +1,6 @@
 <script setup lang="ts">
-// 图标/图片占位组件：加载前显示大号原版游戏（草方块）图标占位，
-// 加载完成后淡入真实图片；请求失败保持占位。
-// 加载状态由独立 Image() 探针驱动（先绑监听再赋 src，事件必达）；
-// 实测 Modrinth CDN 图标当前网络失败率高（307 目标节点概率性黑洞）：
-// 探针带 6s 超时 + 失败重试 2 次（共 3 次尝试），仍失败才显示占位。
+// 图标/图片占位组件：加载前显示原版草方块图标，加载完成淡入真实图片，失败保持占位；由独立 Image() 探针驱动（先绑监听再赋 src）。
+// Modrinth CDN 图标失败率高（307 目标节点概率性黑洞）；探针 6s 超时 + 重试 2 次（共 3 次尝试）后仍失败才显示占位。
 import { onBeforeUnmount, ref, watch } from "vue";
 import { Box } from "@lucide/vue";
 
@@ -15,9 +12,7 @@ const failed = ref(false);
 const PROBE_TIMEOUT_MS = 6000;
 const PROBE_RETRIES = 2;
 
-// 探针取消机制：src 变化或组件卸载时 token 自增，旧探针的回调只在 token
-// 仍匹配时才写状态——否则上一张图的超时结果会覆盖新图（列表翻页后图标错乱），
-// 卸载后探针还会继续重试到 18s。
+// 探针取消：src 变化或卸载时 token 自增，旧回调仅 token 匹配才写状态（否则旧图超时结果覆盖新图，致翻页图标错乱）。
 let probeToken = 0;
 let probeTimer: ReturnType<typeof setTimeout> | null = null;
 

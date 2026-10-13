@@ -1,5 +1,4 @@
-// 社区资源搜索 store（Modrinth / CurseForge 聚合，覆盖 Mod/光影/资源包等）：模块级 reactive 单例，页面与组件直接 import。
-// 来源为本地状态：Modrinth 无需 key；CurseForge 需 .env 配置的 API Key（后端校验）
+// 社区资源搜索 store（Modrinth / CurseForge 聚合）：模块级 reactive 单例，页面与组件直接 import。来源为本地状态：Modrinth 无需 key，CurseForge 需 .env 配置的 API Key（后端校验）。
 import { reactive, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { dlTranslateMode } from "../config/downloaderConfig";
@@ -8,14 +7,11 @@ import { errMsg } from "../../utils/error";
 export interface CommunitySearchResult {
   id: string;
   title: string;
-  /** 内置百科表提供的中文译名（无译名/未开启翻译为 null） */
   title_zh: string | null;
   /** MC百科条目 id（内置表 slug 匹配；未收录为 null）→ https://www.mcmod.cn/class/{id}.html */
   mcmod_id: number | null;
   description: string;
-  /** MCIM 中文简介翻译（无翻译/未开启翻译为 null） */
   translated: string | null;
-  /** 支持的 ModLoader（fabric/forge/neoforge/quilt，可能为空） */
   loaders: string[];
   /** 支持的 MC 游戏版本范围（"最低 ~ 最高"；无则 null） */
   game_version_range: string | null;
@@ -23,7 +19,6 @@ export interface CommunitySearchResult {
   downloads: number;
   icon_url: string | null;
   page_url: string;
-  /** 搜索结果所属分类（shader/worlds 等；普通 mod 搜索为 null） */
   category: string | null;
 }
 
@@ -50,16 +45,13 @@ export interface CommunityVersion {
   sha1: string | null;
   date_published: string;
   downloads: number;
-  /** 版本类型（两源归一）：release | beta | alpha | unknown */
   version_type: string;
-  /** 该版本文件的依赖列表（两源归一：project_id + relation） */
   dependencies: CommunityDependency[];
 }
 
 /** 版本文件依赖（镜像 Rust downloader::community::CommunityDependency）。 */
 export interface CommunityDependency {
   project_id: string;
-  /** required | optional | incompatible | embedded */
   relation: string;
 }
 
@@ -69,16 +61,13 @@ export interface CommunityDependencyItem {
   title: string;
   description: string;
   icon_url: string | null;
-  /** MCIM 中文简介翻译（翻译关闭/未命中为 null，UI 降级显示原文） */
   translated: string | null;
 }
 
-/** 查询项目版本文件列表（Modrinth/CurseForge 均支持；分类项目同样适用）。 */
 export function fetchVersions(source: string, projectId: string): Promise<CommunityVersion[]> {
   return invoke<CommunityVersion[]>("get_community_versions", { source, projectId });
 }
 
-/** 批量查询项目详情（前置依赖卡片数据源；同源查询；按翻译模式决定是否查中文简介）。 */
 export function fetchCommunityDetails(source: string, ids: string[]): Promise<CommunityDependencyItem[]> {
   return invoke<CommunityDependencyItem[]>("get_community_details", { source, ids, translate: needsTranslation() });
 }
@@ -95,10 +84,9 @@ export const modLoaderOptions = [
   { value: "quilt", label: "Quilt" },
 ];
 
-/** 首次进入 Mod 页自动搜索热门只触发一次（重置后不重复自动触发） */
 let autoSearched = false;
 
-/** 剥离 markdown/KaTeX 标记（Modrinth 描述支持 KaTeX，`$$...$$`、`**加粗**` 等会原样返回，UI 纯文本显示需清洗） */
+/** 剥离 markdown/KaTeX 标记（Modrinth 描述支持 KaTeX，标记会原样返回，UI 纯文本需清洗） */
 export function cleanText(s: string): string {
   return s
     .replace(/\$\$(.*?)\$\$/g, "$1")
@@ -129,13 +117,8 @@ export function needsTranslation(): boolean {
   return dlTranslateMode.value !== "en";
 }
 
-/** 聚合搜索：两源并发，单源失败降级为空；按标题去重保留下载量高的一侧。
- *  `category` 为项目类型过滤（如 "shader"），普通 mod 传 null。
- *  `pageSize` 每源条数：聚合模式传页大小一半（15），合并去重后展示 ≤15 条。
- *  返回的 `maxKnownTotal` 为「已知总量下限」：两源各自的 `total` 是平台精确命中数，
- *  聚合去重后真实总数需拉全两源才能得（跨源标题去重无法离线求并），故取两者较大值——
- *  并集 ≥ 任一源，因此它是下限；同时与分页口径一致（每页每源各取 15 条、offset 同步推进，
- *  能翻到的最深页数正是 ceil(max/每源页大小)）。**不要改成 sum**（去重后会重复计数）。 */
+/** 聚合搜索：两源并发，单源失败降级为空；按标题去重保留下载量高的一侧。`pageSize` 每源条数（聚合传 15）。
+ *  返回 `maxKnownTotal` = 两源 total 较大值（已知总量下限，真实并集需拉全两源）；**勿改成 sum**（去重后会重复计数）。 */
 export async function searchAllSources(
   query: string,
   gameVersion: string,
@@ -243,7 +226,6 @@ export const communitySearch = reactive({
     this.search();
   },
 
-  /** 首次进入 Mod 页自动搜索热门（对齐 PCL2）；仅触发一次 */
   ensureAutoSearch() {
     if (autoSearched || this.searching) return;
     autoSearched = true;

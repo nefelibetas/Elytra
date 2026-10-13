@@ -1,6 +1,5 @@
 //! 已安装版本目录域：定位 / 枚举 / 建目录 / 重命名 / 删除。
-//! 命令层（commands/version.rs / downloader.rs / gamedirs.rs / version_icon.rs）只做参数透传。
-//! 基准 = downloader section 的 minecraft_dir（相对值按平台默认基准解析）。
+//! 路径基准 = downloader section 的 minecraft_dir（相对值按平台默认基准解析）。
 
 use crate::config::downloader::DownloaderConfig;
 use crate::config::game_dirs;
@@ -15,15 +14,13 @@ pub fn active_minecraft_dir() -> PathBuf {
     config.minecraft_dir_abs()
 }
 
-/// 自动激活结果：激活的目录路径 + 该目录下第一个版本名。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AutoActivate {
     pub dir_path: String,
     pub version: String,
 }
 
-/// 检测所有已配置的游戏目录，激活第一个存在游戏版本的目录，并返回其第一个版本。
-/// 版本名按字母序取第一个；目录按配置列表顺序检测。
+/// 按配置列表顺序检测游戏目录，激活首个存在版本者，返回其字母序第一个版本名。
 pub fn auto_activate_first_version() -> Result<AutoActivate, String> {
     let dirs = game_dirs::ensure_initialized();
     for d in &dirs {
@@ -61,8 +58,7 @@ pub fn version_dir_path(version_name: &str) -> Result<PathBuf, String> {
 }
 
 /// 版本级服务器直连配置的 persist section 名：`version_server_{版本目录名}`。
-/// 版本名会直接成为 TOML 顶层 key，因此与其他「名字进路径/键」的命令一致做简单名校验，
-/// 避免异常名产生非预期的键（这也是全仓 `SECT_*` 常量约定之外的唯一动态 section）。
+/// 版本名会直接成为 TOML 顶层 key，故做简单名校验（全仓唯一动态 section）。
 pub fn version_server_section(version_name: &str) -> Result<String, String> {
     if !is_simple_name(version_name) {
         return Err("版本名非法\n仅允许不含路径分隔符与 `..` 的名称".into());
@@ -70,17 +66,14 @@ pub fn version_server_section(version_name: &str) -> Result<String, String> {
     Ok(format!("version_server_{version_name}"))
 }
 
-/// 已安装版本信息（get_installed_versions 返回项）。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct InstalledVersionInfo {
     pub name: String,
-    /// 从版本 json 推断的 loader（fabric/forge/neoforge/optifine/vanilla）；
-    /// json 读取失败（非版本目录）时为空串
+    /// 从版本 json 推断的 loader；json 读取失败（非版本目录）时为空串
     pub loader: String,
 }
 
-/// 枚举已安装版本（versions/ 下子目录），loader 从目录内 json 特征推断
-/// （PCL2 实例目录名可能无 loader 标记）。按名称排序。
+/// 枚举 versions/ 下子目录，loader 从目录内 json 推断（PCL2 实例名可能无 loader 标记），按名排序。
 pub fn list_installed() -> Result<Vec<InstalledVersionInfo>, String> {
     let versions_dir = active_minecraft_dir().join("versions");
     if !versions_dir.exists() {
@@ -94,7 +87,7 @@ pub fn list_installed() -> Result<Vec<InstalledVersionInfo>, String> {
                 return None;
             }
             let name = entry.file_name().to_string_lossy().to_string();
-            // 从版本 json 推断 loader（PCL2 实例目录名可能无 loader 标记）
+            // 目录名可能无 loader 标记，须读 json 推断
             let loader = find_version_json(&entry.path(), &name)
                 .and_then(|p| std::fs::read_to_string(p).ok())
                 .map(|t| infer_loader_from_json(&t))
@@ -106,8 +99,8 @@ pub fn list_installed() -> Result<Vec<InstalledVersionInfo>, String> {
     Ok(items)
 }
 
-/// 确保版本对应文件夹存在（不存在则创建），返回其绝对路径（快捷方式按钮用）。
-/// 版本隔离：游戏运行时 gameDir = versions/{name}，存档/mod 实际都位于版本目录下。
+/// 确保版本文件夹存在（不存在则创建）并返回绝对路径（快捷方式按钮用）。
+/// 版本隔离：gameDir = versions/{name}，存档/mod 位于版本目录下。
 pub fn ensure_kind_folder(kind: &str, version_name: &str) -> Result<String, String> {
     let base = active_minecraft_dir();
     let sub = match kind {
@@ -141,11 +134,9 @@ pub fn rename_version_dir(version_name: &str, new_name: &str) -> Result<(), Stri
     std::fs::rename(&from, &to).map_err(common_err_ctx!("重命名失败"))
 }
 
-/// 删除版本文件夹（递归删除 versions/{name}）。
-/// 大目录删除耗时，命令层用 tokio::fs（内部 spawn_blocking）避免阻塞主线程。
+/// 递归删除 versions/{name}；大目录耗时，故用 tokio::fs 避免阻塞主线程。
 pub async fn delete_version_dir(version_name: &str) -> Result<(), String> {
-    // 目录名必须先校验：`..` / 分隔符会被 `join` 带出 versions/（`..` 即 `.minecraft` 根，
-    // 一次调用就能整删游戏数据），UI 的改名/删除输入是自由文本，不能只靠前端。
+    // 必须先校验目录名：`..`/分隔符经 `join` 会带出 versions/（`..` 即整删游戏数据），UI 输入不可信。
     if !is_simple_name(version_name) {
         bail!("非法的版本目录名");
     }
@@ -158,8 +149,7 @@ pub async fn delete_version_dir(version_name: &str) -> Result<(), String> {
         .map_err(common_err_ctx!("删除失败"))
 }
 
-/// 解析版本目录名：`versions/{id}` 冲突时追加 `_{n}`。
-/// 目录存在但缺 client jar（上次下载中断）→ 复用目录重新下载，避免残留残缺版本。
+/// 版本目录名：`versions/{id}` 已存在且含 client jar 时追加 `_{n}`；缺 jar（下载中断）则复用原目录。
 pub fn resolve_version_dir(mc: &Path, version_id: &str) -> (String, PathBuf) {
     let base = mc.join("versions").join(version_id);
     if !base.exists() {
@@ -175,7 +165,7 @@ pub fn resolve_version_dir(mc: &Path, version_id: &str) -> (String, PathBuf) {
             return (name, dir);
         }
     }
-    // 循环为无限 RangeFrom（命中即 return），此处仅为满足类型检查
+    // 循环必 return，此行仅为类型检查
     unreachable!()
 }
 
@@ -185,7 +175,7 @@ mod tests {
 
     #[test]
     fn version_server_section_rejects_unsafe_names() {
-        // 空名 / 路径分隔符 / `..` 段都会让版本名直接污染 TOML 顶层 key
+        // 空名 / 分隔符 / `..` 会污染 TOML 顶层 key
         assert!(version_server_section("").is_err());
         assert!(version_server_section("../evil").is_err());
         assert!(version_server_section("a/b").is_err());

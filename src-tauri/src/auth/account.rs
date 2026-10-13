@@ -1,5 +1,4 @@
-//! 账号域服务：登录回调处理、远程资源下载（base64）。
-//! 命令层（commands/account.rs）只做薄封装，协议在 microsoft.rs，API 在 mojang.rs。
+//! 账号域服务：登录回调、远程资源下载（base64）；协议在 microsoft.rs，API 在 mojang.rs。
 
 use crate::auth;
 use crate::constants;
@@ -35,15 +34,9 @@ fn unix_now() -> u64 {
         .unwrap_or(0)
 }
 
-/// 取当前正版账号，并确保其凭证可用：临近过期时才用 refresh_token 静默刷新并回写列表。
-///
-/// 背景：`MsAccount.expires_at` 此前只在写入时设置、**从未被读取**，于是所有用 token 的功能
-/// （披风 / 皮肤 / 启动）拿到的都可能是已过期的缓存值 —— MC token 只有约 24h 有效期，
-/// 过期后表现为 401，而账号仍在列表里（就是「明明已登录却失败」的假象）。
-///
-/// 注意与 `refresh_ms_account` 的区别：后者**无条件**走完整微软登录链（MS token → Xbox Live
-/// → XSTS → MC login，四五次网络往返），作为「启动游戏前每次跑一遍」太重；本函数只在
-/// `expires_at` 已到/临近时才付这份代价。
+/// 取当前正版账号并确保凭证可用：仅当 `expires_at` 距过期不足 [`TOKEN_REFRESH_SKEW_SECS`]
+/// 时用 refresh_token 静默刷新并回写列表。
+/// 区别于 `refresh_ms_account`（后者无条件走完整微软登录链，四次网络往返，较重）。
 pub async fn ensure_valid_account() -> Result<auth::model::MsAccount, String> {
     let account = auth::model::read().ok_or_else(|| "尚未登录正版账号".to_string())?;
     if account.expires_at > unix_now() + TOKEN_REFRESH_SKEW_SECS {
@@ -58,7 +51,6 @@ pub async fn ensure_valid_account() -> Result<auth::model::MsAccount, String> {
     Ok(refreshed)
 }
 
-/// 只要 token 字符串的便捷入口（披风 / 皮肤等 API 调用与启动参数注入共用）。
 pub async fn valid_access_token() -> Result<String, String> {
     ensure_valid_account().await.map(|a| a.access_token)
 }
@@ -80,8 +72,7 @@ pub async fn fetch_b64(url: &str, err_prefix: &str) -> Result<String, String> {
     Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
 
-/// 启动 Microsoft 登录的浏览器回调等待（含超时），完成后端口自动释放。
-/// 结果经 `ms-login-complete` 事件推送。
+/// 等待微软登录的浏览器回调（含超时），完成后端口自动释放；结果经 `ms-login-complete` 推送。
 pub async fn wait_callback(
     sink: Arc<dyn EventSink>,
     listener: tokio::net::TcpListener,
@@ -102,14 +93,13 @@ pub async fn wait_callback(
     }
 }
 
-/// 处理一次浏览器回调：解析 code + state，完成登录，emit 结果。
 async fn handle_callback(
     mut stream: tokio::net::TcpStream,
     state: &str,
     pkce: &auth::microsoft::Pkce,
     app: &dyn EventSink,
 ) {
-    // 从流中最多读取4096字节
+    // 最多读 4096 字节
     let mut buf = [0u8; 4096];
     let read = match stream.read(&mut buf).await {
         Ok(n) => n,
@@ -119,10 +109,9 @@ async fn handle_callback(
         }
     };
     let request = String::from_utf8_lossy(&buf[..read]).to_string();
-    // 提取首行: GET /xxx
+    // 提取首行 GET 请求行
     let first_line = request.lines().next().unwrap_or("").to_string();
 
-    // 解析 GET 请求的 query
     let query = first_line
         .split_whitespace()
         .nth(1)
@@ -138,7 +127,6 @@ async fn handle_callback(
             Some((k, url_decode(&v)))
         })
         .collect();
-    // 解析, 获取关键数据
     let (ok, account, error, http_status) = if let Some(err) = params.get("error") {
         (false, None, Some(format!("授权被拒绝\n{err}")), 400)
     } else {
@@ -169,7 +157,7 @@ fn emit_result(
     account: Option<auth::model::MsAccount>,
     error: Option<String>,
 ) -> Result<(), tauri::Error> {
-    // 队列线程派发：回调服务线程不因 webview 未消费而阻塞（与 task-progress 同机制）
+    // 队列线程派发：回调服务线程不因 webview 未消费而阻塞
     task::emit_event(
         app,
         events::MS_LOGIN_COMPLETE,
@@ -208,13 +196,11 @@ pub struct CapeInfo {
     pub alias: String,
     pub url: String,
     pub active: bool,
-    /// 披风贴图 base64（WebView 无 http 插件，前端无法自行访问 textures.minecraft.net CDN）；
-    /// 下载失败置空串——贴图是装饰性资源，不应让整个列表失败。
+    /// 披风贴图 base64（WebView 无 http 插件）；下载失败置空串：装饰性资源不应拖垮列表。
     pub texture: String,
 }
 
-/// 拉取官方披风列表（GET /minecraft/profile，需 Bearer token），
-/// 并并发拉取每条披风的贴图 base64（供前端 3D 预览）。
+/// 拉取官方披风列表（GET /minecraft/profile，需 Bearer token）并并发拉取贴图 base64（供 3D 预览）。
 pub async fn fetch_capes(access_token: &str) -> Result<Vec<CapeInfo>, String> {
     let resp = http_client(15)?
         .get("https://api.minecraftservices.com/minecraft/profile")
@@ -238,7 +224,7 @@ pub async fn fetch_capes(access_token: &str) -> Result<Vec<CapeInfo>, String> {
         })
         .collect();
 
-    // 贴图并发下载（各披风独立，单个失败只影响自身 → 空串）
+    // 贴图并发下载：单个失败只影响自身 → 空串
     let textures = futures_util::future::join_all(list.iter().map(|c| {
         let url = c.url.clone();
         async move {
@@ -285,7 +271,7 @@ pub async fn disable_cape(access_token: &str) -> Result<(), String> {
 }
 
 /// 上传本地皮肤文件到官方账号（读盘 → [`upload_skin_bytes`]）。
-/// 注意：披风没有公开上传端点（官方仅支持网页/游戏内上传），故只有皮肤走此通道。
+/// 披风无公开上传端点（仅网页/游戏内上传），故只有皮肤走此通道。
 pub async fn upload_skin(access_token: &str, file_path: &str, variant: &str) -> Result<(), String> {
     let bytes = tokio::fs::read(file_path)
         .await
@@ -293,10 +279,8 @@ pub async fn upload_skin(access_token: &str, file_path: &str, variant: &str) -> 
     upload_skin_bytes(access_token, bytes, variant).await
 }
 
-/// 上传皮肤字节到官方账号（POST multipart: variant + file）。
-///
-/// **bytes → 上传的唯一入口**：本地文件（[`upload_skin`]）走这里，字节直接进
-/// multipart，不落临时文件。`variant` 由调用方校验（CLASSIC / SLIM）。
+/// 上传皮肤字节（POST multipart: variant + file）：bytes → 上传的唯一入口，不落临时文件。
+/// `variant` 由调用方校验（CLASSIC / SLIM）。
 pub async fn upload_skin_bytes(
     access_token: &str,
     bytes: Vec<u8>,
@@ -311,7 +295,7 @@ pub async fn upload_skin_bytes(
                 .mime_str("image/png")
                 .map_err(common_err_ctx!("构造上传失败"))?,
         );
-    // 官方文档实测为 POST（PUT 在认证通过后返回 405 Method Not Allowed）
+    // 必须 POST（PUT 认证通过后返回 405）
     let resp = http_client(30)?
         .post("https://api.minecraftservices.com/minecraft/profile/skins")
         .bearer_auth(access_token)

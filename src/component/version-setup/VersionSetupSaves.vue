@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// 版本设置-存档管理 tab：标题卡（打开存档文件夹）+ 列表卡（世界缩略图 + 名称 + 最后游玩）。
-// 多选交互：点击 item 选中，底部 action 栏全选/取消 + 批量删除。
+// 版本设置-存档管理 tab：标题卡（打开存档文件夹）+ 列表卡（缩略图 + 名称 + 最后游玩），支持多选批量删除。
 import { computed, ref, onMounted, onUnmounted } from "vue";
 import { useRoute } from "vue-router";
 import { Folder, Trash2, Map } from "@lucide/vue";
@@ -23,20 +22,15 @@ import {
 
 const route = useRoute();
 
-/** 游戏 id（版本目录名），由路由 query 传入。 */
 const versionName = computed(() => String(route.query.name ?? ""));
 
-/** 多选状态：点击 item 切换选中，底部 action 栏批量操作。 */
 const { selected, selectedSet, selecting, allVisibleSelected, toggle, toggleAll, clear } =
   useSelectable(computed(() => worlds.value.map(w => w.name)));
 
-/** 删除确认弹窗：目标名（选中单项时）或"N 项"批量文案。 */
 const deleteDialog = ref(false);
 const deleteLabel = ref("");
-/** 待删除列表（确认后逐个消费）。 */
 const deletePending = ref<string[]>([]);
 
-/** 批量删除选中项：一次确认后逐个删除。 */
 function doBatchDelete() {
   const names = [...selected.value];
   if (names.length === 0) return;
@@ -45,7 +39,6 @@ function doBatchDelete() {
   deleteDialog.value = true;
 }
 
-/** 确认删除：逐个执行，完成后刷新列表并清空选中。 */
 async function confirmDelete() {
   const names = [...deletePending.value];
   deleteDialog.value = false;
@@ -66,17 +59,15 @@ async function confirmDelete() {
 
 onMounted(async () => {
   if (!versionName.value) return;
-  // 缓存命中（切 Tab 回来/刚从主页进入）不重新加载，避免 loading 闪烁
+  // 缓存命中则跳过加载，避免 loading 闪烁
   if (worldsLoadedFor.value !== versionName.value) {
     await loadWorlds(versionName.value);
   }
-  // 存档实时性轮询：游戏运行中新建/删除存档自动反映（缩略图由 store 级 watch 补载）
+  // 实时轮询存档：游戏运行中新建/删除自动反映（缩略图由 store watch 补载）
   startWorldsLivePolling(versionName.value);
 });
 
 onUnmounted(() => stopWorldsLivePolling());
-
-/** 打开地图编辑器窗口（独立 WebView；初始定位到该存档）。 */
 
 /** 打开存档文件夹（目录不存在先创建）。 */
 async function openSavesFolder() {
@@ -136,7 +127,7 @@ async function openSavesFolder() {
       </div>
        </div>
 
-    <!-- 底部 action 栏：选中 ≥1 时滑出，固定列表卡底部 -->
+    <!-- 底部 action 栏：选中 ≥1 时出现，固定列表卡底部 -->
     <Transition name="fade">
       <div v-if="selecting" class="vs-actions-bar vs-bar-boxed">
         <button class="vs-ab-btn" @click="toggleAll">
@@ -186,7 +177,6 @@ async function openSavesFolder() {
   border-radius: var(--radius-md);
 }
 
-/* 标题卡 */
 .vss-head-card {
   flex: none;
   display: flex;
@@ -227,7 +217,6 @@ async function openSavesFolder() {
   color: var(--color-brand);
 }
 
-/* 列表卡（占满剩余高度，内容区内滚动） */
 .vss-list-card {
   flex: 1;
   min-height: 0;

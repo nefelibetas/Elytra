@@ -1,12 +1,8 @@
-//! 下载链按 jdk_source_mode 三态路由：
-//! - auto（默认）：**并发速率探测**各源后按速度排序安装——每端实际下载前 2 MB
-//!   计算有效吞吐量（含代理场景的真实表现），最快优先；不可达源排在最后兜底。
-//!   解决 HEAD 探测通过但大文件下载卡死的"探测欺骗"问题。
-//! - officialOnly：仅 Mojang 官方 → Azul（固定链，不探测）。
-//! - mirrorOnly：Mojang（走文件源镜像）→ Adoptium 仅 TUNA（固定链，不探测）。
+//! JDK 下载/安装，按 jdk_source_mode 三态路由：
+//! - auto（默认）：并发速率探测各源（每端实下前 2 MB 算有效吞吐，含代理真实表现）按速度排序安装，
+//!   规避“HEAD 通过但下载卡死”；不可达源排最后。officialOnly：Mojang→Azul；mirrorOnly：Mojang→Adoptium 仅 TUNA（固定链）。
 //!
-//! 下载目录：`{minecraft_dir}/runtime/{platform}/{version}/`，完成后经
-//! `scanner::inspect` 校验版本并注册进 persist 的 jdk_scanned section（扫描缓存）。
+//! 目录 `runtime/{platform}/java-{major}/`；完成后 scanner::inspect 校验并注册 jdk_scanned 缓存。
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -36,9 +32,7 @@ pub struct InstallProgress<'a> {
     pub on_file_done: Option<&'a (dyn Fn() + Send + Sync)>,
 }
 
-/// 按 Java 主版本映射 Mojang runtime 组件名（all.json 的键）。
-/// 官方启动器为 1.20.5+ 用 epsilon（25）、1.18-1.20.4 用 delta（21）、
-/// 1.16-1.17 用 gamma（17）、1.7-1.8 用 jre-legacy（8）。
+/// 按 Java 主版本映射 Mojang runtime 组件名（all.json 键）：8→jre-legacy、17→gamma、21→delta、25→epsilon。
 fn component_for_major(major: u32) -> Option<&'static str> {
     match major {
         8 => Some("jre-legacy"),
@@ -49,9 +43,6 @@ fn component_for_major(major: u32) -> Option<&'static str> {
     }
 }
 
-/// 当前平台在 all.json 中的平台键。
-/// 用 `cfg!` 而非 `#[cfg]` 块语句：多块写法下 rust-analyzer 会把 cfg 剥离后的
-/// 上一块误判为语句（E0308 expected (), found &'static str），rustc 则正常。
 fn platform_key() -> &'static str {
     if cfg!(target_os = "windows") {
         "windows-x64"
@@ -72,14 +63,12 @@ fn platform_key() -> &'static str {
     }
 }
 
-/// 当前平台/架构是否受支持的 managed runtime 目标（64 位 x64/arm64）。
-/// 32 位（i686/x86/arm）等罕见架构 Minecraft 生态不支持，明确拒绝而非静默误判为 x64。
+/// 是否受支持的 managed runtime 目标（仅 64 位 x64/arm64；32 位架构 Minecraft 生态不支持，明确拒绝）。
 fn is_supported_runtime_target() -> bool {
     cfg!(any(target_arch = "x86_64", target_arch = "aarch64"))
 }
 
-/// 统一入口：按 jdk_source_mode 三态选择回退链（见 installer_chain）。
-/// 已装同 major 的 managed runtime 时直接返回（幂等）。
+/// 统一入口：按 jdk_source_mode 三态选择回退链；已装同 major 时直接返回（幂等）。
 pub async fn auto_install(
     major: u32,
     config: &DownloaderConfig,
@@ -89,9 +78,8 @@ pub async fn auto_install(
         return Err("当前架构不受支持（仅支持 64 位 x64/arm64）".into());
     }
     let dest_dir = runtime_dir(config, major);
-    // 已下载过：直接校验返回（兼容多种安装布局：Mojang 直接含 bin/；
-    // Adoptium/Azul 顶层为 jdk-*/、zulu*/ 子目录——递归定位 java 根后再 inspect，
-    // 否则装的 runtime 每次启动都会被误判未装而重下整个包）
+    // 已装同 major 则校验返回；Adoptium/Azul 顶层为 jdk-*/zulu*/ 子目录，
+    // 需递归定位 java 根，否则每次启动都误判未装而重下整包
     if let Some(home) = find_java_home(&dest_dir) {
         if let Ok(info) = scanner::inspect(&home) {
             if parse_java_major(&info.version) == Some(major) {
@@ -100,8 +88,7 @@ pub async fn auto_install(
         }
     }
 
-    // Auto（智能）模式：下载前并发速率探测各源，最快优先安装；
-    // OfficialOnly/MirrorOnly 单选语义不变（固定链，不探测）。
+    // Auto：先并发探测各源按速度排序；其余模式固定链（顺序敏感）。
     let chain: Vec<(JdkInstaller, &'static str)> = match config.jdk_source_mode {
         JdkSourceMode::Auto => build_speed_chain(major, config).await,
         JdkSourceMode::OfficialOnly => vec![
@@ -148,8 +135,7 @@ async fn run_installer(
     }
 }
 
-/// 各源模式的回退链（纯安装器列表，不含标签）；Auto 模式探测后使用此函数获取
-/// 待排序候选，fixed_chain（officialOnly/MirrorOnly）直接使用返回结果。
+/// 各源模式的回退链（纯安装器列表，不含标签）；Auto 探测后据此排序。
 fn installer_chain(mode: JdkSourceMode) -> Vec<JdkInstaller> {
     match mode {
         JdkSourceMode::OfficialOnly => vec![JdkInstaller::Mojang, JdkInstaller::Azul],
@@ -165,7 +151,6 @@ fn installer_chain(mode: JdkSourceMode) -> Vec<JdkInstaller> {
     }
 }
 
-/// 为指定安装器构造可测速的文件 URL（async，因为需要查 API 拿文件名）。
 async fn speed_probe_url_for(
     installer: &JdkInstaller,
     major: u32,
@@ -296,9 +281,7 @@ async fn fetch_all_json_content_sync(major: u32, config: &DownloaderConfig) -> O
     None
 }
 
-/// Auto 模式：并发速率探测各源后按速率排序安装顺序。
-/// 每端实际下载前 2 MB 计算有效吞吐量，最快优先；不可达源排在最后兜底。
-/// 全不可达则保持默认排序不变。
+/// Auto 模式：并发速率探测各源（每端实下前 2 MB 算有效吞吐）按速率降序排序；全不可达保持默认序。
 async fn build_speed_chain(
     major: u32,
     config: &DownloaderConfig,
@@ -341,7 +324,7 @@ async fn build_speed_chain(
         }
     }
 
-    // 按速度降序排序（速度相同保持稳定顺序），不可达放后面
+    // 按速度降序（相同则保持稳定顺序），不可达排后
     results.sort_by(|a, b| {
         b.speed
             .speed_bps
@@ -355,8 +338,7 @@ async fn build_speed_chain(
         .collect()
 }
 
-/// managed runtime 安装目录：`{minecraft_dir}/runtime/{platform}/java-{major}/`。
-/// pub(crate)：任务侧（task/runner.rs）用于路径互斥。
+/// managed runtime 目录 `{minecraft_dir}/runtime/{platform}/java-{major}/`；pub(crate)：task/runner.rs 用于路径互斥。
 pub(crate) fn runtime_dir(config: &DownloaderConfig, major: u32) -> PathBuf {
     config
         .minecraft_dir_abs()
@@ -365,7 +347,6 @@ pub(crate) fn runtime_dir(config: &DownloaderConfig, major: u32) -> PathBuf {
         .join(format!("java-{major}"))
 }
 
-/// 下载并安装 Mojang 官方 runtime。
 async fn install_mojang_runtime(
     major: u32,
     config: &DownloaderConfig,
@@ -385,9 +366,7 @@ async fn install_mojang_runtime(
     let all: serde_json::Value =
         serde_json::from_str(&all_text).map_err(common_err_ctx!("解析 runtime 索引失败"))?;
 
-    // 2. 平台 → 组件 → 版本列表（取最新一条的 manifest）。
-    // 注意实际结构：顶层键是平台（windows-x64/mac-os-arm64/...），
-    // 组件（java-runtime-gamma 等）在第二层（顶层同名键为空占位，勿取）。
+    // 2. 取平台→组件第一条 manifest（组件键在第二层；顶层同名键为空占位，勿取）
     let entry = all[&platform][component]
         .as_array()
         .and_then(|arr| arr.first())
@@ -428,8 +407,7 @@ async fn install_mojang_runtime(
     let manifest: serde_json::Value =
         serde_json::from_str(&manifest_text).map_err(common_err_ctx!("解析 manifest 失败"))?;
 
-    // 4. 统计文件条目与总字节（进度基线），逐文件下载到 runtime 目录
-    //（目录条目建目录，文件条目 sha1 校验下载，link 条目跳过）
+    // 4. 统计文件条目/总字节（进度基线），逐文件下载（目录建目录、文件 sha1 校验、link 跳过）
     let dest_root = runtime_dir(config, major);
     let files = manifest["files"]
         .as_object()
@@ -470,8 +448,7 @@ async fn install_mojang_runtime(
                     .iter()
                     .map(|s| s.mirror_url(url))
                     .collect();
-                // 字节增量回调：闭包需 Fn（fetch 内部按块调用），统一走
-                // delta_callback 差分助手（见其文档：不换 ProgressCounters::byte_callback）
+                // 字节回调走 delta_callback 差分助手（闭包需 Fn，fetch 内部按块调用）
                 let cb = delta_callback(hook.on_bytes);
                 fetcher::fetch_verified_c(&urls, &dest, Some(cb), sha1, hook.cancel)
                     .await
@@ -481,8 +458,7 @@ async fn install_mojang_runtime(
                 }
             }
             "link" => {
-                // 官方 manifest 的 symlink 条目主要在 unix 平台；Windows runtime 无此条目。
-                // 此处跳过（Java 运行所需实体文件均已逐一下载）。
+                // symlink 条目主要在 unix 平台，跳过（实体文件均已逐一下载）
             }
             other => {
                 bail!("未知 runtime 文件类型\n{other:?}（{path}）");
@@ -501,11 +477,8 @@ async fn install_mojang_runtime(
     Ok(info)
 }
 
-/// Adoptium（Eclipse Temurin）回退：官方 API 查最新 GA 包（含 sha256 checksum）→
-/// TUNA 清华镜像优先下载（国内带宽）、404/失败回退官方 link → sha256 校验 →
-/// 解压（zip/tar.gz）→ inspect。
-/// `tuna_only`（mirrorOnly 模式）：下载候选仅 TUNA，官方 link 不参与——
-/// 元数据仍走官方 API（TUNA 只镜像文件、不提供 checksum，属不可绕过的例外）。
+/// Adoptium（Temurin）回退：官方 API 查最新 GA 包（含 sha256）→ TUNA 优先、失败回退官方 link
+/// → sha256 校验 → 解压（zip/tar.gz）→ inspect。`tuna_only`（mirrorOnly）：候选仅 TUNA。
 async fn install_adoptium_runtime(
     major: u32,
     config: &DownloaderConfig,
@@ -553,8 +526,7 @@ async fn install_adoptium_runtime(
         .unwrap_or("")
         .to_string();
 
-    // 2. 下载候选：TUNA 镜像优先（文件名与官方一致，直接构造 URL）；
-    // Auto 模式先探测 TUNA 与官方 TTFB，快者优先、慢者作下载中降级兜底
+    // 2. TUNA 优先（文件名与官方一致，直接构造 URL）；Auto 先探测 TTFB，快者优先、慢者降级兜底
     let tuna_url = tuna_package_url(major, arch, os, &name);
     let mut urls = vec![tuna_url.clone()];
     if !tuna_only {
@@ -573,8 +545,7 @@ async fn install_adoptium_runtime(
         }
     }
 
-    // 3. 下载 → sha256 校验（下载时 sha1 传空：先凭 HTTP 成功取包，
-    // 整包校验与 Azul 路径同构）→ 解压 → inspect
+    // 3. 下载（sha1 传空，整包 sha256 校验与 Azul 路径同构）→ 校验 → 解压 → inspect
     let ext = if name.ends_with(".tar.gz") || name.ends_with(".tgz") {
         "tar.gz"
     } else {
@@ -629,7 +600,6 @@ fn adoptium_platform() -> (&'static str, &'static str) {
     (os, arch)
 }
 
-/// TUNA 镜像文件 URL：Adoptium 官方文件名与镜像完全一致，按镜像目录结构直接构造。
 fn tuna_package_url(major: u32, arch: &str, os: &str, name: &str) -> String {
     format!(
         "{}/{major}/jdk/{arch}/{os}/{name}",
@@ -637,8 +607,7 @@ fn tuna_package_url(major: u32, arch: &str, os: &str, name: &str) -> String {
     )
 }
 
-/// 源层排序决策（纯逻辑，便于单测）：官方探测可用且快于 TUNA → 官方优先；
-/// 官方探测失败/更慢 → TUNA 优先（现状默认）。探测失败不剔除候选，仅排序。
+/// 源层排序（纯逻辑便于单测）：官方可用且快于 TUNA → 官方优先，否则 TUNA 优先；探测失败不剔除候选。
 fn prefer_official_over_tuna(official_ok: bool, official_ttfb_ms: u64, tuna_ttfb_ms: u64) -> bool {
     official_ok && official_ttfb_ms < tuna_ttfb_ms
 }
@@ -681,8 +650,7 @@ fn extract_zip(package: &Path, dest_root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// tar.gz 解压（Adoptium mac/linux 包格式）。条目路径先剥 `./` 前缀再过
-/// safe_runtime_path；符号链接等特殊条目跳过（JDK 包内实体文件已逐一下载，无链接依赖）。
+/// tar.gz 解压（Adoptium mac/linux）：条目剥 `./` 后过 safe_runtime_path，符号链接等特殊条目跳过。
 fn extract_tar_gz(package: &Path, dest_root: &Path) -> Result<(), String> {
     let file = std::fs::File::open(package).map_err(common_err_ctx!("打开 JDK 包失败"))?;
     let gz = flate2::read::GzDecoder::new(file);
@@ -771,7 +739,7 @@ async fn install_azul_runtime(
     // 下载 zip → sha256 校验（单包：字节增量回调 + 完成后文件计数）
     let zip_path = temp_file(&format!("azul-java-{major}.zip"));
     let urls: Vec<String> = vec![download_url.clone()];
-    // 字节增量回调：同 Mojang 路径，统一走 delta_callback 差分助手
+    // 字节回调同 Mojang 路径，统一走 delta_callback 差分助手
     let cb = delta_callback(hook.on_bytes);
     fetcher::fetch_verified_c(&urls, &zip_path, Some(cb), "", hook.cancel)
         .await
@@ -793,7 +761,6 @@ async fn install_azul_runtime(
     extract_archive(&zip_path, &dest_root)?;
     let _ = std::fs::remove_file(&zip_path);
 
-    // 找到含 bin/java(.exe) 的 JDK 根目录（zip 顶层目录名不定）
     let home = find_java_home(&dest_root).ok_or("解压后未找到 JDK 根目录")?;
     let info = scanner::inspect(&home).map_err(common_err_ctx!("校验 Azul JDK 失败"))?;
     if parse_java_major(&info.version) != Some(major) {
@@ -829,10 +796,8 @@ fn temp_file(name: &str) -> PathBuf {
     dir.join(name)
 }
 
-/// 字节增量回调工厂：闭包自持水位原子，swap-prev 差分出本次增量转给 `on_bytes`。
-/// 不换 ProgressCounters::byte_callback：JDK 安装链路没有 ProgressCounters 步骤计数，
-/// 字节进度经 InstallProgress::on_bytes 回调上报、由任务侧自行聚合，消费端与
-/// 全局计数器原子不同构。
+/// 字节增量回调工厂：闭包自持水位原子，swap-prev 差分增量转给 `on_bytes`；
+/// 不复用 byte_callback（JDK 链路无步骤计数，消费端不同构）。
 fn delta_callback<'a>(on_bytes: Option<&'a (dyn Fn(u64) + Send + Sync)>) -> impl Fn(u64, u64) + 'a {
     let prev = AtomicU64::new(0);
     move |downloaded: u64, _total: u64| {
@@ -843,9 +808,7 @@ fn delta_callback<'a>(on_bytes: Option<&'a (dyn Fn(u64) + Send + Sync)>) -> impl
     }
 }
 
-/// 文件 sha256（Azul 包校验）。分块流式读取（1MB 缓冲，对齐 hash.rs 流式风格）：
-/// Azul zip 包可达数百 MB，整文件读内存只为算哈希不划算。任一读取失败返回空串
-/// （fail-closed：与期望值必不相等 → 校验失败，语义同旧整读实现）。
+/// 文件 sha256（Azul 包校验），1MB 分块流式读；读取失败返回空串（fail-closed → 校验失败）。
 fn file_sha256(path: &Path) -> String {
     let Ok(file) = std::fs::File::open(path) else {
         return String::new();
@@ -881,7 +844,6 @@ mod tests {
         assert_eq!(component_for_major(9), None);
     }
 
-    /// 三态配置对应正确回退链长度与类型（顺序敏感：错误按链序拼接）。
     #[test]
     fn installer_chain_matches_source_mode() {
         assert_eq!(installer_chain(JdkSourceMode::Auto).len(), 3);
@@ -894,7 +856,6 @@ mod tests {
         ));
     }
 
-    /// TUNA 镜像 URL：文件名与官方一致，按镜像目录结构直接构造。
     #[test]
     fn adoptium_tuna_url_constructed_from_package_name() {
         assert_eq!(
@@ -917,8 +878,6 @@ mod tests {
         );
     }
 
-    /// Azul 布局（runtime 根下套 zulu*/ 子目录）也能定位到 java 根——
-    /// auto_install 幂等检查依赖它，否则 Azul 装的 runtime 每次启动都被误判未装重下。
     #[test]
     fn find_java_home_finds_nested_bin() {
         let tmp = std::env::temp_dir().join(format!("elytra_jh_{}", std::process::id()));
@@ -935,8 +894,6 @@ mod tests {
         std::fs::remove_dir_all(&tmp).ok();
     }
 
-    /// tar.gz 解压（Adoptium mac/linux 包格式）：嵌套目录布局可解压且
-    /// find_java_home 能定位 JDK 根（mac 的 Contents/Home 深层布局同此）。
     #[test]
     fn extract_tar_gz_handles_nested_layout_and_finds_home() {
         let tmp = std::env::temp_dir().join(format!("elytra_tgz_{}", std::process::id()));

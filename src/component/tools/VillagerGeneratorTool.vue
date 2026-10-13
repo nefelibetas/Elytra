@@ -179,7 +179,6 @@ async function copyCommand() {
       </div>
     </div>
 
-    <!-- 交易表单 -->
     <div class="nb-sec">
       <div class="nb-sec-title">交易（可添加多条；物品填 ID，如 emerald / book）</div>
       <div class="nb-row">
@@ -249,7 +248,6 @@ async function copyCommand() {
       </div>
     </div>
 
-    <!-- 输出 -->
     <div class="nb-output">
       <div class="nb-output-head">
         <span>命令 /SUMMON（{{ format === "modern" ? "1.20.5+" : "1.13–1.20.4" }}）</span>

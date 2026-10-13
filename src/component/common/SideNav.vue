@@ -1,10 +1,6 @@
 <script setup lang="ts">
-/**
- * 左侧垂直导航 + 内容区骨架。
- * Settings / Tools / VersionSetup 三页共用：导航项 v-for 渲染 + active 高亮 +
- * 可选刷新按钮（VersionSetup 需要）+ 内容区过渡动画。
- * 语义注意：tab 根用 div（允许内嵌刷新 button，button 嵌套 button 非法）。
- */
+// 左侧垂直导航 + 内容区骨架，Settings / Tools / VersionSetup 三页共用：
+// 导航项 v-for + active 高亮 + 可选刷新按钮 + 内容区过渡。tab 根用 div（可内嵌刷新 button）。
 import { RefreshCw } from "@lucide/vue";
 import type { Component } from "vue";
 
@@ -134,7 +130,7 @@ function onRefresh(e: MouseEvent, k: string) {
   background-color: var(--color-brand-bg);
 }
 
-/* hover 显示的刷新按钮（VersionSetup：切 Tab 缓存命中后手动刷新入口） */
+/* hover 显示的刷新按钮（VersionSetup） */
 .sn-refresh {
   flex: none;
   margin-left: auto;

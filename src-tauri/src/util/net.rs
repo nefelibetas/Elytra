@@ -4,11 +4,8 @@ use crate::config::downloader::{DownloadSourceMode, DownloaderConfig};
 use crate::downloader;
 use crate::persist;
 
-/// 社区文件下载候选：Modrinth 官方 CDN → MCIM 换域名镜像。
-/// 按 community_source_mode 组织：OfficialOnly 仅官方 / MirrorOnly 仅镜像 /
-/// Auto 下载前探测两源 TTFB（downloader/probe.rs，TTL 10min），快者优先、
-/// 慢者兜底（探测失败不剔除，仅排序——下载期另有重试降级）。
-/// 非 cdn.modrinth.com URL 仅返回官方一源。社区资源文件下载统一经此构造多源。
+/// 社区文件下载候选：Modrinth 官方 CDN → MCIM 换域名镜像。按 community_source_mode：OfficialOnly
+/// 仅官方 / MirrorOnly 仅镜像 / Auto 探测两源 TTFB（TTL 10min）快者优先、慢者兜底；非 modrinth CDN 仅官方一源。
 pub async fn community_download_urls(url: &str) -> Vec<String> {
     let official = url.to_string();
     let mirrored = official.replace(
@@ -34,8 +31,7 @@ pub async fn community_download_urls(url: &str) -> Vec<String> {
     }
 }
 
-/// 镜像优先决策（纯逻辑，便于单测）：镜像探测可用且快于官方 → 镜像优先；
-/// 镜像失败/更慢 → 官方优先（现状默认）。探测失败不剔除候选，仅排序。
+/// 镜像优先决策（纯逻辑）：镜像探测可用且快于官方 → 镜像优先；失败/更慢 → 官方（现状默认）。
 fn prefer_mirror(mirror_ok: bool, mirror_ttfb_ms: u64, official_ttfb_ms: u64) -> bool {
     mirror_ok && mirror_ttfb_ms < official_ttfb_ms
 }

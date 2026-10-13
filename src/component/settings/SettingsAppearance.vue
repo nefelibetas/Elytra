@@ -1,7 +1,6 @@
 <script setup lang="ts">
-// 外观设置：内置亮色主题（Grass / End / Nether / Ice）+ 用户自定义外观（核心色板编辑器）。
-// 内置卡片点击切换；自定义卡片点击激活、hover 显示编辑/删除；末尾「添加自定义」新建。
-// 全部即时生效并持久化 localStorage（theme 入选 + 自定义 theme 列表）。
+// 外观设置：内置亮色主题（Grass/End/Nether/Ice）+ 自定义色板。
+// 即时生效并持久化 localStorage；自定义卡片 hover 显示编辑/删除。
 import { computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import {
@@ -11,10 +10,9 @@ import {
 } from "../../store/app/theme";
 import { Trash2, Pencil, Plus } from "@lucide/vue";
 
-// 挂载时注入全部已保存自定义主题样式（页面刷新后 style 不持久），并高亮当前选中
+// 挂载时注入已保存自定义主题样式（刷新后 style 不持久）。
 onMounted(() => ensureCustomThemesApplied());
 
-/** 展示用主题列表：内置 + 自定义。自定义主题合成 swatch（品牌/文本/底色）与 desc。 */
 const allThemes = computed(() => {
   const customs = Object.values(customThemes.value).map((t) => ({
     id: t.id,
@@ -34,14 +32,12 @@ function isActive(id: string) {
   return themeId.value === id;
 }
 
-/** 卡片图标：swatch 首色为主、次色为渐变（内置 4 色 / 自定义 3 色取前两）。 */
 function iconStyle(swatch: string[]) {
   const a = swatch[0] ?? "var(--color-brand)";
   const b = swatch[1] ?? swatch[0] ?? "var(--color-brand)";
   return { background: `linear-gradient(135deg, ${a}, ${b})` };
 }
 
-/** 点击内置主题：直接切换（调用方已确认 id 为内置主题）。 */
 function selectBuiltin(id: string) {
   themeId.value = id as ThemeId;
 }
@@ -52,7 +48,7 @@ function onPick(id: string) {
   else selectBuiltin(id);
 }
 
-/** 点击自定义主题：激活（切换 + 注入）。 */
+/** 激活自定义主题（切换 + 注入）。 */
 function selectCustom(id: string) {
   activateCustomTheme(id);
 }
@@ -67,19 +63,17 @@ function selectCustom(id: string) {
 
 
 
-/** 进入自定义外观编辑器（子路由）：新建从当前主题复制起点。 */
+/** 进入自定义编辑器（子路由）：新建从当前主题复制。 */
 const router = useRouter();
 
 function openNew(fromThemeId: string) {
   void router.push({ path: "/custom-theme", query: { from: fromThemeId } });
 }
 
-/** 进入编辑器编辑已有自定义主题。 */
 function openEdit(id: string) {
   void router.push({ path: "/custom-theme", query: { id } });
 }
 
-/** 删除确认：直接删（简易确认放回调）。 */
 function removeCustom(id: string) {
   const t = customThemes.value[id];
   if (!t) return;
@@ -107,7 +101,6 @@ function removeCustom(id: string) {
         <span class="appearance-icon" :style="iconStyle(t.swatch)"></span>
         <span class="appearance-name">{{ t.label }}</span>
         <span class="appearance-desc">{{ t.desc }}</span>
-        <!-- 自定义卡片的 hover 操作：编辑 / 删除 -->
         <span v-if="isCustom(t.id)" class="appearance-custom-ops" @click.stop>
           <button class="appearance-op" v-tooltip="'编辑'" @click="openEdit(t.id)">
             <Pencil :size="13" />
@@ -118,7 +111,6 @@ function removeCustom(id: string) {
         </span>
       </button>
 
-      <!-- 添加自定义 -->
       <button class="appearance-item appearance-add" @click="openNew(themeId)">
         <span class="appearance-icon appearance-add-icon"><Plus :size="26" /></span>
         <span class="appearance-name">添加自定义</span>
@@ -171,12 +163,11 @@ function removeCustom(id: string) {
   box-shadow: 0 0 0 1px var(--color-brand) inset;
 }
 
-/* 自定义卡片：顶部预留 ops 空间 */
 .appearance-item--custom {
   padding-top: 40px;
 }
 
-/* 自定义卡片 ops：右上角固定，hover 时从透明淡入 */
+/* 自定义卡片 ops：右上角，hover 淡入 */
 .appearance-custom-ops {
   position: absolute;
   top: 8px;
@@ -215,7 +206,6 @@ function removeCustom(id: string) {
   color: var(--color-danger);
 }
 
-/* 添加卡片：虚线边框整卡 */
 .appearance-add {
   border-style: dashed;
 }

@@ -16,7 +16,7 @@ import {
 import { loadVersionIcon, versionIcons } from "../../store/task/versionIcon";
 import { watch } from "vue";
 
-// 整合包安装的版本带平台项目图标（懒加载；缺失回退 loader 图标）
+// 整合包安装的版本用平台项目图标（懒加载，缺失回退 loader 图标）。
 watch(
   () => versions.value.map(v => v.name),
   names => names.forEach(loadVersionIcon),
@@ -25,7 +25,6 @@ watch(
 
 const router = useRouter();
 
-/** 选择版本 → 记录（含所属目录）并返回启动页。 */
 function selectAndBack(v: string) {
   pickVersion(v);
   router.push("/");
@@ -127,7 +126,6 @@ function goDownload() {
   gap: 10px;
 }
 
-/* 搜索框：版本列表顶部，flex 占位保持卡片布局稳定 */
 .vs-search {
   margin-bottom: 12px;
 }
@@ -152,7 +150,7 @@ function goDownload() {
   color: var(--text-tertiary);
 }
 
-/* 版本选择场景：item 之间不显示分割线（下载页保持原样） */
+/* 版本选择页：item 间无分割线 */
 .vs-cards :deep(.ver-item + .ver-item) {
   border-top: none;
 }
@@ -197,7 +195,6 @@ function goDownload() {
   color: var(--color-danger);
 }
 
-/* 空状态：右侧容器正中提示 + 下载入口 */
 .vs-empty {
   min-height: 100%;
   display: flex;
@@ -223,7 +220,7 @@ function goDownload() {
   font-size: 13.5px;
   font-weight: 600;
   cursor: pointer;
-  /* 渐变 ↔ 纯色背景切换不做插值（会闪变），只过渡 transform/阴影 */
+  /* 渐变色切换不插值（会闪变），只过渡 transform/阴影 */
   transition: transform 0.15s, box-shadow 0.15s;
 }
 
@@ -238,7 +235,6 @@ function goDownload() {
 
 
 
-/* dialog 内容 */
 .vs-dialog-body {
   display: flex;
   flex-direction: column;

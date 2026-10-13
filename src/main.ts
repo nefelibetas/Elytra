@@ -5,7 +5,7 @@ import { applyTheme } from "./store/app/theme";
 import tooltip from "./utils/tooltip";
 import "./styles/transitions.css";
 
-// 主题在挂载前应用，避免首帧闪白（暗色模式必须）
+// 挂载前应用主题，避免首帧闪白
 applyTheme();
 
 const app = createApp(App);

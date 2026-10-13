@@ -10,9 +10,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{ toggle: [] }>();
 
-// 惰性挂载：折叠分组在**首次展开前不渲染任何条目**（原版 manifest 全量 1000+
-// 条，四组折叠时全部常驻 DOM 会让下载页首帧创建上千节点）。首次展开后保持挂载
-// （配合 v-show 切换 display），避免反复重建列表。
+// 惰性挂载：折叠组首次展开前不渲染条目，展开后持续挂载（配合 v-show），避免大列表拖慢首帧与反复重建。
 const everExpanded = ref(props.expanded);
 watch(
   () => props.expanded,
@@ -21,11 +19,7 @@ watch(
   }
 );
 
-// 展开高度用真实内容高度驱动（过渡前后各量一次），不再按 count × ROW_H 估算——
-// 估算值在 snapshots 组可达数万 px，max-height 过渡会提前"跑完"（后半段无视觉变化）
-// 且过渡期间仍要为大列表布局。
-// before-enter / enter 都量一次：before-enter 时元素尚未布局（scrollHeight=0）也无妨，
-// enter 钩子在同一帧（enter-to 已加、尚未绘制）补齐真实高度。
+// 高度取真实 scrollHeight（不按 count 估算：估计值可达数万 px，max-height 过渡会提前跑完）；before-enter / enter 各量一次，enter 在同帧内（enter-to 已加、未绘制）补齐真实高度。
 function measure(el: Element) {
   const h = el as HTMLElement;
   if (h.scrollHeight > 0) h.style.setProperty("--expand-h", `${h.scrollHeight}px`);
@@ -66,8 +60,6 @@ function measure(el: Element) {
 
 .card-body {
   overflow: hidden;
-  /* 底部圆角贴合 .card 的 border-radius：列表最后一项 hover 的直角背景
-     被 overflow 裁剪时不再"顶着"卡片圆角形成方角 */
   border-radius: 0 0 var(--radius-md) var(--radius-md);
 }
 /* 标题与 items 之间的分割线：左右留白 16px */

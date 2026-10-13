@@ -1,11 +1,5 @@
-// ── 整合包安装任务（单卡片：解析 → 本体 → 内容 全程一个任务）──
-// 同一 TaskManager 注册 / 同一 cancel token / 同一步骤列表动态增长。
-//   A. 获取包体（在线下载 / 本地文件）+ 解析清单 → PackPlan JSON
-//   B. 本体：版本 JSON → client.jar → 依赖库 → 资源 → 原生库 → ModLoader（复用
-//      library/assets/extract/mod_loader，内部按 sha1 跳过已有文件，无需扫描）
-//   C. 内容：计划内文件并发下载（sha1 校验）→ overrides/ 解压到版本目录
-// 步骤表两段式：创建时仅含 A 段占位，A 完成后重写为全量列表。进度 = 完成步骤数/总步骤数
-// （每内容文件一步）；字节计数仅供速度/ETA。
+// ── 整合包安装任务（单卡片：A 包体+清单 → B 本体 → C 内容；同一 TaskManager / cancel token，步骤列表动态增长）──
+// B/C 复用 library/assets/extract（内部按 sha1 跳过已有文件）；内容文件并发下载（sha1 校验）→ overrides/ 解压。步骤表两段式：创建时仅 A 段占位，A 完成后重写为全量；进度 = 完成步骤数/总步骤数（每内容文件一步），字节仅供速度/ETA。
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
@@ -36,13 +30,11 @@ use crate::task::progress::{
 use crate::task::{global, update_and_emit, EventSink, StepInfo, StepStatus, TaskProgress, TaskStatus};
 use crate::util::safe_relative_path;
 
-/// 包体缓存目录（config_dir()/modpacks，与 Settings.toml 同根）。
 fn cache_dir() -> PathBuf {
     crate::util::config_dir().join("modpacks")
 }
 
-/// 包体缓存路径：**仅在线源**落 `modpacks/{key}.{ext}` 缓存；
-/// 本地源直接用用户选定的文件（缓存目录从不持有其副本）。
+/// 包体缓存路径（config_dir()/modpacks）：**仅在线源**落 `{key}.{ext}`；本地源直接用用户文件（缓存目录从不持有其副本）。
 pub fn zip_cache_path(request: &ModpackRequest) -> PathBuf {
     let url = match &request.source {
         PackSource::Local { path } => return PathBuf::from(path),
@@ -59,7 +51,6 @@ pub fn zip_cache_path(request: &ModpackRequest) -> PathBuf {
     cache_dir().join(format!("{}{}", cache_key(request), ext))
 }
 
-/// 计划 JSON 路径。
 pub fn plan_path_for(request: &ModpackRequest) -> PathBuf {
     cache_dir().join(format!("{}.plan.json", cache_key(request)))
 }
@@ -92,23 +83,18 @@ fn write_plan(plan_path: &Path, plan: &PackPlan) -> Result<(), String> {
 
 // ── 单卡片执行体 ──
 
-/// 共享计数器束（心跳与各阶段共用）。
 struct Counters {
     /// 已完成步骤数（进度分子；每步 +1，内容文件粒度一步）
     done_steps: Arc<AtomicU32>,
-    /// 累计下载字节（速度/ETA 展示用；进度百分比走步骤数公式）
     bytes: Arc<AtomicU64>,
     /// 总字节估算（版本 JSON 获取后补齐 assets/libraries/client 部分）
     est_bytes: Arc<AtomicU64>,
-    /// 总步骤数
     total_steps: u32,
     /// 当前运行步骤索引（`usize::MAX` = 无）——心跳据此填 `steps[idx].progress`。
     step_idx: Arc<AtomicUsize>,
-    /// 当前步骤的字节进度（分子/分母）：单文件步骤（游戏主文件）用。
     step_bytes: Arc<AtomicU64>,
     step_total: Arc<AtomicU64>,
-    /// 当前步骤的文件数进度（分子/分母）：批量步骤（依赖库/资源文件）用，
-    /// 分母由下载辅助函数在起跑前写入 `ProgressCounters::step_files_total`。
+    /// 当前步骤文件数进度（分子/分母）：批量步骤（依赖库/资源文件）用，分母由下载辅助函数起跑前写入。
     step_files: Arc<AtomicU32>,
     step_files_total: Arc<AtomicU32>,
 }
@@ -128,7 +114,6 @@ impl Counters {
         }
     }
 
-    /// 进入字节型步骤（单文件、总量已知）并重置该步骤计数。
     fn enter_step_bytes(&self, idx: usize, total: u64) {
         self.step_files_total.store(0, Ordering::Relaxed);
         self.step_bytes.store(0, Ordering::Relaxed);
@@ -136,8 +121,6 @@ impl Counters {
         self.step_idx.store(idx, Ordering::Relaxed);
     }
 
-    /// 进入文件数型步骤（批量下载）并重置该步骤计数；
-    /// 分母由下载辅助函数随后写入 `step_files_total`。
     fn enter_step_files(&self, idx: usize) {
         self.step_files.store(0, Ordering::Relaxed);
         self.step_files_total.store(0, Ordering::Relaxed);
@@ -145,12 +128,10 @@ impl Counters {
         self.step_idx.store(idx, Ordering::Relaxed);
     }
 
-    /// 离开当前步骤（步骤结束后不再刷新其百分比）。
     fn leave_step(&self) {
         self.step_idx.store(usize::MAX, Ordering::Relaxed);
     }
 
-    /// 心跳用的分步进度视图（共享同一组原子）。
     fn step_ref(&self) -> StepRef {
         StepRef {
             idx: Arc::clone(&self.step_idx),
@@ -161,8 +142,7 @@ impl Counters {
         }
     }
 
-    /// 下载辅助函数的计数器视图：整任务字节与当前步骤的计数共享同一组原子
-    /// （无需每次新建，步骤计数才能被心跳读取）。
+    /// 下载辅助函数计数器视图：整任务字节与当前步骤计数共享同一组原子（步骤计数需被心跳读取）。
     fn counter(&self) -> ProgressCounters {
         ProgressCounters {
             files: Arc::clone(&self.step_files),
@@ -174,15 +154,13 @@ impl Counters {
     }
 }
 
-/// 完成一步：步骤状态置 done + 完成计数 +1 + 结束该步骤的分步进度上报。
 fn finish_step(app: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>, idx: usize, c: &Counters) {
     step_done(app, progress, idx);
     c.done_steps.fetch_add(1, Ordering::Relaxed);
     c.leave_step();
 }
 
-/// 失败收口：取消走 set_cancelled，否则 set_error；全新目录随失败整删（取消路径
-/// 的删除交由 TaskManager cleanup 异步处理，不在此重复删）。
+/// 失败收口：取消走 set_cancelled，否则 set_error；全新目录随失败整删（取消路径的删除交由 TaskManager cleanup）。
 fn fail_or_cancel(
     app: &dyn EventSink,
     progress: &Arc<Mutex<TaskProgress>>,
@@ -193,8 +171,7 @@ fn fail_or_cancel(
     if cancelled(cancel) {
         set_cancelled(app, progress);
     } else {
-        // 先登记清理路径再 set_error（后者收口时取走并后台整删；
-        // 同步 remove_dir_all 会阻塞任务线程，大目录可达数十秒）
+        // 先登记清理路径再 set_error（收口时取走并后台整删；同步 remove_dir_all 会阻塞任务线程数十秒）
         if let Some((vdir, existed_before)) = vdir_for_cleanup {
             if !existed_before {
                 let cleanup_id = progress.try_lock().map(|p| p.task_id.clone());
@@ -234,8 +211,7 @@ fn replace_steps(
     });
 }
 
-/// 取消感知包装：底层操作不支持取消参数（纯网络 JSON/同步 IO）时与轮询取消令牌赛跑；
-/// 落败方 future 被 drop（连接随之中断）。
+/// 取消感知包装：底层操作不支持取消参数（纯网络 JSON/同步 IO）时与轮询取消令牌赛跑；落败 future 被 drop（连接中断）。
 async fn race_cancel<F, T>(cancel: &Arc<AtomicBool>, fut: F) -> Result<T, String>
 where
     F: std::future::Future<Output = Result<T, String>>,
@@ -253,7 +229,6 @@ where
     }
 }
 
-/// 安装主体（单卡片）。返回是否成功。
 pub async fn run_install(
     sink: Arc<dyn EventSink>,
     cancel: &Arc<AtomicBool>,
@@ -273,12 +248,10 @@ pub async fn run_install(
     };
     let PackPrep { c, emit, idx } = prepare_pack_install(&sink, progress, request, &plan, a_done);
 
-    // ── 目标目录：预指定名保证解析期/安装期一致 ──
     let (vdir, vdir_existed_before) = prepare_version_dir(progress, &config, request, &plan);
     let lib_dir = config.minecraft_dir_abs().join("libraries");
     let reuse_root = LocalRuntimeSource::discover(&vdir);
 
-    // ── A3：项目图标持久化（装饰性内容：缺失/下载失败静默跳过，不阻塞安装）──
     persist_pack_icon(cancel, request, &vdir).await;
     let sources: Vec<DownloadSource> = config.file_sources_list().into_iter().cloned().collect();
 
@@ -309,17 +282,13 @@ pub async fn run_install(
     run.finish_install(app, progress)
 }
 
-/// A 段产出的运行态：正式计数器 + 心跳句柄 + 步骤索引表（B/C 段共用）。
 struct PackPrep {
     c: Counters,
     emit: tauri::async_runtime::JoinHandle<()>,
     idx: StepIndex,
 }
 
-/// A 段：获取包体 → 解析清单 → 生成计划。失败/取消时已收口，返回 None。
-/// 返回（计划，A 段已完成步骤数）。
-/// A 段临时心跳：正式心跳在解析完成后才启动，此前若无心跳则包体下载全程 0%（无
-/// 速度/ETA/百分比）。临时心跳 est=包体大小、进度走字节公式，A 段结束 abort 后由正式心跳接管。
+/// A 段：获取包体 → 解析清单 → 生成计划（失败/取消已收口）；A 段临时心跳（正式心跳解析完成后才启动）est=包体大小，结束 abort 后交接。
 async fn phase_a_fetch_and_parse(
     sink: &Arc<dyn EventSink>,
     cancel: &Arc<AtomicBool>,
@@ -348,15 +317,12 @@ async fn phase_a_fetch_and_parse(
             total_files: u32::from(online) + 1,
             bytes: Arc::clone(&a_bytes),
             est_total_bytes: Arc::clone(&a_est),
-            // 在线包体下载的分子/分母同宇宙（都是包体字节）；本地包 est 恒 0 → 自动回退步骤口径
             percent_by_steps: false,
             step: a_step,
         },
     );
 
     // ── A1：获取包体（幂等：本地缓存 sha1 命中直接跳过）──
-    // 包体字节只进 A 段临时心跳：本段步骤完成后由 B/C 段接管，B/C 的 est 只统计本段还要
-    // 下载的字节（详见 prepare_pack_install 注释），故这里的估算不再外传。
     if let Err(e) =
         phase_fetch_pack(app, cancel, progress, request, zip_path, &a_bytes, &a_est).await
     {
@@ -368,7 +334,6 @@ async fn phase_a_fetch_and_parse(
         return None;
     }
 
-    // ── A2：解析清单并生成计划 ──
     let parse_idx = usize::from(online);
     let plan =
         match phase_parse_plan(app, cancel, progress, zip_path, request, config, parse_idx).await {
@@ -378,19 +343,14 @@ async fn phase_a_fetch_and_parse(
                 return None;
             }
         };
-    // A 段结束：停临时心跳，正式 Counters/心跳由 prepare_pack_install 接管
     a_heartbeat.abort();
     let a_done = parse_idx + 1; // A 段已完成步骤数
     Some((plan, a_done))
 }
 
-/// 重建完整步骤表（B 段本体 + C 段内容）+ 装配正式计数器与心跳。
-///
-/// 进度口径：总百分比走**完成步骤数**（`percent_by_steps`，与步骤表天然同宇宙，收尾时
-/// 自然到 99.9%）；`est_bytes` 只服务速度/ETA 与前端聚合剩余量，故只累计本段真正要下载的
-/// 字节（内容 + 版本清单补入的 client/库/资源）——**不含包体**：本地包体的字节永远不会
-/// 进字节分子，在线包体已在 A 段下完，两者留在分母都会把进度/ETA 拖到低位后跳变。
-/// 心跳刷新计数/速度/ETA；收尾前 abort。
+/// 重建完整步骤表（B 段本体 + C 段内容）+ 装配正式计数器与心跳（心跳刷新计数/速度/ETA，收尾前 abort）。
+/// 进度口径：总百分比走**完成步骤数**（`percent_by_steps`，与步骤表同宇宙，自然收尾到 99.9%）；`est_bytes` 只服务
+/// 速度/ETA，仅累计本段要下载的字节——**不含包体**（本地包体字节永不进字节分子，在线包体已在 A 段下完，入分母会拖低进度）。
 fn prepare_pack_install(
     sink: &Arc<dyn EventSink>,
     progress: &Arc<Mutex<TaskProgress>>,
@@ -416,7 +376,6 @@ fn prepare_pack_install(
             est_total_bytes: Arc::clone(&c.est_bytes),
             // 步骤口径：每内容文件一步，粒度足够细（字节分母含不回传字节的估算）
             percent_by_steps: true,
-            // 分步进度：B/C 段长步骤（游戏主文件/依赖库/资源文件）据此刷新
             step: Some(c.step_ref()),
         },
     );
@@ -436,23 +395,19 @@ async fn persist_pack_icon(cancel: &Arc<AtomicBool>, request: &ModpackRequest, v
     }
 }
 
-/// 步骤索引表（步骤表两段式重写后，各阶段在完整列表中的下标）。
 struct StepIndex {
     i_json: usize,
     i_jar: usize,
     i_libs: usize,
     i_asst: usize,
     i_nat: usize,
-    /// ModLoader 钩子推进的两步（无 loader 时 None）
     i_cfg: Option<usize>,
     i_lbs: Option<usize>,
-    /// 内容文件下载起始下标
     content_start: usize,
     i_overrides: Option<usize>,
 }
 
-/// 重建完整步骤表：B 段本体 + loader 两步（可选）+ 内容文件逐步 + overrides（可选）。
-/// 返回（全量步骤名，索引表，内容阶段字节估算）。
+/// 重建完整步骤表：B 段本体 + loader 两步（可选）+ 内容文件逐步 + overrides（可选）；返回（步骤名，索引表，内容字节估算）。
 fn build_step_plan(request: &ModpackRequest, plan: &PackPlan) -> (Vec<String>, StepIndex, u64) {
     let mut names: Vec<String> = vec![
         "版本清单".into(),
@@ -490,7 +445,7 @@ fn build_step_plan(request: &ModpackRequest, plan: &PackPlan) -> (Vec<String>, S
         .iter()
         .map(|s| s.to_string())
         .collect();
-    // A 段步骤排在最终表最前，B/C 段索引必须整体后移此前缀长度，否则写到"错一行"的步骤。
+    // A 段步骤排在最终表最前，B/C 段索引必须整体后移此前缀长度，否则步骤索引错位。
     let prefix = full_names.len();
     full_names.extend(names.iter().cloned());
     let content_bytes: u64 = plan.files.iter().map(|f| f.size).sum();
@@ -512,8 +467,7 @@ fn build_step_plan(request: &ModpackRequest, plan: &PackPlan) -> (Vec<String>, S
     )
 }
 
-/// 目标目录：预指定名保证解析期/安装期一致。写版本身份标记（重装/更新同名整合包时
-/// 据此复用目录，内容 sha1 幂等跳过生效）；本次新建目录注册取消时整删（对齐 run_task）。
+/// 目标目录：预指定名保证解析期/安装期一致；写版本身份标记（重装/更新同名整合包据此复用目录，sha1 幂等跳过生效），新建目录注册取消时整删。
 fn prepare_version_dir(
     progress: &Arc<Mutex<TaskProgress>>,
     config: &DownloaderConfig,
@@ -534,14 +488,12 @@ fn prepare_version_dir(
         eprintln!("[modpack] 包身份标记写入失败（复用检测将失效）: {e}");
     }
     if !vdir_existed_before {
-        // 取消时整删本次新建的版本目录（对齐 run_task）
         let tid = progress.lock().task_id.clone();
         global().set_cleanup_path(&tid, vdir.clone());
     }
     (vdir, vdir_existed_before)
 }
 
-/// B/C 段各阶段的共享状态包（A 段完成后一次性装配，阶段间按序推进）。
 struct PackInstall<'a> {
     app: &'a dyn EventSink,
     cancel: &'a Arc<AtomicBool>,
@@ -559,16 +511,13 @@ struct PackInstall<'a> {
     reuse_root: Option<LocalRuntimeSource>,
     /// B1 版本清单原文（loader 安装需透传给 installer）
     parent_text: String,
-    /// B1 解析出的版本清单（B2–B5 消费）
     version_json: Option<VersionJson>,
     /// 剩余受限文件（CurseForge 禁三方分发，C0 就地解决一部分）
     restricted: Vec<String>,
-    /// C0 后待下载的（步骤索引，文件）
     pending: Vec<(usize, &'a PackFile)>,
 }
 
 impl<'a> PackInstall<'a> {
-    /// 失败收口：停心跳 → fail_or_cancel（本次新建的版本目录随失败整删）。
     fn fail(&self, msg: String) -> bool {
         self.emit.abort();
         fail_or_cancel(
@@ -610,7 +559,6 @@ impl<'a> PackInstall<'a> {
         };
         let vj: VersionJson =
             serde_json::from_str(&parent_text).map_err(common_err_ctx!("解析版本清单失败"))?;
-        // 补齐 B 段总量估算：client + 库 + 资源索引声明总量
         let lib_est: u64 = vj
             .libraries
             .iter()
@@ -623,8 +571,7 @@ impl<'a> PackInstall<'a> {
                 + vj.asset_index.total_size,
             Ordering::Relaxed,
         );
-        // 无 loader 时写原版 JSON（loader 模式由 installer 写合并 JSON）。
-        // 写盘失败必须报错：假成功会让版本缺 json、启动时报"未找到版本 JSON"。
+        // 无 loader 时写原版 JSON（loader 模式由 installer 写）；写盘失败必须报错：假成功会让版本缺 json、启动时报"未找到版本 JSON"。
         if self.plan.loader.is_none() {
             let json = serde_json::to_string_pretty(&vj)
                 .map_err(common_err_ctx!("序列化版本 JSON 失败"))?;
@@ -642,7 +589,6 @@ impl<'a> PackInstall<'a> {
         Ok(())
     }
 
-    /// B2：client.jar（sha1 幂等跳过）。
     async fn b_client_jar(&self) -> Result<(), String> {
         set_phase(
             self.app,
@@ -688,7 +634,6 @@ impl<'a> PackInstall<'a> {
         Ok(())
     }
 
-    /// B3/B4/B5：依赖库 → 资源文件 → 原生库。
     async fn b_vanilla_content(&self) -> Result<(), String> {
         let src_refs: Vec<&DownloadSource> = self.sources.iter().collect();
         let vj = self.vj()?;
@@ -701,7 +646,6 @@ impl<'a> PackInstall<'a> {
             self.idx.i_libs,
             StepStatus::Running,
         );
-        // 分步进度：分母由 download_libraries 起跑前写入（待下载条目数）
         self.c.enter_step_files(self.idx.i_libs);
         if let Err(e) = library::download_libraries(
             &vj.libraries,
@@ -726,7 +670,6 @@ impl<'a> PackInstall<'a> {
             self.idx.i_asst,
             StepStatus::Running,
         );
-        // 分步进度：分母由 download_assets 起跑前写入（待下载条目数）
         self.c.enter_step_files(self.idx.i_asst);
         if let Err(e) = assets::download_assets(
             AssetIndexRef {
@@ -754,7 +697,6 @@ impl<'a> PackInstall<'a> {
             self.idx.i_nat,
             StepStatus::Running,
         );
-        // 分步进度：分母由 process_natives 起跑前写入（待处理候选数）
         self.c.enter_step_files(self.idx.i_nat);
         if let Err(e) = extract::process_natives(
             &vj.libraries,
@@ -771,14 +713,12 @@ impl<'a> PackInstall<'a> {
         Ok(())
     }
 
-    /// B6：ModLoader 安装。钩子只置内存标志，步骤推进由轮询循环完成
-    /// （钩子非 async，不能触碰 progress 锁；install_* 借用外部状态）。
+    /// B6：ModLoader 安装。钩子只置内存标志，步骤推进由轮询循环完成（钩子非 async，不能触碰 progress 锁）。
     async fn b_loader(&self) -> Result<(), String> {
         let Some(loader) = &self.plan.loader else {
             return Ok(());
         };
-        // install_loader 是外部安装器，拿不到可信百分比：两步置 Running 0% → 完成 100%，
-        // 与其它无百分比步骤（原生库/内容文件）一致（前端对 pending 行不显示百分比）。
+        // install_loader 是外部安装器，无可信百分比：两步置 Running 0% → 完成 100%（与其它无百分比步骤一致）。
         let label = loader.kind.display_name();
         if let Some(idx) = self.idx.i_cfg {
             set_phase(
@@ -847,15 +787,13 @@ impl<'a> PackInstall<'a> {
                     break;
                 }
             }
-            // 取消不在此提前 return：install_fut 内部轮询同一 cancel，会杀 installer
-            // 子进程并返回 Err 经 fail 收口——中途 drop future 会遗留孤儿 JVM 进程
+            // 取消不在此提前 return：install_fut 内部轮询同一 cancel 并返回 Err 经 fail 收口；中途 drop future 会遗留孤儿 JVM 进程
         }
         Ok(())
     }
 
-    /// C0：包内资源复用。部分整合包把 mod 物理捆绑在 overrides/ 内（作者关闭 CurseForge
-    /// 第三方分发）。清单文件先与包内同名条目比对 sha1：一致则直接解包免下载；受限文件
-    /// 已捆绑则就地落盘并从提示清单移除。
+    /// C0：包内资源复用：部分整合包把 mod 物理捆绑在 overrides/ 内（作者关闭 CurseForge 三方分发）。
+    /// 清单文件先与包内同名条目比对 sha1：一致则直接解包免下载；受限文件已捆绑则就地落盘并从提示清单移除。
     fn c0_bundled_reuse(&mut self) -> Result<(), String> {
         let mut pack_zip = self.plan.overrides.as_ref().and_then(|ov| {
             std::fs::File::open(&ov.zip_path)
@@ -909,7 +847,6 @@ impl<'a> PackInstall<'a> {
             }
         }
 
-        // 受限文件就地解决：捆绑副本按声明路径落盘（内容来自包作者本人）
         if !self.restricted.is_empty() && !index.is_empty() {
             for name in self.restricted.clone() {
                 let candidate = format!("mods/{name}");
@@ -967,8 +904,7 @@ impl<'a> PackInstall<'a> {
                 let size = f.size;
                 set.spawn(async move {
                     let urls = crate::util::community_download_urls(&f_url).await;
-                    // 幂等：目标已存在且校验命中 → 跳过（恢复场景零重下）；
-                    // sha1 缺失时降级为体积匹配
+                    // 幂等：目标已存在且校验命中则跳过（恢复场景零重下）；sha1 缺失时降级为体积匹配
                     let hit = dest.is_file()
                         && if !sha1.is_empty() {
                             hash::file_sha1_matches(&dest, &sha1)
@@ -982,13 +918,11 @@ impl<'a> PackInstall<'a> {
                     if cancelled(&cancel) {
                         return Ok((idx, 0u64));
                     }
-                    // 字节回调增量累加进任务总字节；step_bytes 无消费者（进度走步骤数公式），丢弃。
                     let counters = ProgressCounters {
                         files: Arc::new(AtomicU32::new(0)),
                         bytes,
                         step_bytes: Arc::new(AtomicU64::new(0)),
                         step_total: Arc::new(AtomicU64::new(0)),
-                        // 内容文件并发下载：各自独立计数，不做步骤级百分比
                         step_files_total: Arc::new(AtomicU32::new(0)),
                     };
                     let cb = counters.byte_callback();
@@ -1046,23 +980,16 @@ impl<'a> PackInstall<'a> {
         Ok(())
     }
 
-    /// B/C 段编排：本体（清单 → client → 依赖/资源/原生 → loader）→
-    /// 内容（包内复用 → 并发下载 → overrides）；错误交调用方统一收口。
+    /// B/C 段编排：本体（清单 → client → 依赖/资源/原生 → loader）→ 内容（包内复用 → 并发下载 → overrides）；错误交调用方统一收口。
     async fn phases_bc(&mut self) -> Result<(), String> {
         // ── B1：版本清单（唯一硬前置）──
         self.b_manifest().await?;
-        // ── B2：client.jar ──
         self.b_client_jar().await?;
-        // ── B3/B4/B5：依赖库 / 资源 / 原生库（领域函数内部 sha1 跳过已有文件；
-        //     内部并发由 config.concurrency 驱动，字节进共享计数）──
+        // ── B3/B4/B5：依赖库 / 资源 / 原生库（内部 sha1 跳过已有文件；并发由 config.concurrency 驱动，字节进共享计数）──
         self.b_vanilla_content().await?;
-        // ── B6：ModLoader（钩子推进 配置/文件 两步）──
         self.b_loader().await?;
-        // ── C0：包内资源复用 ──
         self.c0_bundled_reuse()?;
-        // ── C1：内容文件并发下载 ──
         self.c1_download_files().await?;
-        // ── C2：overrides 解压 ──
         self.c2_overrides().await?;
         Ok(())
     }
@@ -1079,8 +1006,7 @@ impl<'a> PackInstall<'a> {
     }
 }
 
-/// A1：获取包体（在线源：下载 + sha1 强校验，缓存命中幂等跳过；本地源直取）。
-/// 返回包体字节数估算（累计进 A 段临时心跳）。
+/// A1：获取包体（在线源：下载 + sha1 强校验，缓存命中幂等跳过；本地源直取）；返回包体字节估算（累计进 A 段临时心跳）。
 async fn phase_fetch_pack(
     app: &dyn EventSink,
     cancel: &Arc<AtomicBool>,
@@ -1092,8 +1018,7 @@ async fn phase_fetch_pack(
 ) -> Result<u64, String> {
     let mut pack_bytes_est = 0u64;
     if let PackSource::Local { path } = &request.source {
-        // 恢复场景（重启后重跑整卡）文件可能已被移动/删除：给中文首行提示，
-        // 而非下游 open_zip 的「系统找不到指定的路径。(os error 3)」
+        // 恢复场景文件可能已被移动/删除：给中文首行提示，而非下游 open_zip 的「系统找不到指定的路径。(os error 3)」
         if !zip_path.is_file() {
             bail!("整合包文件不存在\n{path}");
         }
@@ -1108,8 +1033,7 @@ async fn phase_fetch_pack(
         );
         pack_bytes_est = *size;
         a_est.store(*size, Ordering::Relaxed);
-        // 强校验优先；清单未提供 sha1 时降级为体积弱校验（与 fetch_verified_c
-        // 空 sha1 跳过网络校验的信任模型一致），恢复场景不整包重下
+        // 强校验优先；清单未提供 sha1 时降级为体积弱校验（与 fetch_verified_c 空 sha1 跳过网络校验的信任模型一致）
         let cached = zip_path.is_file()
             && match (sha1.is_empty(), *size) {
                 (false, _) => hash::file_sha1_matches(zip_path, sha1),
@@ -1168,7 +1092,6 @@ async fn phase_parse_plan(
     Ok(plan)
 }
 
-/// 受限文件收口提示：其余内容已全部就位，列出需手动下载的文件。
 fn restricted_notice(restricted: &[String]) -> String {
     let mut msg = format!(
         "已安装完成，但 {} 个文件因 CurseForge 作者关闭第三方分发无法自动下载（需手动从官网下载后放入 mods 目录）：",
@@ -1264,7 +1187,6 @@ mod tests {
         assert_eq!(override_rel("meta/other", "overrides/"), None);
     }
 
-    /// 构造测试 zip：指定清单名 + overrides 内容。
     fn write_test_zip(path: &Path, manifest_name: &str) {
         let file = std::fs::File::create(path).unwrap();
         let mut w = zip::ZipWriter::new(file);
@@ -1458,7 +1380,6 @@ mod tests {
             let plan = PackPlan {
                 name: "D".into(),
                 mc_version: "1.20.1".into(),
-                // 带 loader：把 i_cfg / i_lbs 也纳入断言
                 loader: Some(LoaderChoice {
                     kind: LoaderKind::Fabric,
                     version: "0.15.0".into(),
@@ -1486,10 +1407,8 @@ mod tests {
 
             let (names, idx, est) = build_step_plan(&request, &plan);
 
-            // A 段前缀保持原样（A 阶段自己用 0/1 推进）
             assert_eq!(names[0], initial_steps(&request)[0], "{label}");
             assert_eq!(names.len(), prefix + 5 + 2 + 2, "{label}：A + 5 固定步 + loader 2 + 内容 2");
-            // 各阶段索引必须落在同名步骤上
             assert_eq!(names[idx.i_json], "版本清单", "{label}");
             assert_eq!(names[idx.i_jar], "游戏主文件", "{label}");
             assert_eq!(names[idx.i_libs], "依赖库", "{label}");
@@ -1497,7 +1416,6 @@ mod tests {
             assert_eq!(names[idx.i_nat], "原生库", "{label}");
             assert_eq!(names[idx.i_cfg.unwrap()], "Fabric 配置", "{label}");
             assert_eq!(names[idx.i_lbs.unwrap()], "Fabric 文件", "{label}");
-            // 内容步起始位与内容文件名对得上
             assert_eq!(names[idx.content_start], "下载 mods/a.jar", "{label}");
             assert_eq!(names[idx.content_start + 1], "下载 config/b.json", "{label}");
             assert_eq!(est, 30, "{label}：内容字节估算");
@@ -1517,7 +1435,6 @@ mod tests {
         );
         assert_eq!(member_sha1(&mut ar, "overrides/missing.jar"), None);
 
-        // 单成员解压：内容逐字节还原到目标路径
         let out = dir.path().join("out").join("dup.jar");
         extract_member(&mut ar, "overrides/mods/a.jar", &out).unwrap();
         assert_eq!(std::fs::read(&out).unwrap(), b"jar-bytes");
@@ -1528,11 +1445,9 @@ mod tests {
     fn counters_track_current_step() {
         let c = Counters::new(10, 0);
         let step = c.step_ref();
-        // 初始：无运行中步骤 → 心跳不刷新任何步骤
         assert_eq!(step.idx.load(Ordering::Relaxed), usize::MAX);
         assert_eq!(step.percent(), None);
 
-        // 字节型步骤（游戏主文件）：分母已知，分子随下载回调累加
         c.enter_step_bytes(4, 200);
         assert_eq!(step.idx.load(Ordering::Relaxed), 4);
         c.step_bytes.store(50, Ordering::Relaxed);
@@ -1546,7 +1461,6 @@ mod tests {
         c.step_files.store(1, Ordering::Relaxed);
         assert_eq!(step.percent(), Some(25.0));
 
-        // 完成 → 离开步骤
         c.leave_step();
         assert_eq!(step.idx.load(Ordering::Relaxed), usize::MAX);
         assert_eq!(step.percent(), None);

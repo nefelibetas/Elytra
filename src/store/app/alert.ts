@@ -1,4 +1,4 @@
-// 全局错误弹窗状态（AlertDialog）：启动/登录/皮肤/披风等多处共用，跨 store 引用。
+// 全局错误弹窗状态（AlertDialog）：启动/登录/皮肤/披风共用，跨 store 引用。
 import { reactive } from "vue";
 
 export const alertState = reactive({

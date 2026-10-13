@@ -15,7 +15,7 @@ pub enum GcType {
 pub enum AuthMode {
     Offline {
         username: String,
-        /// 离线 UUID（按离线皮肤设置生成：匹配 Steve/Alex 模型或正版玩家真实 UUID）
+        /// 离线 UUID（按离线皮肤设置生成）
         uuid: String,
     },
     Online {
@@ -24,8 +24,7 @@ pub enum AuthMode {
         uuid: String,
         xuid: String,
     },
-    /// 第三方登录（authlib-injector / 皮肤站 / Yggdrasil 兼容服务器）。
-    /// api_url = 验证服务器根地址（如 https://littleskin.cn/api/yggdrasil）。
+    /// 第三方登录（authlib-injector / 皮肤站 / Yggdrasil 兼容服务器）；api_url = 验证服务器根地址。
     External {
         username: String,
         access_token: String,
@@ -54,7 +53,6 @@ pub enum ProcessPriority {
     RealTime,
 }
 
-/// 游戏窗口大小。
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, ts_rs::TS)]
 #[ts(export_to = "launcher/")]
 pub enum WindowSize {
@@ -69,8 +67,7 @@ pub enum WindowSize {
 pub struct LaunchOptions {
     pub memory: MemoryMode,
 
-    /// 最小堆 -Xms（MB）；None = 不设置（JVM 默认，随 -Xmx 的 1/64 起扩）。
-    /// 仅 Custom 内存模式生效（Auto 下 -Xmx 动态推测，固定 -Xms 可能超上限）。
+    /// 最小堆 -Xms（MB）；None = 不设置。仅 Custom 模式生效（Auto 的 -Xmx 动态推测）。
     #[serde(default)]
     pub min_memory: Option<u32>,
 
@@ -84,7 +81,7 @@ pub struct LaunchOptions {
     #[serde(default)]
     pub window_size: WindowSize,
 
-    /// 禁用 Java Launch Wrapper（老版本主类 net.minecraft.launchwrapper.Launch → 直接用 client.main.Main）。
+    /// 禁用 Java Launch Wrapper（老版本 launchwrapper 主类 → client.main.Main）。
     #[serde(default)]
     pub disable_launch_wrapper: bool,
 

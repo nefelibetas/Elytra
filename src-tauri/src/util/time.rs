@@ -1,7 +1,6 @@
 //! 文件元数据时间转换 + 时间戳格式化。
 
-/// 文件最后修改时间（unix 秒），读取失败回退 0（不存在/无权限/时钟异常均不致命）。
-/// version.rs / mod_updates(identify,scan) 三处共用，消除重复的 metadata 时间链。
+/// 文件最后修改时间（unix 秒），读取失败回退 0；version.rs / mod_updates(identify,scan) 共用。
 pub fn modified_secs(meta: &std::fs::Metadata) -> u64 {
     meta.modified()
         .ok()
@@ -19,8 +18,7 @@ pub fn utc_stamp() -> String {
     stamp_from_unix(secs)
 }
 
-/// unix 秒 → `YYYYMMDD-HHMMSS`（UTC）。
-/// 不引入 chrono：民用日历换算用 Howard Hinnant 的 `civil_from_days` 算法（纯整数、无查表）。
+/// unix 秒 → `YYYYMMDD-HHMMSS`（UTC）；用 Hinnant `civil_from_days` 纯整数换算，不引入 chrono。
 pub fn stamp_from_unix(secs: i64) -> String {
     let days = secs.div_euclid(86_400);
     let rem = secs.rem_euclid(86_400);

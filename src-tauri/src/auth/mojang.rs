@@ -1,12 +1,9 @@
-//! Mojang 官方 API 客户端（玩家查询 / 皮肤纹理）。
-//! 供 commands/account.rs（正版皮肤保存与账号列表头像）共用，
-//! 消除 name→UUID 与 textures property 拉取的多处重复实现。
+//! Mojang 官方 API 客户端（玩家查询 / 皮肤纹理），供 commands/account.rs 共用。
 
 use crate::downloader::fetcher::http;
 use base64::Engine;
 
-/// 拉取 textures property 的 value（base64 payload，非签名版）。
-/// 统一带 `?unsigned=false`：解码结果与签名版一致，且体积更小。
+/// 拉取 textures property 的 value（base64 payload，非签名版）；统一带 `?unsigned=false`（解码一致且体积更小）。
 pub async fn texture_value(uuid: &str) -> Result<String, String> {
     let resp = http()
         .get(format!(
@@ -43,11 +40,9 @@ pub async fn profile_textures(uuid: &str) -> Result<serde_json::Value, String> {
     serde_json::from_slice(&decoded).map_err(common_err_ctx!("皮肤数据解析失败"))
 }
 
-/// 拉取正版玩家皮肤（含模型类型），官方 sessionserver 失败时回退 minotar
-/// （国内可直连的第三方皮肤源，实测稳定；无 model 信息 → "classic"）。
-/// 仅头像渲染路径使用——装饰性资源，直连失败不该让头像永久缺失；
-/// 主动操作（保存皮肤到本地）仍走官方直连（fetch_skin），失败需如实报错。
-/// 返回 (皮肤 PNG URL, 模型类型)。
+/// 拉取正版玩家皮肤（含模型类型）；官方 sessionserver 失败时回退 minotar
+/// （第三方皮肤源；无 model 信息 → "classic"）。
+/// 仅头像渲染路径用（装饰性）；主动操作走官方直连 fetch_skin，失败需如实报错。
 pub async fn skin_profile_with_fallback(uuid: &str) -> Result<(String, String), String> {
     match profile_textures(uuid).await {
         Ok(t) => {

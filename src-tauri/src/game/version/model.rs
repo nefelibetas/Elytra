@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-/// 版本清单
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionManifest {
@@ -10,7 +9,6 @@ pub struct VersionManifest {
     pub versions: Vec<VersionMeta>,
 }
 
-/// 最新版本
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LatestVersion {
@@ -18,7 +16,6 @@ pub struct LatestVersion {
     pub snapshot: String,
 }
 
-/// 版本元数据
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionMeta {
@@ -31,12 +28,11 @@ pub struct VersionMeta {
     pub compliance_level: serde_json::Value,
 }
 
-/// 游戏版本json
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionJson {
-    /// 游戏参数：1.13+ 用对象形态；**老版本（≤1.12）没有该字段，部分合并/第三方写入的是 null**，
-    /// 故按 Option 解析（`#[serde(default)]` 只兜住"缺失"，兜不住显式 null）。
+    /// 游戏参数：1.13+ 用对象形态；**老版本（≤1.12）无该字段，部分合并/第三方写入 null**，
+    /// 故按 Option 解析（`#[serde(default)]` 只兜住缺失，兜不住显式 null）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub arguments: Option<Arguments>,
     pub asset_index: AssetIndex,
@@ -55,14 +51,12 @@ pub struct VersionJson {
     pub r#type: String,
 }
 
-/// Java版本
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JavaVersion {
     pub major_version: serde_json::Value,
 }
 
-/// 资源索引
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetIndex {
@@ -73,7 +67,6 @@ pub struct AssetIndex {
     pub url: String,
 }
 
-/// 库
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Library {
     pub name: String,
@@ -85,7 +78,6 @@ pub struct Library {
     pub extract: Option<ExtractRules>,
 }
 
-/// 库下载
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LibraryDownloads {
     pub artifact: Option<Artifact>,
@@ -93,7 +85,6 @@ pub struct LibraryDownloads {
     pub classifiers: Option<HashMap<String, Artifact>>,
 }
 
-/// Artifact
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Artifact {
     pub path: String,
@@ -108,7 +99,6 @@ pub struct ExtractRules {
     pub exclude: Vec<String>,
 }
 
-/// 规则
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Rule {
     pub action: String,
@@ -165,9 +155,7 @@ pub struct AssetObject {
 
 #[cfg(test)]
 mod tests {
-    /// 回归：老版本（≤1.12）的版本 json **没有 arguments 字段**，部分合并/第三方写入的是
-    /// `"arguments": null` —— 二者都必须能解析（此前显式 null 会报
-    /// `invalid type: null, expected struct Arguments`，1.7.10/1.8.9 Forge 因此装完打不开）。
+    /// 老版本（≤1.12）json 无 arguments 字段、第三方可能写 `"arguments": null`，二者都必须能解析。
     #[test]
     fn legacy_arguments_null_or_missing_both_parse() {
         let base = |args_field: &str| {
@@ -185,7 +173,7 @@ mod tests {
         assert!(vj.arguments.is_none());
         assert!(vj.jvm_args().is_none() && vj.game_args().is_none());
         assert!(vj.minecraft_arguments.is_some());
-        // 显式 null（此前合并写坏了的形态 / 第三方启动器写入）
+        // 显式 null（第三方启动器写入）
         let vj2: VersionJson =
             serde_json::from_str(&base(r#""arguments": null,"#)).expect("arguments: null 应能解析");
         assert!(vj2.arguments.is_none());

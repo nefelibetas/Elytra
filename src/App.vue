@@ -14,7 +14,7 @@ import { toastState, showToast } from "./utils/toast";
 const router = useRouter();
 
 
-/** 下载失败错误 dialog（body 只放短提示，完整错误由复制按钮带走）。 */
+/** body 只放短提示，完整错误由复制按钮带走。 */
 const errorDialog = ref(false);
 const errorMessage = ref("");
 
@@ -30,22 +30,21 @@ watch(lastAutoTasksFinished, (finished) => {
 });
 
 dlState.onTaskDone = (message: string, kind?: TaskKind, versionDir?: string) => {
-  // JDK 安装任务：完成处理（自动选中等）由 jdkOptions 专属监听负责，此处不提示不跳转
+  // JDK 任务完成处理由 jdkOptions 监听负责
   if (kind === "jdk") return;
-  // 版本下载完成 → 自动选中该版本（后续 Mod 下载目标即此版本）
+  // 版本下载完成后自动选中该版本，使后续 Mod 下载目标为该版本
   if (versionDir) setSelected(versionDir);
-  // 文案由 download.ts 统一格式化（资源名映射 → "下载任务[资源名]完成"，其余原名）
+  // 文案由 download.ts 统一格式化（资源名映射）
   showToast(message);
-  // 不自动退出任务中心：任务中心已是顶级 tab（FAB 移除），完成停留本页查看状态
+  // 完成不自动退出任务中心
 };
 
 dlState.onTaskError = (_taskName: string, error: string) => {
   errorMessage.value = error;
   errorDialog.value = true;
-  // 失败同样停留当前页：错误 dialog 已弹出，不强制跳转（与完成/取消一致）
 };
 
-/** 复制挂起任务错误全文（中文首行 + 技术细节）到剪贴板。 */
+/** 复制挂起任务错误全文（中文首行 + 技术细节）。 */
 async function copyWaitingError() {
   const w = waitingUser.value;
   if (!w?.error) return;
@@ -57,7 +56,7 @@ async function copyWaitingError() {
   }
 }
 
-/** 目标是否处于可编辑上下文（输入框 / 文本域 / contenteditable）。 */
+/** 输入框 / 文本域 / contenteditable。 */
 function isEditableTarget(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;
   if (!el || typeof el.tagName !== "string") return false;
@@ -79,8 +78,7 @@ function onKeyDown(e: KeyboardEvent) {
     e.preventDefault();
     return;
   }
-  // 输入框/文本域内放行原生编辑快捷键（全选/复制/剪切/粘贴/撤销/重做）：
-  // 这些都是元素自身的编辑行为，全局拦截会连带废掉输入框里的 Ctrl+A 等
+  // 输入上下文放行原生编辑快捷键（全选/复制/剪切/粘贴/撤销/重做）
   if (
     isEditableTarget(e.target) &&
     e.ctrlKey &&
@@ -105,14 +103,9 @@ function onKeyDown(e: KeyboardEvent) {
   }
 }
 
-/** 鼠标侧键（后退/前进）驱动应用内导航栈（store/nav.ts）。
- *  WebView 侧键默认直接操作浏览器历史、绕过 vue-router 自身栈导致页面
- *  状态不一致，故必须：捕获阶段逐个拦截 mousedown/mouseup/pointerdown/
- *  pointerup（button 3=后退 4=前进）preventDefault 挡住原生导航，再改由
- *  自管导航栈 sideBack()/sideForward() 精确回放——栈内移动指针，根路由
- *  （Launcher）处后退自然为空操作，永不越出应用。popstate 兜底保留：
- *  若侧键仍在更底层触发浏览器导航，拉回应用当前路由。
- *  同一按键会经 mousedown 与 pointerdown 重复派发，用 120ms 时间窗去重。 */
+/** 鼠标侧键（后退/前进）驱动应用内导航栈（store/nav.ts）：WebView 侧键默认直接操作浏览器历史、绕过
+ *  vue-router 自身栈导致页面状态不一致，故在捕获阶段拦截（button 3=后退 4=前进）并 preventDefault，
+ *  改由自管栈 goBack/goForward 回放；同一按键经 mousedown 与 pointerdown 重复派发，用 120ms 时间窗去重。 */
 let pinnedHash = "#/";
 let lastSideAt = 0;
 
@@ -131,7 +124,7 @@ function onSideButton(e: MouseEvent) {
 function onPopState() {
   const cur = location.hash || "#/";
   if (pinnedHash && cur !== pinnedHash) {
-    // 不新增历史条目地拉回 hash，并同步 vue-router 当前路由
+    // 不新增历史条目地拉回 hash 并同步路由
     history.replaceState(null, "", pinnedHash);
     router.replace(pinnedHash.slice(1) || "/").catch(() => {});
   }
@@ -156,9 +149,9 @@ onMounted(() => {
   document.addEventListener("pointerup", onSideButton, true);
   window.addEventListener("popstate", onPopState);
   ensureListen();
-  // 崩溃/重启恢复检查：拉取上次未完成的任务（DownloadDetail 横幅询问恢复）
+  // 崩溃/重启恢复：拉取上次未完成的任务（DownloadDetail 横幅询问恢复）
   void checkInterrupted();
-  // 应用启动即持续监听系统内存（设置页/启动页共用）
+  // 持续监听系统内存（设置页/启动页共用）
   startMemoryMonitor();
   // 配置损坏恢复提示（启动期拉取 + 运行期订阅事件）
   void ensureConfigRecoveryWatch();
@@ -216,8 +209,7 @@ onUnmounted(() => {
         </div>
       </div>
     </Transition>
-    <!-- 窗口边缘加深：无边框窗口悬浮于桌面，页面底色与外部背景相近时
-         边界难辨。纯视觉覆盖层（描边 + 内阴影晕影），不拦截交互；
+    <!-- 窗口边缘加深：无边框窗口悬浮于桌面时边界难辨。纯视觉覆盖层（描边 + 内阴影），不拦截交互；
          z 2000 位于内容/弹窗之上、toast(3000)/tooltip(3100) 之下 -->
     <div class="edge-shade" aria-hidden="true"></div>
   </div>
@@ -237,8 +229,7 @@ html, body {
   user-select: none;
 }
 
-/* 桌面应用 UI：点击聚焦不显示浏览器默认焦点框（黑色 outline）。
-   键盘/编程聚焦保留品牌色可见轮廓（可访问性底线；Tab 键拦截时仅对编程焦点生效，无害）。 */
+/* 点击聚焦不显示默认焦点框；键盘/编程聚焦保留品牌色轮廓（可访问性底线；Tab 已拦截，实际仅编程焦点生效） */
 :focus { outline: none; }
 :focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
 
@@ -248,39 +239,31 @@ input, textarea {
   user-select: text;
 }
 
-/* placeholder 全局统一（组件级自定义可覆盖） */
+/* 组件级自定义可覆盖 */
 ::placeholder {
   color: var(--text-tertiary);
   opacity: 1;
 }
 
-/* 主题 token 事实源（CSS 侧）。以下 8 个核心色板键与 src/store/theme.ts 的
-   builtinVars() 逐键重复（JS 侧供自定义主题编辑器/预览作内置起点）：
-   --color-brand / --text-primary / --text-secondary / --text-tertiary /
-   --surface-page / --surface-hover / --border-default / --border-strong。
-   :root 对应 builtinVars("grass")，[data-theme="end"|"nether"|"ice"] 对应同名 id；
-   两处任一改动必须同步另一处（消除重复会引入首屏 FOUC，故保留双写 +
-   本交叉引用）。 */
+/* 主题 token 事实源（CSS 侧）：以下 8 个核心色板键与 src/store/theme.ts builtinVars() 逐键重复
+   （--color-brand/--text-primary/--text-secondary/--text-tertiary/--surface-page/--surface-hover/--border-default/--border-strong），两处任一改动必须同步另一处（双写避免首屏 FOUC）。 */
 :root {
   --titlebar-h: 48px;
-  /* 标题栏前景：标题栏铺品牌渐变，白字与半透明白叠层独立于正文语义色 */
+  /* 标题栏铺品牌渐变，前景独立于正文语义色 */
   --titlebar-fg: #FFFFFF;
   --titlebar-fg-dim: rgba(255, 255, 255, 0.7);
-  /* 标题栏交互态底色：color-mix() 在低版本 WebKitGTK 不可用，
-     故给出等价 token 作为前序声明（双声明降级，与 ResourceDetail 的写法一致） */
+  /* color-mix() 低版本 WebKitGTK 不可用，故给出前序等价 token（双声明降级） */
   --titlebar-hover: rgba(255, 255, 255, 0.16);
   --titlebar-active: rgba(255, 255, 255, 0.22);
-  /* 浮层层级常量：FAB < 模态弹窗 < 内容/边缘加深 < 右键菜单 < toast < tooltip。
-     组件内一律引用变量，禁止裸写数值（曾经 waiting 弹窗 z=200 被菜单盖住的根因）。 */
+  /* 层级：FAB < 模态弹窗 < 内容/边缘加深 < 右键菜单 < toast < tooltip；组件一律引用变量，禁止裸写数值 */
   --z-fab: 900;
   --z-menu: 2100;
   --z-modal: 1100;
   --z-toast: 3000;
   --z-tooltip: 3100;
-  /* 滑块填充比例（range 进度条）：组件经 style="--range-pct: N%" 内联注入覆盖，
-     此处默认值仅为静态解析兜底（settings-shared.css 的 var() 引用）。 */
+  /* 组件以 style="--range-pct: N%" 内联覆盖，此处仅为静态解析兜底 */
   --range-pct: 0%;
-  /* 等宽字体栈：生成器命令块 / MOTD 预览等代码等宽文本使用 */
+  /* 命令块 / MOTD 预览等等宽文本使用 */
   --font-mono: "Cascadia Mono", Consolas, "Courier New", monospace;
   font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "Noto Sans SC", sans-serif;
   font-size: 14px;
@@ -291,9 +274,7 @@ input, textarea {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
-  /* brand —— 默认主题 Grass（草方块绿）：取自 Minecraft 草方块/翡翠。
-    多主题体系：data-theme 覆盖块见下（end 末影紫 / nether 下界橙 / ice 冰霜青）。
-    accent 小面积使用（标题栏非色块，激活态/启动按钮/焦点才用品牌色） */
+  /* brand —— 默认主题 Grass（草方块绿）；data-theme 覆盖块见下 */
   --color-brand: #059669;
   --color-brand-dark: #047857;
   --color-brand-hover: #047857;
@@ -324,7 +305,7 @@ input, textarea {
   --shadow-md: 0 2px 8px rgba(15, 23, 42, 0.08);
   --shadow-lg: 0 4px 16px rgba(15, 23, 42, 0.10);
 
-  /* 语义色（错误/成功/警示；危险操作与状态统一收口） */
+  /* 语义色（危险操作与状态统一收口） */
   --color-danger: #E5484D;
   --color-danger-bg: rgba(229, 72, 77, 0.1);
   --color-success: #10B981;
@@ -338,11 +319,11 @@ input, textarea {
   --ld-quilt: #7C3AED;
   --ld-optifine: #0284C7;
 
-  /* 平台品牌徽章色（Modrinth / CurseForge，平台官方色，不随主题变化） */
+  /* 平台品牌徽章色（Modrinth / CurseForge 官方色，不随主题变化） */
   --color-modrinth: #1bd96a;
   --color-curseforge: #f16436;
 
-  /* 备用徽章色（远古版本等非平台徽章；语义独立于 ModLoader 标签色） */
+  /* 非平台徽章（如远古版本）；独立于 ModLoader 标签色 */
   --color-badge-alt: #7C3AED;
   --color-badge-alt-bg: rgba(124, 58, 237, 0.1);
 
@@ -358,14 +339,12 @@ input, textarea {
   /* scrollbar */
   --scrollbar-thumb: #CBD5D1;
 
-  /* 窗口边缘加深（.edge-shade 覆盖层；色相取各主题深色调，避免
-     无边框窗口底色与外部应用背景相近时边界难辨） */
+  /* .edge-shade 覆盖层；色相取各主题深色调（无边框窗口与外部背景接近时易难辨边界） */
   --edge-line: rgba(6, 78, 59, 0.20);
   --edge-shade: rgba(6, 78, 59, 0.08);
 }
 
-/* ===== 主题 End（末影紫）：取自 Minecraft 末地 =====
-   键与色值须与 src/store/theme.ts builtinVars("end") 同步（两处任一改动需同步另一处） */
+/* ===== 主题 End（末影紫）；键与色值须与 src/store/theme.ts builtinVars("end") 同步 ===== */
 [data-theme="end"] {
   --color-brand: #7C3AED;
   --color-brand-dark: #6D28D9;
@@ -401,8 +380,7 @@ input, textarea {
   --ld-optifine: #0891B2;
 }
 
-/* ===== 主题 Nether（下界橙/烈焰）：取自 Minecraft 下界 =====
-   键与色值须与 src/store/theme.ts builtinVars("nether") 同步（两处任一改动需同步另一处） */
+/* ===== 主题 Nether（下界橙/烈焰）；键与色值须与 src/store/theme.ts builtinVars("nether") 同步 ===== */
 [data-theme="nether"] {
   --color-brand: #EA580C;
   --color-brand-dark: #C2410C;
@@ -438,8 +416,7 @@ input, textarea {
   --ld-optifine: #0369A1;
 }
 
-/* ===== 主题 Ice（冰霜青）：取自 Minecraft 冰霜/钻石 =====
-   键与色值须与 src/store/theme.ts builtinVars("ice") 同步（两处任一改动需同步另一处） */
+/* ===== 主题 Ice（冰霜青）；键与色值须与 src/store/theme.ts builtinVars("ice") 同步 ===== */
 [data-theme="ice"] {
   --color-brand: #0EA5E9;
   --color-brand-dark: #0284C7;
@@ -507,8 +484,7 @@ input, textarea {
   background-color: var(--surface-page);
 }
 
-/* 窗口边缘加深覆盖层：色相随主题切换（--edge-line / --edge-shade）。
-   inset box-shadow 三端 WebView 均原生支持，无需 @supports 降级 */
+/* 色相随主题切换；inset box-shadow 三端 WebView 均原生支持，无需 @supports 降级 */
 .edge-shade {
   position: absolute;
   inset: 0;
@@ -577,9 +553,7 @@ input, textarea {
 .wd-btn:hover { border-color: var(--color-brand); }
 .wd-cancel { color: var(--color-danger); }
 .wd-cancel:hover { border-color: var(--color-danger); }
-/* 弹窗操作按钮（AlertDialog #actions slot 全局共享）：
-   scoped CSS 无法穿透 slot 内容，此前在 5 个组件里复制粘贴且变体漂移，
-   统一收敛到全局；vsr/vss 删除弹窗曾因此按钮裸奔（浏览器默认样式） */
+/* AlertDialog #actions slot 全局共享：scoped CSS 无法穿透 slot 内容，故收敛到全局 */
 .dialog-btn {
   padding: 6px 14px;
   border: 1px solid var(--border-strong);

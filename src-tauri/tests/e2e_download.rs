@@ -1,22 +1,7 @@
-//! `run_task` 端到端测试（真实网络 + 真实下载编排）。
-//!
-//! ## 为什么现在能测
-//!
-//! 此前不可测：`run_task` 的参数是 `tauri::AppHandle`（生产 runtime 为 `Wry`），
-//! 而 `tauri::test::mock_app()` 返回 `MockRuntime`，两者类型不兼容；在集成测试里
-//! 用 `tauri::Builder::build(generate_context!())` 构造真实 App 又会因缺少 build
-//! script 生成的资源而在运行时报 `STATUS_ENTRYPOINT_NOT_FOUND`。
-//!
-//! 现在任务层的事件出口抽象为 [`EventSink`]（`AppHandle<R>` 是它的 blanket impl），
-//! 测试注入记录型实现即可驱动完整流程，且不触碰任何 IPC。
-//!
-//! ## 运行
-//!
-//! 均需真实网络，默认 `#[ignore]`：
-//! ```text
-//! cargo test --test e2e_download -- --ignored --nocapture
-//! ```
-//! - `run_task_cancel_path`：秒级（只拉一次版本清单 + 本地扫描后即取消）
+//! `run_task` 端到端测试（真实网络 + 真实下载编排）。任务层事件出口抽象为 [`EventSink`]
+//! （`AppHandle<R>` 是它的 blanket impl），测试注入记录型实现即可驱动完整流程，不触碰 IPC。
+//! 运行（均需真实网络，默认 `#[ignore]`）：`cargo test --test e2e_download -- --ignored --nocapture`
+//! - `run_task_cancel_path`：秒级（拉一次版本清单 + 本地扫描后即取消）
 //! - `run_task_full_download`：分钟级（真实下载一整个版本，数百 MB）
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -74,11 +59,9 @@ fn vanilla_task(version_id: &str, version_url: String) -> DownloadTask {
     }
 }
 
-/// 取消路径端到端：阶段 A（真实拉取版本 JSON）与阶段 B（本地扫描）真实执行，
-/// 阶段 C 前置位取消 → 断言走 `Cancelled` 收口、任务注册被移除、进度事件已发出。
-///
-/// runtime 必须 multi_thread：任务收口会经 `store::update_status` 走 `util::block_on`
-/// （`block_in_place` 分支），current_thread 下会 panic —— 与生产（tauri runtime）一致。
+/// 取消路径端到端：A（真实拉版本 JSON）/ B（本地扫描）真实执行，C 前置位取消 → 断言走 `Cancelled` 收口、
+/// 任务注册被移除、进度事件已发出。runtime 必须 multi_thread：收口经 `store::update_status` 走 `util::block_on`
+/// （block_in_place 分支），current_thread 下 panic —— 与生产（tauri runtime）一致。
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn run_task_cancel_path() {
@@ -108,11 +91,8 @@ async fn run_task_cancel_path() {
     );
 }
 
-/// spawn 入口集成（**不需要网络**）：验证 `spawn_task_with_sink` 完成
-/// 「注册 → 写恢复快照 → 执行闭包」，且事件出口正是注入的 sink。
-///
-/// 这条用例覆盖此前只能手工验证的 TaskManager 注册路径：`run_task_*` 两个用例
-/// 直接调任务体、绕过了 spawn；这里从入口进入，`run` 闭包同步执行后检查注册表。
+/// spawn 入口集成（**不需要网络**）：验证 `spawn_task_with_sink` 完成「注册 → 写恢复快照 →
+/// 执行闭包」，且事件出口正是注入的 sink；补上 `run_task_*` 直接调任务体、绕过 spawn 的空缺。
 #[test]
 fn spawn_task_with_sink_registers_and_runs() {
     let rec = Arc::new(RecordingSink::default());
@@ -150,7 +130,7 @@ fn spawn_task_with_sink_registers_and_runs() {
     assert!(!task::global().exists(&task_id), "fail 应移除任务注册");
 }
 
-/// 成功路径端到端：真实下载一整个原版版本（数百 MB，分钟级）。
+/// 成功路径端到端：真实下载一整个原版版本（数百 MB，分钟级）；
 /// 断言终态为 `Done`、任务注册已移除，且期间发出过进度与（可能的）步骤事件。
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]

@@ -2,16 +2,14 @@
 
 use super::model::{DownloadFilesTask, DownloadTask};
 
-/// 步骤种类：runner 按 kind 定位执行点（索引动态计算，无硬编码常量）。
+/// 步骤种类：runner 按 kind 定位执行点（索引动态计算）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StepKind {
     /// 下载原版 version json（唯一硬前置，恒在，索引 0）
     VersionJson,
     /// client.jar（恒在，与 libraries/assets 并行）
     ClientJar,
-    /// 依赖库
     Libraries,
-    /// 资源文件
     Assets,
     /// native classifier 下载/解压
     Natives,
@@ -31,8 +29,7 @@ pub struct StepSpec {
     pub kind: StepKind,
 }
 
-/// 任务 → 描述（任务名 + 步骤分析）的统一入口。
-/// 新任务类型实现本 trait 即获得步骤能力（命令层/状态机/前端零改动）。
+/// 任务 → 描述（任务名 + 步骤）统一入口：新任务类型实现本 trait 即获得步骤能力。
 pub trait TaskSpec {
     fn name(&self) -> String;
     fn steps(&self) -> Vec<StepSpec>;
@@ -93,7 +90,7 @@ impl TaskSpec for DownloadTask {
                 kind: StepKind::FabricApi,
             });
         }
-        // 生成最终配置放最后：依赖本体/库就绪，UI 上作为收尾步骤展示
+        // 生成最终配置放最后：依赖本体/库就绪，UI 收尾展示
         if let Some(l) = &self.loader {
             v.push(StepSpec {
                 name: format!("生成 {} 最终配置", l.kind.display_name()),

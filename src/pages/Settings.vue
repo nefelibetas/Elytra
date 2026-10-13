@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 设置页容器：SideNav 导航 + 各 tab 内容编排（业务在 store/组件，本文件不做配置逻辑）
+// 页面容器：SideNav + 各 tab 编排；业务在 store/组件，本文件不做配置逻辑
 import { SlidersHorizontal, Download, Palette, Link2, FileText, KeyRound } from "@lucide/vue";
 import SettingsLaunchOptions from "../component/settings/SettingsLaunchOptions.vue";
 import SettingsJdk from "../component/settings/SettingsJdk.vue";
@@ -27,13 +27,11 @@ import { settingsTab } from "../store/app/settingsTab";
         { key: 'log', label: '启动器日志', icon: FileText },
       ]"
     >
-      <!-- 启动设置：启动选项 / 内存 / Java -->
       <div v-if="settingsTab === 'launch'" key="launch" class="stg-page">
         <SettingsLaunchOptions />
         <SettingsJdk />
       </div>
 
-      <!-- 下载设置：管理游戏下载源 -->
       <div v-else-if="settingsTab === 'external'" key="external" class="stg-page">
         <SettingsExternal />
       </div>
@@ -42,17 +40,15 @@ import { settingsTab } from "../store/app/settingsTab";
         <SettingsDownload />
       </div>
 
-      <!-- 外观：亮色 / 暗色 / 跟随系统 -->
       <div v-else-if="settingsTab === 'appearance'" key="appearance" class="stg-page">
         <SettingsAppearance />
       </div>
 
-      <!-- 联机：EasyTier 虚拟局域网 -->
+      <!-- EasyTier 虚拟局域网 -->
       <div v-else-if="settingsTab === 'online'" key="online" class="stg-page">
         <SettingsOnline />
       </div>
 
-      <!-- 启动器日志 -->
       <div v-else key="log" class="stg-page">
         <SettingsLog />
       </div>

@@ -1,5 +1,3 @@
-//! 自动任务命令（薄胶水）：实例自动任务读写 + 立即执行一次。
-
 use std::path::PathBuf;
 
 use tauri::AppHandle;
@@ -11,8 +9,7 @@ use crate::persist;
 use crate::persist::instance;
 use crate::util;
 
-/// 实例自动任务状态：`global` 作为默认值与"自定义"的预填内容；
-/// `instance` 为 `Some` 时该实例完全采用自己的自动任务。
+/// 实例自动任务状态：`global` 为默认值/"自定义"预填；`instance` 为 Some 时该实例采用自己的。
 #[derive(serde::Serialize, ts_rs::TS)]
 #[ts(export_to = "launcher/")]
 pub struct InstanceAutoTasksState {
@@ -20,12 +17,10 @@ pub struct InstanceAutoTasksState {
     pub instance: Option<AutoTasks>,
 }
 
-/// 当前生效的 Minecraft 目录（下载配置里的 minecraft_dir，绝对路径）。
 fn mc_dir() -> PathBuf {
     persist::downloader_config().minecraft_dir_abs()
 }
 
-/// 读取实例自动任务状态（全局 + 实例）。
 #[tauri::command]
 pub fn get_instance_auto_tasks(version_id: String) -> InstanceAutoTasksState {
     InstanceAutoTasksState {
@@ -48,8 +43,7 @@ pub fn save_global_auto_tasks(tasks: AutoTasks) -> Result<(), String> {
     persist::save_launch_options(&options).map_err(common_err_ctx!("保存配置失败"))
 }
 
-/// 立即执行一次某阶段的自动任务（跳过启动流程，便于调试与应急）。
-/// 在阻塞线程执行（备份/打包可能数十秒），不占用 UI 线程。
+/// 立即执行一次某阶段自动任务（跳过启动流程，便于调试/应急）；在阻塞线程执行（备份可能数十秒）。
 #[tauri::command]
 pub async fn run_auto_tasks_now(
     app: AppHandle,

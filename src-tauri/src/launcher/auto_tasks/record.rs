@@ -1,7 +1,5 @@
 //! 内置动作：记录 mod 清单 JSON（纯本地扫描，不触网）。
-//!
-//! 目的不是备份 mod 文件，而是留一份"这次启动跑的是哪些 mod（含 sha1）"的快照，
-//! 便于换整合包 / 更新后崩了时回溯。输出覆盖制 `mods.json`。
+//! 输出覆盖制 `mods.json`（快照本次启动的 mod 及 sha1），便于换整合包/更新后回溯。
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};

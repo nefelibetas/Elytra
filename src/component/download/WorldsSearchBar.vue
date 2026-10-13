@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// 地图存档搜索表单卡片：薄适配层 → CommunitySearchBar。
-// CurseForge 单源（Modrinth 无 worlds project_type），不显示来源筛选。
+// 地图存档搜索表单卡片 → CommunitySearchBar；CurseForge 单源（Modrinth 无 worlds project_type），不显示来源筛选。
 import { worldsSearch } from "../../store/community/categorySearch";
 import CommunitySearchBar from "./CommunitySearchBar.vue";
 </script>

@@ -45,7 +45,7 @@ fn curseforge_url_segment(category: Option<&str>) -> &'static str {
     }
 }
 
-/// 从 CurseForge gameVersions（如 ["Client","NeoForge","Server","26.2"]）提取已知 loader 名。
+/// 从 gameVersions（如 "NeoForge"）提取已知 loader 名。
 fn curseforge_loaders(game_versions: &[String]) -> Vec<String> {
     game_versions
         .iter()
@@ -60,8 +60,7 @@ fn curseforge_loaders(game_versions: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// 从 CurseForge latestFilesIndexes 提取 (loaders, game_version_range)：modLoader 数字映射
-/// 已知 loader；gameVersion 全量收集后取 min ~ max 范围。
+/// 从 latestFilesIndexes 提取 (loaders, 版本范围)：modLoader 数字映射已知 loader，gameVersion 取 min ~ max。
 fn curseforge_support_fields(data: &serde_json::Value) -> (Vec<String>, Option<String>) {
     let mut loaders: Vec<String> = Vec::new();
     let mut versions: Vec<String> = Vec::new();
@@ -89,8 +88,7 @@ fn curseforge_support_fields(data: &serde_json::Value) -> (Vec<String>, Option<S
     (loaders, version_range(&versions))
 }
 
-/// 带 x-api-key 发 GET 并解析 JSON；key 未配置时直接报错（不 panic、不暴露 key）。
-/// pub(crate)：OptiFabric 安装（optifine.rs）复用同一查询通道。
+/// 带 x-api-key 发 GET 并解析 JSON；key 未配置直接报错（不 panic、不暴露 key）。pub(crate)：optifine.rs 的 OptiFabric 安装复用。
 pub(crate) async fn curseforge_get(
     path: &str,
     params: &[(&str, String)],
@@ -111,9 +109,7 @@ pub(crate) async fn curseforge_get(
 /// 批量换链超时：数百个 fileID 一次请求，服务端聚合查询略慢于单查。
 const CF_BATCH_TIMEOUT_SECS: u64 = 30;
 
-/// CurseForge 批量文件换链：`POST /v1/mods/files`（body `{"fileIds":[...]}`）
-/// → data 数组（id/fileName/downloadUrl/hashes/fileLength）。
-/// 整合包清单只有 (projectID, fileID) 数字引用，必须经此换取直链与 sha1。
+/// CurseForge 批量换链 `POST /v1/mods/files` → data 数组（id/fileName/downloadUrl/hashes/fileLength）；整合包清单只有 (projectID, fileID) 数字引用，必须经此换直链与 sha1。
 pub(crate) async fn curseforge_files(file_ids: &[i64]) -> Result<Vec<serde_json::Value>, String> {
     let key = constants::CURSEFORGE_API_KEY
         .ok_or_else(|| "未配置 CurseForge API Key（项目根 .env 的 ELYTRA_CURSEFORGE_API_KEY），无法使用 CurseForge 来源".to_string())?;
@@ -142,7 +138,7 @@ pub(super) async fn search_curseforge(
         ("pageSize", page_size.to_string()),
         ("index", offset.to_string()),
     ];
-    // 空关键字：不传 searchFilter（API 无热门概念，返回按名称序列表——API 限制）
+    // 空关键字不传 searchFilter（API 无热门概念，返回按名称序列表——API 限制）
     if !query.is_empty() {
         params.push(("searchFilter", query.to_string()));
     }
@@ -154,9 +150,7 @@ pub(super) async fn search_curseforge(
             params.push(("modLoaderType", id.to_string()));
         }
     }
-    // CF /mods/search 不传 classId 时返回全部项目类型（整合包/材质包/光影混入），
-    // 必须显式过滤：普通 mod 搜索（category None）默认 Minecraft Mods(classId=6)，
-    // 分类搜索按已知映射（shader=6552 等），未知类别防御性回落 mod
+    // 不传 classId 会混入全部类型（整合包/材质包/光影），必须显式过滤：普通 mod（category None）默认 Minecraft Mods(classId=6)，分类按映射，未知类别回落 6
     let class_id = match category {
         None => 6,
         Some(cat) => curseforge_class_id(cat).unwrap_or(6),
@@ -194,9 +188,7 @@ pub(super) async fn search_curseforge(
                     .to_string(),
                 downloads: m["downloadCount"].as_u64().unwrap_or(0),
                 icon_url: m["logo"]["url"].as_str().map(str::to_string),
-                // 官网 URL 以 API 返回的 websiteUrl 为准（分类段随 classId 变化：
-                // mods/modpacks/worlds 等，自行拼接 mc-mods 会让整合包等 404）；
-                // 缺失时按已知分类段兜底拼接
+                // 官网 URL 以 API websiteUrl 为准（分类段随 classId 变化，自拼 mc-mods 会让整合包等 404）；缺失时按已知分类段兜底拼接
                 page_url: m["links"]["websiteUrl"]
                     .as_str()
                     .map(str::to_string)
@@ -325,7 +317,7 @@ mod tests {
     /// CurseForge API 对并发请求敏感（并发测试会偶发连接失败），串行化。
     static CF_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-    /// CurseForge 需 key：无 key 的环境跳过，本机（.env 已配置）走真实请求。
+    /// CF 需 key：无 key 的环境跳过，本机（.env 已配置）走真实请求。
     #[tokio::test]
     async fn search_curseforge_works() {
         let _g = CF_LOCK.lock().await;
@@ -345,8 +337,7 @@ mod tests {
         );
     }
 
-    /// CurseForge 搜索不匹配名称括号内的缩写（"JEI" 在 "Just Enough Items (JEI)" 中搜不到），
-    /// 搜全名应命中 JEI（id 238222）。
+    /// CF 搜索不匹配名称括号内缩写（"JEI" 搜不到）；搜全名命中 JEI（id 238222）。
     #[tokio::test]
     async fn curseforge_full_name_finds_jei() {
         let _g = CF_LOCK.lock().await;
@@ -365,7 +356,6 @@ mod tests {
         );
     }
 
-    /// CurseForge 分类映射：worlds 地图存档 classId=17。
     #[test]
     fn curseforge_class_id_maps_worlds() {
         assert_eq!(curseforge_class_id("worlds"), Some(17));
@@ -373,7 +363,6 @@ mod tests {
         assert_eq!(curseforge_class_id("unknown"), None);
     }
 
-    /// CF 项目 URL 段：worlds 用 /worlds/，其余用 /mc-mods/。
     #[test]
     fn curseforge_url_segment_selects_category() {
         assert_eq!(curseforge_url_segment(Some("worlds")), "worlds");
@@ -381,7 +370,6 @@ mod tests {
         assert_eq!(curseforge_url_segment(None), "mc-mods");
     }
 
-    /// loader 提取：gameVersions 中已知 loader 名转小写。
     #[test]
     fn curseforge_loaders_extracts_known_names() {
         let gv = vec![
@@ -393,7 +381,6 @@ mod tests {
         assert_eq!(curseforge_loaders(&gv), vec!["neoforge"]);
     }
 
-    /// CurseForge 支持字段提取：modLoader 数字映射已知 loader，版本取 min ~ max 范围。
     #[test]
     fn curseforge_support_fields_maps_loader_ids() {
         let data = serde_json::json!({

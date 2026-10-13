@@ -7,7 +7,6 @@ import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 
 const route = useRoute();
-/** 游戏 id（版本目录名），由路由 query 传入。 */
 const versionName = computed(() => String(route.query.name ?? ""));
 
 const server = ref("");
@@ -20,7 +19,7 @@ onMounted(async () => {
     server.value = cfg.server ?? "";
     port.value = cfg.port != null ? String(cfg.port) : "";
   } catch {
-    // 无配置保持空
+    // 无配置保持空值
   }
 });
 

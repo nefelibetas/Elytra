@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// 地图存档搜索结果列表：薄适配层 → CommunityResultList。
 import { worldsSearch, worldsTotalPages } from "../../store/community/categorySearch";
 import { Map } from "@lucide/vue";
 import CommunityResultList from "./CommunityResultList.vue";

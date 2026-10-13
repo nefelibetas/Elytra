@@ -1,13 +1,5 @@
 // ── OptiFine 安装：分场景（纯净版 classpath / Forge-like mods / Fabric-like OptiFabric）──
-// 历史背景：OptiFine 本质是客户端补丁（mod 形态），但接入方式随环境不同：
-// - 纯净版（无 ModLoader）：官方安装器生成「继承式独立版本」——OptiFine jar 作为
-//   classpath 库（1.13+ 的 jar 是预补丁客户端，类覆盖 vanilla 生效）。
-// - Forge / NeoForge（1.13+）：jar 作为普通 mod 放 mods 目录。
-// - Fabric / Quilt：OptiFine 不是 Fabric mod 结构，必须搭配 OptiFabric 桥接 mod
-//   一起放 mods 目录。
-// 旧实现把三种场景一律当纯净版处理且 jar 落位与 artifact.path 错位（jar 在 versions/
-// 而 classpath/missing 检查按 libraries/ 找）→ 启动被完整性检查拦截；mainClass 写死
-// launchwrapper → 1.13+ 无此类必崩。本文件按场景落位。
+// 纯净版 → 继承式独立版本 + jar 作 classpath 库（1.13+ 为预补丁客户端，类覆盖 vanilla）；Forge/NeoForge → jar 放 mods/；Fabric/Quilt → 须搭配 OptiFabric 桥接一起放 mods/。
 
 use super::{InstallCtx, VersionTarget};
 use crate::downloader::{fetcher, progress};
@@ -24,11 +16,11 @@ pub enum OptifineMode {
     FabricLike,
 }
 
-/// OptiFabric 的 CurseForge slug（官方唯一发布渠道；Modrinth 同名项目是"替代整合包"，GitHub 已停更旧版）。
+/// OptiFabric 的 CurseForge slug（官方唯一发布渠道；Modrinth 同名项目是"替代整合包"）。
 const OPTIFABRIC_CF_SLUG: &str = "optifabric";
 
-/// 从 CurseForge 文件列表响应中挑出最新文件：(文件名, 下载 URL, sha1)。
-/// 纯函数便于单测。下载 URL 为空（CF 对部分请求不返回）时返回 None。
+/// 从 CurseForge 文件列表响应挑出最新文件：(文件名, 下载 URL, sha1)。纯函数便于单测。
+/// 下载 URL 为空（CF 对部分请求不返回）时返回 None。
 fn pick_curseforge_file(data: &serde_json::Value) -> Option<(String, String, Option<String>)> {
     let file = data["data"].as_array()?.first()?;
     let filename = file["fileName"].as_str()?.to_string();
@@ -45,11 +37,8 @@ fn pick_curseforge_file(data: &serde_json::Value) -> Option<(String, String, Opt
     Some((filename, url, sha1))
 }
 
-/// 查询并下载 OptiFabric 桥接 mod 到 mods 目录。
-/// 渠道：CurseForge 官方 API（slug 查项目 → gameVersion+fabric 过滤取最新文件）→
-/// forgecdn 直链下载（实测可匿名，x-api-key 仅查询需要）。查询失败/无匹配版本时
-/// 明确报错——OptiFabric 维护缓慢（CF 最新 1.14.3，2024-01，仅覆盖至 1.20.x），
-/// 现代 MC（1.21+）无兼容版本时不应静默装个无效 jar。
+/// 查询并下载 OptiFabric 桥接 mod 到 mods 目录：CurseForge API（slug 查项目 → gameVersion+fabric 取最新文件）→
+/// forgecdn 直链（x-api-key 仅查询需要）。无匹配版本明确报错——OptiFabric 仅覆盖至 1.20.x（1.21+ 不应静默装无效 jar）。
 async fn download_optifabric(
     mc_version: &str,
     mods_dir: &std::path::Path,
@@ -89,10 +78,10 @@ async fn download_optifabric(
         );
     };
 
-    // 3. forgecdn 直链下载（与单文件下载同一通道；x-api-key 由查询环节承担，下载可匿名）
+    // 3. forgecdn 直链下载（x-api-key 由查询环节承担，下载可匿名）
     std::fs::create_dir_all(mods_dir).map_err(common_err_ctx!("创建 mods 目录失败"))?;
     let dest = mods_dir.join(&filename);
-    // CurseForge 文件条目自带 sha1，用它校验（此前丢弃 → 镜像/CDN 截断内容会被静默接受）
+    // CurseForge 文件条目自带 sha1，用它校验（否则镜像/CDN 截断内容会被静默接受）
     let sha1 = sha1.unwrap_or_default();
     if sha1.is_empty() {
         fetcher::fetch_bounded_c(
@@ -117,9 +106,7 @@ async fn download_optifabric(
     Ok(())
 }
 
-/// 生成纯净版（继承式）version.json。
-/// `artifact_path`：libraries 相对路径（与 jar 实际落位一致，classpath/missing 检查按它找）；
-/// `artifact_url`：真实可下载 URL（修复任务能重下；不用 file://——reqwest 不支持该 scheme）。
+/// 生成纯净版（继承式）version.json。`artifact_path` 为 libraries 相对路径（须与 jar 实际落位一致）；`artifact_url` 为真实可下载 URL（不用 file://——reqwest 不支持）。
 fn build_vanilla_version_json(
     dir_name: &str,
     mc_version: &str,
@@ -129,10 +116,7 @@ fn build_vanilla_version_json(
 ) -> serde_json::Value {
     serde_json::json!({
         "id": dir_name,
-        // 统一官方客户端主类：1.13+ 客户端已移除 launchwrapper，写死它必崩；
-        // ≤1.12.2 的 Main 类同样存在（launchwrapper 仅是 tweak 壳，旧版 OptiFine
-        // 需 --tweakClass optifine.OptiFineTweaker 注入才生效，本实现不注入——
-        // 此时用 launchwrapper 或 Main 行为等价：OptiFine 不加载、游戏原版启动）。
+        // 统一官方主类：1.13+ 已移除 launchwrapper，写死必崩；≤1.12.2 的 Main 亦然（本实现不注入 tweak，行为等价于原版启动）
         "mainClass": "net.minecraft.client.main.Main",
         "libraries": [{
             "name": format!("optifine:OptiFine:{}", patch),
@@ -171,7 +155,7 @@ pub async fn install_optifine(
         &[("mc", mc_version), ("type", of_type), ("patch", patch)],
     );
 
-    // 落位随场景：纯净版 → libraries/{dir_name}/（classpath 与缺失检查都按 artifact.path 找）；
+    // 落位随场景：纯净版 → libraries/{dir_name}/（classpath 与缺失检查按 artifact.path 找）；
     // Forge-like / Fabric-like → 版本目录 mods/（ModLoader 扫描）。
     let (dest, artifact_path) = match mode {
         OptifineMode::Vanilla => {
@@ -187,18 +171,16 @@ pub async fn install_optifine(
         std::fs::create_dir_all(parent).map_err(common_err_ctx!("创建目录失败"))?;
     }
 
-    // 字节级进度：ProgressCounters::step_progress 工厂（增量累加进全局计数与
-    // OptiFine 步骤计数；total 写入步骤分母）。不换 ProgressCounters::byte_callback：
-    // 后者不写 step_total，而 OptiFine jar 下载需要步骤分母显示总字节。
+    // 字节级进度：step_progress 工厂（增量累加进全局与 OptiFine 步骤计数，total 为分母）。
+    // 不用 byte_callback：后者不写 step_total，而 OptiFine jar 需要步骤分母显示总字节。
     fetcher::fetch(&jar_url, &dest, Some(pc.step_progress()))
         .await
         .map_err(common_err_ctx!("下载 OptiFine 失败"))?;
 
     match mode {
         OptifineMode::Vanilla => {
-            // 继承式 version.json：继承原版（assetIndex/arguments/父库等由启动端
-            // env.rs load_version_json_with_inheritance 展开补齐；父版本须已安装，
-            // 缺失时启动端明确报错引导补装原版）。
+            // 继承式 version.json：继承原版，assetIndex/arguments/父库等由启动端
+            // env.rs load_version_json_with_inheritance 展开补齐（父版本须已安装，缺失时明确报错引导补装）。
             let json =
                 build_vanilla_version_json(dir_name, mc_version, patch, &artifact_path, &jar_url);
             let json_path = vdir.join(format!("{dir_name}.json"));
@@ -209,8 +191,7 @@ pub async fn install_optifine(
             .map_err(common_err_ctx!("写入 version.json 失败"))?;
         }
         OptifineMode::ForgeLike => {
-            // loader 的合并 version.json 由 install_forge/neoforge 生成，OptiFine 不写 json——
-            // 旧实现无条件覆盖 minimal json，会把 forge 生成的 json 顶掉。
+            // loader 的合并 version.json 由 install_forge/neoforge 生成，OptiFine 不写 json（否则会顶掉它）
         }
         OptifineMode::FabricLike => {
             download_optifabric(mc_version, &vdir.join("mods"), pc, cancel).await?;

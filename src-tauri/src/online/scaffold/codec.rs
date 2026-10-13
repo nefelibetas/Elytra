@@ -1,25 +1,17 @@
-//! Scaffolding 信息协议帧编解码（TCP，大端序）。
+//! Scaffolding 信息协议帧编解码（TCP，大端序）。请求 `[u8 类型长度][类型 "ns:value"][u32 请求体长度][请求体]`；
+//! 响应 `[u8 状态][u32 响应体长度][响应体]`；状态：0 = 成功，[32, 64) = 协议定义错误，255 = 未知错误（响应体 UTF8 详情）；
+//! 类型 `{namespace}:{value}`，namespace/value 仅小写字母、下划线、数字 ASCII。
 //!
-//! 请求：`[u8 类型长度][类型 "ns:value"][u32 请求体长度][请求体]`
-//! 响应：`[u8 状态][u32 响应体长度][响应体]`
-//!
-//! 状态：0 = 成功；[32, 64) = 协议定义错误；255 = 未知错误（响应体 UTF8 详情）。
-//! 类型：`{namespace}:{value}`，namespace/value 仅小写字母、下划线、数字 ASCII。
-//!
-//! blocking 版本供 OS 监听服务器（`super::server`）与集成测试（`online_diag`）使用；
-//! 运行时数据面（guest 心跳/协商）走 async 版本。两版本帧格式一致，测试据此
-//! 验证跨实现互操作。
+//! blocking 版供 OS 监听服务器与集成测试；运行时数据面走 async 版，两版帧格式一致（测试验证互操作）。
 
 use std::io::{self, Read, Write};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-/// 响应状态：成功。
 pub const STATUS_OK: u8 = 0;
 /// 响应状态：未知错误（响应体为 UTF8 错误详情）。
 pub const STATUS_UNKNOWN_ERROR: u8 = 255;
 
-/// 请求帧。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
     pub namespace: String,
@@ -28,13 +20,11 @@ pub struct Request {
 }
 
 impl Request {
-    /// 完整类型串 `ns:value`。
     pub fn kind(&self) -> String {
         format!("{}:{}", self.namespace, self.value)
     }
 }
 
-/// 响应帧。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Response {
     pub status: u8,
@@ -56,14 +46,11 @@ impl Response {
     }
 }
 
-/// 协议帧体长度上限（16 MiB）。
-///
-/// 长度字段是外部可控的裸 `u32`：若直接 `vec![0u8; body_len]` 分配，一条特制帧头
-/// （长度填 `0xFFFFFFFF`）就能让进程尝试分配 4 GiB → 分配失败即 abort（远程 DoS）。
-/// 本协议最大合法体量是玩家表快照（数十 KB 量级），16 MiB 留足余量。
+/// 协议帧体长度上限（16 MiB）。长度字段是外部可控的裸 `u32`：直接 `vec![0u8; body_len]` 分配时，
+/// 一条特制帧头（长度填 `0xFFFFFFFF`）会让进程尝试分配 4 GiB → abort（远程 DoS）。
+/// 最大合法体量是玩家表快照（数十 KB），16 MiB 留足余量。
 pub const MAX_BODY_LEN: usize = 16 * 1024 * 1024;
 
-/// 校验帧体长度（读请求 / 读响应共用）。
 fn check_body_len(len: u32) -> io::Result<usize> {
     let len = len as usize;
     if len > MAX_BODY_LEN {
@@ -75,7 +62,6 @@ fn check_body_len(len: u32) -> io::Result<usize> {
     Ok(len)
 }
 
-/// 从流中读一个请求（blocking）。
 pub fn read_request<R: Read>(r: &mut R) -> io::Result<Request> {
     let mut kind_len = [0u8; 1];
     r.read_exact(&mut kind_len)?;
@@ -100,7 +86,6 @@ pub fn read_request<R: Read>(r: &mut R) -> io::Result<Request> {
     })
 }
 
-/// 写一个请求到流（blocking）。
 pub fn write_request<W: Write>(w: &mut W, namespace: &str, value: &str, body: &[u8]) -> io::Result<()> {
     let kind = format!("{namespace}:{value}");
     let kind_len = kind.len();
@@ -117,7 +102,6 @@ pub fn write_request<W: Write>(w: &mut W, namespace: &str, value: &str, body: &[
     w.flush()
 }
 
-/// 从流中读一个响应（blocking）。
 pub fn read_response<R: Read>(r: &mut R) -> io::Result<Response> {
     let mut status = [0u8; 1];
     r.read_exact(&mut status)?;
@@ -132,7 +116,6 @@ pub fn read_response<R: Read>(r: &mut R) -> io::Result<Response> {
     })
 }
 
-/// 写一个响应到流（blocking）。
 pub fn write_response<W: Write>(w: &mut W, response: &Response) -> io::Result<()> {
     w.write_all(&[response.status])?;
     w.write_all(&(response.body.len() as u32).to_be_bytes())?;
@@ -140,7 +123,6 @@ pub fn write_response<W: Write>(w: &mut W, response: &Response) -> io::Result<()
     w.flush()
 }
 
-/// 从 async 流中读一个请求（tokio AsyncRead）。
 pub async fn read_request_async<R>(r: &mut R) -> io::Result<Request>
 where
     R: tokio::io::AsyncRead + Unpin,
@@ -171,7 +153,6 @@ where
     })
 }
 
-/// 写一个请求到 async 流（tokio AsyncWrite）。
 pub async fn write_request_async<W>(w: &mut W, namespace: &str, value: &str, body: &[u8]) -> io::Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -191,7 +172,6 @@ where
     w.flush().await
 }
 
-/// 从 async 流中读一个响应（tokio AsyncRead）。
 pub async fn read_response_async<R>(r: &mut R) -> io::Result<Response>
 where
     R: tokio::io::AsyncRead + Unpin,
@@ -209,7 +189,6 @@ where
     })
 }
 
-/// 写一个响应到 async 流（tokio AsyncWrite）。
 pub async fn write_response_async<W>(w: &mut W, response: &Response) -> io::Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -251,11 +230,9 @@ fn is_allowed_kind_char(b: u8) -> bool {
 mod tests {
     use super::*;
 
-    /// 帧体长度必须在**分配之前**校验：长度字段是外部可控的裸 `u32`，
-    /// 直接按声明值分配会让一条特制帧头把进程打到 abort（远程 DoS）。
+    /// 帧体长度必须在**分配之前**校验，否则一条特制帧头（裸 u32）能把进程打到 abort（远程 DoS）。
     #[test]
     fn rejects_oversize_bodies_before_allocating() {
-        // 请求：声明 4 GiB 帧体
         let mut buf = Vec::new();
         buf.push(3u8);
         buf.extend_from_slice(b"c:x");
@@ -264,7 +241,6 @@ mod tests {
         let err = read_request(&mut cur).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
 
-        // 响应：同样
         let mut buf = Vec::new();
         buf.push(0u8);
         buf.extend_from_slice(&u32::MAX.to_be_bytes());
@@ -272,7 +248,6 @@ mod tests {
         let err = read_response(&mut cur).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
 
-        // 边界：恰好等于上限合法，多 1 字节即拒绝
         assert!(check_body_len(MAX_BODY_LEN as u32).is_ok());
         assert!(check_body_len(MAX_BODY_LEN as u32 + 1).is_err());
     }
@@ -323,7 +298,6 @@ mod tests {
 
     #[test]
     fn invalid_kind_rejected() {
-        // 大写/特殊字符 → 拒绝
         let mut cur = io::Cursor::new(b"\x05C:ping\x00\x00\x00\x00".as_slice());
         assert!(read_request(&mut cur).is_err());
     }

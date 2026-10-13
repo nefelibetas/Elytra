@@ -1,16 +1,7 @@
-//! 联机链路诊断（Scaffolding 协议模型）：host 开联机 + 本地 echo 服务器，
-//! guest 加入后经虚拟网数据面连接 host。走真实生产代码
-//! `EasyTierSession::start`（与 UI 联机同一路径，含 easytier 日志初始化）。
-//!
-//! 链路（no_tun + smoltcp 全数据面）：
-//!   guest data_plane_tcp_connect(host虚拟IP:scaffold_port) → 信息协议
-//!   guest data_plane_tcp_connect(host虚拟IP:game_port)  → 游戏流量（proxy NAT）
-//!
-//! 已知坑（session.rs 文档同款）：
-//! - bind_device=false：缺则 Windows 10049 连不上
-//! - kcp feature + enable_kcp_proxy：缺则数据面回退 smoltcp，
-//!   MC 登录配置同步（registry 大数据）中断
-//!
+//! 联机链路诊断（Scaffolding 协议模型）：host 开联机 + 本地 echo 服务器，guest 加入后经虚拟网
+//! 数据面连接 host，走真实生产代码 `EasyTierSession::start`（与 UI 联机同一路径）。
+//! 已知坑（session.rs 文档同款）：bind_device=false（缺则 Windows 10049 连不上）；
+//! kcp feature + enable_kcp_proxy（缺则数据面回退 smoltcp，MC 登录配置同步的 registry 大数据中断）。
 //! 运行：cd src-tauri && cargo test --test online_diag -- --nocapture --test-threads=1
 
 use std::io::{Read, Write};

@@ -1,8 +1,4 @@
-//! ── 本地运行时复用（LocalRuntimeSource）：迁移用户免重下数百 MB ──
-//! 用户换启动器（HMCL/PCL2/官方启动器）迁移时，目标 .minecraft 里可能已存在
-//! libraries / assets / client jar——本模块探测可复用的运行时根，逐文件
-//! size + sha1 双校验后本地复制（绝不盲复制），未命中走网络。
-//! 纯新增模块，不触碰现有下载主路径（library.rs / assets.rs / runner.rs 各自包一层）。
+//! 本地运行时复用（LocalRuntimeSource）：换启动器迁移时探测可复用根，逐文件 size + sha1 双校验后本地复制（免重下数百 MB），未命中走网络。
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -16,11 +12,7 @@ pub struct LocalRuntimeSource {
 }
 
 impl LocalRuntimeSource {
-    /// 从目标版本目录向上探测最近的复用根：
-    /// `ancestors()` 依次检查（目标目录 → .minecraft → 上级目录……），
-    /// 首个同时含 `assets/` 与 `libraries/` 的目录即视为可复用根
-    /// （覆盖 PCL2/HMCL 的多版本目录形态：versions 在某上级目录下）。
-    /// 全新 .minecraft（尚未下载过任何文件、无 libraries/）不会被误判。
+    /// 从目标版本目录向上探测最近的复用根：首个同时含 `assets/` 与 `libraries/` 的目录即可复用根。
     pub fn discover(start: &Path) -> Option<LocalRuntimeSource> {
         start
             .ancestors()
@@ -34,9 +26,7 @@ impl LocalRuntimeSource {
         &self.root
     }
 
-    /// 复用根下对应 .minecraft 相对路径的文件
-    /// （如 `libraries/net/minecraft/...`、`assets/objects/ab/<hash>`、
-    /// `versions/{id}/{id}.jar`）。
+    /// 复用根下对应 .minecraft 相对路径的文件。
     pub fn local_path(&self, rel: &str) -> PathBuf {
         self.root.join(rel)
     }
@@ -47,14 +37,7 @@ pub fn is_local_runtime_root(dir: &Path) -> bool {
     dir.join("assets").is_dir() && dir.join("libraries").is_dir()
 }
 
-/// 逐产物复用判定：
-/// - 无期望 sha1（或为空）→ `None`（**绝不盲复制**——内容无法验证）；
-/// - 本地源同相对路径文件缺失 → `None`；
-/// - 期望 size 已知且本地 size 不符 → `None`（免大文件 sha1 浪费）；
-/// - 流式 sha1 校验匹配 → `Some(源文件路径)`（可安全复制），否则 `None`。
-///
-/// 目标文件自身"已存在且匹配"由调用方先行判断（现有 dest 检查），
-/// 本函数只回答"本地复用根能否补齐该文件"。
+/// 逐产物复用判定：无期望 sha1 / 本地缺失 / size 不符 → `None`，流式 sha1 匹配 → `Some(源路径)`；目标自身匹配由调用方先判。
 pub fn classify_local_artifact(
     source: &LocalRuntimeSource,
     rel: &str,
@@ -79,9 +62,7 @@ pub fn classify_local_artifact(
     }
 }
 
-/// 验证后复制：流式复制本地文件到目标，进度回调与下载回调同语义 `(downloaded, total)`。
-/// 返回复制的字节数；复制失败清理残留目标文件（对齐 fetch 失败语义），
-/// 由调用方把错误降级为普通网络下载（复用失败不致命）。
+/// 验证后复制：流式复制本地文件到目标，进度回调与下载回调同语义；失败清理残留（由调用方降级为网络下载）。
 pub async fn copy_verified_local<F: Fn(u64, u64)>(
     src: &Path,
     dest: &Path,
@@ -121,7 +102,6 @@ mod tests {
     use super::*;
 
     fn fixture() -> (tempdir_shim::TempDir, PathBuf) {
-        // 临时目录：reuse 根（含 assets/libraries 空目录）+ 一个待复制文件
         let root = std::env::temp_dir().join(format!("elytra_test_reuse_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("assets/objects/ab")).unwrap();
@@ -132,7 +112,6 @@ mod tests {
     #[test]
     fn discover_finds_nearest_runtime_root() {
         let (_guard, root) = fixture();
-        // 从版本目录向上：本身不是根，父级（含 assets+libraries）是
         let vdir = root.join("versions").join("1.20.4");
         assert!(!is_local_runtime_root(&vdir));
         assert!(is_local_runtime_root(&root));
@@ -156,29 +135,23 @@ mod tests {
     fn classify_requires_sha1_and_verifies_content() {
         let (_guard, root) = fixture();
         let src = LocalRuntimeSource { root: root.clone() };
-        // 写一个已知内容的本地文件
         let rel = "libraries/net/test/a.jar";
         let content = b"hello reuse";
         std::fs::write(root.join(rel), content).unwrap();
         let sha = super::super::hash::sha1_hex(content);
 
-        // size + sha1 全匹配 → 可复制
         let hit = classify_local_artifact(&src, rel, Some(content.len() as u64), Some(&sha));
         assert_eq!(hit.as_deref(), Some(root.join(rel).as_path()));
-        // size 不符 → 拒绝（免 sha1 浪费）
         assert!(
             classify_local_artifact(&src, rel, Some(999), Some(&sha)).is_none(),
             "size 不匹配不应复用"
         );
-        // sha1 不符 → 拒绝
         assert!(
             classify_local_artifact(&src, rel, Some(content.len() as u64), Some("deadbeef"))
                 .is_none(),
             "sha1 不匹配不应复用"
         );
-        // 无期望 sha1 → 绝不盲复制
         assert!(classify_local_artifact(&src, rel, None, None).is_none());
-        // 文件缺失 → None
         assert!(
             classify_local_artifact(&src, "libraries/net/test/missing.jar", None, Some(&sha))
                 .is_none()

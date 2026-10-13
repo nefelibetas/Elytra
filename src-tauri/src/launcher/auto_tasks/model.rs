@@ -62,10 +62,7 @@ pub enum AutoTaskFailure {
     Continue,
 }
 
-/// 三个时点的自动任务集合（全局与实例同构）。
-///
-/// 默认值（Q8 决策）：`on_crash` 打包崩溃日志、`post_exit` 记录 mod 清单默认开启
-/// （成本低、价值高）；`pre_launch` 备份存档默认**关闭**（体积大，用户自行开启）。
+/// 三个时点的自动任务集合（全局与实例同构）。默认 `on_crash` 打包崩溃日志、`post_exit` 记录 mod 清单开启，`pre_launch` 备份存档关闭（体积大）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(default)]
 #[ts(export_to = "launcher/")]
@@ -113,7 +110,6 @@ impl AutoTaskPhase {
         }
     }
 
-    /// 该阶段的步骤列表。
     pub fn steps(self, auto_tasks: &AutoTasks) -> &[AutoTaskStep] {
         match self {
             AutoTaskPhase::PreLaunch => &auto_tasks.pre_launch,
@@ -148,7 +144,6 @@ pub struct AutoTaskProgress {
     pub done: bool,
 }
 
-/// 单条失败记录。
 #[derive(Debug, Clone, Serialize, ts_rs::TS)]
 #[ts(export_to = "launcher/")]
 pub struct AutoTaskFailureInfo {
@@ -225,7 +220,7 @@ mod tests {
 
     #[test]
     fn auto_tasks_default_when_section_missing() {
-        // 旧配置文件无 [auto_tasks] 字段（或整段缺失）时必须能解析为默认值
+        // 旧配置无 [auto_tasks] 字段（或整段缺失）必须解析为默认值
         #[derive(Deserialize)]
         struct Wrapper {
             #[serde(default)]
@@ -238,14 +233,13 @@ mod tests {
 
     #[test]
     fn step_enabled_defaults_true() {
-        // enabled 省略时默认启用（用户旧配置/手写 TOML 友好）
+        // enabled 省略时默认启用
         let step: AutoTaskStep = toml::from_str("action = \"RecordMods\"").unwrap();
         assert!(step.enabled);
     }
 
     #[test]
     fn auto_tasks_default_enables_records_but_not_backup() {
-        // Q8 决策：默认开 mod 记录 + 崩溃打包，备份存档默认关（体积大）
         let auto_tasks = AutoTasks::default();
         assert!(auto_tasks.pre_launch.is_empty(), "备份默认不开");
         assert_eq!(auto_tasks.on_crash.len(), 1);

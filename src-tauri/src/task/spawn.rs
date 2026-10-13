@@ -17,9 +17,7 @@ use crate::jdk::SUPPORTED_JAVA_MAJORS;
 use crate::persist;
 use crate::task::EventSink;
 
-/// 注册任务并 spawn 执行（任务域统一入口，命令层只传参数与执行闭包）。
-/// `spec`：恢复凭证（JobSpec），spawn 时写入快照（running）；
-/// 终态（done/error/cancelled）由 TaskManager::fail/cancel 收口更新。
+/// 注册任务并 spawn 执行（任务域统一入口）。`spec` 为恢复凭证，spawn 时写入 running 快照；终态由 TaskManager::fail/cancel 收口。
 pub(crate) fn spawn_task(
     app: AppHandle,
     name: String,
@@ -31,11 +29,7 @@ pub(crate) fn spawn_task(
     spawn_task_with_sink(sink, name, steps, spec, run)
 }
 
-/// 与 [`spawn_task`] 同逻辑，但事件出口由调用方注入。
-///
-/// 生产路径经 `spawn_task`（`AppHandle` 是 [`EventSink`] 的 blanket impl，包一次即得 sink）；
-/// 集成测试直接注入记录型 sink，从而覆盖「注册 → running 快照 → 执行闭包」整条路径，
-/// 而不必绕过入口直接调任务体。
+/// 同 [`spawn_task`]，事件出口由调用方注入：生产用 `AppHandle`，集成测试注入记录型 sink。
 pub fn spawn_task_with_sink(
     sink: Arc<dyn EventSink>,
     name: String,
@@ -55,8 +49,7 @@ pub fn spawn_task_with_sink(
     Ok(task_id)
 }
 
-/// 由步骤名构造 StepSpec（kind 取 File 仅占位——供修复/整合包等
-/// 无 TaskSpec 驱动的 runner 使用，进度只按名称呈现）。
+/// 由步骤名构造 StepSpec（kind 取 File 占位，供无 TaskSpec 驱动的 runner 使用）。
 pub(crate) fn steps_by_names(names: Vec<String>) -> Vec<StepSpec> {
     names
         .into_iter()

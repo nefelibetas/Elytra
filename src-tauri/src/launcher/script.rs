@@ -1,8 +1,6 @@
-//! 启动脚本渲染（PCL 风格：Windows .bat / macOS/Linux .sh）。
-//! 命令壳在 commands/launch_script.rs；命令构建见 args.rs。
+//! 启动脚本渲染（PCL 风格：Windows .bat / macOS/Linux .sh）；命令壳见 commands/launch_script.rs。
 
-/// 渲染启动脚本内容（Windows: .bat；macOS/Linux: .sh）。
-/// 格式对齐 PCL 导出脚本：chcp 65001 + title + cd 版本目录 + java 命令行 + pause。
+/// 渲染启动脚本（.bat / .sh）；对齐 PCL：chcp 65001 + title + cd 版本目录 + java 命令行 + pause。
 pub fn render_launch_script(
     args: &[String],
     mc_dir: &std::path::Path,

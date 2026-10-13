@@ -1,5 +1,4 @@
 //! 离线账号历史域：本地用户名列表（最近使用升序，末尾为当前）。
-//! 命令层（commands/offline_account.rs）只做参数透传与错误展平。
 
 use crate::constants;
 use crate::persist;
@@ -17,8 +16,7 @@ pub fn last_username() -> String {
     })
 }
 
-/// 保存/更新离线用户名到历史（输入即存；已存在则移到末尾；空名忽略）。
-/// 顺带清理旧版单值键（其内容已并入列表）。
+/// 保存/更新离线用户名到历史（输入即存；已存在移到末尾；空名忽略），并清理旧版单值键。
 pub fn save(username: &str) -> Result<(), PersistError> {
     let name = username.trim();
     if name.is_empty() {
@@ -48,7 +46,6 @@ fn upsert(list: &mut Vec<String>, name: &str) {
 mod tests {
     use super::*;
 
-    /// 重复名移到末尾，新名追加，其余相对顺序不变。
     #[test]
     fn upsert_moves_existing_to_tail() {
         let mut list: Vec<String> = vec!["a".into(), "b".into(), "c".into()];
@@ -59,7 +56,6 @@ mod tests {
         assert_eq!(list, ["a", "c", "b", "d"]);
     }
 
-    /// 空列表直接追加。
     #[test]
     fn upsert_on_empty_list_appends() {
         let mut list: Vec<String> = Vec::new();

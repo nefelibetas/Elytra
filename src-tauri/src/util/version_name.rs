@@ -1,12 +1,10 @@
 //! 版本目录名 / Java 版本字符串解析（与前端 versionClassify 同规则）。
 
-/// loader 标记 key 列表与顺序（与前端 utils/versionClassify 的 LOADER_KEYS 一致；
-/// 各标记互不重叠，顺序不影响结果，仅保持同一事实源）。
+/// loader 标记 key（与前端 utils/versionClassify 的 LOADER_KEYS 一致；互不重叠，顺序不影响结果）。
 const LOADER_KEYS: &[&str] = &["neoforge", "forge", "fabric", "quilt", "optifine"];
 
-/// 冲突重命名 `{id}_n` 后缀剥离（与前端 classifyVersion 的 /_\d+$/ 语义一致）：
-/// 只剥**尾部**一段 `_<数字>`（`26.2-forge-65.1.0_1` → `26.2-forge-65.1.0`；
-/// `x_1_2` → `x_1`；`x_` 不剥）。
+/// 剥离冲突重命名尾部 `_n` 后缀（同前端 /_\d+$/）：只剥尾部一段 `_<数字>`
+/// （`26.2-forge-65.1.0_1` → `26.2-forge-65.1.0`；`x_1_2` → `x_1`；`x_` 不剥）。
 fn strip_conflict_suffix(name: &str) -> &str {
     if let Some(i) = name.rfind('_') {
         let tail = &name[i + 1..];
@@ -32,11 +30,9 @@ fn find_loader_marker(base: &str) -> Option<(usize, &'static str)> {
     None
 }
 
-/// 从版本目录名提取 MC 版本（与前端 utils/versionClassify 同规则）：
-/// 找 `-{loader_key}-` 标记（大小写不敏感）取标记前部分；无标记（vanilla）取整个目录名；
-/// 冲突重命名 `_n` 后缀按尾部 `_数字` 剥离一次。
-/// **仅限展示与本地键**（natives 共享目录等）；对外表达真实 MC 版本应从版本目录内
-/// json 解析（见 commands/version.rs::resolve_version_meta），目录名解析只是兜底。
+/// 从版本目录名提取 MC 版本（与前端 utils/versionClassify 同规则）：找 `-{loader_key}-` 标记（大小写不敏感）
+/// 取标记前部分；无标记（vanilla）取整名；尾部 `_数字` 剥离一次。**仅限展示与本地键**（natives 共享目录等）；
+/// 对外真实 MC 版本应解析版本 json（commands/version.rs::resolve_version_meta），目录名解析只是兜底。
 pub fn mc_version_from_dir(dir_name: &str) -> &str {
     let base = strip_conflict_suffix(dir_name);
     match find_loader_marker(base) {
@@ -46,9 +42,8 @@ pub fn mc_version_from_dir(dir_name: &str) -> &str {
 }
 
 /// 从版本目录名解析 ModLoader：(loader_key, loader_version)。
-/// `26.2-fabric-0.16.9` → Some(("fabric", "0.16.9"))；vanilla → None；
-/// 标记匹配大小写不敏感（PCL2 等外部目录名可能大写）。optifine 也识别
-/// （导出 mrpack 时忽略——dependencies 无 OptiFine 标准键，文件本体已在 overrides 里）。
+/// `26.2-fabric-0.16.9` → Some(("fabric", "0.16.9"))；vanilla → None；大小写不敏感（PCL2 外部目录可能大写）。
+/// optifine 也识别（导出 mrpack 时忽略——dependencies 无 OptiFine 标准键，本体已在 overrides 里）。
 pub fn loader_from_dir(dir_name: &str) -> Option<(&str, &str)> {
     let base = strip_conflict_suffix(dir_name);
     let (idx, key) = find_loader_marker(base)?;
@@ -69,12 +64,10 @@ pub fn parse_java_major(version: &str) -> Option<u32> {
         .and_then(|s| s.parse::<u32>().ok())
 }
 
-/// 从版本 json 文本推断 loader（轻量字符串检查，无需完整解析）：
-/// 特征名匹配优先级 fabric → neoforge → forge → optifine（neoforge 在 forge 前，
-/// 避免 "neoforged" 子串误匹配）；无特征视为原版。
+/// 从版本 json 文本推断 loader（轻量字符串检查，无需完整解析）：优先级 quilt → fabric →
+/// neoforge → forge → optifine（neoforge 在 forge 前，避免 "neoforged" 子串误匹配；
+/// quilt 必须先判——其 json 同时含 net.fabricmc，先判 fabric 会误认）；无特征视为原版。
 pub fn infer_loader_from_json(text: &str) -> String {
-    // quilt 必须最先判：Quilt 的 version json 同时含 net.fabricmc（sponge-mixin / intermediary）
-    // 与 org.quiltmc，若先判 fabric 会把 Quilt 版本误认成 Fabric（图标/徽章/loader 版本都错）
     if text.contains("org.quiltmc") {
         "quilt".into()
     } else if text.contains("net.fabricmc") {
@@ -116,7 +109,7 @@ mod tests {
         assert_eq!(mc_version_from_dir("我的整合包-fabric-1.0"), "我的整合包");
     }
 
-    /// loader 解析与前端同规则（大小写不敏感 + 尾部冲突后缀）；解析器本身信任目录名，
+    /// loader 解析与前端同规则（大小写不敏感 + 尾部冲突后缀）；解析器信任目录名，
     /// 对外真实语义由版本 json 权威层兜底（commands/version.rs::resolve_version_meta）。
     #[test]
     fn loader_from_dir_parity_forms() {
@@ -174,8 +167,7 @@ mod tests {
             infer_loader_from_json(r#"{"mainClass":"net.minecraft.client.main.Main"}"#),
             "vanilla"
         );
-        // 回归：Quilt 的 json 同时含 net.fabricmc（sponge-mixin / intermediary）与 org.quiltmc，
-        // 必须判为 quilt 而不是 fabric
+        // Quilt json 同时含 net.fabricmc（sponge-mixin/intermediary）与 org.quiltmc，必须判 quilt 而非 fabric
         assert_eq!(
             infer_loader_from_json(
                 r#"{"mainClass":"org.quiltmc.loader.impl.launch.knot.KnotClient","libraries":[{"name":"org.quiltmc:quilt-loader:0.23.1"},{"name":"net.fabricmc:sponge-mixin:0.12.5"}]}"#

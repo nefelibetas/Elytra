@@ -1,12 +1,9 @@
-//! 整合包清单解析与安装计划（Modrinth `.mrpack` / CurseForge modpack zip）。
+//! 整合包清单解析与安装计划（Modrinth `.mrpack` / CurseForge zip）。
 //!
-//! 两种格式同构：zip = 清单 JSON + `overrides/` 目录。差异在文件下载地址：
-//! Modrinth 清单自包含直链（零 API 调用）；CurseForge 只有 (projectID, fileID)
-//! 数字引用，需经 `community::curseforge_files` 批量换链（作者关闭第三方分发
-//! 时 downloadUrl 为 null → 记入 restricted，任务收尾提示手动下载）。
+//! 两格式同构：zip = 清单 JSON + `overrides/`。Modrinth 清单自含直链；CurseForge 只有 (projectID, fileID)，
+//! 需经 `community::curseforge_files` 换链（downloadUrl 为 null = 作者禁第三方分发 → 记入 restricted）。
 //!
-//! 本模块只做纯解析/校验与安装计划组装（可单测），网络换链在 community.rs，
-//! 任务编排（下载/解压/进度）在 task/modpack.rs。
+//! 本模块只做纯解析/校验与计划组装（可单测）；网络换链在 community.rs，任务编排在 task/modpack.rs。
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -23,13 +20,10 @@ use crate::launcher::args::find_version_json;
 use crate::task::{LoaderChoice, LoaderKind};
 use crate::util::safe_relative_path;
 
-/// 整合包来源（命令入参；前端传 snake_case 键）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PackSource {
-    /// 本地文件（.mrpack / CurseForge zip）
     Local { path: String },
-    /// 在线下载（搜索结果 / 资源详情页的版本文件）
     Online {
         url: String,
         #[serde(default)]
@@ -39,18 +33,15 @@ pub enum PackSource {
     },
 }
 
-/// 整合包安装请求（install_modpack 命令入参）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModpackRequest {
     pub name: String,
     pub source: PackSource,
-    /// 平台项目图标 URL（在线安装由前端透传；本地导入无平台元数据为 None）。
-    /// 安装期下载到 versions/{dir}/pack-icon.png，失败静默跳过（纯装饰内容）。
+    /// 平台项目图标 URL（本地导入为 None）；安装期下载到 versions/{dir}/pack-icon.png，失败静默跳过。
     #[serde(default)]
     pub icon_url: Option<String>,
 }
 
-/// 单个待下载文件的安装计划。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackFile {
     /// 相对版本目录的目标路径（已过穿越防护，`/` 分隔）
@@ -72,7 +63,6 @@ pub struct OverridesRef {
     pub prefix: String,
 }
 
-/// mrpack 清单解析结果。
 #[derive(Debug)]
 pub struct ModrinthParsed {
     pub mc_version: String,
@@ -103,9 +93,7 @@ pub struct PackPlan {
     pub overrides: Option<OverridesRef>,
 }
 
-/// 解析 modrinth.index.json 文本。
-/// 规范：<https://docs.modrinth.com/#spec/modrinth-index-json>。
-/// env.client == "unsupported" 的文件（服务端专属）剔除。
+/// 解析 modrinth.index.json（规范：docs.modrinth.com/#spec/modrinth-index-json）；剔除 env.client == "unsupported"。
 pub fn parse_modrinth_index(text: &str) -> Result<ModrinthParsed, String> {
     let idx: serde_json::Value =
         serde_json::from_str(text).map_err(common_err_ctx!("解析 modrinth.index.json 失败"))?;
@@ -155,8 +143,7 @@ pub fn parse_modrinth_index(text: &str) -> Result<ModrinthParsed, String> {
     })
 }
 
-/// dependencies 对象 → LoaderChoice。键：fabric-loader / quilt-loader(含旧写法
-/// quilt_loader) / forge / neoforge；未知 loader 键报错（装出来无法启动）。
+/// dependencies 对象 → LoaderChoice：fabric-loader / quilt-loader(旧写法 quilt_loader) / forge / neoforge；未知键报错。
 fn modrinth_loader(deps: &serde_json::Value) -> Result<Option<LoaderChoice>, String> {
     let obj = deps.as_object().ok_or("清单缺少 dependencies 对象")?;
     for (key, val) in obj {
@@ -187,9 +174,7 @@ pub struct CfManifestParsed {
     pub files: Vec<(i64, i64)>,
 }
 
-/// 解析 CurseForge manifest.json 文本。
-/// 规范：manifestType == "minecraftModpack"、manifestVersion == 1；
-/// modLoaders[].id 形如 "forge-47.3.0" / "fabric-0.15.11"。
+/// 解析 CurseForge manifest.json：manifestType == "minecraftModpack"、manifestVersion == 1；modLoaders[].id 形如 "forge-47.3.0"。
 pub fn parse_curseforge_manifest(text: &str) -> Result<CfManifestParsed, String> {
     let m: serde_json::Value =
         serde_json::from_str(text).map_err(common_err_ctx!("解析 manifest.json 失败"))?;
@@ -239,9 +224,7 @@ pub fn parse_curseforge_manifest(text: &str) -> Result<CfManifestParsed, String>
     })
 }
 
-/// CF 批量换链响应（`POST /v1/mods/files` 的 data 数组）→ PackFile 列表 +
-/// 受限文件名列表（downloadUrl 为 null：作者关闭第三方分发）。
-/// algo 1 = SHA1（CurseForge 枚举）。响应中多余/缺失条目按 ID 匹配跳过。
+/// CF 批量换链响应（`POST /v1/mods/files` 的 data 数组）→ PackFile + 受限文件名（downloadUrl 为 null = 禁第三方分发）；algo 1 = SHA1，多余/缺失条目按 ID 匹配跳过。
 pub fn resolve_cf_files(
     data: &[serde_json::Value],
     wanted: &[(i64, i64)],
@@ -287,14 +270,12 @@ pub fn resolve_cf_files(
 
 // ── 清单读取与安装计划组装 ──
 
-/// 清单格式（按 zip 成员名嗅探）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManifestKind {
     Modrinth,
     CurseForge,
 }
 
-/// 从 zip 根读取清单文本（按成员名嗅探来源）。
 pub fn read_manifest(
     archive: &mut zip::ZipArchive<std::fs::File>,
 ) -> Result<(String, ManifestKind), String> {
@@ -313,8 +294,7 @@ pub fn read_manifest(
     Err("不是有效的整合包文件\n缺少 modrinth.index.json 或 manifest.json".into())
 }
 
-/// 扫描 versions/ 下各整合包版本目录的身份标记，返回与 `cache_key` 匹配的目录名。
-/// 标记由安装阶段写入 versions/{dir}/elytra-pack.json。
+/// 扫描 versions/ 下各版本目录的 elytra-pack.json 身份标记，返回与 `cache_key` 匹配的目录名。
 fn find_reusable_pack_dir(mc: &Path, cache_key: &str) -> Option<String> {
     let entries = std::fs::read_dir(mc.join("versions")).ok()?;
     for entry in entries.flatten() {
@@ -348,7 +328,6 @@ pub fn cache_key(request: &ModpackRequest) -> String {
     )
 }
 
-/// 安装计划组装的清单输入。
 pub struct PackMeta<'a> {
     pub pack_name: &'a str,
     pub cache_key: &'a str,
@@ -360,10 +339,7 @@ pub struct PackMeta<'a> {
     pub minecraft_dir: &'a Path,
 }
 
-/// 组装 PackPlan（纯函数，无网络调用）：overrides 目录检测、内容非空校验、
-/// 目标路径穿越防护、版本目录命名（`{净化包名}-{mc}`）与冲突消解。
-/// `version_url` 由调用方解析官方版本清单后传入；CF 换链在 `build_plan` 完成。
-/// 清单输入统一打包为 `PackMeta`。
+/// 组装 PackPlan（纯函数，无网络）：overrides 检测、非空校验、路径穿越防护、`{净化包名}-{mc}` 命名与 `_{n}` 冲突消解；version_url 由调用方传入。
 pub fn assemble_plan(zip_path: &Path, meta: PackMeta<'_>) -> Result<PackPlan, String> {
     let PackMeta {
         pack_name,
@@ -377,7 +353,7 @@ pub fn assemble_plan(zip_path: &Path, meta: PackMeta<'_>) -> Result<PackPlan, St
     } = meta;
     let mc_version = mc_version.trim().to_string();
 
-    // overrides 目录检测（重新开一次 zip：函数保持无借用纠缠，便于单测）
+    // overrides 目录检测（重开 zip 保持无借用纠缠，便于单测）
     let has_overrides = {
         let mut archive = open_zip(zip_path, "整合包")?;
         (0..archive.len()).any(|i| {
@@ -391,7 +367,7 @@ pub fn assemble_plan(zip_path: &Path, meta: PackMeta<'_>) -> Result<PackPlan, St
     if files.is_empty() && !has_overrides && restricted.is_empty() {
         return Err("整合包没有可安装的内容（无文件且无覆盖）".into());
     }
-    // 目标路径穿越防护提前到计划期：坏条目解析期即报错，不带病安装
+    // 路径穿越防护提前到计划期：坏条目解析期即报错，不带病安装
     for f in &files {
         safe_relative_path(&f.path)?;
     }
@@ -402,8 +378,7 @@ pub fn assemble_plan(zip_path: &Path, meta: PackMeta<'_>) -> Result<PackPlan, St
         crate::util::sanitize_fs_name(pack_name, "modpack"),
         mc_version
     );
-    // 目录选择优先复用：已存在同 cache_key 的整合包版本目录 → 更新语义，
-    // 内容文件 sha1 幂等跳过才真正生效；否则新建并按 `_{n}` 消解冲突
+    // 优先复用同 cache_key 的版本目录（更新语义，sha1 幂等跳过才生效）；否则新建并按 `_{n}` 消解冲突
     let version_dir_name = find_reusable_pack_dir(minecraft_dir, cache_key).unwrap_or_else(|| {
         crate::util::unique_child_dir(&minecraft_dir.join("versions"), &base_dir)
     });
@@ -424,8 +399,7 @@ pub fn assemble_plan(zip_path: &Path, meta: PackMeta<'_>) -> Result<PackPlan, St
     })
 }
 
-/// 读 zip 清单 → 构建 PackPlan。CF 走批量换链网络请求；原版 version json URL
-/// 经官方清单多源回退 + TTL 缓存解析。组装细节见 `assemble_plan`。
+/// 读 zip 清单 → 构建 PackPlan：CF 走批量换链；version json URL 经官方清单多源回退 + TTL 缓存解析（组装细节见 assemble_plan）。
 pub async fn build_plan(
     zip_path: &Path,
     request: &ModpackRequest,
@@ -443,14 +417,13 @@ pub async fn build_plan(
         ManifestKind::CurseForge => {
             let parsed = parse_curseforge_manifest(&index_text)?;
             let ids: Vec<i64> = parsed.files.iter().map(|(_, fid)| *fid).collect();
-            // 批量换链（一次 POST 换全部直链；作者关闭第三方分发的文件进 restricted）
+            // 一次 POST 批量换链（禁第三方分发的文件进 restricted）
             let data = curseforge_files(&ids).await?;
             let (resolved, locked) = resolve_cf_files(&data, &parsed.files);
             (parsed.mc_version, parsed.loader, resolved, locked)
         }
     };
 
-    // 原版 version json URL（官方清单多源回退 + TTL 缓存）
     let manifest = fetch_version_list(config).await?;
     let trimmed = mc_version.trim();
     let version_url = manifest
@@ -477,7 +450,6 @@ pub async fn build_plan(
 
 // ── 导出侧（与上方导入解析对称；命令层 export_modpack 只做壳）──
 
-/// mrpack files[] 条目（Modrinth 在线分发元数据）。
 #[derive(serde::Serialize)]
 pub(crate) struct HostedPackFile {
     path: String,
@@ -486,9 +458,7 @@ pub(crate) struct HostedPackFile {
     file_size: u64,
 }
 
-/// 扫描 mods/ 下压缩类文件 → sha1 → Modrinth version_files 匹配 →
-/// 返回 (files[] 条目, 需从 overrides 排除的文件名集合)。
-/// 网络失败/匹配不到：文件留在 overrides 物理打包（离线降级，静默）。
+/// 扫描 mods/ 下压缩类文件 → sha1 → Modrinth version_files 匹配，返回 (files[] 条目, 需排除的文件名)；网络失败/无匹配则留在 overrides 物理打包（静默降级）。
 pub(crate) async fn resolve_hosted_mods(
     vdir: &Path,
 ) -> (Vec<HostedPackFile>, std::collections::HashSet<String>) {
@@ -496,7 +466,7 @@ pub(crate) async fn resolve_hosted_mods(
     let Ok(rd) = std::fs::read_dir(&mods_dir) else {
         return (Vec::new(), std::collections::HashSet::new());
     };
-    // 压缩/资源类文件（与 PCL2 导出集合一致：jar/zip/rar/disabled/old）
+    // 压缩/资源类文件（与 PCL2 导出集合一致）
     let mut candidates: Vec<PathBuf> = rd
         .flatten()
         .map(|e| e.path())
@@ -511,7 +481,6 @@ pub(crate) async fn resolve_hosted_mods(
     if candidates.is_empty() {
         return (Vec::new(), std::collections::HashSet::new());
     }
-    // 算 sha1（文件小，顺序读即可）
     let mut sha1s: Vec<String> = Vec::with_capacity(candidates.len());
     let mut kept: Vec<(PathBuf, Vec<u8>, String)> = Vec::with_capacity(candidates.len());
     for path in candidates.drain(..) {
@@ -525,7 +494,6 @@ pub(crate) async fn resolve_hosted_mods(
     if kept.is_empty() {
         return (Vec::new(), std::collections::HashSet::new());
     }
-    // Modrinth 批量匹配
     let raw = match modrinth_version_files(&sha1s).await {
         Ok(v) => v,
         Err(_) => return (Vec::new(), std::collections::HashSet::new()), // 离线降级
@@ -559,13 +527,9 @@ pub(crate) async fn resolve_hosted_mods(
     (hosted, names)
 }
 
-/// 权威版本元数据：真实 MC 版本 / loader kind / loader 版本号（None = 无 loader 或未知）。
-/// 解析顺序（目录内 version json 优先，目录名只是兜底——改名/伪标记目录不再污染对外语义）：
-/// - MC：json `inheritsFrom`（loader profile 的真版本）→ json `id`（剥 loader 标记；
-///   改名目录里通常是官方原版 json，id 即真实版本）→ 目录名解析兜底
-/// - loader kind：json 特征推断（infer_loader_from_json，与 UI 徽章同源）→ 目录名标记兜底；
-///   loader 版本号仅在**目录名标记与 json 推断同 kind** 时取（防伪标记注入错误版本号，
-///   如目录名带 -forge- 而 json 实为 fabric profile），否则省略
+/// 权威版本元数据：真实 MC / loader kind / loader 版本号（None = 无 loader 或未知）。
+/// version json 优先、目录名兜底：MC = json `inheritsFrom` → `id`（剥 loader 标记）→ 目录名；
+/// loader kind = json 推断 `infer_loader_from_json` → 目录名标记；版本号仅在两者同 kind 时取（防伪标记注入错误版本号）。
 pub(crate) fn resolve_version_meta(
     vdir: &Path,
     version_name: &str,
@@ -609,9 +573,7 @@ pub(crate) fn resolve_version_meta(
     (mc, kind, ver)
 }
 
-/// 导出标准 MRPACK 整合包（Modrinth 格式 v1）：内容物理打包进 `overrides/`，
-/// `modrinth.index.json` 声明版本与 loader 依赖与 hosted files[]。
-/// 支持 mrpack 的启动器导入均解压 overrides 即用。存档（saves）不打包。
+/// 导出标准 MRPACK（v1）：内容物理打包进 `overrides/`，`modrinth.index.json` 声明版本、loader 依赖与 hosted files[]；存档（saves）不打包。
 pub(crate) fn pack_modpack(
     vdir: &Path,
     version_name: &str,
@@ -619,7 +581,7 @@ pub(crate) fn pack_modpack(
     hosted: &[HostedPackFile],
     hosted_names: &std::collections::HashSet<String>,
 ) -> Result<(), String> {
-    // 收集存在的顶层目录（数据包 1.13+ 有 datapacks 目录，一并导出）
+    // 收集存在的顶层目录（datapacks 为 1.13+ 数据包目录，一并导出）
     let subdirs: Vec<&str> = [
         "mods",
         "config",
@@ -634,15 +596,14 @@ pub(crate) fn pack_modpack(
 
     let file = std::fs::File::create(save_path).map_err(common_err_ctx!("创建文件失败"))?;
     let mut writer = zip::ZipWriter::new(file);
-    // mrpack 惯例 Deflated（Stored 只适合已压缩文件；config/资源包收益明显）
+    // mrpack 惯例 Deflated（config/资源包压缩收益明显）
     let opts = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
 
     let (mc_version, kind, loader_version) = resolve_version_meta(vdir, version_name);
     let mut dependencies = serde_json::Map::new();
     dependencies.insert("minecraft".into(), serde_json::json!(mc_version));
-    // loader 依赖键与导入侧 modrinth_loader 一致：fabric-loader / quilt-loader / forge / neoforge。
-    // 版本号来自目录名约定；未知（外部目录 json 与目录名不一致）时省略依赖而非写假值。
+    // loader 依赖键与导入侧 modrinth_loader 一致：fabric-loader / quilt-loader / forge / neoforge；版本号来自目录名约定，不明确时省略依赖而非写假值。
     if let Some(ver) = loader_version {
         let dep_key = match kind.as_str() {
             "fabric" => "fabric-loader",
@@ -673,7 +634,7 @@ pub(crate) fn pack_modpack(
         .map_err(common_err_ctx!("写入清单失败"))?;
 
     for sub in subdirs {
-        // hosted mod（在线分发）不物理打包进 overrides
+        // 在线分发 mod 不物理打包进 overrides
         let skip = if sub == "mods" {
             Some(hosted_names)
         } else {
@@ -691,7 +652,7 @@ pub(crate) fn pack_modpack(
     Ok(())
 }
 
-/// 递归把目录内容写入 zip（保留相对路径；目录本身也记录条目，zip 空目录才可保留）。
+/// 递归写目录到 zip（保留相对路径；目录条目本身也记录，空目录才可保留）。
 fn add_dir_to_zip(
     writer: &mut zip::ZipWriter<std::fs::File>,
     dir: &Path,
@@ -708,7 +669,7 @@ fn add_dir_to_zip(
     for e in entries.flatten() {
         let path = e.path();
         let name = format!("{}/{}", prefix, e.file_name().to_string_lossy());
-        // 顶层 hosted 文件跳过（mrpack files[] 在线分发，不物理打包）
+        // 顶层 hosted 文件跳过（在线分发，不物理打包）
         if path.is_file()
             && skip_files
                 .is_some_and(|set| set.contains(&e.file_name().to_string_lossy().to_string()))
@@ -858,8 +819,7 @@ mod tests {
         w.finish().unwrap();
     }
 
-    /// assemble_plan：临时 zip + 清单文本 → 计划字段（净化包名/trim 版本/
-    /// overrides 引用/穿越校验），目录冲突 `_{n}` 后缀，空内容报错。
+    /// assemble_plan：临时 zip + 清单文本 → 计划字段，冲突 `_{n}` 后缀，空内容报错。
     #[test]
     fn assemble_plan_builds_fields_and_suffixes_conflicts() {
         let dir = tempfile::tempdir().unwrap();
@@ -901,7 +861,6 @@ mod tests {
         assert_eq!(ov.prefix, "overrides/");
         assert_eq!(ov.zip_path, zip_path.display().to_string());
 
-        // 冲突消解：同名版本目录已存在 → _{n} 后缀（util::unique_child_dir 接入）
         std::fs::create_dir_all(mc.path().join("versions").join("Demo _Pack_-1.21.1")).unwrap();
         let reparsed = parse_modrinth_index(&text).unwrap();
         let plan2 = assemble_plan(
@@ -920,7 +879,6 @@ mod tests {
         .unwrap();
         assert_eq!(plan2.version_dir_name, "Demo _Pack_-1.21.1_1");
 
-        // 无文件且无覆盖 → 明确报错
         let plain = dir.path().join("empty.mrpack");
         let f = std::fs::File::create(&plain).unwrap();
         let mut w = zip::ZipWriter::new(f);
@@ -953,8 +911,7 @@ mod tests {
         assert!(err.contains("没有可安装的内容"), "空内容应报错: {err}");
     }
 
-    /// 包名净化接入 util::sanitize_fs_name：Windows 非法字符替换 `_`，
-    /// 全非法字符与 Windows 保留名回退 "modpack"。
+    /// 包名净化走 util::sanitize_fs_name：Windows 非法字符替换 `_`，全非法字符与保留名回退 "modpack"。
     #[test]
     fn plan_naming_falls_back_on_illegal_or_reserved_names() {
         let dir = tempfile::tempdir().unwrap();
@@ -985,8 +942,7 @@ mod tests {
         assert_eq!(mk("  tail.  "), "tail-1.21.1", "去尾点");
     }
 
-    /// 同 cache_key 重装 → 复用标记目录（更新语义，sha1 跳过才生效）；
-    /// 不同包不受他人标记影响，走常规 `{净化名}-{mc}` 命名。
+    /// 同 cache_key 重装复用标记目录（更新语义，sha1 跳过才生效）；不同包走常规 `{净化名}-{mc}` 命名。
     #[test]
     fn assemble_plan_reuses_dir_marked_with_same_cache_key() {
         let dir = tempfile::tempdir().unwrap();
@@ -1012,7 +968,6 @@ mod tests {
             .version_dir_name
         };
 
-        // 预置上次安装留下的身分标记目录（含冲突后缀形态 _3）
         let existing = mc.path().join("versions").join("Demo-1.21.1_3");
         std::fs::create_dir_all(&existing).unwrap();
         std::fs::write(
@@ -1033,9 +988,7 @@ mod tests {
         );
     }
 
-    /// install_modpack 入参形状契约：前端按 `{ request: { name, source } }` 提交，
-    /// `source` 为 serde 内部标签（`type: "local" | "online"`）。
-    /// 回归：本地导入的 Windows 反斜杠路径必须原样反序列化（不得被转义/截断）。
+    /// install_modpack 入参契约：`{ request: { name, source } }`，`source` 为 serde 内部标签（`type: "local" | "online"`）；Windows 反斜杠路径必须原样反序列化。
     #[test]
     fn request_deserializes_frontend_payload() {
         let req: ModpackRequest = serde_json::from_str(

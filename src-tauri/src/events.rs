@@ -4,8 +4,7 @@
 pub const TASK_PROGRESS: &str = "task-progress";
 /// 微软登录完成回调（{ ok, account, error }）
 pub const MS_LOGIN_COMPLETE: &str = "ms-login-complete";
-/// 游戏进程退出（`[pid, version_label, exit_code, crash_report]` 四元组；
-/// exit_code 非 0 = 异常退出，crash_report 为最新崩溃报告路径或 null）
+/// 游戏进程退出（[pid, version_label, exit_code, crash_report]；exit_code 非 0 = 异常退出，crash_report 为崩溃报告路径或 null）
 pub const GAME_EXITED: &str = "game-exited";
 /// 游戏主窗口可见（[pid, version_label] 元组；spawn 后后端轮询 EnumWindows 判定）
 pub const GAME_WINDOW_VISIBLE: &str = "game-window-visible";
@@ -15,7 +14,7 @@ pub const TASK_WAITING_USER: &str = "task-waiting-user";
 pub const ONLINE_STATE: &str = "online-state";
 /// 工具箱下载器任务快照（ToolDlSnapshot：单任务全量状态，前端按 id 增量更新）
 pub const TOOL_DL_PROGRESS: &str = "tooldl-progress";
-/// 配置文件损坏已备份并重置（RecoveryNotice；运行期推送，启动期由命令拉取兜底）
+/// 配置文件损坏已备份并重置（RecoveryNotice；运行期推送，启动期命令拉取兜底）
 pub const CONFIG_RECOVERY: &str = "config-recovery";
 /// 自动任务进度（AutoTaskProgress：{ version_id, phase, step_index, step_total, action, message, done }）
 pub const AUTO_TASK_PROGRESS: &str = "auto-task-progress";

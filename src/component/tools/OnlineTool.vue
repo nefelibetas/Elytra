@@ -1,11 +1,6 @@
 <script setup lang="ts">
-// 联机工具：EasyTier 虚拟局域网操作（host 开房间 / guest 加入 / 停止）。
-// 配置（协调服务器、广播名）在"设置 → 联机设置"；此处只管会话操作。
-// 顺序自由：host 可先开联机（等待态），再在游戏里"对局域网开放"；
-// 检测到游戏端口后自动生成完整房间码。
-// Scaffolding 协议：host 开房间（房间码 U/XXXX-XXXX-XXXX-XXXX），guest 加入；
-// 跨网联机需在设置里配置协调服务器。
-// 会话模式：host 正版登录开局域网 → 服务器验证会话，朋友需正版；离线 host → 任意可进。
+// 联机工具：EasyTier 虚拟局域网（host 开房间 / guest 加入 / 停止）；配置（协调服务器、广播名）在「设置 → 联机设置」。
+// host 可先开联机（等待态）再「对局域网开放」，检测到端口自动生成房间码 U/XXXX-XXXX-XXXX-XXXX；正版 host 由服务器验证会话（朋友需正版），离线 host 任意可进。
 import { onMounted, ref } from "vue";
 import { Copy, Link2, Unplug } from "@lucide/vue";
 import {
@@ -71,7 +66,6 @@ async function copyRoomCode() {
       <div class="tool-card-sub">EasyTier 虚拟局域网：无需公网服务器，房间码互连</div>
     </div>
 
-    <!-- 状态行 -->
     <div class="online-status">
       <span class="online-dot" :class="{ active: onlineStatus !== 'idle', pulse: onlineStatus === 'waiting' }" />
       <span class="online-status-text">
@@ -84,7 +78,6 @@ async function copyRoomCode() {
       </span>
     </div>
 
-    <!-- host：作为主机 -->
     <div class="online-sec">
       <div class="online-sec-title">作为主机</div>
       <p class="online-desc">点"开启联机"后，游戏里"对局域网开放"即可——启动器自动生成房间码，发给朋友即可加入。</p>
@@ -129,7 +122,6 @@ async function copyRoomCode() {
       </div>
     </div>
 
-    <!-- guest：加入联机 -->
     <div class="online-sec">
       <div class="online-sec-title">加入联机</div>
       <p class="online-desc">输入主机分享的房间码，加入后游戏内多人游戏 → 局域网标签页点 "Elytra 联机" 进入。</p>
@@ -174,7 +166,6 @@ async function copyRoomCode() {
       </div>
     </div>
 
-    <!-- 玩家列表 -->
     <div v-if="onlinePlayers.length > 0" class="online-sec">
       <div class="online-sec-title">玩家（{{ onlinePlayers.length }}）</div>
       <ul class="online-players">

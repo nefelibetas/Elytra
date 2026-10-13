@@ -1,12 +1,7 @@
-//! 社区资源搜索 / 版本查询（Modrinth 官方 API + CurseForge 官方 API），
-//! 覆盖 Mod / 光影 / 资源包 / 数据包 / 整合包 / 世界等类别（category 区分）。
-//! 两平台 ID 体系、鉴权与返回结构完全不同，故分开实现、统一出参；
-//! CurseForge 需要 x-api-key（constants.rs 经 .env 注入），Modrinth 无需 key。
-//! 简介翻译由 MCIM 镜像提供（英文 → 中文），失败静默降级为英文。
-//!
-//! 模块布局：[`api`]（出参类型 + 分派入口）、[`shared`]（查询通道与版本比较）、
-//! [`modrinth`] / [`curseforge`]（各平台实现）、[`translation`]（MCIM 翻译）、
-//! [`wiki_entry`]（MC百科内置条目表：slug → 中文译名）。
+//! 社区资源搜索 / 版本查询（Modrinth + CurseForge 官方 API，类别由 category 区分）。
+//! 两平台 ID 体系/鉴权/返回结构不同，分开实现、统一出参：CurseForge 需 x-api-key
+//! （constants.rs 经 .env 注入），Modrinth 无需 key。简介翻译来自 MCIM 镜像，失败降级英文。
+//! 模块布局：[`api`]/[`shared`]/[`modrinth`]/[`curseforge`]/[`translation`]/[`wiki_entry`]。
 
 mod api;
 mod curseforge;

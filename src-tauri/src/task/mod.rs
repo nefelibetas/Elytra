@@ -1,13 +1,8 @@
 //! 任务域：TaskManager 单例、事件派发、任务注册与各类任务实现。
 //!
-//! 实现划分：
-//! - [`manager`]：TaskManager 单例（注册表 / 终态收口 / 挂起决策）；
-//! - [`emit`]：事件派发队列线程与进度锁外的 emit；
-//! - [`spawn`]：任务注册与 spawn 入口；
-//! - [`model`]：serde 任务配置与进度类型；
-//! - [`steps`]：步骤分析；[`progress`]：进度上报；[`repair`]：缺失扫描与修复；
-//! - [`files`]：批量文件下载；[`runner`]：完整下载主体；[`jdk`]：JDK 安装任务；
-//! - [`modpack`]：整合包安装任务；[`store`]：SQLite 快照与恢复。
+//! 实现划分：[`manager`] 注册表/终态收口/挂起决策；[`emit`] 事件派发；[`spawn`] 注册与 spawn；
+//! [`model`] 配置与进度类型；[`steps`]/[`progress`]/[`repair`]/[`files`] 步骤/上报/修复/批量下载；
+//! [`runner`] 完整下载主体；[`jdk`] JDK 安装；[`modpack`] 整合包安装；[`store`] SQLite 快照与恢复。
 
 pub mod files;
 pub mod jdk;

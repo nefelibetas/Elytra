@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// 数据包搜索结果列表：薄适配层 → CommunityResultList。
 import { datapackSearch, datapackTotalPages } from "../../store/community/categorySearch";
 import { Database } from "@lucide/vue";
 import CommunityResultList from "./CommunityResultList.vue";

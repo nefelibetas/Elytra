@@ -1,5 +1,4 @@
-// 下载页 tab 状态：模块级持久（路由切换/详情页返回不丢）。
-// 搜索条件与结果本身在 communitySearch/categorySearch store 中，这里只管 tab 与滚动位置。
+// 下载页 tab 状态：模块级持久（切路由/详情页返回不丢）。只管 tab 与滚动位置；搜索条件与结果在 communitySearch/categorySearch store。
 import { reactive } from "vue";
 
 export type DownloadTab =

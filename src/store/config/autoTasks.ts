@@ -1,5 +1,4 @@
-// 自动任务 store：全局/实例自动任务读写、事件进度与失败汇总（实例设置页与全局提示共用）。
-// IPC 只在此封装（组件不直接 invoke）。
+// 自动任务 store：全局/实例自动任务读写、事件进度与失败汇总；IPC 只在此封装（组件不直接 invoke）。
 import { ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -24,14 +23,12 @@ export const phases: { key: AutoTaskPhase; label: string; desc: string }[] = [
   { key: "post_exit", label: "退出后", desc: "游戏退出后总是执行" },
 ];
 
-/** 内置动作目录。 */
 export const builtinCatalog: { kind: string; label: string; desc: string }[] = [
   { kind: "backup_saves", label: "备份存档", desc: "按时间戳备份存档到 back/saves，保留最近 N 份" },
   { kind: "record_mods", label: "记录 Mod 清单", desc: "写 mods.json（文件名 + 大小 + sha1）" },
   { kind: "pack_crash_logs", label: "打包崩溃日志", desc: "崩溃报告 + 游戏/启动器日志打包（已脱敏）" },
 ];
 
-/** 动作种类（用于选择图标与文案）。 */
 export function actionKind(action: AutoTaskAction): string {
   if (action === "RecordMods") return "record_mods";
   if (action === "PackCrashLogs") return "pack_crash_logs";
@@ -39,7 +36,6 @@ export function actionKind(action: AutoTaskAction): string {
   return "command";
 }
 
-/** 动作显示文案。 */
 export function actionLabel(action: AutoTaskAction): string {
   if (action === "RecordMods") return "记录 Mod 清单";
   if (action === "PackCrashLogs") return "打包崩溃日志";
@@ -52,7 +48,6 @@ export function actionLabel(action: AutoTaskAction): string {
   return "未知动作";
 }
 
-/** 构造动作（添加菜单用）。 */
 export function makeAction(kind: string): AutoTaskAction {
   switch (kind) {
     case "backup_saves":
@@ -74,7 +69,6 @@ export const autoTaskProgress = ref<AutoTaskProgress | null>(null);
 export const lastAutoTasksFinished = ref<AutoTasksFinished | null>(null);
 
 let listening = false;
-/** 幂等注册自动任务事件监听（App 启动时调用一次）。 */
 export function ensureAutoTasksListen(): void {
   if (listening) return;
   listening = true;
@@ -87,7 +81,6 @@ export function ensureAutoTasksListen(): void {
   });
 }
 
-/** 读取全局自动任务（设置页编辑用）。 */
 export async function getGlobalAutoTasks(): Promise<AutoTasks> {
   const cfg = await invoke<LaunchOptions>("get_launch_options");
   return cfg.auto_tasks;
@@ -98,19 +91,16 @@ export async function saveGlobalAutoTasks(tasks: AutoTasks): Promise<void> {
   await invoke("save_global_auto_tasks", { tasks });
 }
 
-/** 读取实例自动任务状态（全局 + 实例）。 */
 export async function getInstanceAutoTasks(versionId: string): Promise<InstanceAutoTasksState> {
   return await invoke<InstanceAutoTasksState>("get_instance_auto_tasks", { versionId });
 }
 
 /** 保存实例自动任务；`null` 表示删除实例配置（该实例回退全局）。 */
 export async function saveInstanceAutoTasks(versionId: string, auto_tasks: AutoTasks | null): Promise<void> {
-  // 键名必须与后端形参 camelCase 对齐（后端是 `tasks`）——传错会让后端收到 None，
-  // 静默走「删除实例配置」分支。
+  // 键名须与后端形参 camelCase 对齐（后端为 `tasks`）；传错会让后端收到 None，静默走「删除实例配置」分支
   await invoke("save_instance_auto_tasks", { versionId, tasks: auto_tasks });
 }
 
-/** 立即执行一次某阶段自动任务（使用当前生效配置）。 */
 export async function runAutoTasksNow(versionId: string, phase: AutoTaskPhase): Promise<void> {
   await invoke("run_auto_tasks_now", { versionId, phase });
 }

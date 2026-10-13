@@ -1,14 +1,5 @@
 //! 分段（多线程）下载：单文件按 HTTP Range 切段并发写入同一文件，支持断点续传。
-//!
-//! 与 [`super::fetcher`] 的单连接流式路径互补。仅当服务端返回 206 且 `Content-Range`
-//! 能解析出总长、总长 ≥ [`MIN_SEGMENT_BYTES`]、且 URL 非镜像源时启用分段；其余情况
-//! （不支持 Range / 总长未知 / 镜像源 / 小文件）回退单连接 `fetch_with_c`
-//! （保留 3 次重试与失败清残留语义）——镜像源 30 并发即 429，分段打过去只会更慢。
-//!
-//! 落盘形态：分段内容写 `<dest>.part`（预分配到总长，各段 seek 到自身偏移直写），
-//! 元数据写 `<dest>.part.json`（总长 + **每段已完成字节数**）。全部段成功后 `rename`
-//! 到 `dest` 并删除元数据；暂停/失败保留二者，下次 `resume` 时每段从自己的断点继续
-//! （撤销即落盘，故暂停不丢进度）。
+//! 仅当服务端返回 206 且总长可解析、总长 ≥ `MIN_SEGMENT_BYTES`、URL 非镜像源时启用，否则回退单连接 `fetch_with_c`；内容写 `<dest>.part`、元数据写 `<dest>.part.json`，全部段成功后 `rename` 到 `dest` 并删元数据，暂停/失败保留二者供续传。
 
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
@@ -25,16 +16,15 @@ use tokio::io::{AsyncSeekExt as _, AsyncWriteExt as _};
 
 use super::fetcher::{self, FetchError};
 
-/// 每段最小字节数：低于此值不分段（段过碎时请求开销大于收益）。
+/// 每段最小字节数：低于此值不分段（段过碎时开销大于收益）。
 const MIN_SEGMENT_BYTES: u64 = 1024 * 1024;
 /// 段数硬上限：调用方配置再大也不超过（防连接数爆炸）。
 const MAX_SEGMENTS: usize = 32;
 /// 单次限速睡眠上限（秒）：保证暂停/取消能在一个小块间隔内被察觉。
 const PACE_SLEEP_CAP: f64 = 0.25;
-/// 位图落盘间隔（字节）：崩溃后最多丢这么点进度（暂停/取消时立即落盘，不受此限）。
+/// 位图落盘间隔（字节）：崩溃后最多丢这么多进度（暂停/取消时立即落盘）。
 const META_FLUSH_BYTES: u64 = 2 * 1024 * 1024;
 
-/// 分段下载请求。
 pub struct SegmentedRequest<'a> {
     pub url: &'a str,
     /// 最终落地路径（分段中间产物为其 `.part` / `.part.json` 兄弟文件）。
@@ -45,12 +35,10 @@ pub struct SegmentedRequest<'a> {
     pub resume: bool,
     /// 取消令牌：每段每块检查，置位即停止（中间产物与进度位图保留）。
     pub cancel: Option<&'a AtomicBool>,
-    /// 分段方案确定时回调（发起传输前）：`(是否分段, 实际段数)`。
-    /// 供调用方在下载**过程中**就显示真实并发度，不必等下载结束。
+    /// 分段方案确定时回调（发起传输前）：`(是否分段, 实际段数)`，供调用方途中显示真实并发度。
     pub on_plan: Option<&'a (dyn Fn(bool, usize) + Send + Sync)>,
 }
 
-/// 分段下载结果。
 #[derive(Debug)]
 pub struct SegmentedOutcome {
     pub bytes: u64,
@@ -89,7 +77,7 @@ where
     let started = Instant::now();
     let client = fetcher::http();
 
-    // 与其他下载路径共用同一目标时排队（同一文件不被并发写）
+    // 与其它下载路径共用目标时排队（防并发写同一文件）
     let _path_guard = super::path_lock::wait_path_lock(dest).await;
 
     let plan = match probe_total(client.as_ref(), url).await {
@@ -97,7 +85,7 @@ where
         _ => None,
     };
     let Some((total, count)) = plan else {
-        // 回退单连接同样先上报方案，否则调用方在下载途中会误显示为分段
+        // 回退同样上报方案，否则调用方途中会误显示为分段
         if let Some(cb) = on_plan {
             cb(false, 1);
         }
@@ -115,7 +103,7 @@ where
             .map_err(|e| FetchError::Io(format!("创建目录失败\n{e}")))?;
     }
 
-    // 每段已完成字节：仅在 URL / 总长 / 划分数完全一致时才复用旧位图
+    // 仅在 URL / 总长 / 划分数完全一致时才复用旧位图
     let mut progress = vec![0u64; count];
     if resume {
         if let Some(meta) = read_meta(&meta_path) {
@@ -125,12 +113,12 @@ where
         }
     }
 
-    // 预分配到总长：各段 seek 到自身偏移直写，无需按序拼接
+    // 预分配到总长：各段 seek 到自身偏移直写，无需拼接
     {
         let file = tokio::fs::OpenOptions::new()
             .create(true)
             .write(true)
-            // 保留既有 .part 内容：已完成部分的字节靠续传复用，总长由 set_len 校正
+            // 保留既有 .part 内容供续传复用，总长由 set_len 校正
             .truncate(false)
             .open(&part)
             .await
@@ -140,8 +128,7 @@ where
             .map_err(|e| FetchError::Io(format!("预分配文件失败\n{e}")))?;
     }
 
-    // 本次会话起点的已落盘字节（续传偏移）：counter 含此偏移用于进度绝对值显示，
-    // 但限速必须按「本次会话已传字节」计量，故 Pace 记录该基线并减去。
+    // 本次会话起点的已落盘字节：counter 含此偏移用于进度绝对值，Pace 记录基线供限速扣除。
     let done_base: u64 = progress.iter().sum();
     let counter = Arc::new(AtomicU64::new(done_base));
     let pace = Arc::new(Pace::new(done_base));
@@ -152,7 +139,7 @@ where
         total,
         segments: count,
     };
-    // 多段并发共享同一回调：借出 trait object（不 clone 回调本身，也不要求 'static）
+    // 多段共享同一回调：借出 trait object（不 clone，不要求 'static）
     let progress_ref: Option<&(dyn Fn(u64, u64) + Send + Sync)> = progress_cb
         .as_ref()
         .map(|f| f as &(dyn Fn(u64, u64) + Send + Sync));
@@ -164,7 +151,7 @@ where
             let span = end - start + 1;
             let already = progress[index].min(span);
             if already >= span {
-                // 该段在崩溃/暂停前已完整落盘，无需重新请求
+                // 该段此前已完整落盘，无需重下
                 return None;
             }
             let client = Arc::clone(&client);
@@ -206,7 +193,7 @@ where
         return Err(FetchError::Cancelled);
     }
 
-    // 全部段就位：改名到最终路径并清理位图
+    // 全部段就位：改名到最终路径并清位图
     let _ = std::fs::remove_file(&meta_path);
     std::fs::rename(&part, dest).map_err(|e| FetchError::Io(format!("完成写入失败\n{e}")))?;
 
@@ -223,8 +210,7 @@ where
     })
 }
 
-/// 分段中间产物路径（`.part` 数据 + `.part.json` 位图）。
-/// 供调用方在「用户取消」时清理；暂停/失败应保留以支持断点续传。
+/// 分段中间产物路径（`.part` 数据 + `.part.json` 位图）；调用方取消时清理，暂停/失败保留以支持续传。
 pub fn partial_paths(dest: &Path) -> (PathBuf, PathBuf) {
     (append_suffix(dest, ".part"), append_suffix(dest, ".part.json"))
 }
@@ -260,7 +246,6 @@ struct SegmentJob<'a> {
     client: &'a Client,
     url: &'a str,
     part: &'a Path,
-    /// 段序号（位图下标）
     index: usize,
     /// 段起始偏移（含）
     start: u64,
@@ -276,8 +261,7 @@ struct SegmentJob<'a> {
     progress: Option<&'a (dyn Fn(u64, u64) + Send + Sync)>,
 }
 
-/// 下载单个段：`Range` 请求（从断点起）→ seek 到段偏移顺序写 → 限速/取消检查。
-/// 完成、取消与周期节点都会把本段进度落盘，因此暂停不丢已下载字节。
+/// 下载单个段：`Range` 请求（从断点起）→ seek 到段偏移顺序写 → 限速/取消检查；完成/取消/周期节点均落盘本段进度。
 async fn fetch_segment(job: SegmentJob<'_>) -> Result<(), FetchError> {
     let SegmentJob {
         client,
@@ -332,7 +316,7 @@ async fn fetch_segment(job: SegmentJob<'_>) -> Result<(), FetchError> {
     let mut written: u64 = 0;
     let mut last_flush: u64 = 0;
     while let Some(chunk) = stream.next().await {
-        // 取消立即生效：当前块读完即停（进度落盘，保留全部中间产物）
+        // 取消立即生效：当前块读完即停（进度落盘，保留中间产物）
         if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
             writer.record(index, already + written);
             return Err(FetchError::Cancelled);
@@ -366,11 +350,7 @@ async fn fetch_segment(job: SegmentJob<'_>) -> Result<(), FetchError> {
     Ok(())
 }
 
-/// 全局限速状态：所有段共享同一时间基准，各自按「全局累计字节 ÷ 限速」推算目标时刻
-/// 并补睡 —— 段间自然互相等待，总速率被约束在限速内。
-/// `base` 为本次会话起点的已落盘字节（续传偏移）：目标时刻必须按「本次会话已传字节」
-/// 推算，否则续传时首块即把累计值当会话字节，目标时刻远超已耗时，配合
-/// `PACE_SLEEP_CAP` 会把续传钉死在 ≈chunk/0.25s 的低速。
+/// 全局限速状态：所有段共享同一时间基准，按「全局累计字节 ÷ 限速」推算目标时刻并补睡；`base` 为会话起点已落盘字节（续传偏移），目标按会话字节推算，否则续传首块即被 PACE_SLEEP_CAP 钉在低速。
 struct Pace {
     started: Instant,
     base: u64,
@@ -403,9 +383,7 @@ impl Pace {
     }
 }
 
-/// 探测服务端是否支持 Range 并取回总长：`GET Range: bytes=0-0` 返回 206 时从
-/// `Content-Range: bytes 0-0/<total>` 取总长；其余（200 全量 / 4xx / 网络错）返回
-/// `None`，交由调用方回退单连接。
+/// 探测是否支持 Range 并取总长：`GET Range: bytes=0-0` 返回 206 时从 `Content-Range` 取总长；其余（200/4xx/网络错）返回 `None`，交调用方回退单连接。
 async fn probe_total(client: &Client, url: &str) -> Option<u64> {
     let response = client.get(url).header(RANGE, "bytes=0-0").send().await.ok()?;
     if response.status() != StatusCode::PARTIAL_CONTENT {
@@ -447,16 +425,14 @@ where
     })
 }
 
-/// 按总长与期望段数决定实际切分：每段不低于 [`MIN_SEGMENT_BYTES`]，
-/// 段数不足 2 时返回 `None`（调用方回退单连接）。
+/// 按总长与期望段数决定实际切分：每段不低于 [`MIN_SEGMENT_BYTES`]，段数不足 2 时返回 `None`（回退单连接）。
 fn segment_count(total: u64, requested: usize) -> Option<(u64, usize)> {
     let by_size = (total / MIN_SEGMENT_BYTES) as usize;
     let count = requested.clamp(1, MAX_SEGMENTS).min(by_size);
     (count >= 2).then_some((total, count))
 }
 
-/// 均匀切分 `[0, total)` 为 `count` 段（`count >= 2` 且 `total >= count`，故无空段）：
-/// 第 i 段为 `[i*total/count, (i+1)*total/count - 1]`，各段长度差 ≤ 1 且恰好覆盖全文件。
+/// 均匀切分 `[0, total)` 为 `count` 段：第 i 段 `[i*total/count, (i+1)*total/count - 1]`，各段长度差 ≤ 1 且恰好覆盖全文件。
 fn segment_ranges(total: u64, count: usize) -> Vec<(u64, u64)> {
     let count = count as u64;
     (0..count)
@@ -487,8 +463,6 @@ mod tests {
     use tokio::io::AsyncReadExt as _;
     use tokio::net::TcpListener;
 
-    /// 本地 HTTP 服务：`support_range` 为真时按请求头 `Range` 回 206 分片，
-    /// 否则一律 200 全量。返回 URL 与累计请求数（验证是否真的分段并发）。
     async fn serve(body: Vec<u8>, support_range: bool) -> (String, Arc<AtomicUsize>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -585,7 +559,6 @@ mod tests {
         (0..len).map(|i| (i % 251) as u8).collect()
     }
 
-    /// 切分覆盖完整、无重叠、无空洞。
     #[test]
     fn segment_ranges_cover_file_exactly() {
         let ranges = segment_ranges(1000, 8);
@@ -601,18 +574,13 @@ mod tests {
 
     #[test]
     fn segment_count_rejects_small_files() {
-        // 小于每段下限：不分段
         assert!(segment_count(MIN_SEGMENT_BYTES - 1, 16).is_none());
-        // 恰好只够 1 段：仍不分段（count < 2）
         assert!(segment_count(MIN_SEGMENT_BYTES, 16).is_none());
-        // 够 2 段但请求 1 段：不分段
         assert!(segment_count(MIN_SEGMENT_BYTES * 2, 1).is_none());
-        // 受每段下限约束收敛
         assert_eq!(
             segment_count(MIN_SEGMENT_BYTES * 3, 16),
             Some((MIN_SEGMENT_BYTES * 3, 3))
         );
-        // 受硬上限约束
         assert_eq!(
             segment_count(MIN_SEGMENT_BYTES * 100, 999),
             Some((MIN_SEGMENT_BYTES * 100, MAX_SEGMENTS))
@@ -638,7 +606,6 @@ mod tests {
         let _ = std::fs::remove_file(&meta_path);
     }
 
-    /// 服务端支持 Range：应走分段路径，并发写出的内容必须与源逐字节一致。
     #[tokio::test]
     async fn downloads_via_ranges_from_local_server() {
         let body = sample_body(8 * 1024 * 1024);
@@ -674,7 +641,6 @@ mod tests {
         let _ = std::fs::remove_file(&dest);
     }
 
-    /// 服务端不支持 Range（对 Range 请求仍回 200 全量）：应回退单连接且内容正确。
     #[tokio::test]
     async fn falls_back_when_server_ignores_range() {
         let body = sample_body(64 * 1024);
@@ -701,7 +667,6 @@ mod tests {
         let _ = std::fs::remove_file(&dest);
     }
 
-    /// 段级续传：位图标记已完成的段不再重新请求，未完成段补齐后内容仍完整。
     #[tokio::test]
     async fn resume_skips_completed_segments() {
         let body = sample_body(8 * 1024 * 1024);
@@ -710,7 +675,6 @@ mod tests {
         let (part, meta_path) = partial_paths(&dest);
         let span = body.len() as u64 / 4;
 
-        // 预置：.part 已是完整内容，位图声明 0/2 段已完成（模拟中断前下好的两段）
         std::fs::write(&part, &body).expect("写入 .part");
         write_meta(
             &meta_path,
@@ -751,7 +715,6 @@ mod tests {
         let _ = std::fs::remove_file(&dest);
     }
 
-    /// 段内续传：某段完成一半时中断，续传从**段内偏移**继续（不重下已完成部分）。
     #[tokio::test]
     async fn resume_continues_inside_segment() {
         let body = sample_body(8 * 1024 * 1024);
@@ -762,7 +725,6 @@ mod tests {
         let span = total / 4;
         let half = span / 2;
 
-        // 预置：段 0 完成一半、段 2 完成一半，其余为 0
         std::fs::write(&part, &body).expect("写入 .part");
         write_meta(
             &meta_path,
@@ -799,7 +761,6 @@ mod tests {
         let _ = std::fs::remove_file(&dest);
     }
 
-    /// 位图与本次切分不一致（URL 变了）：位图必须作废，全部段重下。
     #[tokio::test]
     async fn resume_ignores_stale_meta() {
         let body = sample_body(8 * 1024 * 1024);
@@ -842,11 +803,9 @@ mod tests {
         let _ = std::fs::remove_file(&meta_path);
     }
 
-    /// 方案回调必须在传输开始前上报真实并发度（分段与回退两条路径都要）：
-    /// 否则调用方在下载途中只能显示初始值，用户会看到"配了 8 线程却显示单连接"。
+    /// 方案回调须在传输开始前上报真实并发度（分段与回退两路）：否则途中只能显示初始值。
     #[tokio::test]
     async fn on_plan_reports_decided_shape() {
-        // 分段路径：8 MiB / 4 段
         let body = sample_body(8 * 1024 * 1024);
         let (url, _) = serve(body, true).await;
         let dest = temp_dest("seg_plan");
@@ -872,7 +831,6 @@ mod tests {
             "分段路径应上报 (true, 4)"
         );
 
-        // 回退路径：服务端不支持 Range
         let body = sample_body(64 * 1024);
         let (url, _) = serve(body, false).await;
         let dest2 = temp_dest("seg_plan_fallback");
@@ -902,15 +860,12 @@ mod tests {
         let _ = std::fs::remove_file(&dest2);
     }
 
-    /// 续传限速回归：限速目标必须按「本次会话已传字节」推算。若误用累计值
-    /// （含续传偏移），续传首块的目标时刻会远超已耗时，配合 `PACE_SLEEP_CAP`
-    /// 把续传速率钉在 ≈chunk/0.25s 的低速。此处断言基线被正确扣除。
+    /// 续传限速：目标按「本次会话已传字节」推算（误用累计值会配合 PACE_SLEEP_CAP 钉在低速）；断言基线被扣除。
     #[test]
     fn pace_target_excludes_resume_offset() {
         let limit = 1024 * 1024; // 1 MiB/s
         let base = 4 * 1024 * 1024; // 续传起点：已落盘 4 MiB
         let pace = Pace::new(base);
-        // 会话内仅新传 128 KiB → 目标 0.125s（而非 (4 MiB + 128 KiB)/1 MiB/s ≈ 4.125s）
         let t = pace.target_secs(base + 128 * 1024, limit);
         assert!((t - 0.125).abs() < 1e-9, "应按会话字节计，实际 {t}");
     }

@@ -7,7 +7,6 @@ use crate::util::exe_dir;
 use crate::util::java_bin_path;
 use crate::util::NoWindow as _;
 
-// 自定义目录扫描
 pub fn scan_custom_dir(path: &str) -> Result<Vec<JdkInfo>, String> {
     let dir = Path::new(path);
     if !dir.exists() {
@@ -56,7 +55,6 @@ fn scan_dir_and_children(
     }
 }
 
-// 探测目录
 fn probe_home(dir: &Path, found: &mut Vec<JdkInfo>, seen: &mut HashSet<String>, only_64bit: bool) {
     let Ok(env) = inspect(dir) else {
         return;
@@ -87,7 +85,7 @@ pub(crate) fn inspect(java_home: &Path) -> Result<JdkInfo, String> {
     })
 }
 
-// 解析版本号, 从java --version输出解析
+// 从 java -version 输出解析带引号的版本号
 fn parse_version(output: &str) -> Option<String> {
     let start = output.find('"')?;
     let end = output[start + 1..].find('"')?;
@@ -112,7 +110,7 @@ fn detect_vendor(output: &str) -> String {
 #[cfg(windows)]
 fn candidate_dirs() -> Vec<String> {
     let mut dirs = Vec::new();
-    // Elytra启动器自己下载的地方
+    // Elytra 自下载的 runtime 目录
     dirs.push(format!(
         r"{}\.minecraft\runtime",
         exe_dir().to_string_lossy()

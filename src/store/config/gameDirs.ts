@@ -1,6 +1,6 @@
 import type { GameDir } from "../../types/config/GameDir";
 import { useConfirmDelete } from "../../utils/useConfirmDelete";
-// 版本选择页 store：游戏目录管理（增删改/激活/右键菜单）+ 目录内版本列表。
+// 版本选择页 store：游戏目录管理（增删改/激活/右键菜单）+ 版本列表。
 import { ref, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -19,14 +19,13 @@ export const dirsError = ref("");
 export async function loadDirs(keepActive = true) {
   try {
     dirs.value = await invoke<GameDir[]>("get_game_dirs");
-    // 记住游戏目录选择状态：优先恢复后端持久化的激活目录（跨重启保留）
+    // 优先恢复后端持久化的激活目录（跨重启保留）
     let desired = "";
     if (keepActive) {
       try {
         const active = await invoke<GameDir>("get_active_game_dir");
         desired = active.path;
       } catch {
-        // 读取失败则回退默认
       }
     }
     if (!desired || !dirs.value.some(d => d.path === desired)) {
@@ -55,7 +54,6 @@ export const itemMenu = ref<{ visible: boolean; x: number; y: number; dir: GameD
 
 export function openItemMenu(e: MouseEvent, d: GameDir) {
   e.stopPropagation();
-  // toggle：同一目录菜单已展开则关闭
   if (itemMenu.value.visible && itemMenu.value.dir?.path === d.path) {
     closeItemMenu();
     return;
@@ -73,12 +71,10 @@ export function closeItemMenu() {
   itemMenu.value.visible = false;
 }
 
-/** window click 关闭菜单（页面 onMounted 注册监听）。 */
 export function onWindowClick() {
   closeItemMenu();
 }
 
-/** 打开：文件管理器打开对应路径。 */
 export async function menuOpen() {
   const d = itemMenu.value.dir;
   closeItemMenu();
@@ -90,7 +86,6 @@ export async function menuOpen() {
   }
 }
 
-/** 刷新：重新读取该目录下的游戏。 */
 export async function menuRefresh() {
   const d = itemMenu.value.dir;
   closeItemMenu();
@@ -166,7 +161,6 @@ export async function addFolder() {
   const path = await open({ directory: true, multiple: false });
   if (!path) return;
   addPath.value = path;
-  // 默认名称 = 目录名
   const segs = path.replace(/\\/g, "/").split("/").filter(Boolean);
   addInput.value = segs[segs.length - 1] || "";
   addError.value = "";
@@ -185,7 +179,6 @@ export async function confirmAdd() {
       path: addPath.value,
     });
     addDialog.value = false;
-    // 添加后自动激活新目录（刚加入的目录通常就是要用的），并加载其版本列表
     const added = dirs.value.find(d => d.path === addPath.value);
     if (added && added.path !== activePath.value) {
       await selectDir(added);
@@ -197,7 +190,7 @@ export async function confirmAdd() {
   }
 }
 
-// ── 删除版本 dialog（与版本设置页删除功能一致；复用共享 composable）──
+// ── 删除版本 dialog（复用版本设置页共享 composable）──
 const {
   deleteDialog, deleteTarget, openDelete, confirmDelete: runConfirmDelete,
 } = useConfirmDelete(async (versionName) => {
@@ -223,12 +216,11 @@ export async function confirmDeleteVersion() {
 
 // ── 版本列表（右侧，单卡片平铺全部版本）──
 
-/** 重命名版本目录（versions/{old} → versions/{new}）。 */
 export async function renameVersionDir(versionName: string, newName: string) {
   await invoke("rename_version_dir", { versionName, newName });
 }
 
-/** 确保版本子目录存在并返回其绝对路径（后端 ensure_game_folder：不存在则创建）。 */
+/** 确保版本子目录存在（后端 ensure_game_folder 不存在则创建）。 */
 export async function ensureGameFolder(
   kind: "saves" | "version" | "mods" | "resourcepacks" | "datapacks" | "shaderpacks",
   versionName: string,
@@ -246,14 +238,11 @@ export const versions = ref<InstalledVersionInfo[]>([]);
 export const versionsLoading = ref(false);
 export const versionsError = ref("");
 
-/** 版本列表展开状态（单卡片：默认展开）。 */
 export const expanded = ref<Record<string, boolean>>({ all: true });
 
-/** 版本过滤关键字（右侧列表顶部搜索框；按名称模糊匹配，大小写不敏感）。 */
 export const searchQuery = ref("");
 
-/** 全部已安装版本（单卡片平铺）：loader 优先取后端 json 推断（PCL2 实例目录名
- *  无 loader 标记），推断失败回退目录名分类；副标题为 loader 版本号或 loader 名。 */
+/** 全部已安装版本：loader 优先取后端 json 推断，失败回退目录名分类；副标题为 loader 版本号或名。 */
 export const allVersions = computed(() =>
   versions.value
     .map(info => {
@@ -289,7 +278,6 @@ export async function loadVersions() {
   }
 }
 
-/** 选择版本 → 记录（含所属目录）；跳转由组件执行。 */
 export function pickVersion(v: string) {
   setSelected(v, activePath.value || undefined);
 }

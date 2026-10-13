@@ -1,11 +1,8 @@
 //! 玩家表：协议 `c:player_ping` / `c:player_profiles_list` 的数据模型与在线维护。
 //!
-//! host 侧维护 profiles（含房主 HOST + 各 guest），收 `c:player_ping` 刷新时间戳，
-//! 超时（协议未规定，参考 Terracotta 用 10s）剔除；`c:player_profiles_list` 返回
-//! JSON 数组。guest 侧存自己看到的玩家列表（含 host + 其他 guest + 本地 LOCAL）。
-//!
-//! `kind` 语义：HOST = 联机中心（房主）；GUEST = 联机房客；LOCAL = 本地玩家
-//! （仅客户端本地视图，不上报协议——协议只定义 HOST/GUEST）。
+//! host 侧维护 profiles（房主 HOST + 各 guest），收 ping 刷新时间戳、超时剔除；`player_profiles_list`
+//! 返回 JSON 数组。guest 侧存自己看到的列表（host + 其他 guest + 本地 LOCAL）。
+//! `kind`：HOST = 联机中心（房主）；GUEST = 房客；LOCAL = 本地玩家（仅客户端视图，不上报协议）。
 
 use std::time::{Duration, SystemTime};
 
@@ -14,7 +11,6 @@ use serde::{Deserialize, Serialize};
 /// 心跳超时：5s 心跳，10s 无包视为离线（参考 Terracotta 行为，协议未规定）。
 pub const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// 玩家类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum ProfileKind {
@@ -44,7 +40,6 @@ pub struct Profile {
 }
 
 impl Profile {
-    /// 构造（name 非空校验）。
     pub fn new(name: String, machine_id: String, vendor: String, kind: ProfileKind) -> Self {
         Self {
             name,
@@ -55,7 +50,6 @@ impl Profile {
     }
 }
 
-/// host 侧在线条目：profile + 最后心跳时间。
 #[derive(Debug, Clone)]
 pub struct OnlineProfile {
     pub profile: Profile,
@@ -70,7 +64,6 @@ pub struct ProfileTable {
 }
 
 impl ProfileTable {
-    /// 建表并放入房主。
     pub fn with_host(host: Profile) -> Self {
         Self {
             entries: vec![OnlineProfile {
@@ -80,8 +73,7 @@ impl ProfileTable {
         }
     }
 
-    /// 收到 guest 心跳：存在（非 host 槽）则刷新时间/更新名字；不存在则插入。
-    /// 返回是否发生变化（插入或改名）。
+    /// 收到 guest 心跳：存在（非 host 槽）则刷新时间/更新名字，否则插入；返回是否变化（插入或改名）。
     pub fn upsert_guest(&mut self, profile: Profile) -> bool {
         let now = SystemTime::now();
         if let Some(entry) = self
@@ -112,7 +104,6 @@ impl ProfileTable {
         self.entries.len() != before
     }
 
-    /// 当前玩家列表（HOST + 在线 GUEST），协议返回顺序。
     pub fn profiles(&self) -> Vec<Profile> {
         self.entries.iter().map(|e| e.profile.clone()).collect()
     }
@@ -139,9 +130,7 @@ mod tests {
         let mut t = ProfileTable::with_host(host);
         assert!(t.upsert_guest(profile("alice", "m1")));
         assert_eq!(t.profiles().len(), 2);
-        // 同名刷新：无变化
         assert!(!t.upsert_guest(profile("alice", "m1")));
-        // 改名：有变化
         assert!(t.upsert_guest(profile("alice2", "m1")));
         let ps = t.profiles();
         assert_eq!(ps[1].name, "alice2");
@@ -153,12 +142,10 @@ mod tests {
         let host = Profile::new("host".into(), "m0".into(), "v".into(), ProfileKind::Host);
         let mut t = ProfileTable::with_host(host);
         t.upsert_guest(profile("alice", "m1"));
-        // 手动把 guest 时间戳改老
         t.entries[1].last_seen = SystemTime::now() - Duration::from_secs(30);
         assert!(t.purge_expired());
         assert_eq!(t.profiles().len(), 1, "仅剩 host");
         assert_eq!(t.profiles()[0].kind, ProfileKind::Host);
-        // 无超时 → 无变化
         assert!(!t.purge_expired());
     }
 
@@ -166,8 +153,7 @@ mod tests {
     fn guest_cannot_overwrite_host() {
         let host = Profile::new("host".into(), "m0".into(), "v".into(), ProfileKind::Host);
         let mut t = ProfileTable::with_host(host);
-        // 若 guest 心跳带 host 的 machine_id（冲突）：upsert 只操作 skip(1)，
-        // 不会触碰 host 槽——host 名保持不变
+        // guest 心跳带 host 的 machine_id（冲突）：upsert 只操作 skip(1)，不触碰 host 槽
         t.upsert_guest(profile("fake", "m0"));
         assert_eq!(t.profiles()[0].name, "host", "host 槽不可被覆盖");
         assert_eq!(t.profiles()[0].kind, ProfileKind::Host);

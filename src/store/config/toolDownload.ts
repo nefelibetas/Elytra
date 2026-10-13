@@ -1,6 +1,4 @@
-// 工具箱「多线程下载器」状态机：任务列表（按 id 增量更新）+ 配置 + 操作命令。
-// 与 download.ts 的启动器下载任务完全隔离（自己的事件名 tooldl-progress 与列表），
-// 互不干扰：这里只承载用户手动粘贴的外部 URL 下载。
+// 工具箱多线程下载器状态机：任务列表（按 id 增量）+ 配置 + 操作命令；与 download.ts 启动器下载任务隔离（独立事件名 tooldl-progress），仅承载手动粘贴的外部 URL。
 import { reactive } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -11,15 +9,13 @@ import type { ToolDlConfig } from "../../types/config/ToolDlConfig";
 export type { ToolDlSnapshot, ToolDlStatus } from "../app/events";
 
 export const toolDlState = reactive({
-  /** 全部任务（入队顺序；终态保留，由用户清除或移除） */
+  /** 全部任务（入队顺序；终态保留，由用户清除/移除） */
   tasks: [] as ToolDlSnapshot[],
 
-  /** 正在下载的任务数 */
   get activeCount(): number {
     return this.tasks.filter((t) => t.status === "downloading").length;
   },
 
-  /** 队列中等待槽位的任务数 */
   get queuedCount(): number {
     return this.tasks.filter((t) => t.status === "queued").length;
   },
@@ -31,7 +27,6 @@ export const toolDlState = reactive({
       .reduce((s, t) => s + t.speed, 0);
   },
 
-  /** 已结束（完成/失败/取消）的任务数 */
   get finishedCount(): number {
     return this.tasks.filter(
       (t) => t.status === "done" || t.status === "error" || t.status === "cancelled",
@@ -41,7 +36,7 @@ export const toolDlState = reactive({
 
 let listening = false;
 
-/** 幂等注册 tooldl-progress 监听（对齐 download.ts ensureListen：模块级单次，路由往返不累积）。 */
+/** 幂等注册 tooldl-progress 监听（模块级单次，路由往返不累积）。 */
 export function ensureToolDlListen() {
   if (listening) return;
   listening = true;
@@ -59,7 +54,6 @@ function applySnapshot(snap: ToolDlSnapshot) {
   }
 }
 
-/** 拉取全量任务快照（页面重进时恢复列表）。 */
 export async function loadToolDlTasks() {
   toolDlState.tasks = await invoke<ToolDlSnapshot[]>("tooldl_list");
 }
@@ -97,7 +91,6 @@ export async function clearFinishedToolDl() {
   await invoke("tooldl_clear_finished");
 }
 
-/** 打开文件所在目录（复用 gamedirs 的 open_folder 命令）。 */
 export async function openToolDlFolder(dest: string) {
   const dir = dest.replace(/[\\/][^\\/]*$/, "");
   await invoke("open_folder", { path: dir });

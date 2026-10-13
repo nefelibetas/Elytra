@@ -1,10 +1,8 @@
-//! TypeScript 类型导出入口（**非测试路径**）：`cargo run --bin gen_ts --features gen-ts`。
+//! TypeScript 类型导出入口：`cargo run --bin gen_ts --features gen-ts`。
 //!
-//! 所有需要镜像到前端的 Rust 类型在此登记（新增类型加一行）。漏登记不会静默：
-//! 前端 import 该类型时会编译报错（`src/types/<域>/<Type>.ts` 不存在）。
-//!
-//! 不在 `#[cfg(test)]` 里导出的原因：跑测试会写文件，容易误伤（CI/本地跑测试
-//! 都会改工作区），故独立成 bin，只在显式调用时生成。
+//! 需镜像到前端的 Rust 类型在此登记；漏登记时前端 import 会编译报错
+//! （`src/types/<域>/<Type>.ts` 不存在）。独立为 bin 而非 `#[cfg(test)]`：
+//! 跑测试会写文件、污染工作区，故只在显式调用时生成。
 
 use ts_rs::TS;
 

@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// 主页右侧版本卡片：单卡片，Tab 切换存档 / Mod 内容 + 打开存档按钮 + 底部（游戏文件夹 / 修复）。
-// 业务在 store/versionDetail；重命名/修复/打开文件夹为本地编排。
+// 主页右侧版本卡片：Tab 切换资源列表 + 底部操作。业务在 store/versionDetail。
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { Pencil, Folder, FolderOpen, CloudDownload, Puzzle, Map, Settings2, Palette, Database, Sun, ImagePlus } from "@lucide/vue";
@@ -39,19 +38,12 @@ import {
 
 const versionName = computed(() => selectedVersion.value);
 
-/** 打开地图编辑器窗口（独立 WebView；初始定位到该存档）。 */
 const info = computed(() => classifyVersion(versionName.value));
-/** loader 判定：后端 json 特征推断优先（PCL2 等目录名无标记实例也能识别），目录名分类兜底。
- *  与版本选择页（gameDirs.ts）同规则，保证两处图标一致。 */
+/** loader 判定：后端 json 特征推断优先，目录名分类兜底；与 gameDirs.ts 同规则，两处图标须一致。 */
 const category = computed(() => versionLoader.value || info.value.category);
-/** 展示图标：自定义/整合包项目图（懒加载缓存）优先，回退 loader 图标。 */
 const displayIcon = computed(() => versionIcons[versionName.value] ?? LOADER_ICONS[category.value] ?? LOADER_ICONS.vanilla);
-// 版本切换即懒加载该版本的持久化图标（整合包 logo / 用户自定义）
 watch(versionName, name => void loadVersionIcon(name), { immediate: true });
-/**
- * 修改图标：本地选图 → 后端魔数校验后复制为版本自定义图标。
- * 成功后 store 已刷新缓存，卡片立即显示新图。
- */
+/** 修改图标：选图 → 后端魔数校验后复制为自定义图标。 */
 async function changeIcon() {
   const path = await open({
     multiple: false,
@@ -65,7 +57,7 @@ async function changeIcon() {
     showToast(errMsg(e));
   }
 }
-/** loader 版本号：目录名可解析且与最终 category 一致才显示（后端推断时目录名可能无版本号）。 */
+/** loader 版本号：目录名可解析且与最终 category 一致才显示。 */
 const loaderVersion = computed(() =>
   info.value.category === category.value ? info.value.loaderVersion : "",
 );
@@ -77,12 +69,12 @@ const subtitle = computed(() =>
 
 const router = useRouter();
 
-/** 进入版本设置页（下层页面）；返回时按历史回到主页。 */
+/** 进入版本设置页；返回按历史回主页。 */
 function goSetup() {
   router.push({ path: "/version-setup", query: { name: versionName.value } });
 }
 
-/** 当前 tab：存档 | Mod | 材质包 | 数据包 | 光影包（组件内状态，路由重建回存档）。 */
+/** 当前 tab（组件内状态，路由重建后回存档）。 */
 type TabKind = "worlds" | "mods" | "resourcepacks" | "datapacks" | "shaderpacks";
 const tab = ref<TabKind>("worlds");
 
@@ -94,7 +86,6 @@ const TAB_LABELS: Record<TabKind, string> = {
   shaderpacks: "光影包",
 };
 
-/** 各资源类型的侧边导航图标。 */
 const SIDE_ICONS = {
   worlds: Map,
   mods: Puzzle,
@@ -103,13 +94,7 @@ const SIDE_ICONS = {
   shaderpacks: Sun,
 } as const;
 
-/**
- * 可见 Tab 列表（固定展示通用资源入口）：
- * - 存档/光影/材质包始终显示（不管是否为空，空态有引导文案）
- * - 数据包仅 1.13+ 支持（Minecraft 数据包功能 1.13 引入）
- * - Mod 仅 ModLoader 版本显示（mods 为特殊资源，需 loader 才有意义）
- */
-/** 数据包目录 1.13+ 才支持（1.12 及更早无 datapacks）。26.x 新命名也能正确比较。 */
+/** 可见 Tab：存档/光影/材质包恒显，数据包需 1.13+（兼容 26.x 命名版本号），Mod 仅 ModLoader 版本。 */
 function supportsDatapacks(mc: string): boolean {
   const t = mc.split(".").map(Number);
   const min = [1, 13];
@@ -127,12 +112,10 @@ const tabs = computed<TabKind[]>(() => {
   return list;
 });
 
-// 资源列表变化（加载完成/删除后）时，若当前 tab 已不可见则回退存档。
 watch(tabs, t => {
   if (!t.includes(tab.value)) tab.value = "worlds";
 });
 
-/** 当前 tab 对应的"打开文件夹"参数与 tooltip 文案。 */
 const folderMeta = computed(() => {
   switch (tab.value) {
     case "mods":
@@ -149,7 +132,7 @@ const folderMeta = computed(() => {
 });
 
 // ── 资源目录（材质包/数据包/光影包）通用列表数据 ──
-// 状态选择下沉 store 的 resourceRefs：此处按 tab 解包；非资源 tab 给空态兜底。
+// 状态在 store resourceRefs，按 tab 解包；非资源 tab 给空态。
 function isResourceTab(t: TabKind): t is ResourceKind {
   return t === "resourcepacks" || t === "datapacks" || t === "shaderpacks";
 }
@@ -167,7 +150,6 @@ const res = computed(() => {
   };
 });
 
-/** 各资源类型的空态图标与文案。 */
 const RES_ICONS = { resourcepacks: Palette, datapacks: Database, shaderpacks: Sun } as const;
 const RES_EMPTY_TEXTS: Record<ResourceKind, string> = {
   resourcepacks: "还没有材质包\n可将 zip 包放入 resourcepacks 目录",
@@ -195,7 +177,7 @@ watch(
 
 onBeforeUnmount(() => stopWorldsLivePolling());
 
-// ── 打开文件夹（目录不存在先创建；后端 ensure_game_folder 支持 version/saves/mods/资源目录）──
+// ── 打开文件夹（不存在则先由后端 ensure_game_folder 创建）──
 async function openVersionFolder(kind: "saves" | "version" | "mods" | "resourcepacks" | "datapacks" | "shaderpacks") {
   try {
     const target = await ensureGameFolder(kind, versionName.value);
@@ -205,7 +187,7 @@ async function openVersionFolder(kind: "saves" | "version" | "mods" | "resourcep
   }
 }
 
-// ── 修复：扫描缺失 → 提交任务中心（检测期间按钮显示环形进度 + "检测中…"）──
+// ── 修复：扫描缺失 → 提交任务中心 ──
 const checking = ref(false);
 
 async function repairFiles() {
@@ -220,7 +202,7 @@ async function repairFiles() {
       return;
     }
     const taskId = await submitMissingDownload(versionName.value);
-    // 预注册任务：任务中心徽标立即出现（首次 task-progress 事件到达前也能看到）
+    // 预注册任务：徽标立即出现，不等首次 task-progress 事件
     dlState.addTask({
       taskId,
       name: `${versionName.value} 版本修复`,
@@ -267,7 +249,7 @@ async function confirmRename() {
   try {
     await renameVersionDir(versionName.value, newName);
     renameDialog.value = false;
-    // 保持选中新名：卡片 watch 自动刷新内容
+    // 保持选中新名，触发卡片 watch 刷新
     setSelected(newName);
   } catch (e) {
     renameError.value = errMsg(e);
@@ -362,7 +344,7 @@ async function confirmRename() {
           </div>
           <div class="vdc-mod-list">
             <template v-for="m in mods" :key="m.file_name">
-              <!-- 识别得到：Modrinth 元数据详情样式 -->
+              <!-- 已识别：社区元数据样式 -->
               <div v-if="m.project_id" class="vdc-mod">
                 <IconImage :src="m.icon_url" :size="32" />
                 <span class="vdc-mod-info">
@@ -379,7 +361,7 @@ async function confirmRename() {
                   </span>
                 </span>
               </div>
-              <!-- 识别不到：本地文件样式 -->
+              <!-- 未识别：本地文件样式 -->
               <div v-else class="vdc-mod vdc-mod-local">
                 <Puzzle :size="20" class="vdc-mod-local-icon" />
                 <span class="vdc-mod-info">
@@ -406,7 +388,7 @@ async function confirmRename() {
           </div>
           <div class="vdc-mod-list">
             <template v-for="f in res.list" :key="f.file_name">
-              <!-- 匹配到社区项目：图标 + 标题 + 描述 + 下载量 -->
+              <!-- 已匹配社区项目 -->
               <div v-if="f.project_id" class="vdc-mod">
                 <IconImage :src="f.icon_url" :size="32" />
                 <span class="vdc-mod-info">
@@ -423,7 +405,7 @@ async function confirmRename() {
                   </span>
                 </span>
               </div>
-              <!-- 未匹配：本地文件 + 通用类型图标 -->
+              <!-- 未匹配：本地文件 -->
               <div v-else class="vdc-mod vdc-mod-local">
                 <component :is="resIcon" :size="20" class="vdc-mod-local-icon" />
                 <span class="vdc-mod-info">
@@ -475,7 +457,7 @@ async function confirmRename() {
 
 <style scoped>
 .vdc {
-  /* 圆角卡片占满右区：宽高 100%，内容由 flex column 分布（右区本身宽>高） */
+  /* 占满右区，内容 flex column 分布 */
   width: 100%;
   height: 100%;
   display: flex;
@@ -568,7 +550,7 @@ async function confirmRename() {
   background: var(--color-brand-bg);
 }
 
-/* 打开当前资源目录：侧边栏底部常驻，位置不随导航数量变化 */
+/* 打开当前资源目录，底部常驻 */
 .vdc-side-open {
   width: 30px;
   height: 30px;
@@ -619,7 +601,6 @@ async function confirmRename() {
   opacity: 0;
 }
 
-/* 空态：图标 + 换行文本，内容区完全居中 */
 .vdc-err {
   padding: 20px;
   font-size: 12px;
@@ -648,7 +629,7 @@ async function confirmRename() {
   color: var(--text-tertiary);
 }
 
-/* 世界行：真实缩略图（icon.png）或 Map 占位；缩略图圆角卡片 */
+/* 世界行：缩略图或 Map 占位 */
 .vdc-world-row {
   padding: 6px 16px;
 }
@@ -682,7 +663,7 @@ async function confirmRename() {
   color: var(--text-tertiary);
 }
 
-/* ===== Mod 列表（社区资源风格：图标 + 标题/文件名 + 描述 + 版本支持）===== */
+/* ===== Mod 列表 ===== */
 .vdc-net-warn {
   font-size: 11px;
   color: var(--color-danger);
@@ -841,7 +822,7 @@ async function confirmRename() {
   color: var(--text-secondary);
 }
 
-/* 修复按钮检测态：环形进度条（旋转环，复用 vdc-spin keyframes） */
+/* 修复按钮检测态环形进度条（复用 vdc-spin keyframes） */
 .vdc-repair-spinner {
   width: 13px;
   height: 13px;

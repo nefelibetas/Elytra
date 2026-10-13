@@ -1,7 +1,6 @@
 <script setup lang="ts">
-// /give 生成器：搜索选择物品 → 配置（数量/名称颜色/背景故事/附魔/属性/选项）→
-// 按所选语法格式（1.20.5+ 组件 / 1.13–1.20.4 NBT）生成 /give 命令。
-// 物品 ID 采用 1.13+ 命名空间格式（主流版本稳定）；1.12 及以下数字 ID 不支持。
+// /give 生成器：搜索选择物品 → 配置（数量/名称颜色/背景故事/附魔/属性/选项）→ 生成 /give 命令。
+// 语法双口径：1.20.5+ 组件 / 1.13–1.20.4 NBT；物品 ID 用 1.13+ 命名空间，1.12 及以下数字 ID 不支持。
 import { computed, ref } from "vue";
 import { Copy, Plus, Trash2, Search } from "@lucide/vue";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
@@ -160,7 +159,6 @@ async function copyCommand() {
       <div class="tool-card-sub">物品 ID 按 1.13+ 命名空间格式（主流版本稳定）；1.12 及以下请勿使用</div>
     </div>
 
-    <!-- 格式选择 -->
     <div class="give-row">
       <span class="give-label">命令格式</span>
       <DropSelect
@@ -171,7 +169,6 @@ async function copyCommand() {
       />
     </div>
 
-    <!-- 物品选择 -->
     <div class="give-sec">
       <div class="give-row">
         <span class="give-label">物品</span>
@@ -208,7 +205,6 @@ async function copyCommand() {
     </div>
 
     <template v-if="selectedItem">
-      <!-- 基础配置 -->
       <div class="give-sec">
         <div class="give-row">
           <span class="give-label">数量</span>
@@ -268,7 +264,6 @@ async function copyCommand() {
         </div>
       </div>
 
-      <!-- 附魔 -->
       <div class="give-sec">
         <div class="give-sec-title">附魔（不受原版限制）</div>
         <div class="give-row">
@@ -295,7 +290,6 @@ async function copyCommand() {
         </div>
       </div>
 
-      <!-- 属性 -->
       <div class="give-sec">
         <div class="give-sec-title">属性（加到物品基础值上）</div>
         <div class="give-row">
@@ -322,7 +316,6 @@ async function copyCommand() {
         </div>
       </div>
 
-      <!-- 输出 -->
       <div class="give-output">
         <div class="give-output-head">
           <span>命令 /GIVE（{{ format === "modern" ? "1.20.5+" : "1.13–1.20.4" }}）</span>

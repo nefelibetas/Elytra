@@ -14,7 +14,6 @@ use std::future::Future;
 use std::sync::LazyLock;
 use tokio::sync::Mutex;
 
-/// host 共享状态（信息服务器 handler + 代理任务用）。
 pub(super) struct HostShared {
     /// 当前游戏端口（None = 未检测到；c:server_port 据此）。
     pub(super) mc_port: parking_lot::RwLock<Option<u16>>,
@@ -22,16 +21,12 @@ pub(super) struct HostShared {
     pub(super) profiles: parking_lot::Mutex<ProfileTable>,
 }
 
-/// guest 本地游戏代理句柄：包住后台代理任务，drop/停止时中止它并释放本地监听端口。
-///
-/// 旧实现拿 `JoinHandle` 直接丢弃：停止联机后 `run_guest_proxy` 无人通知，
-/// `0.0.0.0:<local_port>` 会一直处于 LISTEN。
+/// guest 本地游戏代理句柄：drop/停止时中止后台任务并释放本地监听端口（丢弃 `JoinHandle` 会让代理一直 LISTEN）。
 pub(super) struct GuestProxy {
     handle: Option<tauri::async_runtime::JoinHandle<()>>,
 }
 
 impl GuestProxy {
-    /// 启动代理任务并返回可停止句柄。
     pub(super) fn spawn<F>(task: F) -> Self
     where
         F: Future<Output = ()> + Send + 'static,
@@ -65,13 +60,13 @@ pub(super) struct OnlineServiceInner {
     pub(super) room: Option<RoomCredential>,
     /// 组播扫描器（host 用；drop 即停线程）。
     pub(super) scanner: Option<MinecraftScanner>,
-    /// 组播广播器（guest 用：模拟 MC 局域网服务器；drop 即停线程）。
+    /// 组播广播器（guest 用；drop 即停线程）。
     pub(super) advertiser: Option<McAdvertiser>,
-    /// guest 本地游戏代理任务（drop/停止即中止并释放本地监听端口）。
+    /// guest 本地游戏代理任务。
     pub(super) proxy: Option<GuestProxy>,
-    /// host 信息服务器（drop/停止即停 accept 线程并释放端口）。
+    /// host 信息服务器（drop 即停 accept 线程并释放端口）。
     pub(super) info_server: Option<InfoServer>,
-    /// 会话代际：stop/start_host 递增，旧的后台任务据此自杀。
+    /// 会话代际：stop/start 递增，旧后台任务据此退出。
     pub(super) generation: u64,
     /// 信息服务器端口（host；guest 侧为空）。
     pub(super) scaffold_port: Option<u16>,
@@ -132,13 +127,13 @@ pub(super) fn emit_snapshot(sink: &dyn EventSink, snap: &OnlineSnapshot) {
 
 /// 停止联机（幂等）。
 pub async fn stop(sink: &dyn EventSink) -> Result<(), String> {
-    // 锁内（短）：先递增代际——在途的 start/重建据此认输并丢弃自己刚建的会话；
-    // 随后摘出会话与资源、复位状态。
+    // 锁内（短）：先递增代际（在途 start/重建据此认输并丢弃自己刚建的会话），
+    // 再摘出会话与资源、复位状态。
     let (session, proxy, info_server, snap) = {
         let mut svc = SERVICE.lock().await;
         svc.generation += 1;
         let session = svc.session.take();
-        svc.scanner = None; // Drop → 组播线程退出（非阻塞：只发退出信号）
+        svc.scanner = None; // Drop → 组播线程退出（只发退出信号，非阻塞）
         svc.advertiser = None; // Drop → 广播线程退出
         let proxy = svc.proxy.take(); // 中止代理任务 → 释放 guest 本地监听端口
         let info_server = svc.info_server.take(); // 停 accept 线程 → 释放 host 信息端口
@@ -161,13 +156,11 @@ pub async fn stop(sink: &dyn EventSink) -> Result<(), String> {
     Ok(())
 }
 
-/// 当前状态快照（纯读）。
 pub async fn status() -> OnlineSnapshot {
     let svc = SERVICE.lock().await;
     snapshot_inner(&svc)
 }
 
-/// 探测一个空闲 TCP 端口并释放。
 pub(super) fn free_tcp_port() -> Result<u16, String> {
     std::net::TcpListener::bind(("127.0.0.1", 0))
         .and_then(|l| l.local_addr())
@@ -175,7 +168,7 @@ pub(super) fn free_tcp_port() -> Result<u16, String> {
         .map_err(common_err_ctx!("分配本地端口失败"))
 }
 
-/// 联机昵称：读配置（OnlineConfig.nickname），空则回退系统用户名。
+/// 联机昵称：配置为空则回退系统用户名。
 pub(super) fn online_player_name() -> String {
     let cfg = online_config();
     if let Some(name) = cfg.nickname.as_ref().filter(|s| !s.trim().is_empty()) {
@@ -187,7 +180,7 @@ pub(super) fn online_player_name() -> String {
     }
 }
 
-/// vendor 字符串：`Elytra {版本}`（协议 c:player_ping 的 vendor 字段）。
+/// vendor 字符串：`Elytra {版本}`。
 pub(super) fn vendor_string() -> String {
     format!("Elytra {}", crate::constants::APP_VERSION)
 }

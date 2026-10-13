@@ -296,12 +296,9 @@ mod matrix {
         dest
     }
 
-    /// install_profile 声明的可下载构件里，未落盘（或 sha1 不符）的清单。
-    ///
-    /// 这是 Forge 1.17+ 运行时模块 jar（`fmlcore` / `javafmllanguage` / `lowcodelanguage` /
-    /// `mclanguage`）**唯一**的声明处：version.json 只声明 fmlloader/fmlearlydisplay，安装时若
-    /// 只下 version.json 的库，游戏启动会在 `MinecraftLocator.scanMods` 上
-    /// `Invalid paths argument, contained no existing paths` 秒退（退出码 1）。
+    /// install_profile 声明的可下载构件里，未落盘（或 sha1 不符）的清单。这是 Forge 1.17+ 运行时模块 jar（`fmlcore` /
+    /// `javafmllanguage` / `lowcodelanguage` / `mclanguage`）**唯一**的声明处：version.json 只声明 fmlloader/fmlearlydisplay，
+    /// 安装时若只下 version.json 的库，游戏启动会 `Invalid paths argument, contained no existing paths` 秒退（退出码 1）。
     fn missing_profile_libraries(installer: &Path, lib_dir: &Path) -> Vec<String> {
         let text = super::processors::read_profile_from_installer(installer)
             .unwrap_or_else(|e| panic!("读 install_profile.json 失败：{e}"));
@@ -374,7 +371,7 @@ mod matrix {
                 return serde_json::json!({
                     "case": case.name, "kind": case.kind, "mc": case.mc, "ver": ver,
                     "ok": false,
-                    // 安装错误优先（读不到 JSON 时它才是根因，此前被这里的 plan 错误顶掉）
+                    // 安装错误优先（读不到 JSON 时它才是根因）
                     "error": result.as_ref().err().map(|e| serde_json::Value::from(e.clone()))
                         .unwrap_or_else(|| plan["error"].clone()),
                     "first_line": result.as_ref().err()

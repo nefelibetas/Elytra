@@ -1,8 +1,6 @@
 <script setup lang="ts">
-// 通用自定义下拉选择（DropSelect）：原生 <select> 替代品。
-// 背景：UA 原生 select 的展开面板（浅蓝高亮/系统字体）与项目风格割裂，
-// 统一为自定义面板（对齐 jdk-dropdown 视觉：surface-card + 边框 + hover/selected 态）。
-// 无 props 链：纯展示控件，v-model 双向绑定 + 点击外部关闭。
+// 通用自定义下拉（原生 <select> 替代品）：自定义面板统一风格（对齐 jdk-dropdown 视觉）。
+// 纯展示控件：v-model 双向绑定 + 点击外部关闭。
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from "vue";
 import { Check, ChevronDown } from "@lucide/vue";
 
@@ -35,10 +33,7 @@ const emit = defineEmits<{ (e: "update:modelValue", v: string): void }>();
 const open = ref(false);
 const rootEl = ref<HTMLElement>();
 
-/** 面板 fixed 定位（视口坐标）：absolute 溢出会扩展滚动容器 scrollHeight（设置页 GC 下拉抖动根因）；
- * scroll/resize 时跟随按钮重新定位，保持滚动场景正确。
- * 方向自适应：下方空间不足（面板底部将超出视口）时向上展开。
- * minWidth：fixed 后 min-width:100% 会相对视口（全宽），须显式传按钮宽。 */
+/** 面板 fixed 视口定位（absolute 溢出会扩展滚动容器 scrollHeight）；scroll/resize 重定位，下方不足则上展；minW 显式传按钮宽。 */
 const panelPos = reactive({ left: 0, top: 0, minW: 0 });
 const panelEl = ref<HTMLElement>();
 
@@ -47,11 +42,11 @@ function positionPanel() {
   const btnR = rootEl.value.getBoundingClientRect();
   const pr = panelEl.value.getBoundingClientRect();
   panelPos.minW = btnR.width;
-  // 左缘对齐按钮；面板（实际宽）超出视口右缘时内收（fixed 下包含块=视口，须按实际宽 clamp）
+  // 左缘对齐按钮；右缘超出视口时内收（fixed 下包含块=视口，按实际宽 clamp）
   panelPos.left = Math.min(btnR.left, Math.max(0, window.innerWidth - pr.width - 6));
   const spaceBelow = window.innerHeight - btnR.bottom - 4;
   panelPos.top = pr.height > spaceBelow ? Math.max(4, btnR.top - pr.height - 4) : btnR.bottom + 4;
-  // minW 更新是响应式异步生效：面板变宽后下一帧按新宽重新校准左缘（避免右缘超视口）
+  // minW 异步生效：下一帧按新宽重新校准左缘
   requestAnimationFrame(() => {
     if (!open.value || !rootEl.value || !panelEl.value) return;
     const w = panelEl.value.getBoundingClientRect().width;
@@ -64,14 +59,14 @@ function positionPanel() {
 
 const current = computed(() => props.options.find((o) => o.value === props.modelValue));
 
-// 打开时渲染完成后按按钮位置与面板实际高度定方向（reactive 渲染前已就位）
+// 打开后渲染完成再按按钮位置与面板高度定方向
 watch(open, async (v) => {
   if (!v) return;
   await nextTick();
   positionPanel();
 });
 
-/** 点击组件外部关闭面板（挂载周期内注册，对齐 AccountSection 菜单模式）。 */
+/** 点击组件外部关闭面板。 */
 function onDocClick(e: MouseEvent) {
   if (open.value && rootEl.value && !rootEl.value.contains(e.target as Node)) {
     open.value = false;
@@ -79,7 +74,7 @@ function onDocClick(e: MouseEvent) {
 }
 onMounted(() => {
   window.addEventListener("click", onDocClick);
-  // capture：内部滚动容器滚动也触发（scroll 不冒泡）；resize 同
+  // capture：内部滚动容器的 scroll 也会触发（scroll 不冒泡）
   window.addEventListener("scroll", positionPanel, true);
   window.addEventListener("resize", positionPanel);
 });
@@ -189,10 +184,8 @@ function select(o: SelOption) {
 .ds-panel {
   position: fixed;
   z-index: 30;
-  /* 坐标由 JS 按按钮 rect 计算（视口定位，避免 absolute 溢出扩展滚动容器 scrollHeight）；
-     面板比按钮宽：按最宽选项自适应撑开（min-width = 按钮宽，由 JS 传 CSS 变量——
-     fixed 定位下 min-width:100% 会相对视口全宽），选项单行完整可读；
-     max-width 兜底防极端长文本（游戏版本/路径）撑破布局 */
+  /* 坐标由 JS 按按钮 rect 计算（fixed 视口定位）；宽度按内容撑开，min-width 由 JS 传 CSS 变量
+     （fixed 下 % 会相对视口）；max-width 兜底防超长文本撑破布局 */
   width: max-content;
   min-width: var(--ds-min-w, 0px);
   max-width: 380px;

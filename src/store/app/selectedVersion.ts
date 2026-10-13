@@ -1,5 +1,4 @@
-// 版本选择状态单例（Launch / VersionSelect 共用）。
-// 收敛原先两处手写的 localStorage 键（elytra.selectedVersion / selectedVersionDir）契约。
+// 版本选择状态单例（Launch / VersionSelect 共用），对应两个 localStorage 键。
 import { ref } from "vue";
 
 const SELECTED_VERSION_KEY = "elytra.selectedVersion";
@@ -19,7 +18,6 @@ export function clearSelected() {
   selectedVersion.value = "";
 }
 
-/** 上次选择所属目录（跨目录校验用）。 */
 export function getSavedDir(): string | null {
   return localStorage.getItem(SELECTED_DIR_KEY);
 }

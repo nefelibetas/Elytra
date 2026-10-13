@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// 服务器状态检测：输入地址（Java/基岩版，可自动识别），探测在线状态。
-// 后端实现：commands/server_status.rs → server_status.rs（SLP / RakNet）。
+// 服务器状态检测：输入地址（Java/基岩版，自动识别）探测在线状态。
+// 后端 commands/server_status.rs → server_status.rs（SLP / RakNet）。
 import { ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { Radio, RefreshCw } from "@lucide/vue";
@@ -81,7 +81,6 @@ function editionLabel(): string {
       <div class="tool-card-sub">探测任意 Java / 基岩版服务器的在线状态、版本、人数与 MOTD</div>
     </div>
 
-    <!-- 输入行 -->
     <div class="ping-row">
       <input
         v-model="address"
@@ -104,10 +103,8 @@ function editionLabel(): string {
       </button>
     </div>
 
-    <!-- 错误 -->
     <div v-if="error" class="ping-error">{{ error }}</div>
 
-    <!-- 结果 -->
     <div v-if="status" class="ping-result">
       <div class="ping-head">
         <img v-if="status.favicon" class="ping-icon" :src="status.favicon" alt="服务器图标" />
@@ -134,7 +131,6 @@ function editionLabel(): string {
       <div class="ping-motd-label">MOTD</div>
       <MotdPreview :motd="status.motd" />
 
-      <!-- 玩家样例 -->
       <div v-if="status.player_sample.length > 0" class="ping-sample">
         <span class="ping-sample-label">在线玩家</span>
         <div class="ping-sample-list">
@@ -146,7 +142,6 @@ function editionLabel(): string {
       </div>
     </div>
 
-    <!-- 提示 -->
     <div v-else class="ping-hint">
       <Radio :size="13" />
       联机时可用它确认主机游戏端口是否已开放；地址不填端口时默认 Java 25565 / 基岩版 19132。

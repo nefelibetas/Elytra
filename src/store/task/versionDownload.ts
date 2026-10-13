@@ -1,6 +1,4 @@
-// 原版版本下载流程 store（manifest 列表 / 版本选择 / ModLoader 选择 / Fabric API / 提交下载）：
-// 模块级 reactive 单例，页面与组件直接 import。
-// 状态跨路由保留（切到设置页再返回不丢选择进度）；manifest 缓存跨组件重建保留。
+// 原版版本下载流程 store（manifest/版本选择/ModLoader/Fabric API/提交下载）：模块级 reactive 单例，状态与 manifest 缓存跨路由保留。
 import { reactive, computed, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { dlState, registerVersionTarget } from "../task/download";
@@ -40,29 +38,21 @@ export interface FabricApiVer {
   filename: string;
 }
 
-// 模块级 manifest 缓存：仅首次进入下载页拉取版本列表，之后直接展示缓存
+// 模块级 manifest 缓存：仅首次进入下载页拉取版本列表。
 let manifestLoaded = false;
 let manifestLoading = false;
 let cachedManifest: VersionManifest | null = null;
 
-// loader 版本列表缓存（key `${loader}_${mcVersion}`）：一次选择版本写入 5 条
-// （forge/neoforge/fabric/quilt/optifine，条目为 loader 版本号数组）。
-// 上限 64（≈12 个版本的量）：当前所选版本的 5 条总是最新写入、必不被淘汰，
-// 更早版本条目被淘汰后重新选择会照常重取（selectVersion 对缺失键重新请求）。
+// loader 版本缓存（key `${loader}_${mcVersion}`）：上限 64，当前所选版本条目每次写入必不被淘汰。
 const loaderDataCache = createBoundedCache<string[]>(64);
 
-// 在途请求键集合（key `${loader}_${mcVersion}`）：去重必须按 MC 版本维度。
-// 旧实现按 loader 名去重（loaderLoading[ld]）：A 版本请求在途时切到 B 选同一 loader，
-// B 的请求被直接 return，B 的键永不写入 loaderDataCache（loader 卡片恒显示「无」）。
+// 在途请求键集合：去重须按 MC 版本维度，否则 A 在途时切 B 选同 loader 会误吞 B 请求、其缓存键永不写入。
 const loaderInflight = new Set<string>();
 
-// Fabric API 版本列表缓存（key mcVersion）：条目含下载 URL（每条 10 个量级）。
-// 换版本且选了 Fabric 时整体清空（见下方 watch），上限 8 仅为兜底。
+// Fabric API 版本缓存（key mcVersion）：换版本且选了 Fabric 时整体清空，上限 8 仅为兜底。
 const fabricApiDataCache = createBoundedCache<FabricApiVer[]>(8);
 
-// Fabric API 在途请求键集合（按 MC 版本维度去重）：旧实现用单个布尔 fabricApiLoading
-// 去重，A 版本在途时切到 B 会吞掉 B 的请求（B 无数据），且 A 迟到的响应会把 A 的
-// fabric-api 版本回填进 B 的选择（版本不匹配）。
+// Fabric API 在途键集合（按 MC 版本去重）：布尔去重会吞切换后的请求，A 迟到响应会回填 B 的选择。
 const fabricApiInflight = new Set<string>();
 
 export const loaderIcon: Record<string, string> = Object.fromEntries(
@@ -96,7 +86,6 @@ function isAprilFools(v: VersionMeta): boolean {
 
 export const vdState = reactive({
   manifest: cachedManifest as VersionManifest | null,
-  // 初始加载态由缓存状态决定：已有缓存则首帧直接展示列表，不闪加载卡片
   loading: !manifestLoaded,
   error: "",
   expanded: {
@@ -109,12 +98,10 @@ export const vdState = reactive({
 
   // Loader 加载态（数据本体见模块级 loaderDataCache；此表键为 loader 名，恒 ≤5 条）
   loaderLoading: {} as Record<string, boolean>,
-  // Selected loader: only one of forge/neoforge/fabric at a time
   selectedMainLoader: null as string | null,
   selectedLoaderVersions: {} as Record<string, string>,
   expandedLoader: {} as Record<string, boolean>,
 
-  // Fabric API 数据本体见模块级 fabricApiDataCache
   fabricApiLoading: false,
   fabricApiExpanded: false,
 
@@ -131,8 +118,7 @@ export const vdState = reactive({
     if (mc && !this.loaderSupported(ld, mc)) return false;
     if (!isMainLoader(ld)) {
       if (!this.selectedMainLoader) return false;
-      // OptiFabric 桥接仅支持至 1.20.x：Fabric/Quilt + 1.21+ 组合直接过滤
-      // （安装时也会明确报错，这里在下载流程提前隐藏）
+      // OptiFabric 桥接仅支持至 1.20.x：Fabric/Quilt + 1.21+ 组合过滤（安装时也会明确报错，这里提前隐藏）
       if (ld === "optifine" && mc && versionGte(mc, "1.21")) {
         const main = this.selectedMainLoader;
         if (main === "fabric" || main === "quilt") return false;
@@ -145,7 +131,6 @@ export const vdState = reactive({
 
   async fetchManifest() {
     if (manifestLoading) return;
-    // 已有缓存：直接展示，不重新请求（loading 初始值已按缓存状态设定）
     if (manifestLoaded) return;
     manifestLoading = true;
     this.loading = true;
@@ -177,7 +162,6 @@ export const vdState = reactive({
     this.selectedMainLoader = null;
     this.selectedLoaderVersions = {};
 
-    // Fetch all loader versions in parallel
     const mcVer = v.id;
     await Promise.all([
       this.fetchLoaderVersions("forge", mcVer),
@@ -197,7 +181,6 @@ export const vdState = reactive({
   },
 
   selectLoaderVer(loader: string, ver: string) {
-    // If main loader, clear other main loaders and their selections
     if (isMainLoader(loader)) {
       this.selectedMainLoader = loader;
       for (const ld of loaders) {
@@ -208,7 +191,6 @@ export const vdState = reactive({
       }
       this.selectedLoaderVersions[loader] = ver;
     } else {
-      // OptiFine - just set
       this.selectedLoaderVersions[loader] = ver;
     }
     this.versionInput = computedVersionName.value;
@@ -261,8 +243,7 @@ export const vdState = reactive({
     try {
       const versions = await invoke<FabricApiVer[]>("get_fabric_api_versions", { mcVersion: mcVer });
       fabricApiDataCache.put(mcVer, versions);
-      // 回填自动选择前校验当前选中版本仍为请求的 MC 版本：版本切换后迟到的响应
-      // 不得把 A 的 fabric-api 版本写进 B 的选择（否则装进 B 实例的 api 与 MC 不匹配）
+      // 回填前校验当前选中版本仍为请求的 MC 版本：迟到响应不得把 A 的 api 写进 B 的选择。
       if (
         versions.length > 0 &&
         !this.selectedLoaderVersions["fabric-api"] &&
@@ -289,7 +270,6 @@ export const vdState = reactive({
 
   clearFabricApi() {
     delete this.selectedLoaderVersions["fabric-api"];
-    // ponytail: re-auto-select latest if data exists
     const mc = this.selectedVersion?.id;
     if (mc) {
       const data = fabricApiDataCache.record[mc];
@@ -303,7 +283,6 @@ export const vdState = reactive({
     return fabricApiDataCache.record[mcVer] ?? [];
   },
 
-  /** 选了 Fabric 但 Fabric API 列表未就绪（加载中/拉取失败/未选择）时禁止下载。 */
   fabricApiUnready(): boolean {
     if (this.selectedMainLoader !== "fabric") return false;
     const sv = this.selectedVersion;
@@ -345,9 +324,7 @@ export const vdState = reactive({
     }
 
     this.dlSubmitting = true;
-    // 提交前重新解析目标目录：watcher 的异步更新有竞态（选版本后立即点下载时
-    // resolve invoke 未返回，缓存旧值指向已存在的同名目录）——重名场景必须
-    // 拿到最新 _n，否则 json/jar/fabric-api 全部落盘到旧目录（覆盖已有版本）
+    // 提交前重新解析目标目录：watcher 异步更新有竞态，重名场景须拿到最新 _n，否则覆盖旧目录。
     await this.updateResolvedDirName();
     const taskId = await dlState.startTask(
       sv.id, sv.url, sv.id,
@@ -365,14 +342,13 @@ export const vdState = reactive({
 
 // ── 派生数据 ──
 
-/** 原版/正式版图标（数据源在 versionMeta）。 */
 export const vanillaIcon = CATEGORIES[0].icon;
 
 export const displayLoaders = computed<LoaderItem[]>(() => {
   const list: LoaderItem[] = [];
   for (const ld of loaders) {
     list.push(ld);
-    // Injects fabric-api right after fabric for strict ordering
+    // fabric-api 紧接 fabric 注入（严格顺序）
     if (ld.key === "fabric" && vdState.selectedMainLoader === "fabric") {
       list.push({ key: "fabric-api", name: "Fabric API", icon: loaderIcon.fabric });
     }
@@ -412,14 +388,11 @@ export const computedVersionName = computed(() => {
 
 // ── 响应式联动（模块级 watch，生命周期与应用一致） ──
 
-// 版本/loader 选择变化 → 刷新目录名
 watch(
   () => [vdState.selectedVersion, vdState.selectedLoaderVersions, vdState.selectedMainLoader],
   () => vdState.updateResolvedDirName(),
   { deep: true },
 );
-
-// Auto-fetch Fabric API when Fabric is selected
 
 watch(() => vdState.selectedMainLoader, (ld) => {
   // 未选主 ModLoader 时隐藏 OptiFine：同时清掉残留选择，防止被静默提交

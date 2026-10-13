@@ -1,6 +1,5 @@
 //! sha1 → Modrinth 项目识别：`/v2/version_file/{sha1}` 逐文件命中，
-//! `/v2/projects?ids=[...]` 批量补全元数据（复用 community::modrinth_projects_raw 同端点解析）。
-//! 网络环节失败不阻塞列表：降级为纯本地信息并置 network_error。
+//! `/v2/projects?ids=[...]` 批量补全元数据；网络失败不阻塞列表，降级为本地信息 + network_error。
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -16,11 +15,10 @@ use crate::game::community::wiki_entry;
 
 use crate::util;
 
-/// sha1 → 项目查询并发上限（Modrinth 限 300 req/min，个人 mods 量级安全）。
+/// 项目查询并发上限（Modrinth 限 300 req/min）。
 pub(super) const QUERY_CONCURRENCY: usize = 8;
 
-/// 本地 mod 详细列表项：Modrinth 命中时带项目元数据（图标/标题/描述/下载量/当前版本），
-/// 未命中或网络失败时仅本地信息（其余字段 None）。
+/// 本地 mod 详细列表项：命中带项目元数据，未命中/网络失败仅本地信息（其余字段 None）。
 #[derive(Debug, Clone, Serialize)]
 pub struct ModFileDetail {
     pub file_name: String,
@@ -28,31 +26,30 @@ pub struct ModFileDetail {
     pub last_modified: u64,
     pub project_id: Option<String>,
     pub title: Option<String>,
-    /// MC百科内置条目表提供的中文译名（slug 匹配；未收录为 None）
+    /// MC百科中文译名（slug 匹配；未收录 None）
     pub title_zh: Option<String>,
     pub description: Option<String>,
-    /// MCIM 翻译接口的中文简介（失败/未收录为 None）
+    /// MCIM 中文简介（失败/未收录 None）
     pub description_zh: Option<String>,
     pub icon_url: Option<String>,
     pub downloads: Option<u64>,
     pub current_version: Option<String>,
 }
 
-/// 详细列表结果：任一网络环节失败时 mods 仍含本地信息，network_error 供前端提示降级。
+/// 详细列表结果：网络失败时 mods 仍含本地信息，network_error 供前端提示降级。
 #[derive(Debug, Clone, Serialize)]
 pub struct ModListResult {
     pub mods: Vec<ModFileDetail>,
     pub network_error: bool,
 }
 
-/// 资源目录详细列表结果（与 ModListResult 同构，字段名面向资源）。
 #[derive(Debug, Clone, Serialize)]
 pub struct ResourceListResult {
     pub files: Vec<ModFileDetail>,
     pub network_error: bool,
 }
 
-/// 读文件并计算 sha1（文件 IO 放 spawn_blocking，避免阻塞 async executor）。
+/// 读文件计算 sha1（IO 放 spawn_blocking，避免阻塞 async executor）。
 pub(super) async fn file_sha1(path: PathBuf) -> Option<String> {
     tokio::task::spawn_blocking(move || std::fs::read(&path).ok().map(|d| sha1_hex(&d)))
         .await
@@ -60,8 +57,7 @@ pub(super) async fn file_sha1(path: PathBuf) -> Option<String> {
         .flatten()
 }
 
-/// 识别单个 mod：sha1 → Modrinth version_file，返回 (project_id, current_version)。
-/// Ok(Some(..)) 命中；Ok(None) 不在 Modrinth（HTTP 404）；Err 网络/服务错误。
+/// 识别单个 mod：sha1 → version_file，返回 (project_id, current_version)；None=404，Err=网络/服务错误。
 async fn identify_mod(dir: PathBuf, file_name: String) -> Result<Option<(String, String)>, ()> {
     let sha1 = file_sha1(dir.join(&file_name)).await.ok_or(())?;
     let urls = api_routes(
@@ -78,7 +74,7 @@ async fn identify_mod(dir: PathBuf, file_name: String) -> Result<Option<(String,
             })
         }
         Err(e) => {
-            // HTTP 404 = 该文件不在 Modrinth（正常未命中）；其余视为网络/服务错误
+            // 404 = 不在 Modrinth（正常未命中）；其余为网络/服务错误
             if e.contains("HTTP 404") {
                 Ok(None)
             } else {
@@ -88,17 +84,13 @@ async fn identify_mod(dir: PathBuf, file_name: String) -> Result<Option<(String,
     }
 }
 
-/// 识别单个文件并补全元数据（增量识别：前端逐文件调用，每项完成立即刷新）。
-/// 未命中（HTTP 404）/文件缺失/网络失败均返回 None —— 与详细列表的降级语义一致
-/// （前端保持本地信息渲染）。复用 identify_mod + 单项目元数据 + 翻译通道。
+/// 识别单个文件并补全元数据（逐文件调用）；未命中(404)/缺失/网络失败均 None（与详细列表降级一致）。
 pub async fn identify_one_file(dir: &Path, file_name: &str) -> Option<ModFileDetail> {
     let file_name = file_name.to_string();
     let dir = dir.to_path_buf();
-    // identify_mod 内部计算 sha1；文件缺失/网络失败返回 None（与详细列表降级语义一致）
     let (project_id, current_version) =
         identify_mod(dir.clone(), file_name.clone()).await.ok()??;
 
-    // 单项目元数据（projects?ids=[id] 同批量端点，仅一个 id）
     let meta = fetch_project_meta(&[Some((project_id.clone(), current_version.clone()))]).await?;
     let p = meta.get(&project_id)?;
     let title_zh = p["slug"].as_str().and_then(|slug| {
@@ -107,7 +99,6 @@ pub async fn identify_one_file(dir: &Path, file_name: &str) -> Option<ModFileDet
             .and_then(|e| e.chinese_raw.as_deref())
             .and_then(wiki_entry::chinese_name)
     });
-    // 中文简介（MCIM 翻译；失败/未收录静默 None）
     let translated =
         community::fetch_translations("modrinth", std::slice::from_ref(&project_id)).await;
     let meta_file = std::fs::metadata(dir.join(&file_name)).ok();
@@ -129,9 +120,8 @@ pub async fn identify_one_file(dir: &Path, file_name: &str) -> Option<ModFileDet
     })
 }
 
-/// 扫描 + Modrinth 元数据识别（sha1 → version_file 逐文件 → /v2/projects 批量详情）。
-/// 通用目录版本：mods（jar）与资源目录（zip）共用同一识别链路。
-/// 网络环节失败不阻塞：降级为纯本地列表并置 network_error。
+/// 扫描 + Modrinth 识别（sha1 → version_file → /v2/projects 批量详情）；mods(jar) 与资源目录(zip) 共用。
+/// 网络失败降级为本地列表并置 network_error。
 pub async fn list_dir_detailed(dir: &Path, filter: ScanFilter) -> ResourceListResult {
     let files = super::scan::scan_dir_files(dir, filter);
     if files.is_empty() {
@@ -155,18 +145,17 @@ pub async fn list_dir_detailed(dir: &Path, filter: ScanFilter) -> ResourceListRe
     .collect()
     .await;
 
-    // 网络/服务错误（含 version_file 查询失败）→ 置降级标记；404 未命中是合法降级
+    // 网络/服务错误 → 置降级标记；404 未命中是合法降级
     let network_error = identified.iter().any(|r| r.is_err());
 
     let hits: Vec<Option<(String, String)>> =
         identified.into_iter().map(|r| r.unwrap_or(None)).collect();
 
-    // 项目元数据：project_id → (title, slug, description, icon_url, downloads)
-    // 批量详情请求失败也算网络错误（命中项因此缺元数据）
+    // project_id → 详情元数据；批量详情失败也算网络错误（命中项缺元数据）
     let meta = fetch_project_meta(&hits).await;
     let network_error = network_error || (meta.is_none() && hits.iter().any(Option::is_some));
 
-    // 中文简介（MCIM 翻译，复用 community 通道；失败/未收录静默降级为英文原文）
+    // 中文简介（MCIM 翻译；失败静默降级为英文）
     let ids: Vec<String> = hits.iter().flatten().map(|(pid, _)| pid.clone()).collect();
     let translated = community::fetch_translations("modrinth", &ids).await;
 
@@ -176,7 +165,7 @@ pub async fn list_dir_detailed(dir: &Path, filter: ScanFilter) -> ResourceListRe
         .map(|(f, hit)| match hit {
             Some((project_id, current_version)) => {
                 let p = meta.as_ref().and_then(|m| m.get(&project_id));
-                // MC百科内置表按 slug 查中文译名（与社区搜索结果同源）
+                // MC百科按 slug 查中文译名（与社区搜索同源）
                 let title_zh = p.and_then(|v| v["slug"].as_str()).and_then(|slug| {
                     wiki_entry::WIKI
                         .lookup("modrinth", slug)
@@ -219,7 +208,6 @@ pub async fn list_dir_detailed(dir: &Path, filter: ScanFilter) -> ResourceListRe
     }
 }
 
-/// 扫描 mods 目录 + Modrinth 元数据识别（兼容原入口）。
 pub async fn list_mods_detailed(mods_dir: &Path) -> ModListResult {
     let r = list_dir_detailed(mods_dir, ScanFilter::Jar).await;
     ModListResult {
@@ -228,8 +216,7 @@ pub async fn list_mods_detailed(mods_dir: &Path) -> ModListResult {
     }
 }
 
-/// 批量拉取项目元数据（GET /v2/projects?ids=[...]，经 community::modrinth_projects_raw）；
-/// 空 ids 或请求失败返回 None。
+/// 批量拉取项目元数据（GET /v2/projects?ids=[...]）；空 ids 或失败返回 None。
 async fn fetch_project_meta(
     identified: &[Option<(String, String)>],
 ) -> Option<HashMap<String, serde_json::Value>> {

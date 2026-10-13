@@ -323,8 +323,7 @@ fn now_millis() -> u64 {
         .unwrap_or(0)
 }
 
-/// 解析 UNCONNECTED_PONG 载荷。
-/// 结构：id(1) + time(8) + server_guid(8) + magic(16) + strlen(2 BE) + 字符串。
+/// 解析 UNCONNECTED_PONG 载荷：id(1) + time(8) + server_guid(8) + magic(16) + strlen(2 BE) + 字符串；
 /// 字符串字段分号分隔：MOTD;protocol;version;online;max;server_id;level;...
 fn parse_raknet_pong(data: &[u8]) -> Result<ServerStatus, String> {
     if data.len() < 1 + 8 + 8 + 16 + 2 {

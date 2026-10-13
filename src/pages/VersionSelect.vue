@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 版本选择页容器：左列目录管理 + 右列版本列表（业务在 store/gameDirs 与两个组件中）
+// 页面容器：左列目录管理 + 右列版本列表；业务在 store/gameDirs 与两个组件中
 import { onMounted } from "vue";
 import GameDirList from "../component/version/GameDirList.vue";
 import GameVersionList from "../component/version/GameVersionList.vue";

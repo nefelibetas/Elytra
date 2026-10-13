@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 资源中心页容器：导航 + 各 tab 内容编排（具体逻辑在 store/组件中，本文件不做业务）
+// 页面容器：导航 + 各 tab 编排；业务在 store/组件，本文件不做业务
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import DownloadTab from "../component/download/DownloadTab.vue";
@@ -37,9 +37,7 @@ const bodyEl = ref<HTMLElement>();
 const route = useRoute();
 const router = useRouter();
 
-// 原版游戏详情态 ↔ 路由 query：进入详情 push ?v=<id>（产生历史项），
-// 浏览器原生后退 → query 消失 → 回列表（侧键由 nav.ts goBack 规则处理，
-// 此处兜底原生历史/URL 直达场景）
+// 原版详情态 ↔ 路由 query：进入详情 push ?v=<id>，原生后退 → query 消失 → 回列表（侧键见 nav.ts goBack，此处兜底原生历史 / URL 直达）
 watch(
   () => vdState.selectedVersion?.id,
   (id) => {
@@ -67,18 +65,16 @@ watch(
 
 onMounted(async () => {
   vdState.fetchManifest();
-  // 加载下载配置（翻译显示模式等）：社区搜索的翻译开关依赖 dlTranslateMode，
-  // 必须等配置读入后再发起搜索（否则 en 模式首帧仍请求翻译）
+  // 翻译开关依赖 dlTranslateMode：必须等配置读入后再搜索，否则 en 模式首帧仍请求翻译
   await loadDownloadConfig();
-  // 预加载社区 tab 热门（对齐 PCL2）：进入下载页即并发请求，切 tab 秒开；
-  // ensureAutoSearch 幂等（模块级标志），watch 切 tab 时不会重复请求
+  // 预加载各社区 tab 热门（切 tab 秒开）；ensureAutoSearch 幂等，watch 切 tab 不重复请求
   communitySearch.ensureAutoSearch();
   shaderSearch.ensureAutoSearch();
   worldsSearch.ensureAutoSearch();
   resourcepackSearch.ensureAutoSearch();
   datapackSearch.ensureAutoSearch();
   modpackSearch.ensureAutoSearch();
-  // 从详情页返回时恢复该 tab 的滚动位置（组件重建，DOM 需先渲染完成）
+  // 从详情页返回时恢复滚动位置（组件重建，DOM 需先渲染完成）
   await nextTick();
   const el = bodyEl.value;
   if (el) el.scrollTop = downloadTabState.scrollTop[downloadTabState.current];
@@ -89,7 +85,7 @@ onBeforeUnmount(() => {
   if (el) downloadTabState.scrollTop[downloadTabState.current] = el.scrollTop;
 });
 
-// 首次进入社区 tab 自动搜索热门（预加载已触发时直接跳过）；切 tab 滚动复位到最上方
+// 首次进入社区 tab 自动搜索热门（预加载已触发时跳过）；切 tab 滚动复位到最上方
 watch(tab, (t) => {
   bodyEl.value?.scrollTo({ top: 0, behavior: "smooth" });
   if (t === "mod") communitySearch.ensureAutoSearch();
@@ -220,7 +216,7 @@ watch(tab, (t) => {
 }
 .mod-dl-page { gap: 8px; }
 
-/* page transition - fast opacity fade */
+/* fast opacity fade */
 .page-enter-active, .page-leave-active { transition: opacity 0.12s ease; }
 .page-enter-from { opacity: 0; }
 .page-leave-to { opacity: 0; }

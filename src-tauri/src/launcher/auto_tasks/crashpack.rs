@@ -1,7 +1,4 @@
-//! 内置动作：崩溃日志打包（zip + 脱敏）。
-//!
-//! 崩溃包会被用户直接发给他人排查，故所有文本成员一律过 [`redact`]；
-//! 成员缺失静默跳过（崩溃现场本就不整齐），超大成员降级为占位说明。
+//! 内置动作：崩溃日志打包（zip + 脱敏）；成员缺失静默跳过，超大成员降级为占位说明（文本一律过 [`redact`]）。
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -146,9 +143,7 @@ fn add_file(
     };
     match String::from_utf8(bytes) {
         Ok(text) => add_text(zip, opts, name, &redact(&text)),
-        // 非 UTF-8（中文 Windows 上旧版游戏的 GBK 日志即可命中）：整体判定失败时若原样写出，
-        // 这个成员就完全绕过脱敏（而崩溃包是要发给他人排查的），故按 lossy 解码后再脱敏 ——
-        // 宁可字符有损，也不能让凭据与路径漏出去。
+        // 非 UTF-8（如旧版游戏 GBK 日志）：按 lossy 解码后再脱敏——宁可字符有损也不能漏凭据/路径。
         Err(e) => add_text(
             zip,
             opts,

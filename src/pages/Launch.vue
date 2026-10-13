@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// 启动页容器：左列（启动进度 / 账号区 + 启动区）编排 + 右列占位 + 错误弹窗。
-// 业务逻辑在 store（launch/auth/accountUi/avatar/alert），本文件仅做初始化编排。
+// 页面容器：业务在 store（launch/auth/accountUi/avatar/alert）
 import { onMounted } from "vue";
 import { FileText } from "@lucide/vue";
 import AlertDialog from "../component/common/AlertDialog.vue";
@@ -21,8 +20,7 @@ onMounted(async () => {
   await ensureAuthReady(); // 正版 / 第三方账号列表（衣柜判定来源也要等这一份）
   await loadOfflineAccounts();
   void renderOfflineAvatar(username.value);
-  // 账号变化（登录/退出）时渲染正版头像；初始已保存的账号也立即渲染
-  // （watch(msAccount) 已移入 auth store 模块级，路由往返不累积注册）
+  // 账号变化时渲染正版头像（watch 注册在 auth store 模块级，路由往返不累积）
   void renderPremiumAvatar(msAccount.value?.uuid ?? "");
 
   await ensureLoginListener();

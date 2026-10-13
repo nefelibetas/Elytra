@@ -53,7 +53,7 @@ const emit = defineEmits<{ click: []; refresh: [] }>();
   border-radius: var(--radius-sm);
   transition: opacity 0.15s, visibility 0.15s;
   opacity: 0;
-  visibility: hidden; /* 隐藏态彻底移出命中测试（WebView2 下 pointer-events 过渡不可靠） */
+  visibility: hidden; /* 隐藏态移出命中测试（WebView2 pointer-events 过渡不可靠） */
 }
 
 .tab-row:hover .tab-refresh {

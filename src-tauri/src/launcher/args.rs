@@ -10,9 +10,8 @@ use crate::game::version::model::VersionJson;
 use crate::launcher::memory;
 use crate::launcher::model::{AuthMode, LaunchOptions, MemoryMode, WindowSize};
 
-// ── 启动协议常量（集中维护，防拼写错误导致静默失败）──
+// ── 启动协议常量 ──
 
-// 游戏启动参数名（1.13+ camelCase，旧版 JSON token 模板用连字符版）
 const ARG_USERNAME: &str = "--username";
 const ARG_VERSION: &str = "--version";
 const ARG_GAME_DIR: &str = "--gameDir";
@@ -30,7 +29,6 @@ const ARG_PROFILE_PROPERTIES: &str = "--profileProperties";
 const ARG_SERVER: &str = "--server";
 const ARG_PORT: &str = "--port";
 
-// JVM 系统属性键（-D 前缀 + 值；拼接场景用带 = 前缀常量）
 const SYS_LAUNCHER_BRAND: &str = "-Dminecraft.launcher.brand=";
 const SYS_LAUNCHER_VERSION: &str = "-Dminecraft.launcher.version=";
 const SYS_JAVA_LIBRARY_PATH: &str = "-Djava.library.path=";
@@ -41,7 +39,6 @@ const SYS_USE_SYSTEM_PROXIES: &str = "-Djava.net.useSystemProxies=true";
 const SYS_USER_LANGUAGE_ZH: &str = "-Duser.language=zh_CN";
 const SYS_USER_COUNTRY_ZH: &str = "-Duser.country=CN";
 
-// JVM 标志与跳过前缀
 const JVM_FLAG_SUN_MISC_UNSAFE: &str = "--sun-misc-unsafe-memory-access=allow";
 const JVM_FLAG_NATIVE_ACCESS: &str = "--enable-native-access=ALL-UNNAMED";
 const ARG_CP: &str = "-cp";
@@ -51,7 +48,6 @@ const PREFIX_XMS: &str = "-Xms";
 const PREFIX_JAVA_AGENT: &str = "-javaagent:";
 const SUBSTR_LWJGL_UNSAFE_AGENT: &str = "lwjgl-unsafe-agent";
 
-// 类名 / Maven 坐标前缀
 const CLASS_LAUNCHWRAPPER: &str = "net.minecraft.launchwrapper.Launch";
 const CLASS_CLIENT_MAIN: &str = "net.minecraft.client.main.Main";
 const CLASS_PREFIX_FABRIC: &str = "net.fabricmc";
@@ -82,7 +78,6 @@ const PLACEHOLDER_LIBRARY_DIRECTORY: &str = "${library_directory}";
 const PLACEHOLDER_CLASSPATH: &str = "${classpath}";
 const PLACEHOLDER_CLASSPATH_SEPARATOR: &str = "${classpath_separator}";
 
-// 文件标记 / 扩展名
 const NATIVES_READY_MARKER: &str = ".elytra-ready";
 const EXT_JAR: &str = "jar";
 const EXT_JSON: &str = "json";
@@ -96,13 +91,10 @@ const EMPTY_JSON_OBJECT: &str = "{}";
 const DEFAULT_RESOLUTION_WIDTH: u32 = 854;
 const DEFAULT_RESOLUTION_HEIGHT: u32 = 480;
 
-/// 游戏语言：自动中文（与前端 Settings 联动）
 const LANG_AUTO_ZH_CN: &str = "auto_zh_CN";
 
-/// 完整的启动命令，按执行顺序排列。
 pub struct LaunchCommand {
     pub java_path: PathBuf,
-    /// 完整命令行参数（exec 格式，第一个元素是 java 路径）
     pub args: Vec<String>,
 }
 
@@ -133,7 +125,6 @@ struct TemplateContext<'a> {
     launcher_version: &'a str,
 }
 
-/// 替换游戏参数模板中的 `${key}` 占位符。
 fn substitute<'a>(template: &str, ctx: &TemplateContext<'a>) -> String {
     let mut s = template.to_string();
     s = s.replace(PLACEHOLDER_AUTH_PLAYER_NAME, ctx.auth_player_name);
@@ -162,7 +153,6 @@ fn substitute<'a>(template: &str, ctx: &TemplateContext<'a>) -> String {
     s
 }
 
-/// JVM 参数模板的占位符替换输入。
 struct JvmSubst<'a> {
     natives_dir: &'a str,
     lib_dir: &'a str,
@@ -196,11 +186,7 @@ fn substitute_jvm(template: &str, sub: &JvmSubst<'_>) -> String {
 
 // ── 规则匹配 ──────────────────────────────────────────
 
-/// 检查规则的 features 是否匹配启动器提供的 feature 集。
-///
-/// 启动器支持的 feature（26.2 起官方 JSON 用 features 而非 os 区分参数）：
-/// - `has_custom_resolution`: 由用户「窗口大小」设置决定（默认 false = 不传 --width/--height）
-/// - 其余（is_demo_user / has_quick_plays_support / is_quick_play_*）: false
+/// 规则 features 是否匹配启动器 feature 集（26.2 起官方 JSON 用 features 区分参数）；仅 `has_custom_resolution` 依用户窗口大小（默认 false = 不传 --width/--height），其余一律 false。
 fn feature_match(features: &serde_json::Value, has_custom_resolution: bool) -> bool {
     let Some(obj) = features.as_object() else {
         return true;
@@ -215,8 +201,7 @@ fn feature_match(features: &serde_json::Value, has_custom_resolution: bool) -> b
     })
 }
 
-/// 检查规则列表是否匹配当前 OS（Windows）+ features。
-/// 规则语义：默认不允许，遇到 allow 且 os/features 匹配则允许，disallow 直接否决。
+/// 规则列表是否匹配当前 OS（Windows）+ features：默认不允许；allow 且匹配则允许，disallow 直接否决。
 fn match_rules_json(rules: &[serde_json::Value], has_custom_resolution: bool) -> bool {
     let mut allowed = false;
     for rule in rules {
@@ -241,8 +226,6 @@ fn match_rules_json(rules: &[serde_json::Value], has_custom_resolution: bool) ->
     allowed
 }
 
-/// 解析 arguments 数组，返回展开后的参数列表（处理规则对象）。
-/// `has_custom_resolution`: 用户是否设置了自定义窗口大小（决定 has_custom_resolution feature）。
 fn extract_args(args: &[serde_json::Value], has_custom_resolution: bool) -> Vec<String> {
     let mut out = Vec::new();
     for arg in args {
@@ -274,7 +257,6 @@ fn extract_args(args: &[serde_json::Value], has_custom_resolution: bool) -> Vec<
 
 // ── 核心构建函数 ──────────────────────────────────────
 
-/// 启动命令构建的调用方输入（除 java 路径与版本 JSON 外的全部参数）。
 pub struct LaunchRequest<'a> {
     pub version_dir_name: &'a str,
     pub mc_dir: &'a Path,
@@ -284,13 +266,6 @@ pub struct LaunchRequest<'a> {
     pub user_properties: &'a str,
 }
 
-/// 构建完整的 Minecraft 启动命令。
-///
-/// 参数说明：
-/// - `java_path`: JDK 的 java.exe 路径
-/// - `version_json`: 已解析的版本 JSON
-/// - `req`: 其余调用方输入（版本目录名 / .minecraft 目录 / 用户配置 / 认证模式 /
-///   JDK 主版本号 / user properties）
 pub fn build_launch_command(
     java_path: &Path,
     version_json: &VersionJson,
@@ -340,12 +315,10 @@ pub fn build_launch_command(
     args.push(ARG_CP.to_string());
     args.push(classpath_str);
     args.extend(jvm_tuning);
-    // 第三方登录（authlib-injector）：javaagent 注入 + client side
-    // （jar 登录时下载到数据目录；缺失由启动前置检查拦截）
     push_external_auth_args(&mut args, auth);
     args.push(main_class);
     args.extend(game_args);
-    // 服务器直连：快速进服（追加到游戏参数末尾，用户自定义 game_args 之前）
+    // 服务器直连：追加到游戏参数末尾，用户自定义 game_args 之前
     push_server_args(&mut args, config);
 
     LaunchCommand {
@@ -356,7 +329,6 @@ pub fn build_launch_command(
 
 // ── 启动命令阶段函数 ──────────────────────────────────
 
-/// 启动路径解析结果（natives / libraries / assets / 版本目录 / 窗口与平台差异）。
 struct LaunchPaths {
     natives_dir: PathBuf,
     lib_dir: PathBuf,
@@ -370,19 +342,16 @@ struct LaunchPaths {
     has_custom_resolution: bool,
 }
 
-/// 解析启动所需的各种目录：natives / libraries / assets / 版本目录 / client.jar。
 fn resolve_launch_paths(
     version_dir_name: &str,
     mc_dir: &Path,
     config: &LaunchOptions,
 ) -> LaunchPaths {
-    // natives 目录按 MC 版本共享（同 MC 的 vanilla/ModLoader 版本 native 库一致，
-    // 避免每个版本在 natives/<版本id>/ 各解压一份 LWJGL 运行时产物，约 16MB/份）
+    // natives 按 MC 版本共享（同 MC 的 vanilla/ModLoader native 库一致），避免每版本重复解压 LWJGL 产物（~16MB/份）
     let natives_dir = mc_dir.join("natives").join(mc_version_of(version_dir_name));
     let lib_dir = mc_dir.join("libraries");
     let assets_dir = mc_dir.join("assets");
     let version_dir = mc_dir.join("versions").join(version_dir_name);
-    // 版本隔离：每个版本使用独立游戏目录（存档/配置隔离）
     let game_directory = version_dir.clone();
     // 窗口大小：默认不传 --width/--height（has_custom_resolution feature 为 false）
     let (resolution_width, resolution_height, has_custom_resolution) = match config.window_size {
@@ -392,13 +361,10 @@ fn resolve_launch_paths(
             (DEFAULT_RESOLUTION_WIDTH, DEFAULT_RESOLUTION_HEIGHT, false)
         }
     };
-    // JAR 文件名不一定等于目录名（目录可能因冲突被重命名）；
-    // 与启动前完整性检查共用 resolve_client_jar，避免两处选中不同文件
+    // JAR 文件名不一定等于目录名；与启动前完整性检查共用 resolve_client_jar，避免两处选中不同文件
     let client_jar = resolve_client_jar(&version_dir, version_dir_name)
         .unwrap_or_else(|| version_dir.join(format!("{}.{}", version_dir_name, EXT_JAR)));
-    // classpath 分隔符按平台区分：Windows 用 ';'，Unix（Linux/macOS）用 ':'。
-    // 硬编码 ';' 会让 Java 把整串 jar 当成单个路径，导致 ClassNotFoundException
-    // （与 mod_loader/forge.rs 的处理保持一致）
+    // classpath 分隔符按平台区分：Windows ';' / Unix ':'（硬编码 ';' → ClassNotFoundException；与 mod_loader/forge.rs 一致）
     let classpath_sep = if cfg!(windows) { ";" } else { ":" };
 
     LaunchPaths {
@@ -415,7 +381,6 @@ fn resolve_launch_paths(
     }
 }
 
-/// 构建 classpath 字符串：libraries 产物 + PCL2 fabric 兜底，按平台分隔符拼接。
 fn build_classpath_string(
     version_json: &VersionJson,
     lib_dir: &Path,
@@ -446,15 +411,13 @@ fn resolve_main_class(version_json: &VersionJson, config: &LaunchOptions) -> Str
     main_class
 }
 
-/// 按认证模式组装游戏参数（新格式数组 / 旧格式模板 / 保底参数）。
 fn build_game_args_from_auth(
     version_json: &VersionJson,
     auth: &AuthMode,
     user_properties: &str,
     paths: &LaunchPaths,
 ) -> Vec<String> {
-    // 离线模式 UUID 由离线皮肤设置生成（匹配 Steve/Alex 模型或正版玩家真实 UUID），
-    // Token 使用固定占位；在线模式使用真实的微软返回值
+    // 离线 UUID 由离线皮肤设置生成（匹配 Steve/Alex 模型或正版 UUID），token 用固定占位；在线用真实微软返回值
     let (auth_user, auth_uuid, auth_token, auth_xuid, user_type) = match auth {
         AuthMode::Offline { username, uuid } => (
             username.as_str(),
@@ -520,8 +483,7 @@ fn build_game_args_from_auth(
     )
 }
 
-/// 第三方登录（authlib-injector）：javaagent 注入 + client side
-/// （jar 登录时下载到数据目录；缺失由启动前置检查拦截）。
+/// 第三方登录（authlib-injector）：javaagent 注入 + client side（jar 下载到数据目录；缺失由启动前置检查拦截）。
 fn push_external_auth_args(args: &mut Vec<String>, auth: &AuthMode) {
     if let AuthMode::External { api_url, .. } = auth {
         let jar = crate::util::config_dir().join(AUTHLIB_JAR);
@@ -536,7 +498,6 @@ fn push_external_auth_args(args: &mut Vec<String>, auth: &AuthMode) {
     }
 }
 
-/// 服务器直连与用户自定义参数（追加到游戏参数末尾，用户自定义 game_args 之前）。
 fn push_server_args(args: &mut Vec<String>, config: &LaunchOptions) {
     if let Some(server) = config.server.as_deref() {
         let server = server.trim();
@@ -554,12 +515,10 @@ fn push_server_args(args: &mut Vec<String>, config: &LaunchOptions) {
 
 // ── 辅助函数 ──────────────────────────────────────────
 
-/// 构建 classpath：libraries 的 artifact + 新式 classifier + client.jar
 fn build_classpath(version_json: &VersionJson, lib_dir: &Path, client_jar: &Path) -> Vec<PathBuf> {
     let mut cp = Vec::new();
 
     for lib in &version_json.libraries {
-        // 规则过滤
         if let Some(rules) = &lib.rules {
             if !matches_rules(rules) {
                 continue;
@@ -571,8 +530,7 @@ fn build_classpath(version_json: &VersionJson, lib_dir: &Path, client_jar: &Path
         }
         let Some(dls) = &lib.downloads else { continue };
 
-        // artifact JAR（通用 JAR）——按落地路径去重：下面 classifiers 分支可能指向
-        // 同一个 native jar（历史 lwjgl3 早期数据），重复进 classpath 无意义
+        // artifact JAR：按落地路径去重（下面 classifiers 分支可能指向同一 native jar）
         if let Some(artifact) = &dls.artifact {
             let p = lib_dir.join(&artifact.path);
             if !cp.contains(&p) {
@@ -595,10 +553,7 @@ fn build_classpath(version_json: &VersionJson, lib_dir: &Path, client_jar: &Path
         }
     }
 
-    // client.jar（NeoForge 除外）：NeoForge 官方部署中 patched/混淆 vanilla 均不进 classpath，
-    // GameLocator 生产分支经 -DlibraryDirectory 直接从 libraries 目录加载 minecraft-client-patched；
-    // 若把版本目录的混淆 vanilla 放进 classpath，RequiredSystemFiles 会在其上找到全部系统文件，
-    // 误判为 dev 环境报 "Minecraft-Dists attribute" 缺失。
+    // client.jar（NeoForge 除外）：其 patched 混淆 vanilla 不进 classpath（GameLocator 经 -DlibraryDirectory 加载），否则误判 dev 环境报 "Minecraft-Dists" 缺失。
     let is_neoforge = version_json
         .libraries
         .iter()
@@ -610,7 +565,6 @@ fn build_classpath(version_json: &VersionJson, lib_dir: &Path, client_jar: &Path
     cp
 }
 
-/// 语义化版本比较（"9.10.1" > "9.6" > "9.2"）：按 '.' 分段数字比较。
 fn version_gt(a: &str, b: &str) -> bool {
     let pa: Vec<u64> = a.split('.').filter_map(|s| s.parse().ok()).collect();
     let pb: Vec<u64> = b.split('.').filter_map(|s| s.parse().ok()).collect();
@@ -624,11 +578,7 @@ fn version_gt(a: &str, b: &str) -> bool {
     false
 }
 
-/// PCL2 版本隔离实例兜底（见 build_launch_command 触发条件）：
-/// 补 net/fabricmc/（fabric-loader + sponge-mixin 全部 jar，目录结构
-/// net/fabricmc/{group}/{version}/）与 org/ow2/asm/（每个 artifact 取最高版本
-/// jar——lib 目录常有多版本并存，全加会按 classpath 顺序先命中旧版导致
-/// NoSuchMethodError）。已存在的路径跳过（防重复）。
+/// PCL2 版本隔离实例兜底：补 net/fabricmc/ 全部 jar 与 org/ow2/asm/ 各 artifact 最高版本 jar（全加会先命中旧版 → NoSuchMethodError）；已存在路径跳过。
 fn append_pcl_fabric_libs(cp: &mut Vec<PathBuf>, lib_dir: &Path) {
     let mut push_jar = |p: PathBuf| {
         if p.extension().is_some_and(|e| e == EXT_JAR) && !cp.contains(&p) {
@@ -686,7 +636,6 @@ fn push_unique(list: &mut Vec<String>, arg: String) {
     }
 }
 
-/// 检查版本是否包含旧式 natives 库（lwjgl 2.x，有 `natives` 字段）。
 pub fn has_old_style_natives(version_json: &VersionJson) -> bool {
     version_json
         .libraries
@@ -694,13 +643,10 @@ pub fn has_old_style_natives(version_json: &VersionJson) -> bool {
         .any(|l| l.natives_kind() == Some(NativesKind::Legacy))
 }
 
-/// 从版本目录名提取 MC 版本（natives 目录按 MC 版本共享——同一 MC 的 vanilla/ModLoader
-/// 版本 native 库一致，避免每个版本在 natives/<版本id>/ 各解压一份（LWJGL 运行时解压产物约 16MB/份）。
+/// 从版本目录名提取 MC 版本（natives 目录按 MC 版本共享，避免每版本各解压一份 LWJGL 产物，~16MB/份）。
 pub(crate) use crate::util::mc_version_from_dir as mc_version_of;
 
-/// natives 就绪标记的指纹：本次参与解压的旧式 native 库（名字 + 落地路径 + 提取规则）。
-///
-/// 顺序无关（排序后哈希）；任一库增删、换版本、改提取规则都会改变指纹 → 触发重建。
+/// natives 就绪标记指纹：参与解压的旧式 native 库（名字+落地路径+提取规则）排序后哈希；库增删/换版本/改规则 → 重建。
 fn natives_fingerprint(version_json: &VersionJson) -> String {
     let mut parts: Vec<String> = version_json
         .libraries
@@ -719,7 +665,6 @@ fn natives_fingerprint(version_json: &VersionJson) -> String {
     crate::downloader::hash::sha1_hex(parts.join("\n").as_bytes())
 }
 
-/// 清空目录内容（保留目录本身），用于 natives 集合变更时重建。
 fn clear_dir_contents(dir: &Path) -> Result<(), String> {
     let entries = std::fs::read_dir(dir).map_err(common_err_ctx!("读取 natives 目录失败"))?;
     for entry in entries {
@@ -751,9 +696,7 @@ fn write_marker(marker: &Path, fingerprint: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// 确保 natives 目录就绪：所有版本都创建 `.minecraft/natives/<mc>/` 根目录
-/// （官方 arguments.jvm 的 SharedLibraryExtractPath 等参数指向它，LWJGL 需要目录存在）。
-/// 旧式版本（lwjgl 2.x）额外把 natives classifier JAR 解压到该目录。
+/// 确保 natives 目录就绪：所有版本都创建 `.minecraft/natives/<mc>/`（官方 jvm 的 SharedLibraryExtractPath 指向它）；旧式版本（lwjgl 2.x）额外解压 natives classifier JAR。
 pub fn ensure_old_style_natives(
     version_json: &VersionJson,
     lib_dir: &Path,
@@ -766,10 +709,7 @@ pub fn ensure_old_style_natives(
         return Ok(());
     }
 
-    // 标记的语义是「**本版本**需要的 native 集合已就绪」，而不是「这个目录解压过」：
-    // natives 目录按 MC 版本共享（vanilla / Forge / OptiFine 同名一份），若换来的
-    // 版本 native 集合不同，旧标记会让新版本直接跳过解压 → 缺原生库
-    // （UnsatisfiedLibraryError，且报错完全指不到这里）。因此标记内容存指纹。
+    // 标记语义是「本版本所需 native 集合已就绪」而非「该目录解压过」：native 集合不同时旧标记会跳过解压 → 缺原生库（UnsatisfiedLibraryError），故存指纹。
     let fingerprint = natives_fingerprint(version_json);
     let ready_marker = natives_dir.join(NATIVES_READY_MARKER);
     let marker_ok = std::fs::read_to_string(&ready_marker)
@@ -779,13 +719,11 @@ pub fn ensure_old_style_natives(
         return Ok(());
     }
 
-    // 指纹不一致（或旧版遗留的空标记）：清空目录再解压 —— 不清会留下别的版本集合
-    // 的旧 .dll，Windows 的 DLL 搜索顺序可能加载到旧的那份。
+    // 指纹不一致（或旧版遗留空标记）：清空目录再解压——旧 .dll 残留可能被 Windows DLL 搜索顺序加载到。
     clear_dir_contents(natives_dir)?;
 
     let mut errors: Vec<String> = Vec::new();
     for lib in &version_json.libraries {
-        // 仅旧式（natives 字段）参与解压；has_old_style_natives 保证版本整体含旧式库
         let Some(artifact) = legacy_classifier_artifact(lib) else {
             continue;
         };
@@ -799,7 +737,6 @@ pub fn ensure_old_style_natives(
         }
     }
 
-    // 解压后目录仍为空 → 解压失败
     let has_content = std::fs::read_dir(natives_dir)
         .map(|mut it| it.next().is_some())
         .unwrap_or(false);
@@ -816,8 +753,7 @@ pub fn ensure_old_style_natives(
     }
 }
 
-/// 添加 native 相关系统属性。
-/// 仅旧式版本设置 `-Djava.library.path`（natives 目录由 ensure_old_style_natives 保证就绪）。
+/// 添加 native 系统属性：仅旧式版本设置 `-Djava.library.path`（natives 目录由 ensure_old_style_natives 保证就绪）。
 fn add_native_props(props: &mut Vec<String>, natives_dir: &Path, version_json: &VersionJson) {
     if !has_old_style_natives(version_json) {
         return;
@@ -829,12 +765,7 @@ fn add_native_props(props: &mut Vec<String>, natives_dir: &Path, version_json: &
     ));
 }
 
-/// 解析版本目录里的客户端 jar —— **classpath 与启动前完整性检查共用同一条规则**。
-///
-/// 优先级：`{dir_name}.jar` → 目录内唯一的 .jar（导入的实例文件名常与目录名不同）
-/// → 体积最大的 .jar（client jar 通常最大，且结果确定）。
-/// 不取"第一个"：`read_dir` 顺序不保证，两处各取一次会选中不同文件 ——
-/// 表现为"完整性检查通过，但启动用的不是客户端 jar"。
+/// 解析版本目录里的客户端 jar（classpath 与启动前完整性检查共用）；优先级：`{dir_name}.jar` → 目录内唯一 .jar → 体积最大者（`read_dir` 顺序不保证，故不取"第一个"）。
 pub fn resolve_client_jar(version_dir: &Path, version_dir_name: &str) -> Option<PathBuf> {
     let named = version_dir.join(format!("{version_dir_name}.{EXT_JAR}"));
     if named.is_file() {
@@ -857,7 +788,6 @@ pub fn resolve_client_jar(version_dir: &Path, version_dir_name: &str) -> Option<
     jars.into_iter().next()
 }
 
-/// 在目录中扫描第一个指定扩展名的文件（文件名可能与目录名不同，如目录被重命名）。
 pub fn find_file_in_dir(dir: &Path, ext: &str) -> Option<PathBuf> {
     std::fs::read_dir(dir)
         .ok()?
@@ -872,10 +802,7 @@ pub fn find_file_in_dir(dir: &Path, ext: &str) -> Option<PathBuf> {
         })
 }
 
-/// 定位版本 JSON：优先 `{dir_name}.json`（标准布局），否则扫描目录内
-/// 含 `"mainClass"` 键的 json——PCL2 版本隔离实例目录混有游戏数据 json
-/// （TrashSlotSaveState/patchouli_data/usercache 等），字典序第一个
-/// 可能不是版本 json，直接解析会报 "missing field assetIndex"。
+/// 定位版本 JSON：优先 `{dir_name}.json`，否则扫描目录内含 `"mainClass"` 者（PCL2 隔离实例目录混有游戏数据 json，字典序第一个会报 "missing field assetIndex"）。
 pub fn find_version_json(dir: &Path, dir_name: &str) -> Option<PathBuf> {
     let named = dir.join(format!("{dir_name}.{EXT_JSON}"));
     if named.is_file() {
@@ -896,7 +823,6 @@ pub fn find_version_json(dir: &Path, dir_name: &str) -> Option<PathBuf> {
         })
 }
 
-/// JVM 参数三段组装输入。
 struct JvmArgs<'a> {
     version_json: &'a VersionJson,
     natives_dir: &'a Path,
@@ -908,10 +834,7 @@ struct JvmArgs<'a> {
     has_custom_resolution: bool,
 }
 
-/// 组装 JVM 参数三段：
-/// - preamble：-cp 之前（版本 JSON 参数 + JDK 22+ 兼容标志）
-/// - system_props：-D 类（natives/品牌/编码/代理/窗口标题/语言）
-/// - tuning：-cp 之后、mainClass 之前（内存/GC/用户自定义）
+/// 组装 JVM 参数三段（顺序即命令行次序）：preamble（-cp 之前）/ system_props（-D 类）/ tuning（-cp 后、mainClass 前）。
 fn collect_jvm_args(req: &JvmArgs<'_>) -> (Vec<String>, Vec<String>, Vec<String>) {
     let JvmArgs {
         version_json,
@@ -926,15 +849,13 @@ fn collect_jvm_args(req: &JvmArgs<'_>) -> (Vec<String>, Vec<String>, Vec<String>
     let mut jvm_preamble: Vec<String> = Vec::new(); // -cp 之前
     let mut system_props: Vec<String> = Vec::new(); // -D 类
     let mut jvm_tuning: Vec<String> = Vec::new(); // -cp 之后、mainClass 之前
-                                                  // 与上方 classpath 构建保持一致：按平台选择分隔符（Windows ';' / Unix ':'）
+                                                  // 与上方 classpath 构建保持一致：Windows ';' / Unix ':'
     let classpath_sep = if cfg!(windows) { ";" } else { ":" };
 
-    // 从版本 JSON 的 arguments.jvm 提取
     if let Some(jvm_args) = version_json.jvm_args() {
         let raw = extract_args(jvm_args, has_custom_resolution);
         for arg in raw {
-            // 跳过 -cp / -classpath / ${classpath}（classpath 由我们自行构建，
-            // 若 ${classpath} 被替换后不跳过，会变成 -cp 之前的裸 classpath 被 java 当主类）
+            // 跳过 -cp / -classpath / ${classpath}（否则替换后成为 -cp 之前的裸 classpath，被 java 当主类）
             if arg == ARG_CP || arg == ARG_CP_LONG || arg == PLACEHOLDER_CLASSPATH {
                 continue;
             }
@@ -962,10 +883,7 @@ fn collect_jvm_args(req: &JvmArgs<'_>) -> (Vec<String>, Vec<String>, Vec<String>
         }
     }
 
-    // JDK 兼容前置标志（官方 arguments.jvm 可能已包含，去重）。
-    // 门限必须分开：`--sun-misc-unsafe-memory-access` 是 JDK 23（JEP 471）才引入的选项，
-    // 在 JDK 22 上传它会让 JVM 以「Unrecognized option」直接退出（游戏完全起不来）；
-    // `--enable-native-access` 自 JDK 22 起正式可用。
+    // JDK 兼容前置标志（官方 jvm 可能已含，去重）；门限必须分开：`--sun-misc-unsafe-memory-access` 自 JDK 23（JEP 471）才有，JDK 22 传会以「Unrecognized option」退出；`--enable-native-access` 自 JDK 22 起可用。
     if java_major_version >= 23 {
         push_unique(&mut jvm_preamble, JVM_FLAG_SUN_MISC_UNSAFE.into());
     }
@@ -973,10 +891,8 @@ fn collect_jvm_args(req: &JvmArgs<'_>) -> (Vec<String>, Vec<String>, Vec<String>
         push_unique(&mut jvm_preamble, JVM_FLAG_NATIVE_ACCESS.into());
     }
 
-    // Native 库系统属性：旧式版本设置 -Djava.library.path（目录由启动前 ensure 保证就绪）
     add_native_props(&mut system_props, natives_dir, version_json);
 
-    // 启动器品牌标识（官方 arguments.jvm 可能已包含，去重）
     push_unique(
         &mut system_props,
         format!("{}{}", SYS_LAUNCHER_BRAND, constants::LAUNCHER_BRAND),
@@ -986,11 +902,10 @@ fn collect_jvm_args(req: &JvmArgs<'_>) -> (Vec<String>, Vec<String>, Vec<String>
         format!("{}{}", SYS_LAUNCHER_VERSION, constants::APP_VERSION),
     );
 
-    // 编码
     system_props.push(SYS_STDOUT_ENCODING.into());
     system_props.push(SYS_STDERR_ENCODING.into());
 
-    // 游戏进程读取 Windows 系统代理（梯子/PAC 场景下 sessionserver/textures 才能拉取皮肤）
+    // 读取 Windows 系统代理（走代理时 sessionserver/textures 才能拉取皮肤）
     system_props.push(SYS_USE_SYSTEM_PROXIES.into());
 
     // 游戏窗口标题（1.13+ 读取 minecraft.window.title 系统属性；空 = 不改）
@@ -998,20 +913,18 @@ fn collect_jvm_args(req: &JvmArgs<'_>) -> (Vec<String>, Vec<String>, Vec<String>
         system_props.push(format!("{}{}", SYS_WINDOW_TITLE, config.window_title));
     }
 
-    // 游戏语言：自动设置为中文（-Duser.language 影响游戏/资源本地化）
+    // 游戏语言自动设为中文（-Duser.language 影响游戏/资源本地化）
     if config.game_language == LANG_AUTO_ZH_CN {
         system_props.push(SYS_USER_LANGUAGE_ZH.into());
         system_props.push(SYS_USER_COUNTRY_ZH.into());
     }
 
-    // 内存
     let mem_mb = match config.memory {
         MemoryMode::Auto => memory::guess_auto_memory(version_dir),
         MemoryMode::Custom(mb) => mb,
     };
     jvm_tuning.push(format!("{}{}m", PREFIX_XMX, mem_mb));
-    // 最小堆：仅 Custom 模式生效（Auto 下 -Xmx 动态推测，固定 -Xms 可能超上限）；
-    // 值 clamp 到 -Xmx 以内（-Xms > -Xmx 会让 JVM 直接启动失败）。
+    // 最小堆：仅 Custom 模式生效（Auto 的 -Xmx 动态推测）；clamp 到 -Xmx 以内（-Xms > -Xmx 会让 JVM 启动失败）。
     if let Some(min_mb) = config
         .min_memory
         .filter(|_| matches!(config.memory, MemoryMode::Custom(_)))
@@ -1019,7 +932,6 @@ fn collect_jvm_args(req: &JvmArgs<'_>) -> (Vec<String>, Vec<String>, Vec<String>
         jvm_tuning.push(format!("{}{}m", PREFIX_XMS, min_mb.min(mem_mb)));
     }
 
-    // GC 参数
     jvm_tuning.extend(memory::gc_args(&config.gc_type));
 
     // 用户自定义 JVM 参数（放在 -cp 后面，mainClass 前面）
@@ -1039,13 +951,7 @@ fn collect_jvm_args(req: &JvmArgs<'_>) -> (Vec<String>, Vec<String>, Vec<String>
     (jvm_preamble, system_props, jvm_tuning)
 }
 
-/// 生成游戏参数：新格式 arguments.game 数组（含 feature 过滤）/ 旧格式
-/// minecraftArguments 模板（空白拆分）/ 无参数版本的最低保底参数。
-/// 随后按需注入 --userProperties / --profileProperties（1.17+ 官方 json 已移除 token，
-/// Main 仍解析；参数名 1.17+ 为 camelCase，旧版为连字符 --user-properties（由 json token
-/// 替换覆盖，不重复追加）；1.18+ 的 Minecraft.getProfileProperties 直接消费
-/// --profileProperties（非空即注入纹理），1.19.3+ Main 移除解析
-/// （allowsUnrecognizedOptions 静默忽略，与 PCL「仅 1.19.2 以下」一致）。
+/// 生成游戏参数：arguments.game 数组（含 feature 过滤）/ minecraftArguments 模板（空白拆分）/ 最低保底；再按需注入 --userProperties / --profileProperties（1.17+ camelCase，旧版连字符由 token 替换覆盖；1.19.3+ 已移除解析）。
 fn build_game_args(
     version_json: &VersionJson,
     game_ctx: &TemplateContext<'_>,
@@ -1054,25 +960,17 @@ fn build_game_args(
 ) -> Vec<String> {
     let mut game_args = match version_json.game_args() {
         Some(game_arr) if !game_arr.is_empty() => {
-            // 新格式：arguments.game 数组
             let raw = extract_args(game_arr, has_custom_resolution);
             raw.iter().map(|a| substitute(a, game_ctx)).collect()
         }
         _ => {
-            // 旧格式：minecraftArguments 模板字符串
             if let Some(tpl) = &version_json.minecraft_arguments {
-                // 旧格式：模板是空格分隔的参数串，必须**先按空白拆分、再逐 token 替换占位符**
-                // （与官方启动器一致）。若先替换再拆分，含空格的 .minecraft 路径会被
-                // split_whitespace 二次切断（`--gameDir C:\Users\Zhang San\...` →
-                // `--gameDir C:\Users\Zhang` + 两个游离 token），导致版本隔离失效。
-                // 替换后为空的 token 需丢弃（如 `${user_properties}` 展开为空），
-                // 否则会多出一个空 argv 元素。
+                // 旧格式：模板是空格分隔的参数串，必须**先按空白拆分、再逐 token 替换**（含空格的路径不可被切断）。
                 tpl.split_whitespace()
                     .map(|tok| substitute(tok, game_ctx))
                     .filter(|tok| !tok.is_empty())
                     .collect()
             } else {
-                // 最低保底
                 let mut base = vec![
                     ARG_USERNAME.into(),
                     game_ctx.auth_player_name.to_string(),
@@ -1106,7 +1004,6 @@ fn build_game_args(
         }
     };
 
-    // 主动注入 user properties（见函数注释，1.17+ 与 1.19.3+ 语义差异）
     if !user_properties.is_empty()
         && !game_args
             .iter()
@@ -1157,7 +1054,6 @@ mod tests {
         assert!(resolve_client_jar(empty.path(), "v").is_none(), "无 jar 应返回 None");
     }
 
-    /// 版本 JSON 构造器（旧式 native 库列表可变）。
     fn natives_vj(libs_json: &str) -> VersionJson {
         serde_json::from_str(&format!(
             r#"{{
@@ -1179,7 +1075,6 @@ mod tests {
         .expect("构造版本 JSON 失败")
     }
 
-    /// 旧式 native 库（natives 字段 + classifiers）。
     fn legacy_native_lib(name: &str, path: &str) -> String {
         format!(
             r#"{{ "name": "{name}", "natives": {{ "windows": "natives-windows" }},
@@ -1203,10 +1098,7 @@ mod tests {
         assert_eq!(f1, natives_fingerprint(&natives_vj(&a)), "同一集合指纹稳定");
     }
 
-    /// 标记语义回归：同 MC 版本换了 native 集合必须**重新解压**，而不是看到旧标记就跳过。
-    ///
-    /// 此前标记是空文件、只看"存在与否"，而 natives 目录按 MC 版本共享
-    /// （vanilla / Forge / OptiFine 同名一份）→ 新版本直接跳过解压 → 缺原生库。
+    /// 同 MC 版本换了 native 集合必须**重新解压**（标记按指纹而非存在与否）。
     #[test]
     fn natives_marker_rebuilds_when_native_set_changes() {
         let dir = tempfile::tempdir().unwrap();
@@ -1229,12 +1121,10 @@ mod tests {
         let lib1 = legacy_native_lib("org.lwjgl.lwjgl:lwjgl-platform:2.9.4", "n1.jar");
         let lib2 = legacy_native_lib("org.lwjgl.lwjgl:jinput-platform:2.0.5", "n2.jar");
 
-        // 第一次：只解出 a.dll，并写指纹标记
         ensure_old_style_natives(&natives_vj(&lib1), &lib_dir, &natives_dir).unwrap();
         assert!(natives_dir.join("a.dll").is_file(), "应解出 a.dll");
         assert!(!natives_dir.join("b.dll").exists());
 
-        // 同指纹 → 走复用快路径：删掉 a.dll 也不会被补回来（证明没重复解压）
         std::fs::remove_file(natives_dir.join("a.dll")).unwrap();
         ensure_old_style_natives(&natives_vj(&lib1), &lib_dir, &natives_dir).unwrap();
         assert!(
@@ -1242,7 +1132,6 @@ mod tests {
             "指纹一致时应复用，不应重新解压"
         );
 
-        // 指纹变化 → 清空重建：a.dll 与 b.dll 都在
         ensure_old_style_natives(&natives_vj(&format!("{lib1},{lib2}")), &lib_dir, &natives_dir)
             .unwrap();
         assert!(natives_dir.join("a.dll").is_file(), "重建后 a.dll 应回来");
@@ -1252,9 +1141,7 @@ mod tests {
         );
     }
 
-    /// 回归：旧格式 `minecraftArguments`（1.7.10/1.8.9 等无 `arguments.game`）在含空格
-    /// 的 .minecraft 路径下，`--gameDir`/`--assetsDir` 必须保持为**单个** argv 元素。
-    /// 此前「先替换占位符、再 split_whitespace」会把含空格路径切成多个 token。
+    /// 旧格式 `minecraftArguments` 在含空格的 .minecraft 路径下，`--gameDir`/`--assetsDir` 必须保持为**单个** argv 元素。
     #[test]
     fn legacy_minecraft_arguments_keeps_spaced_paths_whole() {
         let vj: VersionJson = serde_json::from_str(
@@ -1307,7 +1194,6 @@ mod tests {
             args[aidx + 1], assets_dir,
             "含空格的 --assetsDir 路径必须保持单个 argv 元素: {args:?}"
         );
-        // 路径没有被切成 `...Zhang` + 游离 `San` token
         assert!(!args.iter().any(|a| a == "San"), "路径被截断: {args:?}");
         // `${user_properties}` 展开为空 → 必须丢弃空 token，而不是塞一个空 argv 元素
         assert!(

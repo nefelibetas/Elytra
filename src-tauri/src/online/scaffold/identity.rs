@@ -1,11 +1,7 @@
 //! machine_id：跨会话稳定的设备唯一标识（协议 c:player_ping / c:player_profiles_list 用）。
 //!
-//! 协议要求"根据硬件信息生成足够长的字符串，避免碰撞，并尽力保证对同一设备始终
-//! 产出稳定的结果"。实现采用首次生成后持久化的 16 字节随机 hex（参考 Terracotta
-//! 行为——随机持久化满足"稳定"且无跨平台硬件指纹复杂度）；存于 exe 旁
-//! `Elytra/machine-id` 文件（与 persist Settings.toml 同目录）。
-//!
-//! 崩溃/重启/重装保留 → machine_id 不变；删除文件 → 重新生成（视为新设备，协议允许）。
+//! 实现为首次生成后持久化的 16 字节随机 hex（满足"对同一设备稳定"，规避跨平台硬件指纹复杂度）；
+//! 存于 exe 旁 `Elytra/machine-id`。崩溃/重启/重装保留 → 不变；删除文件 → 重新生成（视为新设备，协议允许）。
 
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
@@ -15,7 +11,6 @@ use getrandom::getrandom;
 /// machine-id 文件名（exe 旁 Elytra 配置目录下）。
 const MACHINE_ID_FILE: &str = "machine-id";
 
-/// 读取（或首次生成）本机 machine_id。
 pub fn get_machine_id() -> String {
     let dir = crate::util::config_dir();
     let path = dir.join(MACHINE_ID_FILE);

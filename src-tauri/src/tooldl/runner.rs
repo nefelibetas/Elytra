@@ -104,7 +104,7 @@ fn finish(
     emit_snapshot(sink, task);
 }
 
-/// 派发任务快照；已从注册表移除的任务不再派发（防前端幽灵卡片复活）。
+/// 派发任务快照；已从注册表移除的任务不再派发（防前端重建已移除的卡片）。
 pub(crate) fn emit_snapshot(sink: &Arc<dyn EventSink>, task: &ToolDlTask) {
     if !manager::contains(&task.id) {
         return;

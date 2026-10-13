@@ -100,8 +100,7 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
   backdrop-filter: blur(2px);
 }
 
-/* WebKitGTK 低版本无 backdrop-filter（遮罩无模糊）：提升不透明度补偿可读性
- * （色值与 --overlay 的 rgba(15, 23, 42, …) 同源，仅提升 alpha） */
+/* WebKitGTK 低版本无 backdrop-filter（遮罩无模糊）：提升不透明度补偿可读性（alpha 与 --overlay 同源）。 */
 @supports not (backdrop-filter: blur(1px)) {
   .dialog-overlay {
     background: rgba(15, 23, 42, 0.68);
@@ -130,8 +129,7 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
   position: relative;
   flex: none;
   padding: 14px 20px 12px;
-  /* 标题与正文、正文与操作区使用同一条分隔线：1px、text-tertiary（比 border-* 深一档），
-     左右留 20px 与内容对齐（border-* 过浅，视觉上无法承托分区） */
+  /* 分隔线统一 1px text-tertiary（比 border-* 深一档），左右 20px 与内容对齐 */
 }
 
 .dialog-header::after {

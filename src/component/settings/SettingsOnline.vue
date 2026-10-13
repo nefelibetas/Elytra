@@ -1,7 +1,6 @@
 <script setup lang="ts">
-// 联机设置卡片：仅配置（协调服务器 / 自定义广播名）。
-// 会话操作（开启/加入/停止）已移至"工具 → 联机"（OnlineTool.vue），
-// store 为模块级单例，两处共享状态互不冲突。
+// 联机设置卡片：仅配置（协调服务器/广播名/昵称）。
+// 会话操作在「工具 → 联机」（OnlineTool.vue）；store 为模块级单例，两处共享状态。
 import { onMounted, ref } from "vue";
 import { Save, ExternalLink } from "@lucide/vue";
 import {
@@ -15,11 +14,8 @@ onMounted(() => {
   void loadOnlineConfig();
 });
 
-/** 协调服务器保存中。 */
 const savingConfig = ref(false);
-/** 广播名保存中。 */
 const savingMotd = ref(false);
-/** 昵称保存中。 */
 const savingNickname = ref(false);
 
 async function handleSaveConfig() {

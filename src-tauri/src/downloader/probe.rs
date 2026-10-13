@@ -1,7 +1,4 @@
-//! 源预探测：HEAD 测 TTFB（选源）与流式测吞吐（大包选源），结果按 URL TTL 缓存。
-//! JDK 安装链（`jdk/download.rs`）与社区资源下载（`util::community_download_urls`）共用：
-//! Auto 模式下下载前对候选源并发探测，快者优先、慢者兜底；探测失败（超时/黑洞/
-//! 非 2xx）由调用方决定剔除（环节层）或仅降序（源层候选）。
+//! 源预探测：HEAD 测 TTFB（选源）与流式测吞吐（大包选源），结果按 URL TTL 缓存；Auto 模式下载前并发探测，快者优先，失败由调用方决定剔除或仅降序。
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -26,13 +23,13 @@ pub(crate) struct SpeedProbeResult {
     pub(crate) speed_bps: u64,
 }
 
-/// 源预探测超时（秒）：黑洞/假死源 3s 掐断（探测失败 = 剔除/降序依据）。
+/// 源预探测超时（秒）：黑洞/假死源 3s 掐断（失败 = 剔除/降序依据）。
 const PROBE_TIMEOUT_SECS: u64 = 3;
 /// 速度探测超时（秒）：要跑满 2 MB 样本，比 TTFB 探测放宽。
 const SPEED_PROBE_TIMEOUT_SECS: u64 = 8;
-/// 速度探测样本大小：2 MB 足以反映真实带宽，又不会太慢。
+/// 速度探测样本大小：2 MB。
 const SPEED_PROBE_BYTES: u64 = 2 * 1024 * 1024;
-/// 探测结果 TTL（秒）：一次会话内多次下载不重复探测（两类探测共用）。
+/// 探测结果 TTL（秒）：会话内两类探测不重复。
 const PROBE_CACHE_TTL_SECS: u64 = 600;
 const PROBE_CACHE_MAX: usize = 64;
 
@@ -75,8 +72,7 @@ fn speed_cache() -> &'static Mutex<HashMap<String, (Instant, SpeedProbeResult)>>
     &C
 }
 
-/// HEAD 探测单个 URL：测量 TTFB + 可达性。黑洞/假死源 3s 掐断（双保险：
-/// reqwest 请求级 timeout + tokio 独立计时器）；结果按 URL 缓存（TTL 10 分钟）。
+/// HEAD 探测单个 URL：测 TTFB + 可达性。3s 双保险超时（reqwest 请求级 + tokio 计时器）；结果按 URL 缓存。
 pub(crate) async fn probe_url(url: &str) -> ProbeResult {
     if let Some(cached) = cache_get(probe_cache(), url) {
         return cached;
@@ -86,9 +82,7 @@ pub(crate) async fn probe_url(url: &str) -> ProbeResult {
     res
 }
 
-/// 域级探测：缓存键取域根（scheme://host/），探测值来自完整 URL——
-/// 同一域的文件共享缓存（跨文件/跨任务命中，游戏文件下载一次探测管全批次）；
-/// 用真实文件路径探测保证 2xx 判定有效（域根路径可能 404/403，误判不可达）。
+/// 域级探测：缓存键取域根（scheme://host/），同域文件共享缓存；用真实文件路径探测保证 2xx 判定有效。
 pub(crate) async fn probe_domain(url: &str) -> ProbeResult {
     let key = domain_root(url);
     if let Some(cached) = cache_get(probe_cache(), &key) {
@@ -99,9 +93,7 @@ pub(crate) async fn probe_domain(url: &str) -> ProbeResult {
     res
 }
 
-/// 流式探测单个 URL 的下载吞吐（只读前 2 MB），结果按 URL 缓存（TTL 同 TTFB 探测）。
-/// 与 [`probe_url`] 的分工：后者测延迟（小文件/通用选源），本函数测带宽
-/// （JDK runtime 等数十~数百 MB 的包，延迟低不等于下载快）。
+/// 流式探测单个 URL 的下载吞吐（只读前 2 MB），结果按 URL 缓存；与 `probe_url` 分工：后者测延迟（小文件选源），本函数测带宽（JDK runtime 等大包）。
 pub(crate) async fn probe_speed(url: &str) -> SpeedProbeResult {
     if let Some(cached) = cache_get(speed_cache(), url) {
         return cached;
@@ -127,7 +119,7 @@ fn domain_root(url: &str) -> String {
     }
 }
 
-/// 探测执行体（无缓存）：3s 双保险超时 + 黑洞掐断，返回 TTFB/可达性。
+/// 探测执行体（无缓存）：3s 双保险超时，返回 TTFB/可达性。
 async fn probe_url_uncached(url: &str) -> ProbeResult {
     let t0 = Instant::now();
     let outcome = async {
@@ -163,13 +155,11 @@ async fn probe_speed_uncached(url: &str) -> SpeedProbeResult {
             Ok(r) if r.status().is_success() => r,
             _ => return None,
         };
-        // 元数据太小不适合测速
         if let Some(len) = resp.content_length() {
             if len > 0 && len < SPEED_PROBE_BYTES / 2 {
                 return None;
             }
         }
-        // 流式读取最多 SPEED_PROBE_BYTES 字节
         let mut reader = resp.bytes_stream();
         let mut bytes_read = 0u64;
         let start = Instant::now();
@@ -201,12 +191,9 @@ async fn probe_speed_uncached(url: &str) -> SpeedProbeResult {
 mod tests {
     use super::*;
 
-    /// 探测缓存读写：同 URL 命中返回缓存结果（TTL 内不再发网络）；
-    /// 缓存淘汰上限不 panic。
     #[test]
     fn probe_cache_roundtrip() {
         let url = "https://example.com/probe-cache-test";
-        // 清理可能残留
         probe_cache().lock().remove(url);
         let res = ProbeResult {
             ok: true,
@@ -214,12 +201,10 @@ mod tests {
         };
         cache_set(probe_cache(), url.to_string(), res);
         assert_eq!(cache_get(probe_cache(), url), Some(res));
-        // 缓存命中后返回克隆值，原值不变
         assert_eq!(cache_get(probe_cache(), url).unwrap().ttfb_ms, 42);
         probe_cache().lock().remove(url);
     }
 
-    /// 速度缓存与 TTFB 缓存相互独立（同 URL 两类结果互不覆盖）。
     #[test]
     fn speed_cache_is_separate_from_probe_cache() {
         let url = "https://example.com/speed-cache-test";

@@ -8,10 +8,8 @@ use super::{
 };
 use crate::downloader::fetcher::http;
 
-/// 已知 ModLoader 名（用于从 Modrinth categories 中过滤 loader 标签）。
 const KNOWN_LOADERS: [&str; 4] = ["fabric", "forge", "neoforge", "quilt"];
 
-/// 从 Modrinth 搜索 hit 的 categories 数组提取已知 loader 名（去重保序）。
 fn modrinth_loaders(categories: &serde_json::Value) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     if let Some(arr) = categories.as_array() {
@@ -59,12 +57,9 @@ pub(super) async fn search_modrinth(
     if let Some(ld) = loader {
         facets.push(vec![format!("categories:{}", ld)]);
     }
-    // Modrinth /v2/search 不带 project_type facet 时返回全部项目类型
-    // （modpack/resourcepack 等会混入 mod 搜索结果，实测确认），必须显式过滤：
-    // 普通 mod 搜索（category None）固定 project_type:mod；
-    // 分类搜索按类型映射——注意 datapack 无 project_type 实体（数据包项目是
-    // mod 类型 + datapack 标签，需双 facet：project_type:mod AND categories:datapack）；
-    // worlds 无对应类型（前端已锁定 CurseForge 单源，此处防御性返回空）
+    // /v2/search 不带 project_type facet 会混入全部项目类型，必须显式过滤：普通 mod 搜索固定
+    // project_type:mod；分类搜索按类型映射；datapack 无 project_type 实体（= mod 类型 + datapack
+    // 标签，双 facet）；worlds 无对应类型（前端已锁定 CurseForge 单源，防御性返回空）
     match category {
         Some("datapack") => {
             facets.push(vec!["project_type:mod".into()]);
@@ -119,8 +114,7 @@ pub(super) async fn search_modrinth(
                 author: h["author"].as_str().unwrap_or("").to_string(),
                 downloads: h["downloads"].as_u64().unwrap_or(0),
                 icon_url: h["icon_url"].as_str().map(str::to_string),
-                // 项目 URL 按 project_type 分段（mod/shader/resourcepack/datapack/modpack），
-                // 写死 /mod/ 会让光影包等详情页「转到 Modrinth」404
+                // 项目 URL 按 project_type 分段；写死 /mod/ 会让光影包等详情页「转到 Modrinth」404
                 page_url: format!(
                     "https://modrinth.com/{}/{}",
                     h["project_type"].as_str().unwrap_or("mod"),
@@ -213,8 +207,7 @@ pub(super) async fn modrinth_versions(
 }
 
 /// 批量拉取 Modrinth 项目原始 JSON（GET /v2/projects?ids=[...]），保持响应顺序。
-/// pub(crate)：依赖卡片详情（本模块）与本地 Mod 元数据识别（mod_updates）
-/// 共用同一端点与解析入口，消除两套同端点实现。
+/// pub(crate)：依赖卡片详情与本地 Mod 识别（mod_updates）共用此端点与解析入口。
 pub(crate) async fn modrinth_projects_raw(
     ids: &[String],
 ) -> Result<Vec<serde_json::Value>, String> {
@@ -249,7 +242,6 @@ pub(super) async fn modrinth_details(
 mod tests {
     use super::*;
 
-    /// Modrinth 无需 key，任何环境可跑（单发小请求）。
     #[tokio::test]
     async fn search_modrinth_works() {
         let page = search_modrinth("jei", Some("1.21.1"), Some("fabric"), None, 0, 30).await;
@@ -264,7 +256,6 @@ mod tests {
         assert!(page.total > 0, "应返回总数");
     }
 
-    /// 空关键字：对齐 PCL2 行为，返回按下载量排序的热门列表。
     #[tokio::test]
     async fn modrinth_empty_query_returns_popular() {
         let page = search_modrinth("", None, None, None, 0, 30).await.unwrap();
@@ -280,7 +271,6 @@ mod tests {
         );
     }
 
-    /// Modrinth loader 提取：categories 中过滤已知 loader，杂项/重复忽略。
     #[test]
     fn modrinth_loaders_filters_known_ones() {
         let cats = serde_json::json!(["Fabric", "Mechanic", "fabric", "forge", "Adventure"]);
@@ -299,7 +289,6 @@ mod tests {
         );
     }
 
-    /// Modrinth 版本范围：latest_version 与 versions 合并，过滤 snapshot，取 min ~ max。
     #[test]
     fn modrinth_version_range_min_to_max() {
         let hit = serde_json::json!({

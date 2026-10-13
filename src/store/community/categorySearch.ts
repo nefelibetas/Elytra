@@ -1,6 +1,4 @@
-// 分类资源搜索 store（光影包 / 资源包等非 mod 项目类型）：
-// 工厂生成各自独立的 reactive 单例（状态互不干扰），复用 communitySearch 的聚合逻辑，
-// 固定 category（project_type / CurseForge classId），无加载器。
+// 分类资源搜索 store（光影包 / 资源包等非 mod 类型）：工厂生成各自独立的 reactive 单例（状态互不干扰），复用 communitySearch 的聚合逻辑，固定 category（project_type / CurseForge classId），无加载器。
 import { reactive, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { searchAllSources, toDisplayItem, needsTranslation, type CommunityDisplayItem } from "../community/communitySearch";
@@ -14,7 +12,6 @@ export function createCategorySearch(
   category: string,
   initialSource: "all" | "modrinth" | "curseforge" = "all",
 ) {
-  /** 首次进入对应 tab 自动搜索热门只触发一次（预加载/重置后不重复） */
   let autoSearched = false;
 
   return reactive({
@@ -86,7 +83,6 @@ export function createCategorySearch(
       this.search();
     },
 
-    /** 自动搜索热门（对齐 PCL2）；仅触发一次，预加载与 tab 切换共用 */
     ensureAutoSearch() {
       if (autoSearched || this.searching) return;
       autoSearched = true;

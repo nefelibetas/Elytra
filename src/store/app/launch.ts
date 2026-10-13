@@ -1,5 +1,4 @@
-// 启动流程 store：启动阶段/步骤、已安装版本加载、游戏退出事件监听。
-// doLaunch 的页面跳转依赖参数化（navigateToDownload），store 不依赖 router。
+// 启动流程 store：启动阶段/步骤、版本加载、游戏退出监听；页面跳转参数化（navigateToDownload），不依赖 router。
 import { reactive, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -28,21 +27,18 @@ function resetLaunch() {
   launchState.steps = [];
 }
 
-/** 加载已安装版本：恢复上次选择（跨目录校验）+ 无版本时自动激活第一个有版本的目录。 */
 export async function loadVersions() {
   try {
     const list: InstalledVersionInfo[] = await invoke("get_installed_versions");
-    // 上次选择的版本仅在所属目录仍是当前激活目录时才恢复（版本选择页同时写入两者）
+    // 仅在所属目录仍是当前激活目录时才恢复（版本选择页同时写入两者）
     const savedDir = getSavedDir();
     if (savedDir) {
       try {
         const active = await invoke<{ path: string }>("get_active_game_dir");
         if (active.path !== savedDir) selectedVersion.value = "";
       } catch {
-        // 目录信息获取失败时不额外处理
       }
     }
-    // 当前目录无可用版本：检测所有目录，激活第一个有版本的目录并选中其第一个版本
     if (!list.some(v => v.name === selectedVersion.value) || list.length === 0) {
       try {
         const r = await invoke<{ dir_path: string; version: string }>(
@@ -54,20 +50,17 @@ export async function loadVersions() {
           : newList[0]?.name ?? "";
         setSelected(selectedVersion.value, r.dir_path);
       } catch {
-        // 所有目录均无版本：保持现状
         selectedVersion.value = list.some(v => v.name === selectedVersion.value)
           ? selectedVersion.value
           : (list[0]?.name ?? "");
       }
     }
   } catch {
-    // ignore
   }
 }
 
 export async function doLaunch(navigateToDownload: () => void) {
   if (isLaunching.value) return;
-  // 无可用游戏版本：按钮即"下载游戏"入口，跳转下载页
   if (!selectedVersion.value) {
     navigateToDownload();
     return;
@@ -76,20 +69,17 @@ export async function doLaunch(navigateToDownload: () => void) {
   const isOffline = authMode.value === "offline";
   const isExternal = authMode.value === "external";
 
-  // 离线模式必须输入用户名
   if (isOffline && !username.value.trim()) {
     showError("请输入用户名后再启动游戏");
     return;
   }
 
-  // 正版模式必须已登录；启动前静默刷新 token
-  // （界面切换在前，刷新是网络请求，避免点击后界面无反馈）
+  // 正版须已登录；启动前静默刷新 token（界面切换在前，避免点击后无反馈）
   if (!isOffline && !isExternal && !msAccount.value) {
     showError("请先登录 Microsoft 账号");
     return;
   }
 
-  // 第三方模式必须已登录
   if (isExternal && !externalAccount.value) {
     showError("请先登录第三方账号");
     return;
@@ -109,12 +99,7 @@ export async function doLaunch(navigateToDownload: () => void) {
   ];
 
   try {
-    // 启动前确保凭据可用。
-    // 正版：后端按需续签（未过期时零网络开销，避免每次启动都走完整微软登录链）。
-    // 第三方：同样先静默续签——Yggdrasil 令牌的刷新窗口有限，不主动续签就会一直放到
-    //   连 refresh 都过期的地步，届时只能报「登录凭据已失效」重新登录（Yggdrasil 不返回
-    //   过期时间，无法像正版那样先判过期，故每次启动都刷一次，网络开销可忽略）。
-    // 离线：无凭据，跳过。
+    // 启动前确保凭据可用：正版后端按需续签（未过期零网络开销）；第三方每次静默续签（Yggdrasil 无过期时间）；离线跳过
     if (isExternal) {
       const ext = externalAccount.value;
       if (ext) {
@@ -167,12 +152,12 @@ export async function doLaunch(navigateToDownload: () => void) {
     step("等待游戏窗口", "running");
     console.log("Game started, PID:", pid);
 
-    // 记录最后一次离线用户名（与正版隔离）
+    // 记录最后离线用户名（与正版隔离）
     if (isOffline) {
       await invoke("save_last_offline_username", { username: name });
     }
 
-    // ③ 等待游戏窗口出现（后端轮询可见窗口推送事件；90s 兜底防卡死）
+    // ③ 等待游戏窗口（后端轮询可见窗口推送事件；90s 兜底防卡死）
     step("等待游戏窗口", "running");
     const windowShown = await waitGameWindow(selectedVersion.value);
     step("等待游戏窗口", "done");
@@ -185,7 +170,6 @@ export async function doLaunch(navigateToDownload: () => void) {
       );
     }
 
-    // 完成后稍作停留再切回原样
     setTimeout(() => {
       resetLaunch();
     }, 1500);
@@ -195,13 +179,10 @@ export async function doLaunch(navigateToDownload: () => void) {
   }
 }
 
-/** game-exited 事件 payload：[pid, versionLabel, exitCode, crashReport]（exitCode 非 0 = 异常退出）。 */
 type GameExitedPayload = [number, string, number | null, string | null];
 
 let gameExitListenerReady = false;
 
-/** 等待游戏主窗口：window-visible 事件到达（后端轮询命中）即成功；
- *  进程先退出则按窗口是否已出现过判定；90s 无事件兜底失败（防卡死）。 */
 function waitGameWindow(label: string): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
@@ -222,26 +203,22 @@ function waitGameWindow(label: string): Promise<boolean> {
     }).then(u => unlisteners.push(u));
     listen<GameExitedPayload>(GAME_EXITED, (ev) => {
       if (ev.payload[1] !== label) return;
-      // 任意退出码：窗口已见则视为"已成功等待"，否则判定失败
       finish(windowSeen);
     }).then(u => unlisteners.push(u));
   });
 }
 
-/** 读取某版本的最近一次游戏日志（launcher/process.rs 落盘）。 */
+/** 最近一次游戏日志（launcher/process.rs 落盘）。 */
 export async function loadGameLog(gameDir: string, versionName: string): Promise<string> {
   return await invoke<string>("get_game_log", { gameDir, versionName });
 }
 
-/** 幂等注册 game-exited 监听（页面 onMounted 调用一次）：非零退出码弹错误提示。 */
 export async function ensureGameExitListener() {
   if (gameExitListenerReady) return;
   gameExitListenerReady = true;
   await listen<GameExitedPayload>(GAME_EXITED, (ev) => {
     console.log("Game exited:", ev.payload);
     const [, label, exitCode, crashReport] = ev.payload;
-    // 退出码非 0：游戏异常退出（崩溃/启动失败）——不再静默，弹错误级提示
-    // body 仅友好提示（AlertDialog 只显示首行），完整信息进复制区
     if (exitCode !== null && exitCode !== 0) {
       showError(
         `游戏异常退出（退出码 ${exitCode}），请查看崩溃报告或重新启动\n` +

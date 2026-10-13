@@ -14,19 +14,17 @@ pub const UA_DOWNLOAD: &str = "Elytra Launcher/1.0.0";
 /// Mojang API 调用 User-Agent
 pub const UA_MOJANG_API: &str = "Elytra Launcher/1.0.0 (+https://github.com/nefelibetas/Elytra)";
 
-/// 镜像源（BMCLAPI 等）并发上限。
-/// 官方源实测 128 并发稳定无限制；BMCLAPI 30 并发同文件即触发 429
-/// （`retry-after-short: 60` 窗口），8 为实测安全值，与主流启动器对镜像的保守并发一致。
+/// 镜像源（BMCLAPI 等）并发上限：8（BMCLAPI 30 并发同文件即触发 429，60s 窗口）。
 /// 前端 Settings.vue 的 MIRROR_CONCURRENCY 需与此同步。
 pub const MIRROR_CONCURRENCY: usize = 8;
 
 /// CurseForge API Key（构建时从项目根 `.env` 注入，不提交 git）。
-/// 所有 api.curseforge.com 与 forgecdn.net 请求（含文件下载，2026-07-16 起强制）
-/// 都必须携带 x-api-key 头；未配置时为 None，此时 CurseForge 源不可用。
+/// 所有 api.curseforge.com 与 forgecdn.net 请求（含文件下载）必须携带 x-api-key；
+/// 未配置为 None，此时 CurseForge 源不可用。
 pub const CURSEFORGE_API_KEY: Option<&str> = option_env!("ELYTRA_CURSEFORGE_API_KEY");
 
 /// 微软 OAuth 客户端 ID（构建时从项目根 `.env` 注入，不提交 git）。
-/// 未配置时为 None，此时微软正版登录返回 NotConfigured。
+/// 未配置为 None，此时微软正版登录返回 NotConfigured。
 pub const MS_CLIENT_ID: Option<&str> = option_env!("ELYTRA_MS_CLIENT_ID");
 
 /// 配置目录名（exe 旁）
@@ -41,33 +39,32 @@ pub const KEYCHAIN_MASTER_KEY_ACCOUNT: &str = "master-key";
 /// 主密钥条目 label（用户可见）
 pub const KEYCHAIN_MASTER_KEY_LABEL: &str = "Elytra Launcher master key";
 
-/// persist section: 下载器配置
+/// 下载器配置
 pub const SECT_DOWNLOADER: &str = "downloader";
-/// persist section: 启动器配置
+/// 启动器配置
 pub const SECT_LAUNCHER: &str = "launcher";
-/// persist section: JDK 配置
+/// JDK 配置
 pub const SECT_JDK: &str = "jdk";
 /// JDK 扫描缓存 section（本机发现的 JDK 列表，后端维护）
 pub const SECT_JDK_SCANNED: &str = "jdk_scanned";
-/// persist section: 微软账号列表（secrets.bin 加密存储，按登录时间排序，末尾为当前）
+/// 微软账号列表（secrets.bin 加密存储，按登录时间排序，末尾为当前）
 pub const SECT_MS_ACCOUNTS: &str = "ms_accounts";
 pub const SECT_EXTERNAL_ACCOUNTS: &str = "external_accounts";
 pub const SECT_EXTERNAL: &str = "external";
-/// persist section: 离线账号历史列表（最近使用排序，末尾为当前）
+/// 离线账号历史列表（最近使用排序，末尾为当前）
 pub const SECT_OFFLINE_ACCOUNTS: &str = "offline_accounts";
-/// persist section: 游戏目录
+/// 游戏目录
 pub const SECT_GAME_DIRS: &str = "game_dirs";
-/// persist section: 联机配置（协调节点等）
+/// 联机配置（协调节点等）
 pub const SECT_ONLINE: &str = "online";
-/// persist section: 本地皮肤收藏索引（PNG 原文存配置目录 `skins/<id>.png`）
+/// 本地皮肤收藏索引（PNG 原文存配置目录 `skins/<id>.png`）
 pub const SECT_LOCAL_SKINS: &str = "local_skins";
-/// persist section: 工具箱多线程下载器（保存目录 / 并发文件数 / 分段数）
+/// 工具箱多线程下载器（保存目录 / 并发文件数 / 分段数）
 pub const SECT_TOOL_DL: &str = "tooldl";
 
 #[cfg(test)]
 mod tests {
-    /// CurseForge key 经 build.rs 从 .env 注入。
-    /// 无 .env 的环境（CI/他人克隆）为 None 时跳过，有则校验格式，确保注入链路完整。
+    /// CurseForge key 经 build.rs 从 .env 注入；None（CI/未克隆 .env）跳过，有则校验格式。
     #[test]
     fn curseforge_key_injected_via_env() {
         if let Some(key) = super::CURSEFORGE_API_KEY {

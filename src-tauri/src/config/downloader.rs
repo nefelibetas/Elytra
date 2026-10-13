@@ -104,10 +104,8 @@ pub enum NetworkMode {
     Direct,
 }
 
-/// 下载源选择模式：
-/// - auto（默认）：按 URL 自动分类，镜像候选即时生成并按健康度排序；元数据/清单请求官方优先、
-///   超时（4s）自动降级镜像
-/// - officialOnly / mirrorOnly：单选，只用一个源，不自动回退
+/// 下载源选择模式：auto（默认）按 URL 自动分类、镜像候选即时生成并按健康度排序，元数据/清单请求官方优先、
+/// 超时（4s）自动降级镜像；officialOnly / mirrorOnly 单选，只用一个源，不自动回退。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default, ts_rs::TS)]
 #[ts(export_to = "config/")]
 #[serde(rename_all = "camelCase")]
@@ -183,10 +181,9 @@ pub struct DownloaderConfig {
     pub jdk_source_mode: JdkSourceMode,
 }
 
-/// JDK（managed runtime）下载源模式：
-/// - auto（默认）：Mojang 官方 runtime 优先，失败依次回退 Adoptium（TUNA 清华镜像优先，404 回退官方 link）与 Azul
-/// - officialOnly：仅官方（Mojang runtime → Azul）；mirrorOnly：仅镜像（Adoptium 仅 TUNA 下载候选）
-/// - 元数据仍走 Adoptium 官方 API——TUNA 只镜像文件、不提供 checksum，属不可绕过的例外
+/// JDK（managed runtime）下载源模式：auto（默认）Mojang 官方 runtime 优先，失败依次回退 Adoptium
+/// （TUNA 清华镜像优先，404 回退官方 link）与 Azul；officialOnly 仅官方（Mojang → Azul）、mirrorOnly 仅镜像
+/// （Adoptium 仅 TUNA 下载候选）。元数据仍走 Adoptium 官方 API——TUNA 只镜像文件、不提供 checksum，为不可绕过的例外。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default, ts_rs::TS)]
 #[ts(export_to = "config/")]
 #[serde(rename_all = "camelCase")]

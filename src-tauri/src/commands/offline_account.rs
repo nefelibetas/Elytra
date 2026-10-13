@@ -1,5 +1,3 @@
-//! 离线账号历史 CRUD 命令（薄封装 auth::offline）。
-
 use crate::auth;
 
 /// 读取最后一次使用的离线用户名（历史列表末尾；兼容旧版单值键）。
@@ -8,7 +6,6 @@ pub fn get_last_offline_username() -> String {
     auth::offline::last_username()
 }
 
-/// 保存最后一次使用的离线用户名（历史列表 upsert，置为末尾；空名忽略）。
 #[tauri::command]
 pub fn save_last_offline_username(username: String) -> Result<(), String> {
     save_offline_account(username)
@@ -26,7 +23,6 @@ pub fn save_offline_account(username: String) -> Result<(), String> {
     auth::offline::save(&username).map_err(common_err_ctx!("保存配置失败"))
 }
 
-/// 移除指定离线用户名。
 #[tauri::command]
 pub fn remove_offline_account(username: String) -> Result<(), String> {
     auth::offline::remove(&username).map_err(common_err_ctx!("保存配置失败"))

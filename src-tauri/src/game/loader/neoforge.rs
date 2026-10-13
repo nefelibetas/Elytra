@@ -16,8 +16,7 @@ pub async fn install_neoforge(
     ctx: InstallCtx<'_>,
 ) -> Result<(), String> {
     let InstallCtx { config, .. } = ctx;
-    // 安装程序也走多源回退：官方 maven 对国内网络不稳（连接重置/超时），
-    // 按 game_source_mode 的完整源顺序各构造一个 URL，fetch_fallback 依次尝试
+    // 多源回退：官方 maven 对国内网络不稳，按完整源顺序各构造 URL，fetch_fallback 依次尝试
     let installer_urls: Vec<String> = config
         .file_sources_list()
         .iter()
@@ -26,11 +25,9 @@ pub async fn install_neoforge(
     download_and_extract(&installer_urls, target, parent_text, ctx).await
 }
 
-/// NeoForge 的 universal jar：install_profile.libraries 才有（version.json 无）。
-/// 官方部署中它不进启动 classpath——GameLocator production 分支经 -DlibraryDirectory
-/// 从 libraries 目录直接加载（作为 mod 加入 pipeline）。若放进 classpath，
-/// RequiredSystemFiles 会找到 NeoForge 类而缺 MC 类 → 误报 "The patched Minecraft jar is missing"。
-/// 因此这里仅下载文件到 libraries 目录，不写进展开 JSON。
+/// NeoForge 的 universal jar：install_profile.libraries 才有（version.json 无）。它不进启动 classpath——GameLocator
+/// production 分支经 -DlibraryDirectory 从 libraries 直接加载；若进 classpath，RequiredSystemFiles 会找到 NeoForge 类而缺
+/// MC 类 → 误报 "The patched Minecraft jar is missing"。故仅下载文件到 libraries，不写进展开 JSON。
 pub(super) async fn download_neoforge_universal(
     uni: &serde_json::Value,
     lib_dir: &Path,
@@ -52,8 +49,7 @@ pub(super) async fn download_neoforge_universal(
         file
     );
     let dest = lib_dir.join(&rel);
-    // 期望 sha1 由 install_profile 的 universal 条目声明（此前忽略，镜像截断的 >1MB
-    // 半成品会被永久接受；跳过判断也从"存在且 >1MB"改为 sha1 命中）
+    // 期望 sha1 由 install_profile 的 universal 条目声明；跳过判断按 sha1 命中（否则镜像截断的 >1MB 半成品会被永久接受）
     let sha1 = uni["downloads"]["artifact"]["sha1"]
         .as_str()
         .unwrap_or_default();
@@ -88,14 +84,8 @@ pub(super) async fn download_neoforge_universal(
     Ok(())
 }
 
-/// NeoForge 26.x：运行 installertools `PROCESS_MINECRAFT_JAR` 生成
-/// `libraries/net/neoforged/minecraft-client-patched/{ver}/minecraft-client-patched-{ver}.jar`
-/// NeoForge：按 installer 自己声明的 `install_profile.processors` 执行 client 侧安装。
-///
-/// 21.x 的链是 `installertools`/`jarsplitter`/`AutoRenamingTool` + `binarypatcher`，
-/// 26.x 是单个 `PROCESS_MINECRAFT_JAR`；产物路径取自 profile 的 `{PATCHED}`。
-/// **不能写死配方**：工具与补丁包格式逐代变化，写死其中一代会在另一代上报
-/// `Invalid bundle signature`（实测 NeoForge 21.1.248）。详见 [`super::processors`]。
+/// NeoForge：按 installer 声明的 `install_profile.processors` 执行 client 侧安装，产物路径取自 profile 的
+/// `{PATCHED}`。**不能写死配方**（工具与补丁包格式逐代变化，写死某代会报 `Invalid bundle signature`）。详见 [`super::processors`]。
 pub(super) async fn extract_neoforge_client(
     archive: &mut zip::ZipArchive<std::fs::File>,
     installer_path: &Path,
@@ -122,9 +112,7 @@ pub(super) async fn extract_neoforge_client(
         return Ok(());
     }
 
-    // 2. 幂等：`{PATCHED}` 完好（完整 zip 且 ≥1MB）则跳过整条链——避免杀软误报与
-    //    数十秒 JVM 开销；半成品/截断文件不算完好，会被重跑覆盖（此前用"存在且 ≥1MB"
-    //    粗校验，中途失败的半成品会被误判为已完成并永久跳过）。
+    // 2. 幂等：`{PATCHED}` 完好（完整 zip 且 ≥1MB）则跳过整条链（省数十秒 JVM 开销）；半成品/截断不算完好，会被重跑覆盖
     let patched = processors::output_path(&profile, "PATCHED", lib_dir, mc_dir)?;
     if processors::intact_archive(&patched) {
         return Ok(());

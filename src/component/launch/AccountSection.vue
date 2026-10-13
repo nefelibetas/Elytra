@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// 账号区：正版/离线切换 + 用户区（头像/用户名/登录/操作菜单）。
-// 菜单跟随鼠标 Teleport 到 body；window click 关闭菜单（组件挂载周期内注册）。
+// 账号区：正版/离线切换 + 用户区；菜单 Teleport 到 body，window click 关闭（挂载期注册）。
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { ShieldCheck, User, UserRound, Pencil, LogOut, Users, ChevronDown, Link2, RotateCcw, RefreshCw } from "@lucide/vue";
 import {
@@ -43,7 +42,7 @@ function retryAvatar() {
 /** 用户名输入防抖 1.337s 后刷新离线头像 */
 watch(username, (v) => scheduleOfflineRender(v));
 
-// 离线用户名输入即存历史：防抖 1s（与头像刷新防抖并存；直接点启动时 launch.ts 兜底保存）
+// 用户名输入防抖 1s 存历史（直接点启动时 launch.ts 兜底保存）
 let offlineSaveTimer: number | undefined;
 watch(username, (v) => {
   window.clearTimeout(offlineSaveTimer);
@@ -52,7 +51,6 @@ watch(username, (v) => {
   }
 });
 
-// window click 统一关闭菜单（组件挂载周期内注册；箭头函数保持 this 绑定）
 const closeHandler = () => {
   accountUi.closeMenus();
   showRoles.value = false;
@@ -62,14 +60,11 @@ function goExternalLogin() {
   settingsTab.value = "external";
   void router.push("/settings");
 }
-/** 能否进启动器衣柜：**只有已登录的正版账号**。
- *  注意不能只看 authMode ——「正版模式但尚未登录」同样进不去衣柜，
- *  入口必须与衣柜页自身的准入条件一致，否则点进去会被瞬间弹回。 */
+/** 可进启动器衣柜：仅已登录的正版账号；准入须与衣柜页一致，否则点进去即被弹回。 */
 const canOpenSkinStudio = computed(() => authMode.value === "premium" && !!msAccount.value);
-/** 能否打开站点衣柜：第三方模式且已登录第三方账号。 */
 const canOpenSiteCloset = computed(() => authMode.value === "external" && !!externalAccount.value);
 
-/** 站点衣柜地址：由 authlib-injector 的 API 地址推 origin（Blessing Skin 的衣柜路径固定为 `/user/closet`）。 */
+/** 站点衣柜地址：由 API 地址推 origin（Blessing Skin 路径固定 `/user/closet`）。 */
 const siteClosetUrl = computed(() => {
   const api = externalAccount.value?.api_url;
   if (!api) return "";
@@ -80,8 +75,6 @@ const siteClosetUrl = computed(() => {
   }
 });
 
-/** 头像提示：入口不可用时由它承担引导（说清为什么点不动、该做什么），
- *  而不是让用户点进去再被弹回来。 */
 const avatarTip = computed(() => {
   if (canOpenSiteCloset.value) return "在站点衣柜中管理";
   if (canOpenSkinStudio.value) return "衣柜";
@@ -91,11 +84,6 @@ const avatarTip = computed(() => {
     : "登录 Microsoft 账号后可管理皮肤与披风";
 });
 
-/** 点皮肤头像：
- *  正版（已登录）→ 启动器衣柜（Mojang 皮肤 + 本地收藏）；
- *  第三方（已登录）→ 直接用浏览器打开**站点衣柜**——站点有完整的上传 / 预览 / 整理，
- *                    而启动器只能管「已有材质」（站点没有上传 API），镜像一份反而更残缺；
- *  其余（离线 / 正版未登录 / 第三方未登录）→ 入口已置灰，这里静默返回，不弹提示。 */
 function openSkinStudio() {
   accountUi.closeMenus();
   if (canOpenSiteCloset.value) {
@@ -107,26 +95,22 @@ function openSkinStudio() {
   if (!canOpenSkinStudio.value) return;
   void router.push("/skin-studio");
 }
-/** 第三方已登录时的附加操作（多角色切换 / 皮肤下载）。 */
 const showRoles = ref(false);
-/** 用户区 hover 状态（显示操作按钮；模板中直接赋值 ref 解包不写回，用函数显式 .value）。 */
+/** 用户区 hover 状态（模板 ref 解包不写回，用函数显式改 .value）。 */
 const extHover = ref(false);
 function onExtEnter() { extHover.value = true; }
 function onExtLeave() { extHover.value = false; }
 /** 角色头像缓存（profile_id → dataURL），面板打开时懒加载。 */
 const roleHeads = reactive<Record<string, string>>({});
-/** 拉取角色皮肤头（2D 大头照）。 */
 async function loadRoleHead(apiUrl: string, roleId: string) {
   if (roleHeads[roleId]) return;
   try {
     const b64 = await invoke<string>("fetch_external_skin", { apiUrl, uuid: roleId });
     roleHeads[roleId] = await renderSkinHead3D(b64);
   } catch {
-    // 无皮肤：保持占位
   }
 }
-// 打开角色面板：先 refresh 账号（自动读取最新角色列表，覆盖皮肤站增删角色/改名的极端场景），
-// 再懒加载全部角色头像
+// 打开面板：先 refresh 账号（同步最新角色列表），再懒加载角色头像
 watch(showRoles, async (open) => {
   if (!open) return;
   const acc = externalAccount.value;
@@ -145,7 +129,6 @@ watch(showRoles, async (open) => {
   }
 });
 
-/** 刷新角色和皮肤：refresh 账号（最新 token + 角色列表同步）→ 重拉皮肤渲染头像。 */
 async function refreshExternalSkin() {
   const acc = externalAccount.value;
   if (!acc) return;
@@ -159,7 +142,6 @@ async function refreshExternalSkin() {
   }
 }
 
-/** 切换角色（refresh + selectedProfile）。 */
 async function doSwitchRole(profileId: string, profileName: string) {
   const acc = externalAccount.value;
   if (!acc) return;
@@ -189,7 +171,7 @@ onMounted(() => {
 let headLoadSeq = 0;
 
 async function ensureAccountHeads() {
-  const seq = ++headLoadSeq; // 组件重建/重复打开时丢弃过期结果
+  const seq = ++headLoadSeq; // 丢弃过期结果（组件重建/重复打开）
   for (const acc of msAccounts.value) {
     renderAccountHead(acc.uuid).then((h) => {
       if (seq === headLoadSeq && h) accountHeads[acc.uuid] = h;
@@ -197,7 +179,7 @@ async function ensureAccountHeads() {
   }
 }
 
-// ── 离线历史头像（Steve/Alex 默认皮肤 2D 头部，哈希决定模型，与主头像/游戏内一致）──
+// ── 离线历史头像（Steve/Alex 默认皮肤头部，哈希决定模型，与主头像一致）──
 
 async function ensureOfflineHeads() {
   for (const name of offlineAccounts.value) {
@@ -208,9 +190,7 @@ async function ensureOfflineHeads() {
   }
 }
 
-/** 正版 access_token 仅约 24h 有效；过期后各入口会经后端 valid_access_token 自动静默续签。
- *  这里只把状态摆明：正常时不打扰界面，临近（<5 分钟）或已过期才标警示，
- *  消除「账号还在列表里、却各个功能失败」的困惑。 */
+/** 正版 access_token 约 24h 有效，过期后经后端 valid_access_token 自动续签；<5 分钟或已过期才标警示。 */
 function credHint(acc: MsAccountInfo): string {
   const left = acc.expires_at - Date.now() / 1000;
   if (left <= 0) return "登录凭证已过期，将在使用时自动续签";
@@ -220,7 +200,6 @@ function credHint(acc: MsAccountInfo): string {
   return `凭证有效，约 ${mins} 分钟后到期（自动续签）`;
 }
 
-/** 凭证是否临近过期或已过期（用于显示警示标记）。 */
 function credWarn(acc: MsAccountInfo): boolean {
   return acc.expires_at - Date.now() / 1000 < 300;
 }
@@ -255,7 +234,6 @@ function removeCurrentMsAccount() {
   if (acc) void removeAccount(acc.uuid);
 }
 
-/** 从历史选择离线用户名。 */
 function useOfflineName(name: string) {
   username.value = name;
   accountUi.closeOfflineMenu();
@@ -315,7 +293,7 @@ function useOfflineName(name: string) {
               @error="avatarState.avatarError = true"
             />
             <UserRound v-else :size="34" />
-            <!-- 头像加载失败（网络原因）→ hover 显示刷新重试 -->
+            <!-- 头像加载失败 → hover 显示重试 -->
             <button
               v-if="avatarState.avatarError && authMode !== 'offline'"
               class="avatar-retry"
@@ -418,7 +396,6 @@ function useOfflineName(name: string) {
             <button class="ms-cancel" @click="cancelMsLogin">取消</button>
           </div>
           <template v-else-if="msAccount">
-            <!-- 账号：历史账号列表（切换/移除/登录新账号） -->
             <button
               class="icon-btn"
               v-tooltip="'账号列表'"
@@ -426,11 +403,10 @@ function useOfflineName(name: string) {
             >
               <Users :size="14" />
             </button>
-            <!-- 编辑：账号信息菜单（修改密码 / 修改玩家名） -->
             <button class="icon-btn" v-tooltip="'编辑信息'" @click.stop="accountUi.openEditMenu($event)">
               <Pencil :size="14" />
             </button>
-            <!-- 登出：从列表移除当前账号（其余历史账号保留） -->
+            <!-- 登出：仅从列表移除当前账号 -->
             <button class="icon-btn" v-tooltip="'移除当前账号'" @click="removeCurrentMsAccount">
               <LogOut :size="14" />
             </button>
@@ -441,7 +417,6 @@ function useOfflineName(name: string) {
           </button>
         </div>
 
-        <!-- 编辑信息菜单（修改密码 / 修改玩家名） -->
         <MenuPopover
           :visible="accountUi.editMenu.visible"
           :x="accountUi.editMenu.x"
@@ -451,7 +426,6 @@ function useOfflineName(name: string) {
           <div class="menu-item" @click="accountUi.openNameChangePage">修改玩家名</div>
         </MenuPopover>
 
-        <!-- 账号列表菜单（历史正版账号切换/移除/登录新账号） -->
         <MenuPopover
           :visible="accountUi.accountsMenu.visible"
           :x="accountUi.accountsMenu.x"
@@ -769,7 +743,7 @@ function useOfflineName(name: string) {
   gap: 12px;
 }
 
-/* 扩大 hover 热区：鼠标在头像/用户名四周也能保持操作行显示（不占布局、不挡点击） */
+/* 扩大 hover 热区，不占布局、不挡点击 */
 .user-area::before {
   content: "";
   position: absolute;
@@ -793,7 +767,7 @@ function useOfflineName(name: string) {
   display: flex;
   align-items: center;
   justify-content: center;
-  /* 占位图标时无背景；方形"头+带肩"头像完整等比显示 */
+  /* 占位图标无背景；头像等比完整显示 */
   background-color: transparent;
 }
 
@@ -802,7 +776,7 @@ function useOfflineName(name: string) {
   height: 100%;
 }
 
-/* 头像即衣柜入口：hover 品牌色描边提示可点（z-index 盖过 .user-area::before 热区） */
+/* 衣柜入口：hover 描边提示可点（z-index 盖过热区） */
 .avatar.clickable {
   z-index: 1;
   cursor: pointer;
@@ -814,10 +788,7 @@ function useOfflineName(name: string) {
   box-shadow: 0 0 0 3px var(--color-brand-glow);
 }
 
-/* 离线模式：衣柜没有皮肤来源，入口不可点。**不给任何样式**——
- *  点击由 openSkinStudio() 内部守卫拦住（!canOpenSkinStudio 直接 return），
- *  光标也保持默认。头像是内容而非按钮，任何置灰/降透明度都会让它发白、去饱和
- *  （#efdabf 混 45% 白底 → #f6ebdc），看起来像渲染出了问题。 */
+/* 离线模式衣柜无入口：由 openSkinStudio() 内部守卫拦住，此处不给样式。 */
 
 .avatar img {
   max-width: 100%;
@@ -827,7 +798,7 @@ function useOfflineName(name: string) {
   image-rendering: pixelated;
 }
 
-/* 头像加载失败：右下角刷新重试按钮（hover 头像区显示） */
+/* 头像加载失败：右下角重试按钮（hover 头像区显示） */
 .avatar-retry {
   position: absolute;
   right: 4px;
@@ -878,7 +849,7 @@ function useOfflineName(name: string) {
   text-align: center;
   outline: none;
   transition: border-color 0.15s;
-  /* 盖过 .user-area::before hover 热区，保证可点击聚焦 */
+  /* 盖过热区，保证可点击聚焦 */
   position: relative;
   z-index: 1;
 }
@@ -897,7 +868,7 @@ function useOfflineName(name: string) {
   gap: 8px;
 }
 
-/* 箭头按钮（无边框：icon-btn 的边框在样式表更后被覆盖，用双类提特异性） */
+/* 箭头按钮：双类提特异性以覆盖 icon-btn 边框 */
 .icon-btn.hist-btn {
   flex-shrink: 0;
   width: 26px;
@@ -917,7 +888,7 @@ function useOfflineName(name: string) {
   color: var(--color-brand);
 }
 
-/* 历史用户名展开面板：锚定输入框下方，固定高度（超出滚动） */
+/* 历史用户名面板：锚定输入框下方，固定高度超出滚动 */
 .offline-pop {
   position: absolute;
   top: calc(100% + 4px);
@@ -931,12 +902,11 @@ function useOfflineName(name: string) {
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
-  /* expand 目标高度 = 固定高度（共享骨架见 styles/transitions.css） */
+  /* expand 目标高度（共享骨架见 styles/transitions.css） */
   --expand-h: 180px;
 }
 
-/* premium hover actions：始终占位（不影响头像/用户名位置），仅切换透明度。
-   显示条件 hover / 键盘焦点（:focus-within）/ 菜单展开——三者任一即显示。 */
+/* premium hover actions：始终占位，仅切换透明度；hover / :focus-within / 菜单展开任一显示。 */
 .user-actions {
   position: relative;
   z-index: 1; /* 盖过 .user-area::before 热区，保证按钮可点击 */
@@ -954,7 +924,7 @@ function useOfflineName(name: string) {
   pointer-events: auto;
 }
 
-/* 图标操作按钮（衣服 / 编辑 / 登出） */
+/* 图标操作按钮 */
 .icon-btn {
   display: flex;
   align-items: center;
@@ -974,7 +944,7 @@ function useOfflineName(name: string) {
   border-color: var(--color-brand);
 }
 
-/* 账号列表菜单：行 + 删除按钮（菜单壳与 .menu-item/.menu-sep 样式收敛在 MenuPopover） */
+/* 账号列表菜单行 + 删除按钮（菜单壳样式在 MenuPopover） */
 
 .acct-row {
   display: flex;
@@ -1003,7 +973,7 @@ function useOfflineName(name: string) {
   color: var(--text-tertiary);
 }
 
-/* 账号列表 2D 皮肤头像（8×8 头部放大，MC 像素风） */
+/* 账号列表 2D 皮肤头像（8×8 头部放大） */
 .acct-head {
   flex-shrink: 0;
   width: 20px;
@@ -1025,7 +995,7 @@ function useOfflineName(name: string) {
   font-size: 12px;
 }
 
-/* 凭证临近过期/已过期标记：正版 token 约 24h 有效，过期后会自动续签，仅作提醒不阻断操作 */
+/* 凭证临近/已过期标记（token 约 24h，自动续签，仅提醒不阻断） */
 .acct-cred-warn {
   flex-shrink: 0;
   display: flex;
@@ -1055,7 +1025,7 @@ function useOfflineName(name: string) {
   line-height: 1;
   cursor: pointer;
   opacity: 0;
-  visibility: hidden; /* 隐藏态彻底移出命中测试（WebView2 下 pointer-events 过渡不可靠） */
+  visibility: hidden; /* 隐藏态移出命中测试（WebView2 pointer-events 过渡不可靠） */
   transition: opacity 0.12s, visibility 0.12s;
 }
 
@@ -1074,7 +1044,7 @@ function useOfflineName(name: string) {
   cursor: default;
 }
 
-/* 双类提特异性：压过 MenuPopover 内 :slotted(.menu-item:hover) 的品牌色反白 */
+/* 双类提特异性：压过 MenuPopover 的 :slotted(.menu-item:hover) */
 .menu-item.acct-empty:hover {
   background: transparent;
   color: var(--text-tertiary);

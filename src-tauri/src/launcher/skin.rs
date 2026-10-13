@@ -1,21 +1,16 @@
-//! 离线皮肤机制：UUID 模型匹配 + user-properties 纹理注入。
-//! 固定随机行为（用户名哈希决定 Steve/Alex，与游戏内默认皮肤一致）；
-//! 配置层已砍（2026-08），后续由自定义皮肤站登录（外置认证）接管皮肤注入。
+//! 离线皮肤机制：UUID 模型匹配 + user-properties 纹理注入；用户名哈希决定 Steve/Alex（与游戏内默认一致）。
 
 use base64::Engine as _;
 
 use crate::launcher::model::AuthMode;
 
-/// 离线默认 UUID（固定占位）。
 const OFFLINE_BASE_UUID: &str = "00000000FFFFFFFFFFFFFFFFFFFFFFFF";
 
-/// Alex 官方默认皮肤纹理（textures.minecraft.net 固定 hash；与游戏内置 alex.png 一致，已验证）。
-/// Steve 不注入：游戏默认纹理即经典蓝衬衫 Steve。
+/// Alex 官方默认皮肤纹理（textures.minecraft.net 固定 hash，与游戏内置 alex.png 一致）；Steve 不注入（游戏默认即 Steve）。
 const ALEX_TEXTURE_URL: &str = "https://textures.minecraft.net/texture/46acd06e8483b176e8ea39fc12fe105eb3a2a4970f5100057e9d84d4b60bdfa7";
 
-/// PCL 式皮肤模型匹配：
-/// `UUID.hashCode() & 1 == (Uuid[7] ^ Uuid[15] ^ Uuid[23] ^ Uuid[31]) & 1`
-/// （1.8+ 的 DefaultPlayerSkin.isSlimSkin 判定，奇数 → Alex/slim）
+/// PCL 式皮肤模型匹配：`UUID.hashCode() & 1 == (Uuid[7] ^ Uuid[15] ^ Uuid[23] ^ Uuid[31]) & 1`
+/// （1.8+ DefaultPlayerSkin.isSlimSkin，奇数 → Alex/slim）。
 fn uuid_matches_alex(uuid: &str) -> bool {
     let chars: Vec<u32> = uuid.chars().filter_map(|c| c.to_digit(16)).collect();
     if chars.len() != 32 {
@@ -39,8 +34,7 @@ fn skin_matching_uuid(base: &str, want_alex: bool) -> String {
     }
 }
 
-/// 应用离线皮肤：按用户名哈希（random_is_alex）生成匹配模型的 UUID，
-/// 游戏内按 UUID 哈希显示对应默认皮肤（与前端头像渲染一致）。
+/// 应用离线皮肤：按用户名哈希生成匹配模型的 UUID，游戏内按 UUID 哈希显示对应默认皮肤（与前端头像一致）。
 pub fn apply_offline_skin(auth: &mut AuthMode) {
     let AuthMode::Offline { username, uuid } = auth else {
         return;
@@ -51,20 +45,13 @@ pub fn apply_offline_skin(auth: &mut AuthMode) {
     *uuid = skin_matching_uuid(uuid, random_is_alex(username));
 }
 
-/// Random 皮肤模型决策：哈希奇数 → Alex（slim）。apply_offline_skin 与 build_user_properties 共用。
-/// 复用 util::fnv1a64（与前端 hashName 的 FNV-1a 32 位奇偶一致：
-/// FNV-1a 每步 `(h ^ byte) * 奇素数` 不改变最低位，奇偶仅由末字节决定，64/32 位判定等价）。
+/// Random 皮肤模型决策：哈希奇数 → Alex（slim）；与前端头像渲染共用同一哈希（FNV-1a 奇偶一致）。
 fn random_is_alex(username: &str) -> bool {
     crate::util::fnv1a64(username) % 2 == 1
 }
 
-/// 构造 `--user-properties` 参数值（authlib user properties）。
-/// 仅 1.19.2 以下版本的游戏参数含 `${user_properties}`，离线模式 authlib 不校验签名，
-/// 注入纹理即可自定义皮肤（对齐 PCL「离线皮肤仅 1.19.2 以下生效」）。
-/// 在线模式：返回空（皮肤走 sessionserver）。
-/// Alex（哈希决策）注入 slim 纹理；Steve 不注入（游戏默认纹理即经典 Steve）。
-/// 格式统一为 authlib PropertyMap 字符串数组 `{"textures":["<b64>"]}`
-/// （1.12-1.19.2 的 PropertyMap$Serializer 均按此解析）。
+/// 构造 `--user-properties`（authlib PropertyMap `{"textures":["<b64>"]}`）：仅 1.19.2 以下参数含 `${user_properties}`；
+/// 离线模式不校验签名、注入纹理即可自定义皮肤，在线返回空（sessionserver）。Alex 注入 slim，Steve 不注入。
 pub fn build_user_properties(auth: &AuthMode) -> String {
     let AuthMode::Offline { username, .. } = auth else {
         return String::new();
@@ -97,20 +84,17 @@ mod tests {
 
     #[test]
     fn test_skin_matching_uuid() {
-        // 与 Java UUID.hashCode() & 1（isSlimSkin 判定）一致
-        // 匹配收敛：Steve 模式产生非 Alex UUID，Alex 模式产生 Alex UUID
+        // 与 Java UUID.hashCode() & 1（isSlimSkin 判定）一致；最多一次递增即可翻转最低位
         let base = "00000000ffffffffffffffffffffffff";
         let s = skin_matching_uuid(base, false);
         assert!(!uuid_matches_alex(&s), "Steve UUID 不应匹配 Alex: {s}");
         let a = skin_matching_uuid(base, true);
         assert!(uuid_matches_alex(&a), "Alex UUID 应匹配 Alex: {a}");
-        // 最多一次递增即可翻转最低位
         assert!(s[..31] == base[..31] || a[..31] == base[..31]);
     }
 
     #[test]
     fn test_random_decision_consistent() {
-        // UUID 决策与纹理注入决策一致（同一哈希）；注入返回值与决策对应
         let base = "00000000ffffffffffffffffffffffff";
         for name in ["Steve", "Alex", "BridgeFishDev", "Notch", "测试用户"] {
             let want_alex = random_is_alex(name);
@@ -134,8 +118,7 @@ mod tests {
 
     #[test]
     fn fnv1a64_parity_matches_frontend_hash_name() {
-        // 前端 hashName 是 FNV-1a 32 位；Steve/Alex 决策只取最低位。
-        // 守住「64 位与 32 位奇偶一致」这一迁移前提（乘奇素数不改最低位，奇偶仅由末字节决定）。
+        // 前端 hashName 是 FNV-1a 32 位；只取最低位，64/32 位奇偶一致（乘奇素数不改最低位）。
         fn hash32(name: &str) -> u32 {
             let mut h: u32 = 2166136261;
             for b in name.bytes() {

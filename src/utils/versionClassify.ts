@@ -1,7 +1,4 @@
-/**
- * 版本目录名解析工具（命名规则 {mc}-{loader}-{ver}，如 1.18.2-forge-40.1.0）。
- * VersionSelect / VersionSetup 共用。元数据（loader key/标题）来自 versionMeta.ts。
- */
+/** 版本目录名解析，命名规则 {mc}-{loader}-{ver}（如 1.18.2-forge-40.1.0）；元数据见 versionMeta.ts。 */
 import { LOADER_KEYS, LOADER_TITLES } from "./versionMeta";
 
 export interface VersionClass {
@@ -13,11 +10,7 @@ export interface VersionClass {
   mcVersion: string;
 }
 
-/**
- * 解析版本目录名。目录可能被冲突重命名（如 {id}_1），先剥掉 `_数字` 后缀再分类。
- * loader 标记大小写不敏感（PCL2 等外部启动器目录名可能是大写，如 26.1.2-Fabric），
- * 切片索引基于小写串（小写化不改变长度，索引与原串一致）。
- */
+/** 先剥 `_数字` 冲突重命名后缀；loader 标记大小写不敏感，切片索引基于小写串（长度不变）。 */
 export function classifyVersion(name: string): VersionClass {
   const base = name.replace(/_\d+$/, ""); // 冲突重命名 {id}_n → {id}
   const lower = base.toLowerCase();

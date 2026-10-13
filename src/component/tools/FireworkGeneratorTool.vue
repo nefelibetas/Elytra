@@ -126,7 +126,6 @@ async function copyCommand() {
       </div>
     </div>
 
-    <!-- 爆炸配置 -->
     <div class="nb-sec">
       <div class="nb-sec-title">
         {{ itemKind === "firework_rocket" ? "爆炸效果（可添加多个）" : "爆炸效果" }}
@@ -191,7 +190,6 @@ async function copyCommand() {
       </div>
     </div>
 
-    <!-- 输出 -->
     <div class="nb-output">
       <div class="nb-output-head">
         <span>命令 /GIVE（{{ format === "modern" ? "1.20.5+" : "1.13–1.20.4" }}）</span>

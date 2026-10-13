@@ -1,11 +1,6 @@
-//! ── 安装任务持久化（#6 一期）：任务快照 SQLite 存储，崩溃/重启不丢任务 ──
-//! 设计：Elytra 下载任务天然幂等（文件级 sha1 校验 + 已存在跳过 + 残缺目录复用），
-//! 因此"恢复" = 用快照中的 JobSpec 重跑一次，已下载完的文件自动跳过（等价断点续跑），
-//! 不需要 Axolotl 的精确断点续跑。
-//! 快照生命周期：spawn 时写 running → 终态（done/error/cancelled）经 TaskManager::fail/cancel
-//! 收口更新 → 进程崩溃残留 running → 下次启动 task::init() 标记 interrupted → 前端询问恢复。
-//! 库文件：`config_dir()/tasks.db`（与 Settings.toml 同目录约定；config_dir 平台感知，
-//! Windows/Linux exe 旁 `Elytra/`，macOS `~/Library/Application Support/Elytra/`）。
+//! ── 安装任务持久化：任务快照 SQLite 存储，崩溃/重启不丢任务 ──
+//! "恢复" = 用快照 JobSpec 重跑（下载任务天然幂等：文件级 sha1 + 已存在跳过 + 残缺目录复用）；生命周期：spawn 写 running → 终态经 TaskManager::fail/cancel 收口 → 崩溃残留 running → 启动 task::init() 标 interrupted。
+//! 库文件：`config_dir()/tasks.db`（Win/Linux exe 旁 `Elytra/`，macOS `~/Library/Application Support/Elytra/`）。
 
 use std::sync::LazyLock;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -21,13 +16,9 @@ use crate::util::{block_on, config_dir};
 /// 任务恢复凭证：重建任务所需的最小信息（各任务一）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum JobSpec {
-    /// 完整下载/安装（原版/ModLoader/OptiFine/Fabric API）
     Download(DownloadTask),
-    /// 批量文件下载（mod / 资源包 / 数据包 / 光影包）
     Files(DownloadFilesTask),
-    /// 版本补全（修复）
     Repair { version_dir_name: String },
-    /// JDK 安装（下载缺失 Java 运行时）
     InstallJdk { major: u32 },
     /// 整合包安装（单卡片全流程；恢复 = 重跑整卡，各环节幂等）
     ModpackInstall(ModpackInstallSpec),
@@ -72,12 +63,10 @@ fn db_path() -> std::path::PathBuf {
     config_dir().join("tasks.db")
 }
 
-/// 同步执行异步 DB 操作（复用 util::block_on；任务级低频操作，阻塞毫秒级可接受）。
-/// 注意：block_on 内不得再嵌套 block_on——tokio 禁止"runtime 内启动 runtime"。
+/// 同步执行异步 DB 操作（复用 util::block_on；低频、阻塞毫秒级）；block_on 内不得再嵌套 block_on（tokio 禁止 runtime 内启动 runtime）。
 fn pool() -> Result<&'static SqlitePool, String> {
     POOL.as_ref().map_err(|e| {
-        // 池初始化失败是环境/权限问题，留痕一次即可（后续每次调用不再刷屏）；
-        // 控制流不变：DB 不可用不影响任务执行，只是快照/崩溃恢复停用。
+        // 池初始化失败仅留痕一次；DB 不可用不影响任务执行，仅停用快照/崩溃恢复。
         static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
             eprintln!("[task-store] 任务快照数据库不可用，进度快照与崩溃恢复停用: {e}");
@@ -96,10 +85,7 @@ static POOL: LazyLock<Result<SqlitePool, String>> = LazyLock::new(|| {
             // 多连接并发写：sqlite 文件锁等待而非立即 BUSY 报错
             .busy_timeout(std::time::Duration::from_secs(5));
         let pool = SqlitePoolOptions::new()
-            // 单连接 + timeout 取消查询时连接可能不回池（sqlx 已知陷阱）→
-            // 池耗尽后所有 DB 操作 acquire 超时静默失败：快照残留（重启误报
-            // 未完成）+ 后续任务无快照。多连接稀释该风险；acquire 显式超时
-            // 防无限等待。
+            // sqlx 陷阱：单连接 + 查询超时取消时连接可能不回池 → 池耗尽后 acquire 超时静默失败；多连接稀释风险，acquire 显式超时防无限等待。
             .max_connections(4)
             .acquire_timeout(std::time::Duration::from_secs(2))
             .connect_with(opts)
@@ -129,8 +115,7 @@ fn now() -> i64 {
         .unwrap_or(0)
 }
 
-/// 写入任务快照（INSERT OR REPLACE；spawn 时调用，status=running）。
-/// DB 故障静默忽略（任务运行不依赖持久化，仅影响崩溃恢复能力）。
+/// 写入任务快照（INSERT OR REPLACE），spawn 时调用；DB 故障静默忽略。
 pub fn save_snapshot(id: &str, name: &str, spec: &JobSpec, status: TaskStatus) {
     let Ok(pool) = pool() else {
         return;
@@ -163,8 +148,7 @@ pub fn save_snapshot(id: &str, name: &str, spec: &JobSpec, status: TaskStatus) {
     });
 }
 
-/// 更新快照状态（终态收口：TaskManager::fail / cancel 调用）。
-/// DB 写带 2s 超时：sqlite 文件锁/连接池异常时静默放弃，不阻塞 cancel/fail。
+/// 更新快照状态（TaskManager::fail/cancel 调用）；DB 写 2s 超时，异常静默放弃不阻塞 cancel/fail。
 pub fn update_status(id: &str, status: TaskStatus) {
     let Ok(pool) = pool() else {
         return;
@@ -185,8 +169,7 @@ pub fn update_status(id: &str, status: TaskStatus) {
     });
 }
 
-/// 启动时把残留 running 标记为 interrupted（进程崩溃现场），
-/// 供前端 `list_interrupted_tasks` 拉取询问恢复。
+/// 启动时把残留 running 标为 interrupted，供 `list_interrupted_tasks` 拉取询问恢复。
 pub fn mark_crashed_as_interrupted() {
     let Ok(pool) = pool() else {
         return;
@@ -206,9 +189,7 @@ pub fn mark_crashed_as_interrupted() {
     });
 }
 
-/// 列出中断（running/interrupted）任务快照，按更新时间倒序。
-/// kind 按 spec 反序列化。注意：rows 先物化出 block_on（block_on 内不得再嵌套
-/// block_on——tokio 禁止"runtime 内启动 runtime"），逐条补查在外部做。
+/// 列出中断（running/interrupted/paused）快照，按更新时间倒序；rows 先物化出 block_on（不嵌套 runtime）。
 pub fn list_interrupted() -> Vec<InterruptedJob> {
     let Ok(pool) = pool() else {
         return Vec::new();
@@ -359,10 +340,7 @@ mod tests {
         cleanup(&[&id]);
     }
 
-    /// 回归：tauri async command（runtime worker 线程）内调用同步 store 操作不得 panic。
-    /// 此前 Handle::block_on 在 worker 线程直接调用会炸
-    /// "Cannot start a runtime from within a runtime"（tokio 禁止 runtime 内再启动 runtime），
-    /// 下载任务 spawn 后写快照/收口状态即触发。
+    /// tauri async command（worker 线程）内调用同步 store 操作不得 panic：block_on 在 worker 线程会炸 "Cannot start a runtime from within a runtime"。
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn store_ops_from_runtime_worker_no_panic() {
         let id = format!("test_worker_{}", std::process::id());

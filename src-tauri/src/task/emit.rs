@@ -1,29 +1,7 @@
-//! 事件派发：事件出口抽象（[`EventSink`]）+ 派发线程 + 进度锁外的 emit。
-//!
-//! # 为什么需要派发线程
-//!
-//! `app.emit` 是同步调用：webview（JS 主线程）未及时消费 IPC 时会阻塞调用方。
-//! 任务线程若卡在 emit 上，表现为「任务卡死 + 取消失效」（取消的 `try_lock` 已
-//! 释放但任务不前进）。统一走独立派发线程后，任务线程 / 进度锁永远不碰 IPC。
-//!
-//! # 为什么进度帧要按任务合并（[`Dispatcher`]）
-//!
-//! 派发队列不能无界：webview 卡住时（例如正渲染上千个版本卡片）生产者仍按心跳
-//! 频率投递——任务 150ms、工具箱 250ms 一帧，而 `TaskProgress` 是**完整快照**
-//! （整合包安装的 `steps` 每个内容文件一步，单帧可达数十 KB）。不合并的话内存按
-//! 「卡顿时长 × 频率 × 帧大小」线性上涨（整合包场景量级可达百 KB/s）。
-//!
-//! 合并规则：**同一 (事件, 任务) 只保留最新一帧**。
-//! - 语义安全：payload 是完整快照而非增量，被合并掉的中间帧只是少刷新几次进度条；
-//!   终态（done/error/cancelled）就是该任务最后一次写入，**不会被丢弃**。
-//! - 键必须含**事件名**：`task-waiting-user` 与 `task-progress` 属于同一任务，
-//!   若共用槽位，后到的进度帧会把「等你决策」的弹窗帧顶掉 → 任务永远等人来点。
-//! - 只合并高频快照类（`task-progress` / `tooldl-progress`）；其余低频事件
-//!   （登录完成 / 联机状态 / 游戏退出 / 配置恢复 / 等待用户决策）不可丢且量小，
-//!   走 FIFO 直投。
-//!
-//! 两条通道之间无全局顺序保证（语义相互独立）；同一 (事件, 任务) 内部严格保序，
-//! 后帧绝不会先于前帧送达（否则前端卡片状态会回退）。
+//! 事件派发：事件出口抽象（[`EventSink`]）+ 派发线程 + 进度锁外 emit。
+//! 派发线程：`app.emit` 同步阻塞，任务线程/进度锁绝不直接碰 IPC。
+//! 合并规则：进度帧按 (事件名, 任务) 只留最新一帧（payload 为完整快照）；键必须含事件名，否则
+//! `task-waiting-user` 与 `task-progress` 共槽会顶掉弹窗帧；仅高频快照类合并，其余 FIFO 直投且保序。
 
 use parking_lot::{Condvar, Mutex};
 use serde::Serialize;
@@ -35,12 +13,7 @@ use tauri::Emitter;
 use super::model::TaskProgress;
 use crate::events;
 
-/// 任务事件出口。
-///
-/// 生产实现是 Tauri 的 `AppHandle`（见下方 blanket impl），事件经派发线程投递；
-/// 测试可注入 no-op 或记录型实现 —— 这是任务执行体（`run_task` 等）不直接依赖
-/// `tauri::AppHandle` 的原因，因而可在集成测试中被驱动（`tauri::test::mock_app()`
-/// 返回的 `MockRuntime` 与生产 `Wry` 不是同一类型，无法互相替代）。
+/// 任务事件出口：生产为 Tauri `AppHandle`（经派发线程投递），测试注入 no-op/记录型实现；任务体不直接依赖 `AppHandle`，便于集成测试驱动。
 pub trait EventSink: Send + Sync + 'static {
     /// 派发一条事件（实现需自行保证不阻塞调用方：生产走队列线程）。
     fn send(&self, event: &'static str, payload: serde_json::Value);
@@ -48,10 +21,9 @@ pub trait EventSink: Send + Sync + 'static {
 
 impl<R: tauri::Runtime> EventSink for tauri::AppHandle<R> {
     fn send(&self, event: &'static str, payload: serde_json::Value) {
-        // 先判定并入键，再把 payload 移进 job
         let key = coalesce_key(event, &payload);
         let app = self.clone();
-        // 只做 mutex/channel 投递（O(1)），实际 emit 由派发线程执行
+        // O(1) 入队，emit 由派发线程执行
         let job: Job = Box::new(move || {
             let _ = app.emit(event, &payload);
         });
@@ -76,17 +48,13 @@ static DISPATCH: LazyLock<Arc<Dispatcher>> = LazyLock::new(|| {
     dispatcher
 });
 
-/// 事件派发器：高频快照帧按 (事件, 任务) 合并，低频事件 FIFO 直投。
-///
-/// 状态由一个互斥量 + 条件变量保护：生产者只做 `insert`/`push_back` + `notify_one`
-/// （O(1)，永不阻塞），派发线程取出后**在锁外**执行（`app.emit` 可能长时间阻塞）。
+/// 高频快照帧按 (事件, 任务) 合并，低频事件 FIFO 直投；生产者仅 O(1) insert/notify，派发线程锁外执行（`app.emit` 可能长时间阻塞）。
 #[derive(Default)]
 struct Dispatcher {
     inner: Mutex<Pending>,
     wake: Condvar,
 }
 
-/// 派发器内部状态。
 #[derive(Default)]
 struct Pending {
     /// `(事件名, 任务 id)` → 待发的最新一帧（同键新帧覆盖旧帧）。
@@ -96,7 +64,7 @@ struct Pending {
 }
 
 impl Dispatcher {
-    /// 投递一帧进度快照：同键已排队的旧帧被替换（丢弃的是**中间帧**，不是终态）。
+    /// 同键旧帧被替换（丢中间帧，非终态）。
     fn enqueue_progress(&self, key: String, job: Job) {
         let mut pending = self.inner.lock();
         pending.progress.insert(key, job);
@@ -123,7 +91,7 @@ impl Dispatcher {
         }
     }
 
-    /// 阻塞至有活可干，然后取走全部待发（锁内只做搬运，执行在锁外）。
+    /// 阻塞到有活，取走全部待发（锁内只搬运）。
     fn wait_and_take(&self) -> (Vec<Job>, Vec<Job>) {
         let mut pending = self.inner.lock();
         while pending.progress.is_empty() && pending.immediate.is_empty() {
@@ -139,22 +107,19 @@ impl Dispatcher {
         )
     }
 
-    /// 取走当前待发（不执行）。仅供单测确定性驱动。
+    /// 取走当前待发（不执行），仅供单测确定性驱动。
     #[cfg(test)]
     fn take_pending(&self) -> (Vec<Job>, Vec<Job>) {
         Self::take(&mut self.inner.lock())
     }
 }
 
-/// 合并键：`事件名\u{1}任务 id`（`\u{1}` 不会出现在事件名或 id 中）。
+/// 合并键：`事件名\u{1}任务 id`（`\u{1}` 不会出现在两者中）。
 fn frame_key(event: &str, id: &str) -> String {
     format!("{event}\u{1}{id}")
 }
 
-/// 该事件是否可合并，可合并时返回其键。
-///
-/// 只认高频快照类事件，且必须能从 payload 取到任务 id —— 取不到就返回 `None`
-/// （宁可多投一帧，也不能把不同东西塞进同一个槽位）。
+/// 可合并时返回键：仅高频快照类且须能取到任务 id，否则 `None`（宁可多投也不顶错槽）。
 fn coalesce_key(event: &str, payload: &serde_json::Value) -> Option<String> {
     if event == events::TASK_PROGRESS || event == events::TOOL_DL_PROGRESS {
         // 任务进度用 `task_id`，工具箱下载用 `id`（各自完整快照的标识字段）。
@@ -165,8 +130,7 @@ fn coalesce_key(event: &str, payload: &serde_json::Value) -> Option<String> {
         return Some(frame_key(event, id));
     }
     if event == events::AUTO_TASK_PROGRESS {
-        // 自动任务进度按「实例 + 阶段」合并：同实例三个阶段互不顶替，
-        // 且新阶段开始时旧阶段的残留帧不会复活。
+        // 自动任务进度按 (实例, 阶段) 合并，避免旧阶段残留帧顶掉新阶段。
         let id = payload.get("version_id")?.as_str()?;
         let phase = payload.get("phase")?.as_str()?;
         return Some(frame_key(event, &format!("{id}\u{2}{phase}")));
@@ -195,14 +159,8 @@ pub(crate) fn update_and_emit(
     guard: &Arc<Mutex<TaskProgress>>,
     f: impl FnOnce(&mut TaskProgress),
 ) {
-    // 锁内更新 + clone 快照，锁外 emit：emit 若因 webview 未及时消费而阻塞，
-    // 不会持有 progress 锁——否则取消（cancel 的 try_lock）和进度读取都会卡死，
-    // 表现为"取消失效"。
-    //
-    // 优先 try_lock：正常短临界区立即成功，不阻塞调用方。仅当锁已被占用
-    // （异常：持锁方长时间未释放）才退化为阻塞式 lock —— parking_lot 会在锁
-    // 释放时立即唤醒，而此前的 `std::thread::sleep(5ms)` 自旋既占死 tokio
-    // worker，又平白引入最多 5ms 延迟。临界区内无 IO/await，不会长等。
+    // 锁内更新 + clone，锁外 emit：emit 阻塞时不持 progress 锁，否则 cancel 的 try_lock 与进度读取
+    // 都会卡死。优先 try_lock，被占才退化阻塞 lock；临界区无 IO/await。
     let snapshot = match guard.try_lock() {
         Some(p) => p,
         None => {
@@ -216,7 +174,7 @@ pub(crate) fn update_and_emit(
         f(&mut p);
         snapshot_clone = p.clone();
     }
-    // 锁外 emit（emit_event 序列化/投递不占 progress 锁）
+    // 锁外 emit
     emit(sink, &snapshot_clone);
 }
 
@@ -237,7 +195,7 @@ mod tests {
         frame_key(event, id)
     }
 
-    /// 只有高频快照类事件可合并，且必须带标识字段。
+    /// 仅高频快照类且带标识字段才可合并。
     #[test]
     fn coalesce_key_covers_only_high_rate_snapshots() {
         assert_eq!(
@@ -253,8 +211,7 @@ mod tests {
             Some(key(events::TOOL_DL_PROGRESS, "d1").as_str())
         );
 
-        // 等待用户决策与进度帧同属一个任务，但**不可共槽**：否则弹窗帧被顶掉，
-        // 任务会一直等人点、前端却从没弹过窗。
+        // 等待用户决策与进度帧同任务但不可共槽，否则弹窗帧被顶掉。
         assert!(coalesce_key(events::TASK_WAITING_USER, &json!({"task_id": "t1"})).is_none());
         // 其余低频事件直投。
         assert!(coalesce_key(events::ONLINE_STATE, &json!({"status": "idle"})).is_none());
@@ -262,8 +219,7 @@ mod tests {
         // 快照类但取不到 id → 不合并（宁可多投，不能顶错槽）。
         assert!(coalesce_key(events::TASK_PROGRESS, &json!({"status": "running"})).is_none());
 
-        // 自动任务进度按（实例 + 阶段）合并：同实例不同阶段必须分槽，
-        // 否则 pre_launch 的残留帧会顶掉 post_exit 的进度。
+        // 自动任务进度按（实例 + 阶段）合并：不同阶段/实例必须分槽，否则残留帧顶掉进度。
         assert_eq!(
             coalesce_key(
                 events::AUTO_TASK_PROGRESS,

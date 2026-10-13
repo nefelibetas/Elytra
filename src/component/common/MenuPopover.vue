@@ -1,9 +1,6 @@
 <script setup lang="ts">
-// 共享弹出菜单壳：Teleport 到 body + 视口 fixed 定位 + @click.stop 阻断冒泡
-// （window click 统一关闭菜单的监听仍由使用方注册）。
-// 壳样式与菜单项通用样式（.menu-item / .menu-sep）收敛于此，替换原先
-// AccountSection（skin-menu 系）与 GameDirList（vs-item-menu 系）两份重复实现；
-// 两处壳样式仅 min-width 不同（164px / 120px），经 prop 传入。
+// 共享弹出菜单壳：Teleport 到 body + fixed 视口定位 + @click.stop 阻断冒泡（window click 关闭监听由使用方注册）。
+// .menu-item / .menu-sep 通用样式收敛于此；各出现处仅 min-width 不同（经 prop 传入）。
 withDefaults(
   defineProps<{
     /** 开关状态。 */
@@ -38,8 +35,7 @@ withDefaults(
 
 <style scoped>
 /* 壳：Teleport 到 body 的 fixed 弹出层。left/top 由调用方内联传入，
-   必须 fixed 定位才生效——缺 position 会退化为 body 底部 static 块，
-   菜单渲染到窗口角落/屏幕外，表现为"点了没反应"。 */
+   缺 position 会退化为 static 块渲染到屏幕外（表现为"点了没反应"）。 */
 .menu-pop {
   position: fixed;
   z-index: var(--z-menu); /* 内容/边缘加深(2000)之上，toast(3000)/tooltip(3100) 之下 */

@@ -1,5 +1,4 @@
-//! 跨任务下载路径互斥：不同版本任务共用 libraries/assets 目录，按目标路径独占，
-//! 避免并发写同一文件导致 sha1 校验互相踩踏（只锁具体目标，不锁整个版本目录）。
+//! 跨任务下载路径互斥：按具体目标路径独占（不锁版本目录），避免并发写同一文件。
 
 use parking_lot::Mutex;
 use std::collections::HashSet;
@@ -33,7 +32,7 @@ impl Drop for PathLock {
     }
 }
 
-/// 轮询等待获取路径锁：另一任务正占用同一目标路径时短暂等待其完成。
+/// 轮询等待路径锁：被占用时每 50ms 重试。
 pub async fn wait_path_lock(path: &Path) -> PathLock {
     loop {
         if let Some(lock) = PathLock::try_acquire(path) {

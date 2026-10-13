@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 设置-启动器日志：查看启动器自身输出（stdout/stderr 重定向到 exe 旁 Elytra/launcher.log）。
+// 启动器日志：查看 launcher.log（stdout/stderr 重定向到 exe 旁 Elytra/）。
 import { onMounted, ref } from "vue";
 import { loadLauncherLog, openLauncherLogDir } from "../../store/app/appLog";
 import { RefreshCw, FolderOpen } from "@lucide/vue";
@@ -20,7 +20,6 @@ async function loadLog() {
 
 onMounted(loadLog);
 
-/** 打开启动器日志所在目录（exe 旁 Elytra/）。 */
 async function openLogDir() {
   try {
     await openLauncherLogDir();
@@ -53,7 +52,6 @@ async function openLogDir() {
 </template>
 
 <style scoped>
-/* 标题（左）+ 刷新按钮（右，底对齐）同行 */
 .slog-actions {
   display: flex;
   align-items: center;

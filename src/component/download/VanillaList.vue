@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// 原版游戏版本列表页：最新版本 + 正式版/预览版/远古版/愚人节版分组
 import VersionCard from "../download/VersionCard.vue";
 import VersionItem from "../download/VersionItem.vue";
 import {
@@ -45,7 +44,7 @@ import cobbleIcon from "../../assets/cobble.png";
 .card { background-color: var(--surface-card); border: 1px solid var(--border-default); border-radius: var(--radius-md); }
 .card-body {
   overflow: hidden;
-  /* 与 VersionCard 一致：底部圆角贴合 .card 圆角，最后一项 hover 背景不露直角 */
+  /* 与 VersionCard 一致：底部圆角贴合 .card，末项 hover 背景不露直角 */
   border-radius: 0 0 var(--radius-md) var(--radius-md);
 }
 .card-title {

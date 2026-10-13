@@ -1,11 +1,9 @@
 // ── 内存与 GC 策略：JVM 堆分配 + GC 参数 ──
-// 纯策略函数（输入配置/目录 → 输出参数），由 args.rs 的 build_launch_command 调用。
 
 use std::path::Path;
 
 use crate::launcher::model::GcType;
 
-/// 根据 GC 类型返回对应的 JVM 参数
 pub fn gc_args(gc: &GcType) -> Vec<String> {
     match gc {
         GcType::PreferZgc => vec![
@@ -48,11 +46,7 @@ fn count_mods(version_dir: &Path) -> u32 {
         .unwrap_or(0)
 }
 
-/// 自动推测游戏内存（MB）：按剩余内存 + mod 数量动态分配。
-///
-/// 策略（-Xmx 是堆上限，给多不预占，核心约束是别超过系统剩余）：
-/// - 基准比例 60%（0 mod）；每 mod +0.3%，60 个 mod 封顶（最多 78%）
-/// - 封顶剩余内存的 85%（留呼吸空间防 OOM）；下限 2GB
+/// 自动推测游戏内存（MB，-Xmx 堆上限）：基准 60%（0 mod），每 mod +0.3%，60 mod 封顶 78%；再封顶系统剩余 85%，下限 2GB。
 pub fn guess_auto_memory(version_dir: &Path) -> u32 {
     auto_alloc_memory(system_memory_mb().1, count_mods(version_dir))
 }
@@ -60,8 +54,7 @@ pub fn guess_auto_memory(version_dir: &Path) -> u32 {
 /// 系统物理内存（MB）：(总内存, 可用内存)。三平台统一入口，启动内存显示与自动分配共用。
 pub fn system_memory_mb() -> (u64, u64) {
     #[cfg(target_os = "windows")]
-    // SAFETY: MEMORYSTATUSEX 为 #[repr(C)]，dw_length 已置为结构体真实大小；
-    // 传入的指针指向本栈帧上已完整初始化的 status，GlobalMemoryStatusEx 只会写入该结构体内，返回值已检查。
+    // SAFETY: MEMORYSTATUSEX 为 #[repr(C)]，dw_length 已置为结构体真实大小；传入的指针指向本栈帧已完整初始化的 status，GlobalMemoryStatusEx 只会写入该结构体内，返回值已检查。
     unsafe {
         #[allow(clippy::upper_case_acronyms)]
         type DWORD = u32;
@@ -120,9 +113,7 @@ pub fn system_memory_mb() -> (u64, u64) {
     }
     #[cfg(target_os = "macos")]
     {
-        // sysctl hw.memsize（字节）→ 总内存；可用内存取总内存 60% 保守估算
-        // （macOS 无直接的 available sysctl，free+inactive+speculative 组合复杂，
-        // 60% 与 Windows 兜底同保守级别，够自动分配用）
+        // sysctl hw.memsize（字节）→ 总内存；可用内存取 60% 保守估算（macOS 无直接 available sysctl）。
         let total = sysctl_u64("hw.memsize").map(|b| b / 1024 / 1024).unwrap_or(16384);
         (total, total * 60 / 100)
     }
@@ -132,14 +123,12 @@ pub fn system_memory_mb() -> (u64, u64) {
     }
 }
 
-/// macOS：读 sysctl 数值（如 hw.memsize）。
 #[cfg(target_os = "macos")]
 fn sysctl_u64(name: &str) -> Option<u64> {
     let mut out = 0u64;
     let mut len = std::mem::size_of::<u64>() as usize;
     let c_name = std::ffi::CString::new(name).ok()?;
-    // SAFETY: out 是本栈帧上的 u64，len 为其字节长度，c_name 是有效的 NUL 结尾 C 字符串；
-    // sysctlbyname 按 len 写入 out，返回值已检查，仅在 ret == 0 时读取 out。
+    // SAFETY: out 是本栈帧上的 u64，len 为其字节长度，c_name 是有效的 NUL 结尾 C 字符串；sysctlbyname 按 len 写入 out，返回值已检查，仅在 ret == 0 时读取 out。
     let ret = unsafe {
         libc::sysctlbyname(
             c_name.as_ptr(),
@@ -185,7 +174,6 @@ mod tests {
         for i in 0..n {
             std::fs::write(mods.join(format!("mod{i}.jar")), b"x").unwrap();
         }
-        // 非 jar 文件不应计入
         std::fs::write(mods.join("config.json"), b"{}").unwrap();
         d
     }
@@ -200,20 +188,15 @@ mod tests {
     #[test]
     fn test_auto_memory_strategy() {
         let avail = 9216u64; // 剩余 9GB
-                             // 0 mod → 60% = 5529MB
         assert_eq!(auto_alloc_memory(avail, 0), (9216.0 * 0.60) as u32);
-        // 30 mod → 69%
         assert_eq!(auto_alloc_memory(avail, 30), (9216.0 * 0.69) as u32);
-        // 60 mod → 78% 封顶（比例不再随 mod 增长）
         assert_eq!(auto_alloc_memory(avail, 60), (9216.0 * 0.78) as u32);
         assert_eq!(auto_alloc_memory(avail, 80), (9216.0 * 0.78) as u32);
-        // 大 mod 数不超过 85% 封顶
         assert!(auto_alloc_memory(avail, 1000) <= (9216.0 * 0.85) as u32);
     }
 
     #[test]
     fn test_auto_memory_min_floor() {
-        // 剩余 2.5GB：60% = 1536MB → 下限 2048MB；剩余 5GB 时正常分配
         assert_eq!(auto_alloc_memory(2560, 0), 2048);
         assert_eq!(auto_alloc_memory(2560, 30), 2048); // 66% 仍低于下限
         assert_eq!(auto_alloc_memory(5120, 0), (5120.0 * 0.60) as u32);

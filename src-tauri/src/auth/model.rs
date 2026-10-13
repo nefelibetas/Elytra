@@ -3,14 +3,12 @@ use crate::persist;
 use serde::{Deserialize, Serialize};
 
 /// Microsoft 正版账号（含长期 refresh_token 与短期 Minecraft access_token）。
-/// 敏感数据安全：经 persist::secrets 存到 `Elytra/secrets.bin`（Windows DPAPI 加密，
-/// 绑定当前用户账户），**不进 Settings.toml 明文**。
+/// 经 persist::secrets 存到 `Elytra/secrets.bin`（Windows DPAPI，绑定当前用户账户），不进 Settings.toml 明文。
 #[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[ts(export_to = "auth/")]
 pub struct MsAccount {
     /// Minecraft profile uuid（无连字符）
     pub uuid: String,
-    /// 游戏名
     pub name: String,
     /// Minecraft access_token（短时有效，启动游戏用）
     pub access_token: String,
@@ -34,7 +32,7 @@ pub fn read() -> Option<MsAccount> {
 }
 
 /// 保存正版账号：按 uuid upsert 并置为当前（移到列表末尾）。
-/// 走原子读-改-写：并发（静默刷新的 save 与登录/删除重叠）下用陈旧列表整体写回会丢更新。
+/// 原子读-改-写：并发（静默刷新与登录/删除重叠）下用陈旧列表整体写回会丢更新。
 pub fn save(account: &MsAccount) -> Result<(), String> {
     let account = account.clone();
     persist::secrets::update_json_list(constants::SECT_MS_ACCOUNTS, move |list: &mut Vec<MsAccount>| {
@@ -76,7 +74,6 @@ mod tests {
         .ok();
     }
 
-    /// 多账号：save 追加新账号，upsert 不重复，末尾 = 当前。
     #[test]
     fn save_appends_and_upserts_by_uuid() {
         cleanup();
@@ -86,7 +83,6 @@ mod tests {
         assert_eq!(read_all().len(), 2);
         assert_eq!(read().unwrap().uuid, "uuid-b", "最近保存的应为当前");
 
-        // upsert：更新已有 uuid 并置为当前，不新增条目
         save(&sample("uuid-a", "Alice2")).unwrap();
         let all = read_all();
         assert_eq!(all.len(), 2, "同 uuid 保存应更新而非追加");
@@ -97,7 +93,6 @@ mod tests {
         cleanup();
     }
 
-    /// remove：按 uuid 删除，删除当前后回退到前一账号；清空后 read 为 None。
     #[test]
     fn remove_drops_account_and_falls_back() {
         cleanup();

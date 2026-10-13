@@ -1,6 +1,5 @@
-/// 错误上下文宏: 短文案 + 错误原因, 中间换行
-/// 形态1: `common_err_ctx!("短文案")`，必须为纯文本
-/// 形态2: `common_err_ctx!("fmt文本", arg1, arg2, ...)`，可格式化
+/// 错误上下文宏：短文案 + 换行 + 错误原因。
+/// 形态1 `common_err_ctx!("纯文本")`；形态2 `common_err_ctx!("fmt", args...)` 可格式化。
 macro_rules! common_err_ctx {
     ($fmt: literal, $($arg: expr),* $(,)?) => {
         |e| format!("{}\n{}", format!($fmt, $($arg)*), e)
@@ -10,8 +9,7 @@ macro_rules! common_err_ctx {
     };
 }
 
-/// 快速返回错误
-/// bail!("{err_prefix}失败\nHTTP {}", resp.status())
+/// 快速返回错误（`bail!(...)` → `return Err(format!(...))`）
 macro_rules! bail {
     ($($t: tt)*) => {
         return Err(format!($($t)*))

@@ -1,24 +1,18 @@
 // 皮肤绘画器 store（模块级 reactive 单例，项目约定无 Pinia）。
-//
-// 像素缓冲**刻意不走响应式**：64×64×4 = 16KB 的 Uint8ClampedArray 一旦被 Vue 深度代理，
-// 每次读写都要过 Proxy，画笔拖动会明显掉帧。约定：像素存普通模块变量，视图只订阅
-// `revision` 计数，写入端改完像素后调 `bumpRevision()`（组件侧再用 rAF 合并重绘）。
+// 像素缓冲**刻意非响应式**（16KB Uint8ClampedArray 被 Vue 深度代理会致画笔拖动掉帧）：像素存普通模块变量，视图只订阅 `revision`；写入端改完像素调 `bumpRevision()`（组件侧 rAF 合并重绘）。
 
 import { reactive } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { loadSkinImage } from "../skin/skinRender";
 
-/** 导出 PNG 到指定路径（IPC：写文件在后端完成）。 */
 export async function exportSkinPng(path: string, b64: string): Promise<void> {
   await invoke("export_skin_png", { path, b64 });
 }
 
-/** 从文件读取 PNG，返回 base64（IPC：读文件在后端完成）。 */
 export async function importSkinPng(path: string): Promise<string> {
   return invoke<string>("import_skin_png", { path });
 }
 
-/** 画布边长（Mojang 公开布局）。 */
 export const SKIN_SIZE = 64;
 
 /** 编辑工具（hand = 抓手，只用于平移画布，不改像素）。 */
@@ -35,19 +29,11 @@ export interface EditorRegion {
   y: number;
   w: number;
   h: number;
-  /** 标注色：内层深、第二层浅（同一部位的两层同色系，一眼看出对应关系）。 */
   color: string;
-  /** 0 = 第一层（本体），1 = 第二层（帽子/外套/袖腿）。预览底纹只垫第一层。 */
   layer: 0 | 1;
 }
 
-/**
- * 皮肤 64×64 的部位标注。矩形是该立方体在展开图上的**取样区**（宽 2(d+w)、高 d+h），
- * 十字形之外的四个角是空像素（不属于任何面），故矩形只作定位参考、不做像素归属校验。
- *
- * 每块一个颜色：十几个矩形同色时，相邻两块的分界线根本认不出属于哪个部位；
- * 第二层（帽子/外套/袖子/裤腿）取本体色系的浅色，内层外层一眼可分。
- */
+/** 皮肤 64×64 部位标注。矩形为立方体展开取样区（宽 2(d+w)、高 d+h）；十字形外四角为空像素，矩形仅作定位参考、不校验像素归属。第二层取本体浅色以便区分。 */
 export const EDITOR_REGIONS: readonly EditorRegion[] = [
   { key: "head", label: "头", x: 0, y: 0, w: 32, h: 16, color: "#f59e0b", layer: 0 },
   { key: "hat", label: "帽子层", x: 32, y: 0, w: 32, h: 16, color: "#fcd34d", layer: 1 },
@@ -68,7 +54,7 @@ const UNDO_LIMIT = 30;
 
 /** 像素缓冲（非响应式，见文件头）。null = 尚未载入。 */
 let pixels: Uint8ClampedArray | null = null;
-/** 撤销 / 重做栈：整帧快照（这个量级下差分不值得）。 */
+/** 撤销 / 重做栈：整帧快照（差分不值得）。 */
 let undoStack: Uint8ClampedArray[] = [];
 let redoStack: Uint8ClampedArray[] = [];
 /** 笔画起点快照（pointerdown 取，pointerup 时无变化则丢弃，避免占栈）。 */
@@ -80,32 +66,26 @@ export const skinEditor = reactive({
   /** 是否已有可编辑画布。 */
   ready: false,
   tool: "brush" as EditorTool,
-  /** 当前颜色（#rrggbb）。 */
   color: "#4f8ef7",
-  /** 当前颜色的不透明度（0-255）。 */
   alpha: 255,
-  /** 笔刷边长（像素）：1 = 单像素点，2/3 = 方块笔刷（大面铺色用）。 */
+  /** 笔刷边长（像素）：1 = 单像素点，2/3 = 方块笔刷。 */
   size: 1,
   showGrid: true,
   showRegions: true,
-  /** 导出时使用的文件名（不含扩展名）。 */
   name: "",
   variant: "CLASSIC" as EditorVariant,
   /** 导入图片的原始高度（0 = 空白画布）：< 64 说明是旧版 64×32 皮肤，渲染要按 legacy 走。 */
   sourceHeight: 0,
-  /** 撤销 / 重做可用深度（视图据此禁用按钮）。 */
   undoDepth: 0,
   redoDepth: 0,
   /** 当前指针所在部位的 key（空串 = 不在任何标注区内），画布据此高亮该块。 */
   hoverKey: "",
 });
 
-/** 像素缓冲（活引用，写后需 `bumpRevision`）。 */
 export function editorPixels(): Uint8ClampedArray | null {
   return pixels;
 }
 
-/** 通知视图像素已变。 */
 export function bumpRevision() {
   skinEditor.revision++;
 }
@@ -115,7 +95,6 @@ function syncDepths() {
   skinEditor.redoDepth = redoStack.length;
 }
 
-/** 重置所有编辑态（载入 / 新建共用）。 */
 function resetState() {
   undoStack = [];
   redoStack = [];
@@ -125,7 +104,6 @@ function resetState() {
   bumpRevision();
 }
 
-/** 新建空白画布（全透明 64×64）。 */
 export function newEditorCanvas() {
   pixels = new Uint8ClampedArray(SKIN_SIZE * SKIN_SIZE * 4);
   skinEditor.name = "新皮肤";
@@ -133,7 +111,6 @@ export function newEditorCanvas() {
   resetState();
 }
 
-/** 用图片 base64 载入画布（旧版 64×32 皮肤下半留透明）。 */
 export async function loadImageIntoEditor(
   b64: string,
   name: string,
@@ -151,21 +128,13 @@ export async function loadImageIntoEditor(
   ctx.drawImage(img, 0, 0);
   pixels = ctx.getImageData(0, 0, SKIN_SIZE, SKIN_SIZE).data;
   skinEditor.name = name;
-  // 模型自动判定：slim 皮肤的手臂贴图末两列基本留白，classic 的有内容。
-  // 判错只会让手臂差一列宽，且用户随时可在界面上覆盖，所以值得自动猜一次。
+  // 模型自动判定：slim 手臂贴图末两列基本留白、classic 有内容；判错仅差一列宽且用户可覆盖，故自动猜一次。
   skinEditor.variant = variant === "SLIM" || isSlimArm(pixels) ? "SLIM" : "CLASSIC";
   skinEditor.sourceHeight = img.naturalHeight;
   resetState();
 }
 
-/** 按手臂贴图**末两列**的填充比例判断 slim。
- *
- *  slim 的手臂只有 3 列宽，展开占 x=40..53（右臂）/ 32..45（左臂），而贴图为 4 列布局
- *  预留了 16 宽 —— 于是末两列（右臂 54/55、左臂 46/47）基本空着；classic 用满 4 列，
- *  那两列是手臂背面的贴图，几乎填满。
- *
- *  用**比例**而不是「必须全空」：皮肤作者常在空白处随手点几个像素
- *  （实测某张 slim 皮肤第 55 列有 2 个点），要求全空会把纤细误判成经典。 */
+/** 按手臂贴图末两列填充比例判断 slim：slim 末两列基本空着、classic 用满 4 列；用比例而非「必须全空」（作者常在空白处点像素）。 */
 function isSlimArm(px: Uint8ClampedArray): boolean {
   const tailFill = (x0: number, y0: number): number => {
     let filled = 0;
@@ -179,7 +148,6 @@ function isSlimArm(px: Uint8ClampedArray): boolean {
   return tailFill(54, 16) < 0.25 && tailFill(46, 48) < 0.25;
 }
 
-/** 当前像素导出为 PNG base64（无画布返回空串）。 */
 export function exportEditorPng(): string {
   if (!pixels) return "";
   const canvas = document.createElement("canvas");
@@ -215,7 +183,6 @@ function sameBuffer(a: Uint8ClampedArray, b: Uint8ClampedArray): boolean {
   return true;
 }
 
-/** 取色：把该像素的颜色与不透明度写回当前色，返回 #rrggbb（无画布返回 null）。 */
 export function pickColorAt(x: number, y: number): string | null {
   if (!pixels) return null;
   const i = (y * SKIN_SIZE + x) * 4;
@@ -226,7 +193,6 @@ export function pickColorAt(x: number, y: number): string | null {
   return `#${[r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
 }
 
-/** 落笔（画笔 / 橡皮）：按当前笔刷边长画一个方块，以点击像素为中心。 */
 export function paintAt(x: number, y: number) {
   if (!pixels) return;
   const { r, g, b } = hexToRgb(skinEditor.color);
@@ -304,13 +270,11 @@ export function floodFillAt(x: number, y: number) {
   endStroke();
 }
 
-/** 笔画开始：取起点快照（重复调用无副作用）。 */
 export function beginStroke() {
   if (!pixels || strokeBase) return;
   strokeBase = new Uint8ClampedArray(pixels);
 }
 
-/** 笔画结束：与起点不同才入撤销栈。 */
 export function endStroke() {
   if (!pixels || !strokeBase) return;
   if (!sameBuffer(strokeBase, pixels)) {
@@ -340,7 +304,6 @@ export function redo() {
   bumpRevision();
 }
 
-/** 指针像素坐标 → 部位 key（不在任何标注区返回空串）。 */
 export function regionKeyAt(x: number, y: number): string {
   const hit = EDITOR_REGIONS.find(
     (r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h,

@@ -2,13 +2,12 @@ import { reactive, ref } from "vue"
 import { listen } from "@tauri-apps/api/event"
 import { TASK_PROGRESS, TASK_WAITING_USER } from "../app/events";
 import type { StepStatus, StepInfo, ProgressPayload, WaitingUserPayload } from "../app/events";
-// 事件 payload 类型集中定义在 events.ts，这里 re-export 保持既有 import 路径兼容。
+// payload 类型定义在 events.ts，re-export 保持既有 import 路径。
 export type { StepStatus, StepInfo, ProgressPayload, WaitingUserPayload };
 import { invoke } from "@tauri-apps/api/core"
 import { showToast } from "../../utils/toast"
 import { errMsg } from "../../utils/error"
 
-/** 任务种类标记（前端私有，用于终态回调分流；仅特殊任务设置）。 */
 export type TaskKind = "jdk";
 
 export interface TaskItem {
@@ -26,11 +25,10 @@ export interface TaskItem {
   currentPhase: string
   steps: StepInfo[]
   error?: string
-  /** 任务种类（JDK 安装等特殊任务；版本/文件下载不设置） */
   kind?: TaskKind
 }
 
-// ── 任务入参（类型来自 ts-rs 生成，勿手写镜像；字段名 snake_case 与 Rust 严格一致）──
+// ── 任务入参（ts-rs 生成物，勿手写镜像；snake_case 与 Rust 一致）──
 
 import type { DownloadTask } from "../../types/task/DownloadTask";
 import type { FabricApi } from "../../types/task/FabricApi";
@@ -38,26 +36,21 @@ import type { LoaderChoice } from "../../types/task/LoaderChoice";
 export type { DownloadTask, FabricApi, LoaderChoice };
 export type { DownloadFileKind } from "../../types/task/DownloadFileKind";
 
-/** 任务资源名映射：taskId → 资源名（社区资源单文件下载注册，完成提示用）。
- *  模块级（非 dlState 内）避免响应式开销；done 事件消费后即删除。 */
+/** taskId → 资源名（社区单文件下载注册；done 消费后删）。 */
 export const taskNames = new Map<string, string>();
 
-/** 注册任务资源名：提交下载后调用，任务完成提示显示 "下载任务[资源名]完成"。 */
 export function registerTaskName(taskId: string, name: string) {
   taskNames.set(taskId, name);
 }
 
-/** 版本下载任务 → 安装目录名（下载完成自动选中该版本作为后续 Mod 下载目标；
- *  done 事件消费后删除）。 */
+/** taskId → 安装目录名（下载完成后自动选中为 Mod 下载目标；done 消费后删）。 */
 export const versionTargets = new Map<string, string>();
 
-/** 注册版本下载目标：startTask 提交后调用。 */
 export function registerVersionTarget(taskId: string, dirName: string) {
   versionTargets.set(taskId, dirName);
 }
 
-/** 任务完成钩子（taskId → 回调，消费后即删）：特殊任务（JDK 安装等）经统一监听
- *  感知终态并接续自身流程，替代各 store 自建 TASK_PROGRESS 监听。 */
+/** taskId → 完成回调（消费后即删）：特殊任务经统一监听接续自身流程。 */
 export const taskDoneHooks = new Map<string, () => void>();
 
 /** 注册任务完成钩子：任务 done 时回调一次（error/cancel 不触发且清除）。 */
@@ -80,7 +73,7 @@ export const dlState = reactive({
       .reduce((s, t) => s + t.speedBps, 0)
   },
 
-  /** 聚合预计剩余时间：总剩余字节 ÷ 总速度；总速度过低（<1KB/s，停滞）时 null。 */
+  /** 聚合剩余时间：总剩余字节 ÷ 总速度；速度过低（<1KB/s，停滞）时 null。 */
   get totalEtaSeconds(): number | null {
     const running = this.tasks.filter(t => t.status === "running")
     if (running.length === 0) return null
@@ -102,8 +95,7 @@ export const dlState = reactive({
   addTask(task: TaskItem) {
     const idx = this.tasks.findIndex(t => t.taskId === task.taskId)
     if (idx >= 0) {
-      // 竞态：startTask 的 invoke 返回与首个 task-progress 事件谁先到不确定；
-      // 事件已自动注册（同 taskId）时合并
+      // 竞态：startTask 返回与首个 progress 事件先后不定，同 taskId 合并。
       this.tasks[idx] = { ...task, ...this.tasks[idx] }
       return
     }
@@ -126,7 +118,6 @@ export const dlState = reactive({
     fabricApiUrl?: string,
     fabricApiVersion?: string,
   ) {
-    // 统一入口：散参组装成 DownloadTask 单对象提交（字段名 snake_case）
     const task: DownloadTask = {
       version_id: versionId,
       version_url: versionUrl,
@@ -147,15 +138,8 @@ export const dlState = reactive({
     return taskId
   },
 
-  /**
-   * 统一任务接管：后端提交类命令（start_download / submit_install_jdk 等）共用的
-   * 收尾路径——预注册任务卡片 + 极快终态竞态校正。
-   * 竞态：invoke 返回与首个 task-progress 事件谁先到不确定；事件已自动注册时合并。
-   * 任务可能极快终态（error/done 事件先于预注册到达被忽略，卡片以 pending 残留且
-   * 不再有终态事件）。终态任务已从后端移除，查不到即已结束——移除卡片；
-   * 终态事件已处理（terminalTaskIds 命中）时不重复提示；事件丢失场景只做中性提示。
-   * `silentFastExit`：跳过极快终态的中性提示（调用方自带反馈时使用）。
-   */
+  /** 统一任务接管：预注册卡片 + 极快终态竞态校正。invoke 返回与首个 progress 事件先后不定，同 taskId 合并；
+   * 终态事件先到被忽略致卡片残留 pending 时，后端查不到即移除卡片（terminalTaskIds 防重复提示）。 */
   async adoptTask(
     taskId: string,
     init: Partial<TaskItem> & { name: string },
@@ -187,36 +171,33 @@ export const dlState = reactive({
   },
 
   async cancelTask(taskId: string) {
-    // 主动取消即终态：先标 terminal，防迟到的 running 事件让已移除卡片"幽灵复活"，
-    // 也保证后端收尾 emit 的 cancelled 事件不重建卡片
+    // 主动取消即终态：先标 terminal，防迟到事件让卡片复活/重建。
     terminalTaskIds.add(taskId)
     await invoke("cancel_task", { taskId })
-    // 用户主动取消：终态不走 done 分发，钩子就地清除防泄漏
+    // 取消不走 done 分发，钩子就地清除防泄漏
     taskDoneHooks.delete(taskId)
   },
 
-  /** 暂停任务：停下载、保留目录与快照；卡片本地标 paused（供继续/放弃）。
-   *  后端 runner 随后收尾会 emit 一次 cancelled 事件，事件处理对 paused 任务忽略。 */
+  /** 暂停：停下载、保留目录与快照，卡片本地标 paused；后端收尾 emit 的 cancelled 事件对 paused 任务忽略。 */
   async pauseTask(taskId: string) {
     await invoke("pause_task", { taskId })
     const idx = this.tasks.findIndex(t => t.taskId === taskId)
     if (idx >= 0) this.tasks[idx].status = "paused"
   },
 
-  /** 继续暂停任务：后端读快照重跑（已完成文件 sha1 跳过），新任务经事件自动注册；移除旧卡片。 */
+  /** 继续：后端读快照重跑（已完成文件 sha1 跳过），新任务经事件自动注册；移除旧卡片。 */
   async resumePausedTask(taskId: string) {
     await invoke("resume_task", { taskId })
     this.removeTask(taskId)
   },
 
-  /** 放弃暂停任务：删快照（重启不再提示恢复）+ 移除卡片。 */
+  /** 放弃：删快照（重启不再提示恢复）+ 移除卡片。 */
   async dismissPausedTask(taskId: string) {
     try { await invoke("dismiss_interrupted_task", { taskId }) } catch { /* 快照已删则忽略 */ }
     this.removeTask(taskId)
   },
 
-  /** 任务完成回调：第一参为完成提示文案；第三参为版本下载任务的安装目录名
-   *  （下载完成自动选中该版本，供 Mod 下载目标使用） */
+  /** 任务完成回调：第一参为完成提示文案；第三参为版本下载任务的安装目录名（下载完成自动选中该版本）。 */
   onTaskDone: null as ((message: string, kind?: TaskKind, versionDir?: string) => void) | null,
   /** 任务失败回调：弹出错误 dialog（失败资源由后端清理）。 */
   onTaskError: null as ((taskName: string, error: string) => void) | null,
@@ -226,14 +207,14 @@ export const dlState = reactive({
 
 let listening = false
 
-// 已收到终态事件/已移除的任务 id：防迟到的 running 事件让已移除卡片"幽灵复活"
+// 已收到终态/已移除的任务 id：防迟到 running 事件让卡片复活
 const terminalTaskIds = new Set<string>()
 
 export function ensureListen() {
   if (listening) return
   listening = true
   listen<WaitingUserPayload>(TASK_WAITING_USER, (ev) => {
-    // 批量文件下载失败挂起：弹窗询问 跳过/重试/取消
+    // 批量下载失败挂起：弹窗询问 跳过/重试/取消
     waitingUser.value = ev.payload
   })
   listen<ProgressPayload>(TASK_PROGRESS, (ev) => {
@@ -241,30 +222,28 @@ export function ensureListen() {
     const idx = dlState.tasks.findIndex(t => t.taskId === p.task_id)
     if (idx >= 0) {
       if (p.status === "done") {
-        // 任务完成：从前端清理（触发完成通知后移除）
         terminalTaskIds.add(p.task_id)
         const kind = dlState.tasks[idx]?.kind;
-        // 社区资源单文件下载注册了资源名 → "下载任务[资源名]完成"；其余任务用原名
         const mapped = taskNames.get(p.task_id);
         taskNames.delete(p.task_id);
         const message = mapped
           ? `下载任务[${mapped}]完成`
           : `${p.name || "下载任务"} 已完成`;
-        // 版本下载完成 → 携带安装目录名（App.vue 据此自动选中该版本）
+        // 版本下载完成：携带安装目录名（App.vue 据此自动选中版本）
         const vdir = versionTargets.get(p.task_id);
         versionTargets.delete(p.task_id);
         dlState.onTaskDone?.(message, kind, vdir);
         dlState.removeTask(p.task_id);
-        // 特殊任务（JDK 安装等）的完成接续：统一监听内分发，消费后即删
+        // 特殊任务（JDK 等）完成接续：此处分发，消费后即删
         const doneHook = taskDoneHooks.get(p.task_id);
         taskDoneHooks.delete(p.task_id);
         doneHook?.();
         return
       }
       if (p.status === "error") {
-        // 任务失败：弹错误 dialog + 清理卡片（残留由后端清理）
+        // 任务失败：弹 dialog + 清理卡片
         terminalTaskIds.add(p.task_id)
-        // 与 done 分支对齐：终态即清理资源名/版本目标映射，防条目泄漏
+        // 终态即清理资源名/版本目标映射，防条目泄漏
         taskNames.delete(p.task_id)
         versionTargets.delete(p.task_id)
         dlState.onTaskError?.(p.name || "下载任务", p.error || "未知错误");
@@ -272,11 +251,10 @@ export function ensureListen() {
         taskDoneHooks.delete(p.task_id);
         return
       }
-      // 暂停任务的后端收尾会 emit cancelled 事件，必须忽略以保留 paused 卡片（见 pauseTask）
+      // 暂停后端的收尾 cancelled 事件须忽略，保留 paused 卡片（见 pauseTask）
       if (p.status === "cancelled" && dlState.tasks[idx].status === "paused") return
       if (p.status === "cancelled") {
-        // 用户取消（含挂起弹窗"取消任务"）：与 done/error 一致走终态清理，否则卡片停留
-        // cancelled 且无任何操作入口（僵尸卡片，重启前一直残留）
+        // 用户取消：与 done/error 一致走终态清理，防卡片停留 cancelled 无入口。
         terminalTaskIds.add(p.task_id)
         taskNames.delete(p.task_id)
         versionTargets.delete(p.task_id)
@@ -319,7 +297,7 @@ export function ensureListen() {
   })
 }
 
-// ── 中断任务恢复（#6 一期）：上次进程退出未完成的任务 → 询问/恢复/忽略 ──
+// ── 中断任务恢复：上次进程退出未完成的任务 → 询问/恢复/忽略 ──
 
 /** 后端中断任务条目（镜像 Rust task::store::InterruptedJob）。 */
 export interface InterruptedJob {
@@ -329,10 +307,8 @@ export interface InterruptedJob {
   updated_at: number;
 }
 
-/** 挂起等待用户决策的文件下载任务（非 null 时前端弹窗）。 */
 export const waitingUser = ref<WaitingUserPayload | null>(null);
 
-/** 对挂起任务作出决策：skip=跳过该文件继续，retry=重试，cancel=取消任务。 */
 export async function decideWaitingTask(action: "skip" | "retry" | "cancel") {
   const w = waitingUser.value;
   if (!w) return;
@@ -344,10 +320,8 @@ export async function decideWaitingTask(action: "skip" | "retry" | "cancel") {
   }
 }
 
-/** 上次未完成任务列表（App.vue 挂载时拉取；DownloadDetail 横幅展示）。 */
 export const interruptedJobs = ref<InterruptedJob[]>([]);
 
-/** 应用启动时检查：拉取上次未完成的任务（进程崩溃/重启残留）。 */
 export async function checkInterrupted() {
   try {
     interruptedJobs.value = await invoke<InterruptedJob[]>("list_interrupted_tasks");
@@ -356,10 +330,7 @@ export async function checkInterrupted() {
   }
 }
 
-/**
- * 恢复全部中断任务：逐个 resume_task（后端读快照重跑，已下载文件 sha1 命中自动跳过，
- * 等价断点续跑）。恢复的任务经 task-progress 事件自动注册进任务中心。
- */
+/** 恢复全部中断任务：逐个 resume_task（后端读快照重跑，已完成文件 sha1 命中跳过）。 */
 export async function resumeAllInterrupted() {
   const jobs = [...interruptedJobs.value];
   let failed = 0;
@@ -378,7 +349,7 @@ export async function resumeAllInterrupted() {
   }
 }
 
-/** 忽略全部中断任务（放弃恢复）：横幅一键清空，避免每个任务一个忽略按钮。 */
+/** 忽略全部中断任务（清空横幅）。 */
 export async function dismissAllInterrupted() {
   const jobs = [...interruptedJobs.value];
   interruptedJobs.value = [];
@@ -386,7 +357,6 @@ export async function dismissAllInterrupted() {
     try {
       await invoke("dismiss_interrupted_task", { taskId: j.id });
     } catch {
-      // 忽略失败不影响本地清理
     }
   }
 }
@@ -399,12 +369,10 @@ export interface MissingReport {
   natives: number;
 }
 
-/** 扫描指定版本的缺失文件（client jar / 库 / 资源 / natives），仅统计不下载。 */
 export async function scanMissingFiles(versionDirName: string): Promise<MissingReport> {
   return await invoke<MissingReport>("scan_missing_files", { versionDirName });
 }
 
-/** 提交"补全缺失文件"任务到任务中心，返回任务 id。 */
 export async function submitMissingDownload(versionDirName: string): Promise<string> {
   return await invoke<string>("submit_missing_download", { versionDirName });
 }

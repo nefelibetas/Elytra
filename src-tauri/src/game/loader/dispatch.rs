@@ -7,7 +7,7 @@ use super::fabric::{install_fabric, install_quilt};
 use super::forge::install_forge;
 use super::neoforge::install_neoforge;
 
-/// runner（完整下载）与 task/modpack（整合包）共用，消除两份四路 match 重复。
+/// runner（完整下载）与 task/modpack（整合包）共用入口。
 /// `ctx.cancel` 仅 Forge/NeoForge 使用（installer 式需 kill 子进程），Fabric/Quilt 忽略。
 pub async fn install_loader(
     kind: LoaderKind,

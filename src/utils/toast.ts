@@ -1,5 +1,4 @@
-// 全局轻提示（App.vue 渲染；页面 import showToast 调用）。
-// 替代原先 App.vue 全局 + Launch/Settings 本地 + (window as any).__showToast 的多份实现。
+// App.vue 渲染，页面 import 调用；默认时长 2500ms。
 import { reactive } from "vue";
 
 export const toastState = reactive({ msg: "" });

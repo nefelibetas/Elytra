@@ -1,6 +1,5 @@
 <script lang="ts">
-// 工具 tab 状态：模块级持久（路由切换不丢），对齐 settingsTab 先例。
-// 放普通 <script> 块：<script setup> 不允许 export。
+// 工具 tab 状态：模块级持久（路由切换不丢）；须放普通 <script>（<script setup> 不允许 export）
 import { ref } from "vue";
 
 export type ToolsTab =
@@ -18,8 +17,7 @@ export const toolsTab = ref<ToolsTab>("status");
 </script>
 
 <script setup lang="ts">
-// 工具页容器：SideNav 导航 + 各工具编排（业务在组件内，本文件不做工具逻辑）。
-// 工具：服务器状态 / MOTD / /give / 药水 / 烟花 / 村民交易 / 皮肤绘画 / 多线程下载 / 联机；后续工具加条目即可。
+// 页面容器：SideNav + 各工具编排（业务在组件内）
 import { Server, Type, Link2, Sword, FlaskConical, Rocket, Store, Download, Paintbrush } from "@lucide/vue";
 import ServerStatusTool from "../component/tools/ServerStatusTool.vue";
 import MotdGeneratorTool from "../component/tools/MotdGeneratorTool.vue";

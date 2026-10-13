@@ -1,7 +1,5 @@
 <script setup lang="ts">
-// 版本设置-Mod 管理 tab：两层卡片竖直布局。
-// 上层：搜索卡片（本地过滤）；下层：Tab（全部/可更新）+ 打开文件夹 + Mod items。
-// 识别得到 → 详情样式；识别不到 → 本地文件样式；可更新 item 行最右侧更新按钮。
+// 版本设置-Mod 管理 tab：搜索卡 + Tab（全部/可更新）+ 列表；双态：识别到 Modrinth → 详情，未识别 → 本地文件，可更新 item 行右侧有更新按钮。
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { Search, RefreshCw, Upload, Puzzle, Folder, Trash2 } from "@lucide/vue";
@@ -25,21 +23,16 @@ import {
 
 const route = useRoute();
 
-/** 游戏 id（版本目录名），由路由 query 传入。 */
 const versionName = computed(() => String(route.query.name ?? ""));
 
-/** 当前 tab：全部 | 可更新。 */
 const tab = ref<"all" | "updatable">("all");
 
-/** 搜索关键字（按标题/文件名模糊过滤）。 */
 const searchQuery = ref("");
 
-/** 更新信息按 file_name 索引（行最右侧更新按钮用）。 */
 const updMap = computed<Record<string, (typeof updates.value)[number]>>(() =>
   Object.fromEntries(updates.value.map(u => [u.file_name, u])),
 );
 
-/** 搜索过滤后的 mods（对全部与可更新两个 tab 同时生效）。 */
 const filteredMods = computed(() => {
   const q = searchQuery.value.trim().toLowerCase();
   if (!q) return mods.value;
@@ -49,21 +42,18 @@ const filteredMods = computed(() => {
   );
 });
 
-/** 当前 tab 的 items。 */
 const items = computed(() =>
   tab.value === "all" ? filteredMods.value : filteredMods.value.filter(m => updMap.value[m.file_name]),
 );
 
-/** 多选状态：点击 item 切换选中，底部 action 栏批量操作。 */
 const { selected, selectedSet, selecting, allVisibleSelected, toggle, toggleAll, clear } =
   useSelectable(computed(() => items.value.map(m => m.file_name)));
 
-/** 可更新的选中项（file_name → ModUpdate）。 */
 const updatableSelected = computed(() =>
   selected.value.filter(name => updMap.value[name]).map(name => updMap.value[name]),
 );
 
-/** 批量更新选中项：逐个执行，跳过更新中；完成后清空选中。 */
+/** 批量更新选中项：跳过更新中的项；完成后清空选中。 */
 async function doBatchUpdate() {
   if (updatingFiles.value.size > 0) return;
   const targets = updatableSelected.value;
@@ -74,13 +64,10 @@ async function doBatchUpdate() {
   clear();
 }
 
-/** 删除确认弹窗：目标名（选中单项时）或"N 项"批量文案。 */
 const deleteDialog = ref(false);
 const deleteLabel = ref("");
-/** 待删除列表（确认后逐个消费）。 */
 const deletePending = ref<string[]>([]);
 
-/** 批量删除选中项：一次确认后逐个删除。 */
 function doBatchDelete() {
   const names = [...selected.value];
   if (names.length === 0) return;
@@ -89,7 +76,6 @@ function doBatchDelete() {
   deleteDialog.value = true;
 }
 
-/** 确认删除：逐个执行，完成后刷新列表并清空选中。 */
 async function confirmDelete() {
   const names = [...deletePending.value];
   deleteDialog.value = false;
@@ -105,7 +91,7 @@ async function confirmDelete() {
   if (names.length > 0) clear();
 }
 
-/** 禁用单个 mod：调用后端重命名 .jar → .jar.disabled，成功后刷新列表（禁用项被扫描过滤隐藏）。 */
+/** 禁用单个 mod：后端重命名 .jar → .jar.disabled（禁用项被扫描过滤隐藏）。 */
 async function toggleOne(fileName: string) {
   try {
     await toggleMod(versionName.value, fileName);
@@ -118,7 +104,7 @@ async function toggleOne(fileName: string) {
 onMounted(async () => {
   if (!versionName.value) return;
   await loadVersionLoader(versionName.value);
-  // 缓存命中（切 Tab 回来/刚从主页进入）不重新加载，避免 loading 闪烁
+  // 缓存命中则跳过加载，避免 loading 闪烁
   if (modsLoadedFor.value !== versionName.value) {
     await loadMods(versionName.value);
   }
@@ -190,7 +176,7 @@ async function openModsFolder() {
         </div>
       </div>
 
-      <!-- 内容：Mod items（状态切换淡入淡出） -->
+      <!-- 内容：Mod items -->
       <div class="vsm-content">
         <Transition name="fade" mode="out-in">
           <LoadingSpinner v-if="modsLoading && mods.length === 0" key="loading" text="加载 Mod 信息…" />
@@ -216,7 +202,7 @@ async function openModsFolder() {
                   :class="{ selected: selectedSet.has(m.file_name) }"
                   @click="toggle(m.file_name)"
                 >
-                  <!-- 识别得到：Modrinth 元数据详情 -->
+                  <!-- 已识别：Modrinth 元数据 -->
                   <template v-if="m.project_id">
                     <IconImage :src="m.icon_url" :size="32" />
                     <span class="vsm-info">
@@ -234,7 +220,7 @@ async function openModsFolder() {
                       </span>
                     </span>
                   </template>
-                  <!-- 识别不到：本地文件样式 -->
+                  <!-- 未识别：本地文件 -->
                   <template v-else>
                     <Puzzle :size="20" class="vsm-local-icon" />
                     <span class="vsm-info">
@@ -250,7 +236,7 @@ async function openModsFolder() {
         </Transition>
       </div>
 
-      <!-- 底部 action 栏：选中 ≥1 时滑出，全选/取消 + 批量更新/删除 -->
+      <!-- 底部 action 栏：选中 ≥1 时出现 -->
       <Transition name="fade">
         <div v-if="selecting" class="vs-actions-bar vs-bar-attached">
           <button class="vs-ab-btn" @click="toggleAll">
@@ -338,7 +324,7 @@ async function openModsFolder() {
   color: var(--text-tertiary);
 }
 
-/* 下层：列表卡片（占满剩余高度，内容区内滚动） */
+/* 下层：列表卡：占满剩余高度，内容滚动 */
 .vsm-list-card {
   flex: 1;
   min-height: 0;
@@ -434,7 +420,7 @@ async function openModsFolder() {
   }
 }
 
-/* 内容区（卡片内滚动） */
+/* 内容区：卡片内滚动 */
 .vsm-content {
   flex: 1;
   min-height: 0;
@@ -485,7 +471,7 @@ async function openModsFolder() {
   border-color: var(--color-brand);
 }
 
-/* 让位过渡移除：info 不再为 hover 按钮留空 */
+/* info 不为 hover 按钮留空 */
 .vsm-info {
   flex: 1;
   min-width: 0;
@@ -585,7 +571,7 @@ async function openModsFolder() {
   color: var(--text-tertiary);
 }
 
-/* action 栏公共部分见 styles/version-setup-shared.css；update 态仅 Mods 使用 */
+/* action 栏公共样式见 version-setup-shared.css；update 态仅 Mods 用 */
 .vs-ab-btn.update {
   border-color: var(--color-brand);
   background: var(--color-brand-bg);
@@ -597,7 +583,7 @@ async function openModsFolder() {
   color: var(--text-inverse);
 }
 
-/* 行内禁用按钮（Mod 行最右侧；与 act 按钮同款紧凑样式） */
+/* 行内禁用按钮（Mod 行最右侧） */
 .vsm-toggle-btn {
   flex: none;
   margin-left: 8px;

@@ -1,11 +1,7 @@
 //! 工具箱「多线程下载器」端到端测试：入队 → 并发调度 → 分段下载 → 进度事件 → 终态。
-//!
-//! 默认用例走本地 HTTP 服务（可控 206 / 200 与节流速率，不依赖外网），驱动 `tooldl`
-//! 域的真实调度与下载链路；事件出口注入记录型实现（不触碰 IPC）。
-//! `real_network_segmented_download` 走真实 CDN，需显式开启：
-//! ```text
-//! cargo test --test tool_download -- --ignored --nocapture
-//! ```
+//! 默认用例走本地 HTTP 服务（可控 206/200 与节流速率，不依赖外网），驱动 `tooldl` 域真实调度与
+//! 下载链路，事件出口注入记录型实现（不触碰 IPC）。`real_network_segmented_download` 走真实 CDN：
+//! `cargo test --test tool_download -- --ignored --nocapture`
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -19,8 +15,8 @@ use tokio::net::TcpListener;
 use elytra_lib::task::EventSink;
 use elytra_lib::tooldl::{self, ToolDlSnapshot, ToolDlStatus};
 
-/// 测试串行闸：`tooldl` 的注册表 / 并发上限 / 槽位计数都是进程级全局，
-/// 用例之间必须互斥（否则 clear_finished 会清掉别人的任务）。
+/// 测试串行闸：`tooldl` 的注册表 / 并发上限 / 槽位计数都是进程级全局，用例之间必须互斥
+/// （否则 clear_finished 会清掉别人的任务）。
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 /// 事件出口：记录 payload 供断言（不触达任何 IPC）。
@@ -52,9 +48,8 @@ impl RecordingSink {
     }
 }
 
-/// 本地 HTTP 服务：`support_range` 为真时按请求头 `Range` 回 206 分片，否则一律 200
-/// 全量。`pace` 为 `Some((块大小, 每块延迟))` 时按块节流，用于制造可观测的下载中窗口。
-/// 返回 URL 与累计请求数。
+/// 本地 HTTP 服务：`support_range` 为真时按 `Range` 回 206 分片，否则 200 全量；
+/// `pace` 为 Some 时按块节流（制造可观测的下载中窗口）。返回 URL 与累计请求数。
 async fn serve(
     body: Vec<u8>,
     support_range: bool,
@@ -409,10 +404,8 @@ async fn real_network_segmented_download() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// 下载**途中**就必须显示真实并发度。
-///
-/// 回归：`ranged` / `segments_used` 曾只在终态收口里写入，导致用户配了 8 线程、
-/// 下载中却一直显示「单连接」，直到下载完成才跳成「8 线程分段」。
+/// 下载**途中**就必须显示真实并发度：`ranged` / `segments_used` 曾只在终态收口里写入，
+/// 导致下载中一直显示「单连接」，完成才跳成「8 线程分段」。
 #[tokio::test(flavor = "multi_thread")]
 async fn segment_plan_visible_while_downloading() {
     let _guard = TEST_LOCK.lock();

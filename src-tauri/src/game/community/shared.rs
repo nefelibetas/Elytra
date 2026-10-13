@@ -1,5 +1,4 @@
-//! 两平台共用部分：社区 API 路由（官方/MCIM 多候选）、多候选 JSON 请求、
-//! MC 版本号解析/比较助手。
+//! 两平台共用：社区 API 路由（官方/MCIM 多候选）、多候选 JSON 请求、MC 版本号解析/比较。
 
 use crate::config::downloader::{DownloadSourceMode, DownloaderConfig};
 use crate::downloader;
@@ -14,10 +13,9 @@ pub(crate) enum ApiPlatform {
     CurseForge,
 }
 
-/// 社区 API 多源候选：按 community_source_mode 在官方与 MCIM 镜像间路由。
-/// 镜像映射（docs.mcimirror.top，"可直接替换 URL"）：
-///   api.modrinth.com   → mod.mcimirror.top/modrinth
-///   api.curseforge.com → mod.mcimirror.top/curseforge（/v1 前缀保留）
+/// 社区 API 多源候选：按 community_source_mode 在官方与 MCIM 镜像间路由。镜像映射
+/// （docs.mcimirror.top，"可直接替换 URL"）：api.modrinth.com → mod.mcimirror.top/modrinth；
+/// api.curseforge.com → mod.mcimirror.top/curseforge（保留 /v1 前缀）。
 pub(crate) fn api_routes(platform: ApiPlatform, path: &str) -> Vec<String> {
     let (official, mirror) = match platform {
         ApiPlatform::Modrinth => (
@@ -49,8 +47,7 @@ pub(crate) fn api_routes(platform: ApiPlatform, path: &str) -> Vec<String> {
     }
 }
 
-/// 多候选 URL 构造：对每个路由 base 追加查询参数。
-/// 统一"api_routes + parse_with_params + 错误文案"的重复样板。
+/// 多候选 URL 构造：每个路由 base 追加查询参数（统一 api_routes + parse_with_params + 错误文案样板）。
 pub(crate) fn api_urls(
     platform: ApiPlatform,
     path: &str,
@@ -80,7 +77,6 @@ where
         let resp = match build(url)
             .timeout(std::time::Duration::from_secs(
                 if i == 0 && urls.len() > 1 {
-                    // 主源过慢（5s）即降级镜像，对齐 version_query 自适应语义
                     5
                 } else {
                     QUERY_TIMEOUT_SECS
@@ -95,7 +91,6 @@ where
                 continue;
             }
         };
-        // 404 属确定性未命中（镜像同样不会有），不换源
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
             bail!("请求失败\nHTTP {}", resp.status());
         }
@@ -111,8 +106,7 @@ where
     Err(last_err)
 }
 
-/// 多候选 JSON POST：与 get_json_multi 同语义（主源 5s 降级、404 不换源），
-/// 但以 POST + JSON body 请求（Modrinth /v2/version_files 批量 sha1 查询用）。
+/// 多候选 JSON POST：同 get_json_multi 语义（主源 5s 降级、404 不换源），但用 POST + JSON body（Modrinth /v2/version_files 批量 sha1 查询）。
 pub(crate) async fn post_json_multi<F>(
     urls: &[String],
     body: &serde_json::Value,
@@ -206,7 +200,6 @@ pub(super) fn version_range(versions: &[String]) -> Option<String> {
 mod tests {
     use super::*;
 
-    /// 版本比较：数值段逐段比较，段数不足补 0，非法版本（snapshot）返回 None。
     #[test]
     fn compare_game_versions_numeric_semantics() {
         use std::cmp::Ordering;

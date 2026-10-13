@@ -1,4 +1,4 @@
-//! 下载任务命令（薄胶水层）：注册与 spawn 在 task/ 域，命令只传参。
+//! 下载任务命令：注册与 spawn 在 task/ 域，命令只传参。
 
 use std::path::Path;
 use tauri::AppHandle;
@@ -6,16 +6,12 @@ use tauri::AppHandle;
 use crate::game::modpack::{ModpackRequest, PackSource};
 use crate::task::{self, files, model, modpack, repair, store};
 
-/// 提交完整下载/安装任务：注册到 TaskManager 并后台执行，返回任务 id。
-/// 任务配置（含 ModLoader 选择）统一经 DownloadTask 传入，入口先做信任边界校验。
-/// 注册/spawn/快照统一走 task::spawn_download（任务域）。
+/// 提交完整下载/安装任务（注册 TaskManager 并后台执行），返回任务 id；注册/spawn/快照走 task::spawn_download。
 #[tauri::command]
 pub async fn start_download(app: AppHandle, task: model::DownloadTask) -> Result<String, String> {
     task::spawn_download(app, task)
 }
 
-/// 提交批量文件下载任务（多个 mod / 资源包 / 数据包 / 光影包）到下载管理。
-/// 返回任务 id。
 #[tauri::command]
 pub async fn download_files(
     app: AppHandle,
@@ -24,9 +20,6 @@ pub async fn download_files(
     files::spawn_files_task(app, task)
 }
 
-/// 提交单文件下载任务（mod / 资源包 / 数据包 / 光影包）到下载管理。
-/// 单文件是批量任务的特例：构造单元素批量任务，统一走批量 runner。
-/// 返回任务 id。
 #[tauri::command]
 pub async fn download_single_file(
     app: AppHandle,
@@ -44,14 +37,12 @@ pub async fn download_single_file(
     files::spawn_files_task(app, batch)
 }
 
-/// 扫描版本缺失文件（client.jar / 支持库 / 资源），不发起下载。
 #[tauri::command]
 pub async fn scan_missing_files(version_dir_name: String) -> Result<repair::MissingReport, String> {
     repair::scan_missing(&version_dir_name).await
 }
 
-/// 提交补全任务到下载管理：只下载实际缺失的部分，步骤按缺失情况动态生成。
-/// 返回任务 id。
+/// 提交补全任务（只下载实际缺失部分，步骤按缺失动态生成），返回任务 id。
 #[tauri::command]
 pub async fn submit_missing_download(
     app: AppHandle,
@@ -76,22 +67,18 @@ pub async fn submit_missing_download(
     )
 }
 
-/// 提交 JDK 安装任务（下载缺失 Java 运行时）到任务中心。
-/// 单步任务；完成后自动注册进 jdk 配置，前端完成监听自动选中。
-/// 返回任务 id。
+/// 提交 JDK 安装任务（下载缺失 Java 运行时）；完成后自动注册进 jdk 配置，返回任务 id。
 #[tauri::command]
 pub async fn submit_install_jdk(app: AppHandle, major: u32) -> Result<String, String> {
     task::spawn_install_jdk(app, major)
 }
 
-/// 列出上次进程退出时未完成的任务（running/interrupted 快照），供前端询问恢复。
 #[tauri::command]
 pub fn list_interrupted_tasks() -> Vec<store::InterruptedJob> {
     store::list_interrupted()
 }
 
-/// 恢复中断任务：读取快照 → 用恢复凭证重新提交（幂等重跑——
-/// 已下载文件 sha1 命中自动跳过，等价从断点继续）→ 返回新任务 id。
+/// 恢复中断任务：读快照 → 以恢复凭证重新提交（幂等重跑，已下载文件 sha1 命中自动跳过），返回新任务 id。
 #[tauri::command]
 pub async fn resume_task(app: AppHandle, task_id: String) -> Result<String, String> {
     let (_name, spec) = store::load_spec(&task_id).ok_or("任务快照不存在或已过期")?;
@@ -100,9 +87,8 @@ pub async fn resume_task(app: AppHandle, task_id: String) -> Result<String, Stri
     match spec {
         store::JobSpec::Download(task) => crate::task::spawn_download(app, task),
         store::JobSpec::Files(task) => {
-            // 社区资源无校验数据，恢复 = 重新开始：先清掉上次中断残留的
-            // .elytra-part 半截临时文件（陈旧残留可能被占用/校验干扰），
-            // 确保重新下载干净起步
+            // 社区资源无校验数据，恢复 = 重新开始：先清掉上次中断残留的 .elytra-part
+            // 半截临时文件（可能被占用/干扰校验）。
             files::cleanup_file_parts(&task);
             files::spawn_files_task(app, task)
         }
@@ -114,14 +100,12 @@ pub async fn resume_task(app: AppHandle, task_id: String) -> Result<String, Stri
     }
 }
 
-/// 放弃恢复：删除任务快照（后续启动不再提示）。
 #[tauri::command]
 pub fn dismiss_interrupted_task(task_id: String) {
     store::remove_snapshot(&task_id);
 }
 
-/// 暂停任务：停下载、保留已下载目录与快照（status=paused），
-/// 供前端显示"继续"（resume_task 重跑快照，已完成文件 sha1 跳过）。
+/// 暂停任务：停下载、保留已下载目录与快照（status=paused），前端可"继续"（resume_task 重跑）。
 #[tauri::command]
 pub fn pause_task(task_id: String) -> Result<(), String> {
     if !task::global().pause(&task_id) {
@@ -133,8 +117,7 @@ pub fn pause_task(task_id: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn cancel_task(app: AppHandle, task_id: String) -> Result<(), String> {
     task::global().cancel(&task_id);
-    // 立即广播取消态：cancel() 只改内存不发事件，此前要等任务侧下个检查点
-    // 才反映，期间心跳事件会把刚取消的卡片重置回运行中（"复活"观感）
+    // 立即广播取消态：cancel() 只改内存不发事件，否则心跳事件会把卡片重置回运行中。
     if let Some(p) = task::global()
         .list()
         .into_iter()
@@ -145,8 +128,7 @@ pub async fn cancel_task(app: AppHandle, task_id: String) -> Result<(), String> 
     Ok(())
 }
 
-/// 对挂起等待决策的任务作出选择（WaitingForUser）：skip=跳过该文件继续，retry=重试，cancel=取消任务。
-/// 任务未处于等待状态时返回错误（前端弹窗已消失/竞态）。
+/// 对挂起等待决策的任务（WaitingForUser）作出选择：skip=跳过该文件继续，retry=重试，cancel=取消任务；非等待状态返回错误。
 #[tauri::command]
 pub fn decide_waiting_task(task_id: String, action: String) -> Result<(), String> {
     let decision = match action.as_str() {
@@ -162,18 +144,15 @@ pub fn decide_waiting_task(task_id: String, action: String) -> Result<(), String
     }
 }
 
-/// 任务是否仍注册（存在 = 运行中；终态已移除）。
-/// 前端预注册任务后查询：查不到说明终态事件可能先于注册到达（竞态），应清理卡片。
+/// 任务是否仍注册（存在 = 运行中；终态已移除）；前端预注册后查询，查不到 = 竞态应清理卡片。
 #[tauri::command]
 pub fn task_exists(task_id: String) -> bool {
     task::global().exists(&task_id)
 }
 
-// ── 整合包安装（单任务卡片：解析 → 本体 → 内容，步骤表动态增长）──
+// ── 整合包安装（单任务卡片，步骤表动态增长）──
 
-/// 安装整合包（Modrinth .mrpack / CurseForge zip）。
-/// 单一任务全程承载：包体下载/解析 → 游戏本体+ModLoader → 内容文件+覆盖解压。
-/// 恢复 = 重跑整卡（各环节 sha1/扫描幂等，已就位内容零重下）。返回任务 id。
+/// 安装整合包（Modrinth .mrpack / CurseForge zip）：单任务承载 包体下载/解析 → 本体+ModLoader → 内容+覆盖解压；恢复 = 重跑整卡（各环节幂等），返回任务 id。
 #[tauri::command]
 pub async fn install_modpack(app: AppHandle, request: ModpackRequest) -> Result<String, String> {
     if request.name.trim().is_empty() {

@@ -1,6 +1,4 @@
-//! 版本内容命令（薄胶水）：存档/Mod 本地扫描、Mod 更新检查与更新下载、整合包导出。
-//! 目录定位复用 gamedirs 的"当前激活游戏目录 + versions/{name}"约定；
-//! 更新检查/下载的领域逻辑在 downloader/mod_updates/；版本图标命令在 commands/version_icon.rs。
+//! 版本内容命令：存档/Mod 扫描、Mod 更新、整合包导出；目录 = 激活游戏目录 + versions/{name}。
 
 use serde::Serialize;
 
@@ -11,19 +9,15 @@ use crate::game::updates::{
 use crate::game::version::dir::{version_dir_path, version_server_section};
 use crate::util;
 
-/// 本地存档信息（saves 目录子目录扫描结果）。
 #[derive(Debug, Clone, Serialize)]
 pub struct WorldInfo {
-    /// 世界文件夹名
     pub name: String,
     /// 最后修改时间（unix 秒）
     pub last_modified: u64,
 }
 
-/// 版本下资源目录中的单个文件（resourcepacks/datapacks/shaderpacks 扫描结果）。
 #[derive(Debug, Clone, Serialize)]
 pub struct ResourceFile {
-    /// 文件名
     pub name: String,
     /// 文件大小（字节）
     pub size: u64,
@@ -31,7 +25,6 @@ pub struct ResourceFile {
     pub last_modified: u64,
 }
 
-/// 本地存档信息（saves 目录子目录扫描结果）。
 #[tauri::command]
 pub fn list_worlds(version_name: String) -> Vec<WorldInfo> {
     let Ok(vdir) = version_dir_path(&version_name) else {
@@ -52,9 +45,7 @@ pub fn list_worlds(version_name: String) -> Vec<WorldInfo> {
 /// 世界 icon 文件大小上限（128×128 PNG 正常 <100KB；超限视为异常，前端回退占位）。
 const MAX_WORLD_ICON_BYTES: u64 = 512 * 1024;
 
-/// 读取世界缩略图（saves/<world>/icon.png，即游戏世界选择界面的缩略图来源）。
-/// 缺失/超限/损坏返回 None（不报错，前端回退 Map 占位）。
-/// `world_name` 仅接受简单目录名，防路径穿越。
+/// 世界缩略图（saves/<world>/icon.png）：缺失/超限/损坏返回 None；`world_name` 须为简单目录名（防路径穿越）。
 #[tauri::command]
 pub fn get_world_icon(version_name: String, world_name: String) -> Option<util::IconData> {
     if !util::is_simple_name(&world_name) {
@@ -67,8 +58,7 @@ pub fn get_world_icon(version_name: String, world_name: String) -> Option<util::
     )
 }
 
-/// 列出版本下资源目录（材质包/数据包/光影包/mod）中的文件，按名称排序；目录不存在返回空列表。
-/// `kind` 白名单：resourcepacks / datapacks / shaderpacks / mods（防路径穿越）。
+/// 列出版本下资源目录（材质包/数据包/光影包/mod）中的文件，按名称排序；`kind` 白名单：resourcepacks / datapacks / shaderpacks / mods。
 #[tauri::command]
 pub fn list_resource_files(version_name: String, kind: String) -> Vec<ResourceFile> {
     if !matches!(
@@ -93,10 +83,7 @@ pub fn list_resource_files(version_name: String, kind: String) -> Vec<ResourceFi
     files
 }
 
-/// 列出资源目录（材质包/数据包/光影包）下的 .zip 详细列表：
-/// sha1 → Modrinth 识别（resourcepack/shaderpack/datapack 项目），命中带社区元数据，
-/// 未命中/文件夹形式仅本地信息（网络失败时 files 仍含本地信息，network_error 置位）。
-/// `kind` 白名单：resourcepacks / datapacks / shaderpacks（防路径穿越）。
+/// 资源目录（材质包/数据包/光影包）的 .zip 详细列表：sha1 → Modrinth 识别，未命中/网络失败仅本地信息（network_error 置位）；`kind` 白名单：resourcepacks / datapacks / shaderpacks。
 #[tauri::command]
 pub async fn list_resource_detailed(
     version_name: String,
@@ -112,8 +99,6 @@ pub async fn list_resource_detailed(
     Ok(updates::list_dir_detailed(&vdir.join(&kind), updates::ScanFilter::Zip).await)
 }
 
-/// 删除资源目录（材质包/数据包/光影包）下的单个文件。
-/// `kind` 白名单 + 纯文件名（防路径穿越），文件不存在报错。
 #[tauri::command]
 pub async fn delete_resource_file(
     version_name: String,
@@ -124,8 +109,7 @@ pub async fn delete_resource_file(
     updates::delete_resource_file(&vdir, &kind, &file_name).await
 }
 
-/// 删除整个存档（saves/<world> 目录，递归）。
-/// `world_name` 仅接受简单目录名（防路径穿越）；大目录删除走 tokio（内部 spawn_blocking）。
+/// 删除整个存档（saves/<world> 目录，递归）；`world_name` 须为简单目录名（防路径穿越），大目录走 spawn_blocking。
 #[tauri::command]
 pub async fn delete_world(version_name: String, world_name: String) -> Result<(), String> {
     if !util::is_simple_name(&world_name) {
@@ -141,18 +125,13 @@ pub async fn delete_world(version_name: String, world_name: String) -> Result<()
         .map_err(common_err_ctx!("删除失败"))
 }
 
-/// 列出 mods 目录下的 mod 详情（.jar 扫描 + Modrinth 元数据识别；网络失败降级本地信息）。
-/// 兼容旧入口；前端现走逐文件增量识别（identify_mod_file）。
 #[tauri::command]
 pub async fn list_mods_detailed(version_name: String) -> Result<ModListResult, String> {
     let vdir = version_dir_path(&version_name)?;
     Ok(updates::list_mods_detailed(&vdir.join("mods")).await)
 }
 
-/// 增量识别单个 mod 文件：sha1 → Modrinth 元数据。
-/// 返回 None = 未命中（HTTP 404）/文件缺失/网络失败——前端保持本地信息渲染；
-/// 前端逐文件并发调用，每项完成立即刷新列表（不用等全部识别完）。
-/// `file_name` 仅接受纯文件名（防路径穿越）。
+/// 单个 mod 文件识别：sha1 → Modrinth 元数据；None = 未命中/文件缺失/网络失败；`file_name` 须为纯文件名（防路径穿越）。
 #[tauri::command]
 pub async fn identify_mod_file(
     version_name: String,
@@ -166,9 +145,7 @@ pub async fn identify_mod_file(
     Ok(f)
 }
 
-/// 检查 mods 目录下的 mod 是否有更新（仅 Modrinth 源，命中不到的项目跳过）。
-/// `mc_version` / `loader` 由后端从版本目录 json 权威解析（目录名只作兜底）——
-/// 前端不再传入解析结果，防改名/伪标记目录把垃圾版本号发给 Modrinth。
+/// 检查 mods 更新（仅 Modrinth 源，未命中跳过）；`mc_version`/`loader` 由后端从版本目录 json 权威解析（目录名仅兜底）。
 #[tauri::command]
 pub async fn check_mod_updates(version_name: String) -> Result<Vec<ModUpdate>, String> {
     let vdir = version_dir_path(&version_name)?;
@@ -181,7 +158,6 @@ pub async fn check_mod_updates(version_name: String) -> Result<Vec<ModUpdate>, S
     Ok(updates::check_updates(&vdir.join("mods"), &files, &mc_version, &loader).await)
 }
 
-/// 更新单个 mod：下载新版本 jar 并替换 mods 目录中的旧文件。
 #[tauri::command]
 pub async fn update_mod_file(
     version_name: String,
@@ -193,8 +169,7 @@ pub async fn update_mod_file(
     updates::update_mod_file(&vdir.join("mods"), &file_name, &file_url, &file_sha1).await
 }
 
-/// 版本级服务器直连配置（快速进服 --server/--port，per-version 存储）。
-/// 存储于 persist section `version_server_{version_name}`；为空时启动回退全局 LaunchOptions。
+/// 版本级服务器直连配置（快速进服 --server/--port，per-version）；存储于 section `version_server_{version_name}`，为空时启动回退全局 LaunchOptions。
 #[derive(Debug, Clone, Default, Serialize, serde::Deserialize)]
 pub struct VersionServer {
     pub server: Option<String>,
@@ -228,7 +203,6 @@ pub fn save_version_server(
     })
 }
 
-/// 删除 mods 目录下的单个 mod 文件。
 #[tauri::command]
 pub fn delete_mod_file(version_name: String, file_name: String) -> Result<(), String> {
     let vdir = version_dir_path(&version_name)?;
@@ -242,15 +216,12 @@ pub fn toggle_mod_file(version_name: String, file_name: String) -> Result<bool, 
     updates::toggle_mod_file(&vdir.join("mods"), &file_name)
 }
 
-/// 导出整合包：把版本目录下的 mods/config/shaderpacks/resourcepacks 打进 zip
-/// （顶层同名目录 + manifest.json 元数据）。目录缺失自动跳过；打包走 spawn_blocking 防阻塞。
-/// 领域逻辑（hash 匹配/打包/权威元数据解析）在 downloader/modpack.rs。
+/// 导出整合包：mods/config/shaderpacks/resourcepacks 打进 zip（顶层同名目录 + manifest.json）；目录缺失自动跳过，打包走 spawn_blocking。
 #[tauri::command]
 pub async fn export_modpack(version_name: String, save_path: String) -> Result<(), String> {
     let vdir = version_dir_path(&version_name)?;
     let name = version_name.clone();
-    // Modrinth hash 匹配（对齐 PCL2 导出）：能匹配的 mod 走 files[]（在线分发，
-    // 包内不物理携带）；匹配不到/网络失败的全量物理打包进 overrides。
+    // 能匹配 Modrinth hash 的 mod 走 files[]（在线分发，包内不物理携带），其余打进 overrides。
     let (hosted, hosted_names) = resolve_hosted_mods(&vdir).await;
     tokio::task::spawn_blocking(move || {
         pack_modpack(&vdir, &name, &save_path, &hosted, &hosted_names)
@@ -272,7 +243,6 @@ mod tests {
         std::fs::write(vdir.path().join("mods").join("a.jar"), b"jar-content").unwrap();
         std::fs::create_dir_all(vdir.path().join("mods").join("nested")).unwrap();
         std::fs::write(vdir.path().join("mods").join("nested").join("b.jar"), b"b").unwrap();
-        // config 目录不存在 → 打包时跳过
         let out = tempfile::tempdir().unwrap();
         let zip_path = out.path().join("pack.zip");
         pack_modpack(
@@ -327,7 +297,7 @@ mod tests {
 
     #[test]
     fn pack_modpack_empty_version_still_writes_manifest() {
-        let vdir = tempfile::tempdir().unwrap(); // 无任何内容目录
+        let vdir = tempfile::tempdir().unwrap();
         let out = tempfile::tempdir().unwrap();
         let zip_path = out.path().join("pack.zip");
         pack_modpack(

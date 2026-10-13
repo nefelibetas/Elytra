@@ -1,5 +1,4 @@
-//! 本地皮肤收藏命令（衣柜「皮肤」半边，薄胶水层）：逻辑在 auth/skins.rs。
-//! 披风侧沿用 account.rs 现成命令（fetch_capes / set_active_cape / disable_cape）。
+//! 本地皮肤收藏命令（披风侧沿用 account.rs 的 fetch_capes / set_active_cape / disable_cape）。
 
 use crate::auth::skins::{self, LocalSkinView};
 
@@ -27,19 +26,17 @@ pub fn remove_local_skin(id: String) -> Result<Vec<LocalSkinView>, String> {
     skins::remove(&id)
 }
 
-/// 读取本地皮肤 PNG（base64），供前端单独刷新预览/应用。
 #[tauri::command]
 pub fn read_local_skin(id: String) -> Result<String, String> {
     skins::read(&id)
 }
 
-/// 导出皮肤 PNG 到选定路径（绘画器导出；仅接受 .png）。
+/// 导出皮肤 PNG 到选定路径（仅接受 .png）。
 #[tauri::command]
 pub fn export_skin_png(path: String, b64: String) -> Result<(), String> {
     skins::export_png(&path, &b64)
 }
 
-/// 导入指定路径的皮肤图片（绘画器导入），返回 base64。
 #[tauri::command]
 pub fn import_skin_png(path: String) -> Result<String, String> {
     skins::import_png(&path)

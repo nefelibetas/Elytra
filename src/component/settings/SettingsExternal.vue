@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// 设置-第三方登录：登录（服务器下拉选择）+ 预设管理（label + value）。
-// 下拉选项 = 内置预设 + 用户预设（下面有什么，上面才能选什么）。
+// 设置-第三方登录：登录（服务器下拉）+ 预设管理（label + value）；下拉选项 = 内置预设 + 用户预设。
 import { computed, onMounted, ref } from "vue";
 import { loadExternalConfig, saveExternalConfig } from "../../store/config/externalConfig";
 import { Plus, Trash2, ExternalLink } from "@lucide/vue";
@@ -18,10 +17,8 @@ interface ServerOption {
   value: string;
 }
 
-/** 预设服务器列表（内置 + 用户新增；get_external_config 默认返回内置）。 */
 const presetServers = ref<ServerOption[]>([]);
 
-/** 登录下拉选项 = 全部预设。 */
 const serverOptions = computed(() => presetServers.value);
 
 const extApi = ref("");
@@ -32,11 +29,9 @@ const extError = ref("");
 /** 已登录时是否展开"登录新账号"表单 */
 const showLoginForm = ref(false);
 
-/** 新增预设输入（label + value）。 */
 const newLabel = ref("");
 const newValue = ref("");
 
-/** 登录：选中服务器 + 账号密码。 */
 async function doLogin() {
   if (extBusy.value) return;
   if (!extApi.value.trim()) { extError.value = "请选择验证服务器"; return; }
@@ -56,7 +51,7 @@ async function doLogin() {
   }
 }
 
-/** 打开服务器站点（官网）：取 value 域名拼 https://。 */
+/** 打开服务器站点：取域名拼 https://。 */
 function openServerLink(url: string) {
   const host = url.replace(/^https?:\/\//, "").split("/")[0];
   if (host) void openUrl(`https://${host}`);
@@ -122,7 +117,6 @@ onMounted(() => {
       <div class="stg-card-sub">外置认证（authlib-injector），登录后游戏内显示该站皮肤</div>
     </div>
 
-    <!-- 全部已存账号（点击切换启用） -->
     <div v-if="externalAccounts.length" class="tp-accounts">
       <div
         v-for="acc in externalAccounts"
@@ -142,18 +136,16 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- 登录新账号：分隔线中间插文本（可点击开关）；未登录时表单直接显示 -->
+    <!-- 登录新账号：分隔线中插文本可点击；未登录时表单直接显示 -->
     <div v-if="externalAccount" class="tp-divider" @click="showLoginForm = !showLoginForm">
       <span class="tp-divider-line"></span>
       <span class="tp-divider-text">{{ showLoginForm ? "收起" : "登录新账号" }}</span>
       <span class="tp-divider-line"></span>
     </div>
 
-    <!-- 登录表单（展开动画） -->
     <Transition name="expand">
     <div v-if="!externalAccount || showLoginForm" class="tp-login">
 
-      <!-- 行1：服务器选择 + 打开站点 -->
       <div class="tp-row tp-field">
         <span class="tp-label">服务器</span>
         <DropSelect
@@ -172,7 +164,6 @@ onMounted(() => {
           <ExternalLink :size="13" />
         </button>
       </div>
-      <!-- 行2：账号 + 密码 + 登录 -->
       <div class="tp-row tp-field">
         <input v-model="extUser" class="tp-input" type="text" placeholder="皮肤站账号" autocomplete="off" />
         <input
@@ -187,7 +178,6 @@ onMounted(() => {
           {{ extBusy ? "登录中…" : "登录" }}
         </button>
       </div>
-      <!-- 行3：错误提示（出现时） -->
       <div v-if="extError" class="tp-error-row">{{ extError }}</div>
     </div>
     </Transition>

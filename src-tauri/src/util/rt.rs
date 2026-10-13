@@ -5,14 +5,9 @@ use std::sync::LazyLock;
 
 use tokio::runtime::RuntimeFlavor;
 
-/// 同步执行异步操作（低频阻塞可接受；secret-service 钥匙串 / task DB 复用）。
-/// 有 tokio 上下文时复用现有 runtime：
-/// - multi_thread runtime：worker 线程直接用 `Handle::block_on` 会 panic
-///   （tokio 禁止 runtime 内再启动 runtime），须先 `block_in_place` 让出 worker；
-///   外部线程（主线程/blocking 线程）下 `block_in_place` 是 no-op，行为不变。
-/// - current_thread runtime：`block_in_place` 不可用，驱动线程直接 `block_on`。
-///
-/// 无 runtime 上下文（后台线程/独立进程/纯同步测试）时自维护兜底 runtime。
+/// 同步执行异步操作（低频阻塞可接受；secret-service 钥匙串 / task DB 复用）。有 tokio 上下文则复用现有 runtime：
+/// multi_thread 下 worker 直接 `Handle::block_on` 会 panic（runtime 内不能再启动 runtime），须 `block_in_place`
+/// 让出 worker（外部线程下 no-op）；current_thread 不可用则直接 `block_on`；无上下文时自维护兜底 runtime（2 worker）。
 pub fn block_on<F: Future>(fut: F) -> F::Output {
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
         if handle.runtime_flavor() == RuntimeFlavor::MultiThread {

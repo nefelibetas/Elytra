@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Java 运行时卡片：选择器下拉 + 扫描/自定义目录 + 下载缺失 JDK + 高级项（JVM 参数/GC/复选框）
+// Java 运行时卡片：选择器 + 扫描/自定义目录 + 下载缺失 JDK + 高级项（JVM 参数/GC/复选框）
 import { computed, onMounted, ref } from "vue";
 import { RefreshCw, FolderPlus, Download } from "@lucide/vue";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
@@ -22,7 +22,6 @@ onMounted(loadConfig);
 /** 下载目标 Java 主版本（Mojang runtime 组件覆盖 8/17/21/25）。 */
 const downloadMajor = ref(17);
 
-/** 下载版本下拉选项（DropSelect 用）。 */
 const jdkDownloadOptions: SelOption[] = [
   { value: "8", label: "Java 8" },
   { value: "17", label: "Java 17" },
@@ -39,7 +38,7 @@ async function handleInstallJdk() {
   }
 
 }
-/** JDK 选择下拉（DropSelect）：自动模式 + 扫描到的各 JDK，path 作唯一 value。 */
+/** JDK 选择下拉：自动 + 扫描到的 JDK，path 作唯一 value。 */
 const AUTO_VALUE = "__auto__";
 
 const jdkOptions = computed<SelOption[]>(() => [
@@ -54,7 +53,7 @@ const jdkOptions = computed<SelOption[]>(() => [
 /** 当前选中值：自动模式固定 AUTO_VALUE；手动为 activeJdk 的 path。 */
 const jdkValue = computed(() => (autoMode.value ? AUTO_VALUE : activeJdk.value?.path ?? ""));
 
-/** 下拉选择：切自动或按 path 选中对应 JDK（store 内保存配置）。 */
+/** 下拉选择：切自动或按 path 选中 JDK（store 内保存配置）。 */
 function onJdkPick(value: string) {
   if (value === AUTO_VALUE) {
     selectAuto();
@@ -72,7 +71,6 @@ function onJdkPick(value: string) {
       <span class="stg-card-sub">选择用于启动游戏的 Java 版本，或由启动器自动匹配</span>
     </div>
 
-    <!-- 选择行：下拉 + 扫描类操作 -->
     <div class="jdk-toolbar">
       <div class="jdk-toolbar-row">
         <div class="jdk-picker-wrap">
@@ -94,7 +92,6 @@ function onJdkPick(value: string) {
         </button>
       </div>
 
-      <!-- 下载行：安装缺失 Java（Mojang 官方/备用源自动安装） -->
       <div class="jdk-dl-group">
         <span class="jdk-dl-label">下载缺失 JDK</span>
         <div class="jdk-dl-controls">
@@ -181,14 +178,12 @@ function onJdkPick(value: string) {
   gap: 10px;
 }
 
-/* 第一行：选择器 + 扫描类操作（刷新/自定义目录） */
 .jdk-toolbar-row {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-/* 第二行：下载安装容器（label 左侧，select+下载按钮右侧） */
 .jdk-dl-group {
   display: flex;
   align-items: center;

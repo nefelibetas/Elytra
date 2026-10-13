@@ -1,4 +1,4 @@
-//! ModLoader 安装的公共参数结构。安装器首行解构，函数体沿用原参数名。
+//! ModLoader 安装的公共参数结构。
 
 use std::path::Path;
 use std::sync::atomic::AtomicBool;

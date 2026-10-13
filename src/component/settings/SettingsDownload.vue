@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// 下载设置卡片（管理游戏下载源）：下载源主开关 + 细分折叠 + 网络代理 + 线程数
-// 下拉统一用共享 DropSelect 组件（外点关闭/视口定位自适应），不再自研 .dl-sel。
+// 下载设置卡片：下载源主开关 + 细分折叠 + 网络代理 + 线程数；下拉统一用共享 DropSelect。
 import { onMounted } from "vue";
 import { ChevronDown } from "@lucide/vue";
 import DropSelect from "../common/DropSelect.vue";
@@ -21,7 +20,7 @@ import {
 } from "../../store/config/downloaderConfig";
 
 onMounted(loadDownloadConfig);
-/** 主开关 custom 态显示文案（custom 值不在选项中，经 placeholder 呈现）。 */
+/** 主开关 custom 态文案（custom 值不在选项中，经 placeholder 呈现）。 */
 const masterPlaceholder = "自定义（已单独设置）";
 
 function onMaster(v: string) {
@@ -36,7 +35,7 @@ function onMaster(v: string) {
       <div class="stg-card-sub">游戏文件、版本列表、社区资源与 JDK 的下载来源与线程数</div>
     </div>
 
-    <!-- 下载源（主开关）：三细分统一切换；明细区可展开单独调整 -->
+    <!-- 下载源（主开关）：切换三细分；明细区可展开单独调整 -->
     <div class="dl-row">
       <span class="dl-label">下载源</span>
       <div class="dl-field">
@@ -57,10 +56,10 @@ function onMaster(v: string) {
       </button>
     </div>
 
-    <!-- 细分源设置：独立折叠区，三类各自独立 -->
+    <!-- 细分源设置：三类各自独立 -->
     <Transition name="expand">
       <div v-if="dlDetailOpen" class="dl-source-detail">
-        <!-- 游戏下载源：版本列表/版本 json/资源/库/ModLoader 构件/JDK runtime 统一走此源 -->
+        <!-- 游戏下载源：版本列表/json/资源/库/ModLoader/JDK runtime 统一走此源 -->
         <div class="dl-row">
           <span class="dl-label">游戏下载源</span>
           <div class="dl-field">
@@ -72,7 +71,6 @@ function onMaster(v: string) {
           </div>
         </div>
 
-        <!-- 社区下载源：Modrinth 官方 vs MCIM 镜像（管理 Fabric API 等社区资源） -->
         <div class="dl-row">
           <span class="dl-label">社区下载源</span>
           <div class="dl-field">
@@ -84,7 +82,7 @@ function onMaster(v: string) {
           </div>
         </div>
 
-        <!-- JDK 下载源：auto 并发测速三源最快优先；officialOnly 固定 Mojang → Azul；mirrorOnly 固定 Mojang（镜像）→ Adoptium 仅 TUNA -->
+        <!-- JDK 下载源：auto 测速取最快；officialOnly 固定 Mojang→Azul；mirrorOnly 固定 Mojang(镜像)→Adoptium 仅 TUNA -->
         <div class="dl-row">
           <span class="dl-label">JDK 下载源</span>
           <div class="dl-field">
@@ -98,7 +96,7 @@ function onMaster(v: string) {
       </div>
     </Transition>
 
-    <!-- 网络代理：自动检测系统代理 / 强制系统代理 / 直连（TUN 由网络层接管） -->
+    <!-- 网络代理：自动 / 强制系统代理 / 直连（TUN 由网络层接管） -->
     <div class="dl-row">
       <span class="dl-label">网络代理</span>
       <div class="dl-field">
@@ -110,7 +108,7 @@ function onMaster(v: string) {
       </div>
     </div>
 
-    <!-- 翻译显示：社区搜索结果简介的显示语言（仅中文/中英对照/仅英文） -->
+    <!-- 翻译显示 -->
     <div class="dl-row">
       <span class="dl-label">翻译显示</span>
       <div class="dl-field">
@@ -122,12 +120,11 @@ function onMaster(v: string) {
       </div>
     </div>
 
-    <!-- 社区资源版本过滤：快照/预发布/候选等非正式版本（默认开启过滤） -->
     <div class="dl-row">
       <CheckToggle v-model="dlShowReleaseOnly" @change="saveDownloadConfig">社区资源仅显示正式版（过滤快照/预发布版本）</CheckToggle>
     </div>
 
-    <!-- 最大线程数：官方源并发（仅镜像模式由镜像源固定 8，隐藏该行——无操作意义） -->
+    <!-- 最大线程数：官方源并发；镜像模式固定 8，隐藏该行 -->
     <div v-if="!concurrencyLocked" class="dl-row">
       <span class="dl-label">最大线程数</span>
       <input
@@ -159,7 +156,7 @@ function onMaster(v: string) {
       />
       <span class="dl-val">{{ dlMaxSpeed === 0 ? '不限' : fmtSpeed(dlMaxSpeed) }}</span>
     </div>
-    <!-- Auto（智能）模式：官方源优先 + 镜像降级，并发仅作用于官方源，镜像源固定 8 -->
+    <!-- Auto 模式：官方源优先+镜像降级；并发仅作用官方源，镜像固定 8 -->
     <p v-if="dlGameMode === 'auto' && !concurrencyLocked" class="dl-note">
       该并发仅对官方源生效，镜像源固定 8 线程
     </p>
@@ -180,13 +177,11 @@ function onMaster(v: string) {
   padding: 9px 0;
 }
 
-/* 下拉占位：DropSelect 撑满除标签外的行内空间 */
 .dl-field {
   flex: 1;
   min-width: 0;
 }
 
-/* 明细区折叠切换按钮 */
 .dl-detail-toggle {
   flex: 0 0 auto;
   width: 28px;
@@ -212,7 +207,6 @@ function onMaster(v: string) {
   transform: rotate(180deg);
 }
 
-/* 细分源设置容器：主开关展开区，缩进突出层级 */
 .dl-source-detail {
   margin-left: 12px;
   padding-left: 14px;
@@ -236,7 +230,6 @@ function onMaster(v: string) {
   color: var(--text-primary);
 }
 
-/* 滑块（进度条） */
 .dl-range {
   flex: 1;
   min-width: 0;
@@ -257,7 +250,6 @@ function onMaster(v: string) {
   color: var(--color-danger);
 }
 
-/* 线程数备注：Auto 模式说明并发作用域 */
 .dl-note {
   margin: -4px 0 4px 102px;
   font-size: 11px;

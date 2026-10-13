@@ -1,4 +1,4 @@
-/// 宏分发实现if
+/// default_of!：取类型 `Default`，或使用显式默认表达式。
 macro_rules! default_of {
     ($ty: ty) => {
         <$ty as Default>::default()
@@ -8,8 +8,8 @@ macro_rules! default_of {
     };
 }
 
-/// 生成 section 的类型化读写函数（消除 `read::<T>(SECT).unwrap_or_default()` /
-/// `save(SECT, &T)` 样板：section 常量只在调用宏处出现一次）。
+/// 生成 section 的类型化读写函数（消除 `read::<T>(SECT).unwrap_or_default()` / `save(SECT, &T)`
+/// 样板：section 常量只在调用宏处出现一次）。
 macro_rules! section_accessors {
     ($($load:ident, $store:ident => $ty:ty, $sect:path $(, $default: expr)?;)*) => {
         $(

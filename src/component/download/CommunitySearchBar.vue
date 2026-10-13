@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// 社区资源搜索表单卡片（通用版）：六套 SearchBar（Mod/光影/资源/数据/整合包/地图）收敛于此。
-// 差异全部 props 化：搜索状态实例、标题、来源/加载器筛选开关；整合包「导入本地」走 prepend-actions 插槽。
+// 每类 xSearchBar 与 xResultList 成对，必须绑定同一 search 单例（同名的 store 搜索状态）。
 import { computed, watch } from "vue";
 import { releases } from "../../store/task/versionDownload";
 import { modLoaderOptions } from "../../store/community/communitySearch";
@@ -11,7 +10,6 @@ export interface CommunitySearchState {
   source: "all" | "modrinth" | "curseforge";
   query: string;
   gameVersion: string;
-  /** 仅 Mod 搜索状态有加载器字段 */
   loader?: string;
   searching: boolean;
   search(page?: number): Promise<void> | void;
@@ -22,13 +20,11 @@ const props = withDefaults(
   defineProps<{
     /** 搜索状态实例（reactive 单例，直接变更其字段） */
     search: CommunitySearchState;
-    /** 卡片标题，如「搜索光影包」 */
     title: string;
     /** 是否显示来源筛选（worlds 为 CurseForge 单源，不显示） */
     showSource?: boolean;
-    /** 是否显示加载器筛选（仅 Mod） */
     showLoader?: boolean;
-    /** 表单控件 id 前缀（同页多实例时防 id 冲突；当前 tab 互斥，默认即可） */
+    /** 表单控件 id 前缀（同页多实例防 id 冲突；当前 tab 互斥） */
     idPrefix?: string;
   }>(),
   {
@@ -38,22 +34,18 @@ const props = withDefaults(
   },
 );
 
-/** 来源选项（DropSelect 用）。 */
 const sourceOptions: SelOption[] = [
   { value: "all", label: "全部" },
   { value: "curseforge", label: "CurseForge" },
   { value: "modrinth", label: "Modrinth" },
 ];
 
-/** 版本选项：全部 + 正式版列表（releases 为 computed）。 */
 const versionOptions = computed<SelOption[]>(() => [
   { value: "", label: "全部" },
   ...releases.value.map((r) => ({ value: r.id, label: r.id })),
 ]);
 
-// 筛选切换即自动搜索（来源/版本/加载器；名称输入走回车）。
-// watch 在微任务触发，与控件事件栈解耦（不直接在 DropSelect 回调里发起搜索）。
-// 无对应字段的状态实例取常量占位（worlds 单源 / 分类搜索无加载器），不会误触发。
+// 来源/版本/加载器切换即自动搜索（名称走回车）；watch 在微任务触发，无对应字段的实例取常量占位不误触发。
 watch(
   () => [
     props.showSource ? props.search.source : "",
@@ -77,7 +69,6 @@ watch(
           @keydown.enter="search.search()"
           autocomplete="off"
         />
-        <!-- Mod 布局特例：来源与名称同行 -->
         <template v-if="showSource && showLoader">
           <label class="cs-form-label" :for="`${idPrefix}SourceSelect`">来源</label>
           <DropSelect
@@ -90,7 +81,6 @@ watch(
         </template>
       </div>
       <div v-if="showSource || showLoader" class="cs-form-row">
-        <!-- 非 Mod 布局特例：来源独占行首（140px），版本填充余下空间 -->
         <template v-if="showSource && !showLoader">
           <label class="cs-form-label" :for="`${idPrefix}SourceSelect`">来源</label>
           <DropSelect
@@ -121,7 +111,6 @@ watch(
         </template>
       </div>
       <div class="cs-form-actions">
-        <!-- 扩展点：整合包「导入本地」等前置动作按钮 -->
         <slot name="prepend-actions"></slot>
         <button class="cs-btn cs-btn-primary" :disabled="search.searching" @click="search.search()">
           <span v-if="search.searching" class="cs-spin"></span>{{ search.searching ? "搜索中" : "搜索" }}

@@ -1,9 +1,7 @@
 //! Minecraft 局域网组播监听：自动发现"对局域网开放"的游戏端口与存档名。
 //!
-//! MC 局域网游戏每 1.5s 向 `224.0.2.60:4445`（IPv4）发组播，
-//! 载荷格式 `[MOTD]...[/MOTD][AD]<port>[/AD]`。监听并解析 `<port>` 与 MOTD，
-//! 用于 host 侧自动获知游戏端口（用户无需手动填写）与存档名（编入房间码，
-//! guest 端 MC 局域网广播显示真实世界名）。
+//! MC 局域网游戏每 1.5s 向 `224.0.2.60:4445`（IPv4）发组播，载荷 `[MOTD]...[/MOTD][AD]<port>[/AD]`。
+//! 解析出端口（host 自动获知，无需手填）与 MOTD（存档名；guest 端广播显示真实世界名）。
 
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -30,7 +28,6 @@ pub struct MinecraftScanner {
 }
 
 impl MinecraftScanner {
-    /// 创建扫描器并启动监听线程。
     pub fn start() -> Self {
         let (quit_tx, quit_rx) = mpsc::channel::<()>();
         let entries = Arc::new(Mutex::new(Vec::new()));
@@ -41,7 +38,6 @@ impl MinecraftScanner {
         Self { entries, quit_tx }
     }
 
-    /// 监听循环：绑定组播 socket，收包解析端口与 MOTD，超时老化。
     fn run(quit_rx: Receiver<()>, entries: Arc<Mutex<Vec<McEntry>>>) -> std::io::Result<()> {
         let socket = UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], MC_MULTICAST_PORT)))?;
         socket.join_multicast_v4(&MC_MULTICAST_IP, &Ipv4Addr::UNSPECIFIED)?;
@@ -72,9 +68,8 @@ impl MinecraftScanner {
     }
 
     /// 当前监测到的 MC 端口（None = 尚未发现/已过期）。
-    ///
-    /// 取**最新入表**的条目：世界关掉再开（新端口）时旧端口条目仍在 5s TTL 内，
-    /// 若返回最先入表的旧端口，host 侧会误判"端口未变"而不重建会话。
+    /// 取**最新入表**条目：世界关掉再开（新端口）时旧端口仍在 5s TTL 内，
+    /// 返回旧端口会让 host 侧误判"端口未变"而不重建会话。
     pub fn get_port(&self) -> Option<u16> {
         self.entries
             .lock()
@@ -90,7 +85,6 @@ impl Drop for MinecraftScanner {
     }
 }
 
-/// 解析组播载荷中的 `[AD]<port>[/AD]`。
 fn parse_port(data: &[u8]) -> Option<u16> {
     let text = String::from_utf8_lossy(data);
     let ad_start = text.find("[AD]")?;
@@ -99,7 +93,6 @@ fn parse_port(data: &[u8]) -> Option<u16> {
     port_str.trim().parse().ok()
 }
 
-/// 解析组播载荷中的 `[MOTD]<motd>[/MOTD]`（无则空串）。
 fn parse_motd(data: &[u8]) -> Option<String> {
     let text = String::from_utf8_lossy(data);
     let motd_start = text.find("[MOTD]")?;
@@ -139,8 +132,7 @@ mod tests {
         assert_eq!(parse_motd(b"nope"), None);
     }
 
-    /// 回归：世界关掉再开后，旧端口条目仍在 TTL 内——`get_port` 必须返回最新入表
-    /// 的端口，否则 host 侧会判定"端口未变"而不重建会话。
+    /// 世界关掉再开后旧端口条目仍在 TTL 内——`get_port` 必须返回最新入表端口，否则 host 侧判定"端口未变"不重建会话。
     #[test]
     fn get_port_returns_newest_entry() {
         let (quit_tx, _quit_rx) = std::sync::mpsc::channel();

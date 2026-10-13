@@ -145,7 +145,6 @@ async function copyCommand() {
       </div>
     </div>
 
-    <!-- 效果 -->
     <div class="nb-sec">
       <div class="nb-sec-title">状态效果（可叠加多个）</div>
       <div class="nb-row">
@@ -175,7 +174,6 @@ async function copyCommand() {
       </div>
     </div>
 
-    <!-- 颜色与名称 -->
     <div class="nb-sec">
       <div class="nb-row">
         <span class="nb-label">液体颜色</span>
@@ -222,7 +220,6 @@ async function copyCommand() {
       </div>
     </div>
 
-    <!-- 输出 -->
     <div class="nb-output">
       <div class="nb-output-head">
         <span>命令 /GIVE（{{ format === "modern" ? "1.20.5+" : "1.13–1.20.4" }}）</span>

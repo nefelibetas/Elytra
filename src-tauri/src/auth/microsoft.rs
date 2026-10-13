@@ -10,8 +10,8 @@ use url::form_urlencoded::Serializer;
 pub const CALLBACK_PORT: u16 = 27205;
 pub const REDIRECT_URI: &str = "http://localhost:27205";
 
-/// 微软 OAuth 客户端 ID（构建时从 .env 注入，见 constants::MS_CLIENT_ID）。
-/// 缺失（未配置 .env / 未重编译）时返回 NotConfigured。
+/// 微软 OAuth 客户端 ID（构建时从 .env 注入，见 constants::MS_CLIENT_ID）；
+/// 未配置 .env / 未重编译时返回 NotConfigured。
 fn ms_client_id() -> Result<&'static str, MsError> {
     constants::MS_CLIENT_ID.ok_or(MsError::NotConfigured)
 }
@@ -24,7 +24,7 @@ const XBL_URL: &str = "https://user.auth.xboxlive.com/user/authenticate";
 const XSTS_URL: &str = "https://xsts.auth.xboxlive.com/xsts/authorize";
 const MC_LOGIN_URL: &str = "https://api.minecraftservices.com/authentication/login_with_xbox";
 const MC_PROFILE_URL: &str = "https://api.minecraftservices.com/minecraft/profile";
-/// 微软签发长期凭证关键, 避免重复登录
+/// 含 `offline_access`：微软签发 refresh_token 以避免重复登录。
 const SCOPE: &str = "XboxLive.signin offline_access";
 
 /// XSTS 错误码 → 用户可读的中文说明。
@@ -41,7 +41,6 @@ fn xsts_error_message(xerr: i64) -> &'static str {
 
 #[derive(Debug)]
 pub enum MsError {
-    /// Azure 未配置 client_id
     NotConfigured,
     /// OAuth 授权阶段失败（含 error_description）
     OAuth(String),
@@ -51,19 +50,16 @@ pub enum MsError {
     NoPurchase,
     /// 账号被迁移/不存在
     NoProfile(String),
-    /// 网络/HTTP 异常
     Http(String),
     /// 认证服务限流（429）——临时性，等待后自动恢复；反复快速重试会延长限流
     RateLimited(&'static str),
-    /// 响应格式异常
     Malformed(String),
     /// 系统 CSPRNG 不可用（极罕见，通常意味着系统级故障）
     Rng(String),
 }
 
 impl std::fmt::Display for MsError {
-    /// 第一行为友好短提示（前端弹窗只显示这行），
-    /// 换行后为详细技术信息（复制按钮复制全文）。
+    /// 第一行 = 友好短提示（前端弹窗只显示这行）；换行后 = 详细技术信息（复制按钮复制全文）。
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             MsError::NotConfigured => write!(f, "Azure 客户端 ID 未配置"),
@@ -115,14 +111,13 @@ pub fn generate_state() -> Result<String, MsError> {
     Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
 }
 
-/// 从系统 CSPRNG 填充随机字节；失败返回 Rng 错误（不再 panic）。
+/// 从系统 CSPRNG 填充随机字节；失败返回 Rng 错误。
 fn random_bytes(buf: &mut [u8]) -> Result<(), MsError> {
     getrandom::getrandom(buf).map_err(|e| MsError::Rng(e.to_string()))
 }
 
-/// 构建 application/x-www-form-urlencoded 请求体。
-/// （reqwest 0.13 的 `.form()` 不可用；用 url crate 的 Serializer：
-/// 空格→`+`、非 ASCII UTF-8 字节→`%XX`，WHATWG 标准序列化）
+/// 构建 form-urlencoded 请求体（reqwest `.form()` 不可用；用 url Serializer：
+/// 空格→`+`、非 ASCII→`%XX`，WHATWG 标准序列化）。
 fn form_body(params: &[(&str, &str)]) -> String {
     let mut serialize = Serializer::new(String::new());
     for (k, v) in params {
@@ -144,8 +139,7 @@ fn urlencode(s: &str) -> String {
     out
 }
 
-/// 构建授权 URL。
-/// `prompt=select_account`：总是显示微软账号选择器（允许切换账号），
+/// 构建授权 URL；`prompt=select_account` 总是显示微软账号选择器（允许切换账号）。
 pub fn build_auth_url(state: &str, pkce: &Pkce) -> Result<String, MsError> {
     let client_id = ms_client_id()?;
     Ok(format!(
@@ -194,7 +188,6 @@ fn extract_tokens(json: &serde_json::Value) -> Result<MsTokens, MsError> {
     })
 }
 
-/// 用授权码换微软 token。
 async fn exchange_code(
     client: &reqwest::Client,
     code: &str,
@@ -218,7 +211,6 @@ async fn exchange_code(
     extract_tokens(&json)
 }
 
-/// 用 refresh_token 刷新微软 token。
 async fn refresh_ms(client: &reqwest::Client, refresh_token: &str) -> Result<MsTokens, MsError> {
     let client_id = ms_client_id()?;
     let resp = client
@@ -238,9 +230,8 @@ async fn refresh_ms(client: &reqwest::Client, refresh_token: &str) -> Result<MsT
 
 // ── Xbox / Minecraft 链路 ────────────────────────────────────────
 
-/// 共享助手：POST JSON → 状态检查 → 解析响应 JSON。
-/// 发送/解析失败→Http；429→RateLimited(what)；`special`(如 XSTS 401)返回 Some 则短路；
-/// 其余非 2xx→Http(`fail_label({status})` + extract_api_error)。成功返回响应 JSON。
+/// POST JSON → 状态检查 → 解析响应 JSON：发送/解析失败→Http；429→RateLimited(what)；
+/// `special`(如 XSTS 401) 返回 Some 则短路；其余非 2xx→Http(`fail_label` + extract_api_error)。
 async fn post_oauth_json(
     client: &reqwest::Client,
     url: &str,
@@ -300,8 +291,7 @@ async fn authenticate_xbl(
     Ok((token.to_string(), uhs.to_string()))
 }
 
-/// XBL token → XSTS token + xuid。401 时返回 XErr 码。
-/// xid（Xbox 账号 ID）部分账号缺失，非致命：缺失时降级为空串，不阻塞登录。
+/// XBL token → XSTS token + xuid；401 返回 XErr 码。xid（Xbox 账号 ID）部分账号缺失，非致命。
 async fn authenticate_xsts(
     client: &reqwest::Client,
     xbl_token: &str,
@@ -356,7 +346,6 @@ pub(crate) fn extract_api_error(json: &serde_json::Value, status: reqwest::Statu
     }
 }
 
-/// XSTS token → Minecraft access_token。
 async fn minecraft_login(
     client: &reqwest::Client,
     uhs: &str,
@@ -467,7 +456,6 @@ fn build_auth_client() -> reqwest::Client {
         .unwrap_or_else(|_| reqwest::Client::new())
 }
 
-/// 授权码 → 完整登录。
 pub async fn login_with_code(
     code: &str,
     verifier: &str,
@@ -477,7 +465,6 @@ pub async fn login_with_code(
     complete_after_ms_token(&client, &tokens).await
 }
 
-/// refresh_token → 刷新并重新拉取完整账号。
 pub async fn refresh_login(
     account: &auth::model::MsAccount,
 ) -> Result<auth::model::MsAccount, MsError> {

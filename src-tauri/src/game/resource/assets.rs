@@ -13,8 +13,7 @@ use crate::downloader::reuse::{classify_local_artifact, LocalRuntimeSource};
 use crate::game::version::source::CacheBehaviour;
 use crate::util::sha1_sub_dir;
 
-/// 资源下载失败止损阈值：超过即停（资源数庞大，大量失败通常是源整体不可达，
-/// 继续下发只是空耗——与 libraries 的"收齐错误"语义相反，那是可修复的个别缺失）。
+/// 资源下载失败止损阈值：超过即停（大量失败通常是源不可达，继续下发空耗；与 libraries 收齐错误语义相反）。
 const MAX_ASSET_ERRORS: usize = 10;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -28,8 +27,7 @@ pub struct AssetObject {
     pub size: u64,
 }
 
-/// 拉取并缓存资源索引（本地缓存 sha1 匹配则直接读，不重新拉取）。
-/// `index_id` 为 None 时不读缓存也不写缓存（仅拉取，供缺失统计等场景）。
+/// 拉取并缓存资源索引（本地缓存 sha1 匹配则直接读）；`index_id` 为 None 时只拉取不读不写缓存。
 pub async fn fetch_asset_index(
     config: &DownloaderConfig,
     mc_dir: &Path,
@@ -44,8 +42,7 @@ pub async fn fetch_asset_index(
             .join(format!("{}.json", id))
     });
     if let (Some(path), Some(sha1)) = (&index_path, index_sha1) {
-        // 单次读取 + 校验：命中直接用读到的内容返回（file_sha1_matches 已读一次，
-        // 避免二次读取；内容不匹配或读取失败走网络）
+        // 单次读取即校验（避免二次读取）；不匹配或失败走网络
         if path.exists() {
             if let Ok(data) = std::fs::read(path) {
                 if sha1_hex(&data) == sha1 {
@@ -58,7 +55,7 @@ pub async fn fetch_asset_index(
         eprintln!("[assets] 缓存无效或无缓存: {}", path.display());
     }
 
-    // 资源索引：主源过慢（5s）自动降级到备用源
+    // 主源过慢（5s）自动降级到备用源
     eprintln!("[assets] 无有效缓存，走网络 fetch_with_fallback");
     let text = config
         .fetch_with_fallback(
@@ -79,8 +76,7 @@ pub async fn fetch_asset_index(
     Ok(text)
 }
 
-/// 资源索引定位（URL + 版本 id + 期望 sha1）。
-/// `id`/`sha1` 为 `None` 时表示调用方只关心索引内容（缓存以 URL 为键）。
+/// 资源索引定位（URL + 版本 id + 期望 sha1）；id/sha1 为 None 表示只关心内容（缓存以 URL 为键）。
 #[derive(Clone, Copy)]
 pub struct AssetIndexRef<'a> {
     pub url: &'a str,
@@ -89,8 +85,7 @@ pub struct AssetIndexRef<'a> {
 }
 
 /// 批量下载资源文件（objects/{sub}/{hash}，逐文件 sha1 校验）。
-/// `reuse`：可选本地运行时复用根——dest 缺失且复用根有 size+sha1 匹配的同 hash 文件时
-/// 本地复制（计入进度）而非网络下载（迁移场景 assets 数百 MB 免重下）。
+/// `reuse`：dest 缺失且复用根有 size+sha1 匹配的同 hash 文件时本地复制（计入进度）而非网络下载。
 pub async fn download_assets(
     index: AssetIndexRef<'_>,
     config: &DownloaderConfig,
@@ -119,7 +114,7 @@ pub async fn download_assets(
 
     let objects_dir = mc_dir.join("assets").join("objects");
 
-    // 构造批：已存在且 sha1 匹配的跳过；其余交给统一批处理（本地复用优先、网络降级）
+    // 已存在且 sha1 匹配的跳过；其余交给统一批处理（本地复用优先、网络降级）
     let mut items = Vec::new();
     for obj in index.objects.values() {
         let hash = obj.hash.clone();
@@ -129,8 +124,7 @@ pub async fn download_assets(
         if dest.exists() && file_sha1_matches(&dest, &hash) {
             continue;
         }
-        // 本地运行时复用：dest 缺失时先问复用根（hash 即 sha1，size 校验 + 流式 sha1）。
-        // 命中 → 复制；未命中 → 网络下载（多源 URL 照常构造）。
+        // 本地复用：dest 缺失时先问复用根（hash 即 sha1，size + 流式 sha1 校验）；命中复制，未命中走网络。
         let local = reuse.as_ref().and_then(|r| {
             classify_local_artifact(
                 r,
@@ -153,7 +147,7 @@ pub async fn download_assets(
         });
     }
 
-    // 本步骤的进度分母（待下载条目数）：任务层心跳据此算该步骤百分比
+    // 步骤进度分母（待下载条目数）
     pc.step_files_total.store(items.len() as u32, Ordering::Relaxed);
     let errors = batch::run(items, concurrency, pc, cancel, Some(MAX_ASSET_ERRORS)).await;
     if errors.is_empty() {
@@ -168,8 +162,7 @@ mod tests {
     use super::*;
     use crate::config::downloader::DownloaderConfig;
 
-    /// 端到端（B2 路径）：fetch_asset_index 经系统代理/直连拉取官方资源索引应成功。
-    /// 网络测试（与 fetch_manifest_works 同惯例）：开发环境可达；离线/黑洞环境超时报错。
+    /// 端到端：fetch_asset_index 经代理/直连拉官方资源索引应成功；离线/黑洞环境超时报错。
     #[tokio::test]
     async fn fetch_asset_index_end_to_end() {
         let cfg = DownloaderConfig::default();
@@ -192,7 +185,6 @@ mod tests {
             "asset index 应完整（约 586KB）: {}B",
             text.len()
         );
-        // 清理测试目录（避免留缓存）
         let _ = std::fs::remove_dir_all(&mc);
     }
 }

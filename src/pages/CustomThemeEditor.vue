@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// 自定义外观编辑器（子路由页）：所见即所得骨架预览，点击部位弹出内嵌调色板调色。
-// 入口：设置-外观「添加自定义」（新建）或自定义卡片「编辑」（query id）；保存后返回设置页。
+// 自定义外观编辑器（子路由页）：点击骨架部位弹出内嵌调色板调色；保存后返回设置页。
 import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { goBack } from "../store/app/nav";
@@ -13,14 +12,14 @@ import {
 
 const route = useRoute();
 
-/** query id：存在 = 编辑已有自定义主题；缺失 = 新建。 */
+/** query.id：存在 = 编辑已有主题；缺失 = 新建。 */
 const editingId = computed(() => (route.query.id as string) || "");
 
 const editName = ref("");
 const editDesc = ref("");
 const editVars = ref<CustomThemeVars>(initVars());
 
-/** query.from 解析：显式指定且存在（内置主题或已保存的自定义）时的起点 id。 */
+/** query.from：显式指定且存在的起点 id（内置主题或已存自定义）。 */
 function fromParam(): ThemeId | undefined {
   const from = route.query.from as string | undefined;
   if (!from) return undefined;
@@ -31,13 +30,11 @@ function fromParam(): ThemeId | undefined {
 
 function initVars(): CustomThemeVars {
   if (editingId.value && customThemes.value[editingId.value]) {
-    // 编辑：载入现有值
     const t = customThemes.value[editingId.value];
     editName.value = t.name;
     editDesc.value = t.desc ?? "";
     return { ...t.vars };
   }
-  // 新建：从 query.from 指定主题（内置或现有自定义）复制起点
   const from = fromParam();
   editName.value = "自定义外观";
   editDesc.value = "";
@@ -46,7 +43,7 @@ function initVars(): CustomThemeVars {
   return { ...customThemes.value[from].vars };
 }
 
-/** 同组件实例下 query 变化（新建 ↔ 编辑）：重建表单与色板状态。 */
+/** 同实例下 query 变化（新建 ↔ 编辑）：重建表单与色板状态。 */
 watch(
   () => route.query,
   () => {
@@ -56,10 +53,8 @@ watch(
   },
 );
 
-/** 骨架可调部位键（与 store 的可调变量清单同源，单一维护）。 */
 type EditableVarKey = (typeof EDITABLE_VAR_KEYS)[number];
 
-/** 部位标签：Record<EditableVarKey, …> 保证清单新增变量时此处必须补标签。 */
 const PART_LABELS: Record<EditableVarKey, string> = {
   "--color-brand": "品牌色",
   "--text-primary": "主文字",
@@ -70,7 +65,7 @@ const PART_LABELS: Record<EditableVarKey, string> = {
   "--border-strong": "强调边框",
 };
 
-/** 骨架预览 CSS 变量透传（局部作用域，不污染全局主题）。 */
+/** 预览变量透传（局部作用域，不污染全局主题）。 */
 const previewStyle = computed(() => {
   const v = editVars.value;
   const brand = v["--color-brand"];
@@ -88,8 +83,7 @@ const previewStyle = computed(() => {
   };
 });
 
-/** 预览专用：悬停底色 rgba alpha 过低时提升到可见下限（真实应用保持原值，
- *  骨架上需让该可点击部位清晰可辨）。hex 等不透明值原样返回。 */
+/** 预览专用：悬停 alpha 过低时提升到可见下限；不透明值原样返回（真实应用不改）。 */
 function visibleHover(v: string): string {
   const m = v.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
   if (m) {
@@ -102,7 +96,6 @@ function visibleHover(v: string): string {
   return v;
 }
 
-/** hex + 透明度 → rgba（骨架选中项底色等半透明场景）。 */
 function colorMix(hex: string, alphaPct: number): string {
   const m = hex.match(/^#([0-9a-fA-F]{6})$/);
   if (!m) return hex;
@@ -114,24 +107,19 @@ function colorMix(hex: string, alphaPct: number): string {
 
 // ── 调色板状态 ──
 
-/** 当前选中的部位变量。 */
 const activeField = ref<EditableVarKey | null>(null);
 
-/** 调色板开关。 */
 const paletteOpen = ref(false);
 
-/** 点击骨架部位：选中 + 打开调色板。 */
 function pickField(key: EditableVarKey) {
   activeField.value = key;
   paletteOpen.value = true;
 }
 
-/** 当前选中变量的 css 值。 */
 const currentVal = computed(() =>
   activeField.value ? editVars.value[activeField.value] : "",
 );
 
-/** 预设色板（Minecraft 生态 + 中性色）。 */
 const PRESET_COLORS = [
   "#059669", "#10B981", "#34D399", "#0EA5E9", "#38BDF8", "#7C3AED",
   "#A855F7", "#EA580C", "#F97316", "#F59E0B", "#EAB308", "#84CC16",
@@ -139,13 +127,12 @@ const PRESET_COLORS = [
   "#1F2937", "#374151", "#6B7280", "#9CA3AF", "#D1D5DB", "#F3F4F6",
 ];
 
-/** 从预设色板选色（保留原变量透明度语义）。 */
 function pickPreset(hex: string) {
   if (!activeField.value) return;
   applyColor(hex);
 }
 
-/** 应用颜色到当前变量：原值 rgba 保留 alpha。 */
+/** 应用颜色：原值 rgba 保留 alpha。 */
 function applyColor(hex: string) {
   if (!activeField.value) return;
   if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return;
@@ -163,10 +150,9 @@ function applyColor(hex: string) {
   }
 }
 
-/** hex 文本框输入（change 校验）。 */
 function onHexText(e: Event) {
   const el = e.target as HTMLInputElement;
-  // 前缀 # 已从输入框拆出（样式展示），输入补全回 hex 校验
+  // # 前缀在样式层展示，此处补全后再校验
   let val = el.value.trim();
   if (!val.startsWith("#")) val = "#" + val;
   if (/^#[0-9a-fA-F]{6}$/.test(val)) {
@@ -177,7 +163,6 @@ function onHexText(e: Event) {
   }
 }
 
-/** 当前选中变量的 hex 显示值（rgba → 主色 hex）。 */
 const currentHex = computed(() => {
   const v = currentVal.value;
   const m = v.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
@@ -188,7 +173,7 @@ const currentHex = computed(() => {
   return /^#[0-9a-fA-F]{6}$/.test(v) ? v : "#000000";
 });
 
-/** 重置当前变量为默认（grass 值）。 */
+/** 重置为默认（grass 值）。 */
 function resetField() {
   if (!activeField.value) return;
   editVars.value[activeField.value] = builtinVars("grass")[activeField.value];
@@ -196,7 +181,7 @@ function resetField() {
 
 // ── 保存 / 返回 ──
 
-/** 保存：新建或更新，激活，返回设置页。 */
+/** 保存：新建/更新并激活，返回设置页。 */
 function save() {
   const name = editName.value.trim() || "自定义外观";
   const desc = editDesc.value.trim();
@@ -205,8 +190,7 @@ function save() {
     updateCustomTheme(editingId.value, patch);
     activateCustomTheme(editingId.value as ThemeId);
   } else {
-    // 起点与 initVars 保持一致：createCustomTheme 会为内置起点写入 basedOn，
-    // 使品牌衍生物直接取自该内置主题的 CSS 值
+    // 起点与 initVars 一致：内置起点由 createCustomTheme 写 basedOn，品牌衍生物直接取其 CSS 值
     const from = fromParam();
     const t = createCustomTheme(from);
     updateCustomTheme(t.id, patch);
@@ -268,7 +252,7 @@ function save() {
                 class="pv-part pv-card-btn pv-static"
               ></span>
             </div>
-            <!-- 内容区分隔线：常规边框（--border-default）的可点载体 -->
+            <!-- 内容区分隔线：--border-default 的可点载体 -->
             <span
               class="pv-part pv-divider"
               :class="{ active: activeField === '--border-default' }"
@@ -307,7 +291,7 @@ function save() {
 
       <!-- 右栏：上调色板 + 下标题/保存 -->
       <div class="cte-right">
-      <!-- 上：内嵌调色板（点击部位后出现） -->
+      <!-- 上：内嵌调色板 -->
       <div class="cte-palette" :class="{ open: paletteOpen }">
         <template v-if="activeField && paletteOpen">
           <div class="cte-palette-head">
@@ -410,7 +394,6 @@ function save() {
   padding: 4px 6px 0;
 }
 
-/* 名称：无边框底划线，大字号加粗，focus 品牌线 */
 .cte-name {
   width: 100%;
   padding: 6px 2px 8px;
@@ -432,7 +415,6 @@ function save() {
   border-bottom-color: var(--color-brand);
 }
 
-/* 副标题：无边框底划线，小字号弱化 */
 .cte-desc {
   width: 100%;
   padding: 2px 2px 6px;
@@ -454,7 +436,6 @@ function save() {
 }
 
 
-/* 下区：标题 / 副标题 / 保存 */
 .cte-meta {
   flex: none;
   display: flex;
@@ -500,7 +481,6 @@ function save() {
   box-shadow: 0 1px 4px var(--color-brand-glow, rgba(0,0,0,0.2));
 }
 
-/* 主体 */
 .cte-body {
   flex: 1;
   min-height: 0;
@@ -510,7 +490,6 @@ function save() {
   overflow: hidden;
 }
 
-/* 左：骨架预览 */
 .cte-preview {
   position: relative;
   flex: 1;
@@ -525,7 +504,6 @@ function save() {
   user-select: none;
 }
 
-/* 可调部位 */
 .pv-part {
   position: relative;
   cursor: pointer;
@@ -707,8 +685,7 @@ function save() {
   overflow: hidden;
 }
 
-/* 内容区分隔线：常规边框（--border-default）的可点载体；
-   外层 9px 高度为 1px 的线留出可点击热区（hover/active 轮廓随之可见） */
+/* 内容区分隔线：--border-default 的可点载体；9px 高为 1px 线留点击热区 */
 .pv-divider {
   flex: none;
   display: flex;
@@ -780,7 +757,6 @@ function save() {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
-/* 右：内嵌调色板 */
 .cte-palette {
   flex: 1;
   min-height: 0;

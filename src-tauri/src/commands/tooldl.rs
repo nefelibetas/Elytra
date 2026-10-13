@@ -1,4 +1,4 @@
-//! 工具箱「多线程下载器」命令（薄胶水：转调 `tooldl` 域与 `persist`）。
+//! 工具箱「多线程下载器」命令（转调 `tooldl` 域与 `persist`）。
 
 use std::sync::Arc;
 
@@ -9,7 +9,6 @@ use crate::task::EventSink;
 use crate::tooldl::{self, ToolDlSnapshot};
 use crate::persist;
 
-/// 入队一批下载链接，返回新任务 id 列表。
 #[tauri::command]
 pub async fn tooldl_enqueue(
     app: AppHandle,
@@ -27,7 +26,6 @@ pub fn tooldl_pause(task_id: String) -> Result<(), String> {
     tooldl::pause(&task_id)
 }
 
-/// 继续（暂停）或重试（失败）任务。
 #[tauri::command]
 pub async fn tooldl_resume(app: AppHandle, task_id: String) -> Result<(), String> {
     let sink: Arc<dyn EventSink> = Arc::new(app);
@@ -40,19 +38,16 @@ pub fn tooldl_cancel(task_id: String) -> Result<(), String> {
     tooldl::cancel(&task_id)
 }
 
-/// 从列表移除任务记录。
 #[tauri::command]
 pub fn tooldl_remove(task_id: String) -> Result<(), String> {
     tooldl::remove(&task_id)
 }
 
-/// 清除全部已结束的任务记录。
 #[tauri::command]
 pub fn tooldl_clear_finished() {
     tooldl::clear_finished();
 }
 
-/// 全部任务快照（页面重进时恢复列表）。
 #[tauri::command]
 pub fn tooldl_list() -> Vec<ToolDlSnapshot> {
     tooldl::list()

@@ -1,6 +1,4 @@
-// 配置损坏恢复提示：启动期拉取（后端 setup 读配置时可能已恢复，事件会早于前端就绪而丢失）
-// + 运行期订阅事件（用户操作触发保存时发生的恢复）。两条通道天然去重：
-// 启动期那次事件无人监听、只剩在通知槽里被拉走；运行期那次无人再拉取、只走事件。
+// 配置损坏恢复提示：启动期拉取 + 运行期订阅事件，两条通道兜底且天然去重。
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { showError } from "../app/alert";

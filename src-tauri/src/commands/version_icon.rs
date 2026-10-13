@@ -1,7 +1,5 @@
-//! 版本图标命令：读取 / 设置 / 还原 versions/{dir} 下的图标。
-//! 优先级：用户自定义（version-icon.png）> 整合包项目图（pack-icon.png）。
-//! 图片格式判定复用 util::is_supported_image 魔数嗅探（与前端 data URL 渲染语义一致）；
-//! 目录名守卫防路径穿越。
+//! 版本图标命令：读/写/还原 versions/{dir} 下的图标。
+//! 优先级：用户自定义（version-icon.png）> 整合包项目图（pack-icon.png）；目录名守卫防路径穿越。
 
 use std::path::PathBuf;
 
@@ -36,7 +34,6 @@ pub struct VersionIconInfo {
     pub source: String,
 }
 
-/// 查询当前图标来源（设置页展示状态用；目录不存在返回 default）。
 #[tauri::command]
 pub fn get_version_icon_source(version_dir_name: String) -> VersionIconInfo {
     let source = ensure_simple_dir_name(&version_dir_name)
@@ -57,8 +54,7 @@ pub fn get_version_icon_source(version_dir_name: String) -> VersionIconInfo {
     }
 }
 
-/// 设置自定义版本图标：把选中的本地图片复制为 versions/{dir}/version-icon.png。
-/// 仅接受 png/jpeg/webp/gif（魔数校验），≤1MB；覆盖旧自定义图。
+/// 设置自定义版本图标：把选中图片复制为 versions/{dir}/version-icon.png；仅接受 png/jpeg/webp/gif（魔数校验），≤1MB，覆盖旧图。
 #[tauri::command]
 pub async fn set_version_icon(version_dir_name: String, source_path: String) -> Result<(), String> {
     ensure_simple_dir_name(&version_dir_name)?;
@@ -75,7 +71,6 @@ pub async fn set_version_icon(version_dir_name: String, source_path: String) -> 
         return Err("不支持的图片格式（仅支持 png / jpg / webp / gif）".into());
     }
     let vdir = version_dir_path(&version_dir_name)?;
-    // 复制为固定文件名（内容格式由魔数决定，前端按嗅探渲染）
     tokio::task::spawn_blocking(move || {
         std::fs::write(vdir.join("version-icon.png"), &bytes)
             .map_err(common_err_ctx!("写入图标失败"))
@@ -84,8 +79,7 @@ pub async fn set_version_icon(version_dir_name: String, source_path: String) -> 
     .map_err(common_err_ctx!("写入任务失败"))?
 }
 
-/// 还原为默认图标：删除自定义图标（versions/{dir}/version-icon.png）。
-/// 整合包项目图（pack-icon.png）不受影响——"默认"即安装时的样子。
+/// 还原默认图标：删自定义图标（version-icon.png），整合包项目图不受影响。
 #[tauri::command]
 pub async fn reset_version_icon(version_dir_name: String) -> Result<(), String> {
     ensure_simple_dir_name(&version_dir_name)?;

@@ -1,7 +1,4 @@
-//! 游戏进程生命周期（launcher 域，原 commands/launch.rs 内嵌逻辑下沉）：
-//! 子进程 spawn（Windows Job Object 脱钩重试）、stdout/stderr 落盘、可见窗口轮询、
-//! 退出监听与崩溃报告定位。命令层（commands/launch.rs）只做编排与事件派发，
-//! 本模块不依赖 tauri：退出/窗口回调由调用方注入。
+//! 游戏进程生命周期：子进程 spawn（Windows Job Object 脱钩重试）、stdout/stderr 落盘、可见窗口轮询、退出监听与崩溃报告定位；不依赖 tauri（回调由调用方注入）。
 
 #[cfg(target_os = "windows")]
 use std::ffi::c_void;
@@ -18,21 +15,14 @@ use crate::launcher::model::{AuthMode, LaunchOptions, ProcessPriority};
 #[cfg(target_os = "windows")]
 use crate::util::NoWindow as _;
 
-/// 启动游戏子进程（cwd/stdio 由调用方在 command 上预设）。
-/// Windows：游戏进程应与启动器生命周期解耦，否则关闭启动器（或其终端）会连游戏一起关闭：
-/// 游戏作为启动器的子进程，会自动加入启动器所在的 Job Object
-/// （如 VS Code 终端建的 KILL_ON_JOB_CLOSE job），job 关闭时游戏被连带杀死。
-/// 用 CREATE_BREAKAWAY_FROM_JOB 让游戏脱离该 job；
-/// 但宿主 job 不允许 breakaway 时，带该标志的 CreateProcess 会直接失败
-/// ERROR_ACCESS_DENIED(5)（实测复现），此时回退为不带该标志重试——
-/// 游戏留在 job 中（关终端仍会被连带关闭，Windows 硬限制），但能正常启动。
+/// 启动游戏子进程（cwd/stdio 由调用方预设）；Windows 用 CREATE_BREAKAWAY_FROM_JOB 与启动器所在 Job Object 脱钩，否则宿主 job（如终端 KILL_ON_JOB_CLOSE）关闭会连带杀死游戏。
+/// 宿主 job 不允许 breakaway 时该标志会让 CreateProcess 失败 ERROR_ACCESS_DENIED(5)，回退不带标志重试（游戏留在 job 中）。
 #[cfg(target_os = "windows")]
 pub fn spawn_game_child(
     command: &mut std::process::Command,
 ) -> Result<std::process::Child, String> {
     const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
-    // 附加标志（CREATE_NO_WINDOW 由 util::process 统一合并：游戏同样是控制台程序，
-    // 不带该标志就会弹出一个命令行窗口）
+    // 附加标志（CREATE_NO_WINDOW 由 util::process 合并：游戏是控制台程序，不带会弹命令行窗口）
     let mut flags = CREATE_BREAKAWAY_FROM_JOB;
     loop {
         command.no_window_with(flags);
@@ -53,7 +43,6 @@ pub fn spawn_game_child(
     command.spawn().map_err(common_err_ctx!("启动游戏失败"))
 }
 
-/// 读取子进程输出并追加写入日志文件，直到 EOF 或出错。
 pub fn drain_output(reader: &mut impl std::io::Read, path: &Path, is_stderr: bool) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -98,9 +87,7 @@ pub fn ensure_game_ready(
     Ok(())
 }
 
-/// 该进程是否存在可见顶层窗口（Minecraft 主窗口）。
-/// Windows: EnumWindows 按 pid 匹配 + IsWindowVisible 判定；
-/// 其他平台无此能力，直接视为可见（保持旧行为，前端另有 90s 超时兜底）。
+/// 该进程是否存在可见顶层窗口（Minecraft 主窗口）；Windows 用 EnumWindows+IsWindowVisible，其他平台视为可见（前端另有 90s 超时兜底）。
 #[cfg(target_os = "windows")]
 fn process_has_visible_window(pid: u32) -> bool {
     extern "system" {
@@ -118,8 +105,7 @@ fn process_has_visible_window(pid: u32) -> bool {
         found: bool,
     }
 
-    // SAFETY: 作为 EnumWindows 回调，lparam 恒为调用处传入的 &mut search（见下方），
-    // 该指针在枚举期间保持有效且独占，回调内按 *mut Search 还原并解引用因此安全。
+    // SAFETY: 作为 EnumWindows 回调，lparam 恒为调用处传入的 &mut search（见下方），该指针在枚举期间保持有效且独占，回调内按 *mut Search 还原并解引用因此安全。
     unsafe extern "system" fn enum_proc(hwnd: *mut c_void, lparam: isize) -> i32 {
         let s = &mut *(lparam as *mut Search);
         let mut wpid: u32 = 0;
@@ -133,8 +119,7 @@ fn process_has_visible_window(pid: u32) -> bool {
     }
 
     let mut search = Search { pid, found: false };
-    // SAFETY: enum_proc 是签名匹配的 "system" 回调，search 在本栈帧存活至调用结束，
-    // 其地址作为 lparam 传入；EnumWindows 同步枚举完才返回，期间指针保持有效。
+    // SAFETY: enum_proc 是签名匹配的 "system" 回调，search 在本栈帧存活至调用结束，其地址作为 lparam 传入；EnumWindows 同步枚举完才返回，期间指针保持有效。
     unsafe {
         EnumWindows(enum_proc, &mut search as *mut Search as isize);
     }
@@ -146,8 +131,7 @@ fn process_has_visible_window(_pid: u32) -> bool {
     true
 }
 
-/// 返回目录下**本次启动之后**产生的最新 `crash-*.txt` 文件路径（崩溃报告）。
-/// 时间窗 `since` 用于排除历史残留报告（否则上次崩溃会被误判成本次）。
+/// 返回目录下**本次启动之后**产生的最新 `crash-*.txt` 路径；时间窗 `since` 排除历史残留报告。
 fn latest_crash_report(dir: &Path, since: SystemTime) -> Option<String> {
     let mut latest: Option<(SystemTime, String)> = None;
     for entry in std::fs::read_dir(dir).ok()?.flatten() {
@@ -169,8 +153,7 @@ fn latest_crash_report(dir: &Path, since: SystemTime) -> Option<String> {
     latest.map(|(_, p)| p)
 }
 
-/// `logs/latest.log` 在时间窗内是否含崩溃特征。
-/// 覆盖 OOM 等"直接退出、不写 crash-report"的崩溃（只看尾部，避免整读大文件）。
+/// `logs/latest.log` 在时间窗内是否含崩溃特征（覆盖 OOM 等不写 crash-report 的崩溃；只看尾部）。
 fn has_crash_signature(log: &Path, since: SystemTime) -> bool {
     let Ok(modified) = std::fs::metadata(log).and_then(|m| m.modified()) else {
         return false;
@@ -202,7 +185,6 @@ fn detect_crash(game_dir: &Path, exit_code: Option<i32>, since: SystemTime) -> O
 /// 游戏窗口首次可见的轮询间隔（毫秒）。
 const WINDOW_POLL_MS: u64 = 300;
 
-/// `spawn_and_watch` 的装配参数（参数超过 7 个时用上下文结构体，避免 too_many_arguments）。
 pub struct SpawnRequest<'a> {
     /// 完整启动命令 argv（`args[0]` = java 可执行文件）
     pub args: &'a [String],
@@ -213,10 +195,7 @@ pub struct SpawnRequest<'a> {
     pub process_priority: ProcessPriority,
 }
 
-/// 启动游戏子进程并完成全部接线：cwd/stdio 装配 → spawn（Job Object 脱钩）→
-/// 进程优先级 → stdout/stderr 排空线程 → 后台监听（窗口可见 + 退出）。
-/// 两个事件回调由调用方注入（本域不依赖 tauri 与事件常量），回调首参为子进程 pid，
-/// 使调用方无需在 spawn 前就持有它。返回 pid。
+/// 启动子进程并接线：cwd/stdio → spawn（脱钩）→ 优先级 → 输出排空线程 → 后台监听（窗口可见 + 退出）；回调由调用方注入，首参为 pid。
 pub fn spawn_and_watch<W, E>(
     req: SpawnRequest<'_>,
     on_window_visible: W,
@@ -244,7 +223,6 @@ where
         .stdin(std::process::Stdio::null());
     let mut child = spawn_game_child(&mut command)?;
     let pid = child.id();
-    // 进程刚启动即设置优先级（Windows: SetPriorityClass）
     crate::launcher::platform::set_process_priority(pid, process_priority);
     // 捕获子进程 stdout/stderr 写入日志文件（避免 GBK 乱码污染终端，同时保留诊断信息）
     if let Some(mut so) = child.stdout.take() {
@@ -268,8 +246,7 @@ where
     Ok(pid)
 }
 
-/// 合一监听循环（后台线程）：try_wait 非阻塞查退出 + 可见窗口轮询；
-/// 进程退出后回调 on_exit（含崩溃判定与证据定位），窗口首次可见回调 on_window_visible。
+/// 合一监听循环（后台线程）：try_wait 非阻塞查退出 + 可见窗口轮询；退出回调 on_exit（含崩溃判定与证据定位），窗口首次可见回调 on_window_visible。
 pub fn watch_game_process<W, E>(
     mut child: std::process::Child,
     pid: u32,
@@ -286,7 +263,6 @@ pub fn watch_game_process<W, E>(
         // 判定时间窗起点：监听开始时（早于游戏产生任何日志，晚于 pre_launch 钩子）
         let watch_started = SystemTime::now();
         loop {
-            // 进程已退出：回调退出事件（含崩溃报告）并结束
             match child.try_wait() {
                 Ok(Some(status)) => {
                     // 退出码随回调送出：调用方据此区分正常退出与崩溃（非 0 → 错误级提示）
@@ -303,7 +279,6 @@ pub fn watch_game_process<W, E>(
                     return;
                 }
             }
-            // 主窗口尚未可见：轮询一次（Windows EnumWindows 按 pid 匹配可见顶层窗口）
             if !window_notified && process_has_visible_window(pid) {
                 window_notified = true;
                 on_window_visible();
@@ -313,9 +288,7 @@ pub fn watch_game_process<W, E>(
     });
 }
 
-/// 读取游戏日志尾部（最多 200 行）：优先版本目录 logs/latest.log（游戏自身日志，
-/// 游戏 cwd 是版本目录，latest.log/crash-reports 都落在那里），
-/// 为空/不存在时回退启动器捕获日志 <game_dir>/logs/elytra-launch.log；均不可读返回空串。
+/// 读取游戏日志尾部（≤200 行）：优先版本目录 logs/latest.log，否则 `<game_dir>/logs/elytra-launch.log`；均不可读返回空串。
 pub fn read_game_log(mc_dir: &Path, version_name: &str) -> String {
     let version_logs = mc_dir.join("versions").join(version_name).join("logs");
     let game_log = std::fs::read_to_string(version_logs.join("latest.log")).unwrap_or_default();
@@ -345,8 +318,6 @@ pub fn build_auth(
             xuid: xuid.to_string(),
         },
         "external" => {
-            // 第三方登录：账号从 secrets 读（uuid/name/token/api_url 一致），
-            // 前端传 username/uuid/token；api_url 从当前第三方账号取
             let api_url = read()
                 .map(|a| a.api_url)
                 .unwrap_or_default();
@@ -364,8 +335,7 @@ pub fn build_auth(
     }
 }
 
-/// 正版模式 xuid 缺失时从 Minecraft access token（JWT）解析兜底
-/// （XSTS 的 xid 字段部分账号缺失，旧配置也可能未保存 xuid）。
+/// 正版模式 xuid 缺失时从 Minecraft access token（JWT）解析兜底（部分账号 XSTS xid 字段缺失）。
 pub fn fill_missing_xuid(auth: &mut AuthMode) {
     if let AuthMode::Online {
         xuid, access_token, ..
@@ -377,8 +347,7 @@ pub fn fill_missing_xuid(auth: &mut AuthMode) {
     }
 }
 
-/// 启动类命令（launch_game / export_launch_script / spawn_game）共享的前置：
-/// 构造账号（补 xuid）→ 加载配置与版本 JSON。
+/// 启动类命令共享的前置：构造账号（补 xuid）→ 加载配置与版本 JSON。
 #[allow(clippy::type_complexity)]
 pub async fn prepare_launch(
     version_dir_name: &str,
@@ -402,9 +371,7 @@ pub async fn prepare_launch(
     fill_missing_xuid(&mut auth);
     let (java_path, version_json, mc_dir, launcher_config, java_major) =
         load_launch_config(version_dir_name)?;
-    // 第三方登录：启动前确保 authlib-injector.jar 就绪（注入必需，缺失会启动失败）。
-    // 缺失时先尝试自动补齐（官方 → BMCLAPI 双源），仍失败才报错——不该为了一个
-    // 组件文件让用户重走一遍登录流程。
+    // 第三方登录：启动前确保 authlib-injector.jar 就绪（缺失会启动失败）；先自动补齐（官方 → BMCLAPI），仍失败才报错。
     if matches!(auth, AuthMode::External { .. }) {
         ensure_jar().await.map_err(|e| {
             format!("第三方登录组件缺失且自动下载失败\n请检查网络后重试\n{e}")

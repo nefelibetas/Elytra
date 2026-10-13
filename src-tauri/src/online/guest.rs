@@ -19,8 +19,7 @@ use crate::task::EventSink;
 use easytier_core::gateway::DataPlaneTcpStream;
 use std::sync::Arc;
 
-/// 加入联机（作为 guest）：解析房间码 → 建网 → 发现中心 → 心跳 → 协商 →
-/// server_port → 建游戏代理（本地 → 中心游戏端口）→ MC 广播。返回本地端口。
+/// 加入联机（guest）：解析房间码 → 建网 → 发现中心 → 心跳协商 → 建本地游戏代理 + MC 广播。返回本地端口。
 pub async fn join(sink: Arc<dyn EventSink>, room_code: &str) -> Result<u16, String> {
     let (session, gen) = start_join_session(room_code).await?;
     let (stream, center_addr, center_ip) = connect_center(sink.as_ref(), &session, gen).await?;
@@ -46,8 +45,8 @@ pub async fn join(sink: Arc<dyn EventSink>, room_code: &str) -> Result<u16, Stri
     Ok(local_port)
 }
 
-/// 阶段一：校验状态、解析房间码、建虚拟网并写入初始状态。
-/// 返回会话与 generation。**建网在锁外做**（秒级；持锁会让 status()/stop() 一起卡住）。
+/// 阶段一：校验状态、解析房间码、建虚拟网并写入初始状态，返回会话与 generation；
+/// **建网在锁外做**（秒级；持锁会卡住 status()/stop()）。
 async fn start_join_session(room_code: &str) -> Result<(EasyTierSession, u64), String> {
     let (gen, room, cfg) = {
         let mut svc = SERVICE.lock().await;
@@ -86,14 +85,12 @@ async fn start_join_session(room_code: &str) -> Result<(EasyTierSession, u64), S
     Ok((s, gen))
 }
 
-/// 阶段二：发现联机中心并连上信息服务器（数据面）。
-/// 失败时回滚会话、广播快照并返回错误文案。
+/// 阶段二：发现联机中心并连上信息服务器（数据面）；失败时回滚会话、广播快照并返回错误。
 async fn connect_center(
     sink: &dyn EventSink,
     session: &EasyTierSession,
     gen: u64,
 ) -> Result<(DataPlaneTcpStream, SocketAddr, Ipv4Addr), String> {
-    // 发现中心：轮询 route_snapshots 匹配 hostname 前缀
     let (center_ip, center_port) = match discover_center(session, gen).await {
         Some(v) => v,
         None => {
@@ -102,7 +99,6 @@ async fn connect_center(
         }
     };
 
-    // 连信息服务器（数据面）
     let center_addr = SocketAddr::from((center_ip, center_port));
     let stream = match session
         .data_plane_tcp_connect(center_addr, Duration::from_secs(10))
@@ -117,8 +113,7 @@ async fn connect_center(
     Ok((stream, center_addr, center_ip))
 }
 
-/// 阶段三：信息协议握手（立即心跳 → 协议协商 → server_port）。
-/// 返回本地玩家资料、是否支持 easytier_id、游戏端口。
+/// 阶段三：信息协议握手（心跳 → 协议协商 → server_port），返回本地玩家资料、是否支持 easytier_id、游戏端口。
 async fn negotiate_guest_session(
     sink: &dyn EventSink,
     mut stream: DataPlaneTcpStream,
@@ -146,7 +141,6 @@ async fn negotiate_guest_session(
     .map_err(common_err_ctx!("发送心跳失败"))?;
     let _ = read_response_async(&mut stream).await;
 
-    // 协议协商：c:protocols
     write_request_async(&mut stream, "c", "protocols", b"")
         .await
         .map_err(common_err_ctx!("协议协商失败"))?;
@@ -158,7 +152,7 @@ async fn negotiate_guest_session(
         server.split('\0').any(|p| p == "c:player_easytier_id")
     };
 
-    // c:server_port（返回游戏端口；proxy NAT 直连 host 本机 MC 监听）
+    // c:server_port（游戏端口；proxy NAT 直连 host 本机 MC 监听）
     write_request_async(&mut stream, "c", "server_port", b"")
         .await
         .map_err(common_err_ctx!("获取服务器端口失败"))?;
@@ -174,11 +168,8 @@ async fn negotiate_guest_session(
     Ok((local_profile, supports_easytier_id, game_port))
 }
 
-/// 阶段四：建本地游戏代理 + MC 局域网广播，回写状态并广播快照。返回本地端口。
-///
-/// 先锁内校验代际：发现/协商可能长达 15s，期间用户点停止（generation 已递增）时
-/// 不得回写 `advertiser`/`profiles`/`local_port`——否则状态已 idle，却仍有线程向
-/// 224.0.2.60 广播、本地代理端口也无人回收。代际不符直接放弃，不创建任何资源。
+/// 阶段四：建本地游戏代理 + MC 局域网广播，回写状态并广播快照，返回本地端口。
+/// 先锁内校验代际：发现/协商可长达 15s，被 stop 时不得回写资源（否则状态已 idle，仍向 224.0.2.60 广播、端口无人回收）。
 async fn activate_guest_join(
     sink: &dyn EventSink,
     session: &EasyTierSession,
@@ -192,8 +183,8 @@ async fn activate_guest_join(
         bail!("加入联机已取消");
     }
 
-    // 建游戏代理：本地 OS 监听 local_port → 数据面连 centerIP:game_port。
-    // 句柄交给单例：stop()/回滚时中止任务，释放本地监听端口。
+    // 本地 OS 监听 local_port → 数据面连 centerIP:game_port；
+    // 句柄交给单例，stop()/回滚时中止并释放本地监听端口。
     let local_port = free_tcp_port()?;
     let proxy = GuestProxy::spawn({
         let proxy_session = session.clone();
@@ -202,14 +193,13 @@ async fn activate_guest_join(
         }
     });
 
-    // MC 广播模拟（guest 端局域网标签页看到服务器）
+    // MC 广播模拟（guest 局域网标签页看到服务器）
     let advertise_motd = online_config()
         .advertise_motd
         .filter(|s| !s.trim().is_empty());
     let motd = advertise_motd.unwrap_or_else(|| "Elytra 联机".to_string());
     let advertiser = McAdvertiser::start_with_motd(local_port, &motd);
 
-    // 回写状态
     svc.proxy = Some(proxy);
     svc.advertiser = Some(advertiser);
     if let Some(s) = svc.session.as_mut() {
@@ -242,7 +232,6 @@ fn spawn_guest_sync(
     });
 }
 
-/// 后台心跳 + 玩家列表同步循环。
 async fn guest_sync_loop(
     sink: &dyn EventSink,
     stream: &mut DataPlaneTcpStream,
@@ -273,7 +262,6 @@ async fn guest_sync_loop(
         {
             return;
         }
-        // 拉玩家列表
         if write_request_async(stream, "c", "player_profiles_list", b"")
             .await
             .is_ok()
@@ -322,7 +310,6 @@ fn build_guest_profiles(server_players: Vec<Profile>, local_profile: &Profile) -
     profiles
 }
 
-/// guest 游戏代理：本地 OS 监听 → 数据面连 centerIP:game_port。
 async fn run_guest_proxy(
     session: EasyTierSession,
     local_port: u16,
@@ -389,11 +376,7 @@ async fn discover_center(session: &EasyTierSession, gen: u64) -> Option<(Ipv4Add
     None
 }
 
-/// 回滚加入流程（锁内、非阻塞）：递增代际、摘出会话/代理/广播器、复位状态，
-/// 返回待停止的会话与代理。
-///
-/// `EasyTierSession::stop` 是秒级操作，故**不在这里**执行——原实现在持锁时
-/// `block_on(stop)`，会把 status()/stop() 一起卡住（UI 冻结）。调用方在锁外停。
+/// 回滚加入流程（锁内、非阻塞）：递增代际、摘出会话/代理/广播器、复位状态（`stop` 由调用方在锁外停）。
 fn rollback_join(svc: &mut OnlineServiceInner) -> (Option<EasyTierSession>, Option<GuestProxy>) {
     svc.generation += 1;
     let session = svc.session.take();
@@ -406,10 +389,7 @@ fn rollback_join(svc: &mut OnlineServiceInner) -> (Option<EasyTierSession>, Opti
     (session, proxy)
 }
 
-/// 回滚加入流程：锁内复位状态 + 广播快照，锁外停会话与代理。
-///
-/// 锁内先校验代际：若已被 stop/新会话抢先（generation 已变），状态不归我们管，
-/// 直接放弃——否则会把别人的新会话连带清掉。
+/// 回滚加入流程：锁内复位状态 + 广播快照（先校验代际，被抢先则放弃，否则会清掉别人的新会话），锁外停会话与代理。
 async fn rollback_join_and_emit(sink: &dyn EventSink, gen: u64) {
     let (session, proxy) = {
         let mut svc = SERVICE.lock().await;

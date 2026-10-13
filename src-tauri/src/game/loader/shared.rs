@@ -1,5 +1,4 @@
-//! ModLoader 安装的公共纯函数：profile 合并 / 继承展开 / 幂等判定 / 安装器进程管理。
-//! 被 fabric（profile 式）、forge / neoforge（installer 式）与 optifine 共用。
+//! ModLoader 安装的公共纯函数：profile 合并 / 继承展开 / 幂等判定 / 安装器进程管理（fabric/forge/neoforge/optifine 共用）。
 
 use std::process::Output;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,8 +9,7 @@ use tokio::process::Child;
 
 
 fn maven_path(name: &str) -> String {
-    // 坐标形态：`group:artifact:version[:classifier][@ext]`（classifier 与扩展名都必须进路径，
-    // 否则 native 分类器条目会指向错误文件名）
+    // 坐标形态 `group:artifact:version[:classifier][@ext]`（classifier 与扩展名都必须进路径，否则 native 分类器会指向错误文件名）
     let (coord, ext) = match name.split_once('@') {
         Some((c, e)) if !e.is_empty() => (c, e),
         _ => (name, "jar"),
@@ -30,15 +28,12 @@ fn maven_path(name: &str) -> String {
     }
 }
 
-/// 老式库条目补全下载信息：spec-0 安装器（Forge 1.7.10~1.11.2 等）的 `versionInfo.libraries`
-/// 只有 `{name, url}`，没有 `downloads.artifact` —— classpath 构建与缺库检查都从 artifact.path
-/// 取路径，缺了就是**静默丢失**（实测：1.7.10 的 forge jar 与 launchwrapper 都不进 classpath，
-/// 装得下但起不来）。这里按坐标补出 path/url/sha1/size；`url` 为空的老式条目
-/// （如 `net.minecraft:launchwrapper:1.12`）按 Mojang libraries 兜底。
+/// 老式库条目补全下载信息：spec-0 安装器（Forge 1.7.10~1.11.2）的 `versionInfo.libraries` 只有 `{name, url}`、
+/// 无 `downloads.artifact`；classpath 与缺库检查从 artifact.path 取路径，缺了静默丢失（装得下但起不来）。按坐标补出
+/// path/url/sha1/size；`url` 为空的老式条目（如 `net.minecraft:launchwrapper:1.12`）按 Mojang libraries 兜底。
 fn normalize_legacy_libraries(libs: &mut [serde_json::Value]) {
     for lib in libs.iter_mut() {
-        // 已有 artifact（普通构件）或 classifiers（老版本 natives 只有 classifiers，
-        // 没有普通构件——按坐标合成会得到一个 CDN 上不存在的普通 jar，实测 404）→ 都不动
+        // 已有 artifact 或 classifiers（老式 natives 只有 classifiers、无普通构件，按坐标合成会得到 CDN 上不存在的普通 jar → 404）→ 都不动
         let has_download_info = lib
             .get("downloads")
             .and_then(|d| d.as_object())
@@ -79,9 +74,7 @@ fn normalize_legacy_libraries(libs: &mut [serde_json::Value]) {
     }
 }
 
-/// 合并 loader profile 到原版 JSON（Fabric/Quilt 官方 profile 接口）：
-/// 追加 jvm/game 参数、替换 mainClass、追加 libraries（maven 库转 downloads.artifact）、
-/// 删 inheritsFrom、保留原版 downloads（client.jar 下载信息不丢）。
+/// 合并 loader profile 到原版 JSON（Fabric/Quilt 官方 profile 接口）：追加 jvm/game 参数、替换 mainClass、追加 libraries（maven 库转 downloads.artifact）、删 inheritsFrom、保留原版 downloads。
 pub(crate) fn merge_loader_profile(
     parent_text: &str,
     profile: &serde_json::Value,
@@ -113,9 +106,7 @@ pub(crate) fn merge_loader_profile(
         merged["mainClass"] = serde_json::Value::String(mc.to_string());
     }
 
-    // loader（子级）库合成下载信息后**前置**，vanilla 同键条目丢弃：
-    // classpath 里 loader 版本必须先被 JVM 命中（asm / mixin 等坐标与 vanilla 重叠），
-    // 且避免同坐标两份 jar 让"缺库计数/完整性检查"双计。
+    // loader（子级）库合成下载信息后前置，vanilla 同键条目丢弃：classpath 里 loader 版本须先被 JVM 命中（asm/mixin 与 vanilla 重叠），且避免同坐标两份 jar 让缺库计数双计。
     let mut loader_out: Vec<serde_json::Value> = Vec::new();
     if let Some(loader_libs) = profile["libraries"].as_array() {
         {
@@ -183,8 +174,7 @@ pub(crate) fn merge_loader_profile(
     Ok(merged)
 }
 
-/// 库去重键：`group:artifact[:classifier]`（**版本不参与**——同坐标不同版本应子级优先；
-/// classifier 必须参与，否则 native 分类器会被当成主 jar 的同名条目而互相顶掉）。
+/// 库去重键 `group:artifact[:classifier]`：版本不参与（同坐标不同版本子级优先）；classifier 必须参与，否则 native 分类器会被当成主 jar 同名条目顶掉。
 fn library_key(name: &str) -> String {
     let name = name.split('@').next().unwrap_or(name);
     let parts: Vec<&str> = name.split(':').collect();
@@ -197,23 +187,10 @@ fn library_key(name: &str) -> String {
     }
 }
 
-/// 注意：`serde_json` 的**字符串索引在读时会插入 `null`**（`v["missing"]` 会写进 `"missing": null`），
-/// 所以本文件所有"只看一眼"的探测一律走 `get`/`get_mut`；只有确实要写入时才用索引赋值。
-/// 踩过的坑：`merged["arguments"].as_object_mut()` 让老版本（1.7.10 等）合并出的 JSON 多出
-/// `"arguments": null`，读取端 `VersionJson.arguments` 反序列化直接报
-/// `invalid type: null, expected struct Arguments`。
-///
-/// 游戏参数的两种形态：`arguments.game`（1.13+ 数组）与 `minecraftArguments`（旧式模板串）。
-///
-/// `launcher::args::build_game_args` 在两者并存时按"新格式优先"取 `arguments.game`。
-/// 于是"子级只声明旧式串 + 父级提供 arguments.game"这种情况，子级整串参数会被
-/// **静默丢弃**（父级覆盖了子级）。这里在合并阶段消歧：
-/// - 子级**只有**旧式串 → 丢弃继承来的 `arguments.game`（子级参数才用得上）
-/// - 子级**只有**新式数组 → 丢弃继承来的旧式串
-/// - 子级两种都声明（真实 Forge 的 version.json 就是如此）/ 都没声明 → 原样保留，
-///   让 `build_game_args` 的"新格式优先"自然生效（子级的 game 数组已被追加进去）
-///
-/// 注意：标志必须在合并 `.take()` **之前**从子级取出，否则读到的是被置空的字段。
+/// 注意：`serde_json` 字符串索引**读时插入 `null`**（`v["missing"]` 会写进 `"missing": null`），故本文件探测一律走 `get`/`get_mut`，只有写入才用索引——
+/// 否则老版本（1.7.10 等）合并出的 JSON 会多出 `"arguments": null`，读取端反序列化直接报 `invalid type: null, expected struct Arguments`。
+/// 游戏参数两形态：`arguments.game`（1.13+ 数组）与 `minecraftArguments`（旧式模板串）。`build_game_args` 并存时"新格式优先"取 `arguments.game`，故"子级只有旧式串 + 父级有 arguments.game"时子级整串会被静默丢弃。
+/// 合并阶段消歧：子级只有旧式串 → 丢继承的 arguments.game；只有新式数组 → 丢继承的旧式串；都声明/都没声明 → 原样保留。标志须在 `.take()` 前取出（take 会置空子级字段）。
 fn unify_game_arg_form(
     merged: &mut serde_json::Value,
     child_legacy_args: &str,
@@ -233,10 +210,8 @@ fn unify_game_arg_form(
     }
 }
 
-/// 展开 inheritsFrom 继承（Forge/NeoForge 的 version.json 只有自身库 + 父指针）：
-/// 以父 JSON 为基 → 子库拼到父库**之前** → 追加子参数 → 子关键字段覆盖（缺则保留父）
-/// → 删 inheritsFrom。
-/// 子 JSON 无 inheritsFrom 时视为完整独立 JSON，直接返回（仅改 id）。
+/// 展开 inheritsFrom 继承（version.json 只有自身库 + 父指针）：以父 JSON 为基 → 子库拼到父库前 → 追加子参数 →
+/// 子关键字段覆盖（缺则保留父）→ 删 inheritsFrom；子无 inheritsFrom 时视为完整独立 JSON，直接返回（仅改 id）。
 pub(crate) fn expand_inheritance(
     parent_text: &str,
     mut child: serde_json::Value,
@@ -251,24 +226,19 @@ pub(crate) fn expand_inheritance(
         serde_json::from_str(parent_text).map_err(common_err_ctx!("解析原版版本 JSON 失败"))?;
     let parent_inherits = merged.get("inheritsFrom").cloned();
 
-    // libraries：子 + 父 拼接（子在前——继承式版本的通用惯例，官方启动器/HMCL 均子库
-    // 前置；OptiFine 纯净版依赖此顺序：预补丁客户端 jar 必须先于 vanilla 库出现在
-    // classpath，JVM 加载同名类时先命中 OptiFine 版本实现类覆盖。父在前会静默加载
-    // 原版类，OptiFine 不生效）
+    // libraries：子 + 父 拼接（子在前，官方启动器/HMCL 惯例）。OptiFabric/纯净版 OptiFine 依赖此顺序：预补丁客户端 jar 须先于 vanilla 库进 classpath，JVM 同名类先命中 OptiFine 实现才能覆盖
     let child_libs = child
         .get_mut("libraries")
         .map(|v| v.take())
         .unwrap_or(serde_json::Value::Null);
-    // 父级库也要走规范化：老式条目（只有 name/url、无 downloads.artifact）可能只在父级
-    // （spec-0 Forge 的 versionInfo 就全是这种形态，缺 path 会静默丢出 classpath）
+    // 父级库也要规范化：老式条目（只有 name/url、无 downloads.artifact）可能只在父级，缺 path 会静默丢出 classpath
     let mut combined: Vec<serde_json::Value> = merged
         .get("libraries")
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
     if let Some(libs) = child_libs.as_array() {
-        // 子级库在前，父级同键条目丢弃（同坐标不同版本时子级优先；避免同坐标两份
-        // jar 同时进 classpath 与缺库计数）
+        // 子级库在前，父级同键条目丢弃（同坐标不同版本子级优先；避免两份 jar 同进 classpath 与缺库计数）
         let child_keys: std::collections::HashSet<String> = libs
             .iter()
             .filter_map(|l| l["name"].as_str())
@@ -340,10 +310,7 @@ pub(crate) fn expand_inheritance(
     unify_game_arg_form(&mut merged, &child_legacy_args, child_has_game_args);
 
     merged["id"] = serde_json::Value::String(dir_name.to_string());
-    // 关键：把**父级自己的** inheritsFrom 留在结果里。调用方（`launcher::env`）靠它
-    // 继续向上展开多级链（整合包 → Forge → vanilla）；直接 remove 会让多级继承
-    // 退化成单级，祖父版本的 libraries/arguments/mainClass 会被整体丢掉。
-    // 父级无继承时才是真正的链尾，此时删除该字段。
+    // 保留父级自己的 inheritsFrom：调用方（`launcher::env`）靠它继续向上展开多级链（整合包 → Forge → vanilla）；直接 remove 会让多级继承退化成单级，祖父版本整体丢失。父级无继承时才删。
     match parent_inherits {
         Some(v) => merged["inheritsFrom"] = v,
         None => {
@@ -355,9 +322,8 @@ pub(crate) fn expand_inheritance(
     Ok(merged)
 }
 
-/// 运行安装器 Java 工具并收集输出（stdout/stderr 完整返回），轮询取消标志：
-/// cancel 置位时 kill 子进程——用户取消任务后 binarypatcher/installertools 不再白跑。
-/// 使用 tokio::select! 同时等待进程退出与排空输出 pipe（避免大输出撑满 pipe 阻塞子进程）。
+/// 运行安装器 Java 工具并收集输出（stdout/stderr 完整返回）：cancel 置位时 kill 子进程；用 tokio::select!
+/// 同时等待进程退出与排空输出 pipe（避免大输出撑满 pipe 阻塞子进程）。
 pub(crate) async fn run_installer_command(
     mut child: Child,
     cancel: &Arc<AtomicBool>,
@@ -629,11 +595,7 @@ mod tests {
         assert!(r.is_err(), "父 JSON 损坏时应返回 Err");
     }
 
-    /// 多级继承（A→B→C）：连续展开后祖先的库/参数必须在结果里。
-    ///
-    /// 回归：`expand_inheritance` 曾直接删掉 inheritsFrom，使 `launcher::env` 的
-    /// `while let Some(parent_id) = vj.get("inheritsFrom")` 循环一轮即退出 ——
-    /// 多级链（整合包 → Forge → vanilla）的祖父版本被整体丢弃，启动缺库/主类错。
+    /// 多级继承（A→B→C）：连续展开后祖先的库/参数必须在结果里，且合并后保留父级 inheritsFrom 供继续展开。
     #[test]
     fn expand_inheritance_survives_multi_level_chain() {
         let grandparent = r#"{"id":"1.20.1","mainClass":"net.minecraft.client.main.Main",

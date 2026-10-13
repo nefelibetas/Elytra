@@ -1,26 +1,14 @@
-// /give 命令生成器：物品数据表 + 双版本语法命令构建。
-//
-// 物品 ID 采用 1.13+ 命名空间格式（扁平化后 ID 是稳定契约，1.13–1.21 通用）；
-// 1.12 及以下的数字 ID 不在支持范围（页面注明）。个别物品在新版本改名
-// （如唱片 record_* → music_disc_*），表内采用最新版本 ID。
-//
-// 两种输出格式（用户手动选择）：
-// - modern：1.20.5+ 组件格式（enchantments={...} / custom_name='"..."' / ...）
-// - legacy：1.13–1.20.4 NBT 格式（Enchantments:[{id,lvl}] / display:{Name} / ...）
+// /give 命令生成器：物品数据表 + 双版本命令构建（modern = 1.20.5+ 组件；legacy = 1.13–1.20.4 NBT）；物品 ID 用 1.13+ 命名空间，不支持 1.12 及以下数字 ID。
 
-/** 物品条目。 */
 export interface GiveItem {
-  /** 物品 ID（1.13+ 命名空间，无 minecraft: 前缀）。 */
+  /** 无 minecraft: 前缀。 */
   id: string;
-  /** 中文名。 */
   name: string;
-  /** 分类 key（GIVE_CATEGORIES）。 */
   cat: string;
-  /** 引入主版本（如 1.16 下界合金；缺省 13）。 */
+  /** 引入主版本，缺省 13。 */
   since?: number;
 }
 
-/** 分类定义。 */
 export interface GiveCategory {
   key: string;
   label: string;
@@ -38,7 +26,6 @@ export const GIVE_CATEGORIES: GiveCategory[] = [
   { key: "misc", label: "杂项" },
 ];
 
-/** 物品数据表（按分类；id 不含 minecraft: 前缀）。 */
 export const GIVE_ITEMS: GiveItem[] = [
   // ── 剑 ──
   { id: "wooden_sword", name: "木剑", cat: "sword" },
@@ -310,28 +297,26 @@ export const GIVE_ITEMS: GiveItem[] = [
   { id: "flint", name: "燧石", cat: "misc" },
 ];
 
-/** 附魔条目。 */
 export interface GiveEnchant {
   id: string;
   name: string;
   max: number;
-  /** 引入主版本（如 1.21 致密；缺省 13）。 */
+  /** 引入主版本，缺省 13。 */
   since?: number;
 }
 
-/** 按命令格式过滤物品版本可用性：legacy = ≤1.20.4；modern = ≤1.21。 */
+/** 按格式过滤：legacy ≤1.20.4；modern ≤1.21。 */
 export function filterItemsByVersion(items: GiveItem[], format: GiveFormat): GiveItem[] {
   const max = format === "legacy" ? 20 : 21;
   return items.filter((i) => (i.since ?? 13) <= max);
 }
 
-/** 按命令格式过滤附魔版本可用性（同 filterItemsByVersion）。 */
 export function filterEnchantsByVersion(enchs: GiveEnchant[], format: GiveFormat): GiveEnchant[] {
   const max = format === "legacy" ? 20 : 21;
   return enchs.filter((e) => (e.since ?? 13) <= max);
 }
 
-/** 常用附魔表（1.13+ 命名空间 ID，两代语法共用）。 */
+/** 1.13+ 命名空间 ID。 */
 export const ENCHANTMENTS: GiveEnchant[] = [
   { id: "sharpness", name: "锋利", max: 5 },
   { id: "smite", name: "亡灵杀手", max: 5 },
@@ -377,7 +362,7 @@ export const ENCHANTMENTS: GiveEnchant[] = [
   { id: "wind_burst", name: "风爆", max: 3 , since: 21},
 ];
 
-/** 属性条目（amount 为附加量，operation 固定相加）。 */
+/** amount 为附加量，operation 固定相加。 */
 export interface GiveAttribute {
   id: string;
   name: string;
@@ -399,7 +384,7 @@ export const ATTRIBUTES: GiveAttribute[] = [
   { id: "generic.safe_fall_distance", name: "安全摔落距离" },
 ];
 
-/** 输出格式：modern = 1.20.5+ 组件；legacy = 1.13–1.20.4 NBT。 */
+/** modern = 1.20.5+ 组件；legacy = 1.13–1.20.4 NBT。 */
 export type GiveFormat = "modern" | "legacy";
 
 export const GIVE_FORMAT_OPTIONS: { value: GiveFormat; label: string }[] = [
@@ -407,40 +392,32 @@ export const GIVE_FORMAT_OPTIONS: { value: GiveFormat; label: string }[] = [
   { value: "legacy", label: "1.13–1.20.4（NBT 格式）" },
 ];
 
-/** 附魔条目（用户添加）。 */
 export interface EnchantInput {
   id: string;
   level: number;
 }
 
-/** 属性条目（用户添加）。 */
 export interface AttributeInput {
   id: string;
   amount: number;
 }
 
-/** 生成器全部选项。 */
-/** 物品修饰（名称/颜色/lore/附魔/属性/不可破坏/隐藏）；give 命令与交易物品槽共用。 */
+/** give 命令与交易物品槽共用。 */
 export interface ItemMods {
-  /** 颜色前缀（'' = 不染色；"§6" = 16 色；"§x§R§R§G§G§B§B" = 自定义色 1.16+）。 */
   colorCode: string;
   customName: string;
-  /** 背景故事（每行一条）。 */
   lore: string[];
   unbreakable: boolean;
-  /** 隐藏附加信息框（附魔/属性等）。 */
   hideTooltip: boolean;
   enchantments: EnchantInput[];
   attributes: AttributeInput[];
 }
 
-/** 生成器全部选项（give 命令用）。 */
 export interface GiveOptions extends ItemMods {
   itemId: string;
   count: number;
 }
 
-/** 空修饰（交易物品不自定义时用）。 */
 export const EMPTY_MODS: ItemMods = {
   colorCode: "",
   customName: "",
@@ -451,16 +428,11 @@ export const EMPTY_MODS: ItemMods = {
   attributes: [],
 };
 
-/** JSON 字符串转义（组件/文本组件值用）。 */
 function jsonStr(s: string): string {
   return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
-/**
- * 构建 /give 命令。
- * @param opts 生成选项
- * @param format 语法格式（modern 组件 / legacy NBT）
- */
+/** format 为 modern 组件 / legacy NBT。 */
 export function buildGiveCommand(opts: GiveOptions, format: GiveFormat): string {
   const id = `minecraft:${opts.itemId}`;
   const count = Math.max(1, Math.min(99, Math.floor(opts.count) || 1));
@@ -468,13 +440,13 @@ export function buildGiveCommand(opts: GiveOptions, format: GiveFormat): string 
   return `/give @p ${suffix} ${count}`;
 }
 
-/** 1.20.5+ 组件项（key 为 give 简写名，如 enchantments）。 */
+/** key 为 give 简写名，如 enchantments。 */
 export interface ModernComponent {
   key: string;
   value: string;
 }
 
-/** 构建 1.20.5+ 组件列表（give 命令与交易物品槽 components 共用）。 */
+/** give 命令与交易物品槽 components 共用。 */
 export function modernItemComponents(mods: ItemMods): ModernComponent[] {
   const parts: ModernComponent[] = [];
   if (mods.enchantments.length > 0) {
@@ -507,7 +479,7 @@ export function modernItemComponents(mods: ItemMods): ModernComponent[] {
   return parts;
 }
 
-/** 构建 1.13–1.20.4 NBT 标签列表（give 命令与交易物品槽共用）。 */
+/** give 命令与交易物品槽共用。 */
 export function legacyItemTags(mods: ItemMods): string[] {
   const tags: string[] = [];
   if (mods.enchantments.length > 0) {
@@ -525,7 +497,7 @@ export function legacyItemTags(mods: ItemMods): string[] {
     const displayParts: string[] = [];
     if (name || mods.colorCode) {
       const text = `${mods.colorCode}${name}`;
-      // 颜色用 § 码放 text（客户端渲染 JSON 文本时支持 §）
+      // 颜色以 § 码置于 text（客户端渲染 JSON 文本时支持 §）
       displayParts.push(`Name:'{"text":"${jsonStr(text)}"}'`);
     }
     if (lore.length > 0) {
@@ -556,22 +528,19 @@ function clampLevel(level: number): number {
   return Math.max(1, Math.min(level, 255));
 }
 
-/** 1.20.5+ 组件格式（give 命令）。 */
+/** 1.20.5+ 组件格式。 */
 function buildModern(id: string, opts: GiveOptions): string {
   const parts = modernItemComponents(opts).map((c) => `${c.key}=${c.value}`);
   return parts.length > 0 ? `${id}[${parts.join(",")}]` : id;
 }
 
-/** 1.13–1.20.4 NBT 格式（give 命令）。 */
+/** 1.13–1.20.4 NBT 格式。 */
 function buildLegacy(id: string, opts: GiveOptions): string {
   const tags = legacyItemTags(opts);
   return tags.length > 0 ? `${id}{${tags.join(",")}}` : id;
 }
 
-/**
- * 交易物品槽（buy/buyB/sell）：1.20.5+ `{id,count,components:{...}}`；
- * 1.13–1.20.4 `{id,Count,<NBT 标签>}`。修饰与 give 生成器共用一套构建。
- */
+/** 交易物品槽：modern `{id,count,components:{...}}` / legacy `{id,Count,<NBT 标签>}`，修饰与 give 共用构建。 */
 export function buildTradeItem(
   id: string,
   count: number,
@@ -591,16 +560,15 @@ export function buildTradeItem(
   return `{id:"minecraft:${id}",Count:${c}b${tagsStr}}`;
 }
 
-/** 属性 ID 转 1.13–1.20.4 NBT 的 camelCase 形式（generic.attack_damage → generic.attackDamage）。 */
+/** 属性 ID → legacy NBT camelCase（generic.attack_damage → generic.attackDamage）。 */
 function toCamelCase(id: string): string {
-  // 每段去掉下划线并把下划线后首字母大写（首段 generic 保持原样）
   return id
     .split(".")
     .map((seg) => seg.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase()))
     .join(".");
 }
 
-/** UUID（hex 字符串）→ NBT [I;] 四段十进制 i32。 */
+/** UUID（hex）→ NBT [I;] 四段十进制 i32。 */
 function uuidToIntArray(uuid: string): string {
   const hex = uuid.replace(/-/g, "");
   const parts: number[] = [];
@@ -611,7 +579,6 @@ function uuidToIntArray(uuid: string): string {
   return parts.join(",");
 }
 
-/** 按分类 + 关键字过滤物品（关键字匹配 ID/中文名）。 */
 export function filterItems(items: GiveItem[], cat: string, keyword: string): GiveItem[] {
   const kw = keyword.trim().toLowerCase();
   return items.filter(

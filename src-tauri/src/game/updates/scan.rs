@@ -1,11 +1,10 @@
-//! 本地目录扫描：枚举 mods（jar）/ 资源目录（zip）下的目标文件。
-//! 仅顶层文件、按文件名排序，不做任何网络请求。
+//! 本地目录扫描：枚举 mods（jar）/ 资源目录（zip）顶层文件，按文件名排序，无网络请求。
 
 use std::path::Path;
 
 use serde::Serialize;
 
-/// 本地 mod 文件信息（mods 目录扫描结果）。
+/// 本地 mod 文件信息。
 #[derive(Debug, Clone, Serialize)]
 pub struct LocalModFile {
     pub file_name: String,
@@ -15,16 +14,15 @@ pub struct LocalModFile {
     pub last_modified: u64,
 }
 
-/// 目录扫描文件过滤规则。
 #[derive(Debug, Clone, Copy)]
 pub enum ScanFilter {
     /// 仅 .jar（mods 目录）
     Jar,
-    /// 仅 .zip（资源目录：材质包/数据包/光影包；文件夹形式的包不做识别，仅本地表现）
+    /// 仅 .zip（材质包/数据包/光影包；文件夹形式的包不识别）
     Zip,
 }
 
-/// 扫描目录下的文件（按文件名排序，不含子目录/文件夹）。
+/// 扫描目录下文件（按文件名排序，不含子目录）。
 pub fn scan_dir_files(dir: &Path, filter: ScanFilter) -> Vec<LocalModFile> {
     let mut out = Vec::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -60,7 +58,7 @@ pub fn scan_dir_files(dir: &Path, filter: ScanFilter) -> Vec<LocalModFile> {
     out
 }
 
-/// 扫描 mods 目录下的 .jar 文件（按文件名排序）。
+/// 扫描 mods 目录下的 .jar（按文件名排序）。
 pub fn scan_mod_files(mods_dir: &Path) -> Vec<LocalModFile> {
     scan_dir_files(mods_dir, ScanFilter::Jar)
 }
@@ -80,7 +78,6 @@ mod tests {
 
         let files = scan_mod_files(dir.path());
         let names: Vec<&str> = files.iter().map(|f| f.file_name.as_str()).collect();
-        // 仅顶层 .jar、按文件名排序、不含子目录
         assert_eq!(names, vec!["a.jar", "b.jar"]);
         assert_eq!(files[0].size, 1);
         assert_eq!(files[1].size, 2);
@@ -105,7 +102,6 @@ mod tests {
 
         let files = scan_dir_files(dir.path(), ScanFilter::Zip);
         let names: Vec<&str> = files.iter().map(|f| f.file_name.as_str()).collect();
-        // 仅顶层 .zip、按文件名排序、不含子目录与 txt/jar
         assert_eq!(names, vec!["a.zip", "b.zip"]);
         assert_eq!(files[0].size, 1);
         assert_eq!(files[1].size, 2);

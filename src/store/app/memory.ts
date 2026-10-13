@@ -1,7 +1,7 @@
 import { reactive } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 
-/** 全局系统内存状态（MB），由 startMemoryMonitor 持续刷新。 */
+/** 全局内存状态（MB），由 startMemoryMonitor 刷新。 */
 export const memState = reactive({
   totalMb: 0,
   availMb: 0,
@@ -9,7 +9,7 @@ export const memState = reactive({
 
 let timer: number | undefined;
 
-/** 启动全局内存监听：立即刷新一次，之后每 intervalMs 刷新。幂等。 */
+/** 启动内存监听：立即刷新一次，之后每 intervalMs 一次。幂等。 */
 export function startMemoryMonitor(intervalMs = 2000) {
   if (timer !== undefined) return;
   const tick = () => {

@@ -1,5 +1,4 @@
-// 认证状态单例（Launch / VersionSetup 共用）。
-// 收敛原先两处手写的 authMode localStorage 键、get_ms_account、get_last_offline_username 契约。
+// 认证状态单例（Launch / VersionSetup 共用）；收敛 authMode 等 localStorage 键。
 import { ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -26,22 +25,19 @@ export const authMode = ref<AuthMode>(
 );
 /** 当前第三方账号（列表末尾 = 最近登录/切换）。 */
 export const externalAccount = ref<ExternalAccountInfo | null>(null);
-/** 全部已保存第三方账号。 */
 export const externalAccounts = ref<ExternalAccountInfo[]>([]);
 export const msAccount = ref<MsAccountInfo | null>(null);
-/** 全部已保存正版账号（登录时间升序，末尾 = 当前），供账号列表菜单使用 */
+/** 全部已保存正版账号（登录时间升序，末尾 = 当前）。 */
 export const msAccounts = ref<MsAccountInfo[]>([]);
 /** 离线账号历史用户名（最近使用升序，末尾 = 当前） */
 export const offlineAccounts = ref<string[]>([]);
 export const username = ref("");
 
-// 账号变化（登录/退出）时渲染正版头像（模块级注册一次，避免路由往返累积监听）
 watch(msAccount, () => {
   avatarState.avatarError = false;
   void renderPremiumAvatar(msAccount.value?.uuid ?? "");
 });
 
-// 第三方账号变化时渲染皮肤站 3D 头像
 watch(externalAccount, () => {
   avatarState.avatarError = false;
   void renderExternalAvatar(externalAccount.value?.api_url ?? "", externalAccount.value?.uuid ?? "");
@@ -62,8 +58,6 @@ export async function loadMsAccount() {
   }
 }
 
-/** 加载全部正版账号（当前 = 列表末尾，即最近登录/切换的）。 */
-/** 加载全部第三方账号（当前 = 列表末尾）。 */
 export async function loadExternalAccounts(): Promise<boolean> {
   try {
     externalAccounts.value = (await invoke<ExternalAccountInfo[]>("get_external_accounts")) ?? [];
@@ -76,12 +70,10 @@ export async function loadExternalAccounts(): Promise<boolean> {
   }
 }
 
-/** 账号状态就绪 Promise（模块级单次）：authMode 同步读 localStorage，但账号列表是异步 IPC。
- *  判定「正版 / 第三方 / 离线」前必须等它就绪，否则会把「还没读完」当成离线。
- *  幂等——启动页与衣柜共用同一份请求，不重复 IPC。 */
+/** 账号状态就绪 Promise（模块级单次）：判定认证模式前必须等异步 IPC 就绪；幂等，启动页与衣柜共用。 */
 let authReadyPromise: Promise<void> | null = null;
 
-/** 等账号状态就绪（正版列表 + 第三方列表读完）。读取失败不留缓存 → 下次调用（重进页面 / 刷新）可重试。 */
+/** 等账号状态就绪（正版 + 第三方列表读完）；读取失败不留缓存，下次调用可重试。 */
 export function ensureAuthReady(): Promise<void> {
   authReadyPromise ??= Promise.all([loadMsAccounts(), loadExternalAccounts()]).then(([ms, ext]) => {
     if (!ms || !ext) authReadyPromise = null;
@@ -89,7 +81,6 @@ export function ensureAuthReady(): Promise<void> {
   return authReadyPromise;
 }
 
-/** 第三方登录：服务器地址 + 账号密码 → 保存账号。 */
 export async function loginExternal(apiUrl: string, account: string, password: string) {
   const acc = await invoke<ExternalAccountInfo>("external_login", {
     apiUrl,
@@ -100,34 +91,28 @@ export async function loginExternal(apiUrl: string, account: string, password: s
   return acc;
 }
 
-/** 移除第三方账号。 */
 export async function removeExternalAccount(apiUrl: string, uuid: string) {
   await invoke("remove_external_account", { apiUrl, uuid });
   await loadExternalAccounts();
 }
 
-/** 切换第三方账号（后端置为列表末尾 = 当前）。 */
 export async function switchExternalAccount(apiUrl: string, uuid: string) {
   await invoke("switch_external_account", { apiUrl, uuid });
   await loadExternalAccounts();
 }
 
-/** 刷新第三方账号（refresh：新 token + 最新角色列表 + 角色变化同步）。
- *  后端在凭据彻底失效时会**注销**该账号（免得占位又刷不动），所以失败后也要同步一次列表，
- *  让界面立刻反映「账号已退出」。 */
+/** 刷新第三方账号（refresh：新 token + 角色列表同步）；凭据失效时后端会注销该账号，故失败后也同步列表。 */
 export async function refreshExternalAccount(apiUrl: string, uuid: string) {
   try {
     await invoke<ExternalAccountInfo>("refresh_external_account", { apiUrl, uuid });
   } catch (e) {
     await loadExternalAccounts().catch(() => {
-      // 列表本身读不出来不影响把错误抛给调用方
     });
     throw e;
   }
   await loadExternalAccounts();
 }
 
-/** 切换第三方账号角色（refresh + selectedProfile，无密码）。 */
 export async function switchExternalRole(apiUrl: string, uuid: string, profileId: string, profileName: string) {
   const acc = await invoke<ExternalAccountInfo>("switch_external_role", {
     apiUrl,
@@ -164,7 +149,6 @@ export async function removeMsAccount(uuid: string) {
   await loadMsAccounts();
 }
 
-/** 读取离线账号历史。 */
 export async function loadOfflineAccounts() {
   try {
     offlineAccounts.value = (await invoke<string[]>("get_offline_accounts")) ?? [];
@@ -183,13 +167,11 @@ export async function saveOfflineAccount(name: string) {
   }
 }
 
-/** 移除指定离线历史用户名。 */
 export async function removeOfflineAccount(name: string) {
   try {
     await invoke("remove_offline_account", { username: name });
     await loadOfflineAccounts();
   } catch {
-    // ignore
   }
 }
 
@@ -199,7 +181,6 @@ export async function loadLastUsername() {
     const last = await invoke<string>("get_last_offline_username");
     if (last && !username.value) username.value = last;
   } catch {
-    // ignore
   }
 }
 
@@ -238,7 +219,6 @@ export interface MsLoginCompletePayload {
 
 let loginListenerReady = false;
 
-/** 幂等注册 ms-login-complete 监听（页面 onMounted 调用一次）。 */
 export async function ensureLoginListener() {
   if (loginListenerReady) return;
   loginListenerReady = true;

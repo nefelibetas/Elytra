@@ -5,7 +5,7 @@ import type { ExternalConfig } from "../../types/auth/ExternalConfig";
 import type { ExternalServer } from "../../types/auth/ExternalServer";
 export type { ExternalConfig, ExternalServer };
 
-/** 读取第三方站点预设（空列表时后端注入内置预设）。 */
+/** 读取第三方站点预设（空时后端注入内置预设）。 */
 export async function loadExternalConfig(): Promise<ExternalConfig> {
   return await invoke<ExternalConfig>("get_external_config");
 }

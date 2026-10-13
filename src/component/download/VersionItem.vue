@@ -74,7 +74,7 @@ const emit = defineEmits<{ select: [] }>();
   align-items: center;
   gap: 4px;
   opacity: 0;
-  visibility: hidden; /* 隐藏态彻底移出命中测试（对 WebView2/WebKit 最稳） */
+  visibility: hidden; /* 隐藏态移出命中测试（对 WebView2/WebKit 最稳） */
   transition: opacity 0.12s, visibility 0.12s;
 }
 

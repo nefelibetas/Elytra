@@ -1,7 +1,6 @@
 <script setup lang="ts">
-// 物品搜索选择输入：输入中文名或 ID 关键字 → 下拉匹配列表 → 点击选中。
-// 选中后输入框显示中文名；再次输入即清除原选择（emit 空串）。
-// 供村民交易等需要手填物品 ID 的场景使用（替代裸文本输入）。
+// 物品搜索选择输入：输入中文名或 ID 关键字 → 下拉匹配 → 点击选中；再次输入即清除原选择（emit 空串）。
+// 用于村民交易等需手填物品 ID 的场景（替代裸文本输入）。
 import { computed, ref, watch } from "vue";
 import { Search } from "@lucide/vue";
 import { GIVE_ITEMS } from "../../utils/give";

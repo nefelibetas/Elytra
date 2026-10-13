@@ -1,18 +1,5 @@
-// 自研等距 3D 渲染器：正交投影 + 画家算法 + Minecraft 公开皮肤 UV 规范。
-//
-// 零依赖（只用 Canvas 2D），替代 three.js / skinview3d —— 启动器只需要「正脸头像」与
-// 「全身预览」两种小图，真透视相机 + 光照 + 后处理是纯粹的浪费。
-//
-// 与真 3D 的差别（也是选它的理由）：
-//   - **正交投影**：yaw/pitch 直接代进旋转矩阵，没有任何相机状态可被覆盖或残留，
-//     同一组参数永远得到同一张图（真 3D 那套「相机被库内部重算」的坑不存在）。
-//   - **正交下四边形保持平行四边形** → 每个面一个仿射矩阵即可贴图，不必拆三角形做透视校正。
-//   - **贴合裁切**：画布按可见顶点的投影包围盒自适应，头像天然居中填满、不会跑偏。
-//
-// 皮肤布局是 Mojang 公开规范（64×64；旧版 64×32 亦可）：立方体 UV 展开从左到右依次是
-// [深度][正面][深度][背面]，上面/下面贴在右上角。公开格式文档，不是任何服务的私有算法。
+// 自研等距 3D 渲染器（Canvas 2D 零依赖）：正交投影 + 画家算法 + Mojang 皮肤 UV 规范（64×64，旧版 64×32；UV 展开 [深度][正面][深度][背面]，上下贴右上角）。
 
-/** 立方体六面在 UV 展开图上的取样矩形。 */
 type UvRect = readonly [number, number, number, number];
 
 /** 一个待绘制的体素立方体：中心 + 尺寸（1 体素 = 皮肤 1 像素）。 */
@@ -27,33 +14,26 @@ interface VoxelBox {
   v: number;
   /** 第二层（帽子/外套/袖腿）向外膨胀的体素量；0 = 第一层 */
   inflate: number;
-  /** 贴图水平镜像（64×32 旧格式的左侧肢体复用右侧贴图时用） */
+  /** 贴图水平镜像（64×32 旧格式左侧肢体复用右侧贴图）。 */
   mirror?: boolean;
   /** 绕肩/髋的 X 轴摆动（度）：正 = 向后摆。用于待机/行走动画。 */
   swing?: number;
   /** 绕支点的 Z 轴摆动（度）：正 = 下端向 +x。用于手臂外张（skinview3d 的 idle/walk）。 */
   swingZ?: number;
-  /** 绕支点的 Y 轴旋转（度）：正 = 向 +x 侧偏转。用于行走的头部摆动（headBobbing）。 */
   swingY?: number;
   /** 摆动支点（体素坐标，三轴共用）；未给则绕立方体中心。 */
   pivot?: readonly [number, number, number];
   /** 所属身体部位（供 3D 预览按部位隐藏；披风 / 鞘翅等无此字段 = 不可隐藏）。 */
   part?: SkinPart;
-  /** 用披风贴图而非皮肤贴图绘制（披风是独立的 64×32 纹理，UV 原点同为 (0,0)）。 */
+  /** 用披风贴图绘制（独立 64×32 纹理，UV 原点同为 (0,0)）。 */
   cape?: boolean;
-  /** 交换 z 方向两面的贴图区域。
-   *  皮肤/身体靠它保持「正面朝观察者」；披风贴在背后、朝外的面是 -z，
-   *  不交换的话图案会朝到身体那侧（背面看只有素色）。 */
+  /** 交换 z 方向两面的贴图区域：披风朝外的面是 -z，须让图案显示在该面，否则背面看只有素色。 */
   flipZ?: boolean;
-  /** UV 布局尺寸（缺省 = 几何尺寸）。
-   *  鞘翅是典型例子：几何为 12×22×4（基础盒 10×20×2 加 1 体素膨胀），
-   *  但贴图按基础盒 10×20×2 的展开切分（MC 官方模型即如此），两者不等。 */
+  /** UV 布局尺寸（缺省 = 几何尺寸）。鞘翅几何 12×22×4 但贴图按基础盒 10×20×2 展开，两者不等。 */
   uvW?: number;
   uvH?: number;
   uvD?: number;
-  /** 不剔背面（两面都画）。
-   *  鞘翅用：翅膀贴图只画在**朝外那一面**（另一面全透明），剔除背面会让翅膀从正面完全消失。
-   *  MC 对应 `RenderType.armorCutoutNoCull`，即鞘翅是不做背面剔除的。 */
+  /** 不剔背面（两面都画）。鞘翅贴图只画在朝外那一面，剔除会让翅膀从正面消失（MC `armorCutoutNoCull`）。 */
   noCull?: boolean;
 }
 
@@ -65,7 +45,6 @@ interface FaceDef {
   corners: readonly (readonly [number, number, number])[];
 }
 
-/** 立方体局部坐标下的四角（从面外看的左下、右下、右上、左上），已含膨胀。 */
 function cornersFor(
   axis: 0 | 1 | 2,
   sign: 1 | -1,
@@ -75,7 +54,6 @@ function cornersFor(
 ): readonly (readonly [number, number, number])[] {
   // 每个面自成一个「右向量 / 上向量」坐标系，保证贴上来的贴图是正立的。
   if (axis === 0) {
-    // ±X 面：水平轴 = ∓Z，竖直轴 = +Y
     const s = sign;
     return [
       [s * hw, -hh, s * hd],
@@ -85,7 +63,6 @@ function cornersFor(
     ];
   }
   if (axis === 1) {
-    // ±Y 面：水平轴 = +X，竖直轴 = ∓Z
     const s = sign;
     return [
       [-hw, s * hh, -s * hd],
@@ -94,7 +71,6 @@ function cornersFor(
       [-hw, s * hh, s * hd],
     ];
   }
-  // ±Z 面：水平轴 = ±X，竖直轴 = +Y
   const s = sign;
   return [
     [-s * hw, -hh, s * hd],
@@ -104,17 +80,7 @@ function cornersFor(
   ];
 }
 
-/**
- * 立方体六面。
- *
- * 按 Mojang 公开布局，以 (u,v) 为立方体 UV 左上角：
- *   上面 (u+d, v)        尺寸 (w, d)
- *   下面 (u+d+w, v)      尺寸 (w, d)
- *   左面 (u, v+d)        尺寸 (d, h)
- *   正面 (u+d, v+d)      尺寸 (w, h)
- *   右面 (u+d+w, v+d)    尺寸 (d, h)
- *   背面 (u+d+w+d, v+d)  尺寸 (w, h)
- */
+/** 立方体六面，按 Mojang 布局（(u,v) 为 UV 左上角）：上 (u+d,v) w×d；下 (u+d+w,v) w×d；左 (u,v+d) d×h；正面 (u+d,v+d) w×h；右 (u+d+w,v+d) d×h；背面 (u+d+w+d,v+d) w×h。 */
 function facesOf(b: VoxelBox): FaceDef[] {
   const { u, v } = b;
   // UV 布局尺寸可与几何尺寸不同（见 VoxelBox.uvW 的说明）；几何半宽用几何尺寸算
@@ -124,8 +90,7 @@ function facesOf(b: VoxelBox): FaceDef[] {
   const hw = b.w / 2 + b.inflate;
   const hh = b.h / 2 + b.inflate;
   const hd = b.d / 2 + b.inflate;
-  // z 方向两面的贴图区域：默认 +z 用 north(u+d)、-z 用 south(u+d+w+d)；
-  // flipZ 时对调（披风朝外的面是 -z，要显示图案所在的 north）
+  // z 方向两面：默认 +z 用 north(u+d)、-z 用 south(u+d+w+d)；flipZ 时对调（披风朝外的 -z 需显示图案）
   const uvZPlus: UvRect = b.flipZ
     ? [u + uvd + uvw + uvd, v + uvd, uvw, uvh]
     : [u + uvd, v + uvd, uvw, uvh];
@@ -166,16 +131,10 @@ const SKIN_UV = {
 const INFLATE_HEAD = 0.5;
 const INFLATE_LIMB = 0.25;
 
-/** 组装玩家模型。`slim` = 纤细手臂（宽 3 而不是 4）。
- *  坐标：原点在双脚之间的地面中心，y 向上，z 指向模型正面。
- *
- *  `legacy` = 64×32 旧格式：没有独立的左臂/左腿 UV，左右两侧共用右侧贴图（显示时镜像），
- *  第二层也只有头部有。用专有的 64×64 左臂 UV 在 32 高的图上会取到越界/空白。 */
+/** 组装玩家模型。`slim`=纤细手臂（宽 3）；原点在双脚间地面中心，y 向上，z 指向正面；`legacy`=64×32：无独立左臂/左腿 UV，左右共用右侧贴图（镜像）。 */
 function buildPlayer(slim: boolean, legacy: boolean): VoxelBox[] {
   const armW = slim ? 3 : 4;
-  // 深度恒为 4：纤细模型只把手臂**宽度**收窄，厚度不变。
-  // （曾错写成 armD = armW，导致 slim 的 UV 展开只有 12 宽而贴图是 14 —— 整条手臂错位两列，
-  //  表现就是肩膀边缘缺一个像素、能看到背景。）
+  // 深度恒为 4：纤细模型只收窄宽度，厚度不变（厚度参与 UV 展开列数，改错会整条手臂错位）。
   const armD = 4;
   const armX = slim ? 5.5 : 6;
   const rightArmUv = SKIN_UV.rightArm;
@@ -227,12 +186,7 @@ function buildPlayer(slim: boolean, legacy: boolean): VoxelBox[] {
   return boxes.map((b, i) => ({ ...b, part: parts[i] }));
 }
 
-/** 披风：10×16×1 的板，挂在身体背后（z 负向），从肩部垂到小腿。
- *  贴图是**独立的** 64×32 披风纹理，立方体 UV 展开与皮肤同规则（原点 0,0）。
- *
- *  `swing` 给一个固定的下垂外张（绕肩部支点，底端向后摆开）：
- *  完全贴背的话，默认的 3/4 正面视角会把披风整个挡在身后，用户选了披风却看不到。
- *  外张后底端摆出约 2 体素，正面视角下能从身体右侧露出一角，背面视角照常看全。 */
+/** 披风：10×16×1 板，挂身体背后（z 负向）；独立 64×32 纹理，UV 展开同皮肤规则。`swing` 给固定下垂外张，否则默认 3/4 视角看不见。 */
 function buildCape(): VoxelBox[] {
   return [
     {
@@ -255,45 +209,19 @@ function buildCape(): VoxelBox[] {
 
 /** 鞘翅静止姿态：绕 X 前倾 15°（官方 rotation.x = 0.2618 rad）。 */
 const ELYTRA_TILT_DEG = 15;
-/** 鞘翅静止姿态：绕 Z 张开 15°（官方 rotation.z = 0.2618 rad）。
- *
- *  静止态就是**收拢**的——两片翅膀近乎垂直贴着后背叠在一起、合起来呈壳状，
- *  所以官方才要额外给一点点 Y 轴旋转（skinview3d 的 `rotation.y = 0.01`）来避免两片共面闪烁。
- *  真正展开成水平翅膀是滑翔时才有的形态，本项目不需要（衣柜预览的是站立态）。
- *
- *  注意 15° 这个值不能随便放大：翅膀贴图的图案是按**竖直朝向**画的，
- *  张开角一大会把图案整体拧过去，看起来就像"把披风横向拉伸成翅膀"。 */
+/** 鞘翅绕 Z 张开 15°（官方 rotation.z = 0.2618 rad）：两片近垂直贴背叠成收拢壳状；15° 不可放大（图案按竖直朝向绘制）。 */
 const ELYTRA_REST_SPREAD_DEG = 15;
 
-/** 鞘翅（按官方模型 1:1）。
- *
- *  几何 `12×22×4` = MC `ElytraModel` 的基础盒 `10×20×2` 加 `CubeDeformation(1)` 膨胀；
- *  UV 按**基础盒** `10×20×2` 展开，即 `texOffs(22,0)` ⇒ 取样区 `(22,0)-(46,22)`。
- *  这一点有实物可查：官方 `elytra.png`（64×32）的图案正落在 x=22..45，其余全透明。
- *
- *  贴图用**披风纹理**——这正是 MC 的行为，但关键在于**取样哪一块**：
- *  Mojang 的披风纹理是双用途的，左半 `(0,0)-(22,17)` 是披风展开（披风模型用），
- *  右半 `(22,0)-(46,22)` 是**同一布局的鞘翅图案**（另外画的，不是把披风图案切两半）。
- *  实测迁移者披风纹理：右半与该 UV 区逐像素重合，但配色是迁移者自己的红黑，
- *  与官方灰色 elytra.png 图案轮廓一致、颜色不同。
- *
- *  早先的实现把披风展开区 `(0,0)-(22,17)` 拉伸到翅膀上，于是两片翅膀拼起来能看出原披风
- *  —— 那不是 MC 的行为。改成取 `(22,0)` 后，翅膀显示的是纹理里真正的鞘翅图案。
- *
- *  另外翅膀贴图只画在**朝外那一面**（另一面全透明），所以必须 noCull，
- *  否则从正面看背面被剔除、正面又全透明，翅膀会整个消失。 */
+/** 鞘翅（官方模型 1:1）：几何 12×22×4 = 基础盒 10×20×2 + CubeDeformation(1)，UV 按基础盒展开即 texOffs(22,0) ⇒ 取样区 (22,0)-(46,22)；必须 noCull（只画朝外面，否则正面全透明）。 */
 function buildElytra(): VoxelBox[] {
   const mk = (sign: 1 | -1): VoxelBox => ({
     cx: 0,
-    // 位置换算自 skinview3d 的 ElytraObject（其模型脚底在 y=-16，本渲染器在 y=0）：
-    //   group (0,8,-2) + mesh 偏移 (∓5,-10,-1) ⇒ 盒子中心 (0,-2,-3) ⇒ 本坐标系 (0,14,-3)
-    //   旋转支点＝group 原点 (0,8,-2) ⇒ 本坐标系 (±5,24,-2)（y=24 正是本模型的肩线）
+    // 位置换算自 skinview3d ElytraObject：盒中心 (0,14,-3)，支点 (±5,24,-2)，y=24 即肩线。
     cy: 14,
     cz: -3,
     w: 12,
     h: 22,
     d: 4,
-    // 官方 texOffs(22,0) + 基础盒 10×20×2
     u: 22,
     v: 0,
     uvW: 10,
@@ -302,26 +230,20 @@ function buildElytra(): VoxelBox[] {
     inflate: 0,
     cape: true,
     noCull: true,
-    // 静止姿态＝官方默认：rotation.x = 0.2618 rad(15°)、rotation.z = 0.2618 rad(15°)。
-    // 翅膀贴近竖直、两片在后背叠成壳状（与 skinview3d 的 ElytraObject.resetJoints 一致）。
+    // 静止姿态＝官方默认（rotation.x/z = 0.2618 rad）：两片贴近竖直、在后背叠成壳状。
     swing: ELYTRA_TILT_DEG,
     swingZ: sign * ELYTRA_REST_SPREAD_DEG,
-    // 旋转中心在肩部（对应 skinview3d 的 leftWing.position = (5,0,0)，即 group 原点）
+    // 旋转中心在肩部（对应 skinview3d leftWing.position=(5,0,0)）
     pivot: [sign * 5, 24, -2],
     mirror: sign < 0,
   });
   return [mk(-1), mk(1)];
 }
 
-/** 披风下垂外张角度（度）：底端向后摆开，使默认 3/4 视角能看到它。
- *  静止贴背的话正面完全看不到披风；12° 时底端摆出约 3.3 体素，
- *  正面视角能从身体右侧露出一条明显边缘，背面视角仍完整。 */
+/** 披风下垂外张角度（度）：底端向后摆开，使默认 3/4 视角能看到（12° 时底端摆出约 3.3 体素）。 */
 const CAPE_DRAPE_DEG = 12;
 
-/** 披风动效：对齐 skinview3d 的官方实现——
- *  `cape.rotation.x = sin(t/1.5) * 0.06 + 0.188`（行走）、`sin(t) * 0.01 + 0.188`（待机）。
- *  基础外张用本渲染器的 CAPE_DRAPE_DEG（约合 0.21 rad，与官方的 0.188 接近），
- *  摆动幅度 ±3.4°(行走) / ±0.6°(待机)。 */
+/** 披风动效（对齐 skinview3d）：基础外张用 CAPE_DRAPE_DEG，摆动 ±3.4°（行走）/ ±0.6°（待机）。 */
 function applyCapeMotion(capes: VoxelBox[], anim: Animation, phase: number): void {
   if (anim === "none") return;
   const wave =
@@ -329,7 +251,6 @@ function applyCapeMotion(capes: VoxelBox[], anim: Animation, phase: number): voi
   for (const c of capes) c.swing = CAPE_DRAPE_DEG + wave;
 }
 
-/** 只取头部（头像用）：头 + 帽子层，中心在原点。 */
 function buildHead(): VoxelBox[] {
   const mk = (
     w: number,
@@ -341,9 +262,7 @@ function buildHead(): VoxelBox[] {
   return [mk(8, 8, 8, SKIN_UV.head, 0), mk(8, 8, 8, SKIN_UV.hat, INFLATE_HEAD)];
 }
 
-/** 六个朝向的固定明暗系数（模拟 Minecraft 的逐面着色）。
- *  **正面与顶面为 1.0（不做压暗）**：正脸头像是主用途，压暗会让整张脸比原皮肤暗一档、显灰；
- *  侧面/背面/底面仍保留差异，3/4 视角的立体感不受影响。 */
+/** 六朝向固定明暗系数（模拟 MC 逐面着色）。正面/顶面 1.0 不压暗（正脸头像主用途），其余保留差异以维持立体感。 */
 function shadeFor(normal: readonly [number, number, number]): number {
   if (normal[1] > 0) return 1.0; // 顶
   if (normal[1] < 0) return 0.55; // 底
@@ -369,56 +288,41 @@ function project(
   return [x1, -y2, z2];
 }
 
-/** 已投影的一个待绘制面。 */
 interface PaintFace {
   /** 屏幕四角（扁平 [x0,y0,x1,y1,x2,y2,x3,y3]，顺序＝左下、右下、右上、左上） */
   pts: number[];
   uv: UvRect;
   shade: number;
   depth: number;
-  /** 贴图水平镜像（64×32 旧格式左侧肢体） */
   mirror: boolean;
-  /** 0 = 第一层（本体），1 = 第二层（帽子/外套/袖腿） */
+  /** 0 = 第一层（本体），1 = 第二层（帽子/外套/袖腿）；披风/鞘翅面为独立纹理 */
   layer: 0 | 1;
-  /** 披风/鞘翅面（用的是独立纹理，不属于皮肤贴图） */
   cape: boolean;
-  /** 该面使用的贴图；未给则用主皮肤贴图（披风面用披风贴图） */
   tex?: CanvasImageSource;
 }
 
-/** 身体部位（六大部分，每部分含本体与第二层）：3D 预览可整块隐藏，便于聚焦绘制某一处。 */
+/** 身体部位（六大部分，各含本体与第二层）：3D 预览可整块隐藏。 */
 export type SkinPart = "head" | "body" | "rightArm" | "leftArm" | "rightLeg" | "leftLeg";
 
-/** 一次绘制留下的**可拾取面**（按绘制顺序：远 → 近）。
- *  供「3D 直绘」把屏幕点击反查成贴图像素：面在正交投影下是平行四边形，
- *  `m` 就是它「贴图像素 → 画布设备像素」的仿射矩阵，求逆即得反查。 */
+/** 一次绘制留下的可拾取面（远 → 近），供「3D 直绘」把屏幕点击反查成贴图像素；`m` 为「贴图像素 → 画布设备像素」仿射矩阵，求逆即反查。 */
 export interface PickFace {
-  /** 贴图取样矩形 [u, v, w, h]。 */
   uv: UvRect;
-  /** 仿射矩阵 [a, b, c, d, e, f]，同 ctx.transform。 */
   m: readonly [number, number, number, number, number, number];
-  /** 0 = 第一层（本体），1 = 第二层。 */
   layer: 0 | 1;
-  /** 披风/鞘翅面不可拾取（贴图坐标落在披风纹理上，不是皮肤像素）。 */
+  /** 披风/鞘翅面不可拾取（贴图坐标落在披风纹理上）。 */
   cape: boolean;
 }
 
-/** 一次绘制的构图参数。 */
 interface PaintOpts {
-  /** 视角（度）。 */
   yaw: number;
   pitch: number;
-  /** 模型在画布中的占比。 */
   fill: number;
-  /** `bbox` = 按可见包围盒贴合填满（头像，永远居中填满）；
-   *  `fixed` = 按名义尺寸 (nominalW×nominalH 体素) 固定构图（全身，姿势变化时不会忽大忽小）。 */
+  /** `bbox` = 按可见包围盒贴合填满（头像）；`fixed` = 按名义尺寸 (nominalW×nominalH 体素) 固定构图（全身，姿势变化不会忽大忽小）。 */
   fit?: "bbox" | "fixed";
   nominalW?: number;
   nominalH?: number;
-  /** 披风贴图（独立 64×32 纹理）。 */
   capeTex?: CanvasImageSource;
-  /** 画面平移量（设备像素）。只作用在投影原点，`hits` 的仿射矩阵与绘制同源，
-   *  因此拾取会随平移一起走，不会错位。 */
+  /** 画面平移量（设备像素）。只作用在投影原点，`hits` 仿射矩阵与绘制同源，故拾取不会错位。 */
   offsetX?: number;
   offsetY?: number;
   /** 隐藏的身体部位（整块不画，同时不进 `hits` —— 隐藏处自然点不到）。 */
@@ -427,7 +331,6 @@ interface PaintOpts {
   hits?: PickFace[];
 }
 
-/** 把模型正交等距画到 canvas 上。 */
 function paint(
   canvas: HTMLCanvasElement,
   skin: CanvasImageSource,
@@ -457,8 +360,7 @@ function paint(
 
   for (const b of boxes) {
     for (const f of facesOf(b)) {
-      // 背面剔除：本投影约定 +z 朝向观察者，法线转到视空间后深度分量为正即面向观察者
-      // （noCull 的盒子两面都画，靠画家算法定序；透明面不覆盖已画好的像素，天然安全）
+      // 背面剔除：本投影约定 +z 朝向观察者，法线转视空间后深度分量 >0 即面向观察者（noCull 盒子两面都画，靠画家算法定序）。
       if (!b.noCull) {
         const nz1 = f.normal[0] * sinY + f.normal[2] * cosY;
         const nDepth = f.normal[1] * sinP + nz1 * cosP;
@@ -559,9 +461,7 @@ function paint(
     const syp = [y0 * scale + offY, y1 * scale + offY, y2 * scale + offY, y3 * scale + offY];
     const [u, v, uw, uh] = f.uv;
 
-    // 正交投影下四角仍是平行四边形：用两个基向量（左下→右下 = +u，左下→左上 = -v）做仿射贴图。
-    // 四角顺序是「左下、右下、右上、左上」，故 p0 对应贴图左下角 (u, v+uh)。
-    // 镜像时 u 方向取反，p0 改对应贴图右下角 (u+uw, v+uh)。
+    // 正交投影下四角仍是平行四边形：用两基向量（左下→右下 = +u，左下→左上 = -v）做仿射贴图；p0 对应贴图左下角，镜像时 u 取反。
     const uSign = f.mirror ? -1 : 1;
     const uBase = f.mirror ? u + uw : u;
     const m11 = (sxp[1]! - sxp[0]!) / (uw * uSign);
@@ -585,9 +485,7 @@ function paint(
     ctx.closePath();
     ctx.clip();
     ctx.transform(m11, m12, m21, m22, tx, ty);
-    // 明暗绑在**这一次 drawImage** 上：brightness 只作用于本面画出的像素。
-    // （不能用「画完再 source-atop 涂一层」——那会连带把下面别面画好的像素一起压暗，
-    //   典型症状是透明帽子层与头重叠处被暗化两次，头像整体发灰。）
+    // 明暗绑在**这一次 drawImage** 上（brightness 只作用本面像素）；不可「画完再 source-atop 涂一层」——会连别面已画像素一起压暗。
     ctx.filter = f.shade < 0.999 ? `brightness(${f.shade})` : "none";
     ctx.drawImage(f.tex ?? skin, 0, 0);
     ctx.restore();
@@ -595,10 +493,8 @@ function paint(
   return true;
 }
 
-/** 已解码皮肤图缓存（dataURL → Image），避免同一皮肤反复解码。 */
 const skinImageCache = new Map<string, Promise<HTMLImageElement>>();
 
-/** 解码皮肤 dataURL（失败 reject）。 */
 export function loadSkinImage(dataUrl: string): Promise<HTMLImageElement> {
   const hit = skinImageCache.get(dataUrl);
   if (hit) return hit;
@@ -612,12 +508,10 @@ export function loadSkinImage(dataUrl: string): Promise<HTMLImageElement> {
   return p;
 }
 
-/** dataURL 前缀归一化。 */
 function toDataUrl(b64: string): string {
   return b64.startsWith("data:") ? b64 : `data:image/png;base64,${b64}`;
 }
 
-/** 常驻预览可用的动作。 */
 export type Animation = "none" | "idle" | "walk";
 
 /** 相机默认视角（度）：3/4 正面 + 微俯。 */
@@ -628,15 +522,9 @@ export const DEFAULT_VIEW_PITCH = 15;
 export const BODY_VOXEL_W = 20;
 export const BODY_VOXEL_H = 34;
 
-/** 按动画与相位给四肢设定摆角，参数对齐 skinview3d 官方实现（WalkingAnimation / IdleAnimation）：
- *
- *  - 行走：`t = progress * 8`，四肢绕 X 轴 ±0.5 rad (±28.6°)，臂与同侧腿反相；
- *          手臂另有绕 Z 轴的外张（基础 0.02π≈3.6° + cos 摆动 ±1.72°）。
- *  - 待机：`t = progress * 2`，**腿完全不动**，只有手臂的 Z 轴外张。
- *  - 披风：`sin(t/1.5) * 0.06 + 0.06π`（约基础 10.8° + 摆动 ±3.4°）。
- *
- *  符号：skinview3d 的 rotation.x 正值让肢体向前，本实现的 swing 正值向后，故取反；
- *  绕 Z 轴的外张方向两侧对称（官方左臂 +、右臂 −），与本实现的臂位（左 +x / 右 −x）一致。 */
+/** 按动画与相位给四肢设定摆角，参数对齐 skinview3d（WalkingAnimation / IdleAnimation）：
+ *  行走 `t=progress*8`：四肢绕 X ±0.5 rad(±28.6°)，臂与同侧腿反相，另绕 Z 外张（基础 3.6° ± cos 1.72°）；待机 `t=progress*2`：腿不动，仅手臂外张。
+ *  符号：官方 rotation.x 正=向前，本实现 swing 正=向后，故取反；Z 外张两侧对称（左 +x / 右 −x）。 */
 function applyAnimation(boxes: VoxelBox[], anim: Animation, phase: number): void {
   if (anim === "none") return;
   const setX = (i: number, angle: number, pivotY: number) => {
@@ -678,8 +566,7 @@ function applyAnimation(boxes: VoxelBox[], anim: Animation, phase: number): void
     setX(4, -legR, 24);
     setX(5, -legR, 24);
     setArms(t);
-    // 头部摆动（官方 headBobbing：rotation.y = sin(t/4)*0.2、rotation.x = sin(t/5)*0.1）
-    // 头与帽子层（0/1）一起转，绕头自身中心。Y 轴符号与官方相反（本实现正向朝 +x 偏）。
+    // 头部摆动（官方 headBobbing：rotation.y = sin(t/4)*0.2、rotation.x = sin(t/5)*0.1）；头与帽子层(0/1)一起绕头心转，Y 轴符号与官方相反。
     const headX = Math.sin(t / 5) * 5.73;
     const headY = -Math.sin(t / 4) * 11.46;
     for (const hi of [0, 1]) {
@@ -695,10 +582,7 @@ function applyAnimation(boxes: VoxelBox[], anim: Animation, phase: number): void
   setArms(phase * 2);
 }
 
-/** 把皮肤画到给定 canvas（衣柜实时预览 / 离屏取图共用）。
- *  `fill` 控制模型在画布中的占比（0.4 = 占画布高约 40%），由调用方按交互缩放传入。
- *  传入 `capeTex` 时挂上披风（独立的 64×32 披风纹理）；
- *  `elytra` 为真时改为渲染**展开的鞘翅形态**（同一张披风纹理，取样同一 UV）。 */
+/** 把皮肤画到给定 canvas（衣柜实时预览 / 离屏取图共用）。`fill` = 模型占画布比例；`capeTex` 挂披风（独立 64×32 纹理），`elytra` 为真时渲染展开鞘翅。 */
 export function drawFullCanvas(
   canvas: HTMLCanvasElement,
   skin: CanvasImageSource,
@@ -712,27 +596,22 @@ export function drawFullCanvas(
     fill?: number;
     capeTex?: CanvasImageSource;
     elytra?: boolean;
-    /** 画面平移量（设备像素，供预览拖动视角用）。 */
     offsetX?: number;
     offsetY?: number;
-    /** 隐藏的身体部位（整块不画；`hits` 同步剔除，隐藏处点不到）。 */
     hiddenParts?: readonly SkinPart[];
-    /** 传入则回填本次绘制的可拾取面（供 3D 直绘反查贴图像素）。 */
     hits?: PickFace[];
   },
 ): boolean {
   let boxes = buildPlayer(opts.slim, opts.legacy ?? false);
   const anim = opts.animation ?? "none";
   const phase = opts.phase ?? 0;
-  // 顺序要紧：applyAnimation 按**固定下标**（[0,1] 头 / [4..7] 臂 / [8..11] 腿）取部位，
-  // 所以必须在按部位过滤**之前**应用动画——否则下标前移，剩余肢体会被套上别处的姿态。
+  // 顺序要紧：applyAnimation 按固定下标（[0,1] 头 / [4..7] 臂 / [8..11] 腿）取部位，必须在按部位过滤**之前**应用，否则下标前移会套错姿态。
   applyAnimation(boxes, anim, phase);
   const hidden = opts.hiddenParts;
   if (hidden && hidden.length) {
     boxes = boxes.filter((b) => !b.part || !hidden.includes(b.part));
   }
-  // 披风/鞘翅追加在四肢之后：applyAnimation 按固定下标 [4..11] 取四肢，追加不影响；
-  // 但它们自己的摆动要单独给（下标方案覆盖不到）
+  // 披风/鞘翅追加在四肢之后（applyAnimation 按固定下标 [4..11] 取四肢，追加不影响）；它们自己的摆动单独给。
   if (opts.capeTex) {
     if (opts.elytra) {
       boxes.push(...buildElytra());

@@ -1,4 +1,4 @@
-// 下载设置 store（管理游戏下载源）：文件/版本列表/社区源模式、线程数、速度限制。
+// 下载设置 store：下载源模式、线程数、速度限制。
 import { ref, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { useConfigSection } from "../../utils/useConfigSection";
@@ -10,32 +10,27 @@ export const sourceModeOptions = [
   { value: "mirrorOnly", label: "仅镜像源", desc: "仅使用 BMCLAPI 国内镜像，不自动回退" },
 ];
 
-// 网络代理模式：auto 自动检测系统代理（Windows 注册表 / Linux 环境变量或 gsettings）；
-// system 强制系统代理；direct 强制直连（TUN 模式由网络层接管，直连也会走代理）
+// 网络代理模式：auto 检测系统代理（Win 注册表 / Linux 环境变量或 gsettings）；system 强制系统代理；direct 强制直连（TUN 由网络层接管）
 export const networkModeOptions = [
   { value: "auto", label: "自动检测", desc: "自动使用系统代理；未开启代理时直连（TUN 模式自动生效）" },
   { value: "system", label: "系统代理", desc: "强制使用系统代理（检测不到时回退直连）" },
   { value: "direct", label: "直连", desc: "不走应用层代理，直连网络（TUN 模式仍由系统接管）" },
 ];
 
-// 社区下载源：Modrinth 官方 API/CDN vs MCIM 国内镜像（管理 Fabric API 等社区资源）
 export const communitySourceOptions = [
   { value: "auto", label: "智能模式", desc: "优先Modrinth/CurseForge官方，加载缓慢时自动使用MCIM镜像站" },
   { value: "officialOnly", label: "仅Modrinth/CurseForge", desc: "仅使用Modrinth/CurseForge官方" },
   { value: "mirrorOnly", label: "仅镜像源", desc: "仅使用 MCIM 镜像站，不自动回退" },
 ];
 
-// JDK（managed runtime）下载源三态：auto 并发速率探测三源（Mojang / Adoptium / Azul）
-// 最快优先、不可达兜底；officialOnly 固定 Mojang → Azul；mirrorOnly 固定
-// Mojang（文件走文件源镜像）→ Adoptium 仅 TUNA（元数据例外走官方 API）。
+// JDK（managed runtime）下载源三态：auto 并发探测三源（Mojang/Adoptium/Azul）最快优先、不可达兜底；officialOnly 固定 Mojang→Azul；mirrorOnly 固定 Mojang（文件走镜像）→Adoptium 仅 TUNA（元数据走官方 API）。
 export const jdkSourceOptions = [
   { value: "auto", label: "智能测速", desc: "Mojang / Adoptium / Azul 三源并发测速，最快者优先下载，不可达源自动兜底" },
   { value: "officialOnly", label: "仅官方源", desc: "仅使用 Mojang 官方与 Azul，不启用国内镜像" },
   { value: "mirrorOnly", label: "仅镜像源", desc: "Mojang 走文件源镜像，Adoptium 仅从清华 TUNA 下载（元数据例外走官方 API）" },
 ];
 
-// 社区搜索结果翻译显示模式（默认仅中文；en 模式后端跳过翻译请求）
-// 标题译名来自内置表（热门 Mod 社区常用名），简介翻译来自 MCIM
+// 社区翻译显示模式（默认仅中文，en 后端跳过翻译请求）；标题译名来自内置表，简介翻译来自 MCIM
 export const translateDisplayOptions = [
   { value: "zh", label: "仅中文", desc: "标题与简介显示中文（默认）" },
   { value: "en", label: "仅英文", desc: "不请求翻译，显示英文原文" },
@@ -49,18 +44,12 @@ export const dlCommunityMode = ref("auto");
 export const dlJdkMode = ref("auto");
 export const dlConcurrency = ref(64);
 export const dlMaxSpeed = ref(0); // bytes/s，0 = 不限
-// 镜像源并发上限（后端 constants.rs MIRROR_CONCURRENCY，改动需同步）：
-// 官方源不限流、镜像源（BMCLAPI）30 并发即触发 429，镜像请求恒为 8 并发
+// 镜像源并发上限（须与后端 constants.rs MIRROR_CONCURRENCY 同步）：官方源不限流，BMCLAPI 30 并发即触发 429，故恒为 8
 export const MIRROR_CONCURRENCY = 8;
-// 仅镜像模式下并发数由镜像源规定，输入锁定（智能/官方模式并发给官方源配置）
+// 仅镜像模式下并发由镜像源规定，输入锁定
 export const concurrencyLocked = computed(() => dlGameMode.value === "mirrorOnly");
-/** 细分源明细折叠区显隐（与主开关下拉解耦；DropSelect 自管开合）。 */
 export const dlDetailOpen = ref(false);
-/**
- * 下载源主开关：三细分（游戏/社区/JDK）是否一致时显示统一值，
- * 不一致显示 "custom"。默认收起，展开可见三个细分各自独立设置。
- * 纯前端聚合，不改后端三个独立字段。
- */
+/** 下载源主开关：三分项一致时显示统一值，否则 "custom"；纯前端聚合，不改后端三个独立字段。 */
 export type SourceMasterValue = "auto" | "officialOnly" | "mirrorOnly" | "custom";
 const sourceModes = [dlGameMode, dlCommunityMode, dlJdkMode];
 export const dlSourceMaster = computed<SourceMasterValue>(() => {
@@ -69,7 +58,7 @@ export const dlSourceMaster = computed<SourceMasterValue>(() => {
   return "custom";
 });
 
-/** 主开关联动：设统一值同步四个细分（custom 不经此函数，由细分修改自然聚合）。 */
+/** 主开关联动：设统一值同步各细分（custom 经细分修改自然聚合）。 */
 export function setSourceMaster(v: SourceMasterValue) {
   if (v === "custom") return;
   dlGameMode.value = v;
@@ -80,7 +69,6 @@ export function setSourceMaster(v: SourceMasterValue) {
 export const dlMinecraftDir = ref(".minecraft");
 export const dlNetworkMode = ref("auto");
 export const dlTranslateMode = ref<"zh" | "en">("zh");
-/** 社区资源版本列表仅显示正式版（默认开启，过滤快照/预发布/候选版本） */
 export const dlShowReleaseOnly = ref(true);
 
 export async function loadDownloadConfig() {
@@ -107,7 +95,6 @@ export async function loadDownloadConfig() {
     dlShowReleaseOnly.value = cfg.show_release_only ?? true;
     dlMaxSpeed.value = cfg.max_speed ?? 0;
   } catch {
-    // 无配置时保持默认
   }
 }
 

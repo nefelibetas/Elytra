@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// 工具箱「多线程下载器」：粘贴多个链接 → 队列并发 + 单文件 HTTP Range 分段。
-// 任务列表与进度完全独立于启动器下载任务（自己的 store / 事件 / 卡片布局）。
+// 多线程下载器：粘贴多个链接 → 队列并发 + 单文件 HTTP Range 分段，任务列表独立于启动器下载任务。
 // 服务端不支持 Range（或链路吃掉 Range 头）时后端自动回退单连接。
 import { onMounted, ref } from "vue";
 import { Download, FolderOpen, Pause, Play, Trash2, X } from "@lucide/vue";
@@ -191,8 +190,7 @@ function statusText(task: ToolDlSnapshot): string {
 
 function modeText(task: ToolDlSnapshot): string {
   if (task.status === "queued") return "等待线程";
-  // 传输发起前还没探测：ranged 未定但 segments 仍是请求值 → 显示"探测中"，
-  // 避免用户看到"配了 8 线程却短暂显示单连接"（探测一完成内核就回写真实方案）
+  // 探测前 ranged 未定、segments 仍是请求值 → 显示"探测中"，避免短暂误报单连接（内核探测完即回写真实方案）
   if (!task.ranged && task.segments > 1) return "探测中…";
   return task.ranged ? `${task.segments} 线程分段` : "单连接";
 }
@@ -207,7 +205,6 @@ function modeText(task: ToolDlSnapshot): string {
       </div>
     </div>
 
-    <!-- 新建任务 -->
     <div class="tdl-sec">
       <textarea
         v-model="urlsText"

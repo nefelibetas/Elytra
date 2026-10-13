@@ -1,6 +1,4 @@
-//! 第三方登录（authlib-injector / 皮肤站 / Yggdrasil 兼容服务器）。
-//! 账号经 persist::secrets 加密存储（仿 MsAccount）；登录调
-//! `POST {api}/authserver/authenticate`；启动前确保 authlib-injector.jar 存在。
+//! 第三方登录（authlib-injector / 皮肤站 / Yggdrasil 兼容服务器）；账号经 persist::secrets 加密存储。
 
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -14,14 +12,12 @@ use crate::persist;
 /// authlib-injector jar 文件名（数据目录 = exe 旁 Elytra/）。
 pub const AUTHLIB_JAR: &str = "authlib-injector.jar";
 
-/// Ely.by 使用非标准 Yggdrasil 路径（POST /auth/authenticate）且注入需别名
-/// `ely.by`（authlib-injector 内置适配）。据此检测走特殊分支。
+/// Ely.by 用非标准 Yggdrasil 路径且注入需别名 `ely.by`（authlib-injector 内置适配）。
 pub fn is_ely_by(api_url: &str) -> bool {
     api_url.contains("ely.by")
 }
 
-/// 从 Yggdrasil 错误响应文本提取可读信息：错误体常见 {"error": ..., "errorMessage": ...}；
-/// 非 JSON/无 errorMessage 回退 HTTP 状态码。
+/// 从 Yggdrasil 错误响应提取可读信息：`{"error":..,"errorMessage":..}`，非 JSON/无字段回退 HTTP 状态码。
 fn extract_yggdrasil_error(text: &str, status: reqwest::StatusCode) -> String {
     serde_json::from_str::<Value>(text)
         .ok()
@@ -29,7 +25,6 @@ fn extract_yggdrasil_error(text: &str, status: reqwest::StatusCode) -> String {
         .unwrap_or_else(|| format!("HTTP {status}"))
 }
 
-/// 第三方账号（含验证服务器地址与短期 access_token）。
 #[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[ts(export_to = "auth/")]
 pub struct ExternalAccount {
@@ -37,7 +32,6 @@ pub struct ExternalAccount {
     pub api_url: String,
     /// Minecraft profile uuid（无连字符）
     pub uuid: String,
-    /// 游戏名
     pub name: String,
     /// 服务器签发的 access_token（启动游戏用）
     pub access_token: String,
@@ -55,7 +49,6 @@ pub struct ExternalAccount {
     pub profiles: Vec<ExternalProfile>,
 }
 
-/// 一个 Minecraft 角色（第三方账号可绑定多角色）。
 #[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[ts(export_to = "auth/")]
 pub struct ExternalProfile {
@@ -114,8 +107,8 @@ pub fn remove(api_url: &str, uuid: &str) -> Result<(), String> {
     )
 }
 
-/// 登录：POST {api}/authserver/authenticate（Yggdrasil 协议）→ accessToken + profile。
-/// 多角色时 selectedProfile 缺失 → 取 availableProfiles 第一个（多角色选择留待增强）。
+/// 登录：POST {api}/authserver/authenticate（Yggdrasil）→ accessToken + profile；
+/// 多角色时 selectedProfile 缺失则取 availableProfiles 第一个。
 pub async fn login(
     api_url: &str,
     username: &str,
@@ -176,15 +169,13 @@ pub async fn login(
     // 皮肤站名称（元数据探测；失败不阻塞）
     let server_name = server_name(&api).await;
 
-    // 站点登录账号：优先响应 user.username（部分服务器返回 null），
-    // 回退登录输入的账号名（LittleSkin 等支持用户名/邮箱登录，输入即账号标识）
+    // 站点登录账号：优先 user.username（部分服务器返回 null），回退登录输入的用户名。
     let site_username = json["user"]["username"]
         .as_str()
         .map(str::to_string)
         .filter(|s| !s.is_empty())
         .or_else(|| Some(username.trim().to_string()));
-    // 全部角色（availableProfiles）：LittleSkin 等部分实现不返回该字段，
-    // 空时用当前角色兜底（保证面板至少显示一个角色）
+    // 全部角色：部分实现不返回 availableProfiles，空时用当前角色兜底
     let profiles = json["availableProfiles"]
         .as_array()
         .map(|arr| {
@@ -216,8 +207,7 @@ pub async fn login(
     })
 }
 
-/// 刷新账号：refresh（accessToken + clientToken）→ 新 token + 最新角色列表。
-/// 覆盖极端场景：皮肤站增删角色（availableProfiles 变化）、当前角色被删/改名（selectedProfile 变化）。
+/// 刷新账号：refresh → 新 token + 最新角色列表（同步角色增删/改名）。
 pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccount, String> {
     let list = read_all();
     let Some(idx) = list
@@ -255,9 +245,7 @@ pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccoun
         let code = status.as_u16();
         let text = resp.text().await.unwrap_or_default();
         let msg = extract_yggdrasil_error(&text, status);
-        // 401/403 = 凭据彻底失效（令牌超期/密码改/账号删）→ **顺手注销该账号**：
-        // 留着只会在账号列表里占位，而每次刷新又必然失败。用户重新登录即可。
-        // 其它非 2xx（5xx / 网关错误）只是服务端一时的问题 → 保留账号，别误踢。
+        // 401/403 = 凭据彻底失效 → 注销该账号；其它非 2xx（5xx/网关）→ 保留账号。
         if code == 401 || code == 403 {
             let _ = remove(api_url, uuid); // 幂等；注销失败也不影响把错误报给前端
             bail!("登录凭据已失效，已退出该账号，请重新登录\n{msg}");
@@ -271,8 +259,7 @@ pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccoun
         .as_str()
         .ok_or("刷新响应缺少 accessToken")?
         .to_string();
-    // 最新角色列表：部分服务器（Ely.by 等）refresh 响应不含 availableProfiles，
-    // 缺失/为空时保留原列表（避免清空导致'暂无角色信息'）
+    // 部分服务器（Ely.by 等）refresh 响应无 availableProfiles，缺失/为空时保留原列表
     let profiles = json["availableProfiles"]
         .as_array()
         .map(|arr| {
@@ -301,8 +288,7 @@ pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccoun
         .get("selectedProfile")
         .filter(|p| !p.is_null())
         .and_then(|sp| Some((sp["id"].as_str()?.to_string(), sp["name"].as_str()?.to_string())));
-    // 落盘改为原子读-改-写：上面那段网络 await 期间账号列表可能已被其它操作改动
-    // （登录 / 切换 / 删除），用当时的快照整体写回会把那些改动一起丢掉。
+    // 原子读-改-写：网络 await 期间列表可能被并发改动，快照整体写回会丢改动。
     let (api, id) = (api_url.to_string(), uuid.to_string());
     let updated = persist::secrets::update_json_list(
         constants::SECT_EXTERNAL_ACCOUNTS,
@@ -324,8 +310,7 @@ pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccoun
     Ok(updated)
 }
 
-/// 切换当前角色：refresh（accessToken + clientToken + selectedProfile）→ 新 token。
-/// Yggdrasil 标准（authlib-injector 支持）；无 clientToken 时回退报错需重新登录。
+/// 切换当前角色：refresh（accessToken + clientToken + selectedProfile）→ 新 token；无 clientToken 时报错。
 pub async fn switch_role(
     api_url: &str,
     uuid: &str,
@@ -376,8 +361,7 @@ pub async fn switch_role(
         .as_str()
         .ok_or("切换响应缺少 accessToken")?
         .to_string();
-    // 更新账号（新角色 + 新 token）并保持启用（置末尾）。同样走原子读-改-写，
-    // 避免网络 await 期间的并发改动被陈旧快照覆盖。
+    // 更新账号并置末尾启用；同样原子读-改-写，避免并发改动被陈旧快照覆盖。
     let (api, id) = (api_url.to_string(), uuid.to_string());
     let (new_uuid, new_name) = (profile_id.to_string(), profile_name.to_string());
     let updated = persist::secrets::update_json_list(
@@ -397,11 +381,9 @@ pub async fn switch_role(
     Ok(updated)
 }
 
-/// 拉取第三方账号皮肤 URL + 模型类型（slim/classic）。
-/// 标准 Yggdrasil：GET {api}/sessionserver/session/minecraft/profile/{uuid} →
-/// properties[0].value（base64 JSON 含 textures.skin.url）；Ely.by 非标准路径
-/// /session/profile/{uuid}。命令层两个皮肤命令共用（消除整段重复），
-/// 各自再按需下载 base64 / 附带模型。
+/// 拉取第三方账号皮肤 URL + 模型（slim/classic）。标准 Yggdrasil：
+/// GET {api}/sessionserver/session/minecraft/profile/{uuid} → properties[0].value
+/// （base64 JSON 含 textures.skin.url）；Ely.by 路径为 /session/profile/{uuid}。
 pub async fn external_skin_info(api_url: &str, uuid: &str) -> Result<(String, String), String> {
     let api = api_url.trim().trim_end_matches('/');
     if api.is_empty() {
@@ -460,8 +442,8 @@ pub async fn server_name(api_url: &str) -> Option<String> {
     json["meta"]["serverName"].as_str().map(str::to_string)
 }
 
-/// 确保 authlib-injector.jar 存在（数据目录）。缺失时从官方/BMCLAPI 镜像拉取
-/// 最新版（latest.json 拿 download_url + sha256 校验）。返回 jar 绝对路径。
+/// 确保 authlib-injector.jar 存在（数据目录）；缺失时从官方/BMCLAPI 镜像拉取 latest.json
+/// （download_url + sha256 校验）。返回 jar 绝对路径。
 pub async fn ensure_jar() -> Result<std::path::PathBuf, String> {
     let path = crate::util::config_dir().join(AUTHLIB_JAR);
     if path.exists() {
@@ -545,11 +527,9 @@ pub struct ExternalServer {
     pub value: String,
 }
 
-/// 第三方登录配置（预设验证服务器列表，label + value）。
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export_to = "auth/")]
 pub struct ExternalConfig {
-    /// 常用验证服务器（皮肤站）预设列表
     #[serde(default)]
     pub servers: Vec<ExternalServer>,
 }
@@ -606,7 +586,6 @@ mod tests {
         .ok();
     }
 
-    /// 多账号：同服务器同 uuid upsert；不同服务器同 uuid 并存（不同站可同角色）。
     #[test]
     fn save_upserts_same_server_and_keeps_cross_server() {
         cleanup();
@@ -623,7 +602,6 @@ mod tests {
         cleanup();
     }
 
-    /// remove：按 api_url + uuid 定位；清空后存储键删除。
     #[test]
     fn remove_targets_server_and_uuid() {
         cleanup();

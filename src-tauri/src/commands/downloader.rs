@@ -28,7 +28,6 @@ pub fn save_downloader_config(config: DownloaderConfig) -> Result<(), String> {
     Ok(())
 }
 
-/// 已安装版本列表（枚举/loader 推断在 downloader/version.rs）。
 #[tauri::command]
 pub fn get_installed_versions() -> Result<Vec<dir::InstalledVersionInfo>, String> {
     dir::list_installed()

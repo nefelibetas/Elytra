@@ -1,7 +1,5 @@
 <script setup lang="ts">
-// 资源详情页（Mod / 光影包 / 资源包 / 数据包 / 整合包共用）：
-// 信息卡片 + 版本文件列表（过滤展示 + 直接提交文件下载）。
-// 仅 Mod 需要 ModLoader 筛选；非 Mod 项目由 backTab 判定后隐藏相关 UI。
+// 资源详情页（Mod/光影/资源包/数据包/整合包共用）：信息卡片 + 版本文件列表（本地过滤）；仅 Mod 显示 ModLoader 筛选。
 import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -31,15 +29,13 @@ const versions = ref<CommunityVersion[]>([]);
 const loadingVersions = ref(false);
 const versionError = ref("");
 
-// ── 版本列表过滤（本地过滤，选项从已加载版本收集，无需额外请求）──
+// ── 版本列表过滤（本地过滤，选项从已加载版本收集）──
 
 const loaderFilter = ref("");
 const gameVersionFilter = ref("");
 
-/** 加载器选项固定优先级（其余按出现顺序兜底） */
 const LOADER_ORDER = ["fabric", "forge", "neoforge", "quilt"];
 
-/** 仅 Mod 需要 ModLoader 筛选（来源 tab 判定；非 Mod 隐藏加载器下拉）。 */
 const isMod = computed(() => resourceDetail.backTab === "mod");
 const loaderOptions = computed(() =>
   Array.from(new Set(versions.value.flatMap(v => v.loaders))).sort(
@@ -47,27 +43,25 @@ const loaderOptions = computed(() =>
   ),
 );
 
-/** 主版本归类：提取开头 major.minor（"1.20.4"/"1.20.5-pre1"/"26.3-snapshot-8" → "1.20"/"26.3"）；快照等无数字点分前缀原样保留 */
+/** 主版本归类：提取开头 major.minor（"1.20.4"→"1.20"）；无该前缀（快照等）原样保留 */
 function majorVersion(gv: string): string {
   const m = gv.match(/^\d+\.\d+/);
   return m ? m[0] : gv;
 }
 
-/** 当前加载器过滤下的版本文件（版本选项的数据源：只统计该 ModLoader 可用的版本） */
 const loaderScopedVersions = computed(() =>
   loaderFilter.value
     ? versions.value.filter(v => v.loaders.includes(loaderFilter.value))
     : versions.value,
 );
 
-/** 游戏版本选项：基于当前 ModLoader 统计（按主版本归类），数值化降序（最新在前） */
 const gameVersionOptions = computed(() =>
   Array.from(new Set(loaderScopedVersions.value.flatMap(v => v.game_versions).map(majorVersion))).sort((a, b) =>
     new Intl.Collator(undefined, { numeric: true }).compare(b, a),
   ),
 );
 
-// 切换加载器后已选版本可能不在新选项里，自动清空（继承值除外：列表搜索已按该版本过滤）
+// 切换加载器后已选版本若不在新选项内则清空（继承值除外：列表搜索已按其过滤）
 watch(gameVersionOptions, () => {
   if (
     gameVersionFilter.value &&
@@ -78,8 +72,6 @@ watch(gameVersionOptions, () => {
   }
 });
 
-/** 版本类型优先级：正式版置顶（用户逻辑默认下载稳定版），beta/alpha 依次靠后；
- *  同组内按发布时间倒序（最新在前）。无正式版时 beta 组自然置顶（最新可能只有 alpha）。 */
 const TYPE_ORDER: Record<string, number> = { release: 0, beta: 1, alpha: 2, unknown: 3 };
 
 const filteredVersions = computed(() =>
@@ -100,12 +92,12 @@ function loaderLabel(l: string): string {
   return l.charAt(0).toUpperCase() + l.slice(1);
 }
 
-// ── 自定义下拉（原生 select 弹出层高度在 WebView2 无法限制，选项多时过高）──
+// ── 自定义下拉（WebView2 无法限制原生 select 弹出层高度）──
 
 const openFilter = ref<"" | "loader" | "game">("");
 
 const POP_MAX_H = 260;
-/** 弹层最大高度：按下方可视空间动态计算（始终向下展开且不扩展外层滚动容器的 scrollHeight） */
+/** 弹层最大高度：按下方可视空间动态计算（向下展开，不扩展外层容器 scrollHeight） */
 const popMaxH = ref(POP_MAX_H);
 
 const loaderDrop = ref<HTMLElement | null>(null);
@@ -140,30 +132,28 @@ function onDocPointerDown() {
 onMounted(() => document.addEventListener("pointerdown", onDocPointerDown));
 onBeforeUnmount(() => document.removeEventListener("pointerdown", onDocPointerDown));
 
-/** 快照/预发布/候选等非正式版本标记（周快照 26w14a、新式 26.3-snapshot-8、-pre1、-rc1、candidate） */
+/** 快照/预发布/候选等非正式版本标记（26w14a、26.3-snapshot-8、-pre1、-rc1、candidate） */
 const SNAPSHOT_RE = /\d{2}w\d{2}|snapshot|pre\d*|rc\d*|candidate/i;
 const isSnapshot = (gv: string): boolean => SNAPSHOT_RE.test(gv);
 
-/** 当前选中的版本文件 id（点击 mv-item 选中；切换项目/重新加载时重置）。
- *  必须在 loadVersions 前声明：immediate watch 会在 setup 期立即调用它。 */
+/** 当前选中版本文件 id（切换项目/重新加载时重置）；须在 loadVersions 前声明：immediate watch 在 setup 期即调用。 */
 const selectedVersionId = ref("");
 
-/** 版本请求序号：每次请求自增，响应返回时与当前值不符即过期（项目已切换/返回/重试）→ 丢弃。 */
+/** 版本请求序号：自增；响应返回时与当前值不符即过期（项目已切换/返回/重试）→ 丢弃。 */
 let versionsSeq = 0;
 
 async function loadVersions() {
   const seq = ++versionsSeq;
   const it = item.value;
   if (!it) return;
-  // 立即清空旧数据：切换项目瞬间旧版本列表仍在，selectedDepIds 会用旧列表 + 旧选中版本
-  // 算出残留的前置依赖卡片（待新列表加载完成后才消失）——先清空，让依赖卡片随项目切换立即收起
+  // 先清空旧数据：否则依赖卡片会用旧列表 + 旧选中版本算出残留前置依赖
   versions.value = [];
   loadingVersions.value = true;
   versionError.value = "";
   try {
     const all = await fetchVersions(it.source, it.id);
-    if (seq !== versionsSeq) return; // 过期响应（项目已切换/返回）丢弃
-    // 仅显示正式版：剔除所有支持的版本都是快照/预发布的文件（混版文件保留）
+    if (seq !== versionsSeq) return; // 过期响应丢弃
+    // 仅显示正式版：剔除所有支持版本均为快照/预发布的文件（混版保留）
     versions.value = dlShowReleaseOnly.value
       ? all.filter(v => v.game_versions.some(gv => !isSnapshot(gv)))
       : all;
@@ -175,21 +165,17 @@ async function loadVersions() {
   }
 }
 
-/** 项目切换：应用 store 同步来的版本筛选/选中版本（从上一详情进入/返回还原），再加载版本。
- *  返回还原路径：store 存档了上一层的版本列表快照，直接恢复（不重新请求）。
- *  列表页版本选项是完整 ID（如 "1.21.1"），详情页是主版本归类（如 "1.21"），
- *  继承时做 major 归一化，并记录 inheritedVersion——watch(gameVersionOptions) 的清空
- *  逻辑跳过继承值（列表搜索已按该版本过滤，进入详情的 mod 必然支持它，不应被清空）。 */
+/** 项目切换：应用 store 同步来的筛选/选中版本（进入/返回还原）后加载版本；列表页选项为完整 ID、详情页为主版本归类，继承时做 major 归一化并记录 inheritedVersion（watch 清空逻辑跳过它）。 */
 let inheritedVersion: string | null = null;
 
 function onItemChange() {
-  versionsSeq++; // 项目切换：使在飞的版本请求过期（返回恢复路径不调用 loadVersions）
+  versionsSeq++; // 项目切换：使在飞请求过期（返回恢复路径不调用 loadVersions）
   loaderFilter.value = resourceDetail.pendingLoader;
   inheritedVersion = majorVersion(resourceDetail.pendingGameVersion);
   gameVersionFilter.value = inheritedVersion;
   selectedVersionId.value = resourceDetail.pendingSelectedVersion;
   if (resourceDetail.pendingVersions !== null) {
-    // 返回还原：恢复上一层快照，不重新请求
+    // 返回还原：恢复快照，不重新请求
     versions.value = resourceDetail.pendingVersions;
     versionError.value = resourceDetail.pendingVersionError;
     loadingVersions.value = false;
@@ -202,7 +188,7 @@ function onItemChange() {
 
 watch(item, onItemChange, { immediate: true });
 
-// ── 前置依赖（选中版本文件的 required 依赖；不同版本依赖可能不同）──────────
+// ── 前置依赖（选中版本的 required 依赖；不同版本可能不同）──
 
 const depItems = ref<CommunityDependencyItem[]>([]);
 const loadingDeps = ref(false);
@@ -238,15 +224,12 @@ const selectedIncompatIds = computed(() => {
   return order;
 });
 
-/** 依赖详情已加载项按关系分流（loadDeps 一次性拉取 required + incompatible 并集）。 */
 const requiredIdSet = computed(() => new Set(selectedDepIds.value));
 const incompatIdSet = computed(() => new Set(selectedIncompatIds.value));
-/** 前置依赖（required）详情项。 */
 const requiredItems = computed(() => depItems.value.filter(d => requiredIdSet.value.has(d.id)));
-/** 不兼容冲突详情项（只读警示）。 */
 const incompatItems = computed(() => depItems.value.filter(d => incompatIdSet.value.has(d.id)));
 
-/** 依赖请求序号：每次请求自增，响应返回时与当前值不符即过期（选中版本已切换/返回）→ 丢弃。 */
+/** 依赖请求序号：自增；响应返回时与当前值不符即过期（选中版本已切换/返回）→ 丢弃。 */
 let depsSeq = 0;
 
 async function loadDeps() {
@@ -259,7 +242,7 @@ async function loadDeps() {
     depError.value = "";
     return;
   }
-  // 返回还原：恢复上一层依赖快照，不重新请求（seq 已自增，在飞请求随之过期）
+  // 返回还原：恢复依赖快照，不重新请求（seq 已自增，在飞请求随之过期）
   if (resourceDetail.pendingDepItems !== null) {
     depItems.value = resourceDetail.pendingDepItems;
     depError.value = resourceDetail.pendingDepError;
@@ -272,7 +255,7 @@ async function loadDeps() {
   depError.value = "";
   try {
     const items = await fetchCommunityDetails(it.source, Array.from(new Set([...reqIds, ...incIds])));
-    if (seq !== depsSeq) return; // 过期响应（选中版本已切换/返回）丢弃
+    if (seq !== depsSeq) return; // 过期响应丢弃
     depItems.value = items;
   } catch (e) {
     if (seq !== depsSeq) return;
@@ -284,16 +267,12 @@ async function loadDeps() {
 
 watch(selectedDepIds, loadDeps);
 
-/** 点击版本文件行：选中并刷新前置依赖。 */
 function pickVersion(v: CommunityVersion) {
   selectedVersionId.value = v.version_id;
-  // 同步回 store：详情页随 tab 切换卸载重建时（下载完成 → 任务中心 → 返回），
-  // onItemChange 用 pendingSelectedVersion 恢复选中态——不同步则重建后版本
-  // 选中丢失，下载按钮回到未选状态
+  // 同步回 store：随 tab 切换卸载重建时用 pendingSelectedVersion 恢复选中态
   resourceDetail.pendingSelectedVersion = v.version_id;
 }
 
-/** 依赖详情 → 可跳转的 CommunityDisplayItem（详情页字段，无搜索元数据）。 */
 function depToItem(d: CommunityDependencyItem): CommunityDisplayItem {
   const src = item.value?.source ?? "modrinth";
   return {
@@ -317,7 +296,7 @@ function depToItem(d: CommunityDependencyItem): CommunityDisplayItem {
 
 // ── 提交文件下载 ──────────────────────────────
 
-/** 来源 tab → 落盘目录 kind；modpack 走独立链式安装（isModpack 分流），无单文件下载。 */
+/** 来源 tab → 落盘目录 kind；modpack 走链式安装（isModpack 分流），无单文件下载。 */
 const fileKind = computed<DownloadFileKind | null>(() => {
   switch (resourceDetail.backTab) {
     case "mod": return "mod";
@@ -329,10 +308,8 @@ const fileKind = computed<DownloadFileKind | null>(() => {
   }
 });
 
-/** modpack 走 install_modpack 链式安装（准备 → 游戏本体 → 内容），与单文件下载分流。 */
 const isModpack = computed(() => resourceDetail.backTab === "modpack");
 
-/** 整合包安装：选中版本文件 → install_modpack（后端解析清单自动识别 Modrinth/CurseForge）。 */
 async function submitModpackInstall() {
   if (!selectedVersionId.value) {
     showToast("请先选择一个版本文件");
@@ -361,15 +338,14 @@ async function submitModpackInstall() {
   }
 }
 
-/** 提交选中版本文件的下载任务（download_single_file → 任务中心自动注册）。
- *  落盘版本隔离：versions/{版本目录}/{kind_dir}/{filename}（后端 resolve 兜底 _{n} 冲突）。 */
+/** 提交选中版本下载任务（download_single_file → 任务中心自动注册）；落盘 versions/{版本目录}/{kind_dir}/{filename}（后端兜底 _{n} 冲突）。 */
 async function submitDownload() {
   // modpack 分流：不要求已选启动版本（安装器自建版本目录）
   if (isModpack.value) {
     await submitModpackInstall();
     return;
   }
-  // 任何未满足条件都明确提示（不静默）：点击始终有反馈
+  // 任何未满足条件都明确提示（不静默）
   if (!selectedVersionId.value) {
     showToast("请先选择一个版本文件");
     return;
@@ -384,15 +360,14 @@ async function submitDownload() {
     showToast("所选版本文件不存在，请重新选择");
     return;
   }
-  // 下载目标版本：启动页当前选中的版本（下载完成后由 onTaskDone 自动选中，
-  // 实时读取而非挂载快照——下载任务完成后 selectedVersion 会更新）
+  // 下载目标版本：实时读取 selectedVersion（下载完成后 onTaskDone 自动选中更新）
   const targetVersion = selectedVersion.value;
   if (!targetVersion) {
     showToast("请先在版本选择页选择版本（版本下载完成后会自动选中）");
     return;
   }
   try {
-    // 诊断：invoke 超时兜底——后端命令卡住时给出明确反馈而非静默"无反应"
+    // 诊断：invoke 超时兜底（5s）——后端命令卡住时给出反馈而非静默"无反应"
     const taskId = await Promise.race([
       invoke<string>("download_single_file", {
         task: {
@@ -406,7 +381,7 @@ async function submitDownload() {
         setTimeout(() => rej(new Error("下载请求超时（后端无响应），请查看日志")), 5000),
       ),
     ]);
-    // 注册资源名：任务完成提示显示 "下载任务[资源名]完成"（fallback 文件名）
+    // 注册资源名：完成提示显示 "下载任务[资源名]完成"（fallback 文件名）
     if (taskId) {
       registerTaskName(taskId, item.value?.title ?? v.filename);
     }
@@ -418,14 +393,12 @@ async function submitDownload() {
 
 // ── 操作 ──────────────────────────────
 
-/** 来源页面链接（item.page_url）。 */
 function gotoSource() {
   const it = item.value;
   if (!it?.page_url) return;
   openUrl(it.page_url).catch(() => showToast("打开链接失败"));
 }
 
-/** MC百科：有内置条目 id → 直达条目页；未收录 → 名称搜索页降级。 */
 function gotoMcmod() {
   const it = item.value;
   if (!it) return;
@@ -435,7 +408,6 @@ function gotoMcmod() {
   openUrl(url).catch(() => showToast("打开链接失败"));
 }
 
-/** 复制名称：有译名时复制 "翻译名 | 原名"（与标题显示样式一致），否则原名。 */
 async function copyName() {
   const it = item.value;
   if (!it) return;
@@ -451,10 +423,10 @@ async function copyName() {
 
 <template>
   <div v-if="item" class="md">
-    <!-- 项目切换动画：进入依赖 mod 详情时内容整体淡入淡出（同路由 push 不触发路由级过渡） -->
+    <!-- 项目切换动画：内容整体淡入淡出（同路由 push 不触发路由级过渡） -->
     <Transition name="md-switch" mode="out-in">
       <div :key="item.key" class="md-body">
-        <!-- 卡片一：项目信息（样式与外部 item 类似；描述行与图标左对齐全宽；按钮在卡片内底部） -->
+        <!-- 卡片一：项目信息（样式与外部 item 类似） -->
         <div class="md-card">
           <div class="md-row">
             <IconImage :src="item.icon_url" :size="40" />
@@ -469,7 +441,6 @@ async function copyName() {
           </div>
           <div class="md-desc">{{ item.translated ?? item.description }}</div>
 
-          <!-- 操作按钮（卡片内底部） -->
           <div class="md-actions">
             <button class="md-btn" @click="gotoSource">转到{{ sourceLabel }}</button>
             <!-- 光影包/地图存档无 MC百科条目，隐藏跳转 -->
@@ -482,7 +453,6 @@ async function copyName() {
           </div>
         </div>
 
-        <!-- 双卡片并列：左版本文件，右前置依赖（选中版本后出现） -->
         <div class="md-cards-row">
           <div class="md-card md-versions">
             <div class="mv-head">
@@ -557,7 +527,6 @@ async function copyName() {
             </div>
           </div>
 
-          <!-- 右：前置依赖卡片（选中版本且有 required 依赖才出现；宽度展开动画） -->
           <Transition name="mv-side">
             <div v-if="selectedVersionId && (selectedDepIds.length > 0 || selectedIncompatIds.length > 0)" class="md-card md-deps-card">
               <div class="mv-head">
@@ -609,7 +578,6 @@ async function copyName() {
   scrollbar-gutter: stable;
 }
 
-/* 项目切换动画：进入/返回依赖详情时整体淡入淡出 */
 .md-switch-enter-active,
 .md-switch-leave-active {
   transition: opacity 0.18s ease, transform 0.18s ease;
@@ -623,7 +591,6 @@ async function copyName() {
   transform: translateY(-6px);
 }
 
-/* 单列布局：项目信息 + 双卡片行，版本卡片撑满剩余高度 */
 .md-body {
   display: flex;
   flex-direction: column;
@@ -632,7 +599,7 @@ async function copyName() {
 }
 .md-body > .md-card { flex-shrink: 0; }
 
-/* 双卡片并列：左版本文件（flex:1），右前置依赖（固定 240px，动态出现） */
+/* 双卡片并列：左版本文件 flex:1，右前置依赖固定 240px（动态出现） */
 .md-cards-row {
   flex: 1;
   min-height: 0;
@@ -717,7 +684,6 @@ async function copyName() {
   text-overflow: ellipsis;
 }
 
-/* 原名：与译名样式不一致（弱化、更小、常规字重） */
 .md-title-en {
   font-size: 11px;
   font-weight: 400;
@@ -727,7 +693,7 @@ async function copyName() {
   text-overflow: ellipsis;
 }
 
-/* 支持的 ModLoader 徽章（与外部 item 同款；放在标题前，专属色随主题变量切换） */
+/* ModLoader 徽章（与外部 item 同款；专属色随主题变量切换） */
 .md-ld {
   flex-shrink: 0;
   font-size: 10px;
@@ -753,8 +719,7 @@ async function copyName() {
   color: var(--ld-optifine);
 }
 
-/* 徽章底色：color-mix 需要 WebKitGTK ≥ 2.42（Ubuntu 22.04 的 2.40 不支持）。
- * 不支持的平台（低版本 Linux WebView）降级为纯文字色徽章，避免整条声明失效丢色。 */
+/* 徽章底色：color-mix 需 WebKitGTK ≥ 2.42（Ubuntu 22.04 的 2.40 不支持）；不支持则降级为纯文字色徽章 */
 @supports (color-mix(in srgb, red 12%, transparent)) {
   .md-ld-fabric {
     background: color-mix(in srgb, var(--ld-fabric) 12%, transparent);
@@ -792,7 +757,6 @@ async function copyName() {
   white-space: nowrap;
 }
 
-/* 描述：另起一行，左边缘与图标左对齐（全宽） */
 .md-desc {
   margin-top: 12px;
   padding-top: 12px;
@@ -802,7 +766,6 @@ async function copyName() {
   line-height: 1.6;
 }
 
-/* 操作按钮：卡片内底部（描述下方，分隔线上） */
 .md-actions {
   display: flex;
   gap: 8px;
@@ -851,7 +814,6 @@ async function copyName() {
   white-space: nowrap;
 }
 
-/* 数量统计：与标题样式区分（弱化、更小、常规字重） */
 .mv-count {
   font-size: 11px;
   font-weight: 400;
@@ -862,7 +824,6 @@ async function copyName() {
   flex: 1;
 }
 
-/* 下载按钮：主操作（品牌填充），与筛选下拉等高；未选中版本时置灰 */
 .mv-dl {
   flex-shrink: 0;
   height: 30px;
@@ -1044,7 +1005,6 @@ async function copyName() {
   text-overflow: ellipsis;
 }
 
-/* 版本类型标记（非正式版）：alpha 红 / beta 橙，随主题语义色 */
 .mv-type {
   flex: none;
   padding: 0 6px;
@@ -1110,7 +1070,6 @@ async function copyName() {
   font-size: 12px;
 }
 
-/* 不兼容冲突警示（只读，不拦截安装）：红字警示卡 */
 .md-dep-warn {
   display: flex;
   flex-direction: column;

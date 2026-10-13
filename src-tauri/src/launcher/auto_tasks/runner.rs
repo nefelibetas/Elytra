@@ -1,7 +1,5 @@
-//! 自动任务执行器：按阶段跑动作列表，逐动作推进度事件，单个失败不中断后续。
-//!
-//! 是否因失败中止由**调用方**决策（`pre_launch` 看 [`AutoTasks::pre_on_failure`]），
-//! 这里只负责执行与汇总，保持纯粹、可测。
+//! 自动任务执行器：按阶段跑动作列表，逐动作推进度事件，单个失败不中断后续；
+//! 是否因失败中止由**调用方**决策（`pre_launch` 看 [`AutoTasks::pre_on_failure`]），这里只负责执行与汇总。
 
 use std::time::{Duration, Instant};
 
@@ -18,8 +16,7 @@ use crate::util::NoWindow as _;
 /// 命令超时的轮询间隔。
 const POLL_MS: u64 = 50;
 
-/// 单次执行的进度上报器（把 sink/ctx/phase/total 收拢成一个上下文，
-/// 避免逐帧透传 8 个参数）。
+/// 单次执行的进度上报器（收拢 sink/ctx/phase/total，避免逐帧透传 8 个参数）。
 struct Progress<'a> {
     sink: &'a dyn EventSink,
     ctx: &'a AutoTaskCtx<'a>,
@@ -91,7 +88,6 @@ pub fn run_auto_tasks(
     failures
 }
 
-/// 执行单个动作。
 fn run_one(progress: &Progress<'_>, idx: u32, action: &AutoTaskAction) -> Result<String, String> {
     match action {
         AutoTaskAction::BackupSaves { scope, keep } => {
@@ -157,12 +153,8 @@ fn run_command(command: &str, timeout_secs: u32) -> Result<String, String> {
     }
 }
 
-/// 终止整棵进程树。
-///
-/// `cmd /C` / `sh -c` 只是外层壳：只 kill 壳会让真实子进程（编译脚本、7z、用户自带
-/// 的守护进程）变成孤儿继续跑、继续写盘 —— `pre_launch` 场景下会与随后启动的游戏
-/// 争抢存档/文件，且每次超时都残留一个未被回收的子进程。所以 spawn 时就把命令放进
-/// 独立进程组，超时按组回收。
+/// 终止整棵进程树。`cmd /C` / `sh -c` 只是外层壳：只 kill 壳会让真实子进程变成孤儿继续写盘，
+/// `pre_launch` 下会与随后启动的游戏争抢存档/文件；故放入独立进程组、超时按组回收。
 fn kill_tree(child: &mut std::process::Child) {
     let pid = child.id();
     #[cfg(target_os = "windows")]

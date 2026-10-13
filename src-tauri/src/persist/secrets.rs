@@ -54,12 +54,9 @@ pub fn read_json_list<T: serde::de::DeserializeOwned>(key: &str) -> Vec<T> {
         .unwrap_or_default()
 }
 
-/// 对某个键做**原子**「读-改-写」（整段持锁）。
-///
-/// `read_json_list` / `save_json_list` 各自加锁，两次调用之间是竞争窗口：并发操作
-/// （如「静默刷新后 save」与「登录/删除账号的 save」重叠）会让后写者用**旧列表**整体
-/// 覆盖，表现为「新登录的账号重启后消失」或「已删账号复活（连同其 refresh_token）」。
-/// 凡是「读列表 → 改列表 → 存回」的调用一律走这里。
+/// 对某个键做**原子**「读-改-写」（整段持锁）。分开的 read/save 之间有竞争窗口，
+/// 并发时后写者会用旧列表整体覆盖（新登录账号重启后消失 / 已删账号连同 refresh_token 复活）。
+/// 凡「读列表 → 改列表 → 存回」的调用一律走这里。
 pub fn update_json_list<T, F, R>(key: &str, f: F) -> Result<R, String>
 where
     T: serde::Serialize + serde::de::DeserializeOwned,
@@ -90,8 +87,8 @@ fn load_map() -> std::collections::HashMap<String, String> {
     match serde_json::from_str(&content) {
         Ok(map) => map,
         Err(e) => {
-            // 解析失败**不能**静默当空表：下一次写入会用空表覆盖整个文件，凭据彻底丢失。
-            // 先把损坏文件挪成 .bak 留证据（与 Settings.toml 的损坏恢复同思路）。
+            // 解析失败**不能**静默当空表：下次写入会用空表覆盖整个文件、凭据彻底丢失。
+            // 先把损坏文件挪成 .bak 留证据（同 Settings.toml 的损坏恢复）。
             let bak = path.with_extension("bin.bak");
             let _ = std::fs::rename(&path, &bak);
             eprintln!(
@@ -109,14 +106,13 @@ fn write_map(map: &std::collections::HashMap<String, String>) -> Result<(), Stri
         std::fs::create_dir_all(parent).map_err(common_err_ctx!("创建配置目录失败"))?;
     }
     let content = serde_json::to_string(map).map_err(common_err_ctx!("序列化 secrets 失败"))?;
-    // 原子写：先写 .tmp 再 rename（与 Settings.toml 的 store::write_raw 同构）。
-    // 直接 fs::write 会在中途崩溃/断电时留下半截 JSON，而解析失败等于凭据全丢
-    // （表现为「账号与皮肤收藏一次性全没了」）。
+    // 原子写：先写 .tmp 再 rename（同 store::write_raw）；直接 fs::write 中途崩溃会留半截 JSON，
+    // 而解析失败等于凭据全丢。
     let tmp = path.with_extension("bin.tmp");
     std::fs::write(&tmp, content).map_err(common_err_ctx!("写入 secrets 失败"))?;
-    // 权限必须落在**已存在**的 tmp 上：旧实现先 chmod 后 write，首次写入时目标还不存在
-    // （ENOENT 被吞成日志），文件按 umask 落成 0644 —— 在「钥匙串不可用 → 明文降级」
-    // 路径下，同机其他本地用户可直接读到 token。chmod 失败按写入失败上抛。
+    // 权限必须落在**已存在**的 tmp 上：先 chmod 后 write 时首次写入目标还不存在（ENOENT 被吞），
+    // 文件按 umask 落成 0644——在「钥匙串不可用 → 明文降级」路径下同机其他用户可直接读 token。
+    // chmod 失败按写入失败上抛。
     #[cfg(not(target_os = "windows"))]
     {
         std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
@@ -159,9 +155,8 @@ fn decrypt_bytes(data: &[u8]) -> Result<Vec<u8>, String> {
     }
 }
 
-/// 钥匙串主密钥加密格式前缀（Linux/macOS 共用）：
-/// `"ELY1" || nonce(12B) || ChaCha20-Poly1305 密文`。
-/// 无前缀 → 明文（钥匙串不可用期间写入的降级数据，解密时原样返回）。
+/// 钥匙串主密钥加密格式前缀（Linux/macOS 共用）：`"ELY1" || nonce(12B) || ChaCha20-Poly1305 密文`。
+/// 无前缀 → 明文（钥匙串不可用期间的降级数据，解密时原样返回）。
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAGIC: &[u8] = b"ELY1";
 
@@ -205,8 +200,7 @@ fn key_decrypt(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 /// Linux Secret Service（GNOME Keyring / KWallet kwalletd5）：主密钥存 default collection，
-/// secrets.bin 每条 value 用主密钥 ChaCha20-Poly1305 加密。
-/// 无 Secret Service / collection 未解锁时降级明文（encrypt/decrypt 原样返回）。
+/// secrets.bin 每条 value 用主密钥 ChaCha20-Poly1305 加密；无 Secret Service / collection 未解锁时降级明文。
 #[cfg(target_os = "linux")]
 mod key_utils {
     use std::collections::HashMap;
@@ -442,8 +436,8 @@ mod dpapi {
             cb_data: 0,
             pb_data: ptr::null_mut(),
         };
-        // SAFETY: in_blob 的 pb_data/cb_data 由 data 切片及其长度构造且 DPAPI 只读输入；
-        // out_blob 是本栈帧可写变量，CryptProtectData 成功后由其填充，返回值已检查。
+        // SAFETY: in_blob 由 data 切片与长度构造、DPAPI 只读输入；out_blob 为本栈帧可写变量，
+        // CryptProtectData 成功时被填充、返回值已检查。
         let ok = unsafe {
             CryptProtectData(
                 &in_blob,
@@ -458,11 +452,11 @@ mod dpapi {
         if ok == 0 {
             return Err("CryptProtectData 失败".into());
         }
-        // SAFETY: ok != 0 表示调用成功，out_blob.pb_data 指向 LocalAlloc 分配、长度恰为 cb_data 的有效缓冲。
+        // SAFETY: ok != 0 表示成功，out_blob.pb_data 指向 LocalAlloc 分配、长度恰为 cb_data 的缓冲。
         let out = unsafe {
             std::slice::from_raw_parts(out_blob.pb_data, out_blob.cb_data as usize).to_vec()
         };
-        // SAFETY: out_blob.pb_data 是上一步输出的 LocalAlloc 内存句柄，此前未释放，此处释放且仅释放一次。
+        // SAFETY: pb_data 是上一步的 LocalAlloc 句柄，此前未释放，此处仅释放一次。
         unsafe {
             LocalFree(out_blob.pb_data as *mut c_void);
         }
@@ -478,8 +472,8 @@ mod dpapi {
             cb_data: 0,
             pb_data: ptr::null_mut(),
         };
-        // SAFETY: in_blob 的 pb_data/cb_data 由 data 切片及其长度构造且 DPAPI 只读输入；
-        // out_blob 是本栈帧可写变量，CryptUnprotectData 成功后由其填充，返回值已检查。
+        // SAFETY: in_blob 由 data 切片与长度构造、DPAPI 只读输入；out_blob 为本栈帧可写变量，
+        // CryptUnprotectData 成功时被填充、返回值已检查。
         let ok = unsafe {
             CryptUnprotectData(
                 &in_blob,
@@ -494,11 +488,11 @@ mod dpapi {
         if ok == 0 {
             return Err("CryptUnprotectData 失败（凭据不可解密，可能已换 Windows 用户）".into());
         }
-        // SAFETY: ok != 0 表示调用成功，out_blob.pb_data 指向 LocalAlloc 分配、长度恰为 cb_data 的有效缓冲。
+        // SAFETY: ok != 0 表示成功，out_blob.pb_data 指向 LocalAlloc 分配、长度恰为 cb_data 的缓冲。
         let out = unsafe {
             std::slice::from_raw_parts(out_blob.pb_data, out_blob.cb_data as usize).to_vec()
         };
-        // SAFETY: out_blob.pb_data 是上一步输出的 LocalAlloc 内存句柄，此前未释放，此处释放且仅释放一次。
+        // SAFETY: pb_data 是上一步的 LocalAlloc 句柄，此前未释放，此处仅释放一次。
         unsafe {
             LocalFree(out_blob.pb_data as *mut c_void);
         }
@@ -510,8 +504,7 @@ mod dpapi {
 mod tests {
     use super::*;
 
-    /// 清理测试 key（避免污染其他测试/真实数据）。
-    /// 走与生产一致的原子写入口：清空列表即删除条目。
+    /// 清理测试 key（避免污染其他测试/真实数据）；走生产原子写入口，清空列表即删除条目。
     fn cleanup(key: &str) {
         let _ = update_json_list::<String, _, ()>(key, |list| {
             list.clear();
@@ -566,8 +559,7 @@ mod tests {
         );
     }
 
-    /// Linux Secret Service 钥匙串加密 roundtrip。
-    /// 无 Secret Service 环境（headless/未解锁）降级明文，roundtrip 依然成立。
+    /// Linux Secret Service 钥匙串加密 roundtrip；无 Secret Service（headless/未解锁）降级明文，roundtrip 仍成立。
     #[cfg(target_os = "linux")]
     #[test]
     fn key_utils_roundtrip() {

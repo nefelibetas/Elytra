@@ -1,7 +1,6 @@
 <script setup lang="ts">
-// 自动任务编辑器（双模式复用）：
-// - mode="instance"：版本设置页用，支持"使用全局 / 使用自定义"（实例文件存在即完全采用实例配置）
-// - mode="global"：设置页用，直接编辑全局配置（无实例上下文，"立即执行"不可用）
+// 自动任务编辑器（双模式复用）：instance 版本设置页，实例文件存在即完全采用实例配置，否则跟随全局；
+// global 设置页直接编辑全局配置（无实例上下文，"立即执行"不可用）。
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import { Play, Plus, Trash2, Undo2 } from "@lucide/vue";
@@ -22,13 +21,12 @@ const props = withDefaults(defineProps<{ mode?: "instance" | "global" }>(), {
 });
 
 const route = useRoute();
-/** 游戏 id（版本目录名），由路由 query 传入。 */
+/** 游戏 id（版本目录名），来自路由 query。 */
 const versionName = computed(() => String(route.query.name ?? ""));
 
-/** 是否实例模式（全局模式下无实例上下文，"立即执行"不可用）。 */
 const isInstance = computed(() => props.mode === "instance");
 
-/** 是否处于可编辑状态（全局模式恒可编辑；实例模式需切到"自定义"）。 */
+/** 全局模式恒可编辑；实例模式需切到"自定义"。 */
 const editing = computed(() => !isInstance.value || mode.value === "custom");
 
 const mode = ref<"global" | "custom">("global");
@@ -38,7 +36,7 @@ const loaded = ref(false);
 const saving = ref(false);
 const expandAdd = ref<AutoTaskPhase | null>(null);
 
-/** 深拷贝（避免编辑草稿污染全局快照；三端 WebView 保守写法）。 */
+/** 深拷贝，避免草稿污染全局快照（三端 WebView 保守写法）。 */
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
@@ -69,14 +67,14 @@ onMounted(async () => {
   }
 });
 
-/** 切到"自定义"：首次进入时预填当前全局值（避免空白草稿）。 */
+/** 切到"自定义"：预填当前全局值。 */
 function switchToCustom() {
   if (mode.value === "custom") return;
   if (globalAutoTasks.value) draft.value = clone(globalAutoTasks.value);
   mode.value = "custom";
 }
 
-/** 切回"全局"：丢弃实例配置（保存后生效）。 */
+/** 切回"全局"：丢弃实例配置，保存后生效。 */
 function switchToGlobal() {
   mode.value = "global";
 }
@@ -112,14 +110,14 @@ async function runNow(phase: AutoTaskPhase) {
   }
 }
 
-/** 该实例 + 阶段当前是否有进行中的自动任务（事件载荷匹配）。 */
+/** 当前实例 + 阶段是否有进行中的自动任务（事件载荷匹配）。 */
 function runningPhase(): AutoTaskPhase | null {
   const p = autoTaskProgress.value;
   if (!p || p.version_id !== versionName.value) return null;
   return p.phase;
 }
 
-/** 自定义命令动作的命令对象（非命令动作返回占位，保证模板中引用稳定）。 */
+/** 命令动作的命令对象（非命令动作返回占位，保证模板引用稳定）。 */
 function commandAction(step: AutoTaskStep) {
   if (typeof step.action === "object" && "Command" in step.action) {
     return step.action.Command;
@@ -127,7 +125,6 @@ function commandAction(step: AutoTaskStep) {
   return { command: "", timeout_secs: DEFAULT_TIMEOUT };
 }
 
-/** 备份动作的参数对象（非备份动作返回占位）。 */
 function backupAction(step: AutoTaskStep) {
   if (typeof step.action === "object" && "BackupSaves" in step.action) {
     return step.action.BackupSaves;
@@ -135,7 +132,7 @@ function backupAction(step: AutoTaskStep) {
   return { scope: "All" as const, keep: DEFAULT_KEEP };
 }
 
-/** 备份范围是否已限定世界（决定 UI 展示"指定世界"分支）。 */
+/** 备份范围是否已限定世界（决定"指定世界"分支）。 */
 function scopedWorlds(step: AutoTaskStep): string[] {
   const scope = backupAction(step).scope;
   return scope === "All" ? [] : scope.Selected.worlds;
@@ -152,7 +149,6 @@ function toggleWorld(name: string, step: AutoTaskStep) {
 </script>
 
 <template>
-  <!-- 实例页需要自带滚动容器；设置页则是普通卡片堆叠 -->
   <div :class="isInstance ? 'vs-page' : 'auto-tasks-global'">
     <div class="setup-card">
       <div class="setup-card-hdr">
@@ -165,7 +161,6 @@ function toggleWorld(name: string, step: AutoTaskStep) {
         <button class="vsh-save" :disabled="saving || !loaded" @click="save">保存</button>
       </div>
 
-      <!-- 模式：全局 / 自定义（仅实例模式） -->
       <div v-if="isInstance" class="vsh-mode">
         <button
           class="vsh-mode-btn"
@@ -283,7 +278,6 @@ function toggleWorld(name: string, step: AutoTaskStep) {
             </div>
           </div>
 
-          <!-- 添加动作 -->
           <div class="vsh-add">
             <button class="vsh-add-btn" @click="expandAdd = expandAdd === p.key ? null : p.key">
               <Plus :size="12" /> 添加动作
@@ -361,7 +355,7 @@ function toggleWorld(name: string, step: AutoTaskStep) {
   overflow-y: auto;
   overflow-x: hidden;
 }
-/* 设置页模式：作为普通卡片参与页面堆叠（不限宽、不滚动） */
+/* 设置页模式：不限宽、不滚动 */
 .auto-tasks-global .setup-card {
   max-width: none;
 }

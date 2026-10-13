@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 版本设置页容器：左侧导航 + 各 tab 编排（业务在管理组件内）
+// 页面容器：左侧导航 + 各 tab 编排；业务在管理组件内
 import { computed, ref } from "vue";
 import type { Component } from "vue";
 import { useRoute } from "vue-router";
@@ -37,7 +37,7 @@ const activeTab = ref<TabKey>("mods");
 
 const route = useRoute();
 
-/** 游戏 id（版本目录名），由路由 query 传入。 */
+/** 版本目录名，由路由 query 传入。 */
 const versionName = computed(() => String(route.query.name ?? ""));
 
 /** 各管理 tab 的刷新动作（侧边 hover 刷新按钮，强制重载并更新缓存标记）。 */
@@ -80,7 +80,6 @@ const REFRESHERS: Record<TabKey, () => void> = {
       :no-refresh-keys="['export']"
       @refresh="REFRESHERS[$event as TabKey]()"
     >
-      <!-- 右侧：当前 tab 内容（切换淡入淡出） -->
       <VersionSetupMods v-if="activeTab === 'mods'" key="mods" />
 
       <VersionSetupSaves v-else-if="activeTab === 'saves'" key="saves" />

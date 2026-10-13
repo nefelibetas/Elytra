@@ -18,17 +18,14 @@ use super::session::{EasyTierSession, SessionConfig, SessionRole};
 use crate::persist::online_config;
 use crate::task::EventSink;
 
-/// 开启联机（作为 host）：建虚拟网（hostname + 白名单 [scaffold_port]）+
-/// 起信息服务器（OS 监听 scaffold_port，guest 经 proxy NAT 直连）。
-/// 状态 `Waiting`；后台等游戏"对局域网开放"，检测到端口后**重建实例**
-/// 白名单补游戏端口（proxy NAT 直连本机 MC 监听）→ `Hosting`。
+/// 开启联机（host）：建虚拟网（hostname + 白名单 [scaffold_port]）+ 起信息服务器。
+/// 状态 `Waiting`；后台等游戏开放局域网，检测到端口后**重建实例**补白名单 → `Hosting`。
 pub async fn start_host(sink: Arc<dyn EventSink>) -> Result<OnlineSnapshot, String> {
     // 阶段一（锁内、短）：校验 + 代际递增 + 占端口/房间码，随即释放锁
     let (gen, scaffold_port, room, cfg) = prepare_host_session().await?;
-    // 阶段二（锁外、慢）：建虚拟网（秒级）。持锁会让 status()/stop() 一起卡住
-    // （UI 冻结、用户无法取消），故必须在锁外执行。
+    // 阶段二（锁外、慢）：建虚拟网（秒级）；持锁会冻住 status()/stop()
     let session = EasyTierSession::start(cfg).await?;
-    // 阶段三（锁内、短）：代际校验——期间被 stop/重建抢先则丢弃刚建的会话
+    // 阶段三（锁内、短）：代际校验——被 stop/重建抢先则丢弃刚建的会话
     let mut svc = SERVICE.lock().await;
     if svc.generation != gen {
         drop(svc);
@@ -52,7 +49,7 @@ pub async fn start_host(sink: Arc<dyn EventSink>) -> Result<OnlineSnapshot, Stri
 }
 
 /// 阶段一：校验状态、启动扫描器、占信息服务器端口、组装建网配置。
-/// 返回 (generation, scaffold_port, room, cfg)；**建网留给调用方在锁外做**。
+/// 返回 (generation, scaffold_port, room, cfg)；**建网由调用方在锁外做**。
 async fn prepare_host_session() -> Result<(u64, u16, RoomCredential, SessionConfig), String> {
     let mut svc = SERVICE.lock().await;
     if svc.session.is_some() {
@@ -60,11 +57,11 @@ async fn prepare_host_session() -> Result<(u64, u16, RoomCredential, SessionConf
     }
     svc.generation += 1;
     let gen = svc.generation;
-    // 扫描器提前启动：用户先点联机后开局域网也能收到广播（幂等复用）
+    // 扫描器提前启动：先点联机后开局域网也能收到广播（幂等复用）
     if svc.scanner.is_none() {
         svc.scanner = Some(MinecraftScanner::start());
     }
-    // 信息服务器端口：优先 13448（参考 Terracotta），占用则随机
+    // 信息服务器端口：优先 13448，占用则随机
     let scaffold_port = match std::net::TcpListener::bind(("0.0.0.0", DEFAULT_SCAFFOLD_PORT)) {
         Ok(l) => {
             drop(l);
@@ -88,7 +85,6 @@ async fn prepare_host_session() -> Result<(u64, u16, RoomCredential, SessionConf
 /// 阶段二：构建房主玩家表 + 起信息服务器。
 /// 返回服务器句柄（None = 启动失败），调用方须存进单例以便停止时释放端口。
 fn start_info_server(scaffold_port: u16) -> (ProfileTable, Arc<HostShared>, Option<InfoServer>) {
-    // host 玩家表：房主
     let host_profile = Profile::new(
         online_player_name(),
         get_machine_id(),
@@ -104,7 +100,6 @@ fn start_info_server(scaffold_port: u16) -> (ProfileTable, Arc<HostShared>, Opti
     let handlers = build_host_handlers(shared.clone());
     let info_server = match start(handlers, scaffold_port) {
         Ok(server) => {
-            // 端口可能因占用回退到随机值，落一行日志便于与 guest 侧现象对照排查
             eprintln!(
                 "[online] Scaffolding 信息服务器监听 0.0.0.0:{}",
                 server.port()
@@ -119,7 +114,6 @@ fn start_info_server(scaffold_port: u16) -> (ProfileTable, Arc<HostShared>, Opti
     (profiles, shared, info_server)
 }
 
-/// 阶段三：回写状态为 `Waiting` 并广播快照。
 fn publish_host_ready(
     sink: &dyn EventSink,
     svc: &mut OnlineServiceInner,
@@ -140,14 +134,9 @@ fn publish_host_ready(
     snap
 }
 
-/// 发现循环的重建判定：外层 `None` = 无需动作；内层值 = 需重建到的游戏端口
-/// （`None` = 从白名单去掉游戏端口）。
-///
-/// - `Waiting` + 有端口 → 补白名单并升 `Hosting`；
-/// - `Hosting` + 端口消失 → 降回 `Waiting`；
-/// - `Hosting` + 端口变化 → 重建指向新端口。MC 关掉再 5s 内重开时，旧端口条目
-///   仍在扫描器 TTL 内，只靠"消失/出现"判定会漏掉新端口，白名单与 `shared.mc_port`
-///   会一直指向旧端口（guest 加入必失败），故须显式比对当前端口。
+/// 端口重建判定：外层 `None` = 无需动作，内层值 = 重建到的游戏端口（`None` = 去掉游戏端口）；
+/// `Waiting`+有端口 → 升 `Hosting`，`Hosting`+端口消失 → 降 `Waiting`，`Hosting`+端口变化 → 重建。
+/// 端口变化须显式比对：MC 关掉再 5s 内重开时旧端口仍在扫描器 TTL 内，仅靠"消失/出现"会漏掉新端口，白名单与 `shared.mc_port` 将一直指向旧端口（guest 加入必失败）。
 fn host_sync_target(
     status: OnlineStatus,
     mc_port: Option<u16>,
@@ -161,14 +150,12 @@ fn host_sync_target(
     }
 }
 
-/// 阶段四：后台发现任务：Waiting → Hosting（游戏端口出现 → 重建实例补白名单）。
 fn spawn_host_discovery(sink: Arc<dyn EventSink>, shared: Arc<HostShared>, gen: u64) {
     tauri::async_runtime::spawn(async move {
         host_discovery_loop(sink.as_ref(), &shared, gen).await;
     });
 }
 
-/// 后台发现循环：轮询游戏端口，按需重建联机会话。
 async fn host_discovery_loop(sink: &dyn EventSink, shared: &HostShared, gen: u64) {
     loop {
         tokio::time::sleep(DISCOVER_POLL).await;
@@ -192,19 +179,14 @@ async fn host_discovery_loop(sink: &dyn EventSink, shared: &HostShared, gen: u64
     }
 }
 
-/// 重建联机会话以匹配当前游戏端口（`None` = 去游戏端口白名单）。
-/// 返回 `false` 表示调用方应结束后台任务。
-///
-/// `old.stop()` 与 `EasyTierSession::start()` 都是秒级操作，全部放在**锁外**：
-/// 持锁做会让 status()（UI 轮询）与 stop()（用户点停止）一起卡住。
-/// 期间可能被 stop/新会话抢先 → 用代际校验兜住（见收尾处）。
+/// 重建联机会话以匹配当前游戏端口（`None` = 去游戏端口白名单）；返回 `false` = 调用方应结束。
+/// `old.stop()` 与 `start()` 均为秒级，放在**锁外**（持锁会卡住 status()/stop()）；期间被抢先由代际校验兜住。
 async fn sync_host_session(
     sink: &dyn EventSink,
     shared: &HostShared,
     gen: u64,
     mc_port: Option<u16>,
 ) -> bool {
-    // 锁内：摘出旧会话 + 组装新配置
     let (old, cfg) = {
         let mut svc = SERVICE.lock().await;
         if svc.generation != gen {
@@ -230,13 +212,12 @@ async fn sync_host_session(
     old.stop().await;
     let started = EasyTierSession::start(cfg).await;
 
-    // 锁内：代际校验后回写
     let mut stale_info: Option<InfoServer> = None;
     let snap = {
         let mut svc = SERVICE.lock().await;
         if svc.generation != gen {
             drop(svc);
-            // 期间被 stop / 新会话抢占 → 丢弃刚建的会话（它不是当前状态的一部分）
+            // 期间被 stop / 新会话抢占 → 丢弃刚建的会话
             if let Ok(s) = started {
                 s.stop().await;
             }
@@ -258,7 +239,7 @@ async fn sync_host_session(
                 svc.room = None;
                 svc.scaffold_port = None;
                 svc.scanner = None;
-                // 会话已不可用：信息服务器一并关闭，端口留给下次会话复用
+                // 会话已不可用：信息服务器一并关闭
                 stale_info = svc.info_server.take();
             }
         }
@@ -270,7 +251,7 @@ async fn sync_host_session(
     true
 }
 
-/// 阶段五：后台心跳维护任务：剔除超时 guest + 玩家表变化推前端。
+/// 后台心跳任务：剔除超时 guest + 玩家表变化推前端。
 fn spawn_host_heartbeat(sink: Arc<dyn EventSink>, shared: Arc<HostShared>, gen: u64) {
     tauri::async_runtime::spawn(async move {
         loop {
@@ -291,10 +272,8 @@ fn spawn_host_heartbeat(sink: Arc<dyn EventSink>, shared: Arc<HostShared>, gen: 
     });
 }
 
-/// 构建 host 信息服务器 handlers（6 个标准协议）。
 fn build_host_handlers(shared: Arc<HostShared>) -> Handlers {
     let handlers = Handlers::new();
-    // c:ping：回显请求体
     handlers.register(
         "c",
         "ping",
@@ -316,8 +295,7 @@ fn build_host_handlers(shared: Arc<HostShared>) -> Handlers {
             Ok(Response::ok(list.join("\0").into_bytes()))
         }),
     );
-    // c:server_port：游戏端口（proxy NAT 直连本机 MC 端口，大端 u16）；
-    // 未检测到游戏端口 → 错误 32（服务器未启动）
+    // c:server_port：游戏端口（大端 u16）；未检测到 → 错误 32
     {
         let shared = shared.clone();
         handlers.register(
@@ -361,7 +339,6 @@ fn build_host_handlers(shared: Arc<HostShared>) -> Handlers {
             }),
         );
     }
-    // c:player_profiles_list：玩家列表（JSON 数组）
     {
         let shared = shared.clone();
         handlers.register(
@@ -396,7 +373,6 @@ mod tests {
         });
         let handlers = build_host_handlers(shared.clone());
 
-        // c:ping 回显
         let req = Request {
             namespace: "c".into(),
             value: "ping".into(),
@@ -406,7 +382,6 @@ mod tests {
         assert_eq!(resp.status, 0);
         assert_eq!(resp.body, b"abc");
 
-        // c:protocols 含全部标准协议
         let req = Request {
             namespace: "c".into(),
             value: "protocols".into(),
@@ -424,7 +399,6 @@ mod tests {
             assert!(list.split('\0').any(|x| x == p), "缺协议 {p}");
         }
 
-        // c:server_port：无游戏端口 → 32；有 → 返回端口
         let req = Request {
             namespace: "c".into(),
             value: "server_port".into(),
@@ -437,7 +411,6 @@ mod tests {
         assert_eq!(resp.status, 0);
         assert_eq!(resp.body, 25565u16.to_be_bytes().to_vec());
 
-        // c:player_ping：JSON 更新玩家表
         let req = Request {
             namespace: "c".into(),
             value: "player_ping".into(),
@@ -446,7 +419,6 @@ mod tests {
         let resp = handlers.dispatch(&req).unwrap();
         assert_eq!(resp.status, 0);
 
-        // c:player_profiles_list：host + alice
         let req = Request {
             namespace: "c".into(),
             value: "player_profiles_list".into(),
@@ -459,7 +431,6 @@ mod tests {
         assert_eq!(arr[0]["kind"], "HOST");
         assert_eq!(arr[1]["name"], "alice");
 
-        // 未知协议 → 255
         let req = Request {
             namespace: "c".into(),
             value: "nope".into(),
@@ -469,31 +440,26 @@ mod tests {
         assert_eq!(resp.status, 255);
     }
 
-    /// 回归：Hosting 期间游戏端口变化必须触发重建（否则白名单/端口一直指向旧值，
-    /// guest 拿到旧端口加入失败）；端口未变则不得重复重建。
+    /// Hosting 期间游戏端口变化必须触发重建（否则白名单/端口停在旧值，guest 加入失败）；
+    /// 端口未变则不得重复重建。
     #[test]
     fn host_sync_target_handles_port_change() {
-        // Waiting 拿到端口 → 重建（升 Hosting）
         assert_eq!(
             host_sync_target(OnlineStatus::Waiting, Some(25565), None),
             Some(Some(25565))
         );
-        // Hosting 端口消失 → 重建去白名单
         assert_eq!(
             host_sync_target(OnlineStatus::Hosting, None, Some(25565)),
             Some(None)
         );
-        // Hosting 端口变化（旧条目仍在 TTL 内）→ 重建到新端口
         assert_eq!(
             host_sync_target(OnlineStatus::Hosting, Some(25566), Some(25565)),
             Some(Some(25566))
         );
-        // Hosting 端口未变 → 不重建（避免每 poll 重复重建）
         assert_eq!(
             host_sync_target(OnlineStatus::Hosting, Some(25565), Some(25565)),
             None
         );
-        // Idle/Joining → 不动作
         assert_eq!(
             host_sync_target(OnlineStatus::Idle, Some(25565), None),
             None

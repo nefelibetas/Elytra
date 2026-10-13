@@ -1,7 +1,6 @@
 <script setup lang="ts">
-// 版本设置-其他 tab：版本图标管理（自定义图标 / 还原为默认图标）。
-// 图标优先级：用户自定义（version-icon.png）> 整合包项目图（pack-icon.png）> loader 图标。
-// "还原为默认"仅删除自定义图——整合包 logo 是安装时的样子，不属于自定义。
+// 版本设置-其他 tab：版本图标管理。
+// 图标优先级：自定义（version-icon.png）> 整合包项目图（pack-icon.png）> loader 图标。
 import { computed, onMounted } from "vue";
 import { useRoute } from "vue-router";
 import { ImagePlus, Undo2 } from "@lucide/vue";
@@ -15,7 +14,6 @@ import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 
 const route = useRoute();
-/** 游戏 id（版本目录名），由路由 query 传入。 */
 const versionName = computed(() => String(route.query.name ?? ""));
 
 const currentIcon = computed(() => versionIcons[versionName.value]);
@@ -32,7 +30,7 @@ onMounted(() => {
   void loadIconSource(versionName.value);
 });
 
-/** 自定义图标：本地选图 → 后端魔数校验 + 复制为版本图标，成功后缓存自动刷新。 */
+/** 自定义图标：选图 → 后端魔数校验并复制，成功后缓存刷新。 */
 async function pickCustomIcon() {
   const path = await open({
     multiple: false,
@@ -60,7 +58,6 @@ async function restoreDefault() {
 
 <template>
   <div class="vs-page">
-    <!-- 当前图标预览 -->
     <div class="setup-card">
       <div class="setup-card-title">版本图标</div>
       <div class="vs-icon-row">
@@ -70,7 +67,6 @@ async function restoreDefault() {
       </div>
     </div>
 
-    <!-- 自定义图标 -->
     <div class="setup-card">
       <div class="setup-card-title">自定义图标</div>
       <div class="setup-desc">
@@ -85,7 +81,6 @@ async function restoreDefault() {
       </div>
     </div>
 
-    <!-- 还原为默认图标 -->
     <div class="setup-card">
       <div class="setup-card-title">还原为默认图标</div>
       <div class="setup-desc">
@@ -108,7 +103,6 @@ async function restoreDefault() {
 </template>
 
 <style scoped>
-/* 其他页：占满右侧剩余空间，内容超出自身滚动 */
 .vs-page {
   flex: 1;
   min-height: 0;
@@ -174,7 +168,6 @@ async function restoreDefault() {
   cursor: not-allowed;
 }
 
-/* 当前图标预览行 */
 .vs-icon-row {
   display: flex;
   align-items: center;

@@ -1,9 +1,5 @@
 //! HTTP 下载层：把 URL 变成校验过的字节。
-//! 实现划分：
-//! - [`api`]：公开入口与 `DownloadResult` / `FetchError`；
-//! - [`core`]：多源下载核心（`FetchOptions` / `download_core` / `fetch_with_retries`）；
-//! - [`routes`]：镜像路由表引用、健康度排序与候选 URL 生成；
-//! - [`redirect`]：重定向黑洞黑名单、安全跟随与全局 client。
+//! - [`api`] 公开入口/`DownloadResult`/`FetchError`；[`core`] 多源核心；[`routes`] 镜像路由；[`redirect`] 重定向/client。
 
 mod api;
 mod core;

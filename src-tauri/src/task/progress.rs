@@ -1,5 +1,4 @@
-// ── 进度上报基础设施：EmitLoop 主循环 + 收尾心跳 + set_* 状态助手 ──
-// 三个任务（run_task / run_files_task / run_repair_task）共用；依赖方向：任务主体 → 本模块。
+// ── 进度上报基础设施：EmitLoop + 收尾心跳 + set_* 状态助手（依赖方向：任务主体 → 本模块）──
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -18,8 +17,7 @@ fn b2u(b: &AtomicBool) -> u32 {
     }
 }
 
-/// EMA 速度采样器：相邻采样差分 + 指数平滑（0.6/0.4，≥300ms 采样窗）；停滞（>4s）或
-/// 速度 <1KB/s 时 ETA 置 None。供各处心跳共用。
+/// EMA 速度采样器：差分 + 指数平滑（0.6/0.4，≥300ms 采样窗）；停滞 >4s 或速度 <1KB/s 时 ETA 置 None；各处心跳共用。
 pub(crate) struct SpeedSampler {
     last_bytes: u64,
     last_sample: Instant,
@@ -37,8 +35,6 @@ impl SpeedSampler {
         }
     }
 
-    /// 喂入累计/总字节，返回 `(speed_bps, eta_seconds)`：采样窗 ≥300ms 且字节有推进才
-    /// 更新 EMA；停滞 >4s 或速度 <1KB/s 时 ETA 为 None。
     pub fn sample(&mut self, cur_bytes: u64, total_bytes: u64) -> (f64, Option<u64>) {
         let now = Instant::now();
         if cur_bytes > self.last_bytes {
@@ -68,8 +64,7 @@ impl SpeedSampler {
     }
 }
 
-/// 下载任务共享的进度上报循环：读原子计数器 → 更新分步/总进度 → emit。字段由
-/// runner/repair 构造时填充，故全部 pub。
+/// 下载任务共享的进度上报循环：读计数器 → 更新分步/总进度 → emit；字段由 runner/repair 构造时填充，故全部 pub。
 pub struct EmitLoop {
     pub sink: Arc<dyn EventSink>,
     pub cancel: Arc<AtomicBool>,
@@ -81,22 +76,18 @@ pub struct EmitLoop {
     pub jar_bytes: Arc<AtomicU64>,
     pub jar_total: Arc<AtomicU64>,
     pub bytes: Arc<AtomicU64>,
-    /// 分步字节：libs/assets/natives 各自步骤内下载字节增量（分子）
     pub lib_bytes: Arc<AtomicU64>,
     pub asst_bytes: Arc<AtomicU64>,
     pub natives_bytes: Arc<AtomicU64>,
-    /// 分步字节分母：需下载部分的总字节（0 时回退文件数公式）
     pub lib_pending_bytes: u64,
     pub asst_pending_bytes: u64,
     pub natives_pending_bytes: u64,
-    /// 安装步骤字节：LoaderLibs/OptiFine/FabricApi（total 运行时填 content-length）
     pub loader_libs_bytes: Arc<AtomicU64>,
     pub loader_libs_total: Arc<AtomicU64>,
     pub optifine_bytes: Arc<AtomicU64>,
     pub optifine_total: Arc<AtomicU64>,
     pub fabric_bytes: Arc<AtomicU64>,
     pub fabric_total: Arc<AtomicU64>,
-    /// 各下载/安装步骤索引（None = 任务无该步骤）
     pub jar_step: Option<usize>,
     pub lib_step: Option<usize>,
     pub asst_step: Option<usize>,
@@ -104,7 +95,7 @@ pub struct EmitLoop {
     pub loader_libs_step: Option<usize>,
     pub optifine_step: Option<usize>,
     pub fabric_step: Option<usize>,
-    /// 收尾安装步骤完成标志（EmitLoop 覆盖阶段 B 全程，这些步骤的进度计入 completed）
+    /// 收尾安装步骤完成标志（EmitLoop 覆盖阶段 B，这些步骤进度计入 completed）
     pub cfg_done: Arc<AtomicBool>,
     pub libs_done: Arc<AtomicBool>,
     pub optifine_done: Arc<AtomicBool>,
@@ -115,10 +106,9 @@ pub struct EmitLoop {
     /// 初始已完成数（完整下载 = 预扫描已存在文件；补全 = 0）
     pub initial_completed: u32,
     pub total_files: u32,
-    /// 字节维度：检测完的已存在字节与清单总字节（bytes 为 0 时进度回退文件数公式）
     pub initial_bytes: u64,
     pub total_bytes: u64,
-    /// jar 总大小兜底（version.json 的 size；content-length 缺失时用）
+    /// jar 大小兜底（version.json 的 size 或 content-length 缺失时用）
     pub jar_total_fallback: u64,
 }
 
@@ -138,7 +128,6 @@ impl EmitLoop {
                     + b2u(&self.optifine_done)
                     + b2u(&self.fabric_done);
                 let completed = self.initial_completed + jd + ld + ad + nd + flags;
-                // 字节维度：initial（已存在）+ jar 当前字节 + libs/assets 下载增量
                 let completed_bytes = self.initial_bytes + jb + self.bytes.load(Ordering::Relaxed);
 
                 let (done, progress_snapshot) = {
@@ -148,21 +137,18 @@ impl EmitLoop {
                         break;
                     }
 
-                    // 实时速度：字节增量差分 + EMA 平滑（SpeedSampler 统一采样/ETA）
                     let cur_bytes = self.bytes.load(Ordering::Relaxed) + jb;
                     let (speed_bps, eta) = sampler.sample(cur_bytes, self.total_bytes);
                     p.speed_bps = speed_bps;
                     p.eta_seconds = eta;
                     p.completed_files = completed;
                     p.completed_bytes = completed_bytes;
-                    // 最终总数（含 natives/安装步骤）每 tick 写回，剩余文件不会变负
+                    // 总数每 tick 写回（含 natives/安装步骤），剩余文件不会变负
                     p.total_files = self.total_files;
-                    // current_phase = 第一个未完成（running）步骤（各并行路完成时自行 step_done）
                     if let Some(st) = p.steps.iter().find(|s| s.status == StepStatus::Running) {
                         p.current_phase = st.name.clone();
                     }
 
-                    // 分步进度：client.jar 字节级（total 未知时用完成标志），其余按字节/文件数
                     if let Some(i) = self.jar_step {
                         if let Some(st) = p.steps.get_mut(i) {
                             if st.status == StepStatus::Running {
@@ -175,7 +161,6 @@ impl EmitLoop {
                             }
                         }
                     }
-                    // libs/assets/natives：字节优先（pending 字节已知时），否则回退文件数
                     let pct_of =
                         |done: u64, total: u64| (done as f64 / total as f64 * 100.0).min(100.0);
                     if let Some(i) = self.lib_step {
@@ -226,7 +211,7 @@ impl EmitLoop {
                             }
                         }
                     }
-                    // 安装步骤：单文件/多文件字节（total 运行时填充，0 时保持 0 直到完成跳 100%）
+                    // 安装步骤：按字节（total 运行时填充，0 时保持 0 直至完成跳 100%）
                     if let Some(i) = self.loader_libs_step {
                         if let Some(st) = p.steps.get_mut(i) {
                             if st.status == StepStatus::Running {
@@ -261,8 +246,7 @@ impl EmitLoop {
                         }
                     }
 
-                    // 总进度 = 已完成字节/总字节（与 set_completed 同公式，检测完即 initial/total）；
-                    // bytes 为 0 回退文件数占比。封顶 99.9：done 前不显示 100%（收尾显式设置）。
+                    // 总进度 = 已完成字节/总字节（bytes 为 0 回退文件数占比）；封顶 99.9，100% 只由收尾显式设置。
                     p.progress = if self.total_bytes > 0 {
                         (completed_bytes as f64 / self.total_bytes as f64 * 100.0).min(99.9)
                     } else if self.total_files > 0 {
@@ -271,14 +255,13 @@ impl EmitLoop {
                         0.0
                     };
 
-                    // 快照克隆后锁外 emit：emit 阻塞时不持 progress 锁，否则取消/收尾全卡住。
+                    // 快照克隆后锁外 emit：emit 阻塞时不持 progress 锁，否则取消/收尾卡住。
                     (
-                        // 自然退出：计数到顶，或取消（终态事件仍由 set_cancelled/收尾发出）
+                        // 自然退出：计数到顶或取消（终态由 set_cancelled/收尾发出）
                         completed >= self.total_files || self.cancel.load(Ordering::SeqCst),
                         p.clone(),
                     )
                 };
-                // 队列线程派发（emit 阻塞不占本任务/心跳线程）
                 emit(self.sink.as_ref(), &progress_snapshot);
                 if done {
                     break;
@@ -289,8 +272,7 @@ impl EmitLoop {
     }
 }
 
-/// 收尾阶段心跳：EmitLoop 在并行下载结束时 abort，此间读 bytes 增量恢复速度/字节进度。
-/// 自终止：status 离开 Running 即退出，无需外部 abort。
+/// 收尾阶段心跳：EmitLoop 在并行下载结束时 abort，此间读 bytes 增量恢复速度/字节进度；status 离开 Running 即自终止，无需外部 abort。
 pub fn spawn_tail_loop(
     sink: Arc<dyn EventSink>,
     progress: &Arc<Mutex<TaskProgress>>,
@@ -319,7 +301,7 @@ pub fn spawn_tail_loop(
                         initialized = true;
                     }
                     p.completed_bytes = base_done + cur.saturating_sub(base_cnt);
-                    // ETA 基线换算：传入 total + base_done - base_cnt 与 sampler 内部等价
+                    // ETA 基线换算：total + base_done - base_cnt 与 sampler 内部等价
                     let total_for_eta = p
                         .total_bytes
                         .saturating_add(base_done)
@@ -327,7 +309,6 @@ pub fn spawn_tail_loop(
                     let (speed_bps, eta) = sampler.sample(cur, total_for_eta);
                     p.speed_bps = speed_bps;
                     p.eta_seconds = eta;
-                    // 锁外 emit（同 EmitLoop）
                     Some(p.clone())
                 };
                 if let Some(p) = snapshot {
@@ -370,8 +351,7 @@ pub fn step_done(sink: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>, idx:
     });
 }
 
-/// 总进度统一公式：优先字节占比（大文件不卡 99%），bytes 为 0 时回退步骤数占比
-/// （[`steps_percent`]）；封顶 99.9（100% 只由任务收尾显式设置）。
+/// 总进度统一公式：优先字节占比（大文件不卡 99%），bytes 为 0 时回退 [`steps_percent`]；封顶 99.9（100% 只由收尾显式设置）。
 pub fn update_progress(p: &mut TaskProgress) {
     p.progress = if p.total_bytes > 0 {
         (p.completed_bytes as f64 / p.total_bytes as f64 * 100.0).min(99.9)
@@ -394,7 +374,7 @@ pub fn set_completed(sink: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>, 
         p.completed_bytes = bytes;
         update_progress(p);
     });
-    // 此处不 fail（set_completed 多次调用，移除注册会让后续取消失效；注册由终态收口统一移除）。
+    // 此处不 fail：set_completed 会多次调用，移除注册会让后续取消失效（注册由终态收口统一移除）。
 }
 
 /// 成功收口（唯一实现）：Done 终态事件 + 100% 进度 + 移除任务注册；`phase` 为收尾文案。
@@ -405,7 +385,7 @@ pub fn set_done(sink: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>, phase
         p.completed_files = p.total_files;
         p.current_phase = phase.into();
     });
-    // 终态统一移除任务注册（remove 同清挂起登记）。先释放 progress 锁再 remove，防死锁。
+    // 终态统一移除任务注册（remove 同清挂起登记）；先释放 progress 锁再 remove，防死锁。
     if let Some(p) = progress.try_lock() {
         let task_id = p.task_id.clone();
         drop(p);
@@ -413,8 +393,7 @@ pub fn set_done(sink: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>, phase
     }
 }
 
-/// 失败收口：Error 终态事件 + 移除任务注册。若此前 set_cleanup_path 登记了清理路径（如新建
-/// 的版本目录），取走并后台整删——同步 remove_dir_all 会阻塞任务线程（大目录数十秒）。
+/// 失败收口：Error 终态事件 + 移除任务注册。此前 set_cleanup_path 登记过清理路径（如新建版本目录）则取走并后台整删——同步 remove_dir_all 会阻塞任务线程（大目录数十秒）。
 pub fn set_error(sink: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>, msg: String) {
     update_and_emit(sink, progress, |p| {
         p.status = TaskStatus::Error;
@@ -432,13 +411,12 @@ pub fn set_error(sink: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>, msg:
             }
         });
     }
-    // 不整删下载产物：半截/0B 文件由重试时 sha1 校验与空响应防护自愈，已下载内容可复用。
+    // 不整删下载产物：半截/0B 文件由重试 sha1 校验与空响应防护自愈，可复用。
     global().fail(&task_id);
 }
 
 pub fn set_cancelled(sink: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>) {
-    // 取消收口：任务侧下载已停止，取走清理路径后台整删；先释放 progress 锁再 take_cleanup_path
-    // （后者持 inner 锁），保持 inner→progress 锁序。
+    // 取消收口：任务侧下载已停止，取走清理路径后台整删；先释放 progress 锁再 take_cleanup_path（后者持 inner 锁），保持 inner→progress 锁序。
     let cleanup = {
         if let Some(p) = progress.try_lock() {
             let task_id = p.task_id.clone();
@@ -475,7 +453,6 @@ pub fn set_cancelled(sink: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>) 
         p.status = TaskStatus::Cancelled;
         p.current_phase = "已取消".into();
     });
-    // 终态统一移除任务注册
     if let Some(p) = progress.try_lock() {
         let task_id = p.task_id.clone();
         drop(p); // 先释放 progress 锁再 fail（fail 内部读 progress，防死锁）
@@ -485,8 +462,7 @@ pub fn set_cancelled(sink: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>) 
 
 // ── 共享简易心跳（files / modpack 等顺序+块式任务复用）──
 
-/// 当前运行步骤的分步进度来源（供不走 [`EmitLoop`] 的任务复用）：文件数（files_total > 0）
-/// → 字节（step_total > 0）→ 不更新（分母未知时保持现值，避免假的 0%）。
+/// 当前运行步骤的分步进度来源（不走 [`EmitLoop`] 的任务复用）：文件数（files_total > 0）→ 字节（step_total > 0）→ 不更新（分母未知时保持现值，避免假的 0%）。
 #[derive(Clone)]
 pub struct StepRef {
     /// 当前步骤索引；`usize::MAX` = 无运行中步骤。
@@ -498,7 +474,7 @@ pub struct StepRef {
 }
 
 impl StepRef {
-    /// 当前步骤百分比；无运行中步骤或分母未知时 `None`（调用方保持原值，避免假的 0%）。
+    /// 当前步骤百分比；无运行中步骤或分母未知 → None（调用方保持原值，避免假的 0%）。
     pub fn percent(&self) -> Option<f64> {
         if self.idx.load(Ordering::Relaxed) == usize::MAX {
             return None;
@@ -514,14 +490,12 @@ impl StepRef {
     }
 }
 
-/// 分步百分比（上限 100）；分母为 0 时 `None`。
+/// 分步百分比（上限 100）；分母为 0 → None。
 fn percent(done: u64, total: u64) -> Option<f64> {
     (total > 0).then(|| (done as f64 / total as f64 * 100.0).min(100.0))
 }
 
-/// 总进度的**步骤口径**：完成步骤数 / 总步骤数（封顶 99.9，100% 只由收尾显式设置）。
-/// 步骤数在计划期即确定、每步恰好完成一次，故与分母天然同宇宙——批量任务（整合包安装）
-/// 用它避免"分母含不会经过分子累加的字节"导致的低位卡死 + 收尾跳变。
+/// 总进度的**步骤口径**：完成步骤数 / 总步骤数（封顶 99.9，100% 只由收尾显式设置）；批量任务（整合包安装）用它避免分母含不进分子累加的字节 → 低位卡死 + 收尾跳变。
 pub fn steps_percent(p: &TaskProgress) -> f64 {
     if p.total_files > 0 {
         (p.completed_files as f64 / p.total_files as f64 * 100.0).min(99.9)
@@ -530,27 +504,18 @@ pub fn steps_percent(p: &TaskProgress) -> f64 {
     }
 }
 
-/// 心跳输入计数器束：完成文件数 / 总文件数 / 累计字节（速度）/ 总量估算
-/// （可运行中增长，ETA 分母）/ 百分比口径 / 当前步骤进度（可选）。
+/// 心跳输入计数器束：完成/总文件数、累计字节（速度）、总量估算（运行中可增长，ETA 分母）、百分比口径、当前步骤进度（可选）。
 pub struct HeartbeatStats {
     pub done_files: Arc<AtomicU32>,
     pub total_files: u32,
     pub bytes: Arc<AtomicU64>,
     pub est_total_bytes: Arc<AtomicU64>,
-    /// `true` = 总进度走步骤口径（[`steps_percent`]，分母 `total_files`）；
-    /// `false` = [`update_progress`] 默认公式（优先字节占比，分母 `est_total_bytes`）。
-    ///
-    /// 整合包安装**必须**用步骤口径：它的 `est_bytes` 含永远不进字节分子的部分
-    /// （本地包体整体、overrides 解压、已存在文件的完整估算），字节占比追不上分母 →
-    /// 卡片停在低位、任务收尾时直接跳 100%。两个字节字段照常写入（速度显示与
-    /// 前端聚合 ETA 用）。
+    /// `true` = 总进度走步骤口径（[`steps_percent`]，分母 `total_files`）；`false` = [`update_progress`] 默认公式（优先字节占比，分母 `est_total_bytes`）。整合包安装**必须**用步骤口径：其 `est_bytes` 含永不进字节分子的部分（本地包体、overrides 解压、已存在文件），字节占比追不上分母 → 卡片停低位、收尾跳 100%；两个字节字段照常写入。
     pub percent_by_steps: bool,
-    /// 提供则每拍刷新 `steps[idx].progress`（整合包安装用；版本下载走 `EmitLoop`）。
     pub step: Option<StepRef>,
 }
 
-/// 150ms 共享心跳：刷新状态 Running、文件/字节进度、EMA 速度（0.6/0.4，≥300ms 采样窗）、
-/// ETA（<1KB/s 或停滞 >4s 置 None）；百分比交由 update_progress 计算，句柄由调用方收尾前 abort。
+/// 150ms 共享心跳：刷新状态 Running、文件/字节进度、EMA 速度（0.6/0.4，≥300ms 采样窗）、ETA（<1KB/s 或停滞 >4s 置 None）；百分比交由 update_progress 计算，句柄由调用方收尾前 abort。
 pub fn spawn_heartbeat(
     sink: Arc<dyn EventSink>,
     progress: &Arc<Mutex<TaskProgress>>,
@@ -620,7 +585,6 @@ mod tests {
     use super::*;
     use crate::task::StepInfo;
 
-    /// 分步百分比：分母未知 → None（保持前端现值，不显示假的 0%）。
     #[test]
     fn percent_needs_a_denominator() {
         assert_eq!(percent(5, 0), None);
@@ -630,7 +594,6 @@ mod tests {
         assert_eq!(percent(20, 10), Some(100.0));
     }
 
-    /// 文件数分母优先于字节分母（批量步骤必须走文件口径）；无运行中步骤时恒 None。
     #[test]
     fn step_ref_prefers_file_denominator() {
         let step = StepRef {
@@ -640,10 +603,9 @@ mod tests {
             files: Arc::new(AtomicU32::new(1)),
             files_total: Arc::new(AtomicU32::new(4)),
         };
-        // 字节口径会得出 1%、文件口径 25%——两者绝不能混用
+        // 字节口径 1% vs 文件口径 25%，两者不能混用
         assert_eq!(step.percent(), Some(25.0));
 
-        // 无文件分母时回退字节口径
         step.files_total.store(0, Ordering::Relaxed);
         assert_eq!(step.percent(), Some(1.0));
 
@@ -652,7 +614,6 @@ mod tests {
         assert_eq!(step.percent(), None);
     }
 
-    /// 心跳每拍把当前步骤的进度写进 `steps[idx]`（整合包长步骤百分比的实际通路）。
     #[tokio::test]
     async fn heartbeat_fills_running_step_progress() {
         struct NullSink;
@@ -723,9 +684,7 @@ mod tests {
         assert_eq!(p.status, TaskStatus::Running, "心跳应把 Pending 置为 Running");
     }
 
-    /// `percent_by_steps`：总进度按完成步骤数，**忽略** `total_bytes`（整合包的 est 含
-    /// 永不回传的字节：本地包体、overrides 解压——此前卡片因此卡低位、收尾直接跳 100%）。
-    /// 反向对照：同一组计数在字节口径下给出的是完全不同的数字。
+    /// `percent_by_steps`：总进度按完成步骤数，**忽略** `total_bytes`（整合包 est 含永不回传的字节，故同一组计数在字节口径下会给出不同的数字）。
     #[tokio::test]
     async fn heartbeat_percent_by_steps_ignores_byte_denominator() {
         struct NullSink;
@@ -747,7 +706,6 @@ mod tests {
             steps: vec![],
             error: None,
         }));
-        // 只报了 1/8 的字节，但已完成 3/8 步
         let bytes = Arc::new(AtomicU64::new(100));
         let est = Arc::new(AtomicU64::new(800));
         let handle = spawn_heartbeat(

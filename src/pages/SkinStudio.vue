@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// 衣柜：左 = 3D 全身预览（拖动旋转，默认 3/4 正面；左上/右上浮动图层），右 = 皮肤 / 披风 tab。
-// 交互与状态全在 store/skinStudio（模块级单例），本页仅编排布局与缩略图缓存。
+// 衣柜：左 = 3D 预览，右 = 皮肤 / 披风 tab；交互与状态都在 store/skinStudio（模块级单例）。
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { Check, Download, Plus, RefreshCw, RotateCcw, Shirt, Wind, X } from "@lucide/vue";
@@ -15,25 +14,17 @@ import { showToast } from "../utils/toast";
 
 const router = useRouter();
 
-/** 常驻预览画布：自研等距渲染器直接画到它上面（无 WebGL 上下文、无库）。
- *  拖动/动作变化只改参数后重绘一帧 —— 单帧几毫秒，足够流畅。 */
 const stageCanvas = ref<HTMLCanvasElement | null>(null);
-/** 已解码的当前皮肤（重绘时复用，不重复解码）。 */
 let stageImg: HTMLImageElement | null = null;
-/** 已解码的当前披风贴图；无披风时为 null。 */
 let stageCape: HTMLImageElement | null = null;
-/** 动画帧句柄（0 = 未运行）。静止时停掉循环，不空转。 */
+/** 动画帧句柄（0 = 未运行）。 */
 let animRaf = 0;
-/** 首帧是否已就绪：三方数据全部到齐并解码完之前，watch 触发的重绘一律抑制——
- *  否则皮肤先到、披风还在路上时会先画出一张没披风的中间图。 */
 let stageReady = false;
-/** 动画起始时刻（相位基准）。 */
 let animStart = 0;
 
 /** 默认占比（模型约占画布高的 40%）；实际占比 = BASE_FILL × skinStudio.zoom。 */
 const BASE_FILL = 0.4;
 
-/** 重绘预览一帧（画布尺寸跟随容器 + 设备像素比）。 */
 function drawStage(): void {
   const el = stageCanvas.value;
   const box = el?.parentElement;
@@ -57,13 +48,11 @@ function drawStage(): void {
   });
 }
 
-/** 滚轮缩放（桌面 WebView）。 */
 function onWheel(e: WheelEvent): void {
   skinStudio.zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1);
   if (!animRaf) drawStage();
 }
 
-/** 双指捏合缩放（触屏）。单指仍走拖动旋转。 */
 let pinchDist = 0;
 function touchDist(t: TouchList): number {
   const a = t[0];
@@ -91,13 +80,11 @@ function onTouchEnd(): void {
   pinchDist = 0;
 }
 
-/** 动画帧循环（仅「待机/行走」时运行）。 */
 function animTick(): void {
   drawStage();
   animRaf = requestAnimationFrame(animTick);
 }
 
-/** 动作切换：起停动画循环。静止时停帧并重绘一张定格图。 */
 function syncAnimation(): void {
   const wantLoop = skinStudio.animation !== "none";
   if (wantLoop && !animRaf) {
@@ -110,8 +97,6 @@ function syncAnimation(): void {
   }
 }
 
-/** 解码当前皮肤（不重绘）。拆分出来是为了首帧能「皮肤 + 披风都解码完再画一次」，
- *  避免出现只有皮肤、披风还在路上的中间帧。 */
 async function decodeSkin(): Promise<void> {
   const skin = skinStudio.currentSkin;
   if (!skin) {
@@ -125,7 +110,6 @@ async function decodeSkin(): Promise<void> {
   }
 }
 
-/** 解码当前披风贴图（不重绘；无披风则清空）。 */
 async function decodeCape(): Promise<void> {
   const cape = skinStudio.currentCapeTexture;
   if (!cape) {
@@ -139,24 +123,21 @@ async function decodeCape(): Promise<void> {
   }
 }
 
-/** 皮肤变化 → 解码并重绘（首帧未就绪时只解码不画）。 */
 async function refreshSkin(): Promise<void> {
   await decodeSkin();
   if (stageReady && !animRaf) drawStage();
 }
 
-/** 披风变化 → 解码并重绘（同上）。 */
 async function refreshCape(): Promise<void> {
   await decodeCape();
   if (stageReady && !animRaf) drawStage();
 }
 
-/** 衣柜只服务正版账号：第三方账号的外观一律在站点网页管理（点头像直接跳过去），
- *  离线没有任何皮肤来源。两个入口都已在 AccountSection 拦住，这里兜底直接改 URL / 历史前进后退。 */
+/** 仅正版账号可用（第三方外观在站点网页管理）；入口已在 AccountSection 拦截，此处兜底直接改 URL / 前进后退。 */
 onMounted(async () => {
-  // 进入即切刷新态：store 是模块级单例，否则上一次会话的缓存列表会先闪一帧
+  // 进入即切刷新态（store 为模块级单例，否则会先闪上次会话缓存）
   skinStudio.phase = "loading";
-  // 账号列表是异步 IPC：未就绪就判定来源，会把正版账号当成离线而误拦（store 的 loadOfficial 同样先 await）。
+  // 账号列表是异步 IPC：未就绪就判定来源会把正版账号误判为离线（store 的 loadOfficial 同样先 await）
   await ensureAuthReady();
   if (!skinStudio.premium) {
     showToast("皮肤衣柜仅对正版账号开放");
@@ -166,11 +147,10 @@ onMounted(async () => {
   await nextTick(); // 等 canvas 挂载
   stageImg = null;
   stageCape = null;
-  // 皮肤与披风**都**就绪后再渲染首帧：先等三方数据（load 内部已是并发拉取），
-  // 再并发解码两张图，最后只画一次 —— 不会先冒出一张没披风的中间图。
+  // 三方数据 + 两张图都解码完再画首帧，避免没披风的中间图
   await skinStudio.load();
   await Promise.all([decodeSkin(), decodeCape()]);
-  stageReady = true; // 数据齐 + 两张图解码完 → 放行重绘（含首帧）
+  stageReady = true; // 放行重绘（含首帧）
   if (!animRaf) drawStage();
   syncAnimation();
 });
@@ -184,19 +164,16 @@ onUnmounted(() => {
   skinStudio.dispose();
 });
 
-/** 皮肤 / 模型变化 → 重新解码重绘 */
 watch(
   () => [skinStudio.currentSkin, skinStudio.currentSlim] as const,
   () => void refreshSkin(),
 );
 
-/** 披风选择变化 → 重新解码重绘 */
 watch(
   () => skinStudio.currentCapeTexture,
   () => void refreshCape(),
 );
 
-/** 拖动 / 重置视角 / 缩放 → 重绘一帧 */
 watch(
   () => [skinStudio.yaw, skinStudio.pitch, skinStudio.zoom] as const,
   () => {
@@ -204,28 +181,23 @@ watch(
   },
 );
 
-/** 动作切换 → 起停动画循环 */
 watch(
   () => skinStudio.animation,
   () => syncAnimation(),
 );
 
-/** 预览动作选项。名称按场景语义取，不直接暴露库的动画类名。 */
 const ANIM_OPTIONS = [
   { value: "none", label: "静止" },
   { value: "idle", label: "待机" },
   { value: "walk", label: "行走" },
 ] as const;
 
-/** 皮肤模型的中文名——与左侧预览的类型标签、模型弹窗用同一套说法（CLASSIC / SLIM 是
- *  后端与官方 API 的取值，不该直接暴露给用户）。
- *  缺失/未知值按「经典」兜底：一个角标不该让整张卡片渲染中断。 */
+/** 模型中文名（与左侧标签、模型弹窗同套；CLASSIC/SLIM 为后端取值不直接暴露）；缺失/未知按「经典」兜底。 */
 function variantLabel(variant?: string | null): string {
   return variant?.toUpperCase() === "SLIM" ? "纤细" : "经典";
 }
 
-/** 平面皮肤图（3D 缩略图未就绪 / 渲染失败时的兜底）：64×64 纹理里截头部正面 (8,8,8,8) 区域放大
- *  （size 800% + position 14.286% = 8/56 → 精确对准该 UV 区）。 */
+/** 平面皮肤图（3D 兜底）：64×64 纹理取头部正面 (8,8,8,8)，size 800% + position 14.286%（= 8/56）对准该 UV 区。 */
 function skinThumb(b64: string) {
   return {
     backgroundImage: `url(data:image/png;base64,${b64})`,
@@ -243,19 +215,14 @@ function capeThumb(b64: string) {
   };
 }
 
-/** 卡片 3D 缩略图缓存键 = 皮肤贴图 + 模型：两者相同即同一张图，无需失效逻辑。
- *  **不含披风**：缩略图不渲染披风（见 thumbReqs），披风贴图又是异步到达的——
- *  一旦计入键，首批缩略图会在披风列表到达后全部作废重渲（整屏双倍开销）。 */
+/** 卡片 3D 缩略图缓存键 = 皮肤贴图 + 模型（相同即同一张图，无失效逻辑）；不含披风，披风异步到达会让已渲图作废。 */
 function thumbKey(b64: string, slim: boolean) {
   return `${slim ? 1 : 0}|${b64}`;
 }
 
-/** 卡片 3D 缩略图（键见 thumbKey）→ dataURL；未就绪 / 渲染失败留空串（回落平面图）。 */
 const thumbs = reactive<Record<string, string>>({});
 
-/** 去重后的本地条目（缩略图渲染与卡片列表共用同一条去重规则）：
- *  实时卡的贴图先占位（实时卡恒显示，本地一律让它），本地之间同一份贴图只留最靠前的一条
- *  （后端按加入时间倒序 → 留最新）；无贴图（文件缺失）的条目不参与去重，各自保留。 */
+/** 去重后的本地条目：实时卡贴图先占位（本地一律让），本地间同一贴图只留最靠前一条（后端按加入时间倒序），无贴图不参与。 */
 const localEntries = computed<LocalSkin[]>(() => {
   const seen = new Set<string>();
   const official = skinStudio.officialSkin;
@@ -269,9 +236,7 @@ const localEntries = computed<LocalSkin[]>(() => {
   return out;
 });
 
-/** 待渲染的皮肤（官方当前 + 本地条目，须有贴图）——卡片增减 / 换账号时补齐。
- *  **不渲染披风**：60×102 的卡面上披风几乎不可辨（正面视角还被身体挡住），
- *  信息由左侧大预览（可拖动旋转）承担；且披风贴图异步到达，若参与渲染会让整屏缩略图重渲一次。 */
+/** 待渲染的皮肤（官方当前 + 本地条目，须有贴图）；不渲染披风（卡面不可辨，且异步到达会整屏重渲）。 */
 const thumbReqs = computed(() => {
   const reqs: { key: string; b64: string; slim: boolean }[] = [];
   const official = skinStudio.officialSkin;
@@ -287,7 +252,6 @@ const thumbReqs = computed(() => {
   return reqs;
 });
 
-// 渲染器内部同样按「贴图 + 模型」缓存，这里再记一层结果：tab 往返 / 重复皮肤都不重渲。
 watch(
   thumbReqs,
   (reqs) => {
@@ -304,7 +268,6 @@ watch(
   { immediate: true },
 );
 
-/** 皮肤卡片（官方当前置首 + 去重后的本地条目；信息全部走角标，卡片内不再有名称行）。 */
 interface SkinCard {
   key: string;
   /** 皮肤贴图 base64；空串 = 无图（占位方块） */
@@ -344,23 +307,19 @@ const skinCards = computed<SkinCard[]>(() => {
   return cards;
 });
 
-/** 可见的本地条目数（去重后）；面板计数与网格内容保持一致。 */
 const visibleSkinCount = computed(() => localEntries.value.length);
 
-/** 实际高亮的卡片：选中的本地条目被去重隐藏时（与当前皮肤同一张图）改高亮实时卡——
- *  两者本就是这个账号的同一份皮肤，避免出现「选了却看不到选中态」。 */
+/** 实际高亮的卡片：选中的本地条目被去重隐藏时改高亮实时卡（两者为同一份皮肤）。 */
 const effectiveSelectedKey = computed(() => {
   const key = skinStudio.selectedKey;
   if (key === "official") return key;
   return localEntries.value.some((s) => s.id === key) ? key : "official";
 });
 
-/** 删除卡片（仅本地条目有删除按钮）。 */
 function removeCard(c: SkinCard) {
   if (c.local) void skinStudio.removeSkin(c.local);
 }
 
-/** 上传皮肤时可选的模型（经典 / 纤细）——两个选项，无默认值。 */
 const MODEL_OPTIONS = [
   { variant: "CLASSIC", label: "经典模型", sub: "Steve · 4px 宽手臂" },
   { variant: "SLIM", label: "纤细模型", sub: "Alex · 3px 窄手臂" },
@@ -369,7 +328,6 @@ const MODEL_OPTIONS = [
 /** 上传弹窗里当前选中的模型；空串 = 还没选（确认按钮不可用，逼出一次明确的点击）。 */
 const pickedModel = ref<"" | "CLASSIC" | "SLIM">("");
 
-// 每次重新打开上传弹窗都清空选择：上一次的选择不作为下一次的默认值。
 watch(
   () => skinStudio.skinModelDialog,
   (open) => {
@@ -377,7 +335,6 @@ watch(
   },
 );
 
-/** 按用户明确选中的模型把待上传文件收进衣柜。 */
 function savePickedSkin() {
   if (pickedModel.value) void skinStudio.confirmSaveSkin(pickedModel.value);
 }
@@ -385,7 +342,6 @@ function savePickedSkin() {
 
 <template>
   <div class="studio">
-    <!-- 左：3D 全身预览（按住拖动旋转，滚轮 / 双指捏合缩放；初始化 3/4 正面微俯） -->
     <div class="stage-col">
       <div
         class="stage"
@@ -399,7 +355,6 @@ function savePickedSkin() {
         @touchmove="onTouchMove"
         @touchend="onTouchEnd"
       >
-        <!-- 等距渲染画布：皮肤 / 模型 / 视角 / 缩放 / 动作变化后重绘一帧 -->
         <canvas v-show="!!skinStudio.currentSkin" ref="stageCanvas" class="frame"></canvas>
         <LoadingSpinner
           v-if="!skinStudio.currentSkin && skinStudio.phase === 'loading'"
@@ -410,7 +365,6 @@ function savePickedSkin() {
           <p>登录账号或从本地衣柜选一件</p>
         </EmptyState>
 
-        <!-- 左上浮动图层：当前预览的皮肤类型（经典 / 纤细） -->
         <div class="layer type-layer">
           <span class="type-tag" :class="{ slim: skinStudio.currentSlim }">
             {{ skinStudio.currentSlim ? "纤细" : "经典" }}
@@ -457,7 +411,6 @@ function savePickedSkin() {
           </button>
         </div>
 
-        <!-- 底部居中：动作切换（静止 / 待机 / 行走） -->
         <div class="layer anim-layer">
           <div class="anim-group">
             <button
@@ -510,9 +463,7 @@ function savePickedSkin() {
 
         <!-- 皮肤 tab：3D 侧视缩略图网格（3 列 × 2 行，超出滚动；末尾一格为上传卡片） -->
         <div v-if="skinStudio.tab === 'skins'" class="panel-body">
-          <!-- 刷新态：整个右侧只显示刷新中，不与旧列表共存。
-               注意别再包一层容器：LoadingSpinner 自身就是「占满父容器完全居中」
-               （height:100%），多包一层会把 100% 截断成包裹层高度，环形只在那层里居中而整体偏上。 -->
+          <!-- 刷新态：整个右侧只显示刷新中；LoadingSpinner 自身占满父容器居中，勿再包一层 -->
           <LoadingSpinner v-if="skinStudio.phase === 'loading'" text="正在获取皮肤与披风…" />
           <template v-else>
           <div class="grid skins">
@@ -528,8 +479,6 @@ function savePickedSkin() {
                 <div v-else-if="c.skin" class="thumb" :style="skinThumb(c.skin)"></div>
                 <div v-else class="thumb empty"></div>
               </div>
-              <!-- 角标只剩左上角的皮肤类型（来源角标已删除：衣柜现在只服务正版账号与本地文件，
-                   来源不再有区分度） -->
               <span class="card-tag variant" :class="{ slim: c.variant === 'SLIM' }">
                 {{ variantLabel(c.variant) }}
               </span>
@@ -543,7 +492,6 @@ function savePickedSkin() {
               </button>
             </div>
 
-            <!-- 上传本地皮肤：与普通卡片区分（虚线框 + 加号），放在网格末尾 -->
             <div
               class="card upload"
               v-tooltip="'选择本地 64×64 皮肤 PNG，上传为账号当前皮肤'"
@@ -607,7 +555,6 @@ function savePickedSkin() {
         </div>
       </section>
 
-      <!-- 状态提示（无内容时不占位） -->
       <footer v-if="!skinStudio.premium || skinStudio.officialError" class="wardrobe-foot">
         <p v-if="!skinStudio.premium" class="hint">
           本地衣柜可用于预览；应用皮肤 / 管理披风需登录正版账号
@@ -669,7 +616,6 @@ function savePickedSkin() {
   display: flex;
   align-items: center;
   justify-content: center;
-  /* 四周等距留白（底部提示已移除，无需额外空间） */
   padding: 16px;
   overflow: hidden;
   cursor: grab;
@@ -686,8 +632,7 @@ function savePickedSkin() {
   cursor: grabbing;
 }
 
-/* 常驻 WebGL 画布：尺寸由 ResizeObserver → viewer.resize 设定（含设备像素比），
-   这里不做任何缩放 —— 对 canvas 用 max-width/max-height 会让像素被拉伸变形。 */
+/* 常驻画布：尺寸由 ResizeObserver 设定（含设备像素比），此处不做缩放 —— 对 canvas 用 max-width/max-height 会拉伸像素。 */
 .frame {
   display: block;
   image-rendering: pixelated;
@@ -797,7 +742,6 @@ function savePickedSkin() {
   height: 30px;
 }
 
-/* 仅图标按钮：正方形、图标居中（文案交给 tooltip），把浮层的占位压到最小 */
 .tool.icon-only {
   width: 30px;
   padding: 0;
@@ -935,8 +879,7 @@ function savePickedSkin() {
   gap: 12px;
 }
 
-/* 皮肤网格：每行 3 个、最多可见 2 行（再多的在网格内滚动）
-   行高固定 → 各卡尺寸一致；minmax(0,1fr) 防内容撑破列宽 */
+/* 皮肤网格：每行 3 个、最多可见 2 行（超出滚动）；行高固定 → 各卡尺寸一致，minmax(0,1fr) 防内容撑破列宽 */
 .grid.skins {
   --row-h: 186px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -964,16 +907,13 @@ function savePickedSkin() {
   background-color: var(--color-brand-bg);
 }
 
-/* 选中态：用 inset 环而不是外扩 box-shadow——外扩环的圆角半径是「卡片圆角 + 外扩量」，
-   与卡片不同步；且外扩部分会被网格滚动容器在边缘裁掉（左右阴影不对称、边角像被切方）。
-   inset 环的圆角恒等于卡片圆角，也不会被任何父容器裁切。 */
+/* 选中态用 inset 环（非外扩 box-shadow）：inset 环圆角恒等于卡片圆角，且不会被网格滚动容器裁切 */
 .card.active {
   border-color: var(--color-brand);
   box-shadow: inset 0 0 0 2px var(--color-brand-glow);
 }
 
-/* 3D 侧视缩略图：撑满卡片内容区（高度由卡片行高决定 → 明显加高，60×102 帧等比缩放不糊）；
-   min-height 仅作兜底（行高失效时也不会塌成 0） */
+/* 3D 侧视缩略图：撑满卡片内容区（高度由行高决定）；min-height 仅防行高失效时塌成 0 */
 .thumb-3d {
   flex: 1;
   min-height: 120px;
@@ -992,7 +932,6 @@ function savePickedSkin() {
   -webkit-user-drag: none;
 }
 
-/* 平面皮肤图：仅在 3D 缩略图未就绪 / 失败时短暂出现 */
 .thumb {
   width: 64px;
   height: 64px;
@@ -1028,7 +967,6 @@ function savePickedSkin() {
   color: var(--text-secondary);
 }
 
-/* 名称超出省略（皮肤卡已无名称行——名称/来源一律走角标；仅上传卡与披风卡还有名称行） */
 .card-name .nm {
   min-width: 0;
   overflow: hidden;
@@ -1054,7 +992,6 @@ function savePickedSkin() {
   background-color: var(--surface-hover);
 }
 
-/* 皮肤类型角标：经典中性、纤细品牌色（中文比原来的 CLASSIC / SLIM 短，字号略放大保证可读） */
 .card-tag.variant {
   font-size: 10.5px;
 }
@@ -1064,8 +1001,6 @@ function savePickedSkin() {
   background-color: var(--color-brand-bg);
 }
 
-/* 上传卡片（网格最后一格）：虚线框 + 圆形加号，与普通卡片区分。
-   边框/文字比普通卡片用更深一档的 token——太浅的话在深色主题下几乎看不见。 */
 .card.upload {
   justify-content: center;
   gap: 8px;
@@ -1135,7 +1070,6 @@ function savePickedSkin() {
   line-height: 1.6;
 }
 
-/* 模型选择：两张等权选项卡，默认一张也不选（必须明确点一次才能确认） */
 .model-pick {
   display: flex;
   gap: 8px;
@@ -1199,7 +1133,6 @@ function savePickedSkin() {
   color: var(--text-tertiary);
 }
 
-/* 还没选模型时「确认」不可用（灰掉，不给出任何默认模型） */
 .dialog-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;

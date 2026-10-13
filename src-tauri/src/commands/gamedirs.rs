@@ -3,13 +3,12 @@ use tauri_plugin_opener::OpenerExt;
 use crate::config::game_dirs::{self, GameDir};
 use crate::game::version::dir;
 
-/// 游戏目录列表（空时自动生成默认目录：启动器文件夹名 + .minecraft）。
+/// 游戏目录列表（空时自动生成默认目录）。
 #[tauri::command]
 pub fn get_game_dirs() -> Vec<GameDir> {
     game_dirs::ensure_initialized()
 }
 
-/// 添加已有文件夹（校验：名称与路径均不可重复）。
 #[tauri::command]
 pub fn add_game_dir(name: String, path: String) -> Result<Vec<GameDir>, String> {
     let name = name.trim().to_string();
@@ -27,7 +26,6 @@ pub fn add_game_dir(name: String, path: String) -> Result<Vec<GameDir>, String> 
     game_dirs::save_dirs(dirs)
 }
 
-/// 重命名目录（校验：非空、不与其余项重名）。
 #[tauri::command]
 pub fn rename_game_dir(path: String, new_name: String) -> Result<Vec<GameDir>, String> {
     let new_name = new_name.trim().to_string();
@@ -64,13 +62,11 @@ pub fn set_active_game_dir(path: String) -> Result<(), String> {
     game_dirs::set_active(&path)
 }
 
-/// 当前激活的游戏目录（同步于 downloader 配置的 minecraft_dir）。
 #[tauri::command]
 pub fn get_active_game_dir() -> GameDir {
     game_dirs::active_dir()
 }
 
-/// 重命名版本文件夹（versions/{old} → versions/{new}；实际操作在 downloader/version.rs）。
 #[tauri::command]
 pub fn rename_version_dir(version_name: String, new_name: String) -> Result<(), String> {
     let new_name = new_name.trim().to_string();
@@ -83,8 +79,7 @@ pub fn rename_version_dir(version_name: String, new_name: String) -> Result<(), 
     dir::rename_version_dir(&version_name, &new_name)
 }
 
-/// 用系统文件管理器打开指定目录（tauri-plugin-opener Rust 侧 API，不受 JS scope 限制；
-/// 打开前校验存在，避免 explorer 对无效路径回退打开"文档"）。
+/// 用系统文件管理器打开指定目录（不受 JS scope 限制）；打开前校验存在，避免 explorer 回退打开"文档"。
 #[tauri::command]
 pub fn open_folder(app: tauri::AppHandle, path: String) -> Result<(), String> {
     if !std::path::Path::new(&path).exists() {
@@ -95,23 +90,19 @@ pub fn open_folder(app: tauri::AppHandle, path: String) -> Result<(), String> {
         .map_err(common_err_ctx!("打开文件夹失败"))
 }
 
-/// 检测所有已配置的游戏目录，激活第一个存在游戏版本的目录，并返回其第一个版本。
-/// 版本名按字母序取第一个；目录按配置列表顺序检测。
+/// 激活第一个含版本的目录并返回其第一个版本（目录按配置顺序，版本按字母序）。
 #[tauri::command]
 pub fn auto_activate_version() -> Result<dir::AutoActivate, String> {
     dir::auto_activate_first_version()
 }
 
-/// 确保版本对应文件夹存在（不存在则创建），返回其绝对路径（快捷方式按钮用）。
-/// 版本隔离：游戏运行时 gameDir = versions/{name}，存档/mod 实际都位于版本目录下。
-/// 实际操作在 downloader/version.rs。
+/// 确保版本文件夹存在（不存在则创建），返回绝对路径；版本隔离：gameDir = versions/{name}。
 #[tauri::command]
 pub fn ensure_game_folder(kind: String, version_name: String) -> Result<String, String> {
     dir::ensure_kind_folder(&kind, &version_name)
 }
 
-/// 删除版本文件夹（递归删除 versions/{name}；实际操作在 downloader/version.rs，
-/// 大目录删除耗时，命令保持 async 走 tokio::fs 的 spawn_blocking）。
+/// 删除版本文件夹（递归 versions/{name}）；大目录耗时，async 走 tokio 的 spawn_blocking。
 #[tauri::command]
 pub async fn delete_version_dir(version_name: String) -> Result<(), String> {
     dir::delete_version_dir(&version_name).await

@@ -1,5 +1,4 @@
-//! 多源下载核心：公开入口收敛于 `download_core`，按形态分流到 `fetch_with_retries`（单 URL 重试）
-//! 或 `fetch_from_sources`（多源回退）。
+//! 多源下载核心：入口 `download_core` 按形态分流到 `fetch_with_retries`（单 URL 重试）或 `fetch_from_sources`（多源回退）。
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -22,7 +21,7 @@ use crate::constants;
 use crate::downloader::hash::file_sha1_matches;
 use crate::downloader::probe::{probe_domain, ProbeResult};
 
-/// 全局限速（bytes/s，0 = 不限），由配置保存/任务启动时同步。
+/// 全局限速（bytes/s，0 = 不限）。
 static SPEED_LIMIT: AtomicU64 = AtomicU64::new(0);
 
 /// 设置全局限速（bytes/s，0 关闭）。
@@ -30,16 +29,16 @@ pub fn set_speed_limit(bytes: u64) {
     SPEED_LIMIT.store(bytes, Ordering::Relaxed);
 }
 
-/// 当前全局限速（bytes/s，0 = 不限）；分段下载据此在所有段之间统一配速。
+/// 当前全局限速（bytes/s，0 = 不限）；分段下载各段据此统一配速。
 pub(crate) fn speed_limit() -> u64 {
     SPEED_LIMIT.load(Ordering::Relaxed)
 }
 
-/// 镜像源并发信号量：镜像 30 并发即 429（官方 128 稳定），故镜像请求恒限 `MIRROR_CONCURRENCY`，独立于任务并发。
+/// 镜像并发信号量：镜像 30 并发即 429（官方 128 稳定），故恒限 `MIRROR_CONCURRENCY`，独立于任务并发。
 static MIRROR_SEM: LazyLock<Arc<Semaphore>> =
     LazyLock::new(|| Arc::new(Semaphore::new(constants::MIRROR_CONCURRENCY)));
 
-/// 该 URL 是否限流：镜像源 + 高并发不稳的官方 maven（neoforged/quiltmc/minecraftforge）统一限 MIRROR_CONCURRENCY。
+/// 该 URL 是否限流：镜像源 + 高并发不稳的官方 maven 统一限 MIRROR_CONCURRENCY。
 pub(crate) fn is_mirror_url(url: &str) -> bool {
     url.contains("bmclapi")
         || url.contains("mcimirror")
@@ -48,10 +47,7 @@ pub(crate) fn is_mirror_url(url: &str) -> bool {
         || url.contains("maven.minecraftforge.net")
 }
 
-/// 入口形态：
-/// - `Retry`：单 URL 重试（网络错误/5xx 最多 3 次），用 `FetchOptions::client`（缺省全局 `http()`）。
-/// - `MultiSource`：多源回退，每源独立短连接 client + 健康度路由；`total_timeout` 为整请求限时（None 不限），
-///   `single_url_retry` 表示仅一个 URL 时改走 Retry 路径（bounded 关闭，维持限时语义）。
+/// 入口形态：`Retry` 单 URL 重试（网络错误/5xx 最多 3 次）；`MultiSource` 多源回退（每源独立短连接 client + 健康度路由；`total_timeout` 整请求限时，None 不限；单 URL 改走 Retry）。
 #[derive(Debug, Clone, Copy)]
 pub(super) enum FetchKind {
     Retry,
@@ -61,11 +57,9 @@ pub(super) enum FetchKind {
     },
 }
 
-/// 共享下载核心参数，各公开入口转发到此结构。
 pub(super) struct FetchOptions<'a> {
     /// 候选 URL 列表（Retry 取首个；MultiSource 全量参与去重与镜像路由）。
     pub(super) urls: &'a [String],
-    /// 落地目标文件。
     pub(super) dest: &'a Path,
     /// 非空时逐次/逐源校验内容 sha1，不匹配视同该次失败。
     pub(super) expected_sha1: Option<&'a str>,
@@ -73,11 +67,9 @@ pub(super) struct FetchOptions<'a> {
     pub(super) client: Option<&'a Client>,
     /// 取消令牌：非空时每次读块检查，任务取消立即停止。
     pub(super) cancel: Option<&'a AtomicBool>,
-    /// 入口形态。
     pub(super) kind: FetchKind,
 }
 
-/// 共享核心：按形态分流到单 URL 重试路径或多源回退路径。
 pub(super) async fn download_core<F: Fn(u64, u64)>(
     FetchOptions {
         urls,
@@ -146,7 +138,7 @@ async fn fetch_with_retries<F: Fn(u64, u64)>(
             }
         }
     }
-    // MAX_ATTEMPTS ≥ 1 保证至少执行一次；显式处理 None 以免 panic 路径
+    // MAX_ATTEMPTS ≥ 1 保证至少执行一次；显式处理 None 以免 panic
     match last_err {
         Some(e) => Err(e),
         None => Err(FetchError::Network(
@@ -155,7 +147,7 @@ async fn fetch_with_retries<F: Fn(u64, u64)>(
     }
 }
 
-/// 冷启动预探测排序：并发域级 HEAD（TTL 缓存），Loader 镜像先行 → 失败排后 → TTFB 升序；失败候选仍保留。
+/// 冷启动预探测：并发域级 HEAD（TTL 缓存）后按 Loader 镜像先行 → 失败排后 → TTFB 升序；失败候选保留。
 async fn sort_routes_by_probes(routes: &mut [DownloadRoute], class: ResourceClass) {
     let probes = futures_util::future::join_all(
         routes
@@ -168,7 +160,7 @@ async fn sort_routes_by_probes(routes: &mut [DownloadRoute], class: ResourceClas
     sort_routes_with_probes(routes, &probes, class);
 }
 
-/// 探测排序纯逻辑（便于单测）：Loader 镜像先行 → 探测失败排后 → TTFB 升序；无样本视同失败（排后，不剔除）。
+/// 探测排序纯逻辑：Loader 镜像先行 → 探测失败排后 → TTFB 升序；无样本视同失败（排后不剔除）。
 pub(super) fn sort_routes_with_probes(
     routes: &mut [DownloadRoute],
     probes: &HashMap<String, ProbeResult>,
@@ -191,8 +183,7 @@ struct FetchOnceOutput {
     ttfb_ms: f64,
 }
 
-/// 多源循环：每源独立 client（连接 2s），全源一轮失败后整体重试（最多 3 轮，退避 500ms×2ⁿ）。
-/// `total_timeout` None=不限时（大文件）/ Some=整请求限时（小文件防 body 假死）；`expected_sha1` 非空逐源校验。
+/// 多源循环：每源独立 client（连接 2s），全源一轮失败后整体重试（最多 3 轮，退避 500ms×2ⁿ）；`total_timeout` None=不限时/Some=整请求限时（小文件防 body 假死）；`expected_sha1` 非空逐源校验。
 async fn fetch_from_sources<F: Fn(u64, u64)>(
     urls: &[String],
     dest: &Path,
@@ -202,9 +193,9 @@ async fn fetch_from_sources<F: Fn(u64, u64)>(
     cancel: Option<&AtomicBool>,
 ) -> Result<DownloadResult, FetchError> {
     const MAX_ATTEMPTS: u32 = 3;
-    // 自适应路由：去重 + 自动镜像候选（官方保底）+ 健康度/镜像优先排序（非 Auto 模式保持源顺序）
+    // 自适应路由：去重 + 自动镜像候选 + 健康度/镜像优先排序（非 Auto 保持源顺序）
     let mut routes = resolve_download_routes(urls, source_mode());
-    // Auto 且候选全冷启动时域级 HEAD 预探测排序（探测 ≤3s）；热启动走健康度，探测失败不剔除仅排后。
+    // Auto 冷启动时域级 HEAD 预探测排序（≤3s）；探测失败不剔除仅排后。
     if routes.len() > 1
         && source_mode() == DownloadSourceMode::Auto
         && routes.iter().all(|r| route_health(&r.url).samples == 0)
@@ -212,14 +203,13 @@ async fn fetch_from_sources<F: Fn(u64, u64)>(
         let class = infer_resource_class(urls.first().map(String::as_str).unwrap_or(""));
         sort_routes_by_probes(&mut routes, class).await;
     }
-    // 收集每源/每轮全部错误（展示去重），避免最后一个源覆盖前面的原因
+    // 收集每源/每轮错误（展示去重），避免后者覆盖前因
     let mut errors: Vec<FetchError> = Vec::new();
     for attempt in 0..MAX_ATTEMPTS {
         if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
             return Err(FetchError::Cancelled);
         }
         for route in &routes {
-            // 每源独立 client（短 connect 超时 + 黑洞重定向防护 + UA）；UA 由 route_client 统一带上
             let client = match route_client(total_timeout) {
                 Ok(c) => c,
                 Err(e) => {
@@ -278,8 +268,7 @@ async fn fetch_from_sources<F: Fn(u64, u64)>(
             "\n\n提示：部分源返回 404（该文件在镜像源可能尚未同步，或版本不存在），可稍后重试或选择其他版本",
         );
     }
-    // 403/429 = 源限流（BMCLAPI 同文件 30 并发即 429，窗口 60s；`constants::MIRROR_CONCURRENCY`
-    // 已把镜像并发压到 8、镜像分段下载强制单连接，正常路径不会触发；外因是重试太密/别的进程在打同一文件）
+    // 403/429 = 源限流（BMCLAPI 同文件 30 并发即 429，窗口 60s；镜像并发已压到 8 且分段强制单连接，正常不触发；外因是重试太密/他进程打同一文件）
     if seen
         .iter()
         .any(|s| s.contains("HTTP 403") || s.contains("HTTP 429"))
@@ -319,7 +308,6 @@ async fn fetch_once<F: Fn(u64, u64)>(
         .map_err(|e| FetchError::Network(format!("请求失败\n{e}")))?;
     let ttfb_ms = request_start.elapsed().as_secs_f64() * 1000.0;
 
-    // HTTP 状态检查：4xx/5xx 视为失败
     let status = response.status();
     eprintln!("[fetch] {url} → HTTP {status}");
     if !status.is_success() {
@@ -413,7 +401,6 @@ pub(crate) mod test_support {
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    /// 就绪握手：accept 循环启动后 oneshot 通知调用方，避免请求先于循环就绪的连接竞态。
     pub(crate) async fn serve(body: Vec<u8>) -> String {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -449,7 +436,6 @@ pub(crate) mod test_support {
         p
     }
 
-    /// 同 `serve`，另把每次连接收到的**请求头原文**追加进共享缓冲（断言 UA 等请求头用）。
     pub(crate) async fn serve_recording_heads(
         body: Vec<u8>,
     ) -> (String, std::sync::Arc<parking_lot::Mutex<Vec<String>>>) {
@@ -503,7 +489,6 @@ mod tests {
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    /// 镜像源判定：仅 BMCLAPI/MCIM 域名受限，官方源不受限。
     #[test]
     fn is_mirror_url_detects_mirror_domains() {
         assert!(is_mirror_url(
@@ -513,7 +498,6 @@ mod tests {
         assert!(!is_mirror_url("https://libraries.minecraft.net/x.jar"));
         assert!(!is_mirror_url("https://piston-data.mojang.com/x.jar"));
         assert!(!is_mirror_url("https://resources.download.minecraft.net/x"));
-        // 高并发不稳的官方 maven 同样限流
         assert!(is_mirror_url(
             "https://maven.quiltmc.org/repository/release/org/quiltmc/x.jar"
         ));
@@ -525,18 +509,12 @@ mod tests {
         ));
     }
 
-    /// 多源（`MultiSource`）路径的每源 client 必须自带 UA：BMCLAPI 302 到的 CERNET / USTC
-    /// 节点对**无 UA** 请求直接 403（实测同一 URL 无 UA → 403、带 UA → 200），
-    /// 缺 UA 时镜像候选会在换源时全灭（表现为"所有下载源均失败\nHTTP 403"）。
     #[tokio::test]
     async fn multi_source_client_sends_user_agent() {
         let (url, heads) = super::test_support::serve_recording_heads(b"ok".to_vec()).await;
         let dest = temp_dest("ua");
-        // 两个 URL → 走 MultiSource（每源独立 client）；单 URL 会走共享 client 的 Retry 路径
         let urls = vec![url.clone(), format!("{url}?alt=1")];
         let _ = crate::downloader::fetcher::fetch_fallback(&urls, &dest, None::<fn(u64, u64)>).await;
-        // 探测/预热的 HEAD 走共享 client（本就有 UA）；要断言的是**实际下载**用的每源 client →
-        // 只看 GET 请求
         let heads = heads.lock();
         let gets: Vec<&String> = heads
             .iter()
@@ -575,7 +553,6 @@ mod tests {
                     m3.fetch_max(cur, Ordering::SeqCst);
                     let mut buf = [0u8; 4096];
                     let _ = sock.read(&mut buf).await;
-                    // 模拟下载耗时，给并发统计留出窗口
                     tokio::time::sleep(Duration::from_millis(80)).await;
                     let body = b"mirror-content";
                     let head = format!(
@@ -615,7 +592,6 @@ mod tests {
         assert!(max > 1, "应存在真实并发（>1），实际 {}", max);
     }
 
-    /// 排序纯逻辑：Loader 镜像永远先行（官方 maven 限流语义）；非 Loader 探测快者先行；失败/无样本排后（不剔除）。
     #[test]
     fn sort_routes_with_probes_orders_fastest_first() {
         let mk = |url: &str| DownloadRoute {
@@ -631,7 +607,6 @@ mod tests {
             ttfb_ms: 999,
         };
 
-        // 非 Loader：官方快 → 官方前
         let mut r = vec![
             mk("https://libraries.minecraft.net/a.jar"),
             mk("https://bmclapi2.bangbang93.com/libraries/a.jar"),
@@ -653,7 +628,6 @@ mod tests {
             r[0].url
         );
 
-        // 非 Loader：官方慢/失败 → 镜像前
         let mut r = vec![
             mk("https://libraries.minecraft.net/a.jar"),
             mk("https://bmclapi2.bangbang93.com/libraries/a.jar"),
@@ -675,7 +649,6 @@ mod tests {
             r[0].url
         );
 
-        // Loader 类：镜像永远先行（即使官方探测更快）——官方 maven 限流语义
         let mut r = vec![
             mk("https://maven.minecraftforge.net/x.jar"),
             mk("https://bmclapi2.bangbang93.com/maven/x.jar"),
@@ -697,7 +670,6 @@ mod tests {
             r[0].url
         );
 
-        // 无探测样本视同失败排后（不剔除候选）
         let mut r = vec![
             mk("https://libraries.minecraft.net/b.jar"),
             mk("https://bmclapi2.bangbang93.com/libraries/b.jar"),

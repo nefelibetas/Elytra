@@ -32,7 +32,6 @@ use crate::task::{
 };
 use crate::util;
 
-/// `run_task` 的运行期上下文：准备阶段确定、供后续各阶段共享。
 struct TaskRuntime {
     started: std::time::Instant,
     config: DownloaderConfig,
@@ -46,25 +45,18 @@ struct TaskRuntime {
     _lock: PathLock,
 }
 
-/// 准备阶段：读配置 → 解析目标目录（不依赖 version JSON）→ 本地复用根探测 → 目录互斥占用。
-/// `Err` 为可展示的错误文案（调用方转 `set_error`）。
+/// 准备：解析目标目录（不依赖 version JSON）→ 复用根探测 → 目录互斥占用；Err 为可展示错误文案（调用方转 set_error）。
 fn prepare_runtime(task: &DownloadTask) -> Result<TaskRuntime, String> {
     let config: DownloaderConfig = persist::downloader_config();
     let sources: Vec<DownloadSource> = config.file_sources_list().into_iter().cloned().collect();
     let mc = config.minecraft_dir_abs();
 
-    // ── 目标目录提前确定（不依赖 version JSON），并做同路径互斥 ──
+    // ── 目标目录提前确定（不依赖 version JSON），同路径互斥 ──
     let TargetDir { dir_name, vdir } = resolve_target_dir(task, &mc);
-    // 本地运行时复用根探测（迁移场景）：从版本目录向上找含 assets/+libraries/ 的
-    // .minecraft 根（HMCL/PCL2/官方启动器迁移用户已有数百 MB 文件），
-    // 命中后 libraries/assets/client jar 先走 size+sha1 校验的本地复制，免全量重下。
-    // 全新 .minecraft（无 libraries/）探测为 None，行为与现状一致。
+    // 本地复用根探测（迁移场景）：版本目录向上找含 assets/+libraries/ 的 .minecraft 根；命中则 libraries/assets/client jar 先走 size+sha1 本地复制，免全量重下（无根则 None）。
     let reuse_root = reuse::LocalRuntimeSource::discover(&vdir);
-    // 任务开始前该版本目录是否已存在：
-    // - 全新下载（目录不存在）→ 下载失败时整删残缺目录，免手动清理
-    // - 补全文件（目录已存在，如重下缺失库/修复）→ 失败不删，保留已有版本
+    // 任务开始前目录是否已存在：全新下载失败整删残缺目录；补全（目录已存在）失败不删。
     let vdir_existed_before = vdir.exists();
-    // 同版本互斥：路径被其他任务占用时拒绝，避免并发互相覆盖/清理
     let lock = PathLock::try_acquire(&vdir).ok_or_else(|| {
         format!("该版本正在被其他任务下载:\n{}", vdir.display())
     })?;
@@ -82,9 +74,7 @@ fn prepare_runtime(task: &DownloadTask) -> Result<TaskRuntime, String> {
     })
 }
 
-/// 阶段 A：拉取版本 JSON（唯一硬前置，client/libs/assets/natives/ModLoader 均依赖）
-/// → 非 loader 模式落盘原版 JSON → 登记取消时的目录清理路径。
-/// `Err(())` 表示已自行收口（`set_error`/`set_cancelled`），调用方直接返回。
+/// 阶段 A：拉取版本 JSON（唯一硬前置）→ 非 loader 模式落盘原版 JSON → 登记取消时的清理路径；Err(()) = 已自行收口（set_error/set_cancelled），调用方直接返回。
 async fn stage_fetch_version(
     app: &dyn EventSink,
     progress: &Arc<Mutex<TaskProgress>>,
@@ -117,10 +107,10 @@ async fn stage_fetch_version(
         return Err(());
     }
 
-    // 确保目录存在；非 loader 模式下写入原版 version JSON（loader 模式由 installer 写合并 JSON）
+    // 建目录；非 loader 模式写原版 version JSON（loader 模式由 installer 写合并 JSON）
     std::fs::create_dir_all(vdir).ok();
     if task.loader.is_none() {
-        // 写盘失败必须报错：假成功会让版本缺 json、启动时报"未找到版本 JSON"
+        // 写盘失败必须报错：否则版本缺 json，启动时报"未找到版本 JSON"
         match serde_json::to_string_pretty(&vj) {
             Ok(json) => {
                 let jp = vdir.join(format!("{}.json", task.version_id));
@@ -135,12 +125,9 @@ async fn stage_fetch_version(
             }
         }
     }
-    // 取消时整删本次安装的版本目录：仅新建目录（vdir_existed_before=false）
-    // 才登记清理——补全已有版本时取消不删，避免误删用户已有文件。
+    // 仅新建目录登记清理；补全已有版本取消时不删，避免误删用户文件。
     if !runtime.vdir_existed_before {
-        // try_lock 失败（并发 cancel 持锁）时放弃登记，不 panic——与终态收口风格一致。
-        // 先取 task_id 释放 progress 守卫再调 set_cleanup_path（后者取 inner 锁），
-        // 否则构成 progress→inner 反向锁序（ABBA）。
+        // 先取 task_id 释放 progress 守卫再调 set_cleanup_path（后者取 inner 锁），否则 ABBA。
         let cleanup_task_id = progress.try_lock().map(|p| p.task_id.clone());
         if let Some(task_id) = cleanup_task_id {
             task::global().set_cleanup_path(&task_id, vdir.clone());
@@ -149,7 +136,6 @@ async fn stage_fetch_version(
     Ok((vj, parent_text))
 }
 
-/// 阶段 C 的原子计数器组（进度上报：完成文件数 / 字节 / 各步骤完成标志）。
 #[derive(Default)]
 struct Counters {
     jar_done: Arc<AtomicU32>,
@@ -186,7 +172,6 @@ struct StepIndex {
     fabric: Option<usize>,
 }
 
-/// 阶段 C 的共享上下文：并行下载各步骤共用，避免每个步骤函数重复展开十余个参数。
 struct DownloadCtx<'a> {
     app: &'a dyn EventSink,
     cancel: &'a Arc<AtomicBool>,
@@ -220,8 +205,7 @@ async fn download_client_jar(ctx: &DownloadCtx<'_>) -> Result<(), Vec<String>> {
     } = *ctx;
     if let Some(c) = &vj.downloads.client {
         let jar_path = vdir.join(format!("{}.jar", dir_name));
-        // 只写 jar 自己的字节计数；不碰 ctr.bytes（那是 libs/assets 的增量累加，
-        // 覆盖写会冲掉已累加值导致速度跳变）
+        // 只写 jar 字节；不碰 ctr.bytes（libs/assets 增量累加，覆盖写会致速度跳变）
         let cb = ProgressCounters {
             bytes: Arc::clone(&ctr.jar_bytes),
             step_total: Arc::clone(&ctr.jar_total),
@@ -229,8 +213,6 @@ async fn download_client_jar(ctx: &DownloadCtx<'_>) -> Result<(), Vec<String>> {
         }
         .overwrite_callback();
         let urls: Vec<String> = sources.iter().map(|src| src.mirror_url(&c.url)).collect();
-        // 本地运行时复用：迁移用户已有同版本 client jar（size+sha1 校验通过）→ 本地复制；
-        // 失败降级网络下载（与 libraries/assets 一致，不致命）
         let client_rel = format!("versions/{}/{}.jar", dir_name, dir_name);
         if let Some(src) = reuse_root.and_then(|r| {
             reuse::classify_local_artifact(r, &client_rel, Some(c.size), Some(&c.sha1))
@@ -243,7 +225,6 @@ async fn download_client_jar(ctx: &DownloadCtx<'_>) -> Result<(), Vec<String>> {
                     .map_err(|e2| vec![format!("{e2}（本地复用失败: {e}）")])?;
             }
         } else {
-            // 逐源 sha1 校验下载：镜像 CDN 返回不完整/错误内容自动换源重试
             fetcher::fetch_verified_c(&urls, &jar_path, Some(cb), &c.sha1, Some(cancel))
                 .await
                 .map_err(|e| vec![e.to_string()])?;
@@ -256,7 +237,6 @@ async fn download_client_jar(ctx: &DownloadCtx<'_>) -> Result<(), Vec<String>> {
     Ok(())
 }
 
-/// 阶段 C 步骤：支持库（多源 + 本地复用 + sha1 校验）。
 async fn download_libraries_step(ctx: &DownloadCtx<'_>) -> Result<(), Vec<String>> {
     let DownloadCtx {
         app,
@@ -292,7 +272,6 @@ async fn download_libraries_step(ctx: &DownloadCtx<'_>) -> Result<(), Vec<String
     Ok(())
 }
 
-/// 阶段 C 步骤：资源索引 objects。
 async fn download_assets_step(ctx: &DownloadCtx<'_>) -> Result<(), Vec<String>> {
     let DownloadCtx {
         app,
@@ -329,7 +308,6 @@ async fn download_assets_step(ctx: &DownloadCtx<'_>) -> Result<(), Vec<String>> 
     Ok(())
 }
 
-/// 阶段 C 步骤：natives 解压（旧式 classifier / 新式独立变体）。
 async fn extract_natives_step(ctx: &DownloadCtx<'_>) -> Result<(), Vec<String>> {
     let DownloadCtx {
         app,
@@ -361,7 +339,6 @@ async fn extract_natives_step(ctx: &DownloadCtx<'_>) -> Result<(), Vec<String>> 
     Ok(())
 }
 
-/// 阶段 C 步骤：启动进度上报循环（EmitLoop 心跳）。
 fn spawn_emit_loop(
     ctx: &DownloadCtx<'_>,
     sink: Arc<dyn EventSink>,
@@ -424,7 +401,6 @@ fn spawn_emit_loop(
     .spawn()
 }
 
-/// 阶段 C 步骤：ModLoader 安装（钩子推进 LoaderConfig / LoaderLibs 两步）。
 async fn install_loader_step(
     ctx: &DownloadCtx<'_>,
     loader_choice: Option<&LoaderChoice>,
@@ -443,7 +419,6 @@ async fn install_loader_step(
         ..
     } = *ctx;
     if let Some(loader) = loader_choice {
-        // 阶段钩子：安装内部在对应事件点推进 LoaderConfig/LoaderLibs 两步
         let hook = |ev: loader::LoaderEvent| match ev {
             loader::LoaderEvent::ConfigDone => {
                 if let Some(i) = steps.cfg {
@@ -475,7 +450,7 @@ async fn install_loader_step(
                     step_total: Arc::clone(&ctr.loader_libs_step_total),
                     ..Default::default()
                 },
-                // Forge/NeoForge（installer 式）用于 kill 子进程；Fabric/Quilt 内部忽略
+                // Forge/NeoForge（installer 式）用于 kill 子进程；Fabric/Quilt 忽略
                 cancel,
                 hook: Some(&hook),
             },
@@ -486,7 +461,6 @@ async fn install_loader_step(
     Ok(())
 }
 
-/// 阶段 C 步骤：OptiFine 分场景安装（纯净版 classpath / Forge-like mods / Fabric-like OptiFabric）。
 async fn install_optifine_step(
     ctx: &DownloadCtx<'_>,
     patch: Option<&str>,
@@ -507,10 +481,7 @@ async fn install_optifine_step(
         steps,
         ..
     } = *ctx;
-    // OptiFine 安装场景随主 ModLoader 组合而定：
-    // - Fabric/Quilt：OptiFine + OptiFabric 桥接进 mods
-    // - Forge/NeoForge：OptiFine 直接进 mods
-    // - 无 loader（纯后端调用，前端不暴露）：纯净版独立版本 + classpath 库
+    // OptiFine 场景随主 ModLoader：Fabric/Quilt → OptiFabric 桥接进 mods；Forge/NeoForge → 直接进 mods；无 loader → 纯净版独立版本 + classpath 库
     let mode = match loader_choice {
         Some(l) => match l.kind {
             task::LoaderKind::Fabric | task::LoaderKind::Quilt => {
@@ -552,7 +523,6 @@ async fn install_optifine_step(
     Ok(())
 }
 
-/// 阶段 C 步骤：Fabric API 下载到版本 mods 目录（社区源模式：Auto 探测官方/MCIM 快源）。
 async fn download_fabric_api_step(
     ctx: &DownloadCtx<'_>,
     api: Option<&FabricApi>,
@@ -570,7 +540,7 @@ async fn download_fabric_api_step(
         ..
     } = *ctx;
     let url = api.url.as_str();
-    // URL 最后一段做 percent-decode（文件名中的 `+` 被编码为 %2B）
+    // URL 最后一段 percent-decode（文件名中的 `+` 被编码为 %2B）
     let filename =
         percent_encoding::percent_decode_str(util::url_file_name(url).unwrap_or("fabric-api.jar"))
             .decode_utf8_lossy()
@@ -579,13 +549,8 @@ async fn download_fabric_api_step(
     let mods_dir = vdir.join("mods");
     std::fs::create_dir_all(&mods_dir).ok();
     let dest = mods_dir.join(filename);
-    // 多源候选（社区源模式 community_source_mode）：Auto 模式下载前探测
-    // 官方 CDN 与 MCIM 镜像 TTFB 选快源（util::community_download_urls）。
-    // 注意：fabric-api 只发布在 Modrinth/GitHub，maven.fabricmc.net 及其
-    // 镜像（BMCLAPI /maven）上没有该构件，此前追加的 BMCLAPI maven 候选
-    // 永远 404，只会污染"所有源均失败"的错误信息，已移除。
+    // 多源候选（Auto 探测官方 CDN / MCIM 镜像 TTFB）；fabric-api 只发布在 Modrinth/GitHub，maven 镜像无该构件，勿加 maven 候选（只会 404 污染错误信息）。
     let urls = util::community_download_urls(url).await;
-    // 字节级进度：增量累加进 ctr.bytes（EmitLoop 显示速度）与 Fabric API 步骤计数
     let progress_cb = ProgressCounters {
         bytes: Arc::clone(&ctr.bytes),
         step_bytes: Arc::clone(&ctr.fabric_step_bytes),
@@ -603,15 +568,13 @@ async fn download_fabric_api_step(
     Ok(())
 }
 
-/// 完整下载任务主体：version json → client.jar / libraries / assets → natives → ModLoader/OptiFine → Fabric API。
-/// 任务配置（含 ModLoader 选择）由命令层校验后经 DownloadTask 传入。
+/// 完整下载任务主体：version json → client.jar / libraries / assets → natives → ModLoader/OptiFine → Fabric API；配置由命令层校验后经 DownloadTask 传入。
 pub async fn run_task(
     sink: Arc<dyn EventSink>,
     cancel: &Arc<AtomicBool>,
     progress: &Arc<Mutex<TaskProgress>>,
     task: &DownloadTask,
 ) {
-    // 事件出口以引用贯穿各阶段（`Arc` 仅在 EmitLoop 需要克隆到上报线程时使用）
     let app = sink.as_ref();
     eprintln!(
         "[task] 开始: id={} mc={} loader={:?} url={}",
@@ -622,7 +585,6 @@ pub async fn run_task(
         Err(e) => return set_error(app, progress, e),
     };
 
-    // 步骤分析：初始完整列表（json 步骤恒在，索引 0；零缺失维度检测后过滤）
     let mut specs = task.steps();
     set_phase(
         app,
@@ -642,7 +604,6 @@ pub async fn run_task(
         Err(()) => return,
     };
 
-    // 阶段 A 之后解构上下文（名称与后续各阶段既有局部变量一致，函数体零改动）
     let TaskRuntime {
         started: t0,
         config,
@@ -680,7 +641,7 @@ pub async fn run_task(
     {
         Ok(s) => s,
         Err(e) => {
-            // 扫描阶段被取消（count_assets_all 轮询返回）走取消收口，而非报错
+            // 扫描被取消（count_assets_all 轮询返回）走取消收口，而非报错
             if cancelled(cancel) {
                 eprintln!("[task] 阶段B 取消");
                 return set_cancelled(app, progress);
@@ -697,7 +658,6 @@ pub async fn run_task(
         scan.asst_pending,
         scan.natives_pending,
     );
-    // 安装步骤数：version json + jar + 全量库 + 全量资源 + natives 缺失数 + 安装步骤数
     let mut total_files =
         1 + scan.jar_total + scan.lib_total_all + scan.asst_total_all + scan.natives_pending;
     if loader.is_some() {
@@ -711,7 +671,6 @@ pub async fn run_task(
     }
     set_total(app, progress, total_files, scan.total_bytes);
     set_completed(app, progress, scan.initial_completed, scan.initial_bytes);
-    // 阶段 C：计数器 + 步骤索引 + 共享上下文（各步骤函数共用，避免重复展开十余参数）
     let ctr = Counters::default();
     let steps = StepIndex {
         jar: scan.jar_step,
@@ -739,7 +698,7 @@ pub async fn run_task(
         steps: &steps,
     };
 
-    // 统一转 running（重建后列表；json 保持 done）——在 spawn EmitLoop 前完成，避免锁竞争
+    // 统一转 running（json 保持 done）；在 spawn EmitLoop 前完成，避免锁竞争
     for (i, s) in specs.iter().enumerate() {
         if s.kind != StepKind::VersionJson {
             set_phase(app, progress, None, &s.name, i, StepStatus::Running);
@@ -758,11 +717,7 @@ pub async fn run_task(
         "[task] 阶段C: 并行下载开始 ({:.1}s)",
         t0.elapsed().as_secs_f64()
     );
-    // 用 join! 而非 try_join!：try_join! 在首个 Err 时立即返回并 drop 其余 future，
-    // 但各 step 内部的批处理 worker 是独立 spawn 的（future 被 drop 不会中止它们）——
-    // 于是任务已进入 Error 并登记整删版本目录，孤儿 worker 仍在往该目录写：Windows 下
-    // 句柄占用会让删除失败或目录被重建，「失败整删」承诺失效并留下垃圾。
-    // join! 等全部收尾后再收口，杜绝该竞争。
+    // 用 join! 而非 try_join!：后者短路后各 step 内部 spawn 的批处理 worker 仍在写盘，与失败整删目录竞争（Windows 句柄占用令删除失败/目录重建）；须等全部收尾再收口。
     let (jar, libs, assets, natives, loader_r, optifine_r, fabric_r) = tokio::join!(
         download_client_jar(&ctx),
         download_libraries_step(&ctx),
@@ -774,7 +729,6 @@ pub async fn run_task(
     );
     eprintln!("[task] 阶段C 并行结束 ({:.1}s)", t0.elapsed().as_secs_f64());
 
-    // 失败/取消优先上报，避免先发 100% 完成误导前端
     if cancelled(cancel) {
         eprintln!("[task] 取消收口");
         return set_cancelled(app, progress);
@@ -786,10 +740,8 @@ pub async fn run_task(
         }
     }
     if !errors.is_empty() {
-        // 全新下载失败：整删残缺版本目录（含未写全的 json/jar），免手动清理；
-        // 补全文件（任务开始前目录已存在）不删，避免误删已有版本
+        // 全新下载失败整删残缺目录；补全（目录已存在）不删。登记清理路径由 set_error 后台整删。
         if !vdir_existed_before {
-            // 登记清理路径，由 set_error 收口后台整删（同步删大目录会阻塞任务线程）
             let cleanup_id = progress.try_lock().map(|p| p.task_id.clone());
             if let Some(id) = cleanup_id {
                 task::global().set_cleanup_path(&id, vdir.clone());
@@ -803,13 +755,12 @@ pub async fn run_task(
         return set_cancelled(app, progress);
     }
 
-    // 收尾（EmitLoop 已完成全部计数自然退出；此处显式设 100% 并发 done 终态事件，
-    // 前端据此移除卡片并触发完成通知——缺失则卡片停在 EmitLoop 封顶的 99.9%）
+    // 收尾：显式设 100% 并发 done 终态事件（EmitLoop 封顶 99.9%，前端据此移除卡片并通知）
     eprintln!("[task] 完成 ({:.1}s)", t0.elapsed().as_secs_f64());
     set_done(app, progress, "完成");
 }
 
-/// 拉取并解析版本 JSON，同时保留原始文本（ModLoader 合并需保留未知字段）。
+/// 拉取并解析版本 JSON，保留原始文本（ModLoader 合并需保留未知字段）。
 async fn fetch_version_json(
     version_url: &str,
     config: &DownloaderConfig,
@@ -820,15 +771,12 @@ async fn fetch_version_json(
     Ok((vj, text))
 }
 
-/// 目标目录解析结果：目录名 / 路径。
 struct TargetDir {
     dir_name: String,
     vdir: std::path::PathBuf,
 }
 
-/// 解析目标版本目录（不依赖 version JSON）：
-/// 预指定（补全/修复）→ 原样；loader 任务 → `{mc}-{loader}-{ver}`；
-/// 原版 → `versions/{id}` 冲突时 `{id}_{n}`（缺 client jar 的残缺目录复用重下）。
+/// 解析目标版本目录（不依赖 version JSON）：预指定（补全/修复）→ 原样；loader → `{mc}-{loader}-{ver}`；原版 → `versions/{id}` 冲突时 `{id}_{n}`（缺 client jar 的残缺目录复用重下）。
 fn resolve_target_dir(task: &DownloadTask, mc: &std::path::Path) -> TargetDir {
     if let Some(pre) = task.version_dir_name.as_deref() {
         return TargetDir {
@@ -855,8 +803,6 @@ fn resolve_target_dir(task: &DownloadTask, mc: &std::path::Path) -> TargetDir {
     }
 }
 
-/// 本地状态检测与步骤布局输出（run_task 阶段 B 的产物）：
-/// 各维度缺失数/字节、动态步骤索引、总进度基线。
 struct LocalScan {
     lib_pending: u32,
     lib_total_all: u32,
@@ -881,7 +827,6 @@ struct LocalScan {
     initial_bytes: u64,
 }
 
-/// 本地扫描的数据输入（与任务句柄参数分开传）。
 struct ScanInput<'a> {
     vj: &'a VersionJson,
     config: &'a DownloaderConfig,
@@ -889,11 +834,7 @@ struct ScanInput<'a> {
     lib_dir: &'a std::path::Path,
 }
 
-/// 阶段 B：检测本地已有文件（库/jar/natives 快查 + 资产清单 fetch + 多线程 sha1），
-/// 重建步骤列表（零缺失维度过滤），并给出总进度基线（先全量总数后覆盖，避免 UI 死等）。
-/// 期间实时上报检测进度；资产清单 fetch 失败返回 Err（调用方 set_error）。
-/// `cancel`：扫描轮询取消（count_assets_all 内部检查），任务被取消时返回
-/// Err("任务已取消")，调用方转 set_cancelled。
+/// 阶段 B：检测本地已有文件（库/jar/natives 快查 + 资产清单 fetch + 多线程 sha1），重建步骤列表（零缺失维度过滤）；资产清单 fetch 失败或 cancel 置位时返回 Err。
 async fn init_local_scan(
     app: &dyn EventSink,
     progress: &Arc<Mutex<TaskProgress>>,
@@ -925,7 +866,7 @@ async fn init_local_scan(
     let natives_pending = count_natives_missing(&vj.libraries, lib_dir);
     let natives_pending_bytes = task::repair::natives_missing_bytes(&vj.libraries, lib_dir);
 
-    // 资源清单：fetch asset index（网络）→ 报资产总数（文件+字节）；再多线程 sha1 检测本地（逐批上报）
+    // 资源清单：fetch asset index（网络）→ 报资产总数（文件+字节）→ 多线程 sha1 检测本地（逐批上报）
     let mut asst_total_all = 0u32;
     let mut asst_total_bytes = 0u64;
     task::update_and_emit(app, progress, |p| p.current_phase = "获取资源清单".into());
@@ -985,8 +926,6 @@ async fn init_local_scan(
         1 + lib_existing_bytes + asst_existing_bytes,
     );
 
-    // 重建步骤列表：零缺失维度过滤（json 保持 done）——步骤 = 任务的函数：
-    // 缺失检测结果决定哪些维度实际出现在步骤栏
     if lib_pending == 0 {
         specs.retain(|s| s.kind != StepKind::Libraries);
     }
@@ -1039,4 +978,4 @@ async fn init_local_scan(
     })
 }
 
-// JDK 安装任务已拆分至 task/jdk.rs；此处 re-export 兼容 commands/task.rs 的 runner:: 调用方。
+// JDK 安装任务在 task/jdk.rs；此处 re-export 兼容 commands/task.rs 的 runner:: 调用方。

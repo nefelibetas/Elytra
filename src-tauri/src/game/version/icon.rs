@@ -2,13 +2,12 @@
 
 use std::path::{Path, PathBuf};
 
-/// 用户自定义图标文件名（设置页设置的图，优先级最高）。
+/// 用户自定义图标文件名，优先级最高。
 pub const CUSTOM_ICON_NAME: &str = "version-icon.png";
-/// 整合包项目图文件名（安装时写入，优先级次之）。
+/// 整合包项目图文件名（安装时写入），优先级次之。
 pub const PACK_ICON_NAME: &str = "pack-icon.png";
 
-/// 图标优先级：用户自定义（version-icon.png）> 整合包项目图（pack-icon.png）。
-/// 两者都不存在返回 None。
+/// 图标优先级：version-icon.png > pack-icon.png；都不存在返回 None。
 pub fn version_icon_path(vdir: &Path) -> Option<PathBuf> {
     for name in [CUSTOM_ICON_NAME, PACK_ICON_NAME] {
         let p = vdir.join(name);
