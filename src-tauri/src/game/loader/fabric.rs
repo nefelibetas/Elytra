@@ -9,6 +9,47 @@ use crate::downloader::fetcher::http;
 use crate::game::resource::library;
 use crate::game::version::model;
 
+/// profile 模板按源选取：Fabric/Quilt 各源模板不同（镜像只在 `fabric_profile_url`
+/// 上体现 BMCLAPI fabric-meta），循环内必须用**当前源自己的**模板构造 URL。
+/// `DownloadSource::url` 本身不使用 `self`、只替换传入模板，故若统一传主源模板，
+/// 每个源都会得到同一个 URL → 镜像永远拿不到请求、官方不可达时安装必然失败。
+#[derive(Clone, Copy)]
+enum ProfileKind {
+    Fabric,
+    Quilt,
+}
+
+impl ProfileKind {
+    fn url(self, src: &DownloadSource) -> &str {
+        match self {
+            ProfileKind::Fabric => &src.fabric_profile_url,
+            ProfileKind::Quilt => &src.quilt_profile_url,
+        }
+    }
+}
+
+/// 逐源候选 `(源, URL)`，保持源顺序并跳过重复 URL（Quilt 两源模板相同 → 只请求一次，
+/// 避免"主源失败后对同一 URL 再等一遍"）。
+fn profile_candidates<'a>(
+    kind: ProfileKind,
+    sources: &[&'a DownloadSource],
+    mc_version: &str,
+    loader_version: &str,
+) -> Vec<(&'a DownloadSource, String)> {
+    let mut out: Vec<(&'a DownloadSource, String)> = Vec::with_capacity(sources.len());
+    for src in sources {
+        let url = src.url(
+            kind.url(src),
+            &[("mc", mc_version), ("loaderVer", loader_version)],
+        );
+        if out.iter().any(|(_, u)| u == &url) {
+            continue;
+        }
+        out.push((*src, url));
+    }
+    out
+}
+
 /// `dir_name`/`vdir` 由 runner 的目标目录解析传入（含冲突重命名 `{id}_n`）——
 /// 安装器自行计算会与 runner 的目标分裂：冲突场景 json/jar 写到原始目录而
 /// 新目录缺 json（启动报"未找到版本 JSON"）。
@@ -17,7 +58,7 @@ async fn install_loader_via_profile(
     loader_version: &str,
     target: VersionTarget<'_>,
     parent_text: &str,
-    profile_url_tpl: &str,
+    kind: ProfileKind,
     ctx: InstallCtx<'_>,
 ) -> Result<(), String> {
     let VersionTarget { dir_name, vdir } = target;
@@ -25,14 +66,15 @@ async fn install_loader_via_profile(
     let mc = config.minecraft_dir_abs();
 
     // profile 逐源回退：官方 maven 在国内网络常不可达，镜像提供同一路径
-    // （此前只用主源单发请求，主源挂了 Fabric/Quilt 安装直接失败）
+    // （此前循环内替换的是同一个主源模板，镜像 URL 从未被请求）
     let mut fetched: Option<(serde_json::Value, &DownloadSource)> = None;
     let mut last_err = String::new();
-    for src in config.file_sources_list() {
-        let url = src.url(
-            profile_url_tpl,
-            &[("mc", mc_version), ("loaderVer", loader_version)],
-        );
+    for (src, url) in profile_candidates(
+        kind,
+        &config.file_sources_list(),
+        mc_version,
+        loader_version,
+    ) {
         match http().get(&url).send().await {
             Ok(resp) => match resp.json::<serde_json::Value>().await {
                 Ok(v) => {
@@ -105,14 +147,12 @@ pub async fn install_fabric(
     parent_text: &str,
     ctx: InstallCtx<'_>,
 ) -> Result<(), String> {
-    let InstallCtx { config, .. } = ctx;
-    let source = config.file_primary_source().ok_or("no active source")?;
     install_loader_via_profile(
         mc_version,
         loader_version,
         target,
         parent_text,
-        &source.fabric_profile_url,
+        ProfileKind::Fabric,
         ctx,
     )
     .await
@@ -125,15 +165,53 @@ pub async fn install_quilt(
     parent_text: &str,
     ctx: InstallCtx<'_>,
 ) -> Result<(), String> {
-    let InstallCtx { config, .. } = ctx;
-    let source = config.file_primary_source().ok_or("no active source")?;
     install_loader_via_profile(
         mc_version,
         loader_version,
         target,
         parent_text,
-        &source.quilt_profile_url,
+        ProfileKind::Quilt,
         ctx,
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::downloader::endpoints;
+
+    /// 回归：多源回退必须使用**每个源自己的** profile 模板。
+    /// 此前循环内统一替换主源模板 → 官方与镜像得到同一个 URL，镜像从未被请求，
+    /// 官方 meta 不可达时 Fabric 安装直接失败（注释却声称可回退）。
+    #[test]
+    fn fabric_profile_candidates_include_mirror() {
+        let sources = vec![endpoints::official_source(), endpoints::mirror_source()];
+        let refs: Vec<&DownloadSource> = sources.iter().collect();
+        let urls: Vec<String> = profile_candidates(ProfileKind::Fabric, &refs, "1.20.1", "0.15.0")
+            .into_iter()
+            .map(|(_, u)| u)
+            .collect();
+        assert_eq!(urls.len(), 2, "官方 + 镜像应各有一个候选 URL: {urls:?}");
+        assert!(
+            urls[0].contains("meta.fabricmc.net"),
+            "首选应为官方 meta: {}",
+            urls[0]
+        );
+        assert!(
+            urls[1].contains("bmclapi"),
+            "回退候选必须落到 BMCLAPI fabric-meta: {}",
+            urls[1]
+        );
+        assert_ne!(urls[0], urls[1], "两源 URL 必须不同，否则回退是空转");
+    }
+
+    /// Quilt 两源模板相同（无 BMCLAPI 镜像）→ 去重只请求一次，避免对同一 URL 白等一轮。
+    #[test]
+    fn quilt_profile_candidates_dedupe_same_template() {
+        let sources = vec![endpoints::official_source(), endpoints::mirror_source()];
+        let refs: Vec<&DownloadSource> = sources.iter().collect();
+        let urls = profile_candidates(ProfileKind::Quilt, &refs, "1.20.1", "0.20.0");
+        assert_eq!(urls.len(), 1, "同模板应去重: {:?}", urls);
+    }
 }

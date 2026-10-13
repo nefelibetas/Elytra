@@ -1061,10 +1061,15 @@ fn build_game_args(
         _ => {
             // 旧格式：minecraftArguments 模板字符串
             if let Some(tpl) = &version_json.minecraft_arguments {
-                // 旧格式：模板是空格分隔的参数串，替换后按空白拆分（与官方启动器一致）
-                substitute(tpl, game_ctx)
-                    .split_whitespace()
-                    .map(String::from)
+                // 旧格式：模板是空格分隔的参数串，必须**先按空白拆分、再逐 token 替换占位符**
+                // （与官方启动器一致）。若先替换再拆分，含空格的 .minecraft 路径会被
+                // split_whitespace 二次切断（`--gameDir C:\Users\Zhang San\...` →
+                // `--gameDir C:\Users\Zhang` + 两个游离 token），导致版本隔离失效。
+                // 替换后为空的 token 需丢弃（如 `${user_properties}` 展开为空），
+                // 否则会多出一个空 argv 元素。
+                tpl.split_whitespace()
+                    .map(|tok| substitute(tok, game_ctx))
+                    .filter(|tok| !tok.is_empty())
                     .collect()
             } else {
                 // 最低保底
@@ -1244,6 +1249,70 @@ mod tests {
         assert!(
             natives_dir.join("b.dll").is_file(),
             "回归：native 集合变化时必须重新解压，否则缺 b.dll"
+        );
+    }
+
+    /// 回归：旧格式 `minecraftArguments`（1.7.10/1.8.9 等无 `arguments.game`）在含空格
+    /// 的 .minecraft 路径下，`--gameDir`/`--assetsDir` 必须保持为**单个** argv 元素。
+    /// 此前「先替换占位符、再 split_whitespace」会把含空格路径切成多个 token。
+    #[test]
+    fn legacy_minecraft_arguments_keeps_spaced_paths_whole() {
+        let vj: VersionJson = serde_json::from_str(
+            r#"{
+                "id": "1.7.10",
+                "mainClass": "net.minecraft.launchwrapper.Launch",
+                "assets": "legacy",
+                "assetIndex": { "id": "legacy", "url": "x", "sha1": "y", "size": 1, "totalSize": 1 },
+                "downloads": { "client": { "url": "x", "sha1": "y", "size": 1 } },
+                "minecraftArguments": "--username ${auth_player_name} --gameDir ${game_directory} --assetsDir ${assets_root} --assetIndex ${assets_index_name} --userProperties ${user_properties}",
+                "complianceLevel": 0,
+                "minimumLauncherVersion": 4,
+                "javaVersion": { "majorVersion": 8 },
+                "releaseTime": "2014-05-14T00:00:00Z",
+                "time": "2014-05-14T00:00:00Z",
+                "type": "release",
+                "libraries": []
+            }"#,
+        )
+        .expect("构造旧格式版本 JSON 失败");
+
+        let game_dir = r"C:\Users\Zhang San\.minecraft\versions\1.7.10";
+        let assets_dir = r"C:\Users\Zhang San\.minecraft\assets";
+        let ctx = TemplateContext {
+            auth_player_name: "Player",
+            version_name: "1.7.10",
+            game_directory: game_dir,
+            assets_root: assets_dir,
+            assets_index_name: "legacy",
+            auth_uuid: "u",
+            auth_access_token: "t",
+            auth_xuid: "0",
+            user_type: "msa",
+            user_properties: "",
+            version_type: "release",
+            resolution_width: 854,
+            resolution_height: 480,
+            launcher_name: "Elytra",
+            launcher_version: "1",
+        };
+
+        let args = build_game_args(&vj, &ctx, false, "");
+        let idx = args.iter().position(|a| a == "--gameDir").unwrap();
+        assert_eq!(
+            args[idx + 1], game_dir,
+            "含空格的 --gameDir 路径必须保持单个 argv 元素: {args:?}"
+        );
+        let aidx = args.iter().position(|a| a == "--assetsDir").unwrap();
+        assert_eq!(
+            args[aidx + 1], assets_dir,
+            "含空格的 --assetsDir 路径必须保持单个 argv 元素: {args:?}"
+        );
+        // 路径没有被切成 `...Zhang` + 游离 `San` token
+        assert!(!args.iter().any(|a| a == "San"), "路径被截断: {args:?}");
+        // `${user_properties}` 展开为空 → 必须丢弃空 token，而不是塞一个空 argv 元素
+        assert!(
+            !args.iter().any(|a| a.is_empty()),
+            "不应产生空参数元素: {args:?}"
         );
     }
 }

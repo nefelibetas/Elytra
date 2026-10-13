@@ -492,14 +492,30 @@ pub(super) async fn wait_for_vanilla_client(
     Err("等待原版客户端下载超时（120s），无法生成 ModLoader client".into())
 }
 
+/// Auto 模式选 JDK 的纯决策（便于单测，`resolve_java` 依赖全局 jdk 配置无法直接测）：
+/// `required > 0` 时复用启动侧的按需选择（精确/最低满足/最高）；
+/// 未声明版本（0）或按需选择无果时回退缓存首项（保持旧行为）。
+fn pick_auto_jdk(jdks: &[jdk::model::JdkInfo], required: u32) -> Option<jdk::model::JdkInfo> {
+    let picked = if required > 0 {
+        crate::launcher::env::auto_pick_jdk(jdks, required)
+    } else {
+        None
+    };
+    picked.or_else(|| jdks.first().cloned())
+}
+
 /// 运行补丁工具所需的 Java 可执行文件（与游戏启动同一套 JDK 配置）。
-pub(super) fn resolve_java() -> Result<PathBuf, String> {
+///
+/// `required`：目标版本声明的 Java 主版本（version.json 的 `javaVersion.majorVersion`）。
+/// Auto 模式据此按需选择——此前无脑取缓存首项，机器同时装 JDK 8/17 时（扫描顺序不定）
+/// 装 Forge 1.20.1 的处理器链可能落在 Java 8 上 → `UnsupportedClassVersionError`。
+pub(super) fn resolve_java(required: u32) -> Result<PathBuf, String> {
     let options = jdk::read();
     let cache = jdk::read_cache();
     match options.selection {
         jdk::model::JdkSelection::Manual { path } => Ok(java_bin_path(Path::new(&path))),
         jdk::model::JdkSelection::Auto => {
-            if let Some(jdk) = cache.jdks.first() {
+            if let Some(jdk) = pick_auto_jdk(&cache.jdks, required) {
                 return Ok(java_bin_path(Path::new(&jdk.path)));
             }
             // 兜底：装了 JDK 但还没让启动器扫描过（JAVA_HOME 指向的目录直接可用）
@@ -948,5 +964,35 @@ mod tests {
             "解出的构件应匹配 profile 声明的 sha1"
         );
         eprintln!("✅ 1.12.2 legacy 内嵌构件已解出：{rel}（{size} 字节）");
+    }
+
+    /// 回归：Auto 模式必须按目标版本声明的 major 选 JDK，而不是无脑取缓存首项。
+    /// 构造的列表刻意把 JDK 8 放在首位（模拟扫描顺序不定）：装 1.20.1（需要 17）时
+    /// 若仍选首项就会用 Java 8 跑处理器链 → UnsupportedClassVersionError。
+    #[test]
+    fn auto_jdk_prefers_required_major_not_cache_first() {
+        let mk = |path: &str, version: &str| jdk::model::JdkInfo {
+            path: path.into(),
+            version: version.into(),
+            vendor: "OpenJDK".into(),
+            bits: 64,
+        };
+        let jdks = vec![mk("/jdk8", "1.8.0_202"), mk("/jdk17", "17.0.8"), mk("/jdk21", "21")];
+
+        assert_eq!(
+            pick_auto_jdk(&jdks, 17).unwrap().path,
+            "/jdk17",
+            "需要 17 时必须选 JDK 17，而非缓存首项 JDK 8"
+        );
+        assert_eq!(pick_auto_jdk(&jdks, 21).unwrap().path, "/jdk21");
+        assert_eq!(
+            pick_auto_jdk(&jdks, 8).unwrap().path,
+            "/jdk8",
+            "需要 8 时精确命中"
+        );
+        // 未声明版本（0）→ 保持旧行为：缓存首项
+        assert_eq!(pick_auto_jdk(&jdks, 0).unwrap().path, "/jdk8");
+        // 缓存为空 → None（resolve_java 回退 JAVA_HOME）
+        assert!(pick_auto_jdk(&[], 17).is_none());
     }
 }

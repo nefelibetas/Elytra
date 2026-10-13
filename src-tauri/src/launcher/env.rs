@@ -305,7 +305,8 @@ pub fn apply_game_language(game_dir: &std::path::Path) {
 
 /// 从已扫描的 JDK 列表中自动选择最合适的版本。
 /// 优先精确匹配需求版本；否则选最低但满足需求的版本；再不行选最高版本。
-fn auto_pick_jdk(discovered: &[JdkInfo], required: u32) -> Option<JdkInfo> {
+/// （`pub(crate)`：启动侧与 ModLoader 安装器 processors 链共用同一套按需选择。）
+pub(crate) fn auto_pick_jdk(discovered: &[JdkInfo], required: u32) -> Option<JdkInfo> {
     let mut candidates: Vec<(u32, &JdkInfo)> = discovered
         .iter()
         .filter_map(|env| parse_java_major(&env.version).map(|m| (m, env)))

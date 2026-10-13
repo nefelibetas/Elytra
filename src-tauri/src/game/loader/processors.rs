@@ -414,6 +414,20 @@ fn main_class_of(jar: &Path) -> Result<String, String> {
     bail!("处理器 MANIFEST 未声明 Main-Class\n{}", jar.display())
 }
 
+/// 目标版本声明的 Java 主版本（`javaVersion.majorVersion`），供 `resolve_java` 按需选 JDK。
+///
+/// 处理器链运行前，调用方已把展开继承后的 loader version.json 写在与 `vanilla_jar`
+/// 同目录同名处（`versions/<dir>/<dir>.json`，见 forge.rs 的 `resolve_version_json`），
+/// 因此可直接读取；读不到/未声明时返回 0，由 `resolve_java` 走缓存首项兜底。
+fn required_java_major(ctx: &ProcessorCtx<'_>) -> u32 {
+    std::fs::read_to_string(ctx.vanilla_jar.with_extension("json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v["javaVersion"]["majorVersion"].as_u64())
+        .map(|m| m as u32)
+        .unwrap_or(0)
+}
+
 /// 按 profile 声明依次执行 **client 侧**处理器。
 ///
 /// 幂等由调用方负责（例如 NeoForge 用 `{PATCHED}` 产物是否存在判断是否整体跳过）。
@@ -426,7 +440,7 @@ pub async fn run_client_processors(
     }
     std::fs::create_dir_all(ctx.work_dir).map_err(|e| format!("创建临时目录失败\n{e}"))?;
     let sep = if cfg!(windows) { ";" } else { ":" };
-    let java = resolve_java()?;
+    let java = resolve_java(required_java_major(ctx))?;
 
     for (i, proc) in profile.processors.iter().enumerate() {
         if let Some(sides) = &proc.sides {
