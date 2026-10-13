@@ -7,11 +7,8 @@ use reqwest::Client;
 use crate::constants::UA_DOWNLOAD;
 use crate::downloader::proxy::apply_system_proxy;
 
-/// 重定向目标是否放行：跟随重定向，但拒绝实测黑洞节点域（17.749333.xyz——
-/// BMCLAPI 对象存储节点，国内部分网络 TCP 黑洞，连上不传数据）。
-/// 放行 minio.749333.xyz（bmclapi 文件下载主存储：OptiFine 下载 URL 实测
-/// 302 → minio，按域名前缀一刀切会把真实下载误杀，安装必失败；
-/// 无代理黑洞网络下 minio 不可达由全局 client 的 30s read_timeout 兜底，不永久挂死）。
+/// 重定向目标放行判定：拒绝实测黑洞域（17.749333.xyz，国内部分网络 TCP 黑洞），
+/// 但放行 minio.749333.xyz（bmclapi 下载主存储，OptiFine 下载 302 → minio；其不可达由 client 30s read_timeout 兜底）。
 pub(super) fn redirect_allowed(host: &str) -> bool {
     !host.contains("749333") || host.starts_with("minio.")
 }
@@ -32,25 +29,37 @@ fn build_client() -> Client {
     let mut builder = Client::builder()
         .user_agent(UA_DOWNLOAD)
         // connect 黑洞防挂死：部分镜像 302 到不可达对象存储节点（749333.xyz 实测 TCP 黑洞），
-        // 全局 client 无连接超时会挂满 300s；2s 连接超时只在新建连接时生效，不影响连接池复用
+        // 无连接超时会挂满 300s；2s 超时仅新建连接生效，不影响连接池复用
         .connect_timeout(std::time::Duration::from_secs(2))
-        // 读黑洞防挂死：连接建立后 30s 无数据（镜像假死）即掐断。此 client 服务
-        // 版本清单/资源索引/元数据等小请求（fetch_with_fallback 降级源只靠总超时，
-        // 无 read_timeout 时降级源黑洞会挂满 300s×源数，前端表现为进度永远 0%）
+        // 读黑洞防挂死：连接后 30s 无数据即掐断（此 client 服务清单/元数据等小请求，降级源黑洞会挂满 300s×源数）
         .read_timeout(std::time::Duration::from_secs(30))
         .timeout(std::time::Duration::from_secs(300))
-        // 302 到黑洞节点时直接拒绝（reqwest 跟随重定向时无 per-hop 超时控制，
-        // 黑名单是唯一在超时前拦住的方式）
+        // 302 到黑洞节点直接拒绝（重定向无 per-hop 超时控制，黑名单是唯一在超时前拦住的）
         .redirect(mirror_safe_redirect())
         .pool_max_idle_per_host(16);
     builder = apply_system_proxy(builder);
     builder.build().expect("reqwest::Client")
 }
 
-/// 全局 HTTP client（带系统代理/超时/黑洞重定向防护；首次调用按当前
-/// network_mode 构建代理配置）。返回 Arc 以便 network_mode 切换时整体重建：
-/// `reset_http_client` 置空后下次调用按新配置重建；进行中下载持旧 Arc 引用
-/// 不受影响。探测（probe.rs）与下载全链路共用此 client，代理行为天然一致。
+/// 单源请求 client（`MultiSource` 路径每源独立新建）：与全局 client 同一套 UA / 重定向策略 /
+/// 系统代理，仅总时限按调用方给定（大文件不限时，小文件防 body 假死）。
+///
+/// UA 不是装饰：BMCLAPI 302 到的 CERNET / USTC 节点对**无 UA** 请求直接 403（实测同一 URL
+/// 无 UA → 403、带 UA → 200），缺它会让整条镜像候选链在换源时全灭。
+pub(super) fn route_client(total_timeout: Option<std::time::Duration>) -> reqwest::Result<Client> {
+    let mut builder = Client::builder()
+        .user_agent(UA_DOWNLOAD)
+        .connect_timeout(std::time::Duration::from_secs(2))
+        .read_timeout(std::time::Duration::from_secs(30))
+        .redirect(mirror_safe_redirect());
+    if let Some(t) = total_timeout {
+        builder = builder.timeout(t);
+    }
+    apply_system_proxy(builder).build()
+}
+
+/// 全局 HTTP client（系统代理/超时/黑洞重定向防护）；返回 Arc 供 network_mode 切换整体重建，
+/// `reset_http_client` 置空后下次按新配置重建，进行中下载持旧 Arc 不受影响。
 pub fn http() -> std::sync::Arc<Client> {
     let mut guard = HTTP_CLIENT.lock();
     if guard.is_none() {
@@ -59,8 +68,7 @@ pub fn http() -> std::sync::Arc<Client> {
     guard.clone().expect("http client")
 }
 
-/// network_mode（Auto/System/Direct）切换后调用：置空全局 client，
-/// 下次 `http()` 按新配置重建。旧 client 由持有者引用计数自然释放。
+/// network_mode 切换后调用：置空全局 client，下次 `http()` 重建（旧 client 由引用计数释放）。
 pub fn reset_http_client() {
     HTTP_CLIENT.lock().take();
 }
@@ -77,8 +85,7 @@ mod tests {
     use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    /// 重定向放行决策纯函数：黑洞子域拒绝、minio（bmclapi 下载存储）放行、
-    /// 普通域放行。minio 放行是 OptiFine 安装的硬前提（下载 URL 302 → minio）。
+    /// 重定向放行：黑洞子域拒绝，minio（bmclapi 下载存储）与普通域放行；minio 放行是 OptiFine 安装的硬前提。
     #[test]
     fn redirect_policy_minio_allowed() {
         assert!(!redirect_allowed("17.749333.xyz"), "实测黑洞子域必须拒绝");
@@ -94,9 +101,7 @@ mod tests {
         assert!(redirect_allowed("example.com"));
     }
 
-    /// 真实 bmclapi OptiFine 下载（302 → minio.749333.xyz）：验证重定向放行后
-    /// OptiFine 下载链路可用（黑名单按域名前缀一刀切时此测试必失败——
-    /// minio 放行是 OptiFine 安装的硬前提）。网络测试，默认忽略。
+    /// 真实 bmclapi OptiFine 下载（302 → minio.749333.xyz）：验证重定向放行后链路可用。网络测试，默认忽略。
     #[tokio::test]
     #[ignore]
     async fn bmclapi_optifine_real_download() {
@@ -117,8 +122,7 @@ mod tests {
         let _ = std::fs::remove_file(&dest);
     }
 
-    /// 302 到黑洞节点域（749333.xyz）应被重定向策略立即拒绝（快速失败，
-    /// 而不是跟随到 TCP 黑洞挂满超时——国内网络实测卡在 asset index 的根因）。
+    /// 302 到黑洞域（749333.xyz）应被立即拒绝（快速失败，而非跟随到 TCP 黑洞挂满超时）。
     #[tokio::test]
     async fn redirect_to_blackhole_domain_rejected() {
         // 服务器 accept 3 次（fetch_with 有 3 轮重试），每轮都返回 302 → 黑洞域
@@ -161,8 +165,7 @@ mod tests {
         let target = final_url.clone();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        // 无限 accept：Auto 模式会先对域做 HEAD 探测（消耗一次连接），正式请求另有
-        // 3 轮重试——只 accept 一次会被探测吃掉导致正式请求连接拒绝（确定性 flaky）。
+        // 无限 accept：Auto 模式会先 HEAD 探测（消耗连接）+ 3 轮重试，只 accept 一次会 flaky
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
         tokio::spawn(async move {
             let _ = tx.send(());
@@ -190,8 +193,7 @@ mod tests {
         let _ = std::fs::remove_file(&dest);
     }
 
-    /// network_mode 切换重建：reset 后下次 http() 构建新实例（旧 Arc 由持有者释放）。
-    /// 构建 reqwest Client 不联网，测试在离线环境亦通过。
+    /// network_mode 切换重建：reset 后下次 `http()` 构建新实例（旧 Arc 由持有者释放）；构建不联网，离线亦通过。
     #[test]
     fn http_client_reset_rebuilds_new_instance() {
         let a = http();

@@ -55,8 +55,7 @@ pub enum ResourceClass {
     Other,
 }
 
-/// 按 URL host 推断资源类（BMCLAPI/MCIM 镜像 URL 按映射前域名推断）。
-/// 未知 → Other（不做镜像候选生成，保持原始 URL 列表）。
+/// 按 URL host 推断资源类（BMCLAPI/MCIM 镜像 URL 按映射前域名推断）；未知 → Other（不生成镜像候选）。
 pub fn infer_resource_class(url: &str) -> ResourceClass {
     if url.contains("java-runtime") && url.contains("piston") {
         return ResourceClass::Java;
@@ -93,9 +92,8 @@ pub fn infer_resource_class(url: &str) -> ResourceClass {
 }
 
 /// - auto（默认）：自动检测系统代理（Windows 注册表 / Linux 环境变量或 gsettings），
-///   检测到即走代理；无代理时直连（TUN 模式由网络层接管，无需应用配置）
-/// - system：强制使用系统代理（检测不到时回退直连并告警）
-/// - direct：强制直连（不走应用层代理；TUN 模式仍由网络层生效）
+///   检测到即走代理，无代理直连（TUN 模式由网络层接管）
+/// - system：强制系统代理（检测不到回退直连并告警）；direct：强制直连（TUN 仍由网络层生效）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, ts_rs::TS)]
 #[ts(export_to = "config/")]
 #[serde(rename_all = "camelCase")]
@@ -107,8 +105,8 @@ pub enum NetworkMode {
 }
 
 /// 下载源选择模式：
-/// - auto（默认）：文件下载按 URL 自动分类，镜像候选即时生成并按健康度排序，
-///   元数据/清单请求官方优先、超时（4s）自动降级镜像——无需人工指定优先级
+/// - auto（默认）：按 URL 自动分类，镜像候选即时生成并按健康度排序；元数据/清单请求官方优先、
+///   超时（4s）自动降级镜像
 /// - officialOnly / mirrorOnly：单选，只用一个源，不自动回退
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default, ts_rs::TS)]
 #[ts(export_to = "config/")]
@@ -123,8 +121,7 @@ pub enum DownloadSourceMode {
     Auto,
 }
 
-/// 自定义反序列化
-/// 用于 DownloadSourceMode 与 JdkSourceMode，消除两个同构 impl。
+/// 自定义反序列化，供 DownloadSourceMode / JdkSourceMode 复用（消除两个同构 impl）。
 macro_rules! deserialize_mode {
     ($t:ty) => {
         impl<'de> serde::Deserialize<'de> for $t {
@@ -153,9 +150,8 @@ fn default_sources() -> Vec<DownloadSource> {
 #[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[ts(export_to = "config/")]
 pub struct DownloaderConfig {
-    /// 文件源模板（官方 + 镜像）。代码内置，单一事实源见 `downloader/endpoints.rs`；
-    /// **不持久化**：写配置时跳过（Settings.toml 只存模式三态），读配置时忽略旧文件
-    /// 里的 URL 快照（防旧版本残留地址覆盖新版本内置拓扑）。
+    /// 文件源模板（官方 + 镜像）。代码内置、单一事实源见 `downloader/endpoints.rs`；
+    /// **不持久化**：写时跳过，读时忽略旧文件 URL 快照（防旧地址覆盖新版本内置拓扑）。
     #[serde(default = "default_sources", skip_serializing, skip_deserializing)]
     #[ts(skip)]
     pub sources: Vec<DownloadSource>,
@@ -165,12 +161,11 @@ pub struct DownloaderConfig {
     #[serde(default)]
     #[ts(type = "number")]
     pub max_speed: u64,
-    /// 游戏下载源模式（版本列表 / 版本 json / 资源索引与对象 / 支持库 /
-    /// client JAR / ModLoader 构件与安装器 / Mojang JDK runtime 统一走此源）
+    /// 游戏下载源模式（版本列表/json、资源索引与对象、支持库、client JAR、ModLoader 构件与安装器、
+    /// Mojang JDK runtime 统一走此源）
     #[serde(default)]
     pub game_source_mode: DownloadSourceMode,
-    /// 社区下载源模式（Modrinth 官方 API / CDN vs MCIM 国内镜像）。
-    /// 管理 Fabric API 等社区资源：official = Modrinth API + cdn.modrinth.com，
+    /// 社区下载源模式：official = Modrinth API + cdn.modrinth.com；
     /// china = MCIM（mod.mcimirror.top，镜像 Modrinth/CurseForge API 与文件 CDN）。
     #[serde(default)]
     pub community_source_mode: DownloadSourceMode,
@@ -180,8 +175,7 @@ pub struct DownloaderConfig {
     /// 仅前端展示使用（后端仅存储透传；en 模式下搜索命令跳过翻译请求）。
     #[serde(default)]
     pub translate_display: String,
-    /// 社区资源版本列表是否只显示正式版（过滤快照/预发布/候选等非正式版本）。
-    /// 仅前端展示使用，后端仅存储透传。
+    /// 社区版本列表是否只显示正式版（过滤快照/预发布）；仅前端使用，后端存储透传。
     #[serde(default = "default_show_release_only")]
     pub show_release_only: bool,
     /// JDK（managed runtime）下载源模式：auto 智能回退 / officialOnly 仅官方 / mirrorOnly 仅镜像
@@ -190,12 +184,9 @@ pub struct DownloaderConfig {
 }
 
 /// JDK（managed runtime）下载源模式：
-/// - auto（默认）：Mojang 官方 runtime 优先，失败依次回退 Adoptium 与 Azul——
-///   Adoptium 大文件下载 TUNA 清华镜像优先（国内带宽）、404/失败回退官方 link
-/// - officialOnly：仅官方源（Mojang runtime → Azul），不启用国内镜像
-/// - mirrorOnly：仅镜像（Mojang runtime 按文件源模式走镜像 → Adoptium 仅 TUNA
-///   下载候选、官方 link 不参与）。元数据仍走 Adoptium 官方 API：TUNA 只镜像文件、
-///   不提供 checksum，属不可绕过的例外
+/// - auto（默认）：Mojang 官方 runtime 优先，失败依次回退 Adoptium（TUNA 清华镜像优先，404 回退官方 link）与 Azul
+/// - officialOnly：仅官方（Mojang runtime → Azul）；mirrorOnly：仅镜像（Adoptium 仅 TUNA 下载候选）
+/// - 元数据仍走 Adoptium 官方 API——TUNA 只镜像文件、不提供 checksum，属不可绕过的例外
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default, ts_rs::TS)]
 #[ts(export_to = "config/")]
 #[serde(rename_all = "camelCase")]
@@ -233,10 +224,9 @@ impl Default for DownloaderConfig {
 }
 
 impl DownloaderConfig {
-    /// 绝对化的游戏目录。绝对路径原样返回（`set_active` 写入的始终是绝对路径）；
-    /// 相对路径基于 `util::default_game_dir_base()` 解析而非进程 cwd（从任意目录启动
-    /// `./elytra` 时 cwd 不同会解析错位）；无默认基准（macOS/Linux）时退化为配置目录，
-    /// 仅作防御——正常流程下这里拿到的都是绝对路径。
+    /// 绝对化的游戏目录。绝对路径原样返回（`set_active` 写入的总是绝对路径）；
+    /// 相对路径基于 `util::default_game_dir_base()` 而非进程 cwd 解析（避免从任意目录启动时错位）；
+    /// 无默认基准（macOS/Linux）时退化为配置目录（防御）。
     pub fn minecraft_dir_abs(&self) -> std::path::PathBuf {
         let p = std::path::PathBuf::from(&self.minecraft_dir);
         if p.is_absolute() {
@@ -254,8 +244,7 @@ mod tests {
     use super::*;
     use crate::downloader;
 
-    /// 旧配置（preferOfficial/preferChina）反序列化迁移到 Auto；
-    /// 三态正常解析；未知值兜底 Auto。
+    /// 旧配置（preferOfficial/preferChina）迁移到 Auto；三态正常解析；未知值兜底 Auto。
     #[test]
     fn source_mode_legacy_values_migrate_to_auto() {
         fn parse(s: &str) -> DownloadSourceMode {
@@ -276,8 +265,8 @@ mod tests {
         );
     }
 
-    /// 镜像源必须把 ModLoader 官方 maven 重写到 BMCLAPI 镜像，
-    /// 官方源保持原样；未知域名不动。
+    /// 镜像源把 ModLoader 官方 maven 重写到 BMCLAPI；官方源原样；未知域名不动。
+    /// NeoForge 的 `/releases` 段必须去掉（BMCLAPI 的 `/maven` 前缀已指向该仓库根，保留即 404）。
     #[test]
     fn mirror_url_rewrites_modloader_maven_on_china_source() {
         let china = downloader::endpoints::mirror_source();
@@ -285,7 +274,14 @@ mod tests {
             china.mirror_url(
                 "https://maven.neoforged.net/releases/net/neoforged/bus/8.0.5/bus-8.0.5.jar"
             ),
-            "https://bmclapi2.bangbang93.com/maven/releases/net/neoforged/bus/8.0.5/bus-8.0.5.jar"
+            "https://bmclapi2.bangbang93.com/maven/net/neoforged/bus/8.0.5/bus-8.0.5.jar"
+        );
+        // universal / fancymodloader / modlauncher / mergetool 等 18 条只在去段形态下可达
+        assert_eq!(
+            china.mirror_url(
+                "https://maven.neoforged.net/releases/net/neoforged/neoforge/21.1.248/neoforge-21.1.248-universal.jar"
+            ),
+            "https://bmclapi2.bangbang93.com/maven/net/neoforged/neoforge/21.1.248/neoforge-21.1.248-universal.jar"
         );
         assert_eq!(
             china.mirror_url(
@@ -308,8 +304,7 @@ mod tests {
         );
     }
 
-    /// JDK 源模式三态序列化 + 未知值兜底 Auto（与 DownloadSourceMode 同款行为，
-    /// 防手改 TOML 非法值导致整个 downloader section 反序列化失败回默认）。
+    /// JDK 源模式三态序列化 + 未知值兜底 Auto（防手改 TOML 非法值导致 section 反序列化失败回默认）。
     #[test]
     fn jdk_source_mode_parses_and_defaults_to_auto() {
         fn parse(s: &str) -> JdkSourceMode {
@@ -335,8 +330,8 @@ mod tests {
         assert_eq!(cfg.jdk_source_mode, JdkSourceMode::Auto);
     }
 
-    /// sources（URL 模板）永不持久化：旧配置里存的 [[sources]] URL 快照读取时
-    /// 忽略（永远用代码内置模板，防旧地址覆盖新版本拓扑），序列化也不再落盘。
+    /// sources（URL 模板）永不持久化：旧配置里的 [[sources]] URL 快照读取时忽略
+    /// （永远用代码内置模板），序列化也不再落盘。
     #[test]
     fn sources_not_persisted_and_legacy_rows_ignored() {
         let legacy = "concurrency = 64\nminecraft_dir = \".minecraft\"\ngame_source_mode = \"mirrorOnly\"\ncommunity_source_mode = \"mirrorOnly\"\n\n[[sources]]\nname = \"旧快照\"\nmanifest_url = \"https://stale.example.com\"\n";

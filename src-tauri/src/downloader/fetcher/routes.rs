@@ -1,4 +1,4 @@
-//! 自适应路由（#5）：URL 自动分类 + 镜像候选即时生成 + 健康度排序。
+//! 自适应路由：URL 自动分类 + 镜像候选即时生成 + 健康度排序。
 
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
@@ -9,9 +9,8 @@ use crate::config::downloader::{infer_resource_class, DownloadSourceMode, Resour
 use crate::downloader::endpoints::MIRROR_ROUTES;
 use crate::persist::downloader_config;
 
-/// 真镜像源判定（路由排序/镜像候选用，不含"官方 maven 限流"语义）：
-/// 仅 BMCLAPI / MCIM 域。is_mirror_url 承担限流职责（含官方不稳 maven），
-/// 路由的"镜像优先/追加候选"必须只看这里，避免官方 neoforged maven 被误判为镜像。
+/// 真镜像源判定（路由排序/镜像候选用）：仅 BMCLAPI / MCIM 域。
+/// `is_mirror_url` 承担限流职责（含官方不稳 maven），路由的"镜像优先/追加候选"只看这里。
 fn is_mirror_domain(url: &str) -> bool {
     url.contains("bmclapi") || url.contains("mcimirror")
 }
@@ -25,12 +24,16 @@ pub(super) struct DownloadRoute {
 }
 
 /// 为官方 URL 生成镜像候选（无命中返回空）。
+/// 行序即优先级，**命中即止**：路由表里存在同域的更具体条目（如
+/// `maven.neoforged.net/releases` 在其通用条目之前），继续累积会把已知不可达的候选也塞进来
+/// （实测 BMCLAPI 的 `/maven/releases` 形态对 NeoForge 自身构件全是 404）。
 pub(super) fn mirror_candidates(original: &str) -> Vec<String> {
     let mut out = Vec::new();
     for (domain, replacement) in MIRROR_ROUTES {
         if original.contains(domain) {
             let path = original.split(domain).nth(1).unwrap_or("");
             out.push(format!("{replacement}{path}"));
+            break;
         }
     }
     out
@@ -45,7 +48,7 @@ pub(super) struct RouteHealth {
     pub(super) cooldown_until: Option<Instant>,
     /// 成功样本数（无样本 = 冷启动，排序权重最低）。
     pub(super) samples: u32,
-    /// TTFB EWMA（毫秒，α=0.25，计划对齐 Axolotl）。
+    /// TTFB EWMA（毫秒，α=0.25）。
     pub(super) ttfb_ewma_ms: f64,
 }
 
@@ -69,7 +72,7 @@ pub(super) fn route_health(url: &str) -> RouteHealth {
         .unwrap_or_default()
 }
 
-/// 记录成功：清零连续失败与冷却，TTFB EWMA 更新（α=0.25）。
+/// 记录成功：清零连续失败与冷却，TTFB EWMA 更新。
 pub(super) fn record_route_success(url: &str, ttfb_ms: f64) {
     let mut m = route_health_map().lock();
     let h = m.entry(url.to_string()).or_default();
@@ -100,9 +103,8 @@ pub(super) fn source_mode() -> DownloadSourceMode {
     downloader_config().game_source_mode
 }
 
-/// 生成路由序列（fetch_from_sources 入口）：
-/// 原始 URL 列表（去重保序）→ 追加自动镜像候选（列表未含镜像时）→ 排序：
-/// - Loader 类资源镜像前置（mirror_first_loader：Loader 资源永远镜像先行，官方保底）；
+/// 生成路由序列（fetch_from_sources 入口）：去重保序 → 追加自动镜像候选（未含镜像时）→ 排序：
+/// - Loader 类镜像前置（Loader 永远镜像先行，官方保底）；
 /// - Auto 模式按健康度：Loader 镜像优先 → 冷却中 → 连续失败多 → 无样本 → TTFB 升序。
 pub(super) fn resolve_download_routes(
     urls: &[String],
@@ -116,7 +118,7 @@ pub(super) fn resolve_download_routes(
     }
     let first = seen.first().map(String::as_str).unwrap_or("");
     let class = infer_resource_class(first);
-    // 原始列表已含镜像（调用方手工构造的双源）则不重复追加
+    // 原始列表已含镜像（调用方手工双源）则不重复追加
     if !seen.iter().any(|u| is_mirror_domain(u)) {
         for cand in mirror_candidates(first) {
             if !seen.contains(&cand) {
@@ -133,9 +135,8 @@ pub(super) fn resolve_download_routes(
         .collect();
     match mode {
         DownloadSourceMode::Auto => {
-            // 健康度排序（稳定：同键保持原始顺序 = 调用方源顺序）
-            // 键值越小越靠前：非冷却 → Loader 镜像优先 → 失败少 → 有样本 → TTFB 小。
-            // 冷却优先级高于镜像优先：镜像被冷却时排最末（计划："冷却中 → 失败多 → 无样本"）。
+            // 健康度排序（稳定：同键保持原始顺序）：键越小越靠前，非冷却 → Loader 镜像优先 → 失败少 → 有样本 → TTFB 小；
+            // 冷却优先级高于镜像优先（冷却中的镜像排最末）。
             routes.sort_by_key(|r| {
                 let h = route_health(&r.url);
                 let loader_mirror_first =
@@ -152,7 +153,7 @@ pub(super) fn resolve_download_routes(
             });
         }
         DownloadSourceMode::OfficialOnly | DownloadSourceMode::MirrorOnly => {
-            // 单选：保持调用方源顺序（镜像候选由调用方按模式生成，无健康度竞争）
+            // 单选：保持调用方源顺序（镜像候选由调用方生成，无健康度竞争）
         }
     }
     routes
@@ -166,7 +167,7 @@ mod tests {
     };
     use crate::config::downloader::DownloadSourceMode;
 
-    /// 镜像候选生成：mojang/library/loader 域 → BMCLAPI 镜像（单一表在 downloader/model.rs）。
+    /// 镜像候选生成：mojang/library/loader 域 → BMCLAPI 镜像。
     #[test]
     fn mirror_candidates_generate_bmclapi_urls() {
         assert_eq!(
@@ -177,9 +178,10 @@ mod tests {
             mirror_candidates("https://resources.download.minecraft.net/ab/hash"),
             vec!["https://bmclapi2.bangbang93.com/assets/ab/hash"]
         );
+        // NeoForge 官方 URL 带 `/releases`，BMCLAPI 侧必须去掉该段才是可达路径
         assert_eq!(
             mirror_candidates("https://maven.neoforged.net/releases/net/neoforged/x/1.0/x-1.0.jar"),
-            vec!["https://bmclapi2.bangbang93.com/maven/releases/net/neoforged/x/1.0/x-1.0.jar"]
+            vec!["https://bmclapi2.bangbang93.com/maven/net/neoforged/x/1.0/x-1.0.jar"]
         );
         assert_eq!(
             mirror_candidates("https://meta.fabricmc.net/v2/versions/loader/1.20.4"),
@@ -249,13 +251,11 @@ mod tests {
         h = route_health(url);
         assert_eq!(h.failures, 3);
         assert!(h.in_cooldown(), "连续 3 次失败应进入 30s 冷却");
-        // 成功重置失败数并清除冷却
         record_route_success(url, 120.0);
         h = route_health(url);
         assert_eq!(h.failures, 0);
         assert!(!h.in_cooldown());
         assert_eq!(h.samples, 1);
-        // TTFB EWMA 更新（α=0.25）
         record_route_success(url, 200.0);
         h = route_health(url);
         assert!(
