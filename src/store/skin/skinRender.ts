@@ -37,6 +37,8 @@ interface VoxelBox {
   swingY?: number;
   /** 摆动支点（体素坐标，三轴共用）；未给则绕立方体中心。 */
   pivot?: readonly [number, number, number];
+  /** 所属身体部位（供 3D 预览按部位隐藏；披风 / 鞘翅等无此字段 = 不可隐藏）。 */
+  part?: SkinPart;
   /** 用披风贴图而非皮肤贴图绘制（披风是独立的 64×32 纹理，UV 原点同为 (0,0)）。 */
   cape?: boolean;
   /** 交换 z 方向两面的贴图区域。
@@ -190,7 +192,8 @@ function buildPlayer(slim: boolean, legacy: boolean): VoxelBox[] {
     inflate: number,
     mirror = false,
   ): VoxelBox => ({ cx, cy, cz: 0, w, h, d, u: uv[0], v: uv[1], inflate, mirror });
-  return [
+  // 部位标注：数组顺序与部位一一对应（每部位 2 个盒子：本体 + 第二层）
+  const boxes: VoxelBox[] = [
     mk(0, 28, 8, 8, 8, SKIN_UV.head, 0),
     mk(0, 28, 8, 8, 8, SKIN_UV.hat, INFLATE_HEAD),
     mk(0, 18, 8, 12, 4, SKIN_UV.body, 0),
@@ -213,6 +216,15 @@ function buildPlayer(slim: boolean, legacy: boolean): VoxelBox[] {
     mk(2, 6, 4, 12, 4, leftLegUv, 0, legacy),
     mk(2, 6, 4, 12, 4, legacy ? SKIN_UV.rightPants : SKIN_UV.leftPants, INFLATE_LIMB, legacy),
   ];
+  const parts: SkinPart[] = [
+    "head", "head",
+    "body", "body",
+    "rightArm", "rightArm",
+    "leftArm", "leftArm",
+    "rightLeg", "rightLeg",
+    "leftLeg", "leftLeg",
+  ];
+  return boxes.map((b, i) => ({ ...b, part: parts[i] }));
 }
 
 /** 披风：10×16×1 的板，挂在身体背后（z 负向），从肩部垂到小腿。
@@ -374,6 +386,9 @@ interface PaintFace {
   tex?: CanvasImageSource;
 }
 
+/** 身体部位（六大部分，每部分含本体与第二层）：3D 预览可整块隐藏，便于聚焦绘制某一处。 */
+export type SkinPart = "head" | "body" | "rightArm" | "leftArm" | "rightLeg" | "leftLeg";
+
 /** 一次绘制留下的**可拾取面**（按绘制顺序：远 → 近）。
  *  供「3D 直绘」把屏幕点击反查成贴图像素：面在正交投影下是平行四边形，
  *  `m` 就是它「贴图像素 → 画布设备像素」的仿射矩阵，求逆即得反查。 */
@@ -406,6 +421,8 @@ interface PaintOpts {
    *  因此拾取会随平移一起走，不会错位。 */
   offsetX?: number;
   offsetY?: number;
+  /** 隐藏的身体部位（整块不画，同时不进 `hits` —— 隐藏处自然点不到）。 */
+  hiddenParts?: readonly SkinPart[];
   /** 传入则回填本次绘制的可拾取面（清空后按绘制顺序追加），供 3D 直绘反查。 */
   hits?: PickFace[];
 }
@@ -698,14 +715,22 @@ export function drawFullCanvas(
     /** 画面平移量（设备像素，供预览拖动视角用）。 */
     offsetX?: number;
     offsetY?: number;
+    /** 隐藏的身体部位（整块不画；`hits` 同步剔除，隐藏处点不到）。 */
+    hiddenParts?: readonly SkinPart[];
     /** 传入则回填本次绘制的可拾取面（供 3D 直绘反查贴图像素）。 */
     hits?: PickFace[];
   },
 ): boolean {
-  const boxes = buildPlayer(opts.slim, opts.legacy ?? false);
+  let boxes = buildPlayer(opts.slim, opts.legacy ?? false);
   const anim = opts.animation ?? "none";
   const phase = opts.phase ?? 0;
+  // 顺序要紧：applyAnimation 按**固定下标**（[0,1] 头 / [4..7] 臂 / [8..11] 腿）取部位，
+  // 所以必须在按部位过滤**之前**应用动画——否则下标前移，剩余肢体会被套上别处的姿态。
   applyAnimation(boxes, anim, phase);
+  const hidden = opts.hiddenParts;
+  if (hidden && hidden.length) {
+    boxes = boxes.filter((b) => !b.part || !hidden.includes(b.part));
+  }
   // 披风/鞘翅追加在四肢之后：applyAnimation 按固定下标 [4..11] 取四肢，追加不影响；
   // 但它们自己的摆动要单独给（下标方案覆盖不到）
   if (opts.capeTex) {
@@ -727,6 +752,7 @@ export function drawFullCanvas(
     capeTex: opts.capeTex,
     offsetX: opts.offsetX,
     offsetY: opts.offsetY,
+    hiddenParts: opts.hiddenParts,
     hits: opts.hits,
   });
 }

@@ -15,6 +15,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import {
   DEFAULT_VIEW_PITCH, DEFAULT_VIEW_YAW, drawFullCanvas,
 } from "../../store/skin/skinRender";
+import type { SkinPart } from "../../store/skin/skinRender";
 import type { Animation, PickFace } from "../../store/skin/skinRender";
 import {
   EDITOR_REGIONS, SKIN_SIZE, beginStroke, editorPixels, endStroke, exportEditorPng,
@@ -103,6 +104,8 @@ const preview = reactive({
   /** 画面平移量（设备像素）：左键拖动视角的结果，重置视角时归零。 */
   offsetX: 0,
   offsetY: 0,
+  /** 被隐藏的身体部位（画某一处时可把挡住视线的其他部分整块藏起来）。 */
+  hiddenParts: [] as SkinPart[],
   animation: "none" as Animation,
 });
 
@@ -319,6 +322,7 @@ function drawPreview() {
     fill: 0.9 * preview.zoom,
     offsetX: preview.offsetX,
     offsetY: preview.offsetY,
+    hiddenParts: preview.hiddenParts,
     hits: previewHits,
   });
   // 相机或模型变了：悬停像素要按新矩阵重算，否则光标停在旧位置
@@ -429,6 +433,40 @@ function zoomAt(px: number, py: number, factor: number) {
   view.x = px - skinX * next;
   view.y = py - skinY * next;
   drawEditor();
+}
+
+/** 可单独隐藏的身体部位（与渲染器的 SkinPart 一一对应；配色沿用展开图的区域标注）。 */
+const PART_OPTIONS: { key: SkinPart; label: string; color: string }[] = [
+  { key: "head", label: "头", color: "#f59e0b" },
+  { key: "body", label: "身体", color: "#4f8ef7" },
+  { key: "rightArm", label: "右臂", color: "#10b981" },
+  { key: "leftArm", label: "左臂", color: "#8b5cf6" },
+  { key: "rightLeg", label: "右腿", color: "#ef4444" },
+  { key: "leftLeg", label: "左腿", color: "#ec4899" },
+];
+
+/** 切换部位显示；`alt` = 只看该部位（再按一次恢复全部）。
+ *  隐藏的盒子同时不进可拾取面，所以隐藏处不会被误画到。 */
+function togglePart(part: SkinPart, alt: boolean) {
+  const all = PART_OPTIONS.map((p) => p.key);
+  const others = all.filter((k) => k !== part);
+  if (alt) {
+    const soloed =
+      preview.hiddenParts.length === others.length &&
+      others.every((k) => preview.hiddenParts.includes(k));
+    preview.hiddenParts = soloed ? [] : others;
+  } else {
+    const idx = preview.hiddenParts.indexOf(part);
+    if (idx >= 0) preview.hiddenParts.splice(idx, 1);
+    else preview.hiddenParts.push(part);
+  }
+  drawPreview();
+}
+
+/** 显示全部部位。 */
+function showAllParts() {
+  preview.hiddenParts = [];
+  drawPreview();
 }
 
 /** 重置 3D 预览相机（视角 / 缩放 / 平移）——拖动视角后可能需要一键回到默认构图。 */
@@ -943,16 +981,46 @@ watch(mode, () => {
           <canvas ref="cursorCanvas" class="pp-cursor" />
         </div>
 
-        <div class="pp-anim">
-          <button
-            v-for="a in ANIM_OPTIONS"
-            :key="a.value"
-            class="pp-anim-btn"
-            :class="{ on: preview.animation === a.value }"
-            @click="preview.animation = a.value"
-          >
-            {{ a.label }}
-          </button>
+        <!-- 右侧控件列（3D 下与预览并排，避免占据高度压缩预览） -->
+        <div class="pp-ctl-col">
+          <div class="pp-anim">
+            <button
+              v-for="a in ANIM_OPTIONS"
+              :key="a.value"
+              class="pp-anim-btn"
+              :class="{ on: preview.animation === a.value }"
+              @click="preview.animation = a.value"
+            >
+              {{ a.label }}
+            </button>
+          </div>
+
+          <!-- 部位显示开关（仅 3D）：画某一处时把挡住视线的其他部分藏起来 -->
+          <div v-if="mode === '3d'" class="pp-parts">
+            <div class="pp-parts-hd">
+              <span>显示部位</span>
+              <button
+                class="pp-parts-all"
+                :disabled="!preview.hiddenParts.length"
+                @click="showAllParts"
+              >
+                全部
+              </button>
+            </div>
+            <div class="pp-parts-grid">
+              <button
+                v-for="p in PART_OPTIONS"
+                :key="p.key"
+                class="pp-part"
+                :class="{ off: preview.hiddenParts.includes(p.key) }"
+                v-tooltip="`${p.label}（Alt+点击 = 只看此处）`"
+                @click="togglePart(p.key, $event.altKey)"
+              >
+                <span class="pp-part-dot" :style="{ background: p.color }" />
+                <span class="pp-part-label">{{ p.label }}</span>
+              </button>
+            </div>
+          </div>
         </div>
       </aside>
     </div>
@@ -1237,10 +1305,37 @@ watch(mode, () => {
   gap: 8px;
 }
 
+/* 控件列：2D 下在预览框下方竖排；3D 下改到预览框右侧（见 .mode-3d 覆盖），
+ *  这样既不吃预览高度，也不会把控件横向拉得过宽。 */
+.pp-ctl-col {
+  flex: none;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 /* 3D 直绘：预览顶替画布成为主画面（视口已 v-show 隐藏，右栏直接占满余下宽度）。
  *  展开图模式下 210px 宽的原尺寸点不准单个像素，3D 模式必须给它整个中栏。 */
 .mode-3d .pp-side {
   flex: 1 1 auto;
+  flex-direction: row;
+  align-items: stretch;
+}
+
+/* 3D：控件列挤到右侧窄栏（内容多时自身滚动，不挤压预览） */
+.mode-3d .pp-ctl-col {
+  flex: 0 0 118px;
+  overflow-y: auto;
+}
+
+/* 窄栏里动画按钮竖排，避免三个按钮平分 118px 而挤成一团 */
+.mode-3d .pp-anim {
+  flex-direction: column;
+  align-items: stretch;
+}
+.mode-3d .pp-anim-btn {
+  flex: none;
 }
 
 .pp-preview-box {
@@ -1274,6 +1369,72 @@ watch(mode, () => {
 
 .pp-cursor {
   pointer-events: none;
+}
+
+/* 部位显示开关：两列小按钮，隐藏的变暗划掉 */
+.pp-parts {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--surface-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+}
+.pp-parts-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+}
+.pp-parts-all {
+  padding: 1px 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.pp-parts-all:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.pp-parts-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pp-part {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 6px;
+  font-size: 11.5px;
+  color: var(--text-primary);
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.pp-part.off {
+  opacity: 0.4;
+}
+.pp-part.off .pp-part-label {
+  text-decoration: line-through;
+}
+.pp-part-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+.pp-part-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pp-anim {
