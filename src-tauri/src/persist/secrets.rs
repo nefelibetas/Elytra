@@ -19,12 +19,8 @@ fn secrets_path() -> PathBuf {
 /// 串行化读写（与 persist 的 PERSIST_LOCK 同语义，避免并发覆盖）。
 static SECRETS_LOCK: Mutex<()> = Mutex::new(());
 
-/// 写入一条敏感数据（key → DPAPI 加密字节）。空值删除条目。
-pub fn save_secret(key: &str, value: &[u8]) -> Result<(), String> {
-    if value.is_empty() {
-        return remove_secret(key);
-    }
-    let _guard = SECRETS_LOCK.lock();
+/// 锁内版本（调用方已持 `SECRETS_LOCK`）。
+fn save_secret_locked(key: &str, value: &[u8]) -> Result<(), String> {
     let encrypted = encrypt_bytes(value)?;
     let b64 = engine::general_purpose::STANDARD.encode(&encrypted);
     let mut map = load_map();
@@ -41,8 +37,8 @@ pub fn read_secret(key: &str) -> Option<Vec<u8>> {
     decrypt_bytes(&encrypted).ok()
 }
 
-pub fn remove_secret(key: &str) -> Result<(), String> {
-    let _guard = SECRETS_LOCK.lock();
+/// 锁内版本（调用方已持 `SECRETS_LOCK`）。
+fn remove_secret_locked(key: &str) -> Result<(), String> {
     let mut map = load_map();
     if map.remove(key).is_some() {
         write_map(&map)
@@ -58,13 +54,32 @@ pub fn read_json_list<T: serde::de::DeserializeOwned>(key: &str) -> Vec<T> {
         .unwrap_or_default()
 }
 
-/// 保存 JSON 列表到加密存储；空列表删除条目（语义：清空即无记录）。
-pub fn save_json_list<T: serde::Serialize>(key: &str, list: &[T]) -> Result<(), String> {
+/// 对某个键做**原子**「读-改-写」（整段持锁）。
+///
+/// `read_json_list` / `save_json_list` 各自加锁，两次调用之间是竞争窗口：并发操作
+/// （如「静默刷新后 save」与「登录/删除账号的 save」重叠）会让后写者用**旧列表**整体
+/// 覆盖，表现为「新登录的账号重启后消失」或「已删账号复活（连同其 refresh_token）」。
+/// 凡是「读列表 → 改列表 → 存回」的调用一律走这里。
+pub fn update_json_list<T, F, R>(key: &str, f: F) -> Result<R, String>
+where
+    T: serde::Serialize + serde::de::DeserializeOwned,
+    F: FnOnce(&mut Vec<T>) -> Result<R, String>,
+{
+    let _guard = SECRETS_LOCK.lock();
+    let mut list: Vec<T> = load_map()
+        .get(key)
+        .and_then(|b64| engine::general_purpose::STANDARD.decode(b64).ok())
+        .and_then(|enc| decrypt_bytes(&enc).ok())
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default();
+    let out = f(&mut list)?;
     if list.is_empty() {
-        return remove_secret(key);
+        remove_secret_locked(key)?;
+    } else {
+        let bytes = serde_json::to_vec(&list).map_err(common_err_ctx!("序列化数据失败"))?;
+        save_secret_locked(key, &bytes)?;
     }
-    let bytes = serde_json::to_vec(list).map_err(common_err_ctx!("序列化数据失败"))?;
-    save_secret(key, &bytes)
+    Ok(out)
 }
 
 fn load_map() -> std::collections::HashMap<String, String> {
@@ -72,7 +87,20 @@ fn load_map() -> std::collections::HashMap<String, String> {
     let Ok(content) = std::fs::read_to_string(&path) else {
         return std::collections::HashMap::new();
     };
-    serde_json::from_str(&content).unwrap_or_default()
+    match serde_json::from_str(&content) {
+        Ok(map) => map,
+        Err(e) => {
+            // 解析失败**不能**静默当空表：下一次写入会用空表覆盖整个文件，凭据彻底丢失。
+            // 先把损坏文件挪成 .bak 留证据（与 Settings.toml 的损坏恢复同思路）。
+            let bak = path.with_extension("bin.bak");
+            let _ = std::fs::rename(&path, &bak);
+            eprintln!(
+                "[secrets] secrets.bin 解析失败，已备份为 {}：{e}",
+                bak.display()
+            );
+            std::collections::HashMap::new()
+        }
+    }
 }
 
 fn write_map(map: &std::collections::HashMap<String, String>) -> Result<(), String> {
@@ -81,14 +109,23 @@ fn write_map(map: &std::collections::HashMap<String, String>) -> Result<(), Stri
         std::fs::create_dir_all(parent).map_err(common_err_ctx!("创建配置目录失败"))?;
     }
     let content = serde_json::to_string(map).map_err(common_err_ctx!("序列化 secrets 失败"))?;
+    // 原子写：先写 .tmp 再 rename（与 Settings.toml 的 store::write_raw 同构）。
+    // 直接 fs::write 会在中途崩溃/断电时留下半截 JSON，而解析失败等于凭据全丢
+    // （表现为「账号与皮肤收藏一次性全没了」）。
+    let tmp = path.with_extension("bin.tmp");
+    std::fs::write(&tmp, content).map_err(common_err_ctx!("写入 secrets 失败"))?;
+    // 权限必须落在**已存在**的 tmp 上：旧实现先 chmod 后 write，首次写入时目标还不存在
+    // （ENOENT 被吞成日志），文件按 umask 落成 0644 —— 在「钥匙串不可用 → 明文降级」
+    // 路径下，同机其他本地用户可直接读到 token。chmod 失败按写入失败上抛。
     #[cfg(not(target_os = "windows"))]
     {
-        if let Err(e) = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)) {
-            // 密钥文件权限未生效是安全问题，必须留痕
-            eprintln!("[secrets] 密钥文件权限设置失败（应为 0o600）: {e}");
-        }
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
+            .map_err(common_err_ctx!("设置密钥文件权限失败"))?;
     }
-    std::fs::write(&path, content).map_err(common_err_ctx!("写入 secrets 失败"))
+    std::fs::rename(&tmp, &path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("写入 secrets 失败\n{e}")
+    })
 }
 
 /// 加密（Windows DPAPI / Linux-macOS 钥匙串主密钥 ChaCha20 / 钥匙串不可用降级明文）。
@@ -474,21 +511,29 @@ mod tests {
     use super::*;
 
     /// 清理测试 key（避免污染其他测试/真实数据）。
+    /// 走与生产一致的原子写入口：清空列表即删除条目。
     fn cleanup(key: &str) {
-        let _ = remove_secret(key);
-        // 恢复锁后清理文件级残留
+        let _ = update_json_list::<String, _, ()>(key, |list| {
+            list.clear();
+            Ok(())
+        });
     }
 
     #[test]
-    fn secret_roundtrip_and_remove() {
+    fn json_list_roundtrip_and_remove() {
         let key = format!("test_secret_{}", std::process::id());
         cleanup(&key);
-        assert!(read_secret(&key).is_none(), "未写入时不应命中");
-        save_secret(&key, b"sensitive-token-123").expect("写入应成功");
+        assert!(read_json_list::<String>(&key).is_empty(), "未写入时不应命中");
+
+        update_json_list::<String, _, ()>(&key, |list| {
+            list.push("sensitive-token-123".to_string());
+            Ok(())
+        })
+        .expect("写入应成功");
         assert_eq!(
-            read_secret(&key).as_deref(),
-            Some(&b"sensitive-token-123"[..]),
-            "读取应还原原始字节"
+            read_json_list::<String>(&key),
+            vec!["sensitive-token-123".to_string()],
+            "读取应还原列表"
         );
         // 文件内容不得出现明文（Windows DPAPI 密文；非 Windows 也独立于 TOML）
         if let Ok(content) = std::fs::read_to_string(secrets_path()) {
@@ -497,18 +542,14 @@ mod tests {
                 "secrets.bin 不应含明文 token"
             );
         }
-        remove_secret(&key).expect("删除应成功");
-        assert!(read_secret(&key).is_none(), "删除后不应命中");
-    }
 
-    /// 空值 = 删除语义（save_secret 空 slice 等价 remove）。
-    #[test]
-    fn empty_value_removes_entry() {
-        let key = format!("test_secret_empty_{}", std::process::id());
-        cleanup(&key);
-        save_secret(&key, b"v").unwrap();
-        save_secret(&key, b"").unwrap();
-        assert!(read_secret(&key).is_none());
+        // 清空 = 删除语义（条目不再命中）
+        update_json_list::<String, _, ()>(&key, |list| {
+            list.clear();
+            Ok(())
+        })
+        .expect("清空应成功");
+        assert!(read_json_list::<String>(&key).is_empty(), "清空后不应命中");
     }
 
     /// Windows DPAPI roundtrip（当前用户上下文）。

@@ -75,31 +75,43 @@ pub fn read() -> Option<ExternalAccount> {
 
 /// 保存第三方账号：按 uuid 去重（同服务器下 uuid 唯一）并置为当前。
 pub fn save(account: &ExternalAccount) -> Result<(), String> {
-    let mut list = read_all();
-    list.retain(|a| !(a.uuid == account.uuid && a.api_url == account.api_url));
-    list.push(account.clone());
-    persist::secrets::save_json_list(constants::SECT_EXTERNAL_ACCOUNTS, &list)
+    let account = account.clone();
+    persist::secrets::update_json_list(
+        constants::SECT_EXTERNAL_ACCOUNTS,
+        move |list: &mut Vec<ExternalAccount>| {
+            list.retain(|a| !(a.uuid == account.uuid && a.api_url == account.api_url));
+            list.push(account);
+            Ok(())
+        },
+    )
 }
 
 /// 切换当前账号：从列表移除再重加（置末尾 = 启用）。
 pub fn switch(api_url: &str, uuid: &str) -> Result<(), String> {
-    let mut list = read_all();
-    let Some(idx) = list
-        .iter()
-        .position(|a| a.api_url == api_url && a.uuid == uuid)
-    else {
-        bail!("账号不存在\n{api_url} {uuid}");
-    };
-    let acc = list.remove(idx);
-    list.push(acc);
-    persist::secrets::save_json_list(constants::SECT_EXTERNAL_ACCOUNTS, &list)
+    let (api, id) = (api_url.to_string(), uuid.to_string());
+    persist::secrets::update_json_list(
+        constants::SECT_EXTERNAL_ACCOUNTS,
+        move |list: &mut Vec<ExternalAccount>| {
+            let Some(idx) = list.iter().position(|a| a.api_url == api && a.uuid == id) else {
+                bail!("账号不存在\n{api} {id}");
+            };
+            let acc = list.remove(idx);
+            list.push(acc);
+            Ok(())
+        },
+    )
 }
 
 /// 移除指定账号（api_url + uuid 定位）。列表清空时删除存储键。
 pub fn remove(api_url: &str, uuid: &str) -> Result<(), String> {
-    let mut list = read_all();
-    list.retain(|a| !(a.api_url == api_url && a.uuid == uuid));
-    persist::secrets::save_json_list(constants::SECT_EXTERNAL_ACCOUNTS, &list)
+    let (api, id) = (api_url.to_string(), uuid.to_string());
+    persist::secrets::update_json_list(
+        constants::SECT_EXTERNAL_ACCOUNTS,
+        move |list: &mut Vec<ExternalAccount>| {
+            list.retain(|a| !(a.api_url == api && a.uuid == id));
+            Ok(())
+        },
+    )
 }
 
 /// 登录：POST {api}/authserver/authenticate（Yggdrasil 协议）→ accessToken + profile。
@@ -207,7 +219,7 @@ pub async fn login(
 /// 刷新账号：refresh（accessToken + clientToken）→ 新 token + 最新角色列表。
 /// 覆盖极端场景：皮肤站增删角色（availableProfiles 变化）、当前角色被删/改名（selectedProfile 变化）。
 pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccount, String> {
-    let mut list = read_all();
+    let list = read_all();
     let Some(idx) = list
         .iter()
         .position(|a| a.api_url == api_url && a.uuid == uuid)
@@ -285,17 +297,30 @@ pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccoun
             }
         });
     // 当前角色（selectedProfile；可能被删/改名 → 同步）
-    if let Some(sp) = json.get("selectedProfile").filter(|p| !p.is_null()) {
-        if let (Some(id), Some(name)) = (sp["id"].as_str(), sp["name"].as_str()) {
-            list[idx].uuid = id.to_string();
-            list[idx].name = name.to_string();
-        }
-    }
-    list[idx].access_token = new_token;
-    list[idx].profiles = profiles;
-    let updated = list.remove(idx);
-    list.push(updated.clone());
-    persist::secrets::save_json_list(constants::SECT_EXTERNAL_ACCOUNTS, &list)?;
+    let selected = json
+        .get("selectedProfile")
+        .filter(|p| !p.is_null())
+        .and_then(|sp| Some((sp["id"].as_str()?.to_string(), sp["name"].as_str()?.to_string())));
+    // 落盘改为原子读-改-写：上面那段网络 await 期间账号列表可能已被其它操作改动
+    // （登录 / 切换 / 删除），用当时的快照整体写回会把那些改动一起丢掉。
+    let (api, id) = (api_url.to_string(), uuid.to_string());
+    let updated = persist::secrets::update_json_list(
+        constants::SECT_EXTERNAL_ACCOUNTS,
+        move |list: &mut Vec<ExternalAccount>| {
+            let Some(idx) = list.iter().position(|a| a.api_url == api && a.uuid == id) else {
+                return Err("账号已不存在（可能已被移除）".to_string());
+            };
+            if let Some((new_id, new_name)) = &selected {
+                list[idx].uuid = new_id.clone();
+                list[idx].name = new_name.clone();
+            }
+            list[idx].access_token = new_token;
+            list[idx].profiles = profiles;
+            let acc = list.remove(idx);
+            list.push(acc.clone());
+            Ok(acc)
+        },
+    )?;
     Ok(updated)
 }
 
@@ -307,7 +332,7 @@ pub async fn switch_role(
     profile_id: &str,
     profile_name: &str,
 ) -> Result<ExternalAccount, String> {
-    let mut list = read_all();
+    let list = read_all();
     let Some(idx) = list
         .iter()
         .position(|a| a.api_url == api_url && a.uuid == uuid)
@@ -351,14 +376,24 @@ pub async fn switch_role(
         .as_str()
         .ok_or("切换响应缺少 accessToken")?
         .to_string();
-    // 更新账号：新角色 + 新 token
-    list[idx].uuid = profile_id.to_string();
-    list[idx].name = profile_name.to_string();
-    list[idx].access_token = new_token;
-    // 保持启用（置末尾）
-    let updated = list.remove(idx);
-    list.push(updated.clone());
-    persist::secrets::save_json_list(constants::SECT_EXTERNAL_ACCOUNTS, &list)?;
+    // 更新账号（新角色 + 新 token）并保持启用（置末尾）。同样走原子读-改-写，
+    // 避免网络 await 期间的并发改动被陈旧快照覆盖。
+    let (api, id) = (api_url.to_string(), uuid.to_string());
+    let (new_uuid, new_name) = (profile_id.to_string(), profile_name.to_string());
+    let updated = persist::secrets::update_json_list(
+        constants::SECT_EXTERNAL_ACCOUNTS,
+        move |list: &mut Vec<ExternalAccount>| {
+            let Some(idx) = list.iter().position(|a| a.api_url == api && a.uuid == id) else {
+                return Err("账号已不存在（可能已被移除）".to_string());
+            };
+            list[idx].uuid = new_uuid;
+            list[idx].name = new_name;
+            list[idx].access_token = new_token;
+            let acc = list.remove(idx);
+            list.push(acc.clone());
+            Ok(acc)
+        },
+    )?;
     Ok(updated)
 }
 
@@ -564,7 +599,11 @@ mod tests {
     }
 
     fn cleanup() {
-        persist::secrets::remove_secret(constants::SECT_EXTERNAL_ACCOUNTS).ok();
+        persist::secrets::update_json_list::<ExternalAccount, _, ()>(constants::SECT_EXTERNAL_ACCOUNTS, |list| {
+            list.clear();
+            Ok(())
+        })
+        .ok();
     }
 
     /// 多账号：同服务器同 uuid upsert；不同服务器同 uuid 并存（不同站可同角色）。
