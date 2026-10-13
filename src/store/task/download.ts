@@ -187,6 +187,9 @@ export const dlState = reactive({
   },
 
   async cancelTask(taskId: string) {
+    // 主动取消即终态：先标 terminal，防迟到的 running 事件让已移除卡片"幽灵复活"，
+    // 也保证后端收尾 emit 的 cancelled 事件不重建卡片
+    terminalTaskIds.add(taskId)
     await invoke("cancel_task", { taskId })
     // 用户主动取消：终态不走 done 分发，钩子就地清除防泄漏
     taskDoneHooks.delete(taskId)
@@ -269,7 +272,18 @@ export function ensureListen() {
         taskDoneHooks.delete(p.task_id);
         return
       }
+      // 暂停任务的后端收尾会 emit cancelled 事件，必须忽略以保留 paused 卡片（见 pauseTask）
       if (p.status === "cancelled" && dlState.tasks[idx].status === "paused") return
+      if (p.status === "cancelled") {
+        // 用户取消（含挂起弹窗"取消任务"）：与 done/error 一致走终态清理，否则卡片停留
+        // cancelled 且无任何操作入口（僵尸卡片，重启前一直残留）
+        terminalTaskIds.add(p.task_id)
+        taskNames.delete(p.task_id)
+        versionTargets.delete(p.task_id)
+        taskDoneHooks.delete(p.task_id)
+        dlState.removeTask(p.task_id)
+        return
+      }
       dlState.tasks[idx].name = p.name
       dlState.tasks[idx].status = p.status as TaskItem["status"]
       dlState.tasks[idx].progress = p.progress

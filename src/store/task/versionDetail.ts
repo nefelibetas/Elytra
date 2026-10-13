@@ -178,6 +178,8 @@ export const modsNetworkError = ref(false);
 export const modsLoadedFor = ref("");
 /** 正在加载的版本名（防并发重入：onMounted 与手动刷新可能同时触发）。 */
 const modsLoadingFor = ref("");
+/** 重入期间到来的强制刷新（deleteMod/toggleMod 的 reset）待补跑标记：见 loadMods。 */
+let modsPendingReset = false;
 /**
  * mods 目录本地快速扫描（.jar 文件，纯 read_dir 无网络）——侧边 Mod 图标显示判定用，
  * 避免等待 list_mods_detailed 的 Modrinth 元数据网络查询（1s+）导致图标延迟。
@@ -236,8 +238,13 @@ export async function identifyModFile(versionName: string, fileName: string) {
  *  不用等全部识别完）；全部完成后标记已加载。
  *  @param reset 为 true 时强制重建本地预览并重新识别（刷新用，忽略 loadedFor 缓存）。 */
 export async function loadMods(versionName: string, reset = false) {
-  // 同版本已在加载（onMounted 与刷新并发）：跳过本次，由在途流程负责最终状态
-  if (modsLoadingFor.value === versionName) return;
+  // 同版本已在加载（onMounted 与刷新并发）：跳过本次，由在途流程负责最终状态。
+  // 但 reset（deleteMod/toggleMod 的强制刷新）不能在途丢弃——记下待补跑标记，
+  // 由在途流程 finally 补一次 reset，否则被删/禁用的 mod 仍留在列表上。
+  if (modsLoadingFor.value === versionName) {
+    if (reset) modsPendingReset = true;
+    return;
+  }
   modsLoadingFor.value = versionName;
   modsLoading.value = true;
   modsError.value = "";
@@ -261,6 +268,11 @@ export async function loadMods(versionName: string, reset = false) {
   } finally {
     modsLoading.value = false;
     modsLoadingFor.value = "";
+    // 在途期间到来的强制刷新：补跑一次（本地重扫 + 重新识别），使删除/禁用立即反映
+    if (modsPendingReset) {
+      modsPendingReset = false;
+      void loadMods(versionName, true);
+    }
   }
 }
 
@@ -471,6 +483,7 @@ export function resetVersionDetail() {
   modsNetworkError.value = false;
   modsLoadedFor.value = "";
   modsLoadingFor.value = "";
+  modsPendingReset = false;
   modsQuick.value = [];
   // 三类资源目录统一重置（loading 保持原样不清）
   for (const k of RESOURCE_KINDS) {

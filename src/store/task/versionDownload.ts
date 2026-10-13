@@ -51,9 +51,19 @@ let cachedManifest: VersionManifest | null = null;
 // 更早版本条目被淘汰后重新选择会照常重取（selectVersion 对缺失键重新请求）。
 const loaderDataCache = createBoundedCache<string[]>(64);
 
+// 在途请求键集合（key `${loader}_${mcVersion}`）：去重必须按 MC 版本维度。
+// 旧实现按 loader 名去重（loaderLoading[ld]）：A 版本请求在途时切到 B 选同一 loader，
+// B 的请求被直接 return，B 的键永不写入 loaderDataCache（loader 卡片恒显示「无」）。
+const loaderInflight = new Set<string>();
+
 // Fabric API 版本列表缓存（key mcVersion）：条目含下载 URL（每条 10 个量级）。
 // 换版本且选了 Fabric 时整体清空（见下方 watch），上限 8 仅为兜底。
 const fabricApiDataCache = createBoundedCache<FabricApiVer[]>(8);
+
+// Fabric API 在途请求键集合（按 MC 版本维度去重）：旧实现用单个布尔 fabricApiLoading
+// 去重，A 版本在途时切到 B 会吞掉 B 的请求（B 无数据），且 A 迟到的响应会把 A 的
+// fabric-api 版本回填进 B 的选择（版本不匹配）。
+const fabricApiInflight = new Set<string>();
 
 export const loaderIcon: Record<string, string> = Object.fromEntries(
   CATEGORIES.filter(c => c.key !== "vanilla").map(c => [c.key, c.icon]),
@@ -214,8 +224,10 @@ export const vdState = reactive({
   async fetchLoaderVersions(ld: string, mcVersion: string) {
     const key = `${ld}_${mcVersion}`;
     if (loaderDataCache.record[key]) return;
-    if (this.loaderLoading[ld]) return;
+    // 去重键含 MC 版本：A 版本在途时切到 B 不得吞掉 B 的请求（否则 B 键永不写入）
+    if (loaderInflight.has(key)) return;
 
+    loaderInflight.add(key);
     this.loaderLoading[ld] = true;
     const cmdName = ({
       forge: "get_forge_versions",
@@ -230,6 +242,7 @@ export const vdState = reactive({
     } catch {
       loaderDataCache.put(key, []);
     } finally {
+      loaderInflight.delete(key);
       this.loaderLoading[ld] = false;
     }
   },
@@ -241,17 +254,26 @@ export const vdState = reactive({
   // ── Fabric API ──
   async fetchFabricApi(mcVer: string) {
     if (fabricApiDataCache.record[mcVer]) return;
-    if (this.fabricApiLoading) return;
+    // 去重键为 MC 版本：切版本后 B 的请求不得被 A 的在途请求吞掉
+    if (fabricApiInflight.has(mcVer)) return;
+    fabricApiInflight.add(mcVer);
     this.fabricApiLoading = true;
     try {
       const versions = await invoke<FabricApiVer[]>("get_fabric_api_versions", { mcVersion: mcVer });
       fabricApiDataCache.put(mcVer, versions);
-      if (versions.length > 0 && !this.selectedLoaderVersions["fabric-api"]) {
+      // 回填自动选择前校验当前选中版本仍为请求的 MC 版本：版本切换后迟到的响应
+      // 不得把 A 的 fabric-api 版本写进 B 的选择（否则装进 B 实例的 api 与 MC 不匹配）
+      if (
+        versions.length > 0 &&
+        !this.selectedLoaderVersions["fabric-api"] &&
+        this.selectedVersion?.id === mcVer
+      ) {
         this.selectedLoaderVersions["fabric-api"] = versions[0].version;
       }
     } catch {
       fabricApiDataCache.put(mcVer, []);
     } finally {
+      fabricApiInflight.delete(mcVer);
       this.fabricApiLoading = false;
     }
   },
