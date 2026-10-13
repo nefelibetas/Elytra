@@ -137,7 +137,7 @@ async function exportModpack() {
   background: var(--surface-card);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
-  max-width: 560px;
+  max-width: 640px;
 }
 
 .setup-card + .setup-card {

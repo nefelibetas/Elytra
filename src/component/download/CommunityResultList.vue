@@ -161,8 +161,17 @@ const props = withDefaults(
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-/* 底部栏：分页器居中，结果计数绝对定位最右侧 */
-.cs-footer { position: relative; padding: 6px 16px 14px; }
+/* 底部栏：分页器居中，结果计数固定最右侧。
+ *  min-height 不能省：只有计数没有分页器时（结果不足一页）footer 会塌陷到纯 padding，
+ *  绝对定位的计数就会紧贴最后一个条目，看起来像列表项而不是卡片右下角。 */
+.cs-footer {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 46px;
+  padding: 6px 16px 14px;
+}
 .cs-pager { display: flex; align-items: center; justify-content: center; gap: 12px; }
 .cs-result-count {
   position: absolute; right: 16px; top: 50%; transform: translateY(-50%);

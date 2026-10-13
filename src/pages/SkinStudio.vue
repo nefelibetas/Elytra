@@ -510,10 +510,10 @@ function savePickedSkin() {
 
         <!-- 皮肤 tab：3D 侧视缩略图网格（3 列 × 2 行，超出滚动；末尾一格为上传卡片） -->
         <div v-if="skinStudio.tab === 'skins'" class="panel-body">
-          <!-- 刷新态：整个右侧只显示刷新中，不与旧列表共存 -->
-          <div v-if="skinStudio.phase === 'loading'" class="panel-loading">
-            <LoadingSpinner text="正在获取皮肤与披风…" />
-          </div>
+          <!-- 刷新态：整个右侧只显示刷新中，不与旧列表共存。
+               注意别再包一层容器：LoadingSpinner 自身就是「占满父容器完全居中」
+               （height:100%），多包一层会把 100% 截断成包裹层高度，环形只在那层里居中而整体偏上。 -->
+          <LoadingSpinner v-if="skinStudio.phase === 'loading'" text="正在获取皮肤与披风…" />
           <template v-else>
           <div class="grid skins">
             <div
@@ -565,9 +565,10 @@ function savePickedSkin() {
 
         <!-- 披风 tab -->
         <div v-else class="panel-body">
-          <div v-if="skinStudio.premium && skinStudio.phase === 'loading'" class="panel-loading">
-            <LoadingSpinner text="正在获取披风…" />
-          </div>
+          <LoadingSpinner
+            v-if="skinStudio.premium && skinStudio.phase === 'loading'"
+            text="正在获取披风…"
+          />
           <template v-else-if="skinStudio.premium">
             <div class="grid">
               <div
@@ -644,13 +645,6 @@ function savePickedSkin() {
 </template>
 
 <style scoped>
-/* 刷新态：占满面板主体并居中（刷新时右侧不残留旧列表） */
-.panel-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 180px;
-}
 .studio {
   display: flex;
   height: 100%;
