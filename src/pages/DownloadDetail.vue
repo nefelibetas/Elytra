@@ -155,18 +155,22 @@ async function handleDismissPaused(task: TaskItem) {
             {{ errMsg(task.error) }}
           </div>
 
-          <div class="tc-steps">
-            <div v-for="st in visibleSteps(task)" :key="st.name" class="tc-step">
-              <span class="tc-st-icon" :class="st.status">
-                <Check v-if="st.status === 'done'" :size="10" :stroke-width="2" />
-                <LoaderCircle v-else-if="st.status === 'running'" class="tc-spin" :size="10" :stroke-width="2" />
-                <span v-else class="tc-dot"></span>
-              </span>
-              <span class="tc-st-name">{{ st.name }}</span>
-              <div v-if="st.status === 'running'" class="tc-st-bar">
-                <div class="tc-st-bar-fill" :style="{ width: st.progress + '%' }"></div>
+          <div class="tc-steps-wrap">
+            <!-- 展开态：步骤列表在卡片内滚动（.scroll），收起按钮因此恒定可见；
+                 此前按钮是列表末项，展开几十步后必须滚到卡片最底下才能收起 -->
+            <div class="tc-steps" :class="{ scroll: expandedSteps.has(task.taskId) }">
+              <div v-for="st in visibleSteps(task)" :key="st.name" class="tc-step">
+                <span class="tc-st-icon" :class="st.status">
+                  <Check v-if="st.status === 'done'" :size="10" :stroke-width="2" />
+                  <LoaderCircle v-else-if="st.status === 'running'" class="tc-spin" :size="10" :stroke-width="2" />
+                  <span v-else class="tc-dot"></span>
+                </span>
+                <span class="tc-st-name">{{ st.name }}</span>
+                <div v-if="st.status === 'running'" class="tc-st-bar">
+                  <div class="tc-st-bar-fill" :style="{ width: st.progress + '%' }"></div>
+                </div>
+                <span v-if="st.status !== 'pending'" class="tc-st-pct mono">{{ Math.floor(st.progress) }}%</span>
               </div>
-              <span v-if="st.status !== 'pending'" class="tc-st-pct mono">{{ Math.floor(st.progress) }}%</span>
             </div>
             <button v-if="task.steps.length > MAX_VISIBLE_STEPS" class="tc-more" @click="toggleSteps(task.taskId)">
               {{ expandedSteps.has(task.taskId) ? "收起" : `显示全部 ${task.steps.length} 项` }}
@@ -461,11 +465,25 @@ async function handleDismissPaused(task: TaskItem) {
   cursor: help;
 }
 
-.tc-steps {
+.tc-steps-wrap {
   margin-top: 7px;
   display: flex;
   flex-direction: column;
+  gap: 4px;
+}
+
+.tc-steps {
+  display: flex;
+  flex-direction: column;
   gap: 3px;
+}
+
+/* 展开态：步骤列表在卡片内滚动（约 12 行上限），收起按钮因此恒定可见 ——
+   此前按钮是列表末项，展开几十步后必须滚到卡片最底下才能点「收起」 */
+.tc-steps.scroll {
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 4px; /* 给滚动条留位，避免压住步骤百分比 */
 }
 
 .tc-step {
