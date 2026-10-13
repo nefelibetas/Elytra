@@ -7,9 +7,9 @@ export type { ExternalConfig, ExternalServer };
 
 /** 读取第三方站点预设（空列表时后端注入内置预设）。 */
 export async function loadExternalConfig(): Promise<ExternalConfig> {
-  return await invoke<ExternalConfig>("get_third_party_config");
+  return await invoke<ExternalConfig>("get_external_config");
 }
 
 export async function saveExternalConfig(config: ExternalConfig): Promise<void> {
-  await invoke("save_third_party_config", { config });
+  await invoke("save_external_config", { config });
 }

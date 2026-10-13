@@ -107,7 +107,6 @@ pub async fn spawn_game(
             game_dir: &game_dir,
             version_id: &version_dir_name,
             config_dir: &config_dir,
-            username: &username,
             exit_code: None,
             crash_report: None,
         },
@@ -147,7 +146,6 @@ pub async fn spawn_game(
     let mc_dir_exit = mc_dir.clone();
     let game_dir_exit = game_dir.clone();
     let version_exit = version_dir_name.clone();
-    let username_exit = username.clone();
     let pid = process::spawn_and_watch(
         process::SpawnRequest {
             args: &cmd.args,
@@ -178,7 +176,6 @@ pub async fn spawn_game(
                     game_dir: &game_dir_exit,
                     version_id: &version_exit,
                     config_dir: &config_dir,
-                    username: &username_exit,
                     exit_code,
                     crash_report: crash_report.as_deref(),
                 };

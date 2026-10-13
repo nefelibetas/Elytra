@@ -962,9 +962,14 @@ fn collect_jvm_args(req: &JvmArgs<'_>) -> (Vec<String>, Vec<String>, Vec<String>
         }
     }
 
-    // JDK 22+ 前置兼容标志（官方 arguments.jvm 可能已包含，去重）
-    if java_major_version >= 22 {
+    // JDK 兼容前置标志（官方 arguments.jvm 可能已包含，去重）。
+    // 门限必须分开：`--sun-misc-unsafe-memory-access` 是 JDK 23（JEP 471）才引入的选项，
+    // 在 JDK 22 上传它会让 JVM 以「Unrecognized option」直接退出（游戏完全起不来）；
+    // `--enable-native-access` 自 JDK 22 起正式可用。
+    if java_major_version >= 23 {
         push_unique(&mut jvm_preamble, JVM_FLAG_SUN_MISC_UNSAFE.into());
+    }
+    if java_major_version >= 22 {
         push_unique(&mut jvm_preamble, JVM_FLAG_NATIVE_ACCESS.into());
     }
 

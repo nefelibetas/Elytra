@@ -67,6 +67,8 @@ async fn download_with_decision(
     } = *ctx;
     let mut decided = WaitingDecision::Retry;
     let mut silent_retries = 0u32;
+    // 仅「真的下载成功」为 true：用户决策的 Skip 不是成功，不能落盘
+    let mut downloaded = false;
     while decided == WaitingDecision::Retry {
         let result = fetcher::fetch(url, tmp, Some(cb)).await;
         if cancelled(cancel) {
@@ -76,7 +78,12 @@ async fn download_with_decision(
             return None;
         }
         match result {
-            Ok(_) => decided = WaitingDecision::Skip, // 下载成功，跳出重试循环
+            // 下载成功：置成功标志并跳出重试循环（此前借用 Skip 表示「跳出」，
+            // 与「用户决策跳过」无法区分 → 跳过路径会误走落盘）
+            Ok(_) => {
+                downloaded = true;
+                decided = WaitingDecision::Skip;
+            }
             Err(e) => {
                 let _ = std::fs::remove_file(tmp);
                 if silent_retries < 2 {
@@ -117,7 +124,12 @@ async fn download_with_decision(
         set_cancelled(app, progress);
         return None;
     }
-    // Skip 或成功：用户明示跳过时 tmp 已被清理，落盘会失败（与既有流程一致的报错语义）
+    if !downloaded {
+        // 用户明示跳过该文件：tmp 已在失败分支被清理，绝不能再走 on_success ——
+        // rename 必然失败，会把整批任务从「跳过继续」变成 Error 中止（剩余文件全不下载）。
+        // 该文件按「已处理」返回，调用方继续下一个 item。
+        return Some(());
+    }
     if let Err(e) = on_success(tmp) {
         let _ = std::fs::remove_file(tmp);
         emit_handle.abort();

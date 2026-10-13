@@ -15,11 +15,14 @@ const TOKEN_KEYS: [&str; 6] = [
 
 const MASK: &str = "<redacted>";
 
-/// 脱敏入口：凭据 → `--username` 参数 → 家目录路径。
-pub fn redact(text: &str, username: &str) -> String {
+/// 脱敏入口：凭据 → 家目录路径 → `--username` 参数。
+///
+/// 家目录只按 `<前缀>用户名` 的**形状**掩码，不需要知道名字：传 MC 账号昵称是帮不上忙的
+/// （它与操作系统登录名无关），正是这一点让 `C:\Users\<登录名>` 曾经整段漏网。
+pub fn redact(text: &str) -> String {
     let out = redact_json_secrets(text);
-    let out = redact_username_arg(&out);
-    redact_home_paths(&out, username)
+    let out = redact_home_paths(&out);
+    redact_username_arg(&out)
 }
 
 /// 抹掉 `"accessToken": "xxx"` 这类键的值（保留键名，便于排查结构）。
@@ -105,14 +108,26 @@ fn redact_username_arg(text: &str) -> String {
 }
 
 /// 抹掉家目录路径里的用户名（三平台：`C:\Users\x`、`/home/x`、`/Users/x`）。
-fn redact_home_paths(text: &str, username: &str) -> String {
-    if username.is_empty() {
-        return text.to_string();
-    }
+pub fn redact_home_paths(text: &str) -> String {
     let mut out = text.to_string();
     for prefix in ["C:\\Users\\", "c:\\Users\\", "/home/", "/Users/"] {
-        out = out.replace(&format!("{prefix}{username}"), &format!("{prefix}{MASK}"));
+        out = mask_segment_after(&out, prefix);
     }
+    out
+}
+
+/// 把每个 `prefix` 之后、到下一个路径分隔符为止的一段替换为掩码。
+fn mask_segment_after(text: &str, prefix: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(pos) = rest.find(prefix) {
+        let (head, tail) = rest.split_at(pos + prefix.len());
+        out.push_str(head);
+        let end = tail.find(['\\', '/']).unwrap_or(tail.len());
+        out.push_str(MASK);
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
     out
 }
 
@@ -123,7 +138,7 @@ mod tests {
     #[test]
     fn redacts_access_token_json() {
         let src = r#"{"accessToken":"eyJhbGciOi.J9xyz","other":"keep"}"#;
-        let out = redact(src, "");
+        let out = redact(src);
         assert!(!out.contains("eyJhbGciOi.J9xyz"));
         assert!(out.contains(r#""accessToken":"<redacted>""#));
         assert!(out.contains(r#""other":"keep""#), "非凭据字段不得改动");
@@ -132,7 +147,7 @@ mod tests {
     #[test]
     fn redacts_token_with_spaces_and_escapes() {
         let src = r#"{ "accessToken" : "ab\"cd" }"#;
-        let out = redact(src, "");
+        let out = redact(src);
         assert!(!out.contains("ab\\\"cd"), "转义引号不应截断值");
         assert!(out.contains(MASK));
     }
@@ -140,7 +155,7 @@ mod tests {
     #[test]
     fn redacts_multiple_occurrences() {
         let src = "{\"sessionId\": \"AAA\"}\n{\"sessionId\": \"BBB\"}";
-        let out = redact(src, "");
+        let out = redact(src);
         assert!(!out.contains("AAA") && !out.contains("BBB"));
         assert_eq!(out.matches(MASK).count(), 2);
     }
@@ -148,7 +163,7 @@ mod tests {
     #[test]
     fn redacts_username_argument() {
         let src = "java -Xmx2G --username Steve --version 1.20.1";
-        let out = redact(src, "");
+        let out = redact(src);
         assert!(!out.contains("Steve"));
         assert!(out.contains("--username <redacted>"));
         assert!(out.contains("--version 1.20.1"), "后续参数不受影响");
@@ -161,7 +176,7 @@ mod tests {
             ("/home/MuQiaoYu/.minecraft", "MuQiaoYu"),
             ("/Users/MuQiaoYu/.minecraft", "MuQiaoYu"),
         ] {
-            let out = redact(src, "MuQiaoYu");
+            let out = redact(src);
             assert!(!out.contains(expected_absent), "应抹掉 {src}");
             assert!(out.contains(MASK));
         }
@@ -170,14 +185,14 @@ mod tests {
     #[test]
     fn keeps_unrelated_text() {
         let src = "---- Minecraft Crash Report ----\njava.lang.OutOfMemoryError";
-        assert_eq!(redact(src, "Steve"), src);
+        assert_eq!(redact(src), src);
     }
 
     #[test]
     fn idempotent() {
         let src = r#"{"accessToken":"secret"}`--username Steve`C:\Users\Steve\x"#;
-        let once = redact(src, "Steve");
-        let twice = redact(&once, "Steve");
+        let once = redact(src);
+        let twice = redact(&once);
         assert_eq!(once, twice, "脱敏应幂等");
     }
 }

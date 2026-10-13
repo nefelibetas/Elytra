@@ -17,8 +17,6 @@ pub struct AutoTaskCtx<'a> {
     pub version_id: &'a str,
     /// 配置目录（清单 / 崩溃包输出根）。
     pub config_dir: &'a Path,
-    /// 当前账号昵称（崩溃包脱敏用；离线/第三方账号同样有值）。
-    pub username: &'a str,
     /// 子进程退出码（仅 `on_crash` / `post_exit` 有）。
     pub exit_code: Option<i32>,
     /// 最新崩溃报告路径（仅崩溃判定成立时有）。

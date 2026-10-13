@@ -61,6 +61,22 @@ struct TaskHandle {
     cleanup_path: Option<std::path::PathBuf>,
 }
 
+/// 进程级唯一前缀（启动毫秒 + pid 的十六进制）。
+///
+/// 进程内 counter 重启后从 0 开始，若任务 id 直接用 `t{n}`，新任务会与上次崩溃残留在
+/// `install_jobs` 里的同名行撞主键（`INSERT OR REPLACE` 直接覆盖）→ 用户点「恢复」时
+/// 按 id 查到的已是**另一个任务**的 spec，恢复错作业、原作业的恢复凭证丢失。
+fn process_prefix() -> &'static str {
+    static PREFIX: LazyLock<String> = LazyLock::new(|| {
+        let ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        format!("{ms:x}{:x}", std::process::id())
+    });
+    PREFIX.as_str()
+}
+
 impl TaskManager {
     /// Register a new task, return (task_id, cancel_token, progress_guard).
     pub fn create(
@@ -69,7 +85,7 @@ impl TaskManager {
         steps: &[&str],
     ) -> (String, Arc<AtomicBool>, Arc<Mutex<TaskProgress>>) {
         let mut inner = self.inner.lock();
-        let id = format!("t{}", inner.counter);
+        let id = format!("t{}-{}", process_prefix(), inner.counter);
         inner.counter += 1;
         let cancel = Arc::new(AtomicBool::new(false));
         let progress = Arc::new(Mutex::new(TaskProgress {
@@ -259,6 +275,21 @@ impl TaskManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 任务 id 跨进程唯一（带启动前缀）：否则重启后 `t0` 会与崩溃残留行撞主键，
+    /// `INSERT OR REPLACE` 覆盖后点「恢复」执行的将是另一个任务的 spec。
+    #[test]
+    fn task_ids_carry_process_prefix_and_increment() {
+        let tm = TaskManager::default();
+        let (id1, ..) = tm.create("a", &["step"]);
+        let (id2, ..) = tm.create("b", &["step"]);
+        assert_ne!(id1, id2);
+        assert!(
+            id1.starts_with(&format!("t{}-", process_prefix())),
+            "任务 id 应带进程前缀: {id1}"
+        );
+        assert!(!process_prefix().is_empty());
+    }
 
     /// WaitingForUser：begin_wait 后轮询无决策；decide 后轮询命中；end_wait 清理；
     /// 未挂起任务 decide 返回 false。

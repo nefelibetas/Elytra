@@ -55,7 +55,6 @@ pub async fn run_auto_tasks_now(
     app: AppHandle,
     version_id: String,
     phase: String,
-    username: String,
 ) -> Result<(), String> {
     let phase = AutoTaskPhase::parse(&phase).ok_or_else(|| format!("未知自动任务阶段\n{phase}"))?;
     let root = mc_dir();
@@ -73,7 +72,6 @@ pub async fn run_auto_tasks_now(
             game_dir: &game_dir,
             version_id: &version_id,
             config_dir: &config_dir,
-            username: &username,
             exit_code: None,
             crash_report: None,
         };

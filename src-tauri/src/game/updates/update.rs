@@ -186,6 +186,11 @@ pub async fn update_mod_file(
     file_url: &str,
     file_sha1: &str,
 ) -> Result<(), String> {
+    // 与 delete_mod_file / toggle_mod_file 一致：文件名不得含分隔符或 `..`，
+    // 否则 target / tmp 会被 `join` 带出 mods 目录，造成越界写删。
+    if !crate::util::is_simple_name(file_name) {
+        bail!("非法的文件名");
+    }
     let target = mods_dir.join(file_name);
     let tmp = mods_dir.join(format!(".elytra-update-{file_name}"));
     // 清理上次残留的临时文件（幂等重试）

@@ -126,6 +126,9 @@ pub fn ensure_kind_folder(kind: &str, version_name: &str) -> Result<String, Stri
 
 /// 重命名版本文件夹（versions/{old} → versions/{new}）。
 pub fn rename_version_dir(version_name: &str, new_name: &str) -> Result<(), String> {
+    if !is_simple_name(version_name) || !is_simple_name(new_name) {
+        bail!("非法的版本目录名");
+    }
     let versions_dir = active_minecraft_dir().join("versions");
     let from = versions_dir.join(version_name);
     let to = versions_dir.join(new_name);
@@ -141,6 +144,11 @@ pub fn rename_version_dir(version_name: &str, new_name: &str) -> Result<(), Stri
 /// 删除版本文件夹（递归删除 versions/{name}）。
 /// 大目录删除耗时，命令层用 tokio::fs（内部 spawn_blocking）避免阻塞主线程。
 pub async fn delete_version_dir(version_name: &str) -> Result<(), String> {
+    // 目录名必须先校验：`..` / 分隔符会被 `join` 带出 versions/（`..` 即 `.minecraft` 根，
+    // 一次调用就能整删游戏数据），UI 的改名/删除输入是自由文本，不能只靠前端。
+    if !is_simple_name(version_name) {
+        bail!("非法的版本目录名");
+    }
     let dir = active_minecraft_dir().join("versions").join(version_name);
     if !dir.exists() {
         bail!("版本「{version_name}」不存在");

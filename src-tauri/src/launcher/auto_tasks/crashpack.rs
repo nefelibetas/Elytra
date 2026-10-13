@@ -37,7 +37,7 @@ pub fn pack_crash_logs(ctx: &AutoTaskCtx<'_>) -> Result<PathBuf, String> {
         &mut zip,
         opts,
         "info.txt",
-        &redact(&build_info(ctx), ctx.username),
+        &redact(&build_info(ctx)),
     )?;
 
     if let Some(report) = ctx.crash_report {
@@ -50,7 +50,6 @@ pub fn pack_crash_logs(ctx: &AutoTaskCtx<'_>) -> Result<PathBuf, String> {
             opts,
             Path::new(report),
             &format!("crash-report/{name}"),
-            ctx.username,
         )?;
     }
     for (label, path) in [
@@ -64,21 +63,19 @@ pub fn pack_crash_logs(ctx: &AutoTaskCtx<'_>) -> Result<PathBuf, String> {
             ctx.mc_dir.join("logs").join("elytra-launch.log"),
         ),
     ] {
-        add_file(&mut zip, opts, &path, label, ctx.username)?;
+        add_file(&mut zip, opts, &path, label)?;
     }
     add_file(
         &mut zip,
         opts,
         &super::record::mods_json_path(ctx.config_dir, ctx.version_id),
         "mods.json",
-        ctx.username,
     )?;
     add_file(
         &mut zip,
         opts,
         &ctx.instance_file(),
         INSTANCE_FILE,
-        ctx.username,
     )?;
     // 版本 JSON：目录内文件名可能 ≠ 目录名，按目录名试一次（失败静默跳过）
     add_file(
@@ -86,7 +83,6 @@ pub fn pack_crash_logs(ctx: &AutoTaskCtx<'_>) -> Result<PathBuf, String> {
         opts,
         &ctx.game_dir.join(format!("{}.json", ctx.version_id)),
         "version.json",
-        ctx.username,
     )?;
 
     zip.finish().map_err(common_err_ctx!("写入崩溃包失败"))?;
@@ -130,7 +126,6 @@ fn add_file(
     opts: SimpleFileOptions,
     path: &Path,
     name: &str,
-    username: &str,
 ) -> Result<(), String> {
     let Ok(meta) = std::fs::metadata(path) else {
         return Ok(());
@@ -150,14 +145,16 @@ fn add_file(
         return Ok(());
     };
     match String::from_utf8(bytes) {
-        Ok(text) => add_text(zip, opts, name, &redact(&text, username)),
-        Err(e) => {
-            let raw = e.into_bytes();
-            zip.start_file(name, opts)
-                .map_err(common_err_ctx!("写入崩溃包失败"))?;
-            zip.write_all(&raw)
-                .map_err(common_err_ctx!("写入崩溃包失败"))
-        }
+        Ok(text) => add_text(zip, opts, name, &redact(&text)),
+        // 非 UTF-8（中文 Windows 上旧版游戏的 GBK 日志即可命中）：整体判定失败时若原样写出，
+        // 这个成员就完全绕过脱敏（而崩溃包是要发给他人排查的），故按 lossy 解码后再脱敏 ——
+        // 宁可字符有损，也不能让凭据与路径漏出去。
+        Err(e) => add_text(
+            zip,
+            opts,
+            name,
+            &redact(&String::from_utf8_lossy(e.as_bytes())),
+        ),
     }
 }
 
@@ -213,7 +210,6 @@ mod tests {
             game_dir: &game,
             version_id: "1.20.1-fabric",
             config_dir: &config,
-            username: "Steve",
             exit_code: Some(1),
             crash_report: None,
         };
@@ -244,7 +240,6 @@ mod tests {
             game_dir: &game,
             version_id: "1.20.1-fabric",
             config_dir: &config,
-            username: "Steve",
             exit_code: Some(1),
             crash_report: Some(&report_str),
         };
@@ -267,7 +262,6 @@ mod tests {
             game_dir: &game,
             version_id: "inst",
             config_dir: &config,
-            username: "",
             exit_code: None,
             crash_report: None,
         };
@@ -290,7 +284,6 @@ mod tests {
             game_dir: &game,
             version_id: "inst",
             config_dir: &config,
-            username: "",
             exit_code: Some(1),
             crash_report: None,
         };

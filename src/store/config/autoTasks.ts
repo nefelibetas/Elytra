@@ -105,14 +105,12 @@ export async function getInstanceAutoTasks(versionId: string): Promise<InstanceA
 
 /** 保存实例自动任务；`null` 表示删除实例配置（该实例回退全局）。 */
 export async function saveInstanceAutoTasks(versionId: string, auto_tasks: AutoTasks | null): Promise<void> {
-  await invoke("save_instance_auto_tasks", { versionId, auto_tasks });
+  // 键名必须与后端形参 camelCase 对齐（后端是 `tasks`）——传错会让后端收到 None，
+  // 静默走「删除实例配置」分支。
+  await invoke("save_instance_auto_tasks", { versionId, tasks: auto_tasks });
 }
 
 /** 立即执行一次某阶段自动任务（使用当前生效配置）。 */
-export async function runAutoTasksNow(
-  versionId: string,
-  phase: AutoTaskPhase,
-  username: string,
-): Promise<void> {
-  await invoke("run_auto_tasks_now", { versionId, phase, username });
+export async function runAutoTasksNow(versionId: string, phase: AutoTaskPhase): Promise<void> {
+  await invoke("run_auto_tasks_now", { versionId, phase });
 }

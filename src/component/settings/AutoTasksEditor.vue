@@ -14,7 +14,6 @@ import type { AutoTasks } from "../../types/launcher/AutoTasks";
 import type { AutoTaskPhase } from "../../types/launcher/AutoTaskPhase";
 import type { AutoTaskStep } from "../../types/launcher/AutoTaskStep";
 import { worlds, loadWorlds } from "../../store/task/versionDetail";
-import { username } from "../../store/auth/auth";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 
@@ -106,7 +105,7 @@ function addAction(phase: AutoTaskPhase, kind: string) {
 
 async function runNow(phase: AutoTaskPhase) {
   try {
-    await runAutoTasksNow(versionName.value, phase, username.value);
+    await runAutoTasksNow(versionName.value, phase);
     showToast("自动任务执行完成");
   } catch (e) {
     showToast(errMsg(e));

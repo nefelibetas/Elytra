@@ -261,7 +261,6 @@ mod tests {
             game_dir: &game,
             version_id: "inst",
             config_dir: &config,
-            username: "",
             exit_code: None,
             crash_report: None,
         };
@@ -306,7 +305,6 @@ mod tests {
             game_dir: &game,
             version_id: "inst",
             config_dir: &root,
-            username: "",
             exit_code: Some(1),
             crash_report: None,
         };
@@ -346,7 +344,6 @@ mod tests {
             game_dir: &game,
             version_id: "inst",
             config_dir: &root,
-            username: "",
             exit_code: Some(1),
             crash_report: None,
         };
@@ -369,7 +366,6 @@ mod tests {
             game_dir: &root,
             version_id: "inst",
             config_dir: &root,
-            username: "",
             exit_code: None,
             crash_report: None,
         };

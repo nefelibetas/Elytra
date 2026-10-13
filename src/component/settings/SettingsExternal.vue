@@ -18,7 +18,7 @@ interface ServerOption {
   value: string;
 }
 
-/** 预设服务器列表（内置 + 用户新增；get_third_party_config 默认返回内置）。 */
+/** 预设服务器列表（内置 + 用户新增；get_external_config 默认返回内置）。 */
 const presetServers = ref<ServerOption[]>([]);
 
 /** 登录下拉选项 = 全部预设。 */

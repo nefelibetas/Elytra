@@ -24,6 +24,12 @@ pub fn safe_relative_path(rel: &str) -> Result<PathBuf, String> {
     if rel.is_empty() || rel.starts_with('/') || rel.starts_with('\\') {
         bail!("非法文件路径\n{rel:?}");
     }
+    // Windows 盘符形态（`C:\evil` / `C:/evil` / `C:evil`）同样带前缀：`PathBuf::join`
+    // 遇到带前缀的路径会**清空已有根**，于是 `root.join("C:/evil")` 直接落到 `C:/evil`——
+    // 外部输入（zip 成员名 / 整合包清单 / JDK 包条目）可借此越过目标目录。
+    if rel.as_bytes().get(1) == Some(&b':') {
+        bail!("文件路径含盘符\n{rel:?}");
+    }
     if rel
         .split(['/', '\\'])
         .any(|seg| seg == ".." || seg.is_empty())
@@ -145,5 +151,12 @@ mod tests {
         assert!(safe_relative_path("../evil").is_err());
         assert!(safe_relative_path("bin/../../evil").is_err());
         assert!(safe_relative_path("a//b").is_err());
+        // Windows 盘符形态：`join` 遇到带前缀的路径会清空根，必须一并拒绝
+        assert!(safe_relative_path("C:/evil.txt").is_err());
+        assert!(safe_relative_path("C:\\evil.txt").is_err());
+        assert!(safe_relative_path("C:evil").is_err());
+        assert!(safe_relative_path("c:/Users/Public/x.bat").is_err());
+        // 单个字母文件名（无冒号）仍合法，别误伤
+        assert!(safe_relative_path("c/evil.txt").is_ok());
     }
 }

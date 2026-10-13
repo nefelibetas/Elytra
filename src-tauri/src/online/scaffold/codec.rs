@@ -56,6 +56,25 @@ impl Response {
     }
 }
 
+/// 协议帧体长度上限（16 MiB）。
+///
+/// 长度字段是外部可控的裸 `u32`：若直接 `vec![0u8; body_len]` 分配，一条特制帧头
+/// （长度填 `0xFFFFFFFF`）就能让进程尝试分配 4 GiB → 分配失败即 abort（远程 DoS）。
+/// 本协议最大合法体量是玩家表快照（数十 KB 量级），16 MiB 留足余量。
+pub const MAX_BODY_LEN: usize = 16 * 1024 * 1024;
+
+/// 校验帧体长度（读请求 / 读响应共用）。
+fn check_body_len(len: u32) -> io::Result<usize> {
+    let len = len as usize;
+    if len > MAX_BODY_LEN {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("帧体长度超限: {len} > {MAX_BODY_LEN}"),
+        ));
+    }
+    Ok(len)
+}
+
 /// 从流中读一个请求（blocking）。
 pub fn read_request<R: Read>(r: &mut R) -> io::Result<Request> {
     let mut kind_len = [0u8; 1];
@@ -71,7 +90,7 @@ pub fn read_request<R: Read>(r: &mut R) -> io::Result<Request> {
     let (namespace, value) = split_kind(&kind)?;
     let mut body_len = [0u8; 4];
     r.read_exact(&mut body_len)?;
-    let body_len = u32::from_be_bytes(body_len) as usize;
+    let body_len = check_body_len(u32::from_be_bytes(body_len))?;
     let mut body = vec![0u8; body_len];
     r.read_exact(&mut body)?;
     Ok(Request {
@@ -104,7 +123,7 @@ pub fn read_response<R: Read>(r: &mut R) -> io::Result<Response> {
     r.read_exact(&mut status)?;
     let mut body_len = [0u8; 4];
     r.read_exact(&mut body_len)?;
-    let body_len = u32::from_be_bytes(body_len) as usize;
+    let body_len = check_body_len(u32::from_be_bytes(body_len))?;
     let mut body = vec![0u8; body_len];
     r.read_exact(&mut body)?;
     Ok(Response {
@@ -142,7 +161,7 @@ where
     let (namespace, value) = split_kind(&kind)?;
     let mut body_len = [0u8; 4];
     r.read_exact(&mut body_len).await?;
-    let body_len = u32::from_be_bytes(body_len) as usize;
+    let body_len = check_body_len(u32::from_be_bytes(body_len))?;
     let mut body = vec![0u8; body_len];
     r.read_exact(&mut body).await?;
     Ok(Request {
@@ -181,7 +200,7 @@ where
     r.read_exact(&mut status).await?;
     let mut body_len = [0u8; 4];
     r.read_exact(&mut body_len).await?;
-    let body_len = u32::from_be_bytes(body_len) as usize;
+    let body_len = check_body_len(u32::from_be_bytes(body_len))?;
     let mut body = vec![0u8; body_len];
     r.read_exact(&mut body).await?;
     Ok(Response {
@@ -231,6 +250,32 @@ fn is_allowed_kind_char(b: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 帧体长度必须在**分配之前**校验：长度字段是外部可控的裸 `u32`，
+    /// 直接按声明值分配会让一条特制帧头把进程打到 abort（远程 DoS）。
+    #[test]
+    fn rejects_oversize_bodies_before_allocating() {
+        // 请求：声明 4 GiB 帧体
+        let mut buf = Vec::new();
+        buf.push(3u8);
+        buf.extend_from_slice(b"c:x");
+        buf.extend_from_slice(&u32::MAX.to_be_bytes());
+        let mut cur = io::Cursor::new(&buf);
+        let err = read_request(&mut cur).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+
+        // 响应：同样
+        let mut buf = Vec::new();
+        buf.push(0u8);
+        buf.extend_from_slice(&u32::MAX.to_be_bytes());
+        let mut cur = io::Cursor::new(&buf);
+        let err = read_response(&mut cur).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+
+        // 边界：恰好等于上限合法，多 1 字节即拒绝
+        assert!(check_body_len(MAX_BODY_LEN as u32).is_ok());
+        assert!(check_body_len(MAX_BODY_LEN as u32 + 1).is_err());
+    }
 
     #[test]
     fn request_roundtrip() {
