@@ -43,13 +43,11 @@ pub struct WaitingUserPayload {
     pub error: String,
 }
 
-/// 单文件下载 + 失败重试循环：用户可决策"跳过/重试/取消"（WaitingForUser 暂停），
-/// 不再一文件失败整任务失败——批量下载常见单文件源失效（404/镜像未同步）。
-/// 首次失败静默自动重试（1s/2s 退避）：重启/切代理后的瞬时网络抖动自动消化，不弹窗打扰；
-/// 连续 3 次失败才挂起等用户决策。普通 kind 与 worlds 共用（行为一致）。
-/// 下载成功调用 `on_success(tmp)` 落盘/安装；失败清理 tmp。
-/// 返回 None = 任务已结束（内部已 set_error/set_cancelled）；Some(()) = 该文件完成
-/// （用户明示跳过时 tmp 已被清理，on_success 落盘会失败——与既有流程报错语义一致）。
+/// 单文件下载 + 重试循环：首次失败静默自动重试（1s/2s 退避），连续 3 次失败才挂起
+/// 等用户决策（跳过/重试/取消）——避免单文件源失效（404/镜像未同步）拖垮整任务。
+/// 普通 kind 与 worlds 共用。下载成功调 `on_success(tmp)` 落盘/安装；失败清理 tmp。
+/// None = 任务已结束（内部已 set_error/set_cancelled）；Some(()) = 该文件已处理
+/// （用户明示跳过时 tmp 已清理，on_success 落盘会失败——与既有报错语义一致）。
 async fn download_with_decision(
     ctx: &TaskCtx<'_>,
     filename: &str,
@@ -67,12 +65,11 @@ async fn download_with_decision(
     } = *ctx;
     let mut decided = WaitingDecision::Retry;
     let mut silent_retries = 0u32;
-    // 仅「真的下载成功」为 true：用户决策的 Skip 不是成功，不能落盘
+    // 仅"下载成功"为 true；用户 Skip 不算成功，不能落盘
     let mut downloaded = false;
     while decided == WaitingDecision::Retry {
-        // 用可取消变体（fetch 传入 cancel=None）：大文件（存档 zip / 光影包数百 MB）
-        // 中途取消能立即中断，不必等传输自然结束或 30s read_timeout。
-        // 显式绑定 client（Arc）：临时值跨 await 会被借用检查拒之门外，且 http() 复用全局连接池。
+        // 用可取消变体（传 cancel=None，由外部轮询中断）：大文件中途取消能立即中断，
+        // 不必等传输自然结束或 30s read_timeout。client 须显式绑定（临时值跨 await 借用检查不过）。
         let client = fetcher::http();
         let result = fetcher::fetch_with_c(
             client.as_ref(),
@@ -90,8 +87,7 @@ async fn download_with_decision(
             return None;
         }
         match result {
-            // 下载成功：置成功标志并跳出重试循环（此前借用 Skip 表示「跳出」，
-            // 与「用户决策跳过」无法区分 → 跳过路径会误走落盘）
+            // 下载成功：置标志跳出重试循环（用 Skip 表示跳出）
             Ok(_) => {
                 downloaded = true;
                 decided = WaitingDecision::Skip;
@@ -137,9 +133,8 @@ async fn download_with_decision(
         return None;
     }
     if !downloaded {
-        // 用户明示跳过该文件：tmp 已在失败分支被清理，绝不能再走 on_success ——
-        // rename 必然失败，会把整批任务从「跳过继续」变成 Error 中止（剩余文件全不下载）。
-        // 该文件按「已处理」返回，调用方继续下一个 item。
+        // 用户跳过：tmp 已清理，不能再走 on_success（rename 必失败，会把整批变成 Error 中止）。
+        // 按「已处理」返回，调用方继续下一个 item。
         return Some(());
     }
     if let Err(e) = on_success(tmp) {
@@ -152,9 +147,9 @@ async fn download_with_decision(
 }
 
 /// worlds 地图存档安装：下载 zip → 安全解压到临时区 → 定位世界根（level.dat）→
-/// 移动至 versions/{vdir}/saves/{name}（同名冲突 _{n} 后缀）→ 清理临时区。
+/// 移到 versions/{vdir}/saves/{name}（同名冲突 _{n} 后缀）→ 清理临时区。
 /// 版本隔离落盘：MC 启动时版本目录即游戏目录，saves 直接可读。
-/// 返回 None = 任务已结束（内部已 set_error/set_cancelled）；Some(()) = 安装完成。
+/// None = 任务已结束（内部已 set_error/set_cancelled）；Some(()) = 安装完成。
 async fn install_world(
     ctx: &TaskCtx<'_>,
     mc: &Path,
@@ -174,7 +169,7 @@ async fn install_world(
         .join(version_dir)
         .join("saves")
         .join(".elytra-worlds");
-    // 锁临时区目录：防并发 worlds 任务互相踩踏（下载/解压/移动全程独占）
+    // 锁临时区：防并发 worlds 任务互相踩踏（下载/解压/移动全程独占）
     let _lock = match PathLock::try_acquire(&stage) {
         Some(l) => l,
         None => {
@@ -199,7 +194,7 @@ async fn install_world(
     let tmp = stage.join(format!("{}.elytra-part", f.filename));
     let zip_path = stage.join(&f.filename);
     let unpack = stage.join("unpack");
-    // 下载（含静默重试/WaitingForUser，与普通 kind 一致），成功后 rename 到临时区 zip
+    // 下载（含静默重试/WaitingForUser），成功后 rename 到临时区 zip
     let zip_for_rename = zip_path.clone();
     download_with_decision(ctx, &f.filename, &f.url, &tmp, cb, emit_handle, |tmp| {
         std::fs::rename(tmp, &zip_for_rename).map_err(|e| e.to_string())
@@ -240,7 +235,7 @@ async fn install_world(
         );
         return None;
     }
-    // 冲突消解接入 util（同名存档 `_{n}` 后缀，对齐版本目录语义）
+    // 同名存档 `_{n}` 后缀（对齐版本目录语义）
     let target = saves.join(crate::util::unique_child_dir(&saves, &name));
     if let Err(e) = std::fs::rename(&world_root, &target) {
         let _ = std::fs::remove_dir_all(&stage);
@@ -248,12 +243,12 @@ async fn install_world(
         set_error(app, progress, format!("安装世界 {} 失败:\n{}", name, e));
         return None;
     }
-    // 清理临时区（重活走 spawn_blocking；失败残留由 cleanup_file_parts 兜底）
+    // 清理临时区（走 spawn_blocking；失败残留由 cleanup_file_parts 兜底）
     let _ = tauri::async_runtime::spawn_blocking(move || std::fs::remove_dir_all(&stage)).await;
     Some(())
 }
 
-/// 遍历 unpack 目录找 level.dat（地图存档根标志）：根含 → (根, zip 文件名去 .zip 并清洗)；
+/// 遍历 unpack 找 level.dat（存档根标志）：根含 → (根, zip 名去 .zip 并清洗)；
 /// 单层子目录含 → (子目录, 子目录名)；均无 → None。
 fn locate_world_root(
     unpack_dir: &Path,
@@ -279,9 +274,9 @@ fn locate_world_root(
     None
 }
 
-/// 批量文件下载任务：mod / 资源包 / 数据包 / 光影包。
-/// 步骤 = 每文件一步；逐文件下载到 .elytra-part 临时文件后 rename，取消/失败清理临时文件。
-/// 进度：文件计数 + 字节累计（当前文件增量），EMA 速度，复用 update_progress。
+/// 批量文件下载任务（mod / 资源包 / 数据包 / 光影包）：每文件一步；下载到
+/// .elytra-part 临时文件后 rename，取消/失败清理临时文件。
+/// 进度 = 文件计数 + 字节累计（当前文件增量），EMA 速度。
 pub async fn run_files_task(
     sink: Arc<dyn EventSink>,
     cancel: &Arc<AtomicBool>,
@@ -289,7 +284,7 @@ pub async fn run_files_task(
     task: &DownloadFilesTask,
 ) {
     let app: &dyn EventSink = sink.as_ref();
-    // 准备阶段：配置/目标路径/路径锁/目录创建，失败或已取消 → 内部收口后返回
+    // 准备阶段：配置/路径/路径锁/建目录；失败或已取消 → 内部收口后返回
     // （`_locks` 持有全部路径锁，存活至任务结束）。
     let Some(FilesPlan {
         mc,
@@ -302,9 +297,8 @@ pub async fn run_files_task(
     };
     let counts = FilesCounters::new();
     let total_files = task.files.len() as u32;
-    // 进度上报：150ms 共享心跳刷新状态/文件数/字节/EMA 速度/ETA（语义对齐原内联
-    // 实现：停滞 >4s 或速度 <1KB/s 时 ETA 置 None）。当前文件的步骤级字节占比
-    // 由下载回调节流刷新（见 file_progress_callback），心跳不再重复处理步骤进度。
+    // 150ms 共享心跳刷新状态/文件数/字节/EMA 速度/ETA（语义对齐原内联实现：停滞 >4s
+    // 或速度 <1KB/s 时 ETA 置 None）；步骤级进度由下载回调节流刷新，心跳不处理。
     let emit_handle = spawn_heartbeat(
         Arc::clone(&sink),
         progress,
@@ -313,7 +307,9 @@ pub async fn run_files_task(
             total_files,
             bytes: Arc::clone(&counts.total_bytes),
             est_total_bytes: Arc::clone(&counts.est_bytes),
-            // 该任务的步骤级进度由下载回调节流写入（见 file_progress_callback）
+            // 字节口径：文件任务的分子/分母同宇宙（清单已知的文件大小）
+            percent_by_steps: false,
+            // 步骤级进度由下载回调节流写入
             step: None,
         },
     );
@@ -345,9 +341,9 @@ struct FilesPlan {
 /// 批量文件任务的共享计数器：心跳读取 + 下载回调写入。
 struct FilesCounters {
     done_files: Arc<AtomicU32>,
-    // 心跳字节源 = 已完成文件累计 + 当前文件已下载（回调内维护），速度平滑连续
+    // 心跳字节源 = 已完成累计 + 当前文件已下载（回调维护），速度平滑连续
     total_bytes: Arc<AtomicU64>,
-    // 总量估算 = 已完成累计 + 当前文件声明大小（回调内随 total_size 更新）
+    // 总量估算 = 已完成累计 + 当前文件声明大小（回调随时更新）
     est_bytes: Arc<AtomicU64>,
     cur_bytes: Arc<AtomicU64>,
     cur_total: Arc<AtomicU64>,
@@ -380,8 +376,8 @@ struct FilesCtx<'a> {
     counts: &'a FilesCounters,
 }
 
-/// 准备阶段：读取下载器配置 → 计算目标/临时路径 → 全部路径互斥占用 →
-/// 取消检查 → 创建目标目录。返回 None = 已收口（内部 set_error/set_cancelled）。
+/// 准备：读配置 → 算目标/临时路径 → 全部路径互斥占用 → 取消检查 → 建目录。
+/// None = 已收口（内部 set_error/set_cancelled）。
 fn prepare_files(
     app: &dyn EventSink,
     cancel: &Arc<AtomicBool>,
@@ -402,7 +398,7 @@ fn prepare_files(
         })
         .collect();
 
-    // 全部路径互斥占用：任一被其他任务占用 → 整任务拒绝（可预期，不半途而废）
+    // 任一目标被占用 → 整任务拒绝（不半途而废）
     let mut locks = Vec::new();
     for (dest, _) in &items {
         match PathLock::try_acquire(dest) {
@@ -441,8 +437,8 @@ fn prepare_files(
     })
 }
 
-/// 构造当前文件的下载回调：维护当前文件字节（步骤级占比）+ 心跳字节源/总量估算；
-/// 步骤级进度节流刷新（~150ms，对齐心跳频率），避免每 chunk 都锁 progress。
+/// 当前文件下载回调：维护字节计数/总量估算；步骤级进度节流刷新
+/// （~150ms，避免每 chunk 都锁 progress）。
 fn file_progress_callback(
     sink: &Arc<dyn EventSink>,
     progress: &Arc<Mutex<TaskProgress>>,
@@ -465,7 +461,7 @@ fn file_progress_callback(
             cur_total.store(total_size, Ordering::Relaxed);
             est_bytes.store(acc_snap + total_size, Ordering::Relaxed);
         }
-        // 步骤级字节占比节流刷新（~150ms）；整体进度/速度/ETA 由共享心跳负责
+        // 步骤级占比节流刷新（~150ms）；整体进度/速度/ETA 由心跳负责
         let now_ms = clock.elapsed().as_millis() as u64;
         if now_ms.saturating_sub(throttle_ms.swap(now_ms, Ordering::Relaxed)) >= 150 {
             task::update_and_emit(app.as_ref(), &progress, |p| {
@@ -485,8 +481,8 @@ fn file_progress_callback(
     }
 }
 
-/// 逐文件阶段：下载/落盘 + 步骤收口，循环结束 abort 心跳。
-/// 返回 None = 任务已结束（内部收口）；Some(()) = 全部文件完成（心跳已 abort）。
+/// 逐文件下载/落盘 + 步骤收口，结束 abort 心跳。
+/// None = 已收口；Some(()) = 全部文件完成。
 async fn run_file_steps(
     ctx: &FilesCtx<'_>,
     emit_handle: &tauri::async_runtime::JoinHandle<()>,
@@ -517,9 +513,8 @@ async fn run_file_steps(
         counts.cur_bytes.store(0, Ordering::Relaxed);
         let acc_snap = counts.total_bytes.load(Ordering::Relaxed);
         let cb = file_progress_callback(sink, progress, counts, acc_snap);
-        // 下载 + 落盘：普通 kind 下载到 .elytra-part 后 rename 到 kind 目录；
-        // 失败重试/WaitingForUser 语义两种 kind 一致（download_with_decision 提取）。
-        // None = 任务已结束（内部已 set_error/set_cancelled），直接返回。
+        // 普通 kind 下载到 .elytra-part 后 rename 到 kind 目录；失败重试/WaitingForUser
+        // 两种 kind 一致。None = 已结束（内部已 set_error/set_cancelled），直接返回。
         let file_ctx = TaskCtx {
             app,
             cancel,
@@ -572,16 +567,15 @@ fn finish_files(app: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>, total_
     });
     if let Some(p) = progress.try_lock() {
         let task_id = p.task_id.clone();
-        drop(p); // 先释放 progress 锁再 remove（remove 内部读 progress，防重入死锁）
+        drop(p); // 先释放 progress 锁再 remove（remove 内部读 progress，防死锁）
         task::global().remove(&task_id);
     }
 }
 
 /// 批量文件下载任务的注册 + spawn（单文件是批量特例，统一走这里）。
 pub(crate) fn spawn_files_task(app: AppHandle, task: DownloadFilesTask) -> Result<String, String> {
-    // 前端传入的 version_dir_name 是已安装版本的实际目录名（get_installed_versions
-    // 返回目录名，含冲突追加的 _{n}），直接校验目录存在即可；
-    // mod / 资源包 / 数据包 / 光影包严格落盘到版本隔离目录 versions/{目录}/{kind_dir}/{filename}。
+    // version_dir_name 是已安装版本的实际目录名（get_installed_versions 返回，含冲突追加的
+    // _{n}），校验目录存在即可；严格落盘到 versions/{目录}/{kind_dir}/{filename}。
     let config: DownloaderConfig = persist::downloader_config();
     let dir = config
         .minecraft_dir_abs()
@@ -607,8 +601,8 @@ pub(crate) fn spawn_files_task(app: AppHandle, task: DownloadFilesTask) -> Resul
     )
 }
 
-/// 删除批量文件任务的全部 .elytra-part 残留（恢复社区资源下载前调用）。
-/// worlds 任务清理 `saves/.elytra-worlds/` 临时区（含半截 zip/unpack），替代按 kind_dir 的清理。
+/// 删除任务的全部 .elytra-part 残留（恢复社区资源下载前调用）；
+/// worlds 清理 `saves/.elytra-worlds/` 临时区（含半截 zip/unpack）。
 pub(crate) fn cleanup_file_parts(task: &DownloadFilesTask) {
     let config: DownloaderConfig = persist::downloader_config();
     let mc = config.minecraft_dir_abs();
@@ -648,7 +642,7 @@ mod tests {
             dest,
             Path::new("C:/mc/versions/26.2-fabric-0.19.3/mods/fabric-api-15.0.0.jar")
         );
-        // World 语义兜底：saves 目录（实际落盘走 install_world 特殊分支）
+        // World 兜底：saves 目录（实际落盘走 install_world 特殊分支）
         let dest = file_dest(
             Path::new("C:/mc"),
             "26.2",
@@ -707,8 +701,8 @@ mod tests {
         );
     }
 
-    /// 世界名清洗接入 util::sanitize_fs_name：非法字符替换 _；空/点结尾/
-    /// Windows 保留名回退 "world"（比旧 sanitize_world_name 多保留名回退）。
+    /// 世界名清洗经 util::sanitize_fs_name：非法字符替换 _；空/点结尾/
+    /// Windows 保留名回退 "world"。
     #[test]
     fn world_name_sanitizes_via_util() {
         let clean = |s: &str| crate::util::sanitize_fs_name(s, "world");

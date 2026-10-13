@@ -1,15 +1,11 @@
 // ── 整合包安装任务（单卡片：解析 → 本体 → 内容 全程一个任务）──
-//
-// 流程（同一 TaskManager 注册、同一 cancel token、同一步骤列表动态增长）：
-//   A. 获取包体（在线源下载 / 本地文件）+ 解析清单 → PackPlan JSON
-//   B. 游戏本体：版本 JSON → client.jar → 依赖库 → 资源 → 原生库 → ModLoader
-//      （复用 library/assets/extract/mod_loader 领域函数——它们内部按 sha1
-//        跳过已有文件，恢复场景免重下；因此无需 init_local_scan 级扫描）
+// 同一 TaskManager 注册 / 同一 cancel token / 同一步骤列表动态增长。
+//   A. 获取包体（在线下载 / 本地文件）+ 解析清单 → PackPlan JSON
+//   B. 本体：版本 JSON → client.jar → 依赖库 → 资源 → 原生库 → ModLoader（复用
+//      library/assets/extract/mod_loader，内部按 sha1 跳过已有文件，无需扫描）
 //   C. 内容：计划内文件并发下载（sha1 校验）→ overrides/ 解压到版本目录
-//
-// 步骤表两段式：命令层创建时仅含 A 段占位，A 完成后重写为全量列表。
-// 进度公式走"完成步骤数/总步骤数"（每个内容文件一步，粒度足够细）；
-// 字节计数仅供速度/ETA 展示。
+// 步骤表两段式：创建时仅含 A 段占位，A 完成后重写为全量列表。进度 = 完成步骤数/总步骤数
+// （每内容文件一步）；字节计数仅供速度/ETA。
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
@@ -45,12 +41,8 @@ fn cache_dir() -> PathBuf {
     crate::util::config_dir().join("modpacks")
 }
 
-/// 包体缓存路径。**仅在线源**落 `modpacks/{key}.{ext}` 缓存；
-/// 本地源直接用用户选定的文件（缓存目录从不持有它的副本）。
-///
-/// 回归：曾对本地源也返回拼好的缓存路径，`open_zip` 打开不存在的
-/// `modpacks/xxx.zip` → 首次导入报「系统找不到指定的路径。(os error 3)」，
-/// 本地导入完全不可用。
+/// 包体缓存路径：**仅在线源**落 `modpacks/{key}.{ext}` 缓存；
+/// 本地源直接用用户选定的文件（缓存目录从不持有其副本）。
 pub fn zip_cache_path(request: &ModpackRequest) -> PathBuf {
     let url = match &request.source {
         PackSource::Local { path } => return PathBuf::from(path),
@@ -111,8 +103,6 @@ struct Counters {
     /// 总步骤数
     total_steps: u32,
     /// 当前运行步骤索引（`usize::MAX` = 无）——心跳据此填 `steps[idx].progress`。
-    /// 各阶段长步骤（游戏主文件、依赖库、资源文件）此前无人写百分比，
-    /// 卡片会一直显示 0% 直到该步完成。
     step_idx: Arc<AtomicUsize>,
     /// 当前步骤的字节进度（分子/分母）：单文件步骤（游戏主文件）用。
     step_bytes: Arc<AtomicU64>,
@@ -171,8 +161,8 @@ impl Counters {
         }
     }
 
-    /// 下载辅助函数的计数器视图：整任务字节与**当前步骤**的计数共享同一组原子
-    /// （此前每次调用新建，步骤计数无人读取，进度条因此只能靠步骤数公式）。
+    /// 下载辅助函数的计数器视图：整任务字节与当前步骤的计数共享同一组原子
+    /// （无需每次新建，步骤计数才能被心跳读取）。
     fn counter(&self) -> ProgressCounters {
         ProgressCounters {
             files: Arc::clone(&self.step_files),
@@ -191,8 +181,8 @@ fn finish_step(app: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>, idx: us
     c.leave_step();
 }
 
-/// 失败收口：错误消息区分用户取消；全新目录随失败整删（对齐 run_task 语义，
-/// 取消路径的删除由 TaskManager cleanup 移交异步处理，不在此重复删）。
+/// 失败收口：取消走 set_cancelled，否则 set_error；全新目录随失败整删（取消路径
+/// 的删除交由 TaskManager cleanup 异步处理，不在此重复删）。
 fn fail_or_cancel(
     app: &dyn EventSink,
     progress: &Arc<Mutex<TaskProgress>>,
@@ -231,8 +221,7 @@ fn replace_steps(
             .enumerate()
             .map(|(i, n)| StepInfo {
                 name: n.clone(),
-                // 已完成步骤（A 段前缀）保持 Done + 100%：此前一律写 0.0，
-                // 导致 B 段重写步骤表后"下载整合包/解析整合包"变成"已完成却 0%"。
+                // 已完成步骤（A 段前缀）保持 Done + 100%，不得重置为 0%
                 status: if i < done_count {
                     StepStatus::Done
                 } else {
@@ -245,8 +234,8 @@ fn replace_steps(
     });
 }
 
-/// 取消感知包装：底层操作不支持取消参数（纯网络 JSON/同步 IO）时，
-/// 与轮询取消令牌赛跑——先到者胜；落败方 future 被 drop（连接随之中断）。
+/// 取消感知包装：底层操作不支持取消参数（纯网络 JSON/同步 IO）时与轮询取消令牌赛跑；
+/// 落败方 future 被 drop（连接随之中断）。
 async fn race_cancel<F, T>(cancel: &Arc<AtomicBool>, fut: F) -> Result<T, String>
 where
     F: std::future::Future<Output = Result<T, String>>,
@@ -277,13 +266,12 @@ pub async fn run_install(
     let zip_path = zip_cache_path(request);
 
     // ── A 段（包体 → 清单 → 计划）：失败/取消已在内部收口 → 直接返回 ──
-    let Some((plan, pack_bytes_est, a_done)) =
+    let Some((plan, a_done)) =
         phase_a_fetch_and_parse(&sink, cancel, progress, request, &config, &zip_path, online).await
     else {
         return false;
     };
-    let PackPrep { c, emit, idx } =
-        prepare_pack_install(&sink, progress, request, &plan, pack_bytes_est, a_done);
+    let PackPrep { c, emit, idx } = prepare_pack_install(&sink, progress, request, &plan, a_done);
 
     // ── 目标目录：预指定名保证解析期/安装期一致 ──
     let (vdir, vdir_existed_before) = prepare_version_dir(progress, &config, request, &plan);
@@ -329,11 +317,9 @@ struct PackPrep {
 }
 
 /// A 段：获取包体 → 解析清单 → 生成计划。失败/取消时已收口，返回 None。
-/// 返回（计划，包体字节估算，A 段已完成步骤数）。
-///
-/// A 段临时心跳：正式心跳在解析完成后才启动（完整步骤表那时才知道），
-/// A 段若无心跳则包体下载全程 0%（无速度/ETA/百分比）。临时心跳只覆盖
-/// A1/A2：est = 包体大小，进度走字节公式；A 段结束后 abort，正式心跳接管。
+/// 返回（计划，A 段已完成步骤数）。
+/// A 段临时心跳：正式心跳在解析完成后才启动，此前若无心跳则包体下载全程 0%（无
+/// 速度/ETA/百分比）。临时心跳 est=包体大小、进度走字节公式，A 段结束 abort 后由正式心跳接管。
 async fn phase_a_fetch_and_parse(
     sink: &Arc<dyn EventSink>,
     cancel: &Arc<AtomicBool>,
@@ -342,12 +328,11 @@ async fn phase_a_fetch_and_parse(
     config: &DownloaderConfig,
     zip_path: &Path,
     online: bool,
-) -> Option<(PackPlan, u64, usize)> {
+) -> Option<(PackPlan, usize)> {
     let app = sink.as_ref();
     let a_bytes = Arc::new(AtomicU64::new(0));
     let a_est = Arc::new(AtomicU64::new(0));
-    // 在线包的「下载整合包」是长步骤（包体常达数百 MB），按字节报分步进度；
-    // 本地包没有下载步（步骤 0 是"解析整合包"），不报。
+    // 在线包"下载整合包"是长步骤（常数百 MB），按字节报分步进度；本地包无下载步，不报。
     let a_step = online.then(|| StepRef {
         idx: Arc::new(AtomicUsize::new(0)),
         step_bytes: Arc::clone(&a_bytes),
@@ -363,28 +348,25 @@ async fn phase_a_fetch_and_parse(
             total_files: u32::from(online) + 1,
             bytes: Arc::clone(&a_bytes),
             est_total_bytes: Arc::clone(&a_est),
+            // 在线包体下载的分子/分母同宇宙（都是包体字节）；本地包 est 恒 0 → 自动回退步骤口径
+            percent_by_steps: false,
             step: a_step,
         },
     );
 
     // ── A1：获取包体（幂等：本地缓存 sha1 命中直接跳过）──
-    let pack_bytes_est =
-        match phase_fetch_pack(app, cancel, progress, request, zip_path, &a_bytes, &a_est).await {
-            Ok(v) => v,
-            Err(e) => {
-                let _ = fail_or_cancel(app, progress, cancel, e, None);
-                return None;
-            }
-        };
+    // 包体字节只进 A 段临时心跳：本段步骤完成后由 B/C 段接管，B/C 的 est 只统计本段还要
+    // 下载的字节（详见 prepare_pack_install 注释），故这里的估算不再外传。
+    if let Err(e) =
+        phase_fetch_pack(app, cancel, progress, request, zip_path, &a_bytes, &a_est).await
+    {
+        let _ = fail_or_cancel(app, progress, cancel, e, None);
+        return None;
+    }
     if cancelled(cancel) {
         set_cancelled(app, progress);
         return None;
     }
-    let pack_bytes_est = if pack_bytes_est == 0 {
-        std::fs::metadata(zip_path).map(|m| m.len()).unwrap_or(0)
-    } else {
-        pack_bytes_est
-    };
 
     // ── A2：解析清单并生成计划 ──
     let parse_idx = usize::from(online);
@@ -399,26 +381,29 @@ async fn phase_a_fetch_and_parse(
     // A 段结束：停临时心跳，正式 Counters/心跳由 prepare_pack_install 接管
     a_heartbeat.abort();
     let a_done = parse_idx + 1; // A 段已完成步骤数
-    Some((plan, pack_bytes_est, a_done))
+    Some((plan, a_done))
 }
 
 /// 重建完整步骤表（B 段本体 + C 段内容）+ 装配正式计数器与心跳。
 ///
-/// 心跳：150ms 共享心跳刷新计数/速度/ETA（est_total_bytes 用 c.est_bytes，
-/// 版本清单获取后仍可运行中增长）；进度百分比由 update_progress 按
-/// completed_files/total_files（即完成步骤数）计算。收尾前 abort。
+/// 进度口径：总百分比走**完成步骤数**（`percent_by_steps`，与步骤表天然同宇宙，收尾时
+/// 自然到 99.9%）；`est_bytes` 只服务速度/ETA 与前端聚合剩余量，故只累计本段真正要下载的
+/// 字节（内容 + 版本清单补入的 client/库/资源）——**不含包体**：本地包体的字节永远不会
+/// 进字节分子，在线包体已在 A 段下完，两者留在分母都会把进度/ETA 拖到低位后跳变。
+/// 心跳刷新计数/速度/ETA；收尾前 abort。
 fn prepare_pack_install(
     sink: &Arc<dyn EventSink>,
     progress: &Arc<Mutex<TaskProgress>>,
     request: &ModpackRequest,
     plan: &PackPlan,
-    pack_bytes_est: u64,
     a_done: usize,
 ) -> PackPrep {
     let app = sink.as_ref();
     let (full_names, idx, content_est) = build_step_plan(request, plan);
     replace_steps(app, progress, &full_names, a_done);
-    let c = Counters::new(full_names.len() as u32, pack_bytes_est + content_est);
+    let c = Counters::new(full_names.len() as u32, content_est);
+    // A 段已完成步骤在最终表里就是前 prefix 项：分子要与其对齐，否则总百分比从 0 重算
+    c.done_steps.store(a_done as u32, Ordering::Relaxed);
     set_total(app, progress, c.total_steps, 0);
 
     let emit = spawn_heartbeat(
@@ -429,6 +414,8 @@ fn prepare_pack_install(
             total_files: c.total_steps,
             bytes: Arc::clone(&c.bytes),
             est_total_bytes: Arc::clone(&c.est_bytes),
+            // 步骤口径：每内容文件一步，粒度足够细（字节分母含不回传字节的估算）
+            percent_by_steps: true,
             // 分步进度：B/C 段长步骤（游戏主文件/依赖库/资源文件）据此刷新
             step: Some(c.step_ref()),
         },
@@ -503,9 +490,7 @@ fn build_step_plan(request: &ModpackRequest, plan: &PackPlan) -> (Vec<String>, S
         .iter()
         .map(|s| s.to_string())
         .collect();
-    // A 段步骤（下载/解析整合包）排在最终步骤表最前面，B/C 段各步的下标必须整体
-    // 后移这个前缀长度，否则每个阶段都会写到"错一行"的步骤上（表现为：某一步
-    // 从 0% 直接跳到 100%，而动的那一行其实是别的阶段）。
+    // A 段步骤排在最终表最前，B/C 段索引必须整体后移此前缀长度，否则写到"错一行"的步骤。
     let prefix = full_names.len();
     full_names.extend(names.iter().cloned());
     let content_bytes: u64 = plan.files.iter().map(|f| f.size).sum();
@@ -527,9 +512,8 @@ fn build_step_plan(request: &ModpackRequest, plan: &PackPlan) -> (Vec<String>, S
     )
 }
 
-/// 目标目录：预指定名保证解析期/安装期一致。写版本身份标记（重装/更新
-/// 同名整合包时据此复用目录，内容 sha1 幂等跳过生效）；本次新建目录注册
-/// 取消时整删（对齐 run_task）。
+/// 目标目录：预指定名保证解析期/安装期一致。写版本身份标记（重装/更新同名整合包时
+/// 据此复用目录，内容 sha1 幂等跳过生效）；本次新建目录注册取消时整删（对齐 run_task）。
 fn prepare_version_dir(
     progress: &Arc<Mutex<TaskProgress>>,
     config: &DownloaderConfig,
@@ -670,8 +654,7 @@ impl<'a> PackInstall<'a> {
         );
         let vj = self.vj()?;
         if let Some(cl) = &vj.downloads.client {
-            // 该步此前既无步骤级进度（回调传 None）也只在完成时一次性加字节 →
-            // 卡片全程 0%、速度/ETA 静止。改为：分母取清单 size，字节由回调增量累加。
+            // 分母取清单 size，字节由回调增量累加（否则卡片全程 0%、速度/ETA 静止）
             self.c.enter_step_bytes(self.idx.i_jar, cl.size);
             let jar_path = self
                 .vdir
@@ -788,17 +771,14 @@ impl<'a> PackInstall<'a> {
         Ok(())
     }
 
-    /// B6：ModLoader 安装。钩子只置内存标志；步骤推进由轮询循环完成
+    /// B6：ModLoader 安装。钩子只置内存标志，步骤推进由轮询循环完成
     /// （钩子非 async，不能触碰 progress 锁；install_* 借用外部状态）。
     async fn b_loader(&self) -> Result<(), String> {
         let Some(loader) = &self.plan.loader else {
             return Ok(());
         };
-        // 进入 loader 两步就置 Running：`install_loader` 是外部安装器（Fabric 配置/库、
-        // Forge 的 installer 子进程），进度只能由安装器钩子报里程碑、拿不到可信百分比。
-        // 此前这两步**从不**置 Running、只在结束时 finish_step，前端对 pending 行不显示
-        // 百分比 → 观感是"连 0% 都没有、直接从 100% 冒出来"。这里让它们与其它无百分比
-        // 步骤（原生库 / 内容文件）一致：Running 0% → 完成 100%。
+        // install_loader 是外部安装器，拿不到可信百分比：两步置 Running 0% → 完成 100%，
+        // 与其它无百分比步骤（原生库/内容文件）一致（前端对 pending 行不显示百分比）。
         let label = loader.kind.display_name();
         if let Some(idx) = self.idx.i_cfg {
             set_phase(
@@ -867,17 +847,15 @@ impl<'a> PackInstall<'a> {
                     break;
                 }
             }
-            // 取消不在此处提前 return：install_fut 内部轮询同一 cancel 令牌，
-            // 会杀掉 installer 子进程并自行返回 Err，随后由上方 Err 分支
-            // 经 fail 收口——中途 drop future 会遗留孤儿 JVM 进程
+            // 取消不在此提前 return：install_fut 内部轮询同一 cancel，会杀 installer
+            // 子进程并返回 Err 经 fail 收口——中途 drop future 会遗留孤儿 JVM 进程
         }
         Ok(())
     }
 
-    /// C0：包内资源复用。部分整合包把 mod 物理捆绑在 overrides/ 内（常见于
-    /// 作者关闭 CurseForge 第三方分发的场景）。清单内文件先与包内同名条目做
-    /// sha1 对比：一致则直接解包免下载；受限文件若已捆绑 → 就地落盘并从
-    /// 提示清单移除。
+    /// C0：包内资源复用。部分整合包把 mod 物理捆绑在 overrides/ 内（作者关闭 CurseForge
+    /// 第三方分发）。清单文件先与包内同名条目比对 sha1：一致则直接解包免下载；受限文件
+    /// 已捆绑则就地落盘并从提示清单移除。
     fn c0_bundled_reuse(&mut self) -> Result<(), String> {
         let mut pack_zip = self.plan.overrides.as_ref().and_then(|ov| {
             std::fs::File::open(&ov.zip_path)
@@ -989,8 +967,8 @@ impl<'a> PackInstall<'a> {
                 let size = f.size;
                 set.spawn(async move {
                     let urls = crate::util::community_download_urls(&f_url).await;
-                    // 幂等：目标已存在且校验命中 → 跳过（恢复场景零重下）。
-                    // sha1 缺失时降级为体积匹配（信任模型同上）
+                    // 幂等：目标已存在且校验命中 → 跳过（恢复场景零重下）；
+                    // sha1 缺失时降级为体积匹配
                     let hit = dest.is_file()
                         && if !sha1.is_empty() {
                             hash::file_sha1_matches(&dest, &sha1)
@@ -1004,9 +982,7 @@ impl<'a> PackInstall<'a> {
                     if cancelled(&cancel) {
                         return Ok((idx, 0u64));
                     }
-                    // 字节回调走共享工厂（本地水位 + 增量累加进任务总字节）。
-                    // step_bytes 无消费者（本任务进度百分比由步骤数公式驱动），计数被丢弃；
-                    // 无需知道落盘字节数，故无需保留 worker 本地水位。
+                    // 字节回调增量累加进任务总字节；step_bytes 无消费者（进度走步骤数公式），丢弃。
                     let counters = ProgressCounters {
                         files: Arc::new(AtomicU32::new(0)),
                         bytes,
@@ -1070,7 +1046,7 @@ impl<'a> PackInstall<'a> {
         Ok(())
     }
 
-    /// B/C 段编排：本体（版本清单 → client → 依赖/资源/原生 → loader）→
+    /// B/C 段编排：本体（清单 → client → 依赖/资源/原生 → loader）→
     /// 内容（包内复用 → 并发下载 → overrides）；错误交调用方统一收口。
     async fn phases_bc(&mut self) -> Result<(), String> {
         // ── B1：版本清单（唯一硬前置）──
@@ -1116,7 +1092,7 @@ async fn phase_fetch_pack(
 ) -> Result<u64, String> {
     let mut pack_bytes_est = 0u64;
     if let PackSource::Local { path } = &request.source {
-        // 恢复场景（重启后重跑整卡）文件可能已被移动/删除：此处给中文首行提示，
+        // 恢复场景（重启后重跑整卡）文件可能已被移动/删除：给中文首行提示，
         // 而非下游 open_zip 的「系统找不到指定的路径。(os error 3)」
         if !zip_path.is_file() {
             bail!("整合包文件不存在\n{path}");
@@ -1132,8 +1108,8 @@ async fn phase_fetch_pack(
         );
         pack_bytes_est = *size;
         a_est.store(*size, Ordering::Relaxed);
-        // 强校验优先；清单未提供 sha1 时降级为体积弱校验——与 fetch_verified_c
-        // 空 sha1 跳过网络校验的信任模型一致，恢复场景不再整包重下
+        // 强校验优先；清单未提供 sha1 时降级为体积弱校验（与 fetch_verified_c
+        // 空 sha1 跳过网络校验的信任模型一致），恢复场景不整包重下
         let cached = zip_path.is_file()
             && match (sha1.is_empty(), *size) {
                 (false, _) => hash::file_sha1_matches(zip_path, sha1),
@@ -1355,11 +1331,7 @@ mod tests {
         );
     }
 
-    /// 本地源必须直接指向用户选定的文件。
-    ///
-    /// 回归：`zip_cache_path` 曾对本地源也返回 `modpacks/{key}.zip` —— 该文件从不
-    /// 被写入，`open_zip` 于是报「系统找不到指定的路径。(os error 3)」，本地导入
-    /// （资源中心整合包页 / 游戏目录菜单）完全不可用。
+    /// 本地源必须直接指向用户选定的文件（缓存路径从不被写入，open_zip 会报 os error 3）。
     #[test]
     fn local_source_zip_path_is_user_file() {
         let local = ModpackRequest {
@@ -1409,10 +1381,7 @@ mod tests {
         assert_eq!(initial_steps(&local), vec!["解析整合包"]);
     }
 
-    /// `replace_steps` 必须让已完成步骤保持 **Done + 100%**。
-    ///
-    /// 回归：B 段重写步骤表时曾把每一步都写成 `progress: 0.0`，UI 于是显示
-    /// 「下载整合包 / 解析整合包：已完成但 0%」（用户实测反馈）。
+    /// `replace_steps` 必须让已完成步骤保持 **Done + 100%**（不得重置为 0%）。
     #[test]
     fn replace_steps_keeps_done_steps_at_100() {
         struct NullSink;
@@ -1466,11 +1435,7 @@ mod tests {
         assert_eq!(p.total_files, 4, "总步骤数应随新步骤表更新");
     }
 
-    /// 步骤索引必须落在**同名**步骤上。
-    ///
-    /// 回归测试：`StepIndex` 的索引过去按「只含 B/C 段」的列表算，却用在拼接了
-    /// A 段前缀的最终步骤表上 → 整体错位（每个阶段都写到错一行的步骤，表现为
-    /// 「某步 0% 直接跳到 100%」）。
+    /// 步骤索引必须落在**同名**步骤上（索引须含 A 段前缀偏移，否则整体错位）。
     #[test]
     fn step_index_points_at_matching_names() {
         for (label, source, prefix) in [
