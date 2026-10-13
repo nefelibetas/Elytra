@@ -33,6 +33,7 @@ use super::forge::resolve_java;
 use super::run_installer_command;
 use crate::config::downloader::{DownloadSource, DownloaderConfig};
 use crate::downloader::fetcher;
+use crate::util::NoWindow as _;
 
 /// `install_profile.json` 的执行相关视图（其余字段忽略）。
 #[derive(Debug, Deserialize)]
@@ -473,6 +474,9 @@ pub async fn run_client_processors(
         }
 
         let mut cmd = tokio::process::Command::new(&java);
+        // 应用运行期不得弹出控制台窗口：安装器工具（installertools/jarsplitter/…）
+        // 逐个 java 进程跑，漏掉这行就是「装 Forge 时连弹多个命令行窗口」
+        cmd.no_window();
         cmd.arg("-cp")
             .arg(&classpath)
             .arg(&main)

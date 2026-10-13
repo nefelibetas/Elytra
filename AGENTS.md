@@ -88,6 +88,7 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 - **serde_json 的字符串索引在"读"时也会写入**：`value["missing"]` 会把 `"missing": null` 插进对象。凡"只看一眼"的探测一律 `get`/`get_mut`，只有确实要赋值时才用索引。踩过的坑：`merged["arguments"].as_object_mut()` 让老版本（1.7.10/1.8.9）合并出的版本 JSON 多出 `"arguments": null`，读取端 `VersionJson.arguments`（老版本本就没有该字段）反序列化直接失败——`无效类型 null`。故该字段为 `Option<Arguments>` + `jvm_args()/game_args()` 访问口（`#[serde(default)]` 只兜"缺失"，兜不住显式 null）
 - **loader 库条目的两种形态都要能进 classpath**：老式 profile/spec-0 条目标 `{name, url}`、spec-0 的 `versionInfo.libraries` 甚至只有 `{name}`，都没有 `downloads.artifact`（classpath 与缺库检查都从 `artifact.path` 取路径 → 缺失即静默丢出 classpath）。`shared::normalize_legacy_libraries` 按坐标补 path/url（无 url 走 `MOJANG_LIBRARIES` 兜底）；**只有 `classifiers` 的 natives 条目绝不合成普通构件**（实测会去下 CDN 上不存在的 `*-platform-x.y.jar` → 404）
 - **外部输入的落盘路径**一律过 `util::safe_relative_path`（拒绝绝对路径 / `..` / 空段），sha1 前两位子目录走 `util::sha1_sub_dir`（不裸切 `hash[..2]`）
+- **子进程一律无窗口（铁律）**：应用运行期**不得弹出控制台窗口**。所有 spawn 点（`std::process::Command` / `tokio::process::Command`：java 探版本、Forge/NeoForge installer processors、游戏进程、`cmd /C` 自动任务、`taskkill`…）必须经 `util::process::NoWindow` 装配——`cmd.no_window()`；需附加标志（`CREATE_BREAKAWAY_FROM_JOB` / `CREATE_NEW_PROCESS_GROUP`）时用 `cmd.no_window_with(extra)`，**不要自己再调 `creation_flags`**（覆盖式设置会丢掉 `CREATE_NO_WINDOW`）。漏掉的典型症状：安装 Forge/NeoForge 时连弹多个命令行窗口，几十毫秒后自行消失
 
 ### 前端 Vue/TS
 
@@ -127,7 +128,7 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 | `src-tauri/src/auth/microsoft.rs` | 微软 OAuth（授权码/refresh/XBL/XSTS/MC login）、回调服务 127.0.0.1:27205 |
 | `src-tauri/src/online/session.rs` | easytier 会话封装：no_tun+smoltcp+KCP 数据面、bind_device=false、enable_kcp_proxy=true（KCP 数据面首选，缺则 smoltcp 传大数中断） |
 | `src-tauri/src/online/mc_advertise.rs` | guest 端 MC 局域网广播模拟（224.0.2.60:4445，绕过 MC 26.2 离线会话校验） |
-| `src-tauri/src/util/` | 跨域纯函数（按职责拆分子模块，`mod.rs` 重导出、`crate::util::xxx` 路径不变）：`dirs.rs`（`config_dir()`/平台目录基准）/`path.rs`（`safe_relative_path`/`sha1_sub_dir`/`unique_child_dir`）/`text.rs`（`fnv1a64`/`is_simple_name`）/`version_name.rs`（`infer_loader_from_json`）/`net.rs`/`icon.rs`/`log.rs`/`time.rs`/`rt.rs` |
+| `src-tauri/src/util/` | 跨域纯函数（按职责拆分子模块，`mod.rs` 重导出、`crate::util::xxx` 路径不变）：`dirs.rs`（`config_dir()`/平台目录基准）/`path.rs`（`safe_relative_path`/`sha1_sub_dir`/`unique_child_dir`）/`text.rs`（`fnv1a64`/`is_simple_name`）/`version_name.rs`（`infer_loader_from_json`）/`net.rs`/`icon.rs`/`log.rs`/`time.rs`/`rt.rs`/`process.rs`（`NoWindow`：子进程无窗口装配，铁律——所有 spawn 必过） |
 | `src-tauri/tauri.conf.json` | 窗口 **1008×648**（840×540 的 1.2 倍）、无边框透明、`beforeDevCommand: pnpm dev`、devUrl :1420 |
 | `src-tauri/capabilities/default.json` | main 窗口权限：core:default + window 控制子集 + opener + dialog |
 | `src/store/task/download.ts` | 下载任务状态机（事件驱动核心） |

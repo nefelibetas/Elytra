@@ -1,11 +1,11 @@
+use std::collections::HashSet;
+use std::path::Path;
+
 use crate::jdk::model::JdkInfo;
-use crate::util::java_bin_path;
 #[cfg(target_os = "windows")]
 use crate::util::exe_dir;
-use std::collections::HashSet;
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-use std::path::Path;
+use crate::util::java_bin_path;
+use crate::util::NoWindow as _;
 
 // 自定义目录扫描
 pub fn scan_custom_dir(path: &str) -> Result<Vec<JdkInfo>, String> {
@@ -74,8 +74,8 @@ pub(crate) fn inspect(java_home: &Path) -> Result<JdkInfo, String> {
     }
     let mut cmd = std::process::Command::new(java_bin);
     cmd.arg("-version");
-    #[cfg(target_os = "windows")]
-    cmd.creation_flags(0x08000000); // 避免调用指令出现命令行窗口
+    // java 是控制台程序：应用运行期探版本不得弹出命令行窗口
+    cmd.no_window();
     let output = cmd.output().map_err(common_err_ctx!("Java 检测失败"))?;
     let stderr = String::from_utf8_lossy(&output.stderr);
     let version = parse_version(&stderr).ok_or_else(|| format!("Java 版本解析失败\n{}", stderr))?;

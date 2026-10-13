@@ -12,6 +12,8 @@ use super::model::{
 use super::{backup, crashpack, record};
 use crate::events;
 use crate::task::EventSink;
+#[cfg(target_os = "windows")]
+use crate::util::NoWindow as _;
 
 /// 命令超时的轮询间隔。
 const POLL_MS: u64 = 50;
@@ -166,7 +168,9 @@ fn kill_tree(child: &mut std::process::Child) {
     #[cfg(target_os = "windows")]
     {
         // taskkill /T 递归整个进程树，/F 强制
-        let _ = std::process::Command::new("taskkill")
+        let mut kill = std::process::Command::new("taskkill");
+        kill.no_window(); // taskkill 是控制台程序：不装配就是一闪而过的命令行窗口
+        let _ = kill
             .args(["/T", "/F", "/PID", &pid.to_string()])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -187,12 +191,12 @@ fn kill_tree(child: &mut std::process::Child) {
 
 #[cfg(target_os = "windows")]
 fn command_shell(command: &str) -> std::process::Command {
-    use std::os::windows::process::CommandExt as _;
+    // CREATE_NEW_PROCESS_GROUP：让 kill_tree 能按 PID 递归回收整棵树
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
     let mut cmd = std::process::Command::new("cmd");
     cmd.args(["/C", command]);
-    // CREATE_NO_WINDOW：自动任务命令不应弹出控制台窗口
-    // CREATE_NEW_PROCESS_GROUP：让 kill_tree 能按 PID 递归回收整棵树
-    cmd.creation_flags(0x0800_0000 | 0x0000_0200);
+    // 自动任务命令不得弹出控制台窗口（CREATE_NO_WINDOW 由 util::process 统一合并）
+    cmd.no_window_with(CREATE_NEW_PROCESS_GROUP);
     cmd
 }
 
@@ -258,7 +262,7 @@ mod tests {
             }
             let idx = payload["step_index"].as_u64().unwrap_or(0);
             let action = payload["action"].as_str().unwrap_or("").to_string();
-            if out.last().map(|(i, a)| (*i != idx || *a != action)).unwrap_or(true) {
+            if out.last().map(|(i, a)| *i != idx || *a != action).unwrap_or(true) {
                 out.push((idx, action));
             }
         }

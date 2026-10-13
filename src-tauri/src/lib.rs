@@ -89,6 +89,9 @@ use commands::version_icon::{
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 子进程一律不得弹控制台窗口：GUI 进程先持有一个隐藏控制台，
+    // 第三方库内部的 spawn（easytier 的 cmd/ipconfig 等）才会继承它而非新建窗口
+    util::ensure_hidden_console();
     // 启动器日志落盘（stdout/stderr → Elytra/launcher.log）
     util::init_file_logging();
     task::init();

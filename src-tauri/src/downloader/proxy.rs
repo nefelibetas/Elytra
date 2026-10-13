@@ -7,6 +7,7 @@ use winreg::{enums::HKEY_CURRENT_USER, RegKey};
 
 use crate::config::downloader::NetworkMode;
 use crate::persist::downloader_config;
+use crate::util::NoWindow as _;
 
 /// 解析 Windows 注册表 ProxyServer 值 → (http 代理, https 代理)。
 /// 支持两种格式：
@@ -107,6 +108,8 @@ fn env_proxy_urls() -> (Option<String>, Option<String>) {
 fn linux_gsettings_proxy_urls() -> (Option<String>, Option<String>) {
     fn gs(schema: &str, key: &str) -> Option<String> {
         let out = std::process::Command::new("gsettings")
+            // 子进程一律无窗口装配（其它平台空实现，Windows 构建仅语法检查）
+            .no_window()
             .args(["get", schema, key])
             .output()
             .ok()?;

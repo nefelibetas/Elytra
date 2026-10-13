@@ -6,8 +6,6 @@
 #[cfg(target_os = "windows")]
 use std::ffi::c_void;
 use std::io::Write as _;
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -17,6 +15,8 @@ use crate::game::version::model::VersionJson;
 use crate::launcher::args::{ensure_old_style_natives, mc_version_of};
 use crate::launcher::env::{load_launch_config, pre_launch_check};
 use crate::launcher::model::{AuthMode, LaunchOptions, ProcessPriority};
+#[cfg(target_os = "windows")]
+use crate::util::NoWindow as _;
 
 /// 启动游戏子进程（cwd/stdio 由调用方在 command 上预设）。
 /// Windows：游戏进程应与启动器生命周期解耦，否则关闭启动器（或其终端）会连游戏一起关闭：
@@ -30,11 +30,12 @@ use crate::launcher::model::{AuthMode, LaunchOptions, ProcessPriority};
 pub fn spawn_game_child(
     command: &mut std::process::Command,
 ) -> Result<std::process::Child, String> {
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
-    let mut flags = CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB;
+    // 附加标志（CREATE_NO_WINDOW 由 util::process 统一合并：游戏同样是控制台程序，
+    // 不带该标志就会弹出一个命令行窗口）
+    let mut flags = CREATE_BREAKAWAY_FROM_JOB;
     loop {
-        command.creation_flags(flags);
+        command.no_window_with(flags);
         match command.spawn() {
             Ok(c) => return Ok(c),
             Err(e) if e.raw_os_error() == Some(5) && flags & CREATE_BREAKAWAY_FROM_JOB != 0 => {
