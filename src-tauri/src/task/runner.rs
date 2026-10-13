@@ -758,7 +758,12 @@ pub async fn run_task(
         "[task] 阶段C: 并行下载开始 ({:.1}s)",
         t0.elapsed().as_secs_f64()
     );
-    let parallel = tokio::try_join!(
+    // 用 join! 而非 try_join!：try_join! 在首个 Err 时立即返回并 drop 其余 future，
+    // 但各 step 内部的批处理 worker 是独立 spawn 的（future 被 drop 不会中止它们）——
+    // 于是任务已进入 Error 并登记整删版本目录，孤儿 worker 仍在往该目录写：Windows 下
+    // 句柄占用会让删除失败或目录被重建，「失败整删」承诺失效并留下垃圾。
+    // join! 等全部收尾后再收口，杜绝该竞争。
+    let (jar, libs, assets, natives, loader_r, optifine_r, fabric_r) = tokio::join!(
         download_client_jar(&ctx),
         download_libraries_step(&ctx),
         download_assets_step(&ctx),
@@ -774,7 +779,13 @@ pub async fn run_task(
         eprintln!("[task] 取消收口");
         return set_cancelled(app, progress);
     }
-    if let Err(errors) = parallel {
+    let mut errors: Vec<String> = Vec::new();
+    for r in [jar, libs, assets, natives, loader_r, optifine_r, fabric_r] {
+        if let Err(mut e) = r {
+            errors.append(&mut e);
+        }
+    }
+    if !errors.is_empty() {
         // 全新下载失败：整删残缺版本目录（含未写全的 json/jar），免手动清理；
         // 补全文件（任务开始前目录已存在）不删，避免误删已有版本
         if !vdir_existed_before {

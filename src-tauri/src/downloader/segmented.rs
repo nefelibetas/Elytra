@@ -140,8 +140,11 @@ where
             .map_err(|e| FetchError::Io(format!("预分配文件失败\n{e}")))?;
     }
 
-    let counter = Arc::new(AtomicU64::new(progress.iter().sum()));
-    let pace = Arc::new(Pace::new());
+    // 本次会话起点的已落盘字节（续传偏移）：counter 含此偏移用于进度绝对值显示，
+    // 但限速必须按「本次会话已传字节」计量，故 Pace 记录该基线并减去。
+    let done_base: u64 = progress.iter().sum();
+    let counter = Arc::new(AtomicU64::new(done_base));
+    let pace = Arc::new(Pace::new(done_base));
     let writer = PartWriter {
         slots: Mutex::new(progress.clone()),
         path: meta_path.clone(),
@@ -365,15 +368,25 @@ async fn fetch_segment(job: SegmentJob<'_>) -> Result<(), FetchError> {
 
 /// 全局限速状态：所有段共享同一时间基准，各自按「全局累计字节 ÷ 限速」推算目标时刻
 /// 并补睡 —— 段间自然互相等待，总速率被约束在限速内。
+/// `base` 为本次会话起点的已落盘字节（续传偏移）：目标时刻必须按「本次会话已传字节」
+/// 推算，否则续传时首块即把累计值当会话字节，目标时刻远超已耗时，配合
+/// `PACE_SLEEP_CAP` 会把续传钉死在 ≈chunk/0.25s 的低速。
 struct Pace {
     started: Instant,
+    base: u64,
 }
 
 impl Pace {
-    fn new() -> Self {
+    fn new(base: u64) -> Self {
         Self {
             started: Instant::now(),
+            base,
         }
+    }
+
+    /// 按本次会话已传字节推算的目标时刻（秒）：`global_bytes` 含续传偏移，先减去基线。
+    fn target_secs(&self, global_bytes: u64, limit: u64) -> f64 {
+        global_bytes.saturating_sub(self.base) as f64 / limit as f64
     }
 
     async fn wait(&self, global_bytes: u64) {
@@ -381,7 +394,7 @@ impl Pace {
         if limit == 0 {
             return;
         }
-        let target = global_bytes as f64 / limit as f64;
+        let target = self.target_secs(global_bytes, limit);
         let elapsed = self.started.elapsed().as_secs_f64();
         if elapsed < target {
             let sleep = (target - elapsed).min(PACE_SLEEP_CAP);
@@ -887,5 +900,18 @@ mod tests {
 
         let _ = std::fs::remove_file(&dest);
         let _ = std::fs::remove_file(&dest2);
+    }
+
+    /// 续传限速回归：限速目标必须按「本次会话已传字节」推算。若误用累计值
+    /// （含续传偏移），续传首块的目标时刻会远超已耗时，配合 `PACE_SLEEP_CAP`
+    /// 把续传速率钉在 ≈chunk/0.25s 的低速。此处断言基线被正确扣除。
+    #[test]
+    fn pace_target_excludes_resume_offset() {
+        let limit = 1024 * 1024; // 1 MiB/s
+        let base = 4 * 1024 * 1024; // 续传起点：已落盘 4 MiB
+        let pace = Pace::new(base);
+        // 会话内仅新传 128 KiB → 目标 0.125s（而非 (4 MiB + 128 KiB)/1 MiB/s ≈ 4.125s）
+        let t = pace.target_secs(base + 128 * 1024, limit);
+        assert!((t - 0.125).abs() < 1e-9, "应按会话字节计，实际 {t}");
     }
 }

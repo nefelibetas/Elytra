@@ -361,6 +361,7 @@ async fn repair_downloads(ctx: &RepairCtx<'_>) -> Result<(), Vec<String>> {
         ctx.jar_missing,
         &ctx.sources,
         &pc_jar,
+        ctx.cancel,
     );
 
     let pc_lib = progress::ProgressCounters {
@@ -396,7 +397,20 @@ async fn repair_downloads(ctx: &RepairCtx<'_>) -> Result<(), Vec<String>> {
         Some(ctx.cancel),
     );
 
-    tokio::try_join!(jar, libs, asst).map(|_| ())
+    // 同 runner 阶段 C：join! 等全部收尾，避免 try_join! 短路后孤儿 worker
+    // 仍在写盘（它们与 future 的 drop 无关），与失败清理互相竞争。
+    let (jar, libs, asst) = tokio::join!(jar, libs, asst);
+    let mut errors: Vec<String> = Vec::new();
+    for r in [jar, libs, asst] {
+        if let Err(mut e) = r {
+            errors.append(&mut e);
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
 }
 
 /// natives 阶段（幂等：已解压跳过；仅报告有缺失时才执行，与 steps 索引对应）。
@@ -539,6 +553,7 @@ fn repair_step_indices(
 }
 
 /// 修复 client.jar：清理损坏（0 字节/sha1 不匹配）旧文件后逐源 sha1 校验下载。
+/// `cancel` 置位后传输中途立即中断（可取消变体），大 jar 不再等自然结束/30s 读超时。
 async fn repair_jar(
     vj: &VersionJson,
     vdir: &Path,
@@ -546,6 +561,7 @@ async fn repair_jar(
     jar_missing: bool,
     sources: &[DownloadSource],
     pc: &progress::ProgressCounters,
+    cancel: &AtomicBool,
 ) -> Result<(), Vec<String>> {
     if jar_missing {
         // 清理目录内损坏（0 字节或 sha1 不匹配）的 jar，避免与下载目标并存
@@ -570,8 +586,9 @@ async fn repair_jar(
                 pc.step_total.store(c.size, Ordering::Relaxed);
             }
             let cb = pc.overwrite_callback();
-            // 逐源 sha1 校验下载：镜像 CDN 返回不完整/错误内容自动换源重试
-            fetcher::fetch_verified(&urls, &jar_path, Some(cb), &c.sha1)
+            // 逐源 sha1 校验下载：镜像 CDN 返回不完整/错误内容自动换源重试；
+            // 可取消变体：大 jar 传输中途取消立即停下（不等自然结束/30s 读超时）。
+            fetcher::fetch_verified_c(&urls, &jar_path, Some(cb), &c.sha1, Some(cancel))
                 .await
                 .map_err(|e| vec![e.to_string()])?;
         }

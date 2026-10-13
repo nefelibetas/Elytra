@@ -70,7 +70,19 @@ async fn download_with_decision(
     // 仅「真的下载成功」为 true：用户决策的 Skip 不是成功，不能落盘
     let mut downloaded = false;
     while decided == WaitingDecision::Retry {
-        let result = fetcher::fetch(url, tmp, Some(cb)).await;
+        // 用可取消变体（fetch 传入 cancel=None）：大文件（存档 zip / 光影包数百 MB）
+        // 中途取消能立即中断，不必等传输自然结束或 30s read_timeout。
+        // 显式绑定 client（Arc）：临时值跨 await 会被借用检查拒之门外，且 http() 复用全局连接池。
+        let client = fetcher::http();
+        let result = fetcher::fetch_with_c(
+            client.as_ref(),
+            url,
+            tmp,
+            Some(cb),
+            None,
+            Some(cancel.as_ref()),
+        )
+        .await;
         if cancelled(cancel) {
             let _ = std::fs::remove_file(tmp);
             emit_handle.abort();

@@ -148,12 +148,41 @@ fn run_command(command: &str, timeout_secs: u32) -> Result<String, String> {
             Err(e) => return Err(format!("等待命令失败\n{e}")),
         }
         if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
+            kill_tree(&mut child);
             return Err(format!("命令超时（{} 秒）", timeout_secs));
         }
         std::thread::sleep(Duration::from_millis(POLL_MS));
     }
+}
+
+/// 终止整棵进程树。
+///
+/// `cmd /C` / `sh -c` 只是外层壳：只 kill 壳会让真实子进程（编译脚本、7z、用户自带
+/// 的守护进程）变成孤儿继续跑、继续写盘 —— `pre_launch` 场景下会与随后启动的游戏
+/// 争抢存档/文件，且每次超时都残留一个未被回收的子进程。所以 spawn 时就把命令放进
+/// 独立进程组，超时按组回收。
+fn kill_tree(child: &mut std::process::Child) {
+    let pid = child.id();
+    #[cfg(target_os = "windows")]
+    {
+        // taskkill /T 递归整个进程树，/F 强制
+        let _ = std::process::Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        // 负 pid = 以进程组为单位发信号（spawn 时已 process_group(0)，pgid == pid）
+        // SAFETY: kill(2) 对任意 pid 调用都是安全的；组 id 来自刚刚 spawn 的子进程，
+        // 信号为 SIGKILL，无内存安全影响，失败也只是返回 -1。
+        unsafe {
+            libc::kill(-(pid as i32), libc::SIGKILL);
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 #[cfg(target_os = "windows")]
@@ -162,14 +191,18 @@ fn command_shell(command: &str) -> std::process::Command {
     let mut cmd = std::process::Command::new("cmd");
     cmd.args(["/C", command]);
     // CREATE_NO_WINDOW：自动任务命令不应弹出控制台窗口
-    cmd.creation_flags(0x0800_0000);
+    // CREATE_NEW_PROCESS_GROUP：让 kill_tree 能按 PID 递归回收整棵树
+    cmd.creation_flags(0x0800_0000 | 0x0000_0200);
     cmd
 }
 
 #[cfg(not(target_os = "windows"))]
 fn command_shell(command: &str) -> std::process::Command {
+    use std::os::unix::process::CommandExt as _;
     let mut cmd = std::process::Command::new("sh");
     cmd.args(["-c", command]);
+    // 独立进程组：超时后可按 pgid 一次性回收整棵树
+    cmd.process_group(0);
     cmd
 }
 
