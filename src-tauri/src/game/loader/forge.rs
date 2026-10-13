@@ -1,5 +1,4 @@
-// ── Installer 式安装（Forge / NeoForge 共用流程）：官方 installer.jar 下载 + ZIP 解析 ──
-// NeoForge 专属逻辑（install_neoforge / universal / patched client）在 neoforge.rs。
+// ── Installer 式安装（Forge / NeoForge 共用流程）：官方 installer.jar 下载 + ZIP 解析；NeoForge 专属逻辑在 neoforge.rs ──
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -25,8 +24,7 @@ pub async fn install_forge(
     ctx: InstallCtx<'_>,
 ) -> Result<(), String> {
     let InstallCtx { config, .. } = ctx;
-    // 安装程序也走多源回退：官方 maven 对国内网络不稳（连接重置/超时），
-    // 按 game_source_mode 的完整源顺序各构造一个 URL，fetch_fallback 依次尝试
+    // 多源回退：官方 maven 对国内网络不稳，按完整源顺序各构造 URL，fetch_fallback 依次尝试
     let installer_urls: Vec<String> = config
         .file_sources_list()
         .iter()
@@ -84,8 +82,7 @@ pub(super) async fn download_and_extract(
     )
     .await?;
 
-    // installer 保留到安装结束：processors 引擎需要 {INSTALLER}（此前在补丁前就删除，
-    // Windows 下仅因文件句柄占用而侥幸留下）
+    // installer 须保留到安装结束：processors 引擎需要 {INSTALLER}
     if !found_json {
         return Err("未找到 version.json".into());
     }
@@ -97,18 +94,17 @@ pub(super) async fn download_and_extract(
     }
 
     // ── 下载展开后 JSON 的全部库（vanilla 库已存在自动跳过，实际拉取 ModLoader 增量）──
-    // Forge/NeoForge 26.x 的本体（universal/fancymodloader 等）以 library 形式进 classpath，
-    // 安装阶段必须一并下载，否则启动时缺库。
+    // Forge/NeoForge 26.x 本体（universal/fancymodloader 等）以 library 形式进 classpath，安装阶段必须一并下载
     let lib_dir = mc_dir.join("libraries");
-    let libraries = read_libraries(&json_path)?;
-    // 客户端 patched jar：按 installer 自己声明的 processors 生成
-    // （Forge 1.17+ 为 binarypatcher 链；1.12- 无 processors → 跳过，由 universal 提供）
+    let mut libraries = read_libraries(&json_path)?;
+    // 客户端 patched jar 由 installer 声明的 processors 生成（1.12- 无 processors → 跳过，由 universal 提供）
     let profile_ref = profile.clone().unwrap_or(serde_json::Value::Null);
-    // spec-1 legacy 安装器（如 Forge 1.12.2）的构件内嵌在 zip 的 maven/ 下，
-    // version.json 里 URL 为空 —— 必须在下载支持库之前解出，否则会误报"网络无法下载"
+    // spec-1 legacy 安装器（如 Forge 1.12.2）的构件内嵌在 zip 的 maven/ 下、version.json URL 为空，须在下载支持库前解出
     install_embedded_maven(&mut archive, &profile_ref, &lib_dir)?;
     // spec-0 老 installer：install.filePath（zip 根）按 install.path 坐标落位
     install_profile_file(&mut archive, &profile_ref, &lib_dir)?;
+    // install_profile 声明的构件也必须落盘（含 version.json 里没有声明的运行时模块 jar，见 profile_libraries）
+    extend_with_profile_libraries(&mut libraries, &profile_ref);
     let files = LoaderFiles {
         dir_name,
         mc_dir: &mc_dir,
@@ -117,12 +113,9 @@ pub(super) async fn download_and_extract(
         cancel,
     };
     forge_patch_client(&mut archive, &installer_path, &profile_ref, &files).await?;
-    // NeoForge：install_profile.libraries 含 `net.neoforged:neoforge:{ver}:universal`
-    // （不在 version.json）。官方部署中 universal 不进 classpath——GameLocator production
-    // 分支从 libraries 目录加载它；放进 classpath 会因"找到 NeoForge 类而无 MC 类"
-    // 误报 "The patched Minecraft jar is missing"。这里仅下载文件到 libraries。
-    // 同时运行 installertools PROCESS_MINECRAFT_JAR 生成 minecraft-client-patched
-    // （GameLocator 新安装方式优先使用它，避免缺 client-srg.jar 报 corrupted）。
+    // NeoForge：universal 不在 version.json，须下载到 libraries 但不进 classpath（进了会因"找到
+    // NeoForge 类而无 MC 类"误报 "The patched Minecraft jar is missing"）；同时跑 installertools
+    // PROCESS_MINECRAFT_JAR 生成 minecraft-client-patched（新式安装优先用它，缺 client-srg.jar 会报 corrupted）
     if let Some(uni) = find_neoforge_universal(&profile) {
         install_neoforge_universal(
             uni,
@@ -135,10 +128,12 @@ pub(super) async fn download_and_extract(
         )
         .await?;
         let _ = std::fs::remove_file(&installer_path);
+        verify_profile_artifacts(&profile_ref, &lib_dir)?;
         return Ok(());
     }
     // 其余库走统一下载（多源回退 + sha1 校验；URL 为空的库在此被跳过）
     download_loader_libraries(&libraries, &lib_dir, dir_name, config, pc, cancel).await?;
+    verify_profile_artifacts(&profile_ref, &lib_dir)?;
 
     let _ = std::fs::remove_file(&installer_path);
     if let Some(h) = hook {
@@ -171,8 +166,7 @@ async fn fetch_installer(
         .and_then(|u| u.rsplit('/').next())
         .unwrap_or("installer.jar");
     let installer_path = tmp.join(installer_name);
-    // 字节级进度：step_progress 工厂（增量累加进全局与 LoaderLibs 步骤计数，
-    // total 写入步骤分母）
+    // 字节级进度：step_progress 工厂（增量累加进全局与 LoaderLibs 步骤计数，total 为分母）
     fetcher::fetch_fallback_c(
         installer_urls,
         &installer_path,
@@ -210,6 +204,107 @@ fn read_libraries(json_path: &Path) -> Result<Vec<model::Library>, String> {
     Ok(serde_json::from_value(merged["libraries"].clone()).unwrap_or_default())
 }
 
+/// install_profile 声明里可网络下载的构件（URL 为空的内嵌构件由 `install_embedded_maven` /
+/// `install_profile_file` 落盘，交给批量下载会被判"网络无法下载"而中止安装）。
+///
+/// **必须与 version.json 的库一并落盘**：Forge 1.17+ 的运行时模块 jar（`fmlcore` /
+/// `javafmllanguage` / `lowcodelanguage` / `mclanguage`）只在 install_profile 里声明，
+/// version.json 没有——FMLLoader 的 `LibraryFinder` 启动时按 `-DlibraryDirectory` 直接取这几个
+/// 文件，缺一个即 `Invalid paths argument, contained no existing paths` 秒退（退出码 1）。
+/// 官方 installer 正是把整份 `install_profile.libraries` 装进 `libraries/`（实测官方 1.20.1
+/// 安装产物里 universal 与四个模块 jar 都在，而 version.json 只声明 fmlloader/fmlearlydisplay）。
+pub(super) fn profile_libraries(profile: &serde_json::Value) -> Vec<model::Library> {
+    profile["libraries"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|lib| {
+            let artifact = &lib["downloads"]["artifact"];
+            let path = artifact["path"].as_str()?.to_string();
+            let url = artifact["url"].as_str().unwrap_or("").to_string();
+            if path.is_empty() || url.is_empty() {
+                return None;
+            }
+            Some(model::Library {
+                name: lib["name"].as_str().unwrap_or(&path).to_string(),
+                downloads: Some(model::LibraryDownloads {
+                    artifact: Some(model::Artifact {
+                        path,
+                        url,
+                        sha1: artifact["sha1"].as_str().unwrap_or("").to_string(),
+                        size: artifact["size"].as_u64().unwrap_or(0),
+                    }),
+                    classifiers: None,
+                }),
+                rules: None,
+                natives: None,
+                extract: None,
+            })
+        })
+        .collect()
+}
+
+/// 把 install_profile 的可下载构件并入待下清单，按 `downloads.artifact.path` 去重（保留先到者：
+/// version.json 已声明的条目带着正确的分类器/规则）。
+fn extend_with_profile_libraries(libraries: &mut Vec<model::Library>, profile: &serde_json::Value) {
+    for lib in profile_libraries(profile) {
+        let path = lib
+            .downloads
+            .as_ref()
+            .and_then(|d| d.artifact.as_ref())
+            .map(|a| a.path.clone());
+        let known = libraries.iter().any(|l| {
+            l.downloads
+                .as_ref()
+                .and_then(|d| d.artifact.as_ref())
+                .map(|a| a.path.as_str())
+                == path.as_deref()
+        });
+        if !known {
+            libraries.push(lib);
+        }
+    }
+}
+
+/// 安装收尾核对：install_profile 声明的**每一个**构件都必须落在 `libraries/`（含 version.json
+/// 未声明、只由 profile 声明的运行时模块 jar，以及 URL 为空、由 installer 内嵌流程落盘的条目）。
+///
+/// 下载/解包环节的静默漏项（sha1 缺失、内嵌条目没解出来、镜像 404 被当作"可选"）在这里变成
+/// **安装期错误**：否则表现为"安装成功、启动秒退"——Forge 1.17+ 缺 `fmlcore` 就是这一形态。
+fn verify_profile_artifacts(profile: &serde_json::Value, lib_dir: &Path) -> Result<(), String> {
+    let mut missing: Vec<String> = Vec::new();
+    for lib in profile["libraries"].as_array().into_iter().flatten() {
+        let artifact = &lib["downloads"]["artifact"];
+        let Some(path) = artifact["path"].as_str() else {
+            continue;
+        };
+        let dest = lib_dir.join(path);
+        let sha1 = artifact["sha1"].as_str().unwrap_or("");
+        let ok = if sha1.is_empty() {
+            dest.is_file()
+        } else {
+            crate::downloader::hash::file_sha1_matches(&dest, sha1)
+        };
+        if !ok {
+            missing.push(path.to_string());
+        }
+    }
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let mut msg = format!(
+        "ModLoader 支持库缺失 {} 个（安装器 install_profile 已声明，缺文件会导致游戏启动失败）",
+        missing.len()
+    );
+    for p in missing.iter().take(20) {
+        msg.push_str(&format!("\n  {p}"));
+    }
+    if missing.len() > 20 {
+        msg.push_str(&format!("\n  … 其余 {} 个", missing.len() - 20));
+    }
+    Err(msg)
+}
+
 /// 在 install_profile.libraries 中查找 NeoForge universal 条目。
 fn find_neoforge_universal(profile: &Option<serde_json::Value>) -> Option<&serde_json::Value> {
     profile.as_ref()?["libraries"].as_array()?.iter().find(|l| {
@@ -243,8 +338,7 @@ async fn download_loader_libraries(
     Ok(())
 }
 
-/// NeoForge 分支：下载 universal 并运行 installertools 生成 patched client，
-/// 随后下载其余支持库。
+/// NeoForge 分支：下载 universal 并运行 installertools 生成 patched client，随后下载其余支持库。
 async fn install_neoforge_universal(
     uni: &serde_json::Value,
     archive: &mut zip::ZipArchive<std::fs::File>,
@@ -292,12 +386,8 @@ async fn install_neoforge_universal(
     }
     Ok(())
 }
-/// 安装器内嵌的 maven 构件：spec-1 legacy 安装器（如 Forge 1.12.2）把要安装的
-/// 构件放在 zip 的 `maven/<group>/<artifact>/<ver>/<file>` 下，version.json 里对应
-/// 库的 URL 为空（官方部署由安装器解出）。此前我们只报「该库由安装器内嵌提供，
-/// 网络无法下载，请重新安装对应版本」→ legacy Forge 安装必然失败。
-///
-/// 按 profile 声明的 sha1（有则校验）解到 `libraries/<相对路径>`；已就绪则跳过。
+/// 安装器内嵌的 maven 构件：spec-1 legacy（如 Forge 1.12.2）把构件放在 zip 的 `maven/<group>/<artifact>/<ver>/<file>` 下、
+/// version.json 里对应库 URL 为空。按 profile 声明的 sha1（有则校验）解到 `libraries/<相对路径>`，已就绪则跳过。
 fn install_embedded_maven(
     archive: &mut zip::ZipArchive<std::fs::File>,
     profile: &serde_json::Value,
@@ -339,12 +429,9 @@ fn install_embedded_maven(
     Ok(())
 }
 
-/// spec-0 老 installer（Forge 1.7.10 / 1.8.9 等）的 `install` 段：
-/// `install.path` 是要安装的 maven 坐标，`install.filePath` 是 zip 内（根目录）的文件名。
-///
-/// 这些版本的 maven 上**没有同名普通构件**（实测只有 `-universal` / `-userdev` /
-/// `-installer`），而 `versionInfo.libraries` 却按普通坐标声明（带 url）→ 直接下会 404。
-/// 官方安装器就是把 zip 内的 filePath 复制成该坐标，这里照做（无 sha1 可校验，存在即跳过）。
+/// spec-0 老 installer（Forge 1.7.10 / 1.8.9）：`install.path` 为 maven 坐标、`install.filePath` 为 zip 根文件名。
+/// 这些版本 maven 上无同名普通构件（只有 -universal/-userdev/-installer）而 versionInfo 按普通坐标声明 → 直下 404；
+/// 照官方把 zip 内 filePath 复制成该坐标（无 sha1 可校验，存在即跳过）。
 fn install_profile_file(
     archive: &mut zip::ZipArchive<std::fs::File>,
     profile: &serde_json::Value,
@@ -406,13 +493,8 @@ fn declared_sha1(profile: &serde_json::Value, maven_rel_path: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Forge：按 installer 声明的 `install_profile.processors` 生成 patched client
-/// （与 NeoForge 同源）。旧式 installer（1.12-，只有 install/versionInfo 字段）
-/// 没有 processors → 直接返回，其客户端由 universal jar 提供。
-///
-/// 此前这里写死了 `TOOL_JARS`（binarypatcher 1.3.4 / srgutils 0.6.6…）并手写
-/// binarypatcher 参数 —— 与 installer 声明的版本不符（实测 1.20.1-47.1.0 声明的是
-/// binarypatcher **1.1.1**、srgutils 0.4.x），换代即静默生成坏产物。
+/// Forge：按 installer 声明的 `install_profile.processors` 生成 patched client（与 NeoForge 同源）；
+/// 旧式 installer（1.12-）无 processors → 客户端由 universal jar 提供。
 fn forge_patch_client<'a>(
     archive: &'a mut zip::ZipArchive<std::fs::File>,
     installer_path: &'a Path,
@@ -455,9 +537,7 @@ fn forge_patch_client<'a>(
     })
 }
 
-/// 等待 runner 的 ClientJar 步骤下载完成（与 install 步骤并行）：
-/// 不能只看大小>1MB（部分写入也会超阈值），连续 3 次（间隔 500ms）大小不变即视为完成。
-/// 上限 120s，超时返回错误；任务取消时立即返回（kill 由调用方处理）。
+/// 等待 runner 的 ClientJar 步骤下载完成（与 install 并行）：连续 3 次（间隔 500ms）大小不变视为完成；上限 120s，取消立即返回。
 pub(super) async fn wait_for_vanilla_client(
     mc_dir: &Path,
     dir_name: &str,
@@ -492,9 +572,7 @@ pub(super) async fn wait_for_vanilla_client(
     Err("等待原版客户端下载超时（120s），无法生成 ModLoader client".into())
 }
 
-/// Auto 模式选 JDK 的纯决策（便于单测，`resolve_java` 依赖全局 jdk 配置无法直接测）：
-/// `required > 0` 时复用启动侧的按需选择（精确/最低满足/最高）；
-/// 未声明版本（0）或按需选择无果时回退缓存首项（保持旧行为）。
+/// Auto 模式选 JDK 的纯决策：`required > 0` 走启动侧按需选择（精确/最低满足/最高），否则回退缓存首项。
 fn pick_auto_jdk(jdks: &[jdk::model::JdkInfo], required: u32) -> Option<jdk::model::JdkInfo> {
     let picked = if required > 0 {
         crate::launcher::env::auto_pick_jdk(jdks, required)
@@ -504,11 +582,8 @@ fn pick_auto_jdk(jdks: &[jdk::model::JdkInfo], required: u32) -> Option<jdk::mod
     picked.or_else(|| jdks.first().cloned())
 }
 
-/// 运行补丁工具所需的 Java 可执行文件（与游戏启动同一套 JDK 配置）。
-///
-/// `required`：目标版本声明的 Java 主版本（version.json 的 `javaVersion.majorVersion`）。
-/// Auto 模式据此按需选择——此前无脑取缓存首项，机器同时装 JDK 8/17 时（扫描顺序不定）
-/// 装 Forge 1.20.1 的处理器链可能落在 Java 8 上 → `UnsupportedClassVersionError`。
+/// 运行补丁工具所需的 Java 可执行文件（与游戏启动同一套 JDK 配置）。`required` 为目标版本声明的 Java 主版本；
+/// Auto 模式据此按需选择（无脑取缓存首项可能落在 Java 8 上 → `UnsupportedClassVersionError`）。
 pub(super) fn resolve_java(required: u32) -> Result<PathBuf, String> {
     let options = jdk::read();
     let cache = jdk::read_cache();
@@ -532,8 +607,7 @@ pub(super) fn resolve_java(required: u32) -> Result<PathBuf, String> {
     }
 }
 
-/// Resolve version.json from ZIP install_profile.json metadata or by scanning.
-/// 提取后展开 inheritsFrom（Forge/NeoForge 的 JSON 只含自身库 + 父指针，须合并原版父 JSON）。
+/// 提取 version.json 后展开 inheritsFrom（JSON 只含自身库 + 父指针，须合并原版父 JSON）；三策略：install_profile.json → versionInfo → 扫描条目。
 async fn resolve_version_json(
     archive: &mut zip::ZipArchive<std::fs::File>,
     profile: &Option<serde_json::Value>,
@@ -598,9 +672,7 @@ async fn resolve_version_json(
     Ok(false)
 }
 
-/// Resolve client jar from ZIP, maven download, or fallback to original manifest.
-/// 返回 `Ok(None)`：已取得 client.jar；`Ok(Some(原因))`：各策略均未命中，
-/// 附首个具体失败原因（供调用方最终报错指向真实故障点，而非笼统"未找到"）。
+/// 解析 client jar：ZIP 内条目 / maven 下载 / 兜底官方清单。`Ok(Some(原因))` = 各策略未命中（原因上交便于定位真实故障点）。
 async fn resolve_jar(
     archive: &mut zip::ZipArchive<std::fs::File>,
     profile: &Option<serde_json::Value>,
@@ -609,9 +681,7 @@ async fn resolve_jar(
     dir_name: &str,
     json_path: &Path,
 ) -> Result<Option<String>, String> {
-    // 新版 Forge（26.x+）：install_profile 无 install 字段，ZIP 里只有 shim/universal（属 library，
-    // 进 classpath 不进版本目录）；client.jar 由 version.json 的 downloads.client（继承 vanilla）提供，
-    // runner 的 ClientJar 步骤下载。此时不需要（也不应）提取任何 Forge jar 覆盖 client。
+    // 新版 Forge（26.x+）：install_profile 无 install 字段，ZIP 里只有 shim/universal（属 library，不进版本目录）；client.jar 由 version.json 的 downloads.client（继承 vanilla）提供
     if let Some(p) = profile {
         if p.get("install").is_none() {
             if let Ok(json) = std::fs::read_to_string(json_path) {
@@ -664,11 +734,9 @@ async fn resolve_jar(
             } else {
                 maven_path.to_string()
             };
-            // Forge 构件在 maven.minecraftforge.net（source.maven_url 是 Mojang 库源，不适用）；
-            // 镜像源经 mirror_url 重写到 BMCLAPI /maven/
+            // Forge 构件在 maven.minecraftforge.net（source.maven_url 是 Mojang 库源，不适用）；镜像经 mirror_url 重写到 BMCLAPI /maven/
             let jar_url = source.mirror_url(&format!("{}/{}", endpoints::FORGE_MAVEN, path));
-            // maven 直下失败不再静默：原因随 Ok(Some(..)) 上交（本策略命中后
-            // 原实现即直接返回、不落后续策略，此处仅把吞掉的错误显式化）
+            // maven 直下失败原因随 Ok(Some(..)) 上交（命中本策略后不再尝试后续策略）
             return match fetcher::fetch(&jar_url, jar_path, None::<fn(u64, u64)>).await {
                 Ok(_) => Ok(None),
                 Err(e) => Ok(Some(format!("maven 下载 client.jar 失败\n{e}"))),
@@ -691,10 +759,7 @@ async fn resolve_jar(
             return Ok(None);
         }
     }
-    // Strategy 4: download client.jar from original version manifest
-    // 兜底策略：原为多层 `if let Ok` 吞错链——任何一环失败都静默落到 Ok(false)，
-    // 排障时无从得知卡在哪一环。改为独立步骤函数逐环上抛具体错误；
-    // 失败原因随 Ok(Some(..)) 返回调用方拼入最终报错（回退语义不变）。
+    // Strategy 4: 兜底走官方清单下载（见 resolve_jar_from_manifest）
     match resolve_jar_from_manifest(source, dir_name, jar_path).await {
         Ok(()) => Ok(None),
         Err(e) => Ok(Some(e)),
@@ -833,12 +898,8 @@ mod tests {
         install_profile_file(&mut a2, &serde_json::json!({}), &lib_dir).unwrap();
     }
 
-    /// 真实 installer 验证（**真实网络**，默认 `#[ignore]`）：spec-0 老代（MC 1.7.10）的
-    /// maven 上没有普通构件，安装器靠 `install.filePath` 提供，必须落位成普通坐标。
-    ///
-    /// ```text
-    /// cargo test --lib -- --ignored forge_1710_install_section --nocapture
-    /// ```
+    /// 真实 installer 验证（真实网络，默认 `#[ignore]`）：spec-0 老代（MC 1.7.10）maven 上无普通构件，
+    /// 靠 `install.filePath` 提供，须落位成普通坐标。运行：`cargo test --lib -- --ignored forge_1710_install_section --nocapture`
     #[tokio::test(flavor = "multi_thread")]
     #[ignore]
     async fn forge_1710_install_section_from_real_installer() {
@@ -900,12 +961,8 @@ mod tests {
         eprintln!("✅ 1.7.10 spec-0 install 段落位：{}（{size} 字节）", dest.display());
     }
 
-    /// 真实 installer 验证（**真实网络**，默认 `#[ignore]`）：Forge 1.12.2 的版本 json 里
-    /// `net.minecraftforge:forge` 库 URL 为空，构件内嵌在 installer 的 maven/ 下。
-    ///
-    /// ```text
-    /// cargo test --lib -- --ignored forge_1122_embedded_maven --nocapture
-    /// ```
+    /// 真实 installer 验证（真实网络，默认 `#[ignore]`）：Forge 1.12.2 版本 json 里 `net.minecraftforge:forge`
+    /// 库 URL 为空，构件内嵌在 installer 的 maven/ 下。运行：`cargo test --lib -- --ignored forge_1122_embedded_maven --nocapture`
     #[tokio::test(flavor = "multi_thread")]
     #[ignore]
     async fn forge_1122_embedded_maven_from_real_installer() {
@@ -966,9 +1023,7 @@ mod tests {
         eprintln!("✅ 1.12.2 legacy 内嵌构件已解出：{rel}（{size} 字节）");
     }
 
-    /// 回归：Auto 模式必须按目标版本声明的 major 选 JDK，而不是无脑取缓存首项。
-    /// 构造的列表刻意把 JDK 8 放在首位（模拟扫描顺序不定）：装 1.20.1（需要 17）时
-    /// 若仍选首项就会用 Java 8 跑处理器链 → UnsupportedClassVersionError。
+    /// Auto 模式须按目标版本声明的 major 选 JDK 而非缓存首项（列表刻意 JDK8 在前：装 1.20.1 选首项会以 Java 8 跑链 → UnsupportedClassVersionError）。
     #[test]
     fn auto_jdk_prefers_required_major_not_cache_first() {
         let mk = |path: &str, version: &str| jdk::model::JdkInfo {
