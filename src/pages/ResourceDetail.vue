@@ -15,6 +15,7 @@ import {
   type CommunityVersion, type CommunityDependencyItem, type CommunityDisplayItem,
 } from "../store/community/communitySearch";
 import { registerTaskName, type DownloadFileKind } from "../store/task/download";
+import { installModpack } from "../store/task/modpack";
 import { fmtCount, fmtSize, fmtModDate } from "../utils/format";
 import IconImage from "../component/common/IconImage.vue";
 
@@ -343,20 +344,17 @@ async function submitModpackInstall() {
     return;
   }
   try {
-    const taskId = await invoke<string>("install_modpack", {
-      request: {
-        name: item.value?.title ?? v.filename,
-        source: {
-          type: "online",
-          url: v.download_url,
-          sha1: v.sha1 ?? "",
-          size: v.file_size,
-        },
-        // 平台项目图标：随请求透传，安装期持久化到版本目录供列表展示
-        icon_url: item.value?.icon_url ?? null,
+    await installModpack({
+      name: item.value?.title ?? v.filename,
+      source: {
+        type: "online",
+        url: v.download_url,
+        sha1: v.sha1 ?? "",
+        size: v.file_size,
       },
+      // 平台项目图标：随请求透传，安装期持久化到版本目录供列表展示
+      icon_url: item.value?.icon_url ?? null,
     });
-    if (taskId) registerTaskName(taskId, item.value?.title ?? v.filename);
     showToast("已提交整合包安装（准备 → 游戏本体 → 内容）");
   } catch (e) {
     showToast(errMsg(e));

@@ -1032,4 +1032,26 @@ mod tests {
             "不同包不受标记影响，走常规命名"
         );
     }
+
+    /// install_modpack 入参形状契约：前端按 `{ request: { name, source } }` 提交，
+    /// `source` 为 serde 内部标签（`type: "local" | "online"`）。
+    /// 回归：本地导入的 Windows 反斜杠路径必须原样反序列化（不得被转义/截断）。
+    #[test]
+    fn request_deserializes_frontend_payload() {
+        let req: ModpackRequest = serde_json::from_str(
+            r#"{"name":"愚者0.3.2","source":{"type":"local","path":"C:\\environment\\愚者0.3.2.zip"}}"#,
+        )
+        .expect("前端本地包载荷应能反序列化");
+        match req.source {
+            PackSource::Local { path } => assert_eq!(path, r"C:\environment\愚者0.3.2.zip"),
+            other => panic!("来源类型应为 local：{other:?}"),
+        }
+
+        let online: ModpackRequest = serde_json::from_str(
+            r#"{"name":"P","source":{"type":"online","url":"https://x/a.mrpack","sha1":"","size":0},"icon_url":"https://x/i.png"}"#,
+        )
+        .expect("在线包载荷应能反序列化");
+        assert!(matches!(online.source, PackSource::Online { .. }));
+        assert_eq!(online.icon_url.as_deref(), Some("https://x/i.png"));
+    }
 }

@@ -63,7 +63,8 @@ export function openItemMenu(e: MouseEvent, d: GameDir) {
   itemMenu.value = {
     visible: true,
     x: Math.min(e.clientX + 4, window.innerWidth - 140),
-    y: Math.min(e.clientY + 4, window.innerHeight - 180),
+    // 5 项菜单（重命名/打开/删除/刷新/导入整合包）约 170px 高，留 200px 余量
+    y: Math.min(e.clientY + 4, window.innerHeight - 200),
     dir: d,
   };
 }

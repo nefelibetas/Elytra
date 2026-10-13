@@ -45,13 +45,18 @@ fn cache_dir() -> PathBuf {
     crate::util::config_dir().join("modpacks")
 }
 
-/// 包体缓存路径（.mrpack/.zip 按来源扩展名）。
+/// 包体缓存路径。**仅在线源**落 `modpacks/{key}.{ext}` 缓存；
+/// 本地源直接用用户选定的文件（缓存目录从不持有它的副本）。
+///
+/// 回归：曾对本地源也返回拼好的缓存路径，`open_zip` 打开不存在的
+/// `modpacks/xxx.zip` → 首次导入报「系统找不到指定的路径。(os error 3)」，
+/// 本地导入完全不可用。
 pub fn zip_cache_path(request: &ModpackRequest) -> PathBuf {
-    let raw = match &request.source {
-        PackSource::Local { path } => path.clone(),
-        PackSource::Online { url, .. } => url.clone(),
+    let url = match &request.source {
+        PackSource::Local { path } => return PathBuf::from(path),
+        PackSource::Online { url, .. } => url,
     };
-    let ext = if Path::new(raw.split('?').next().unwrap_or(&raw))
+    let ext = if Path::new(url.split('?').next().unwrap_or(url))
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("mrpack"))
     {
@@ -1110,7 +1115,13 @@ async fn phase_fetch_pack(
     a_est: &Arc<AtomicU64>,
 ) -> Result<u64, String> {
     let mut pack_bytes_est = 0u64;
-    if let PackSource::Online { url, sha1, size } = &request.source {
+    if let PackSource::Local { path } = &request.source {
+        // 恢复场景（重启后重跑整卡）文件可能已被移动/删除：此处给中文首行提示，
+        // 而非下游 open_zip 的「系统找不到指定的路径。(os error 3)」
+        if !zip_path.is_file() {
+            bail!("整合包文件不存在\n{path}");
+        }
+    } else if let PackSource::Online { url, sha1, size } = &request.source {
         set_phase(
             app,
             progress,
@@ -1216,7 +1227,8 @@ fn extract_member(
 
 /// 解压 overrides/ 到版本目录根（词法穿越防护对齐 jdk safe_runtime_path）。
 fn extract_overrides(ov: &OverridesRef, vdir: &Path) -> Result<(), String> {
-    let mut archive = extract::open_zip(Path::new(&ov.zip_path), "整合包缓存")?;
+    // 文案与解析期一致：本地包的 zip_path 就是用户原文件，非"缓存"
+    let mut archive = extract::open_zip(Path::new(&ov.zip_path), "整合包")?;
     for i in 0..archive.len() {
         let mut entry = archive
             .by_index(i)
@@ -1341,6 +1353,40 @@ mod tests {
             cache_key(&online.clone()),
             "同来源键稳定"
         );
+    }
+
+    /// 本地源必须直接指向用户选定的文件。
+    ///
+    /// 回归：`zip_cache_path` 曾对本地源也返回 `modpacks/{key}.zip` —— 该文件从不
+    /// 被写入，`open_zip` 于是报「系统找不到指定的路径。(os error 3)」，本地导入
+    /// （资源中心整合包页 / 游戏目录菜单）完全不可用。
+    #[test]
+    fn local_source_zip_path_is_user_file() {
+        let local = ModpackRequest {
+            name: "愚者0.3.2".into(),
+            icon_url: None,
+            source: PackSource::Local {
+                path: r"C:\environment\愚者0.3.2.zip".into(),
+            },
+        };
+        assert_eq!(
+            zip_cache_path(&local),
+            PathBuf::from(r"C:\environment\愚者0.3.2.zip"),
+            "本地源应直读原文件"
+        );
+
+        let online = ModpackRequest {
+            name: "Demo".into(),
+            icon_url: None,
+            source: PackSource::Online {
+                url: "https://x/a.mrpack?download=1".into(),
+                sha1: String::new(),
+                size: 0,
+            },
+        };
+        let cached = zip_cache_path(&online);
+        assert!(cached.starts_with(cache_dir()), "在线包仍落缓存目录");
+        assert_eq!(cached.extension().and_then(|e| e.to_str()), Some("mrpack"));
     }
 
     #[test]

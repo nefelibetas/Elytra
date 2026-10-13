@@ -4,9 +4,11 @@ import { onMounted, onUnmounted } from "vue";
 import { Ellipsis, FolderPlus } from "@lucide/vue";
 import MenuPopover from "../common/MenuPopover.vue";
 import AlertDialog from "../common/AlertDialog.vue";
+import { errMsg } from "../../utils/error";
+import { importLocalModpack } from "../../store/task/modpack";
 import {
   dirs, activePath, dirsError, itemMenu,
-  selectDir, openItemMenu, onWindowClick,
+  selectDir, openItemMenu, onWindowClick, closeItemMenu,
   menuOpen, menuRefresh, menuRemove, menuRename, confirmRename,
   renameDialog, renameInput, renameError,
   addFolder, confirmAdd, addDialog, addInput, addError,
@@ -14,6 +16,20 @@ import {
 
 onMounted(() => window.addEventListener("click", onWindowClick));
 onUnmounted(() => window.removeEventListener("click", onWindowClick));
+
+/** 导入整合包：先切到该目录（整合包装进「当前游戏目录」），再选文件提交安装。 */
+async function menuImportPack() {
+  const d = itemMenu.value.dir;
+  closeItemMenu();
+  if (!d) return;
+  try {
+    await selectDir(d);
+  } catch (e) {
+    dirsError.value = errMsg(e);
+    return;
+  }
+  await importLocalModpack();
+}
 </script>
 
 <template>
@@ -70,6 +86,7 @@ onUnmounted(() => window.removeEventListener("click", onWindowClick));
       <div class="menu-item" @click="menuOpen">打开</div>
       <div class="menu-item" @click="menuRemove">删除</div>
       <div class="menu-item" @click="menuRefresh">刷新</div>
+      <div class="menu-item" @click="menuImportPack">导入整合包</div>
     </MenuPopover>
 
     <!-- 重命名 dialog -->
