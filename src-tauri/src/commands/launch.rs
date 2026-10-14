@@ -251,11 +251,11 @@ mod tests {
     fn build_cmd(config: &LaunchOptions) -> Vec<String> {
         let vj = minimal_version_json();
         let cmd = build_launch_command(
-            std::path::Path::new("C:/java/bin/java.exe"),
+            std::path::Path::new("java/bin/java.exe"),
             &vj,
             &LaunchRequest {
                 version_dir_name: "1.18.2",
-                mc_dir: std::path::Path::new("D:/Minecraft/.minecraft"),
+                mc_dir: std::path::Path::new("Minecraft/.minecraft"),
                 config,
                 auth: &AuthMode::Offline {
                     username: "tester".into(),
@@ -296,7 +296,7 @@ mod tests {
         let gi = args.iter().position(|a| a == "--gameDir").unwrap();
         assert_eq!(
             args[gi + 1].replace('\\', "/"),
-            "D:/Minecraft/.minecraft/versions/1.18.2"
+            "Minecraft/.minecraft/versions/1.18.2"
         );
     }
 
@@ -327,11 +327,11 @@ mod tests {
         let cfg = LaunchOptions::default();
         let props = r#"{"textures":[{"name":"textures","value":"AQID","signature":""}]}"#;
         let cmd = build_launch_command(
-            std::path::Path::new("C:/java/bin/java.exe"),
+            std::path::Path::new("java/bin/java.exe"),
             &vj,
             &LaunchRequest {
                 version_dir_name: "1.18.2",
-                mc_dir: std::path::Path::new("D:/Minecraft/.minecraft"),
+                mc_dir: std::path::Path::new("Minecraft/.minecraft"),
                 config: &cfg,
                 auth: &AuthMode::Offline {
                     username: "tester".into(),
@@ -369,11 +369,11 @@ mod tests {
         let cfg = LaunchOptions::default();
         let props = r#"{"textures":[{"name":"textures","value":"AQID","signature":""}]}"#;
         let cmd = build_launch_command(
-            std::path::Path::new("C:/java/bin/java.exe"),
+            std::path::Path::new("java/bin/java.exe"),
             &vj,
             &LaunchRequest {
                 version_dir_name: "1.18.2",
-                mc_dir: std::path::Path::new("D:/Minecraft/.minecraft"),
+                mc_dir: std::path::Path::new("Minecraft/.minecraft"),
                 config: &cfg,
                 auth: &AuthMode::Offline {
                     username: "tester".into(),
@@ -424,11 +424,11 @@ mod tests {
         vj.main_class = "net.minecraft.launchwrapper.Launch".into();
         let cfg = LaunchOptions::default();
         let args = build_launch_command(
-            std::path::Path::new("C:/java/bin/java.exe"),
+            std::path::Path::new("java/bin/java.exe"),
             &vj,
             &LaunchRequest {
                 version_dir_name: "1.8.9",
-                mc_dir: std::path::Path::new("D:/Minecraft/.minecraft"),
+                mc_dir: std::path::Path::new("Minecraft/.minecraft"),
                 config: &cfg,
                 auth: &AuthMode::Offline {
                     username: "t".into(),
@@ -446,11 +446,11 @@ mod tests {
             ..Default::default()
         };
         let args = build_launch_command(
-            std::path::Path::new("C:/java/bin/java.exe"),
+            std::path::Path::new("java/bin/java.exe"),
             &vj,
             &LaunchRequest {
                 version_dir_name: "1.8.9",
-                mc_dir: std::path::Path::new("D:/Minecraft/.minecraft"),
+                mc_dir: std::path::Path::new("Minecraft/.minecraft"),
                 config: &cfg,
                 auth: &AuthMode::Offline {
                     username: "t".into(),
@@ -506,7 +506,7 @@ mod tests {
         vj.main_class = "net.fabricmc.loader.impl.launch.knot.KnotClient".into();
         let cfg = LaunchOptions::default();
         let args = build_launch_command(
-            std::path::Path::new("C:/java/bin/java.exe"),
+            std::path::Path::new("java/bin/java.exe"),
             &vj,
             &LaunchRequest {
                 version_dir_name: "1.18.2",

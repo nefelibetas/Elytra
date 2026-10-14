@@ -549,11 +549,11 @@ mod tests {
     #[test]
     fn resolve_data_handles_literal_installer_entry_and_coord() {
         let ctx = ProcessorCtx {
-            installer: Path::new("C:/x/installer.jar"),
-            mc_dir: Path::new("C:/mc"),
-            vanilla_jar: Path::new("C:/mc/versions/v/v.jar"),
-            lib_dir: Path::new("C:/mc/libraries"),
-            work_dir: Path::new("C:/mc/.elytra/tmp"),
+            installer: Path::new("x/installer.jar"),
+            mc_dir: Path::new("mc"),
+            vanilla_jar: Path::new("mc/versions/v/v.jar"),
+            lib_dir: Path::new("mc/libraries"),
+            work_dir: Path::new("mc/.elytra/tmp"),
             config: &DownloaderConfig::default(),
             cancel: &Arc::new(AtomicBool::new(false)),
         };
@@ -571,7 +571,7 @@ mod tests {
         assert_eq!(
             resolve_data("[net.neoforged:neoforge:21.1.248:client]", &ctx),
             Resolved::Path(PathBuf::from(
-                "C:/mc/libraries/net/neoforged/neoforge/21.1.248/neoforge-21.1.248-client.jar"
+                "mc/libraries/net/neoforged/neoforge/21.1.248/neoforge-21.1.248-client.jar"
             ))
         );
     }
@@ -584,11 +584,11 @@ mod tests {
         )
         .unwrap();
         let ctx = ProcessorCtx {
-            installer: Path::new("C:/x/installer.jar"),
-            mc_dir: Path::new("C:/mc"),
-            vanilla_jar: Path::new("C:/mc/versions/v/v.jar"),
-            lib_dir: Path::new("C:/mc/libraries"),
-            work_dir: Path::new("C:/mc/.elytra/tmp"),
+            installer: Path::new("x/installer.jar"),
+            mc_dir: Path::new("mc"),
+            vanilla_jar: Path::new("mc/versions/v/v.jar"),
+            lib_dir: Path::new("mc/libraries"),
+            work_dir: Path::new("mc/.elytra/tmp"),
             config: &DownloaderConfig::default(),
             cancel: &Arc::new(AtomicBool::new(false)),
         };

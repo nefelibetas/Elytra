@@ -1163,8 +1163,8 @@ mod tests {
         )
         .expect("构造旧格式版本 JSON 失败");
 
-        let game_dir = r"C:\Users\Zhang San\.minecraft\versions\1.7.10";
-        let assets_dir = r"C:\Users\Zhang San\.minecraft\assets";
+        let game_dir = r"Zhang San/.minecraft/versions/1.7.10";
+        let assets_dir = r"Zhang San/.minecraft/assets";
         let ctx = TemplateContext {
             auth_player_name: "Player",
             version_name: "1.7.10",

@@ -48,7 +48,7 @@ mod tests {
 
     #[test]
     fn acquire_release_roundtrip() {
-        let p = Path::new("C:/test/versions/26.2");
+        let p = Path::new("test/versions/26.2");
         {
             let _g = PathLock::try_acquire(p).expect("首次占用应成功");
             assert!(PathLock::try_acquire(p).is_none(), "同路径二次占用应失败");
