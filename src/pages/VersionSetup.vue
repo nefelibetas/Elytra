@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 页面容器：左侧导航 + 各 tab 编排；业务在管理组件内
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import type { Component } from "vue";
 import { useRoute } from "vue-router";
 import { Puzzle, Map, Palette, Sun, Database, Upload, ImagePlus, FileText, Server, Play } from "@lucide/vue";
@@ -14,6 +14,7 @@ import VersionSetupMods from "../component/version-setup/VersionSetupMods.vue";
 import VersionSetupSaves from "../component/version-setup/VersionSetupSaves.vue";
 import VersionSetupResource from "../component/version-setup/VersionSetupResource.vue";
 import {
+  watchVersionDir,
   loadMods, loadModsQuick,
   loadWorlds, loadResourceDetailed, loadResourceQuick,
 } from "../store/task/versionDetail";
@@ -67,6 +68,11 @@ const REFRESHERS: Record<TabKey, () => void> = {
   auto_tasks: () => {},
   misc: () => {},
 };
+
+onMounted(() => {
+  // 聚焦当前版本：后端据此监听 versions/{name} 的一级资源子目录
+  if (versionName.value) watchVersionDir(versionName.value);
+});
 </script>
 
 <template>

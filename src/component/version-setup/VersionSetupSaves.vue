@@ -168,7 +168,6 @@ async function openSavesFolder() {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  max-width: 640px;
 }
 
 .vss-card {

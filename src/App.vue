@@ -8,6 +8,7 @@ import { dlState, ensureListen, checkInterrupted, waitingUser, decideWaitingTask
 import { startMemoryMonitor } from "./store/app/memory";
 import { ensureConfigRecoveryWatch } from "./store/config/configRecovery";
 import { ensureAutoTasksListen, lastAutoTasksFinished } from "./store/config/autoTasks";
+import { ensureVersionsWatch } from "./store/config/gameDirs";
 import { setSelected } from "./store/app/selectedVersion";
 import { toastState, showToast } from "./utils/toast";
 
@@ -157,6 +158,8 @@ onMounted(() => {
   void ensureConfigRecoveryWatch();
   // 自动任务事件（进度 + 阶段结束汇总）
   ensureAutoTasksListen();
+  // 游戏目录变化事件（后端监听激活目录 versions/ → 版本列表自动刷新）
+  void ensureVersionsWatch();
 });
 
 onUnmounted(() => {
@@ -255,6 +258,8 @@ input, textarea {
   /* color-mix() 低版本 WebKitGTK 不可用，故给出前序等价 token（双声明降级） */
   --titlebar-hover: rgba(255, 255, 255, 0.16);
   --titlebar-active: rgba(255, 255, 255, 0.22);
+  /* 侧栏布局页（版本设置 / 设置 / 工具）内容区宽度上界：各 tab 卡片等宽，超宽窗口下右侧留白 */
+  --content-max: 720px;
   /* 层级：FAB < 模态弹窗 < 内容/边缘加深 < 右键菜单 < toast < tooltip；组件一律引用变量，禁止裸写数值 */
   --z-fab: 900;
   --z-menu: 2100;

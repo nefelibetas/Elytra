@@ -2,18 +2,13 @@
 
 /**
  * Microsoft 正版账号（含长期 refresh_token 与短期 Minecraft access_token）。
- * 敏感数据安全：经 persist::secrets 存到 `Elytra/secrets.bin`（Windows DPAPI 加密，
- * 绑定当前用户账户），**不进 Settings.toml 明文**。
+ * 经 persist::secrets 存到 `Elytra/secrets.bin`（Windows DPAPI，绑定当前用户账户），不进 Settings.toml 明文。
  */
 export type MsAccount = { 
 /**
  * Minecraft profile uuid（无连字符）
  */
-uuid: string, 
-/**
- * 游戏名
- */
-name: string, 
+uuid: string, name: string, 
 /**
  * Minecraft access_token（短时有效，启动游戏用）
  */

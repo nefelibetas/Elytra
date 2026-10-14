@@ -2,7 +2,7 @@
 // 版本设置-Mod 管理 tab：搜索卡 + Tab（全部/可更新）+ 列表；双态：识别到 Modrinth → 详情，未识别 → 本地文件，可更新 item 行右侧有更新按钮。
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
-import { Search, RefreshCw, Upload, Puzzle, Folder, Trash2 } from "@lucide/vue";
+import { Search, RefreshCw, Upload, Puzzle, Folder, Trash2, Ban, Power } from "@lucide/vue";
 import { ensureGameFolder } from "../../store/config/gameDirs";
 import { openFolder } from "../../utils/fs";
 import { fmtCount, fmtSize } from "../../utils/format";
@@ -16,9 +16,9 @@ import EmptyState from "../common/EmptyState.vue";
 import ErrorState from "../common/ErrorState.vue";
 import { useSelectable } from "../../utils/useSelectable";
 import {
-  mods, modsLoading, modsError, modsNetworkError, modsLoadedFor,
+  mods, modsLoading, modsError, modsNetworkError, disabledMods,
   updates, updatesChecked, checkingUpdates, updatesError, updatingFiles,
-  loadVersionLoader, loadMods, checkModUpdates, updateMod, deleteMod, toggleMod,
+  loadVersionLoader, loadMods, checkModUpdates, updateMod, deleteMod, toggleModsBulk,
 } from "../../store/task/versionDetail";
 
 const route = useRoute();
@@ -91,23 +91,48 @@ async function confirmDelete() {
   if (names.length > 0) clear();
 }
 
-/** 禁用单个 mod：后端重命名 .jar → .jar.disabled（禁用项被扫描过滤隐藏）。 */
-async function toggleOne(fileName: string) {
+const selectedEnabled = computed(() => selected.value.filter(n => !disabledMods.value.has(n)));
+const selectedDisabled = computed(() => selected.value.filter(n => disabledMods.value.has(n)));
+
+/** 选中项全为已禁用 → 按钮转为「启用」，否则禁用其中仍启用的项（混合选择按禁用处理）。 */
+const toggleEnabling = computed(() => selected.value.length > 0 && selectedEnabled.value.length === 0);
+const toggleTargets = computed(() => (toggleEnabling.value ? selectedDisabled.value : selectedEnabled.value));
+const toggleLabel = computed(() => `${toggleEnabling.value ? "启用" : "禁用"}（${toggleTargets.value.length}）`);
+
+const toggling = ref(false);
+
+/** 批量启用/禁用：逐个重命名后统一重扫一次列表；完成后清空选中避免误操作。 */
+async function doBatchToggle() {
+  if (toggling.value) {
+    showToast("上一个禁用/启用操作还在进行中");
+    return;
+  }
+  const enabling = toggleEnabling.value;
+  const names = [...toggleTargets.value];
+  if (names.length === 0) {
+    showToast(enabling ? "选中的 Mod 都已启用" : "选中的 Mod 都已禁用");
+    return;
+  }
+  toggling.value = true;
   try {
-    await toggleMod(versionName.value, fileName);
-    showToast(`已禁用 ${fileName}`);
-  } catch (e) {
-    showToast(errMsg(e));
+    const { ok, failed } = await toggleModsBulk(versionName.value, names);
+    const verb = enabling ? "启用" : "禁用";
+    showToast(
+      failed.length === 0
+        ? `已${verb} ${ok} 项`
+        : `${ok} 项已${verb}，${failed.length} 项失败：${failed[0]}`,
+    );
+    clear();
+  } finally {
+    toggling.value = false;
   }
 }
 
 onMounted(async () => {
   if (!versionName.value) return;
   await loadVersionLoader(versionName.value);
-  // 缓存命中则跳过加载，避免 loading 闪烁
-  if (modsLoadedFor.value !== versionName.value) {
-    await loadMods(versionName.value);
-  }
+  // 每次进入都重扫本地（禁用态/外部增删立即反映）；识别结果按文件指纹复用，不重复联网
+  await loadMods(versionName.value);
 });
 
 async function doCheckUpdates() {
@@ -199,7 +224,7 @@ async function openModsFolder() {
               <div v-for="m in items" :key="m.file_name" class="vsm-item">
                 <div
                   class="vsm-item-body"
-                  :class="{ selected: selectedSet.has(m.file_name) }"
+                  :class="{ selected: selectedSet.has(m.file_name), 'is-disabled': disabledMods.has(m.file_name) }"
                   @click="toggle(m.file_name)"
                 >
                   <!-- 已识别：Modrinth 元数据 -->
@@ -225,11 +250,17 @@ async function openModsFolder() {
                     <Puzzle :size="20" class="vsm-local-icon" />
                     <span class="vsm-info">
                       <span class="vsm-local-name">{{ m.file_name }}</span>
-                      <span class="vsm-local-meta">{{ fmtSize(m.size) }}</span>
+                      <span class="vsm-local-meta">
+                        {{ fmtSize(m.size) }}
+                        <span v-if="m.identify === 'pending'" class="vsm-query-hint">
+                          <RefreshCw :size="10" class="spin" />查询中
+                        </span>
+                        <span v-else-if="m.identify === 'failed'" class="vsm-query-hint">未查询到</span>
+                        <span v-if="disabledMods.has(m.file_name)" class="vsm-off-badge">已禁用</span>
+                      </span>
                     </span>
                   </template>
                 </div>
-                <button class="vsm-toggle-btn" @click="toggleOne(m.file_name)">禁用</button>
               </div>
             </div>
           </div>
@@ -251,6 +282,15 @@ async function openModsFolder() {
           >
             <Upload :size="13" />
             <span>更新（{{ updatableSelected.length }}）</span>
+          </button>
+          <button
+            class="vs-ab-btn"
+            :disabled="toggleTargets.length === 0 || toggling"
+            @click="doBatchToggle"
+          >
+            <Ban v-if="!toggleEnabling" :size="13" />
+            <Power v-else :size="13" />
+            <span>{{ toggleLabel }}</span>
           </button>
           <button class="vs-ab-btn danger" @click="doBatchDelete">
             <Trash2 :size="13" />
@@ -286,7 +326,6 @@ async function openModsFolder() {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  max-width: 640px;
 }
 
 /* 卡片通用 */
@@ -410,7 +449,7 @@ async function openModsFolder() {
   cursor: default;
 }
 
-.vsm-act-btn .spin {
+.spin {
   animation: vsm-spin 0.9s linear infinite;
 }
 
@@ -471,7 +510,17 @@ async function openModsFolder() {
   border-color: var(--color-brand);
 }
 
-/* info 不为 hover 按钮留空 */
+/* 已禁用：降对比 + 灰底 + 虚线边（选中态用品牌色实线边，故排除 .selected） */
+.vsm-item-body.is-disabled {
+  opacity: 0.6;
+  background: var(--surface-hover);
+}
+
+.vsm-item-body.is-disabled:not(.selected) {
+  border-color: var(--border-default);
+  border-style: dashed;
+}
+
 .vsm-info {
   flex: 1;
   min-width: 0;
@@ -571,6 +620,26 @@ async function openModsFolder() {
   color: var(--text-tertiary);
 }
 
+/* 「已禁用」角标（禁用项仍列出，靠它标识状态） */
+.vsm-off-badge {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+/* 元数据查询状态（查询中 / 未查询到） */
+.vsm-query-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
 /* action 栏公共样式见 version-setup-shared.css；update 态仅 Mods 用 */
 .vs-ab-btn.update {
   border-color: var(--color-brand);
@@ -583,31 +652,7 @@ async function openModsFolder() {
   color: var(--text-inverse);
 }
 
-/* 行内禁用按钮（Mod 行最右侧） */
-.vsm-toggle-btn {
-  flex: none;
-  margin-left: 8px;
-  padding: 5px 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.vsm-toggle-btn:hover:not(:disabled) {
-  border-color: var(--color-brand);
-  color: var(--color-brand);
-}
-
-.vsm-toggle-btn:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-/* dialog */
+/* 删除确认 dialog */
 .vsm-dialog-body {
   display: flex;
   flex-direction: column;

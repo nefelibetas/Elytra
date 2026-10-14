@@ -20,3 +20,7 @@ pub const CONFIG_RECOVERY: &str = "config-recovery";
 pub const AUTO_TASK_PROGRESS: &str = "auto-task-progress";
 /// 自动任务阶段结束（AutoTasksFinished：{ version_id, phase, failures }，前端据此弹 dialog）
 pub const AUTO_TASKS_FINISHED: &str = "auto-tasks-finished";
+/// 版本列表变化（VersionsChanged：{ dir, versions }；`versions/` 一级条目或版本 json 变化）
+pub const VERSIONS_CHANGED: &str = "versions-changed";
+/// 聚焦版本目录内资源子目录变化（VersionDirChanged：{ version, kinds }）
+pub const VERSION_DIR_CHANGED: &str = "version-dir-changed";

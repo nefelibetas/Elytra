@@ -1,8 +1,10 @@
 import type { GameDir } from "../../types/config/GameDir";
+import type { InstalledVersionInfo } from "../../types/game/InstalledVersionInfo";
 import { useConfirmDelete } from "../../utils/useConfirmDelete";
 // 版本选择页 store：游戏目录管理（增删改/激活/右键菜单）+ 版本列表。
-import { ref, computed } from "vue";
+import { ref, computed, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { LOADER_TITLES, LOADER_ICONS } from "../../utils/versionMeta";
 import { classifyVersion } from "../../utils/versionClassify";
@@ -10,6 +12,7 @@ import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 import { openFolder } from "../../utils/fs";
 import { selectedVersion, setSelected, clearSelected } from "../app/selectedVersion";
+import { VERSIONS_CHANGED, type VersionsChanged } from "../app/events";
 
 // ── 目录列表 ──
 export const dirs = ref<GameDir[]>([]);
@@ -228,11 +231,8 @@ export async function ensureGameFolder(
   return await invoke<string>("ensure_game_folder", { kind, versionName });
 }
 
-/** 已安装版本信息（镜像 Rust get_installed_versions；loader 为 json 推断）。 */
-export interface InstalledVersionInfo {
-  name: string;
-  loader: string;
-}
+/** 已安装版本信息（Rust `InstalledVersionInfo`：`loader` 由版本 json 推断，读不到时为空串）。 */
+export type { InstalledVersionInfo };
 
 export const versions = ref<InstalledVersionInfo[]>([]);
 export const versionsLoading = ref(false);
@@ -265,17 +265,64 @@ export const allVersions = computed(() =>
     }),
 );
 
+/** 应用后端版本列表：选中版本已不在列表时清空（与命令拉取语义一致）。 */
+function applyVersions(list: InstalledVersionInfo[]) {
+  versions.value = list;
+  if (!list.some(v => v.name === selectedVersion.value)) selectedVersion.value = "";
+}
+
 export async function loadVersions() {
   versionsLoading.value = true;
   versionsError.value = "";
   try {
-    versions.value = await invoke<InstalledVersionInfo[]>("get_installed_versions");
-    if (!versions.value.some(v => v.name === selectedVersion.value)) selectedVersion.value = "";
+    applyVersions(await invoke<InstalledVersionInfo[]>("get_installed_versions"));
   } catch (e) {
     versionsError.value = errMsg(e);
   } finally {
     versionsLoading.value = false;
   }
+}
+
+// ── 游戏目录变化事件（后端非递归监听激活目录的 versions/ 与聚焦版本子目录）──
+
+let versionsWatchReady = false;
+/** 窗口不可见期间到达的变化：只置脏，切回窗口时补一次拉取（后台不做无谓 IO）。 */
+let versionsStale = false;
+
+/** 订阅版本列表变化（幂等；App 启动注册一次）：可见时直接用 payload 刷新，不可见只置脏。 */
+export async function ensureVersionsWatch() {
+  if (versionsWatchReady) return;
+  versionsWatchReady = true;
+  await listen<VersionsChanged>(VERSIONS_CHANGED, (ev) => {
+    // 切目录前发出的迟到事件：来源目录与激活目录不一致即丢弃
+    // （两边一个来自配置值、一个是解析后的绝对路径，故按归一化后缀匹配）
+    const norm = (s: string) => s.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+    const active = norm(activePath.value);
+    const from = norm(ev.payload.dir);
+    const sameDir =
+      !!active && (active === from || from.endsWith(`/${active}`) || active.endsWith(`/${from}`));
+    if (!sameDir) return;
+    if (document.visibilityState !== "visible") {
+      versionsStale = true;
+      return;
+    }
+    versionsStale = false;
+    applyVersions(ev.payload.versions);
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && versionsStale) {
+      versionsStale = false;
+      void loadVersions();
+    }
+  });
+  // 聚焦版本决定后端额外监听哪些版本子目录（变化即重定向）
+  watch(
+    selectedVersion,
+    (v) => {
+      void invoke("set_watched_version", { version: v || null });
+    },
+    { immediate: true },
+  );
 }
 
 export function pickVersion(v: string) {

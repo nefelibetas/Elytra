@@ -2,8 +2,7 @@
 
 /**
  * - auto（默认）：自动检测系统代理（Windows 注册表 / Linux 环境变量或 gsettings），
- *   检测到即走代理；无代理时直连（TUN 模式由网络层接管，无需应用配置）
- * - system：强制使用系统代理（检测不到时回退直连并告警）
- * - direct：强制直连（不走应用层代理；TUN 模式仍由网络层生效）
+ *   检测到即走代理，无代理直连（TUN 模式由网络层接管）
+ * - system：强制系统代理（检测不到回退直连并告警）；direct：强制直连（TUN 仍由网络层生效）
  */
 export type NetworkMode = "auto" | "system" | "direct";

@@ -38,7 +38,7 @@ use commands::downloader::{
 use commands::gamedirs::{
     add_game_dir, auto_activate_version, delete_version_dir, ensure_game_folder,
     get_active_game_dir, get_game_dirs, open_folder, remove_game_dir, rename_game_dir,
-    rename_version_dir, set_active_game_dir,
+    rename_version_dir, set_active_game_dir, set_watched_version,
 };
 use commands::auto_tasks::{
     get_instance_auto_tasks, run_auto_tasks_now, save_global_auto_tasks, save_instance_auto_tasks,
@@ -110,6 +110,8 @@ pub fn run() {
             persist::set_recovery_hook(move |notice| {
                 let _ = handle.emit(events::CONFIG_RECOVERY, notice);
             });
+            // 游戏目录变化监听（激活目录的 versions/ 与聚焦版本子目录 → 事件推送）
+            game::version::watch::init(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -125,6 +127,7 @@ pub fn run() {
             rename_game_dir,
             remove_game_dir,
             set_active_game_dir,
+            set_watched_version,
             get_active_game_dir,
             rename_version_dir,
             delete_version_dir,

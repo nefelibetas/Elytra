@@ -355,15 +355,10 @@ function toggleWorld(name: string, step: AutoTaskStep) {
   overflow-y: auto;
   overflow-x: hidden;
 }
-/* 设置页模式：不限宽、不滚动 */
-.auto-tasks-global .setup-card {
-  max-width: none;
-}
 .setup-card {
   background: var(--surface-card);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
-  max-width: 720px;
   padding: 14px 16px;
 }
 .setup-card-hdr {

@@ -1,6 +1,8 @@
 // 主页版本卡片 store：存档/Mod 列表加载、Mod 更新检查与执行（模块级单例；版本切换时 reset 重载）。
 import { ref, computed, watch, type Ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { VERSION_DIR_CHANGED, type VersionDirChanged } from "../app/events";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 import { createBoundedCache } from "../../utils/boundedCache";
@@ -35,7 +37,12 @@ export interface ModFileDetail {
   icon_url: string | null;
   downloads: number | null;
   current_version: string | null;
+  /** 前端本地识别状态：pending 查询中 / done 已查询 / failed 本次查询失败（不自动重试）。 */
+  identify?: ModIdentifyState;
 }
+
+/** Mod 元数据查询状态（仅前端使用）。 */
+export type ModIdentifyState = "pending" | "done" | "failed";
 
 export interface ModUpdate {
   file_name: string;
@@ -122,6 +129,25 @@ export function stopWorldsLivePolling() {
 	worldsPollVersion = "";
 }
 
+// ── 版本目录变化事件（后端非递归监听聚焦版本的一级资源子目录）──
+
+let dirWatchReady = false;
+/** 当前关注的版本（页面挂载时设置；事件按此过滤，避免刷新非当前版本）。 */
+let watchedVersion = "";
+
+/** 聚焦版本目录：切换后端监听目标 + 订阅资源子目录变化（幂等；页面 onMounted 调用）。 */
+export function watchVersionDir(version: string) {
+	watchedVersion = version;
+	void invoke("set_watched_version", { version: version || null });
+	if (dirWatchReady || !version) return;
+	dirWatchReady = true;
+	void listen<VersionDirChanged>(VERSION_DIR_CHANGED, (ev) => {
+		if (ev.payload.version !== watchedVersion || document.visibilityState !== "visible") return;
+		if (ev.payload.kinds.includes("saves")) void refreshWorldsSilent(watchedVersion);
+		if (ev.payload.kinds.includes("mods")) void loadMods(watchedVersion);
+	});
+}
+
 watch(worlds, list => {
 	const v = worldsLoadedFor.value;
 	if (!v) return;
@@ -164,10 +190,12 @@ export const modsNetworkError = ref(false);
 export const modsLoadedFor = ref("");
 /** 正在加载的版本名（防并发重入：onMounted 与手动刷新可能同时触发）。 */
 const modsLoadingFor = ref("");
-/** 重入期间到来的强制刷新（deleteMod/toggleMod 的 reset）待补跑标记：见 loadMods。 */
+/** 重入期间到来的强制刷新（deleteMod/toggleModsBulk 的 reset）待补跑标记：见 loadMods。 */
 let modsPendingReset = false;
-/** mods 目录本地快速扫描（.jar，纯 read_dir 无网络）——图标显示判定用，免等 Modrinth 元数据。 */
+/** mods 目录本地快速扫描（.jar / .jar.disabled，纯 read_dir 无网络）——列表骨架与图标判定用，免等 Modrinth 元数据。 */
 export const modsQuick = ref<ResourceFile[]>([]);
+/** 已禁用项的文件名（磁盘上为 `{name}.disabled`）：与识别结果解耦，识别写入不会覆盖它。 */
+export const disabledMods = ref<Set<string>>(new Set());
 
 export async function loadModsQuick(versionName: string) {
   try {
@@ -175,15 +203,22 @@ export async function loadModsQuick(versionName: string) {
       versionName,
       kind: "mods",
     });
-    modsQuick.value = files.filter(f => f.name.toLowerCase().endsWith(".jar"));
+    // 禁用项在磁盘上是 `.jar.disabled`，同样列出（否则用户没有重新启用的入口）
+    const jars = files.filter(f => /\.jar(\.disabled)?$/i.test(f.name));
+    modsQuick.value = jars;
+    disabledMods.value = new Set(
+      jars.filter(f => /\.disabled$/i.test(f.name)).map(f => f.name.replace(/\.disabled$/i, "")),
+    );
   } catch {
     modsQuick.value = [];
+    disabledMods.value = new Set();
   }
 }
 
 function quickToDetail(files: ResourceFile[]): ModFileDetail[] {
   return files.map(f => ({
-    file_name: f.name,
+    // 对外统一用原名（命令与选择集都以它为准）；禁用态由 disabledMods 单独承载
+    file_name: f.name.replace(/\.disabled$/i, ""),
     size: f.size,
     last_modified: f.last_modified,
     project_id: null,
@@ -197,41 +232,91 @@ function quickToDetail(files: ResourceFile[]): ModFileDetail[] {
   }));
 }
 
+/** 单项元数据查询超时：到点即判失败并继续后续项（后端请求无法取消，但不再阻塞队列）。 */
+const IDENTIFY_TIMEOUT_MS = 8000;
+/** 本版本内查询失败的项：重扫时不再自动排队（手动刷新会清空重试）。 */
+const identifyFailed = ref<Set<string>>(new Set());
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("查询超时")), ms);
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}
+
+/** 标记单项识别状态（替换对象以触发响应式更新）。 */
+function setIdentifyState(fileName: string, identify: ModIdentifyState) {
+  const idx = mods.value.findIndex(m => m.file_name === fileName);
+  if (idx >= 0) mods.value[idx] = { ...mods.value[idx], identify };
+}
+
 export async function identifyModFile(versionName: string, fileName: string) {
   try {
-    const r = await invoke<ModFileDetail | null>("identify_mod_file", {
-      versionName,
-      fileName,
-    });
-    if (!r) return;
+    const r = await withTimeout(
+      invoke<ModFileDetail | null>("identify_mod_file", { versionName, fileName }),
+      IDENTIFY_TIMEOUT_MS,
+    );
+    if (!r) {
+      // 未命中 Modrinth：保留本地信息，标记已查询
+      setIdentifyState(fileName, "done");
+      return;
+    }
     const idx = mods.value.findIndex(m => m.file_name === fileName);
-    if (idx >= 0) mods.value[idx] = r;
+    if (idx >= 0) mods.value[idx] = { ...r, identify: "done" };
   } catch {
-    // 单文件识别失败：保持本地信息，不中断其余识别
+    identifyFailed.value = new Set([...identifyFailed.value, fileName]);
+    setIdentifyState(fileName, "failed");
   }
 }
 
-/** 加载 mods 列表：先渲染本地文件预览，再逐文件并发增量识别；`reset` 时强制重建预览并重新识别（忽略 loadedFor 缓存）。 */
+/** 本地重扫并重建列表骨架（复用已识别结果）：禁用态与外部增删立即可见，不受识别在途影响。 */
+async function refreshModsLocal(versionName: string) {
+  await loadModsQuick(versionName);
+  const prev = new Map(mods.value.map(m => [m.file_name, m]));
+  mods.value = quickToDetail(modsQuick.value).map(m => {
+    const hit = prev.get(m.file_name);
+    // 同一文件（大小/修改时间一致）沿用识别结果，避免重复联网
+    const reusable = !!hit && hit.size === m.size && hit.last_modified === m.last_modified;
+    if (reusable) return hit;
+    // 禁用项不参与查询（不显示查询状态）；已知失败的项不自动重试（手动刷新会清空失败集）
+    if (disabledMods.value.has(m.file_name)) return m;
+    return { ...m, identify: identifyFailed.value.has(m.file_name) ? "failed" : "pending" };
+  });
+  modsNetworkError.value = false;
+}
+
+/** 加载 mods 列表：先本地重扫（立即反映磁盘事实），再对尚无元数据且未禁用的项增量识别；`reset` 会重试此前失败的项。 */
 export async function loadMods(versionName: string, reset = false) {
-  // 同版本在途：跳过本次；但 reset 强制刷新不能丢——记待补跑标记，由在途流程 finally 补一次。
+  modsError.value = "";
+  if (reset) identifyFailed.value = new Set();
+  await refreshModsLocal(versionName);
+  // 同版本识别在途：跳过识别（记待补跑标记，由在途流程 finally 补一次）
   if (modsLoadingFor.value === versionName) {
     if (reset) modsPendingReset = true;
     return;
   }
   modsLoadingFor.value = versionName;
   modsLoading.value = true;
-  modsError.value = "";
-  if (reset || modsLoadedFor.value !== versionName) {
-    if (reset || modsQuick.value.length === 0) await loadModsQuick(versionName);
-    mods.value = quickToDetail(modsQuick.value);
-    modsNetworkError.value = false;
-  }
   try {
-    // 逐文件增量识别：分批并发（每批 8），每个完成立即 merge 到列表（不等整批）
-    const files = [...mods.value.map(m => m.file_name)];
+    // 逐文件增量识别：只处理尚无元数据且未失败的项，分批并发（每批 8）；单项自带超时，
+    // 批次用 allSettled——个别失败/超时不中断其余项
+    const pending = mods.value
+      .filter(
+        m => !disabledMods.value.has(m.file_name) && m.project_id === null && m.identify !== "failed",
+      )
+      .map(m => m.file_name);
     const BATCH = 8;
-    for (let i = 0; i < files.length; i += BATCH) {
-      await Promise.all(files.slice(i, i + BATCH).map(f => identifyModFile(versionName, f)));
+    for (let i = 0; i < pending.length; i += BATCH) {
+      await Promise.allSettled(pending.slice(i, i + BATCH).map(f => identifyModFile(versionName, f)));
     }
     modsLoadedFor.value = versionName;
   } catch (e) {
@@ -239,7 +324,7 @@ export async function loadMods(versionName: string, reset = false) {
   } finally {
     modsLoading.value = false;
     modsLoadingFor.value = "";
-    // 在途期间到来的强制刷新：补跑一次（本地重扫 + 重新识别），使删除/禁用立即反映
+    // 在途期间到来的强制刷新：补跑一次
     if (modsPendingReset) {
       modsPendingReset = false;
       void loadMods(versionName, true);
@@ -415,11 +500,19 @@ export async function deleteMod(versionName: string, fileName: string) {
   await loadMods(versionName, true);
 }
 
-/** 禁用/启用单个 mod：后端重命名 .jar ↔ .jar.disabled；扫描按扩展名过滤，禁用项不展示且无启用入口。 */
-export async function toggleMod(versionName: string, fileName: string) {
-  await invoke("toggle_mod_file", { versionName, fileName });
-  updates.value = updates.value.filter(u => u.file_name !== fileName);
+/** 批量切换启用/禁用（逐个重命名 .jar ↔ .jar.disabled），最后统一重扫一次列表；返回成功项数与失败原因（错误首行）。 */
+export async function toggleModsBulk(versionName: string, fileNames: string[]) {
+  const failed: string[] = [];
+  for (const name of fileNames) {
+    try {
+      await invoke<boolean>("toggle_mod_file", { versionName, fileName: name });
+    } catch (e) {
+      failed.push(errMsg(e));
+    }
+  }
+  updates.value = updates.value.filter(u => !fileNames.includes(u.file_name));
   await loadMods(versionName, true);
+  return { ok: fileNames.length - failed.length, failed };
 }
 
 // ── 版本切换重置 ──

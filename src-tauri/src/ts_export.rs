@@ -21,6 +21,8 @@ use crate::launcher::auto_tasks::model::{
     AutoTaskStep, AutoTasks,
 };
 use crate::commands::auto_tasks::InstanceAutoTasksState;
+use crate::game::version::dir::InstalledVersionInfo;
+use crate::game::version::watch::{VersionDirChanged, VersionsChanged};
 use crate::task::files::WaitingUserPayload;
 use crate::task::model::{
     DownloadFileKind, DownloadTask, FabricApi, LoaderChoice, LoaderKind, StepInfo, StepStatus,
@@ -75,4 +77,7 @@ pub fn export_all() {
     ExternalServer::export().unwrap();
     ExternalConfig::export().unwrap();
     WaitingUserPayload::export().unwrap();
+    InstalledVersionInfo::export().unwrap();
+    VersionsChanged::export().unwrap();
+    VersionDirChanged::export().unwrap();
 }

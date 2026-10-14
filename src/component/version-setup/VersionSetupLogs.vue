@@ -77,7 +77,6 @@ async function openLogDir() {
   background: var(--surface-card);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
-  max-width: 720px;
   padding: 14px 16px;
 }
 .vslog-actions {

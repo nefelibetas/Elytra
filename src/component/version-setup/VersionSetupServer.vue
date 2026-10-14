@@ -95,7 +95,6 @@ async function save() {
   background: var(--surface-card);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
-  max-width: 640px;
   padding: 14px 16px;
 }
 .setup-card-hdr {

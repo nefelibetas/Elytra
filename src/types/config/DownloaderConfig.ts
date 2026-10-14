@@ -9,13 +9,12 @@ export type DownloaderConfig = { concurrency: number, minecraft_dir: string,
  */
 max_speed: number, 
 /**
- * 游戏下载源模式（版本列表 / 版本 json / 资源索引与对象 / 支持库 /
- * client JAR / ModLoader 构件与安装器 / Mojang JDK runtime 统一走此源）
+ * 游戏下载源模式（版本列表/json、资源索引与对象、支持库、client JAR、ModLoader 构件与安装器、
+ * Mojang JDK runtime 统一走此源）
  */
 game_source_mode: DownloadSourceMode, 
 /**
- * 社区下载源模式（Modrinth 官方 API / CDN vs MCIM 国内镜像）。
- * 管理 Fabric API 等社区资源：official = Modrinth API + cdn.modrinth.com，
+ * 社区下载源模式：official = Modrinth API + cdn.modrinth.com；
  * china = MCIM（mod.mcimirror.top，镜像 Modrinth/CurseForge API 与文件 CDN）。
  */
 community_source_mode: DownloadSourceMode, 
@@ -28,8 +27,7 @@ network_mode: NetworkMode,
  */
 translate_display: string, 
 /**
- * 社区资源版本列表是否只显示正式版（过滤快照/预发布/候选等非正式版本）。
- * 仅前端展示使用，后端仅存储透传。
+ * 社区版本列表是否只显示正式版（过滤快照/预发布）；仅前端使用，后端存储透传。
  */
 show_release_only: boolean, 
 /**

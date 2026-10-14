@@ -3,9 +3,6 @@ import type { AutoTaskFailure } from "./AutoTaskFailure";
 import type { AutoTaskStep } from "./AutoTaskStep";
 
 /**
- * 三个时点的自动任务集合（全局与实例同构）。
- *
- * 默认值（Q8 决策）：`on_crash` 打包崩溃日志、`post_exit` 记录 mod 清单默认开启
- * （成本低、价值高）；`pre_launch` 备份存档默认**关闭**（体积大，用户自行开启）。
+ * 三个时点的自动任务集合（全局与实例同构）。默认 `on_crash` 打包崩溃日志、`post_exit` 记录 mod 清单开启，`pre_launch` 备份存档关闭（体积大）。
  */
 export type AutoTasks = { pre_launch: Array<AutoTaskStep>, on_crash: Array<AutoTaskStep>, post_exit: Array<AutoTaskStep>, pre_on_failure: AutoTaskFailure, };

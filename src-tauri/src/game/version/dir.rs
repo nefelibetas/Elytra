@@ -66,7 +66,8 @@ pub fn version_server_section(version_name: &str) -> Result<String, String> {
     Ok(format!("version_server_{version_name}"))
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
+#[ts(export_to = "game/")]
 pub struct InstalledVersionInfo {
     pub name: String,
     /// 从版本 json 推断的 loader；json 读取失败（非版本目录）时为空串

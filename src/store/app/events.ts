@@ -12,6 +12,10 @@ export const TOOL_DL_PROGRESS = "tooldl-progress";
 export const CONFIG_RECOVERY = "config-recovery";
 export const AUTO_TASK_PROGRESS = "auto-task-progress";
 export const AUTO_TASKS_FINISHED = "auto-tasks-finished";
+/** 版本列表变化（VersionsChanged：{ dir, versions }；`versions/` 一级条目或版本 json 变化） */
+export const VERSIONS_CHANGED = "versions-changed";
+/** 聚焦版本目录内资源子目录变化（VersionDirChanged：{ version, kinds }） */
+export const VERSION_DIR_CHANGED = "version-dir-changed";
 
 // ── 事件 payload 类型（前端类型由 Rust 生成，见 src/types/）──
 
@@ -21,6 +25,8 @@ export type { TaskProgress as ProgressPayload } from "../../types/task/TaskProgr
 export type { WaitingUserPayload } from "../../types/task/WaitingUserPayload";
 export type { ToolDlStatus } from "../../types/tooldl/ToolDlStatus";
 export type { ToolDlSnapshot } from "../../types/tooldl/ToolDlSnapshot";
+export type { VersionsChanged } from "../../types/game/VersionsChanged";
+export type { VersionDirChanged } from "../../types/game/VersionDirChanged";
 
 /** config-recovery / take_config_recovery_notice 返回值（镜像 Rust persist::config::RecoveryNotice）。 */
 export interface RecoveryNotice {

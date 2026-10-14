@@ -164,6 +164,8 @@ function onRefresh(e: MouseEvent, k: string) {
   position: relative;
   min-width: 0;
   padding: 20px 24px;
+  /* 内容区宽度上界：+48 抵消左右 padding，令内容可用宽度恰为 --content-max */
+  max-width: calc(var(--content-max) + 48px);
   background: var(--surface-page);
 }
 

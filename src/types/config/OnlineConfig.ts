@@ -5,15 +5,13 @@
  */
 export type OnlineConfig = { 
 /**
- * 协调节点列表（easytier peer URI，如 `tcp://1.2.3.4:11010`）。
- * host/guest 连同一批节点虚拟网内互发现；跨网（非同一局域网）联机必需。
- * 支持多行多节点（easytier 并行连接，任一可用即可组网，天然主备）。
- * 空列表 = 仅同网直连（guest 经房间码直连 host 局域网 IP）。
+ * 协调节点列表（easytier peer URI，如 `tcp://1.2.3.4:11010`）。host/guest 连同一批节点虚拟网内互发现；
+ * 跨网联机必需；空列表 = 仅同网直连（guest 经房间码直连 host 局域网 IP）。
  */
 public_nodes: Array<string>, 
 /**
- * 自定义联机广播名（guest 端 MC 局域网标签页显示的名字，支持 § 格式码）。
- * None/空 = 自动：用房间码携带的 host 存档名（MOTD），探测不到时回退默认文案。
+ * 自定义联机广播名（guest 端 MC 局域网标签页显示名，支持 § 格式码）；
+ * None/空 = 自动（用房间码携带的 host 存档名 MOTD，探测不到回退默认文案）。
  */
 advertise_motd: string | null, 
 /**

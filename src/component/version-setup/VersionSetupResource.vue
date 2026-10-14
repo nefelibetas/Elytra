@@ -208,7 +208,6 @@ async function openResourceFolder() {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  max-width: 640px;
 }
 
 .vsr-card {

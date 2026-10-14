@@ -68,10 +68,17 @@ pub fn delete_mod_file(mods_dir: &Path, file_name: &str) -> Result<(), String> {
         return Err("非法文件名".to_string());
     }
     let path = mods_dir.join(file_name);
-    if !path.exists() {
-        bail!("文件不存在\n{file_name}");
-    }
-    std::fs::remove_file(&path).map_err(common_err_ctx!("删除失败"))?;
+    // 禁用项在磁盘上是 `{file_name}.disabled`（启用态与它由 toggle_mod_file 互相重命名）
+    let target = if path.exists() {
+        path
+    } else {
+        let disabled = mods_dir.join(format!("{file_name}.disabled"));
+        if !disabled.exists() {
+            bail!("文件不存在\n{file_name}");
+        }
+        disabled
+    };
+    std::fs::remove_file(&target).map_err(common_err_ctx!("删除失败"))?;
     Ok(())
 }
 
@@ -265,5 +272,21 @@ mod tests {
             "反斜杠拒绝"
         );
         assert!(dir.path().join("b.jar").exists(), "拒绝后文件保留");
+    }
+
+    /// 禁用项在磁盘上是 `{name}.disabled`：传 UI 展示的原始文件名也应能删掉（否则禁用项无法删除）。
+    #[test]
+    fn delete_mod_file_removes_disabled_variant() {
+        let dir = tempfile::tempdir().unwrap();
+        let disabled = dir.path().join("a.jar.disabled");
+        std::fs::write(&disabled, b"x").unwrap();
+
+        delete_mod_file(dir.path(), "a.jar").unwrap();
+        assert!(!disabled.exists(), "传原名应删掉 .disabled 变体");
+
+        assert!(
+            delete_mod_file(dir.path(), "a.jar").is_err(),
+            "两种形态都不存在时应报错"
+        );
     }
 }

@@ -7,8 +7,7 @@ import type { WindowSize } from "./WindowSize";
 
 export type LaunchOptions = { memory: MemoryMode, 
 /**
- * 最小堆 -Xms（MB）；None = 不设置（JVM 默认，随 -Xmx 的 1/64 起扩）。
- * 仅 Custom 内存模式生效（Auto 下 -Xmx 动态推测，固定 -Xms 可能超上限）。
+ * 最小堆 -Xms（MB）；None = 不设置。仅 Custom 模式生效（Auto 的 -Xmx 动态推测）。
  */
 min_memory: number | null, 
 /**
@@ -16,7 +15,7 @@ min_memory: number | null,
  */
 window_title: string, process_priority: ProcessPriority, window_size: WindowSize, 
 /**
- * 禁用 Java Launch Wrapper（老版本主类 net.minecraft.launchwrapper.Launch → 直接用 client.main.Main）。
+ * 禁用 Java Launch Wrapper（老版本 launchwrapper 主类 → client.main.Main）。
  */
 disable_launch_wrapper: boolean, 
 /**

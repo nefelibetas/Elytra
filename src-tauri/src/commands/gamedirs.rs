@@ -1,7 +1,7 @@
 use tauri_plugin_opener::OpenerExt;
 
 use crate::config::game_dirs::{self, GameDir};
-use crate::game::version::dir;
+use crate::game::version::{dir, watch};
 
 /// 游戏目录列表（空时自动生成默认目录）。
 #[tauri::command]
@@ -59,7 +59,17 @@ pub fn remove_game_dir(path: String) -> Result<Vec<GameDir>, String> {
 /// 设置当前激活的游戏目录（同步到 downloader 配置的 minecraft_dir，版本列表跟随切换）。
 #[tauri::command]
 pub fn set_active_game_dir(path: String) -> Result<(), String> {
-    game_dirs::set_active(&path)
+    game_dirs::set_active(&path)?;
+    // 监听目标跟随激活目录：`versions/` 与聚焦版本路径整体变化
+    watch::retarget();
+    Ok(())
+}
+
+/// 设置聚焦版本（前端选中版本变化时调用）：决定监听哪些版本子目录，不影响启动。
+#[tauri::command]
+pub fn set_watched_version(version: Option<String>) -> Result<(), String> {
+    watch::set_focus(version);
+    Ok(())
 }
 
 #[tauri::command]
@@ -93,7 +103,10 @@ pub fn open_folder(app: tauri::AppHandle, path: String) -> Result<(), String> {
 /// 激活第一个含版本的目录并返回其第一个版本（目录按配置顺序，版本按字母序）。
 #[tauri::command]
 pub fn auto_activate_version() -> Result<dir::AutoActivate, String> {
-    dir::auto_activate_first_version()
+    let activated = dir::auto_activate_first_version()?;
+    // 内部已切换激活目录：监听目标跟随
+    watch::retarget();
+    Ok(activated)
 }
 
 /// 确保版本文件夹存在（不存在则创建），返回绝对路径；版本隔离：gameDir = versions/{name}。

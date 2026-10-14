@@ -2,7 +2,6 @@
 import type { AutoTasks } from "./AutoTasks";
 
 /**
- * 实例自动任务状态：`global` 作为默认值与"自定义"的预填内容；
- * `instance` 为 `Some` 时该实例完全采用自己的自动任务。
+ * 实例自动任务状态：`global` 为默认值/"自定义"预填；`instance` 为 Some 时该实例采用自己的。
  */
 export type InstanceAutoTasksState = { global: AutoTasks, instance: AutoTasks | null, };
