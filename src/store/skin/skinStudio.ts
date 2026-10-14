@@ -1,4 +1,4 @@
-// 衣柜 store（模块级 reactive 单例，无 Pinia）：提供皮肤/披风/视角状态（渲染由页面 watch 后重绘）；拖动旋转：pointer 累加 yaw/pitch（pitch 以默认视角为基准限 ±40°）。
+// 衣柜 store（模块级 reactive 单例，无 Pinia）：提供皮肤/披风/视角状态（渲染由页面 watch 后重绘）；拖动旋转：pointer 累加 yaw，pitch 限 ±90°（可转到正顶/正底视图）。
 import { reactive } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -34,10 +34,9 @@ export interface StudioCape {
   texture: string;
 }
 
-/** 俯仰角相对默认视角限 ±40°（不会让模型上下翻转）。 */
-const PITCH_RANGE = 40;
-const PITCH_MIN = DEFAULT_VIEW_PITCH - PITCH_RANGE;
-const PITCH_MAX = DEFAULT_VIEW_PITCH + PITCH_RANGE;
+/** 俯仰角绝对范围：±90° 可转到正顶面 / 正底面（正交投影下即为该面的平面正视图）。 */
+const PITCH_MIN = -90;
+const PITCH_MAX = 90;
 /** 拖动灵敏度（度/像素）。yaw 符号与 viewer 相机配套（左拖 → 模型左转）；pitch 正号（下拖 → 视角下移）。 */
 const YAW_SENS = -0.6;
 const PITCH_SENS = 0.5;

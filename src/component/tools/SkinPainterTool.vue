@@ -70,8 +70,9 @@ const MAX_SCALE = 96;
 /** 3D 预览缩放范围（3D 直绘时预览是主画面，上限需够大以点准单像素）。 */
 const PREVIEW_ZOOM_MIN = 0.4;
 const PREVIEW_ZOOM_MAX = 4;
-/** 预览俯仰限幅（相对默认视角）。 */
-const PREVIEW_PITCH_RANGE = 40;
+/** 俯仰角绝对范围：±90° 覆盖正顶面 / 正底面（与衣柜页 skinStudio 一致）。 */
+const PREVIEW_PITCH_MIN = -90;
+const PREVIEW_PITCH_MAX = 90;
 /** 部位标签仅在缩放 ≥ LABEL_MIN_SCALE 时绘制（否则重叠糊成一团）。 */
 const LABEL_MIN_SCALE = 6;
 
@@ -682,11 +683,8 @@ function onPreviewMove(e: PointerEvent) {
   // 符号须与衣柜页（skinStudio YAW_SENS / PITCH_SENS）一致，否则两页拖动方向相反
   preview.yaw = previewFrom.yaw - (e.clientX - previewFrom.x) * 0.6;
   preview.pitch = Math.min(
-    DEFAULT_VIEW_PITCH + PREVIEW_PITCH_RANGE,
-    Math.max(
-      DEFAULT_VIEW_PITCH - PREVIEW_PITCH_RANGE,
-      previewFrom.pitch + (e.clientY - previewFrom.y) * 0.5,
-    ),
+    PREVIEW_PITCH_MAX,
+    Math.max(PREVIEW_PITCH_MIN, previewFrom.pitch + (e.clientY - previewFrom.y) * 0.5),
   );
   drawPreview();
 }
