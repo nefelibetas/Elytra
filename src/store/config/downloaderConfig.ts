@@ -7,7 +7,7 @@ import type { DownloaderConfig } from "../../types/config/DownloaderConfig";
 export const sourceModeOptions = [
   { value: "auto", label: "智能模式", desc: "程序自动判断更快源：按资源类型与健康度自动选源，官方过慢自动降级镜像" },
   { value: "officialOnly", label: "官方源", desc: "仅使用官方源，不自动回退" },
-  { value: "mirrorOnly", label: "仅镜像源", desc: "仅使用 BMCLAPI 国内镜像，不自动回退" },
+  { value: "mirrorOnly", label: "仅镜像源", desc: "文件仅走 BMCLAPI 镜像、不自动回退；版本清单等元数据仍官方优先" },
 ];
 
 // 网络代理模式：auto 检测系统代理（Win 注册表 / Linux 环境变量或 gsettings）；system 强制系统代理；direct 强制直连（TUN 由网络层接管）

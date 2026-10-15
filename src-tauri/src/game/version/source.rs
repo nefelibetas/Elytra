@@ -35,13 +35,27 @@ impl DownloadSource {
 }
 
 impl DownloaderConfig {
-    /// 按模式返回依次尝试的源列表。Auto 下顺序仅作 URL 模板兜底，
-    /// 实际路由由 fetcher 层按资源类 + 健康度决定（官方优先，4s 降级）。
+    /// 文件下载用源顺序（与元数据顺序分离，见 `metadata_sources_in_order`）。
     pub(crate) fn sources_in_order(&self, mode: DownloadSourceMode) -> Vec<&DownloadSource> {
         match mode {
             DownloadSourceMode::OfficialOnly => vec![&self.sources[0]],
             DownloadSourceMode::MirrorOnly => vec![&self.sources[1]],
             DownloadSourceMode::Auto => vec![&self.sources[0], &self.sources[1]],
+        }
+    }
+
+    /// 元数据（清单/version json/索引/loader 版本列表）专用源顺序：一律官方优先，
+    /// 镜像仅作官方失败后的兜底。官方 meta 直连实测 0.2~0.5s，而 BMCLAPI 对这类
+    /// KB 级 JSON 同样走 302 调度链（主控→节点→MinIO 预签名），反而慢、且节点质量波动。
+    pub(crate) fn metadata_sources_in_order(
+        &self,
+        mode: DownloadSourceMode,
+    ) -> Vec<&DownloadSource> {
+        match mode {
+            DownloadSourceMode::OfficialOnly => vec![&self.sources[0]],
+            DownloadSourceMode::MirrorOnly | DownloadSourceMode::Auto => {
+                vec![&self.sources[0], &self.sources[1]]
+            }
         }
     }
 
@@ -69,7 +83,7 @@ impl DownloaderConfig {
         cache: CacheBehaviour,
         make_url: impl Fn(&DownloadSource) -> String,
     ) -> Result<String, String> {
-        let key = make_url(self.sources_in_order(mode)[0]);
+        let key = make_url(self.metadata_sources_in_order(mode)[0]);
         match cache {
             CacheBehaviour::CacheOnly => list_cache_get(&key).ok_or_else(|| {
                 "离线模式：该元数据无缓存（需联网获取一次后才能离线使用，请联网后重试）".to_string()
@@ -95,7 +109,7 @@ impl DownloaderConfig {
         mode: DownloadSourceMode,
         make_url: impl Fn(&DownloadSource) -> String,
     ) -> Result<String, String> {
-        let order = self.sources_in_order(mode);
+        let order = self.metadata_sources_in_order(mode);
         let mut last_err = String::new();
         // 无镜像源的备用 URL 与主源相同（如 quilt），跳过重复请求避免同 URL 二次等待。
         let mut tried: Vec<String> = Vec::new();
@@ -288,6 +302,77 @@ mod tests {
             elapsed.as_secs() < 8,
             "主源 4s 超时应触发并降级，实际 {}s（超时机制失效）",
             elapsed.as_secs_f64()
+        );
+    }
+
+    /// MirrorOnly 下元数据仍官方优先（官方直连，镜像仅兜底）——与文件下载的硬镜像语义分离。
+    #[tokio::test]
+    async fn mirror_only_metadata_prefers_official() {
+        let spawn = |body: &'static str| async move {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            tokio::spawn(async move {
+                loop {
+                    let Ok((mut sock, _)) = listener.accept().await else {
+                        break;
+                    };
+                    let mut buf = [0u8; 4096];
+                    let _ = tokio::io::AsyncReadExt::read(&mut sock, &mut buf).await;
+                    use tokio::io::AsyncWriteExt;
+                    let _ = sock
+                        .write_all(
+                            format!(
+                                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                                body.len(),
+                                body
+                            )
+                            .as_bytes(),
+                        )
+                        .await;
+                    let _ = sock.shutdown().await;
+                }
+            });
+            port
+        };
+        let official_port = spawn("official").await;
+        let mirror_port = spawn("mirror").await;
+        let src = |name: &str, port: u16| DownloadSource {
+            name: name.into(),
+            manifest_url: format!("http://127.0.0.1:{port}"),
+            resource_url: format!("http://127.0.0.1:{port}/assets"),
+            maven_url: format!("http://127.0.0.1:{port}/maven"),
+            libraries_url: format!("http://127.0.0.1:{port}/libraries"),
+            forge_list_url: "".into(),
+            fabric_list_url: "".into(),
+            neoforge_list_url: "".into(),
+            quilt_list_url: "".into(),
+            optifine_list_url: "".into(),
+            forge_installer_url: "".into(),
+            neoforge_installer_url: "".into(),
+            fabric_loader_url: "".into(),
+            fabric_profile_url: "".into(),
+            quilt_profile_url: "".into(),
+            optifine_download_url: "".into(),
+        };
+        let cfg = DownloaderConfig {
+            sources: vec![src("official", official_port), src("mirror", mirror_port)],
+            game_source_mode: DownloadSourceMode::MirrorOnly,
+            ..Default::default()
+        };
+        let text = cfg
+            .fetch_with_fallback(
+                DownloadSourceMode::MirrorOnly,
+                CacheBehaviour::MustRevalidate,
+                |s| format!("{}/test.json", s.manifest_url),
+            )
+            .await
+            .expect("元数据应命中官方源");
+        assert_eq!(text, "official", "MirrorOnly 元数据应官方优先");
+        // 文件下载主源仍保持镜像语义（两套顺序互不串扰）
+        assert_eq!(
+            cfg.file_primary_source().unwrap().name,
+            "mirror",
+            "MirrorOnly 文件主源不应被元数据顺序影响"
         );
     }
 }

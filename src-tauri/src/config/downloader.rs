@@ -104,8 +104,8 @@ pub enum NetworkMode {
     Direct,
 }
 
-/// 下载源选择模式：auto（默认）按 URL 自动分类、镜像候选即时生成并按健康度排序，元数据/清单请求官方优先、
-/// 超时（4s）自动降级镜像；officialOnly / mirrorOnly 单选，只用一个源，不自动回退。
+/// 下载源选择模式：auto（默认）元数据/清单官方优先、超时（4s）自动降级镜像；
+/// officialOnly 全走官方；mirrorOnly 文件仅镜像不回退，元数据仍官方优先（镜像兜底）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default, ts_rs::TS)]
 #[ts(export_to = "config/")]
 #[serde(rename_all = "camelCase")]
