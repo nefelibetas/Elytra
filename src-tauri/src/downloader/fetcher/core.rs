@@ -20,6 +20,7 @@ use crate::config::downloader::{infer_resource_class, DownloadSourceMode, Resour
 use crate::constants;
 use crate::downloader::hash::file_sha1_matches;
 use crate::downloader::probe::{probe_domain, ProbeResult};
+use crate::downloader::segmented::{requested_segment_count, transfer_with_ranges, RangeTransfer};
 
 /// 全局限速（bytes/s，0 = 不限）。
 static SPEED_LIMIT: AtomicU64 = AtomicU64::new(0);
@@ -311,13 +312,14 @@ async fn fetch_once<F: Fn(u64, u64) + Send + Sync>(
     let status = response.status();
     eprintln!("[fetch] {url} → HTTP {status}");
 
-    // 大文件 Range 并行：官方源 + 服务端声明支持 Range + 总长够大（≥ 4×1MB）时分段并发，
-    // 单流官方实测仅 ~0.5MB/s（25MB client.jar 需 50s），4 段可到 ~2MB/s。镜像走 302
-    // 调度链（主控→节点→MinIO 预签名），同 hash 分段会重复打两跳 TLS 且节点按 hash
-    // 限流，保持单连接（与工具箱分段内核对镜像的策略一致）。
+    // 大文件 Range 并行：官方源 + 服务端声明支持 Range 时按时间预算推导段数（见
+    // `requested_segment_count`）。镜像走 302 调度链（主控→节点→MinIO 预签名），
+    // 同 hash 分段会重复打两跳 TLS 且节点按 hash 限流，保持单连接。
     let content_len = response.content_length().unwrap_or(0);
-    let ranged_supported = content_len >= 4 * 1024 * 1024
-        && !is_mirror_url(url)
+    let seg_k = requested_segment_count(content_len);
+    let ranged_supported = !is_mirror_url(url)
+        && content_len > 0
+        && seg_k >= 2
         && response
             .headers()
             .get(reqwest::header::ACCEPT_RANGES)
@@ -333,13 +335,12 @@ async fn fetch_once<F: Fn(u64, u64) + Send + Sync>(
         let cb: Option<&(dyn Fn(u64, u64) + Send + Sync)> = progress
             .as_ref()
             .map(|f| f as &(dyn Fn(u64, u64) + Send + Sync));
-        let out = crate::downloader::segmented::transfer_with_ranges(
-            crate::downloader::segmented::RangeTransfer {
+        let out = transfer_with_ranges(RangeTransfer {
                 client: http(),
                 url,
                 dest,
                 total: content_len,
-                count: 4,
+                count: seg_k,
                 // 上一轮失败遗留的 .part 位图（URL 相同）继续接传
                 resume: true,
                 callback: cb,
@@ -803,11 +804,12 @@ mod tests {
         );
     }
 
-    /// 大文件（≥ 4MB）+ 服务端声明 Accept-Ranges：走 Range 分段，结果字节完整、sha1 校验过。
+    /// 大文件（段数 ≥2）+ 服务端声明 Accept-Ranges：走 Range 分段，结果字节完整、sha1 校验过。
+    /// 12MB / (10s × 512KB/s) ≈ 2.4 → ceil 3 段。
     #[tokio::test]
     async fn large_official_file_downloads_in_range_segments() {
-        // 5MB：4×1MB 段最小门限 + 富余
-        let body: Vec<u8> = (0..(5 * 1024 * 1024)).map(|i| (i % 251) as u8).collect();
+        // 12MB：新段数公式下 3 段（每段 ~4MB）
+        let body: Vec<u8> = (0..(12 * 1024 * 1024)).map(|i| (i % 251) as u8).collect();
         let url = serve_range(body.clone(), true).await;
         let dest = temp_dest("range_seg");
         let out = crate::downloader::fetcher::fetch(&url, &dest, None::<fn(u64, u64)>)

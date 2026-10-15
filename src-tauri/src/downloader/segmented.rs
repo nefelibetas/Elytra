@@ -20,6 +20,25 @@ use super::fetcher::{self, FetchError};
 const MIN_SEGMENT_BYTES: u64 = 1024 * 1024;
 /// 段数硬上限：调用方配置再大也不超过（防连接数爆炸）。
 const MAX_SEGMENTS: usize = 32;
+/// 单文件下载时间预算（秒）：段数按此推导——单流吞吐（近海 CDN 受拥塞窗口×RTT 限制，
+/// 实测 ~0.47MB/s 级）除该预算即所需并行度；25MB client.jar 约 5 段、50MB 约 8 段。
+const TARGET_DOWNLOAD_SECS: u64 = 10;
+/// 官方单流吞吐估计（bytes/s）：实测 466KB/s，取 512KB/s 为收敛圆整
+/// （大值让段数略少——保守不外加连接）。分段仅在官方源启用，镜像保持单连接。
+const OFFICIAL_SINGLE_STREAM_BPS: u64 = 512 * 1024;
+/// 单文件段数上限：batch 并发下「同任务大文件 × 段数」的连接预算（官方源无 per-hash
+/// 限流，但避免爆发连接数逼近我们对官方的经验并发上限）。
+const MAX_FILE_SEGMENTS: usize = 8;
+
+/// 官方大文件的请求段数：`ceil(total / (预算时间 × 单流吞吐))`，随文件大小生长
+/// （返回 `< 2` 表示不值得分段，调用方回退单流）；实际切分仍由 `segment_count`
+/// 按 `MIN_SEGMENT_BYTES` 二次收敛。
+pub(crate) fn requested_segment_count(total: u64) -> usize {
+	let budget_bytes = TARGET_DOWNLOAD_SECS.saturating_mul(OFFICIAL_SINGLE_STREAM_BPS);
+	let k = (total as f64 / budget_bytes as f64).ceil() as usize;
+	k.clamp(1, MAX_FILE_SEGMENTS)
+}
+
 /// 单次限速睡眠上限（秒）：保证暂停/取消能在一个小块间隔内被察觉。
 const PACE_SLEEP_CAP: f64 = 0.25;
 /// 位图落盘间隔（字节）：崩溃后最多丢这么多进度（暂停/取消时立即落盘）。
@@ -629,6 +648,20 @@ mod tests {
             segment_count(MIN_SEGMENT_BYTES * 100, 999),
             Some((MIN_SEGMENT_BYTES * 100, MAX_SEGMENTS))
         );
+    }
+
+    /// 段数随文件大小生长（时间预算 × 单流吞吐推导）：< 预算不分段、大文件收敛到上限。
+    #[test]
+    fn requested_segment_count_scales_with_size() {
+        let budget = TARGET_DOWNLOAD_SECS.saturating_mul(OFFICIAL_SINGLE_STREAM_BPS);
+        // 低于预算：1 段（调用方据此回退单流）
+        assert_eq!(requested_segment_count(budget - 1), 1);
+        assert_eq!(requested_segment_count(budget), 1);
+        // 2×/5× 预算：2/5 段
+        assert_eq!(requested_segment_count(budget * 2), 2);
+        assert_eq!(requested_segment_count(budget * 5), 5);
+        // 远超预算：收敛到上限 8
+        assert_eq!(requested_segment_count(budget * 100), 8);
     }
 
     #[test]

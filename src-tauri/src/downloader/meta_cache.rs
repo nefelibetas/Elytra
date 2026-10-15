@@ -2,6 +2,7 @@
 //! 持久层（进程重启后版本清单/索引免网络）；目录 `config_dir()/cache/meta/`，键 = `sha1(url)`，
 //! 条目 `{url, fetched_ms, body}`，TTL 由读端按 URL 分域（稳定数据 24h / 快变清单 10min）。
 
+use crate::downloader::hash::sha1_hex;
 use crate::util::config_dir;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -42,7 +43,7 @@ fn cache_dir() -> PathBuf {
 }
 
 fn path_for(url: &str) -> PathBuf {
-	cache_dir().join(format!("{}.json", crate::downloader::hash::sha1_hex(url.as_bytes())))
+	cache_dir().join(format!("{}.json", sha1_hex(url.as_bytes())))
 }
 
 /// 读取：`max_age_secs: None` 表示允许陈旧（离线兜底），`Some(n)` 要求新鲜。

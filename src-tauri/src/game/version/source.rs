@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use crate::config::downloader::{DownloadSource, DownloadSourceMode, DownloaderConfig};
 use crate::downloader::endpoints::{BMCLAPI, MIRROR_ROUTES};
+use crate::downloader::meta_cache;
 use crate::downloader::fetcher::http;
 
 /// 元数据请求缓存行为：`DefaultTtl` 命中即返回否则网络写缓存；`CacheOnly` 只读缓存、
@@ -195,9 +196,9 @@ fn list_cache_get(url: &str, allow_stale: bool) -> Option<String> {
     let max_age = if allow_stale {
         None
     } else {
-        Some(crate::downloader::meta_cache::ttl_for(url))
+        Some(meta_cache::ttl_for(url))
     };
-    let body = crate::downloader::meta_cache::get(url, max_age)?;
+    let body = meta_cache::get(url, max_age)?;
     list_cache_set(url.to_string(), body.clone());
     Some(body)
 }
@@ -211,7 +212,7 @@ fn list_cache_set(url: String, val: String) {
         m.insert(url.clone(), (Instant::now(), val.clone()));
     }
     // 内存层独立于磁盘层：入内存的同时落盘（IO 失败静默，下进程失去该项）
-    crate::downloader::meta_cache::put(&url, &val);
+    meta_cache::put(&url, &val);
 }
 
 #[cfg(test)]
