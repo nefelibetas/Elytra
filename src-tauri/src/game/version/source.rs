@@ -2,6 +2,7 @@
 
 use parking_lot::Mutex;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
 use crate::config::downloader::{DownloadSource, DownloadSourceMode, DownloaderConfig};
@@ -85,7 +86,7 @@ impl DownloaderConfig {
     ) -> Result<String, String> {
         let key = make_url(self.metadata_sources_in_order(mode)[0]);
         match cache {
-            CacheBehaviour::CacheOnly => list_cache_get(&key).ok_or_else(|| {
+            CacheBehaviour::CacheOnly => list_cache_get(&key, true).ok_or_else(|| {
                 "离线模式：该元数据无缓存（需联网获取一次后才能离线使用，请联网后重试）".to_string()
             }),
             CacheBehaviour::MustRevalidate => {
@@ -94,7 +95,7 @@ impl DownloaderConfig {
                 Ok(text)
             }
             CacheBehaviour::DefaultTtl => {
-                if let Some(cached) = list_cache_get(&key) {
+                if let Some(cached) = list_cache_get(&key, false) {
                     return Ok(cached);
                 }
                 let text = self.fetch_with_fallback_uncached(mode, make_url).await?;
@@ -166,32 +167,51 @@ impl DownloaderConfig {
     }
 }
 
-// ── 列表 TTL 缓存：元数据拉取结果按主源 URL 缓存（纯内存，自动过期）──
+// ── 列表 TTL 缓存：元数据拉取结果按主源 URL 缓存（内存热度层 + 磁盘持久层）──
+// 内存命中用于进程内去重；磁盘层（downloader::meta_cache）承担进程重启后的免网络命中
+// 与离线（CacheOnly）兜底。TTL 分域在磁盘层内部判定（快变清单 10min / 稳定数据 24h）。
 
 const LIST_CACHE_TTL_SECS: u64 = 600;
 const LIST_CACHE_MAX: usize = 64;
 
-fn list_cache() -> &'static Mutex<HashMap<String, (Instant, String)>> {
-    static C: std::sync::OnceLock<Mutex<HashMap<String, (Instant, String)>>> =
-        std::sync::OnceLock::new();
-    C.get_or_init(|| Mutex::new(HashMap::new()))
+fn list_cache() -> &'static LazyLock<Mutex<HashMap<String, (Instant, String)>>> {
+    static C: LazyLock<Mutex<HashMap<String, (Instant, String)>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    &C
 }
 
-fn list_cache_get(url: &str) -> Option<String> {
-    let m = list_cache().lock();
-    let (t, v) = m.get(url)?;
-    if t.elapsed() > Duration::from_secs(LIST_CACHE_TTL_SECS) {
-        return None;
+/// `allow_stale`：CacheOnly 离线兜底允许陈旧条目（磁盘层返回 body 不校验新鲜度），
+/// DefaultTtl 只认新鲜条目。
+fn list_cache_get(url: &str, allow_stale: bool) -> Option<String> {
+    {
+        let m = list_cache().lock();
+        if let Some((t, v)) = m.get(url) {
+            if t.elapsed() <= Duration::from_secs(LIST_CACHE_TTL_SECS) {
+                return Some(v.clone());
+            }
+        }
     }
-    Some(v.clone())
+    // 内存 miss 或已过期 → 磁盘层兜底
+    let max_age = if allow_stale {
+        None
+    } else {
+        Some(crate::downloader::meta_cache::ttl_for(url))
+    };
+    let body = crate::downloader::meta_cache::get(url, max_age)?;
+    list_cache_set(url.to_string(), body.clone());
+    Some(body)
 }
 
 fn list_cache_set(url: String, val: String) {
-    let mut m = list_cache().lock();
-    if m.len() >= LIST_CACHE_MAX {
-        m.clear();
+    {
+        let mut m = list_cache().lock();
+        if m.len() >= LIST_CACHE_MAX {
+            m.clear();
+        }
+        m.insert(url.clone(), (Instant::now(), val.clone()));
     }
-    m.insert(url, (Instant::now(), val));
+    // 内存层独立于磁盘层：入内存的同时落盘（IO 失败静默，下进程失去该项）
+    crate::downloader::meta_cache::put(&url, &val);
 }
 
 #[cfg(test)]
@@ -201,12 +221,19 @@ mod tests {
 
     #[test]
     fn list_cache_roundtrip() {
-        let url = "https://example.com/maven-metadata.xml";
-        assert!(list_cache_get(url).is_none(), "未写入时不应命中");
-        list_cache_set(url.into(), "v1".into());
-        assert_eq!(list_cache_get(url).as_deref(), Some("v1"));
-        list_cache_set(url.into(), "v2".into());
-        assert_eq!(list_cache_get(url).as_deref(), Some("v2"), "覆盖写应生效");
+        crate::downloader::meta_cache::clear_all();
+        list_cache().lock().clear();
+        // 独立 key：磁盘层跨测试 run 持久，固定示例 URL 会命中上一轮的落盘条目
+        let url = format!("https://example.com/maven-metadata-{}.xml", std::process::id());
+        assert!(list_cache_get(&url, false).is_none(), "未写入时不应命中");
+        list_cache_set(url.clone(), "v1".into());
+        assert_eq!(list_cache_get(&url, false).as_deref(), Some("v1"));
+        list_cache_set(url.clone(), "v2".into());
+        assert_eq!(
+            list_cache_get(&url, false).as_deref(),
+            Some("v2"),
+            "覆盖写应生效"
+        );
     }
 
     #[tokio::test]

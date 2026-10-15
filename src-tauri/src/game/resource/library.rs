@@ -45,6 +45,10 @@ pub fn count_pending(libraries: &[Library], lib_dir: &Path) -> usize {
 }
 
 /// 缺失/校验失败的库路径清单（与 count_pending 同过滤），供完整性检测展示便于排查。
+///
+/// 启动预检走 size-first：下载（fetch_verified）与修复（repair）周期都是 sha1 强校验落盘，
+/// 本地文件损坏只剩磁盘位翻转等极小概率、size 几乎必违；逐文件 sha1 在机械盘上带来
+/// 数秒读盘（~150MB），弱化为 size 后启动校验免逐文件读盘。size 未知（0）时退回 sha1 流式校验。
 pub fn missing_libraries(libraries: &[Library], lib_dir: &Path) -> Vec<String> {
     libraries
         .iter()
@@ -54,10 +58,18 @@ pub fn missing_libraries(libraries: &[Library], lib_dir: &Path) -> Vec<String> {
             }
             let artifact = lib.downloads.as_ref()?.artifact.as_ref()?;
             let dest = lib_dir.join(&artifact.path);
-            if dest.exists() && file_sha1_matches(&dest, &artifact.sha1) {
-                return None;
+            let complete = match std::fs::metadata(&dest) {
+                // size 已知：size 判定即完成（0 字节残留视为损坏）。
+                Ok(m) if artifact.size > 0 => m.len() == artifact.size,
+                // size 未知（manifest 未给）：退回 sha1 强校验。
+                Ok(m) => m.len() > 0 && file_sha1_matches(&dest, &artifact.sha1),
+                Err(_) => false,
+            };
+            if complete {
+                None
+            } else {
+                Some(artifact.path.clone())
             }
-            Some(artifact.path.clone())
         })
         .collect()
 }

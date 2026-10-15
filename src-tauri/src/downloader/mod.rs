@@ -4,6 +4,7 @@ pub mod batch;
 pub mod endpoints;
 pub mod fetcher;
 pub mod hash;
+pub mod meta_cache;
 pub mod path_lock;
 pub mod probe;
 pub mod progress;
