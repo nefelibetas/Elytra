@@ -95,6 +95,54 @@ where
         cb(true, count);
     }
 
+    // 多段共享同一回调：借出 trait object（不 clone，不要求 'static）
+    let progress_ref: Option<&(dyn Fn(u64, u64) + Send + Sync)> = progress_cb
+        .as_ref()
+        .map(|f| f as &(dyn Fn(u64, u64) + Send + Sync));
+
+    transfer_with_ranges(RangeTransfer {
+        client,
+        url,
+        dest,
+        total,
+        count,
+        resume,
+        callback: progress_ref,
+        cancel,
+    })
+    .await
+}
+
+/// 核心分段传输参数（字段多，收敛为结构体避免 `too_many_arguments`）。
+pub(crate) struct RangeTransfer<'a> {
+    pub client: Arc<Client>,
+    pub url: &'a str,
+    pub dest: &'a Path,
+    pub total: u64,
+    pub count: usize,
+    pub resume: bool,
+    /// 多段共享的进度回调（并发驱动）：要求 Send/Sync
+    pub callback: Option<&'a (dyn Fn(u64, u64) + Send + Sync)>,
+    pub cancel: Option<&'a AtomicBool>,
+}
+
+/// 核心分段传输：`total`/`count` 由调用方预探测给出，各段 `Range` 并发直写 `<dest>.part`
+/// 并汇入位图，全部完成后 rename 到 dest；不持 path_lock（调用方负责互斥——fetch 核心分支
+/// 的 batch worker 已持锁，download_segmented 自持；嵌套占用同路径会自旋死锁）。
+pub(crate) async fn transfer_with_ranges(
+    RangeTransfer {
+        client,
+        url,
+        dest,
+        total,
+        count,
+        resume,
+        callback,
+        cancel,
+    }: RangeTransfer<'_>,
+) -> Result<SegmentedOutcome, FetchError> {
+    let started = Instant::now();
+
     let ranges = segment_ranges(total, count);
     let (part, meta_path) = partial_paths(dest);
     if let Some(parent) = dest.parent() {
@@ -139,10 +187,6 @@ where
         total,
         segments: count,
     };
-    // 多段共享同一回调：借出 trait object（不 clone，不要求 'static）
-    let progress_ref: Option<&(dyn Fn(u64, u64) + Send + Sync)> = progress_cb
-        .as_ref()
-        .map(|f| f as &(dyn Fn(u64, u64) + Send + Sync));
 
     let jobs = ranges
         .iter()
@@ -174,7 +218,7 @@ where
                     pace: &pace,
                     writer,
                     cancel,
-                    progress: progress_ref,
+                    progress: callback,
                 })
                 .await
             })

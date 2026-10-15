@@ -70,7 +70,7 @@ pub(super) struct FetchOptions<'a> {
     pub(super) kind: FetchKind,
 }
 
-pub(super) async fn download_core<F: Fn(u64, u64)>(
+pub(super) async fn download_core<F: Fn(u64, u64) + Send + Sync>(
     FetchOptions {
         urls,
         dest,
@@ -112,7 +112,7 @@ pub(super) async fn download_core<F: Fn(u64, u64)>(
 }
 
 /// 单 URL 重试路径：网络错误/5xx 最多 3 次（500ms×2ⁿ 退避），取消立即传播（不重试、不换源）；失败清理残留。
-async fn fetch_with_retries<F: Fn(u64, u64)>(
+async fn fetch_with_retries<F: Fn(u64, u64) + Send + Sync>(
     client: &Client,
     url: &str,
     dest: &Path,
@@ -184,7 +184,7 @@ struct FetchOnceOutput {
 }
 
 /// 多源循环：每源独立 client（连接 2s），全源一轮失败后整体重试（最多 3 轮，退避 500ms×2ⁿ）；`total_timeout` None=不限时/Some=整请求限时（小文件防 body 假死）；`expected_sha1` 非空逐源校验。
-async fn fetch_from_sources<F: Fn(u64, u64)>(
+async fn fetch_from_sources<F: Fn(u64, u64) + Send + Sync>(
     urls: &[String],
     dest: &Path,
     progress: &Option<F>,
@@ -280,7 +280,7 @@ async fn fetch_from_sources<F: Fn(u64, u64)>(
     Err(FetchError::Network(msg))
 }
 
-async fn fetch_once<F: Fn(u64, u64)>(
+async fn fetch_once<F: Fn(u64, u64) + Send + Sync>(
     client: &Client,
     url: &str,
     dest: &Path,
@@ -310,6 +310,58 @@ async fn fetch_once<F: Fn(u64, u64)>(
 
     let status = response.status();
     eprintln!("[fetch] {url} → HTTP {status}");
+
+    // 大文件 Range 并行：官方源 + 服务端声明支持 Range + 总长够大（≥ 4×1MB）时分段并发，
+    // 单流官方实测仅 ~0.5MB/s（25MB client.jar 需 50s），4 段可到 ~2MB/s。镜像走 302
+    // 调度链（主控→节点→MinIO 预签名），同 hash 分段会重复打两跳 TLS 且节点按 hash
+    // 限流，保持单连接（与工具箱分段内核对镜像的策略一致）。
+    let content_len = response.content_length().unwrap_or(0);
+    let ranged_supported = content_len >= 4 * 1024 * 1024
+        && !is_mirror_url(url)
+        && response
+            .headers()
+            .get(reqwest::header::ACCEPT_RANGES)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.eq_ignore_ascii_case("bytes"));
+    if ranged_supported {
+        // 只读头部做决策；丢弃本响应、连接归还连接池，分段各自 Range 重连
+        drop(response);
+        // 取消检查在分段内部逐块执行
+        if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+            return Err(FetchError::Cancelled);
+        }
+        let cb: Option<&(dyn Fn(u64, u64) + Send + Sync)> = progress
+            .as_ref()
+            .map(|f| f as &(dyn Fn(u64, u64) + Send + Sync));
+        let out = crate::downloader::segmented::transfer_with_ranges(
+            crate::downloader::segmented::RangeTransfer {
+                client: http(),
+                url,
+                dest,
+                total: content_len,
+                count: 4,
+                // 上一轮失败遗留的 .part 位图（URL 相同）继续接传
+                resume: true,
+                callback: cb,
+                cancel,
+            },
+        )
+        .await?;
+        // 与单流路径同语义：不匹配视同此源失败（上层换源）
+        if let Some(sha1) = expected_sha1 {
+            if !sha1.is_empty() && !file_sha1_matches(dest, sha1) {
+                let _ = std::fs::remove_file(dest);
+                return Err(FetchError::Checksum);
+            }
+        }
+        return Ok(FetchOnceOutput {
+            dl: DownloadResult {
+                bytes: out.bytes,
+                speed: out.speed,
+            },
+            ttfb_ms,
+        });
+    }
     if !status.is_success() {
         return Err(FetchError::Network(format!("请求失败\nHTTP {status}")));
     }
@@ -436,6 +488,69 @@ pub(crate) mod test_support {
         p
     }
 
+    /// 支持 `Range` 与 `Accept-Ranges` 的服务端：0-0 探测回 206 + `Content-Range`，
+    /// 段请求回 206 对应分段；`range_off` 时回 200 整体（不声明 Accept-Ranges）。
+    pub(crate) async fn serve_range(body: Vec<u8>, range_on: bool) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let _ = tx.send(());
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    break;
+                };
+                let body = body.clone();
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 8192];
+                    let n = tokio::io::AsyncReadExt::read(&mut sock, &mut buf)
+                        .await
+                        .unwrap_or(0);
+                    let head = String::from_utf8_lossy(&buf[..n]).to_string();
+                    let lower = head.to_lowercase();
+                    let ranges = lower.contains("range:");
+                    if range_on && ranges {
+                        // 解析 `bytes=b-`/`bytes=b-e`，支持开区间
+                        let spec = lower
+                            .split("bytes=")
+                            .nth(1)
+                            .and_then(|s| s.lines().next())
+                            .unwrap_or("0-");
+                        let (b, e) = spec.split_once('-').unwrap_or((spec, ""));
+                        let b: usize = b.parse().unwrap_or(0);
+                        let e = e
+                            .parse::<usize>()
+                            .unwrap_or(body.len().saturating_sub(1));
+                        let seg = &body[b..=e.min(body.len().saturating_sub(1))];
+                        let out = format!(
+                            "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {b}-{e}/{}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            body.len(),
+                            seg.len()
+                        );
+                        let _ = sock.write_all(out.as_bytes()).await;
+                        let _ = sock.write_all(seg).await;
+                    } else if range_on {
+                        let out = format!(
+                            "HTTP/1.1 200 OK\r\nAccept-Ranges: bytes\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            body.len()
+                        );
+                        let _ = sock.write_all(out.as_bytes()).await;
+                        let _ = sock.write_all(&body).await;
+                    } else {
+                        let out = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            body.len()
+                        );
+                        let _ = sock.write_all(out.as_bytes()).await;
+                        let _ = sock.write_all(&body).await;
+                    }
+                    let _ = sock.shutdown().await;
+                });
+            }
+        });
+        format!("http://{addr}/file.jar")
+    }
+
     pub(crate) async fn serve_recording_heads(
         body: Vec<u8>,
     ) -> (String, std::sync::Arc<parking_lot::Mutex<Vec<String>>>) {
@@ -476,7 +591,7 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
-    use super::test_support::temp_dest;
+    use super::test_support::{serve_range, temp_dest};
     use super::{is_mirror_url, sort_routes_with_probes};
     use crate::config::downloader::ResourceClass;
     use crate::constants;
@@ -687,5 +802,42 @@ mod tests {
             "无样本的官方应排后（镜像探测成功在前）: {}",
             r[0].url
         );
+    }
+
+    /// 大文件（≥ 4MB）+ 服务端声明 Accept-Ranges：走 Range 分段，结果字节完整、sha1 校验过。
+    #[tokio::test]
+    async fn large_official_file_downloads_in_range_segments() {
+        // 5MB：4×1MB 段最小门限 + 富余
+        let body: Vec<u8> = (0..(5 * 1024 * 1024)).map(|i| (i % 251) as u8).collect();
+        let url = serve_range(body.clone(), true).await;
+        let dest = temp_dest("range_seg");
+        let out = crate::downloader::fetcher::fetch(&url, &dest, None::<fn(u64, u64)>)
+            .await
+            .expect("分段下载应成功");
+        assert_eq!(out.bytes as usize, body.len(), "分段的字节总量应完整");
+        let got = std::fs::read(&dest).expect("目标应存在");
+        assert_eq!(got, body, "分段内容应与服务端一致（段内 seek 定位正确）");
+        assert!(crate::downloader::hash::file_sha1_matches(
+            &dest,
+            &crate::downloader::hash::sha1_hex(&body)
+        ));
+        let _ = std::fs::remove_file(&dest);
+        let _ = std::fs::remove_file(dest.with_extension("jar.part"));
+        let _ = std::fs::remove_file(dest.with_extension("jar.part.json"));
+    }
+
+    /// 服务端不支持 Range（无 Accept-Ranges 声明时 4MB 大文件回退单流，结果同样完整）。
+    #[tokio::test]
+    async fn large_file_falls_back_to_stream_without_range() {
+        let body: Vec<u8> = (0..(5 * 1024 * 1024)).map(|i| (i % 251) as u8).collect();
+        let url = serve_range(body.clone(), false).await;
+        let dest = temp_dest("no_range_seg");
+        let out = crate::downloader::fetcher::fetch(&url, &dest, None::<fn(u64, u64)>)
+            .await
+            .expect("单流回退应成功");
+        assert_eq!(out.bytes as usize, body.len(), "单流的字节总量应完整");
+        let got = std::fs::read(&dest).expect("目标应存在");
+        let _ = std::fs::remove_file(&dest);
+        assert_eq!(got, body, "单流内容应一致");
     }
 }

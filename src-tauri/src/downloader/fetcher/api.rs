@@ -43,7 +43,7 @@ impl std::fmt::Display for FetchError {
 pub async fn fetch(
     url: &str,
     dest: &Path,
-    progress: Option<impl Fn(u64, u64)>,
+    progress: Option<impl Fn(u64, u64) + Send + Sync>,
 ) -> Result<DownloadResult, FetchError> {
     let urls = [url.to_string()];
     download_core(
@@ -64,7 +64,7 @@ pub async fn fetch(
 pub async fn fetch_fallback(
     urls: &[String],
     dest: &Path,
-    progress: Option<impl Fn(u64, u64)>,
+    progress: Option<impl Fn(u64, u64) + Send + Sync>,
 ) -> Result<DownloadResult, FetchError> {
     fetch_fallback_c(urls, dest, progress, None).await
 }
@@ -72,7 +72,7 @@ pub async fn fetch_fallback(
 pub async fn fetch_fallback_c(
     urls: &[String],
     dest: &Path,
-    progress: Option<impl Fn(u64, u64)>,
+    progress: Option<impl Fn(u64, u64) + Send + Sync>,
     cancel: Option<&AtomicBool>,
 ) -> Result<DownloadResult, FetchError> {
     download_core(
@@ -96,7 +96,7 @@ pub async fn fetch_fallback_c(
 pub async fn fetch_verified(
     urls: &[String],
     dest: &Path,
-    progress: Option<impl Fn(u64, u64)>,
+    progress: Option<impl Fn(u64, u64) + Send + Sync>,
     expected_sha1: &str,
 ) -> Result<DownloadResult, FetchError> {
     fetch_verified_c(urls, dest, progress, expected_sha1, None).await
@@ -105,7 +105,7 @@ pub async fn fetch_verified(
 pub async fn fetch_verified_c(
     urls: &[String],
     dest: &Path,
-    progress: Option<impl Fn(u64, u64)>,
+    progress: Option<impl Fn(u64, u64) + Send + Sync>,
     expected_sha1: &str,
     cancel: Option<&AtomicBool>,
 ) -> Result<DownloadResult, FetchError> {
@@ -131,7 +131,7 @@ pub async fn fetch_with(
     client: &Client,
     url: &str,
     dest: &Path,
-    progress: Option<impl Fn(u64, u64)>,
+    progress: Option<impl Fn(u64, u64) + Send + Sync>,
     expected_sha1: Option<&str>,
 ) -> Result<DownloadResult, FetchError> {
     fetch_with_c(client, url, dest, progress, expected_sha1, None).await
@@ -141,7 +141,7 @@ pub async fn fetch_with_c(
     client: &Client,
     url: &str,
     dest: &Path,
-    progress: Option<impl Fn(u64, u64)>,
+    progress: Option<impl Fn(u64, u64) + Send + Sync>,
     expected_sha1: Option<&str>,
     cancel: Option<&AtomicBool>,
 ) -> Result<DownloadResult, FetchError> {
@@ -164,7 +164,7 @@ pub async fn fetch_with_c(
 pub async fn fetch_bounded(
     urls: &[String],
     dest: &Path,
-    progress: Option<impl Fn(u64, u64)>,
+    progress: Option<impl Fn(u64, u64) + Send + Sync>,
 ) -> Result<DownloadResult, FetchError> {
     fetch_bounded_c(urls, dest, progress, None).await
 }
@@ -172,7 +172,7 @@ pub async fn fetch_bounded(
 pub async fn fetch_bounded_c(
     urls: &[String],
     dest: &Path,
-    progress: Option<impl Fn(u64, u64)>,
+    progress: Option<impl Fn(u64, u64) + Send + Sync>,
     cancel: Option<&AtomicBool>,
 ) -> Result<DownloadResult, FetchError> {
     download_core(
