@@ -44,8 +44,8 @@ export const dlCommunityMode = ref("auto");
 export const dlJdkMode = ref("auto");
 export const dlConcurrency = ref(64);
 export const dlMaxSpeed = ref(0); // bytes/s，0 = 不限
-// 镜像源并发上限（须与后端 constants.rs MIRROR_CONCURRENCY 同步）：官方源不限流，BMCLAPI 30 并发即触发 429，故恒为 8
-export const MIRROR_CONCURRENCY = 8;
+// 镜像源并发上限（须与后端 constants.rs MIRROR_CONCURRENCY 同步）：官方源不限流，镜像恒为 16（实测跨文件 32 并发无 429）
+export const MIRROR_CONCURRENCY = 16;
 // 仅镜像模式下并发由镜像源规定，输入锁定
 export const concurrencyLocked = computed(() => dlGameMode.value === "mirrorOnly");
 export const dlDetailOpen = ref(false);

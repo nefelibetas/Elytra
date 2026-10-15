@@ -14,9 +14,11 @@ pub const UA_DOWNLOAD: &str = "Elytra Launcher/1.0.0";
 /// Mojang API 调用 User-Agent
 pub const UA_MOJANG_API: &str = "Elytra Launcher/1.0.0 (+https://github.com/nefelibetas/Elytra)";
 
-/// 镜像源（BMCLAPI 等）并发上限：8（BMCLAPI 30 并发同文件即触发 429，60s 窗口）。
+/// 镜像源（BMCLAPI 等）并发上限：16。实测（2026-10）跨文件 32 并发全部 302 无 429、
+/// 总耗时随并发线性下降；429 风险集中在**同文件**重复 Range 并发（节点侧按 hash 签名限流），
+/// 跨文件高并发安全。单文件分段 ≤4 段，16 ≥ 4×4 文件在飞同文件不会触及节点限流。
 /// 前端 Settings.vue 的 MIRROR_CONCURRENCY 需与此同步。
-pub const MIRROR_CONCURRENCY: usize = 8;
+pub const MIRROR_CONCURRENCY: usize = 16;
 
 /// CurseForge API Key（构建时从项目根 `.env` 注入，不提交 git）。
 /// 所有 api.curseforge.com 与 forgecdn.net 请求（含文件下载）必须携带 x-api-key；

@@ -124,7 +124,7 @@ function onMaster(v: string) {
       <CheckToggle v-model="dlShowReleaseOnly" @change="saveDownloadConfig">社区资源仅显示正式版（过滤快照/预发布版本）</CheckToggle>
     </div>
 
-    <!-- 最大线程数：官方源并发；镜像模式固定 8，隐藏该行 -->
+    <!-- 最大线程数：官方源并发；镜像模式固定 16，隐藏该行 -->
     <div v-if="!concurrencyLocked" class="dl-row">
       <span class="dl-label">最大线程数</span>
       <input
@@ -156,9 +156,9 @@ function onMaster(v: string) {
       />
       <span class="dl-val">{{ dlMaxSpeed === 0 ? '不限' : fmtSpeed(dlMaxSpeed) }}</span>
     </div>
-    <!-- Auto 模式：官方源优先+镜像降级；并发仅作用官方源，镜像固定 8 -->
+    <!-- Auto 模式：官方源优先+镜像降级；并发仅作用官方源，镜像固定 16 -->
     <p v-if="dlGameMode === 'auto' && !concurrencyLocked" class="dl-note">
-      该并发仅对官方源生效，镜像源固定 8 线程
+      该并发仅对官方源生效，镜像源固定 16 线程
     </p>
 
     <div v-if="dlError" class="dl-error">{{ dlError }}</div>
