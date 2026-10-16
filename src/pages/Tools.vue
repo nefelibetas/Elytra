@@ -40,7 +40,7 @@ import SideNav from "../component/common/SideNav.vue";
       :tabs="[
         { key: 'status', label: '服务器状态', icon: Server },
         { key: 'motd', label: 'MOTD 生成器', icon: Type },
-        { key: 'give', label: '/give 生成器', icon: Sword },
+        { key: 'give', label: '物品 NBT 生成', icon: Sword },
         { key: 'potion', label: '药水', icon: FlaskConical },
         { key: 'firework', label: '烟花', icon: Rocket },
         { key: 'villager', label: '村民交易', icon: Store },

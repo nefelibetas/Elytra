@@ -1,5 +1,7 @@
 // /give 命令生成器：物品数据表 + 双版本命令构建（modern = 1.20.5+ 组件；legacy = 1.13–1.20.4 NBT）；物品 ID 用 1.13+ 命名空间，不支持 1.12 及以下数字 ID。
 
+import { normalizeNbtFragment } from "./nbtText";
+
 export interface GiveItem {
   /** 无 minecraft: 前缀。 */
   id: string;
@@ -8,23 +10,6 @@ export interface GiveItem {
   /** 引入主版本，缺省 13。 */
   since?: number;
 }
-
-export interface GiveCategory {
-  key: string;
-  label: string;
-}
-
-export const GIVE_CATEGORIES: GiveCategory[] = [
-  { key: "sword", label: "剑" },
-  { key: "tool", label: "工具" },
-  { key: "armor", label: "盔甲" },
-  { key: "food", label: "食物" },
-  { key: "material", label: "材料" },
-  { key: "block", label: "矿物块" },
-  { key: "redstone", label: "红石" },
-  { key: "building", label: "建筑" },
-  { key: "misc", label: "杂项" },
-];
 
 export const GIVE_ITEMS: GiveItem[] = [
   // ── 剑 ──
@@ -305,12 +290,6 @@ export interface GiveEnchant {
   since?: number;
 }
 
-/** 按格式过滤：legacy ≤1.20.4；modern ≤1.21。 */
-export function filterItemsByVersion(items: GiveItem[], format: GiveFormat): GiveItem[] {
-  const max = format === "legacy" ? 20 : 21;
-  return items.filter((i) => (i.since ?? 13) <= max);
-}
-
 export function filterEnchantsByVersion(enchs: GiveEnchant[], format: GiveFormat): GiveEnchant[] {
   const max = format === "legacy" ? 20 : 21;
   return enchs.filter((e) => (e.since ?? 13) <= max);
@@ -411,11 +390,10 @@ export interface ItemMods {
   hideTooltip: boolean;
   enchantments: EnchantInput[];
   attributes: AttributeInput[];
-}
-
-export interface GiveOptions extends ItemMods {
-  itemId: string;
-  count: number;
+  /** 自由附加内容（原样透传，不解析）：按 /give 语法的附加组件（modern 形如 `custom_model_data=7`）。 */
+  rawModern: string;
+  /** 自由附加内容（原样透传，不解析）：legacy NBT 标签（形如 `CustomModelData:7`）。 */
+  rawLegacy: string;
 }
 
 export const EMPTY_MODS: ItemMods = {
@@ -426,18 +404,12 @@ export const EMPTY_MODS: ItemMods = {
   hideTooltip: false,
   enchantments: [],
   attributes: [],
+  rawModern: "",
+  rawLegacy: "",
 };
 
 function jsonStr(s: string): string {
   return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
-
-/** format 为 modern 组件 / legacy NBT。 */
-export function buildGiveCommand(opts: GiveOptions, format: GiveFormat): string {
-  const id = `minecraft:${opts.itemId}`;
-  const count = Math.max(1, Math.min(99, Math.floor(opts.count) || 1));
-  const suffix = format === "modern" ? buildModern(id, opts) : buildLegacy(id, opts);
-  return `/give @p ${suffix} ${count}`;
 }
 
 /** key 为 give 简写名，如 enchantments。 */
@@ -528,34 +500,32 @@ function clampLevel(level: number): number {
   return Math.max(1, Math.min(level, 255));
 }
 
-/** 1.20.5+ 组件格式。 */
-function buildModern(id: string, opts: GiveOptions): string {
-  const parts = modernItemComponents(opts).map((c) => `${c.key}=${c.value}`);
-  return parts.length > 0 ? `${id}[${parts.join(",")}]` : id;
-}
-
-/** 1.13–1.20.4 NBT 格式。 */
-function buildLegacy(id: string, opts: GiveOptions): string {
-  const tags = legacyItemTags(opts);
-  return tags.length > 0 ? `${id}{${tags.join(",")}}` : id;
-}
-
-/** 交易物品槽：modern `{id,count,components:{...}}` / legacy `{id,Count,<NBT 标签>}`，修饰与 give 共用构建。 */
+/** 交易物品槽：modern `{id,count,components:{...}}` / legacy `{id,Count,<NBT 标签>}`，修饰与 give 共用构建。
+ *  `raw` 为槽级自由内容（trade 语法）：以 `{` 开头按完整物品栈原样覆盖；否则作为附加内容并入 components/tag。 */
 export function buildTradeItem(
   id: string,
   count: number,
   mods: ItemMods,
   format: GiveFormat,
+  raw?: string,
 ): string {
   const c = Math.max(1, Math.min(64, Math.floor(count) || 1));
+  // 完整物品栈（用户自带 id/Count/tag 或 id/count/components）：判别先于归一化，原样透传
+  const rawTrimmed = (raw ?? "").trim();
+  if (rawTrimmed.startsWith("{")) return rawTrimmed;
+  const extra = normalizeNbtFragment(rawTrimmed);
   if (format === "modern") {
-    const comps = modernItemComponents(mods);
-    const compsStr = comps.length > 0
-      ? `,components:{${comps.map((p) => `"minecraft:${p.key}":${p.value}`).join(",")}}`
-      : "";
+    const comps = modernItemComponents(mods).map((p) => `"minecraft:${p.key}":${p.value}`);
+    const rawSelf = normalizeNbtFragment(mods.rawModern);
+    if (rawSelf) comps.push(rawSelf);
+    if (extra) comps.push(extra);
+    const compsStr = comps.length > 0 ? `,components:{${comps.join(",")}}` : "";
     return `{id:"minecraft:${id}",count:${c}${compsStr}}`;
   }
   const tags = legacyItemTags(mods);
+  const rawSelf = normalizeNbtFragment(mods.rawLegacy);
+  if (rawSelf) tags.push(rawSelf);
+  if (extra) tags.push(extra);
   const tagsStr = tags.length > 0 ? `,${tags.join(",")}` : "";
   return `{id:"minecraft:${id}",Count:${c}b${tagsStr}}`;
 }
@@ -579,11 +549,3 @@ function uuidToIntArray(uuid: string): string {
   return parts.join(",");
 }
 
-export function filterItems(items: GiveItem[], cat: string, keyword: string): GiveItem[] {
-  const kw = keyword.trim().toLowerCase();
-  return items.filter(
-    (it) =>
-      (cat === "all" || it.cat === cat) &&
-      (kw.length === 0 || it.id.includes(kw) || it.name.toLowerCase().includes(kw)),
-  );
-}

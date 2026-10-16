@@ -296,17 +296,27 @@ export const VILLAGER_TYPES: { id: string; name: string }[] = [
   { id: "swamp", name: "沼泽" },
 ];
 
+/** 物品槽自由内容（两档分开保存，切档不丢数据）。 */
+export interface SlotRaw {
+  legacy: string;
+  modern: string;
+}
+
 export interface VillagerTrade {
   buyId: string;
   buyCount: number;
   /** 空 = 不自定义。 */
   buyMods?: ItemMods;
+  /** 槽级自定义 NBT：以 `{` 开头按完整物品栈覆盖，否则并入当前档附加内容。 */
+  buyRaw?: SlotRaw;
   buyBId: string;
   buyBCount: number;
   buyBMods?: ItemMods;
+  buyBRaw?: SlotRaw;
   sellId: string;
   sellCount: number;
   sellMods?: ItemMods;
+  sellRaw?: SlotRaw;
   maxUses: number;
   rewardExp: boolean;
 }
@@ -333,11 +343,17 @@ export function buildVillagerCommand(opts: VillagerOptions, format: "legacy" | "
     const recipes = opts.trades
       .map((t) => {
         const parts: string[] = [];
-        parts.push(`buy:${buildTradeItem(t.buyId, t.buyCount, t.buyMods ?? EMPTY_MODS, format)}`);
+        parts.push(
+          `buy:${buildTradeItem(t.buyId, t.buyCount, t.buyMods ?? EMPTY_MODS, format, t.buyRaw?.[format])}`,
+        );
         if (t.buyBId) {
-          parts.push(`buyB:${buildTradeItem(t.buyBId, t.buyBCount, t.buyBMods ?? EMPTY_MODS, format)}`);
+          parts.push(
+            `buyB:${buildTradeItem(t.buyBId, t.buyBCount, t.buyBMods ?? EMPTY_MODS, format, t.buyBRaw?.[format])}`,
+          );
         }
-        parts.push(`sell:${buildTradeItem(t.sellId, t.sellCount, t.sellMods ?? EMPTY_MODS, format)}`);
+        parts.push(
+          `sell:${buildTradeItem(t.sellId, t.sellCount, t.sellMods ?? EMPTY_MODS, format, t.sellRaw?.[format])}`,
+        );
         parts.push(`maxUses:${Math.max(1, Math.min(t.maxUses, 9999))}`);
         parts.push(`rewardExp:${t.rewardExp ? "1b" : "0b"}`);
         return `{${parts.join(",")}}`;

@@ -13,11 +13,14 @@ const props = withDefaults(
     extraIds?: string[];
     /** 版本上限（主版本号，如 20 = ≤1.20.x；null = 不过滤）。 */
     maxVersion?: number | null;
+    /** 宽度上限（宽面板场景可放宽）。 */
+    maxWidth?: string;
   }>(),
   {
     placeholder: "搜索物品（中文名或 ID）…",
     extraIds: () => [],
     maxVersion: null,
+    maxWidth: "220px",
   },
 );
 
@@ -77,7 +80,7 @@ function onBlur() {
 </script>
 
 <template>
-  <div class="isi">
+  <div class="isi" :style="{ maxWidth }">
     <div class="isi-input-wrap">
       <Search :size="13" class="isi-icon" />
       <input
@@ -114,7 +117,7 @@ function onBlur() {
   position: relative;
   flex: 1;
   min-width: 120px;
-  max-width: 220px;
+  /* 上限由 maxWidth prop 内联给出（宽面板放宽） */
 }
 
 .isi-input-wrap {

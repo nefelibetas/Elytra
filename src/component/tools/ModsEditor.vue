@@ -6,6 +6,7 @@ import { computed } from "vue";
 import { Plus, Trash2 } from "@lucide/vue";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
 import { ENCHANTMENTS, filterEnchantsByVersion, type EnchantInput, type GiveFormat } from "../../utils/give";
+import { checkNbtFragment } from "../../utils/nbtText";
 import { MC_COLORS, MC_COLOR_KEYS, MC_COLOR_NAMES, hexToSectionX } from "../../utils/motd";
 
 /** 交易物品修饰表单（与 ItemMods 对应，省略不常用字段）。 */
@@ -13,6 +14,9 @@ export interface ModsForm {
   name: string;
   colorCode: string;
   enchants: EnchantInput[];
+  /** 自定义 NBT（两档分开保存，切档不丢）：`{` 开头按完整物品栈覆盖，否则并入附加内容。 */
+  rawLegacy: string;
+  rawModern: string;
 }
 
 const props = defineProps<{
@@ -20,6 +24,18 @@ const props = defineProps<{
   /** 命令格式（附魔按版本过滤）。 */
   format: GiveFormat;
 }>();
+
+/** 当前档的自定义 NBT（单框双绑定；换档切到该档原文）。 */
+const raw = computed({
+  get: () => (props.format === "modern" ? props.form.rawModern : props.form.rawLegacy),
+  set: (v: string) => {
+    if (props.format === "modern") props.form.rawModern = v;
+    else props.form.rawLegacy = v;
+  },
+});
+
+/** 括号配平预检（不阻断输入，仅提示）。 */
+const rawError = computed(() => (raw.value.trim() ? checkNbtFragment(raw.value) : null));
 
 const newEnch = ref("");
 const newEnchLevel = ref(1);
@@ -113,6 +129,20 @@ function onCustomColor(e: Event) {
         </button>
       </span>
     </div>
+    <div class="nb-row me-raw-row">
+      <span class="nb-label">自定义 NBT</span>
+      <textarea
+        v-model="raw"
+        class="me-raw"
+        rows="2"
+        spellcheck="false"
+        autocomplete="off"
+        :placeholder="format === 'modern'
+          ? '附加组件（如 &quot;minecraft:custom_model_data&quot;:7）；或 {id:...} 完整物品栈覆盖'
+          : '附加 NBT（如 CustomModelData:7）；或 {id:...,Count:1b,...} 完整物品栈覆盖'"
+      ></textarea>
+    </div>
+    <p v-if="rawError" class="me-raw-err">{{ rawError }}</p>
   </div>
 </template>
 
@@ -138,6 +168,12 @@ function onCustomColor(e: Event) {
   gap: 8px;
   margin-bottom: 8px;
   flex-wrap: wrap;
+}
+
+/* label 固定宽：各修饰行（名称/名称颜色/附魔/自定义 NBT）控件左缘统一对齐 */
+.me .nb-row > .nb-label {
+  flex: 0 0 72px;
+  white-space: nowrap;
 }
 
 .nb-label {
@@ -251,5 +287,33 @@ function onCustomColor(e: Event) {
 
 .me-clear:hover {
   border-color: var(--color-brand);
+}
+
+.me-raw-row {
+  align-items: flex-start;
+}
+
+.me-raw {
+  flex: 1;
+  min-width: 220px;
+  padding: 5px 8px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+  color: var(--text-primary);
+  background-color: var(--surface-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  resize: vertical;
+}
+
+.me-raw:focus {
+  outline: none;
+  border-color: var(--color-brand);
+}
+
+.me-raw-err {
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: var(--color-danger);
 }
 </style>

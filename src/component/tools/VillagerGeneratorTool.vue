@@ -10,7 +10,7 @@ import ItemSearchInput from "./ItemSearchInput.vue";
 import ModsEditor, { type ModsForm } from "./ModsEditor.vue";
 import {
   VILLAGER_PROFESSIONS, VILLAGER_TYPES, buildVillagerCommand, isKnownItem,
-  type VillagerTrade,
+  type SlotRaw, type VillagerTrade,
 } from "../../utils/nbt";
 import {
   GIVE_ITEMS, ENCHANTMENTS, GIVE_FORMAT_OPTIONS, type ItemMods, type GiveFormat,
@@ -50,9 +50,9 @@ const addError = ref("");
 
 /** 交易物品修饰表单（购买/第二购买/出售）。 */
 const modsForms = reactive<Record<TradeItemKey, ModsForm>>({
-  buy: { name: "", colorCode: "", enchants: [] },
-  buyB: { name: "", colorCode: "", enchants: [] },
-  sell: { name: "", colorCode: "", enchants: [] },
+  buy: { name: "", colorCode: "", enchants: [], rawLegacy: "", rawModern: "" },
+  buyB: { name: "", colorCode: "", enchants: [], rawLegacy: "", rawModern: "" },
+  sell: { name: "", colorCode: "", enchants: [], rawLegacy: "", rawModern: "" },
 });
 type TradeItemKey = "buy" | "buyB" | "sell";
 /** 当前展开的修饰编辑区（同一时间只展开一个）。 */
@@ -62,7 +62,7 @@ function toggleEditing(key: TradeItemKey) {
   editingKey.value = editingKey.value === key ? null : key;
 }
 
-/** 表单 → ItemMods（全空返回 undefined = 不自定义）。 */
+/** 表单 → ItemMods（全空返回 undefined = 不自定义）；自定义 NBT 走槽级 SlotRaw，不经 ItemMods。 */
 function modsToItemMods(form: ModsForm): ItemMods | undefined {
   if (!form.name.trim() && !form.colorCode && form.enchants.length === 0) {
     return undefined;
@@ -75,7 +75,15 @@ function modsToItemMods(form: ModsForm): ItemMods | undefined {
     hideTooltip: false,
     enchantments: form.enchants.map((e) => ({ ...e })),
     attributes: [],
+    rawLegacy: "",
+    rawModern: "",
   };
+}
+
+/** 表单 → 槽级自定义 NBT（两档分开；全空返回 undefined）。 */
+function modsToSlotRaw(form: ModsForm): SlotRaw | undefined {
+  if (!form.rawLegacy.trim() && !form.rawModern.trim()) return undefined;
+  return { legacy: form.rawLegacy, modern: form.rawModern };
 }
 
 function addTrade() {
@@ -96,12 +104,15 @@ function addTrade() {
     buyId: buyId.value.trim(),
     buyCount: Math.max(1, Math.min(buyCount.value, 64)),
     buyMods: modsToItemMods(modsForms.buy),
+    buyRaw: modsToSlotRaw(modsForms.buy),
     buyBId: buyBId.value.trim(),
     buyBCount: Math.max(1, Math.min(buyBCount.value, 64)),
     buyBMods: modsToItemMods(modsForms.buyB),
+    buyBRaw: modsToSlotRaw(modsForms.buyB),
     sellId: sellId.value.trim(),
     sellCount: Math.max(1, Math.min(sellCount.value, 64)),
     sellMods: modsToItemMods(modsForms.sell),
+    sellRaw: modsToSlotRaw(modsForms.sell),
     maxUses: Math.max(1, Math.min(maxUses.value, 9999)),
     rewardExp: rewardExp.value,
   });
