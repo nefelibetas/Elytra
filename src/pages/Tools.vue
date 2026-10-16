@@ -5,6 +5,7 @@ import { ref } from "vue";
 export type ToolsTab =
   | "status"
   | "motd"
+  | "command"
   | "give"
   | "potion"
   | "firework"
@@ -18,9 +19,10 @@ export const toolsTab = ref<ToolsTab>("status");
 
 <script setup lang="ts">
 // 页面容器：SideNav + 各工具编排（业务在组件内）
-import { Server, Type, Link2, Sword, FlaskConical, Rocket, Store, Download, Paintbrush } from "@lucide/vue";
+import { Server, Type, Link2, Sword, FlaskConical, Rocket, Store, Download, Paintbrush, Terminal } from "@lucide/vue";
 import ServerStatusTool from "../component/tools/ServerStatusTool.vue";
 import MotdGeneratorTool from "../component/tools/MotdGeneratorTool.vue";
+import CommandGeneratorTool from "../component/tools/CommandGeneratorTool.vue";
 import GiveGeneratorTool from "../component/tools/GiveGeneratorTool.vue";
 import PotionGeneratorTool from "../component/tools/PotionGeneratorTool.vue";
 import FireworkGeneratorTool from "../component/tools/FireworkGeneratorTool.vue";
@@ -40,6 +42,7 @@ import SideNav from "../component/common/SideNav.vue";
       :tabs="[
         { key: 'status', label: '服务器状态', icon: Server },
         { key: 'motd', label: 'MOTD 生成器', icon: Type },
+        { key: 'command', label: '指令生成器', icon: Terminal },
         { key: 'give', label: '物品 NBT 生成', icon: Sword },
         { key: 'potion', label: '药水', icon: FlaskConical },
         { key: 'firework', label: '烟花', icon: Rocket },
@@ -51,6 +54,7 @@ import SideNav from "../component/common/SideNav.vue";
     >
       <ServerStatusTool v-if="toolsTab === 'status'" key="status" />
       <MotdGeneratorTool v-else-if="toolsTab === 'motd'" key="motd" />
+      <CommandGeneratorTool v-else-if="toolsTab === 'command'" key="command" />
       <GiveGeneratorTool v-else-if="toolsTab === 'give'" key="give" />
       <PotionGeneratorTool v-else-if="toolsTab === 'potion'" key="potion" />
       <FireworkGeneratorTool v-else-if="toolsTab === 'firework'" key="firework" />

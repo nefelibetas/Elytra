@@ -73,3 +73,140 @@ function outerBracesMatch(s: string): boolean {
 	}
 	return false;
 }
+
+/** 顶层逗号分裂：忽略 `{}` `[]` `""` `''` 内的逗号（仅服务物品栈片段的浅层解析，不做完整 NBT 语义）。 */
+export function splitTopLevel(s: string): string[] {
+	const out: string[] = [];
+	let depth = 0;
+	let quote: string | null = null;
+	let start = 0;
+	for (let i = 0; i < s.length; i++) {
+		const ch = s[i];
+		if (quote) {
+			if (ch === "\\") i++;
+			else if (ch === quote) quote = null;
+			continue;
+		}
+		if (ch === '"' || ch === "'") {
+			quote = ch;
+			continue;
+		}
+		if (ch === "{" || ch === "[") depth++;
+		else if (ch === "}" || ch === "]") depth--;
+		else if (ch === "," && depth === 0) {
+			out.push(s.slice(start, i));
+			start = i + 1;
+		}
+	}
+	out.push(s.slice(start));
+	return out.map((x) => x.trim()).filter((x) => x.length > 0);
+}
+
+/** 顶层首个冒号分裂（键/值）；无顶层冒号返回 null。 */
+export function splitTopLevelPair(pair: string): [string, string] | null {
+	let depth = 0;
+	let quote: string | null = null;
+	for (let i = 0; i < pair.length; i++) {
+		const ch = pair[i];
+		if (quote) {
+			if (ch === "\\") i++;
+			else if (ch === quote) quote = null;
+			continue;
+		}
+		if (ch === '"' || ch === "'") quote = ch;
+		else if (ch === "{" || ch === "[") depth++;
+		else if (ch === "}" || ch === "]") depth--;
+		else if (ch === ":" && depth === 0) {
+			return [pair.slice(0, i).trim(), pair.slice(i + 1).trim()];
+		}
+	}
+	return null;
+}
+
+/** 引号外的顶层是否出现 `=`：用于判别「组件形态」（`k=v`）与「NBT 标签」（`K:v`）。 */
+export function hasTopLevelEquals(s: string): boolean {
+	let depth = 0;
+	let quote: string | null = null;
+	for (let i = 0; i < s.length; i++) {
+		const ch = s[i];
+		if (quote) {
+			if (ch === "\\") i++;
+			else if (ch === quote) quote = null;
+			continue;
+		}
+		if (ch === '"' || ch === "'") quote = ch;
+		else if (ch === "{" || ch === "[") depth++;
+		else if (ch === "}" || ch === "]") depth--;
+		else if (ch === "=" && depth === 0) return true;
+	}
+	return false;
+}
+
+function unquote(s: string): string {
+	if (s.length >= 2 && ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))) {
+		return s.slice(1, -1);
+	}
+	return s;
+}
+
+export interface ParsedItemStack {
+	/** 去命名空间前缀的物品 id；无 id（非物品栈）时为 null。 */
+	item: string | null;
+	count: number | null;
+	/** modern：components 内文转 give 参数语法（`minecraft:x=v,...`，供 /give `[...]`）；无则 null。 */
+	modernArgs: string | null;
+	/** modern：components 内文原样（`"minecraft:x":v,...`，供物品栈 components:{...}）；无则 null。 */
+	modernComponents: string | null;
+	/** legacy：除 id/Count/components 外的标签重组（`Key:value,...`）；无则 null。 */
+	legacyTags: string | null;
+}
+
+/**
+ * 解析物品栈片段（NBT 生成器输出的 `{id:...,count:...,components:{...}}` / legacy `{id:...,Count:1b,...}`）。
+ * 解析不出 `id` 时返回 null（调用方按普通 NBT 处理）。仅浅层解析，复杂值原样透传。
+ */
+export function parseItemStackFragment(raw: string): ParsedItemStack | null {
+	const body = normalizeNbtFragment(raw);
+	if (!body) return null;
+	let item: string | null = null;
+	let count: number | null = null;
+	let modernArgs: string | null = null;
+	let modernComponents: string | null = null;
+	const legacyParts: string[] = [];
+	for (const pair of splitTopLevel(body)) {
+		const kv = splitTopLevelPair(pair);
+		if (!kv) {
+			legacyParts.push(pair);
+			continue;
+		}
+		const key = unquote(kv[0]);
+		if (key === "id") {
+			item = unquote(kv[1]).replace(/^minecraft:/, "");
+		} else if (key === "count" || key === "Count") {
+			const num = parseInt(kv[1], 10);
+			if (Number.isFinite(num)) count = num;
+		} else if (key === "components") {
+			const inner = kv[1].trim();
+			if (inner.startsWith("{") && inner.endsWith("}")) {
+				const body = inner.slice(1, -1);
+				modernComponents = body;
+				modernArgs = splitTopLevel(body)
+					.map((p) => {
+						const c = splitTopLevelPair(p);
+						return c ? `${unquote(c[0])}=${c[1]}` : p;
+					})
+					.join(",");
+			}
+		} else {
+			legacyParts.push(pair);
+		}
+	}
+	if (!item) return null;
+	return {
+		item,
+		count,
+		modernArgs,
+		modernComponents,
+		legacyTags: legacyParts.length > 0 ? legacyParts.join(",") : null,
+	};
+}
