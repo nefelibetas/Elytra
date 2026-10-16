@@ -6,6 +6,7 @@ import { Copy } from "@lucide/vue";
 import DropSelect from "../common/DropSelect.vue";
 import CheckToggle from "../common/CheckToggle.vue";
 import SearchSelect from "./SearchSelect.vue";
+import TargetSelect from "./TargetSelect.vue";
 import { GIVE_ITEMS } from "../../utils/give";
 import { COMMANDS, defaultValues, type CommandDef, type CommandValues } from "../../utils/commands";
 import { checkNbtFragment, parseItemStackFragment } from "../../utils/nbtText";
@@ -83,6 +84,12 @@ for (const def of COMMANDS) valuesFor(def);
           :model-value="String(values[f.key] ?? '')"
           :options="f.options"
           width="220px"
+          @update:model-value="(v: string) => (values[f.key] = v)"
+        />
+      </template>
+      <template v-else-if="f.kind === 'target'">
+        <TargetSelect
+          :model-value="String(values[f.key] ?? f.default)"
           @update:model-value="(v: string) => (values[f.key] = v)"
         />
       </template>

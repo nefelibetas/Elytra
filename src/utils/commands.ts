@@ -3,6 +3,8 @@
 
 import { POTION_EFFECTS } from "./nbt";
 import { hasTopLevelEquals, normalizeNbtFragment } from "./nbtText";
+import { ENCHANTMENTS } from "./give";
+import { PARTICLES, PARTICLE_MODES, SOUND_EVENTS, SOUND_SOURCES } from "./mcData";
 
 // ── 字段模型 ──
 
@@ -14,6 +16,7 @@ export interface FieldOption {
 
 export type ParamField =
   | { kind: "item"; key: string; label: string; placeholder?: string }
+  | { kind: "target"; key: string; label: string; default: string }
   | { kind: "enum"; key: string; label: string; options: FieldOption[]; default: string }
   | {
       kind: "search";
@@ -130,6 +133,11 @@ const EFFECT_OPTIONS: FieldOption[] = POTION_EFFECTS.map((e) => ({
   label: e.name,
 }));
 
+const ENCHANT_OPTIONS: FieldOption[] = ENCHANTMENTS.map((e) => ({
+  value: e.id,
+  label: e.name,
+}));
+
 /** 效果 id → 展示名（输出预览用）。 */
 export function effectName(id: string): string {
   return POTION_EFFECTS.find((e) => e.id === id)?.name ?? id;
@@ -195,7 +203,7 @@ const effectDef: CommandDef = {
   name: "/effect",
   desc: "给予状态效果",
   fields: [
-    { kind: "text", key: "target", label: "目标", placeholder: "@p / @a / Player 等", default: "@p" },
+    { kind: "target", key: "target", label: "目标", default: "@p" },
     { kind: "search", key: "effect", label: "效果", options: EFFECT_OPTIONS, default: "speed", allowCustom: true },
     { kind: "num", key: "duration", label: "时长（秒）", min: 1, max: 1000000, default: 30 },
     { kind: "num", key: "amplifier", label: "等级", min: 0, max: 255, default: 0 },
@@ -217,7 +225,7 @@ const xpDef: CommandDef = {
   name: "/xp",
   desc: "给予经验",
   fields: [
-    { kind: "text", key: "target", label: "目标", placeholder: "@p / @a / Player", default: "@p" },
+    { kind: "target", key: "target", label: "目标", default: "@p" },
     { kind: "num", key: "amount", label: "数量", min: 0, max: 2147483647, default: 100 },
     { kind: "enum", key: "unit", label: "单位", options: XP_UNITS, default: "points" },
   ],
@@ -229,19 +237,88 @@ const xpDef: CommandDef = {
   },
 };
 
-/** 一期指令注册表（顺序即 UI 顺序）。 */
+const enchantDef: CommandDef = {
+  id: "enchant",
+  name: "/enchant",
+  desc: "给手持物品附加魔咒",
+  fields: [
+    { kind: "target", key: "target", label: "目标", default: "@p" },
+    { kind: "search", key: "enchantment", label: "附魔", options: ENCHANT_OPTIONS, default: "sharpness", allowCustom: true },
+    { kind: "num", key: "level", label: "等级", min: 1, max: 255, default: 1 },
+  ],
+  build: (v) => {
+    const target = s(v, "target") || "@p";
+    const ench = s(v, "enchantment");
+    if (!ench) return "";
+    const level = clampNum(n(v, "level", 1), 1, 255);
+    return `/enchant ${target} ${ns(ench)} ${level}`;
+  },
+};
+
+const playsoundDef: CommandDef = {
+  id: "playsound",
+  name: "/playsound",
+  desc: "向玩家播放音效",
+  fields: [
+    { kind: "search", key: "sound", label: "音效", options: SOUND_EVENTS, default: "ui.button.click", allowCustom: true },
+    { kind: "enum", key: "source", label: "声道", options: SOUND_SOURCES, default: "master" },
+    { kind: "target", key: "targets", label: "听众", default: "@a" },
+    { kind: "text", key: "pos", label: "位置", placeholder: "~ ~ ~ 或坐标", default: "~ ~ ~" },
+    { kind: "text", key: "volume", label: "音量", placeholder: "1", default: "1" },
+    { kind: "text", key: "pitch", label: "音调", placeholder: "1（0.5–2.0）", default: "1" },
+  ],
+  build: (v) => {
+    const sound = s(v, "sound");
+    if (!sound) return "";
+    const source = s(v, "source") || "master";
+    const targets = s(v, "targets") || "@a";
+    const pos = s(v, "pos") || "~ ~ ~";
+    const volume = s(v, "volume") || "1";
+    const pitch = s(v, "pitch") || "1";
+    return `/playsound ${ns(sound)} ${source} ${targets} ${pos} ${volume} ${pitch}`;
+  },
+};
+
+const particleDef: CommandDef = {
+  id: "particle",
+  name: "/particle",
+  desc: "在指定位置生成粒子",
+  fields: [
+    { kind: "search", key: "name", label: "粒子", options: PARTICLES, default: "flame", allowCustom: true },
+    { kind: "text", key: "pos", label: "位置", placeholder: "~ ~ ~ 或坐标", default: "~ ~ ~" },
+    { kind: "text", key: "delta", label: "散布", placeholder: "dx dy dz", default: "0 0 0" },
+    { kind: "text", key: "speed", label: "速度", placeholder: "0", default: "0" },
+    { kind: "num", key: "count", label: "数量", min: 1, max: 100000, default: 10 },
+    { kind: "enum", key: "mode", label: "模式", options: PARTICLE_MODES, default: "normal" },
+  ],
+  build: (v) => {
+    const name = s(v, "name");
+    if (!name) return "";
+    const pos = s(v, "pos") || "~ ~ ~";
+    const delta = s(v, "delta") || "0 0 0";
+    const speed = s(v, "speed") || "0";
+    const count = clampNum(n(v, "count", 10), 1, 100000);
+    const mode = s(v, "mode") || "normal";
+    return `/particle ${ns(name)} ${pos} ${delta} ${speed} ${count} ${mode}`;
+  },
+};
+
+/** 指令注册表（顺序即 UI 顺序）。 */
 export const COMMANDS: CommandDef[] = [
   giveDef,
   summonDef,
   effectDef,
   xpDef,
+  enchantDef,
+  playsoundDef,
+  particleDef,
 ];
 
 /** 取指令的默认值表。 */
 export function defaultValues(def: CommandDef): CommandValues {
   const out: CommandValues = {};
   for (const f of def.fields) {
-    if (f.kind === "enum" || f.kind === "search") out[f.key] = f.default;
+    if (f.kind === "enum" || f.kind === "search" || f.kind === "target") out[f.key] = f.default;
     else if (f.kind === "text") out[f.key] = f.default;
     else if (f.kind === "num") out[f.key] = f.default;
     else if (f.kind === "check") out[f.key] = f.default;
