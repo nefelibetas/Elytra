@@ -10,7 +10,7 @@ use futures_util::StreamExt as _;
 use reqwest::Client;
 use tokio::sync::Semaphore;
 
-use super::redirect::{http, route_client};
+use super::redirect::http;
 use super::routes::{
     record_route_failure, record_route_success, resolve_download_routes, route_health, source_mode,
     DownloadRoute,
@@ -124,7 +124,7 @@ async fn fetch_with_retries<F: Fn(u64, u64) + Send + Sync>(
     const MAX_ATTEMPTS: u32 = 3;
     let mut last_err = None;
     for attempt in 0..MAX_ATTEMPTS {
-        match fetch_once(client, url, dest, progress, expected_sha1, cancel).await {
+        match fetch_once(client, url, dest, progress, expected_sha1, cancel, None).await {
             Ok(out) => return Ok(out.dl),
             Err(e) => {
                 // 取消立即传播（不重试、不换源）
@@ -206,19 +206,17 @@ async fn fetch_from_sources<F: Fn(u64, u64) + Send + Sync>(
     }
     // 收集每源/每轮错误（展示去重），避免后者覆盖前因
     let mut errors: Vec<FetchError> = Vec::new();
+    // 全局共享 client：完整复用连接池（历史实现每源每轮新建 Client，Windows 下短连接堆积
+    // 会耗尽 socket/TIME_WAIT，表现为下载中段起任意域 `error sending request`）
+    let client = http();
     for attempt in 0..MAX_ATTEMPTS {
         if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
             return Err(FetchError::Cancelled);
         }
         for route in &routes {
-            let client = match route_client(total_timeout) {
-                Ok(c) => c,
-                Err(e) => {
-                    errors.push(FetchError::Network(format!("{}: {e}", route.url)));
-                    continue;
-                }
-            };
-            match fetch_once(&client, &route.url, dest, progress, expected_sha1, cancel).await {
+            match fetch_once(&client, &route.url, dest, progress, expected_sha1, cancel, total_timeout)
+                .await
+            {
                 Ok(out) => {
                     record_route_success(&route.url, out.ttfb_ms);
                     return Ok(out.dl);
@@ -288,6 +286,7 @@ async fn fetch_once<F: Fn(u64, u64) + Send + Sync>(
     progress: &Option<F>,
     expected_sha1: Option<&str>,
     cancel: Option<&AtomicBool>,
+    total_timeout: Option<Duration>,
 ) -> Result<FetchOnceOutput, FetchError> {
     // 镜像源并发限制：permit 持有到本次传输结束，队列摊薄对镜像源的瞬时请求速率
     let _mirror_permit = if is_mirror_url(url) {
@@ -302,8 +301,11 @@ async fn fetch_once<F: Fn(u64, u64) + Send + Sync>(
         None
     };
     let request_start = Instant::now();
-    let response = client
-        .get(url)
+    let mut request = client.get(url);
+    if let Some(t) = total_timeout {
+        request = request.timeout(t);
+    }
+    let response = request
         .send()
         .await
         .map_err(|e| FetchError::Network(format!("请求失败\n{e}")))?;

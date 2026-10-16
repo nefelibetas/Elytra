@@ -7,23 +7,12 @@ use reqwest::Client;
 use crate::constants::UA_DOWNLOAD;
 use crate::downloader::proxy::apply_system_proxy;
 
-/// 重定向放行判定：拒绝黑洞域（17.749333.xyz，国内部分网络 TCP 黑洞），放行 minio.749333.xyz（bmclapi 下载主存储，OptiFine 302 目标；不可达由 client 30s read_timeout 兜底）。
-pub(super) fn redirect_allowed(host: &str) -> bool {
-    !host.contains("749333") || host.starts_with("minio.")
-}
-
+/// 重定向跟随上限：B 回 2 跳（主控 → 节点 → MinIO 预签名）。
 pub(super) fn mirror_safe_redirect() -> reqwest::redirect::Policy {
-    reqwest::redirect::Policy::custom(|attempt| {
-        let host = attempt.url().host_str().unwrap_or("").to_string();
-        if !redirect_allowed(&host) {
-            eprintln!("[fetch] 拒绝重定向到黑洞节点: {host}");
-            attempt.error("重定向到不可达镜像节点（749333.xyz）")
-        } else {
-            attempt.follow()
-        }
-    })
+    reqwest::redirect::Policy::limited(5)
 }
 
+/// UA 非装饰：BMCLAPI 302 到的 CERNET/USTC 节点对无 UA 请求直接 403，缺它会令镜像候选换源全灭。
 fn build_client() -> Client {
     let mut builder = Client::builder()
         .user_agent(UA_DOWNLOAD)
@@ -38,19 +27,6 @@ fn build_client() -> Client {
         .pool_max_idle_per_host(16);
     builder = apply_system_proxy(builder);
     builder.build().expect("reqwest::Client")
-}
-
-/// 单源请求 client（`MultiSource` 每源独立新建）：与全局 client 同一套 UA/重定向策略/系统代理，仅总时限由调用方给定；UA 非装饰：BMCLAPI 302 到的 CERNET/USTC 节点对无 UA 请求直接 403，缺它会令镜像候选换源全灭。
-pub(super) fn route_client(total_timeout: Option<std::time::Duration>) -> reqwest::Result<Client> {
-    let mut builder = Client::builder()
-        .user_agent(UA_DOWNLOAD)
-        .connect_timeout(std::time::Duration::from_secs(2))
-        .read_timeout(std::time::Duration::from_secs(30))
-        .redirect(mirror_safe_redirect());
-    if let Some(t) = total_timeout {
-        builder = builder.timeout(t);
-    }
-    apply_system_proxy(builder).build()
 }
 
 /// 全局 HTTP client（系统代理/超时/黑洞重定向防护）；返回 Arc 供 network_mode 切换整体重建，进行中下载持旧 Arc 不受影响。
@@ -74,25 +50,22 @@ static HTTP_CLIENT: LazyLock<parking_lot::Mutex<Option<std::sync::Arc<Client>>>>
 mod tests {
     use super::super::api::{fetch, fetch_verified};
     use super::super::core::test_support::{serve, temp_dest};
-    use super::{redirect_allowed, reset_http_client, http};
+    use super::{reset_http_client, http};
     use crate::downloader::hash::{file_sha1_matches, sha1_hex};
     use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    /// 重定向放行：黑洞子域拒绝，minio（bmclapi 下载存储）与普通域放行；minio 放行是 OptiFine 安装的硬前提。
-    #[test]
-    fn redirect_policy_minio_allowed() {
-        assert!(!redirect_allowed("17.749333.xyz"), "实测黑洞子域必须拒绝");
-        assert!(
-            !redirect_allowed("cdn.749333.xyz"),
-            "未知 749333 子域保持拒绝"
-        );
-        assert!(
-            redirect_allowed("minio.749333.xyz"),
-            "bmclapi 下载存储必须放行"
-        );
-        assert!(redirect_allowed("bmclapi2.bangbang93.com"));
-        assert!(redirect_allowed("example.com"));
+    /// 重定向跟随：黑名单已删（BMCLAPI 落地节点就在 `{N}.749333.xyz` 家系，域级拦截
+    /// 曾把整个镜像源拒掉）；用 http() 对 749333 子域发请求应能跟到响应（不可达由超时兜底）。
+    #[tokio::test]
+    async fn redirect_policy_all_allowed() {
+        let client = super::build_client();
+        let resp = client
+            .get("https://bmclapi2.bangbang93.com/mc/game/version_manifest.json")
+            .send()
+            .await
+            .expect("跟随重定向应到达");
+        assert!(resp.status().is_success(), "应 200，实际 {}", resp.status());
     }
 
     #[tokio::test]
