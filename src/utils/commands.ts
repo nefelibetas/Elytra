@@ -4,7 +4,7 @@
 import { POTION_EFFECTS } from "./nbt";
 import { hasTopLevelEquals, normalizeNbtFragment } from "./nbtText";
 import { ENCHANTMENTS } from "./give";
-import { PARTICLES, PARTICLE_MODES, SOUND_EVENTS, SOUND_SOURCES } from "./mcData";
+import { GAMERULES } from "./mcData";
 
 // ── 字段模型 ──
 
@@ -138,12 +138,10 @@ const ENCHANT_OPTIONS: FieldOption[] = ENCHANTMENTS.map((e) => ({
   label: e.name,
 }));
 
-/** 效果 id → 展示名（输出预览用）。 */
-export function effectName(id: string): string {
-  return POTION_EFFECTS.find((e) => e.id === id)?.name ?? id;
-}
-
-// ── 指令定义（一期六条） ──
+const GAMERULE_OPTIONS: FieldOption[] = GAMERULES.map((g) => ({
+  value: g.name,
+  label: `${g.label}（${g.name}）`,
+}));
 
 const giveDef: CommandDef = {
   id: "give",
@@ -220,23 +218,6 @@ const effectDef: CommandDef = {
   },
 };
 
-const xpDef: CommandDef = {
-  id: "xp",
-  name: "/xp",
-  desc: "给予经验",
-  fields: [
-    { kind: "target", key: "target", label: "目标", default: "@p" },
-    { kind: "num", key: "amount", label: "数量", min: 0, max: 2147483647, default: 100 },
-    { kind: "enum", key: "unit", label: "单位", options: XP_UNITS, default: "points" },
-  ],
-  build: (v) => {
-    const target = s(v, "target") || "@p";
-    const amount = clampNum(n(v, "amount", 100), 0, 2147483647);
-    const unit = s(v, "unit") || "points";
-    return `/xp add ${target} ${amount} ${unit}`;
-  },
-};
-
 const enchantDef: CommandDef = {
   id: "enchant",
   name: "/enchant",
@@ -255,51 +236,19 @@ const enchantDef: CommandDef = {
   },
 };
 
-const playsoundDef: CommandDef = {
-  id: "playsound",
-  name: "/playsound",
-  desc: "向玩家播放音效",
+const gameruleDef: CommandDef = {
+  id: "gamerule",
+  name: "/gamerule",
+  desc: "查询或修改游戏规则",
   fields: [
-    { kind: "search", key: "sound", label: "音效", options: SOUND_EVENTS, default: "ui.button.click", allowCustom: true },
-    { kind: "enum", key: "source", label: "声道", options: SOUND_SOURCES, default: "master" },
-    { kind: "target", key: "targets", label: "听众", default: "@a" },
-    { kind: "text", key: "pos", label: "位置", placeholder: "~ ~ ~ 或坐标", default: "~ ~ ~" },
-    { kind: "text", key: "volume", label: "音量", placeholder: "1", default: "1" },
-    { kind: "text", key: "pitch", label: "音调", placeholder: "1（0.5–2.0）", default: "1" },
+    { kind: "search", key: "rule", label: "规则", options: GAMERULE_OPTIONS, default: "keepInventory", allowCustom: true },
+    { kind: "text", key: "value", label: "值", placeholder: "true / false / 数字（留空 = 查询）", default: "" },
   ],
   build: (v) => {
-    const sound = s(v, "sound");
-    if (!sound) return "";
-    const source = s(v, "source") || "master";
-    const targets = s(v, "targets") || "@a";
-    const pos = s(v, "pos") || "~ ~ ~";
-    const volume = s(v, "volume") || "1";
-    const pitch = s(v, "pitch") || "1";
-    return `/playsound ${ns(sound)} ${source} ${targets} ${pos} ${volume} ${pitch}`;
-  },
-};
-
-const particleDef: CommandDef = {
-  id: "particle",
-  name: "/particle",
-  desc: "在指定位置生成粒子",
-  fields: [
-    { kind: "search", key: "name", label: "粒子", options: PARTICLES, default: "flame", allowCustom: true },
-    { kind: "text", key: "pos", label: "位置", placeholder: "~ ~ ~ 或坐标", default: "~ ~ ~" },
-    { kind: "text", key: "delta", label: "散布", placeholder: "dx dy dz", default: "0 0 0" },
-    { kind: "text", key: "speed", label: "速度", placeholder: "0", default: "0" },
-    { kind: "num", key: "count", label: "数量", min: 1, max: 100000, default: 10 },
-    { kind: "enum", key: "mode", label: "模式", options: PARTICLE_MODES, default: "normal" },
-  ],
-  build: (v) => {
-    const name = s(v, "name");
-    if (!name) return "";
-    const pos = s(v, "pos") || "~ ~ ~";
-    const delta = s(v, "delta") || "0 0 0";
-    const speed = s(v, "speed") || "0";
-    const count = clampNum(n(v, "count", 10), 1, 100000);
-    const mode = s(v, "mode") || "normal";
-    return `/particle ${ns(name)} ${pos} ${delta} ${speed} ${count} ${mode}`;
+    const rule = s(v, "rule");
+    if (!rule) return "";
+    const value = s(v, "value");
+    return value ? `/gamerule ${rule} ${value}` : `/gamerule ${rule}`;
   },
 };
 
@@ -308,10 +257,8 @@ export const COMMANDS: CommandDef[] = [
   giveDef,
   summonDef,
   effectDef,
-  xpDef,
   enchantDef,
-  playsoundDef,
-  particleDef,
+  gameruleDef,
 ];
 
 /** 取指令的默认值表。 */
