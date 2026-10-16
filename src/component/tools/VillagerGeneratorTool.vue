@@ -6,12 +6,13 @@ import { Copy, Plus, Trash2, SlidersHorizontal } from "@lucide/vue";
 import { reactive } from "vue";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
 import CheckToggle from "../common/CheckToggle.vue";
-import ItemSearchInput from "./ItemSearchInput.vue";
+import SearchSelect from "./SearchSelect.vue";
 import ModsEditor, { type ModsForm } from "./ModsEditor.vue";
 import {
   VILLAGER_PROFESSIONS, VILLAGER_TYPES, buildVillagerCommand, isKnownItem,
   type SlotRaw, type VillagerTrade,
 } from "../../utils/nbt";
+import { VILLAGER_TRADE_PRESETS } from "../../utils/villagerTrades";
 import {
   GIVE_ITEMS, ENCHANTMENTS, GIVE_FORMAT_OPTIONS, type ItemMods, type GiveFormat,
 } from "../../utils/give";
@@ -31,6 +32,13 @@ const typeOptions: SelOption[] = VILLAGER_TYPES.map((t) => ({
   value: t.id,
   label: t.name,
 }));
+
+/** 村民世代（1.13 及以下无职业体系，仅输出 Offers）。 */
+const era = ref<"1.14+" | "pre1.14">("1.14+");
+const eraOptions: SelOption[] = [
+  { value: "1.14+", label: "1.14+（职业/等级体系）" },
+  { value: "pre1.14", label: "1.13 及以下（纯 Offers 交易）" },
+];
 
 const profession = ref("librarian");
 const type = ref("plains");
@@ -86,6 +94,37 @@ function modsToSlotRaw(form: ModsForm): SlotRaw | undefined {
   return { legacy: form.rawLegacy, modern: form.rawModern };
 }
 
+/** 原版交易预设：按当前职业 + 等级（≤ 当前等级，与该等级村民持有的交易池一致）过滤。 */
+const presetOptions = computed<SelOption[]>(() =>
+  VILLAGER_TRADE_PRESETS.filter((t) => t.p === profession.value && t.lv <= level.value).map(
+    (t) => ({
+      value: String(VILLAGER_TRADE_PRESETS.indexOf(t)),
+      label: `[Lv${t.lv}] ${presetSide(t.want)} → ${presetSide(t.get)}`,
+    }),
+  ),
+);
+
+function itemNameOf(id: string): string {
+  return GIVE_ITEMS.find((i) => i.id === id)?.name ?? id;
+}
+
+function presetSide(items: { id: string; n: number }[]): string {
+  return items.map((i) => `${i.n}×${itemNameOf(i.id)}`).join(" + ");
+}
+
+/** 选中预设 → 回填买/第二买/卖/次数（不直接加入列表，用户可改后点添加）。 */
+function applyPreset(indexStr: string) {
+  const t = VILLAGER_TRADE_PRESETS[Number(indexStr)];
+  if (!t) return;
+  buyId.value = t.want[0]?.id ?? "";
+  buyCount.value = t.want[0]?.n ?? 1;
+  buyBId.value = t.want[1]?.id ?? "";
+  buyBCount.value = t.want[1]?.n ?? 1;
+  sellId.value = t.get[0]?.id ?? "";
+  sellCount.value = t.get[0]?.n ?? 1;
+  if (t.uses != null) maxUses.value = t.uses;
+}
+
 function addTrade() {
   addError.value = "";
   if (!isKnownItem(buyId.value.trim())) {
@@ -138,6 +177,7 @@ function modsSummary(mods?: ItemMods): string {
 const command = computed(() =>
   buildVillagerCommand(
     {
+      era: era.value,
       profession: profession.value,
       type: type.value,
       level: level.value,
@@ -156,7 +196,7 @@ async function copyCommand() {
   <div class="tool-card">
     <div class="tool-card-hdr">
       <h3>村民交易生成器</h3>
-      <div class="tool-card-sub">职业/等级 + 自定义交易（买/卖物品）——输出 /summon 命令</div>
+      <div class="tool-card-sub">双世代：1.14+ 职业/等级体系（含失业/傻子），1.13- 仅 Offers 交易（无 VillagerData）——输出 /summon 命令</div>
     </div>
 
     <div class="nb-row">
@@ -169,7 +209,17 @@ async function copyCommand() {
       />
     </div>
 
-    <div class="nb-sec">
+    <div class="nb-row">
+      <span class="nb-label">村民世代</span>
+      <DropSelect
+        :model-value="era"
+        :options="eraOptions"
+        width="220px"
+        @update:model-value="(v: string) => (era = v as '1.14+' | 'pre1.14')"
+      />
+    </div>
+
+    <div v-if="era === '1.14+'" class="nb-sec">
       <div class="nb-row">
         <span class="nb-label">职业</span>
         <DropSelect
@@ -193,8 +243,18 @@ async function copyCommand() {
     <div class="nb-sec">
       <div class="nb-sec-title">交易（可添加多条；物品填 ID，如 emerald / book）</div>
       <div class="nb-row">
+        <span class="nb-label">原版交易</span>
+        <DropSelect
+          :model-value="''"
+          :options="presetOptions"
+          width="320px"
+          :placeholder="presetOptions.length > 0 ? '从该职业原版交易选择（回填下方）' : '该职业暂无预设'"
+          @update:model-value="applyPreset"
+        />
+      </div>
+      <div class="nb-row">
         <span class="nb-label">购买</span>
-        <ItemSearchInput v-model="buyId" :extra-ids="['emerald']" placeholder="绿宝石 / emerald" :max-version="format === 'legacy' ? 20 : 21" />
+        <SearchSelect v-model="buyId" :options="GIVE_ITEMS" :extra-ids="['emerald']" placeholder="绿宝石 / emerald" :max-version="format === 'legacy' ? 20 : 21" />
         <span class="nb-label nb-label-short">×</span>
         <input v-model.number="buyCount" type="number" class="nb-num" min="1" max="64" autocomplete="off" />
         <button
@@ -209,7 +269,7 @@ async function copyCommand() {
       <ModsEditor v-if="editingKey === 'buy'" :form="modsForms.buy" :format="format" />
       <div class="nb-row">
         <span class="nb-label">第二购买</span>
-        <ItemSearchInput v-model="buyBId" :extra-ids="['emerald']" placeholder="可选，搜索物品" :max-version="format === 'legacy' ? 20 : 21" />
+        <SearchSelect v-model="buyBId" :options="GIVE_ITEMS" :extra-ids="['emerald']" placeholder="可选，搜索物品" :max-version="format === 'legacy' ? 20 : 21" />
         <span class="nb-label nb-label-short">×</span>
         <input v-model.number="buyBCount" type="number" class="nb-num" min="1" max="64" autocomplete="off" />
         <button
@@ -224,7 +284,7 @@ async function copyCommand() {
       <ModsEditor v-if="editingKey === 'buyB'" :form="modsForms.buyB" :format="format" />
       <div class="nb-row">
         <span class="nb-label">出售</span>
-        <ItemSearchInput v-model="sellId" placeholder="书 / book" :max-version="format === 'legacy' ? 20 : 21" />
+        <SearchSelect v-model="sellId" :options="GIVE_ITEMS" placeholder="书 / book" :max-version="format === 'legacy' ? 20 : 21" />
         <span class="nb-label nb-label-short">×</span>
         <input v-model.number="sellCount" type="number" class="nb-num" min="1" max="64" autocomplete="off" />
         <button

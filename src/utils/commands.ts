@@ -15,6 +15,15 @@ export interface FieldOption {
 export type ParamField =
   | { kind: "item"; key: string; label: string; placeholder?: string }
   | { kind: "enum"; key: string; label: string; options: FieldOption[]; default: string }
+  | {
+      kind: "search";
+      key: string;
+      label: string;
+      options: FieldOption[];
+      default: string;
+      /** 允许自由输入（实体/效果等：列表未收录的 id 可直接写）。 */
+      allowCustom?: boolean;
+    }
   | { kind: "text"; key: string; label: string; placeholder?: string; default: string }
   | { kind: "textarea"; key: string; label: string; placeholder?: string; rows?: number }
   | { kind: "num"; key: string; label: string; min: number; max: number; default: number }
@@ -110,14 +119,6 @@ export const SUMMON_ENTITIES: FieldOption[] = [
   { value: "item", label: "掉落物（物品展示用）" },
 ];
 
-/** 游戏模式。 */
-export const GAMEMODES: FieldOption[] = [
-  { value: "survival", label: "生存" },
-  { value: "creative", label: "创造" },
-  { value: "adventure", label: "冒险" },
-  { value: "spectator", label: "旁观" },
-];
-
 /** 经验单位。 */
 export const XP_UNITS: FieldOption[] = [
   { value: "points", label: "点数" },
@@ -170,7 +171,7 @@ const summonDef: CommandDef = {
   name: "/summon",
   desc: "生成实体（位置默认跟随执行者，NBT 可贴村民交易等场景的构造）",
   fields: [
-    { kind: "enum", key: "entity", label: "实体", options: SUMMON_ENTITIES, default: "zombie" },
+    { kind: "search", key: "entity", label: "实体", options: SUMMON_ENTITIES, default: "zombie", allowCustom: true },
     { kind: "text", key: "pos", label: "位置", placeholder: "~ ~ ~", default: "~ ~ ~" },
     {
       kind: "textarea",
@@ -195,7 +196,7 @@ const effectDef: CommandDef = {
   desc: "给予状态效果",
   fields: [
     { kind: "text", key: "target", label: "目标", placeholder: "@p / @a / Player 等", default: "@p" },
-    { kind: "enum", key: "effect", label: "效果", options: EFFECT_OPTIONS, default: "speed" },
+    { kind: "search", key: "effect", label: "效果", options: EFFECT_OPTIONS, default: "speed", allowCustom: true },
     { kind: "num", key: "duration", label: "时长（秒）", min: 1, max: 1000000, default: 30 },
     { kind: "num", key: "amplifier", label: "等级", min: 0, max: 255, default: 0 },
     { kind: "check", key: "hide", label: "隐藏粒子", default: false },
@@ -208,21 +209,6 @@ const effectDef: CommandDef = {
     const amp = clampNum(n(v, "amplifier", 0), 0, 255);
     const tail = Boolean(v["hide"]) ? " true" : "";
     return `/effect give ${target} ${ns(effect)} ${duration} ${amp}${tail}`;
-  },
-};
-
-const tpDef: CommandDef = {
-  id: "tp",
-  name: "/tp",
-  desc: "传送实体到指定位置",
-  fields: [
-    { kind: "text", key: "who", label: "谁", placeholder: "@p / @e[type=...] / Player", default: "@p" },
-    { kind: "text", key: "to", label: "去哪", placeholder: "~ ~ ~ 或 x y z 或 目标选择器", default: "~ ~ ~" },
-  ],
-  build: (v) => {
-    const who = s(v, "who") || "@p";
-    const to = s(v, "to") || "~ ~ ~";
-    return `/tp ${who} ${to}`;
   },
 };
 
@@ -243,36 +229,19 @@ const xpDef: CommandDef = {
   },
 };
 
-const gamemodeDef: CommandDef = {
-  id: "gamemode",
-  name: "/gamemode",
-  desc: "切换游戏模式",
-  fields: [
-    { kind: "enum", key: "mode", label: "模式", options: GAMEMODES, default: "survival" },
-    { kind: "text", key: "target", label: "目标", placeholder: "留空为执行者自己", default: "" },
-  ],
-  build: (v) => {
-    const mode = s(v, "mode") || "survival";
-    const target = s(v, "target");
-    return target ? `/gamemode ${mode} ${target}` : `/gamemode ${mode}`;
-  },
-};
-
 /** 一期指令注册表（顺序即 UI 顺序）。 */
 export const COMMANDS: CommandDef[] = [
   giveDef,
   summonDef,
   effectDef,
-  tpDef,
   xpDef,
-  gamemodeDef,
 ];
 
 /** 取指令的默认值表。 */
 export function defaultValues(def: CommandDef): CommandValues {
   const out: CommandValues = {};
   for (const f of def.fields) {
-    if (f.kind === "enum") out[f.key] = f.default;
+    if (f.kind === "enum" || f.kind === "search") out[f.key] = f.default;
     else if (f.kind === "text") out[f.key] = f.default;
     else if (f.kind === "num") out[f.key] = f.default;
     else if (f.kind === "check") out[f.key] = f.default;

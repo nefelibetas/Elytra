@@ -5,9 +5,9 @@ import { computed, ref } from "vue";
 import { Copy, Plus, Trash2 } from "@lucide/vue";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
 import CheckToggle from "../common/CheckToggle.vue";
-import ItemSearchInput from "./ItemSearchInput.vue";
+import SearchSelect from "./SearchSelect.vue";
 import {
-  ENCHANTMENTS, ATTRIBUTES,
+  GIVE_ITEMS, ENCHANTMENTS, ATTRIBUTES,
   GIVE_FORMAT_OPTIONS, buildTradeItem, filterEnchantsByVersion,
   type GiveFormat, type EnchantInput, type AttributeInput,
 } from "../../utils/give";
@@ -190,8 +190,9 @@ async function copyOutput() {
     <div class="give-sec">
       <div class="give-row">
         <span class="give-label">物品</span>
-        <ItemSearchInput
+        <SearchSelect
           v-model="itemId"
+          :options="GIVE_ITEMS"
           :max-version="format === 'legacy' ? 20 : 21"
           placeholder="搜索物品（ID 或中文名）…"
           max-width="360px"

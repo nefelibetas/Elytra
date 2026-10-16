@@ -269,7 +269,7 @@ function buildFireworkModern(id: string, isStar: boolean, opts: FireworkOptions)
 // ── 村民交易 ──
 
 export const VILLAGER_PROFESSIONS: { id: string; name: string }[] = [
-  { id: "none", name: "无职业" },
+  { id: "none", name: "无职业（失业）" },
   { id: "armorer", name: "盔甲匠" },
   { id: "butcher", name: "屠夫" },
   { id: "cartographer", name: "制图师" },
@@ -283,7 +283,7 @@ export const VILLAGER_PROFESSIONS: { id: string; name: string }[] = [
   { id: "shepherd", name: "牧羊人" },
   { id: "toolsmith", name: "工具匠" },
   { id: "weaponsmith", name: "武器匠" },
-  { id: "nitwit", name: "傻子" },
+  { id: "nitwit", name: "傻子（不就业）" },
 ];
 
 export const VILLAGER_TYPES: { id: string; name: string }[] = [
@@ -322,6 +322,8 @@ export interface VillagerTrade {
 }
 
 export interface VillagerOptions {
+  /** 村民世代：1.14+ 有职业/等级体系（VillagerData）；1.13 及以下无职业，仅 Offers 生效。 */
+  era: "1.14+" | "pre1.14";
   profession: string;
   type: string;
   /** 1–5。 */
@@ -330,15 +332,17 @@ export interface VillagerOptions {
 }
 
 export function buildVillagerCommand(opts: VillagerOptions, format: "legacy" | "modern"): string {
-  const profession = VILLAGER_PROFESSIONS.some((p) => p.id === opts.profession)
-    ? opts.profession
-    : "none";
-  const type = VILLAGER_TYPES.some((t) => t.id === opts.type) ? opts.type : "plains";
-  const level = Math.max(1, Math.min(opts.level, 5));
   const tags: string[] = [];
-  tags.push(
-    `VillagerData:{profession:"minecraft:${profession}",level:${level},type:"minecraft:${type}"}`,
-  );
+  if (opts.era === "1.14+") {
+    const profession = VILLAGER_PROFESSIONS.some((p) => p.id === opts.profession)
+      ? opts.profession
+      : "none";
+    const type = VILLAGER_TYPES.some((t) => t.id === opts.type) ? opts.type : "plains";
+    const level = Math.max(1, Math.min(opts.level, 5));
+    tags.push(
+      `VillagerData:{profession:"minecraft:${profession}",level:${level},type:"minecraft:${type}"}`,
+    );
+  }
   if (opts.trades.length > 0) {
     const recipes = opts.trades
       .map((t) => {
@@ -361,5 +365,8 @@ export function buildVillagerCommand(opts: VillagerOptions, format: "legacy" | "
       .join(",");
     tags.push(`Offers:{Recipes:[${recipes}]}`);
   }
-  return `/summon villager ~ ~ ~ {${tags.join(",")}}`;
+  // 无标签时不带空 NBT 花括号（pre1.14 且未添加交易时的形态）
+  return tags.length > 0
+    ? `/summon villager ~ ~ ~ {${tags.join(",")}}`
+    : "/summon villager ~ ~ ~";
 }

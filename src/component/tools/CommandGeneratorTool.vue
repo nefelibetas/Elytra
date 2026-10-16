@@ -5,7 +5,8 @@ import { computed, reactive, ref } from "vue";
 import { Copy } from "@lucide/vue";
 import DropSelect from "../common/DropSelect.vue";
 import CheckToggle from "../common/CheckToggle.vue";
-import ItemSearchInput from "./ItemSearchInput.vue";
+import SearchSelect from "./SearchSelect.vue";
+import { GIVE_ITEMS } from "../../utils/give";
 import { COMMANDS, defaultValues, type CommandDef, type CommandValues } from "../../utils/commands";
 import { checkNbtFragment, parseItemStackFragment } from "../../utils/nbtText";
 import { copyText } from "../../utils/clipboard";
@@ -86,9 +87,21 @@ for (const def of COMMANDS) valuesFor(def);
         />
       </template>
       <template v-else-if="f.kind === 'item'">
-        <ItemSearchInput
+        <SearchSelect
           :model-value="String(values[f.key] ?? '')"
+          :options="GIVE_ITEMS"
           :placeholder="f.placeholder"
+          max-width="360px"
+          @update:model-value="(v: string) => (values[f.key] = v)"
+        />
+      </template>
+      <template v-else-if="f.kind === 'search'">
+        <SearchSelect
+          :model-value="String(values[f.key] ?? '')"
+          :options="f.options.map((o) => ({ id: o.value, name: o.label }))"
+          :allow-custom="f.allowCustom ?? false"
+          :filter-by-version="false"
+          :placeholder="'搜索或直接输入…'"
           max-width="360px"
           @update:model-value="(v: string) => (values[f.key] = v)"
         />
