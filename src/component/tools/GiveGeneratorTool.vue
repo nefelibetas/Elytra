@@ -11,7 +11,7 @@ import {
   GIVE_FORMAT_OPTIONS, buildTradeItem, filterEnchantsByVersion,
   type GiveFormat, type EnchantInput, type AttributeInput,
 } from "../../utils/give";
-import { checkNbtFragment } from "../../utils/nbtText";
+import { checkNbtFragment, parseItemStackFragment } from "../../utils/nbtText";
 import { MC_COLORS, MC_COLOR_KEYS, MC_COLOR_NAMES, hexToSectionX } from "../../utils/motd";
 import { copyText } from "../../utils/clipboard";
 
@@ -153,6 +153,16 @@ const output = computed(() => {
   if (!itemId.value) return "";
   return buildTradeItem(itemId.value, 1, currentMods(), format.value);
 });
+
+/** 附加 NBT 输入：粘贴完整物品栈片段（含 id）时自动导入——回填物品与组件内文，避免把整栈误当附加段。
+ *  普通附加内容（无 id）原样保留。 */
+function onRawInput(v: string) {
+  rawText.value = v;
+  const parsed = parseItemStackFragment(v);
+  if (!parsed?.item) return;
+  itemId.value = parsed.item;
+  rawText.value = parsed.modernComponents ?? parsed.legacyTags ?? "";
+}
 
 async function copyOutput() {
   if (!output.value) return;
@@ -308,12 +318,13 @@ async function copyOutput() {
         <div class="give-raw-row">
           <span class="give-raw-label">附加 NBT</span>
           <textarea
-            v-model="rawText"
+            :value="rawText"
             class="give-raw"
             rows="2"
             spellcheck="false"
             autocomplete="off"
             :placeholder="rawPlaceholder"
+            @input="onRawInput(($event.target as HTMLTextAreaElement).value)"
           ></textarea>
         </div>
         <p v-if="rawError" class="give-raw-err">{{ rawError }}</p>
@@ -336,27 +347,9 @@ async function copyOutput() {
 </style>
 
 <style scoped>
-.tool-card {
-  background: var(--surface-elevated);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  padding: 16px 18px;
-}
 
-.tool-card-hdr {
-  margin-bottom: 14px;
-}
 
-.tool-card-hdr h3 {
-  margin: 0 0 4px;
-  font-size: 15px;
-  color: var(--text-primary);
-}
 
-.tool-card-sub {
-  font-size: 12px;
-  color: var(--text-tertiary);
-}
 
 /* ===== 通用行 ===== */
 .give-row {

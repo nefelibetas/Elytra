@@ -179,28 +179,14 @@ async function copyRoomCode() {
   </div>
 </template>
 
+<style>
+@import "../../styles/tools-shared.css";
+</style>
+
 <style scoped>
-.tool-card {
-  background: var(--surface-elevated);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  padding: 16px 18px;
-}
 
-.tool-card-hdr {
-  margin-bottom: 14px;
-}
 
-.tool-card-hdr h3 {
-  margin: 0 0 4px;
-  font-size: 15px;
-  color: var(--text-primary);
-}
 
-.tool-card-sub {
-  font-size: 12px;
-  color: var(--text-tertiary);
-}
 
 .online-status {
   display: flex;
