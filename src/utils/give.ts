@@ -487,14 +487,14 @@ export interface ModernComponent {
   value: string;
 }
 
-/** give 命令与交易物品槽 components 共用。 */
-export function modernItemComponents(mods: ItemMods): ModernComponent[] {
+/** give 命令与交易物品槽 components 共用。`forBook`：附魔书用 stored_enchantments（普通 enchantments 在附魔书上无效）。 */
+export function modernItemComponents(mods: ItemMods, forBook = false): ModernComponent[] {
   const parts: ModernComponent[] = [];
   if (mods.enchantments.length > 0) {
     const levels = mods.enchantments
       .map((e) => `"minecraft:${e.id}":${clampLevel(e.level)}`)
       .join(",");
-    parts.push({ key: "enchantments", value: `{levels:{${levels}}}` });
+    parts.push({ key: forBook ? "stored_enchantments" : "enchantments", value: `{levels:{${levels}}}` });
   }
   if (mods.unbreakable) {
     parts.push({ key: "unbreakable", value: "{}" });
@@ -520,14 +520,14 @@ export function modernItemComponents(mods: ItemMods): ModernComponent[] {
   return parts;
 }
 
-/** give 命令与交易物品槽共用。 */
-export function legacyItemTags(mods: ItemMods): string[] {
+/** give 命令与交易物品槽共用。`forBook`：附魔书用 StoredEnchantments。 */
+export function legacyItemTags(mods: ItemMods, forBook = false): string[] {
   const tags: string[] = [];
   if (mods.enchantments.length > 0) {
     const list = mods.enchantments
       .map((e) => `{id:"minecraft:${e.id}",lvl:${clampLevel(e.level)}}`)
       .join(",");
-    tags.push(`Enchantments:[${list}]`);
+    tags.push(`${forBook ? "StoredEnchantments" : "Enchantments"}:[${list}]`);
   }
   if (mods.unbreakable) {
     tags.push("Unbreakable:1b");
@@ -583,15 +583,17 @@ export function buildTradeItem(
   const rawTrimmed = (raw ?? "").trim();
   if (rawTrimmed.startsWith("{")) return rawTrimmed;
   const extra = normalizeNbtFragment(rawTrimmed);
+  // 附魔书：附魔落在 StoredEnchantments / stored_enchantments
+  const forBook = id === "enchanted_book";
   if (format === "modern") {
-    const comps = modernItemComponents(mods).map((p) => `"minecraft:${p.key}":${p.value}`);
+    const comps = modernItemComponents(mods, forBook).map((p) => `"minecraft:${p.key}":${p.value}`);
     const rawSelf = normalizeNbtFragment(mods.rawModern);
     if (rawSelf) comps.push(rawSelf);
     if (extra) comps.push(extra);
     const compsStr = comps.length > 0 ? `,components:{${comps.join(",")}}` : "";
     return `{id:"minecraft:${id}",count:${c}${compsStr}}`;
   }
-  const tags = legacyItemTags(mods);
+  const tags = legacyItemTags(mods, forBook);
   const rawSelf = normalizeNbtFragment(mods.rawLegacy);
   if (rawSelf) tags.push(rawSelf);
   if (extra) tags.push(extra);

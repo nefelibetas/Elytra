@@ -6,6 +6,8 @@ import { Copy, Plus, Trash2 } from "@lucide/vue";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
 import CheckToggle from "../common/CheckToggle.vue";
 import SearchSelect from "./SearchSelect.vue";
+import FireworkEditor from "./FireworkEditor.vue";
+import PotionEditor from "./PotionEditor.vue";
 import {
   GIVE_ITEMS, ENCHANTMENTS, ATTRIBUTES,
   GIVE_FORMAT_OPTIONS, buildTradeItem, filterEnchantsByVersion,
@@ -133,7 +135,19 @@ const rawPlaceholder = computed(() =>
     : "附加 NBT（如 CustomModelData:7）",
 );
 
-/** 当前配置对应的 ItemMods（含附加 NBT）。 */
+/** 烟花/药水专有编辑器产出的附加内文（随物品与格式；无条件块时为空）。 */
+const editorInner = ref("");
+/** 当前物品对应的专用编辑器类型（映射 give 物品 id）。 */
+const editorKind = computed<"firework" | "potion" | null>(() => {
+  if (!itemId.value) return null;
+  if (itemId.value === "firework_rocket" || itemId.value === "firework_star") return "firework" as const;
+  if (["potion", "splash_potion", "lingering_potion", "tipped_arrow"].includes(itemId.value)) {
+    return "potion" as const;
+  }
+  return null;
+});
+
+/** 当前配置对应的 ItemMods（含附加 NBT；专有编辑器内文并入当前档，位于用户手写内容之前）。 */
 function currentMods() {
   return {
     colorCode: colorCode.value,
@@ -143,8 +157,14 @@ function currentMods() {
     hideTooltip: hideTooltip.value,
     enchantments: enchantments.value,
     attributes: attributes.value,
-    rawModern: rawModern.value,
-    rawLegacy: rawLegacy.value,
+    rawModern:
+      format.value === "modern"
+        ? [editorInner.value.trim(), rawModern.value.trim()].filter((x) => x).join(",")
+        : rawModern.value,
+    rawLegacy:
+      format.value === "legacy"
+        ? [editorInner.value.trim(), rawLegacy.value.trim()].filter((x) => x).join(",")
+        : rawLegacy.value,
   };
 }
 
@@ -174,7 +194,7 @@ async function copyOutput() {
   <div class="tool-card">
     <div class="tool-card-hdr">
       <h3>物品 NBT 生成</h3>
-      <div class="tool-card-sub">构造单个物品栈片段（含组件/NBT 双档），供村民交易等场景引用；物品 ID 按 1.13+ 命名空间格式，1.12 及以下请勿使用</div>
+      <div class="tool-card-sub">构造物品栈片段，供指令生成器等场景引用</div>
     </div>
 
     <div class="give-row">
@@ -201,6 +221,19 @@ async function copyOutput() {
     </div>
 
     <template v-if="itemId">
+      <FireworkEditor
+        v-if="editorKind === 'firework'"
+        :item-kind="itemId"
+        :format="format"
+        @update:inner="(v: string) => (editorInner = v)"
+      />
+      <PotionEditor
+        v-else-if="editorKind === 'potion'"
+        :item-kind="itemId"
+        :format="format"
+        @update:inner="(v: string) => (editorInner = v)"
+      />
+
       <div class="give-sec">
         <div class="give-row">
           <span class="give-label">名称颜色</span>
@@ -257,7 +290,7 @@ async function copyOutput() {
       </div>
 
       <div class="give-sec">
-        <div class="give-sec-title">附魔（不受原版限制）</div>
+        <div class="give-sec-title">附魔</div>
         <div class="give-row">
           <DropSelect
             :model-value="newEnch"
@@ -283,7 +316,7 @@ async function copyOutput() {
       </div>
 
       <div class="give-sec">
-        <div class="give-sec-title">属性（加到物品基础值上）</div>
+        <div class="give-sec-title">属性</div>
         <div class="give-row">
           <DropSelect
             :model-value="newAttr"

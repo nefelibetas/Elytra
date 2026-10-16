@@ -59,3 +59,209 @@
   font-size: 12px;
   color: var(--text-tertiary);
 }
+
+/* 工具表单行（村民交易 / 生物 NBT 等共享；各工具 scoped 定义若存在会就近覆盖） */
+.nb-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.nb-label {
+  flex: 0 0 auto;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  min-width: 56px;
+}
+
+.nb-label-short {
+  min-width: 0;
+  margin-left: 8px;
+}
+
+.nb-input {
+  flex: 1;
+  min-width: 80px;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background-color: var(--surface-page);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  outline: none;
+}
+
+.nb-input-sm {
+  max-width: 180px;
+  flex: 0 0 auto;
+}
+
+.nb-input:hover,
+.nb-input:focus {
+  border-color: var(--color-brand);
+}
+
+.nb-num {
+  width: 64px;
+  height: 30px;
+  padding: 0 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background-color: var(--surface-page);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  outline: none;
+}
+
+.nb-num:focus {
+  border-color: var(--color-brand);
+}
+
+.nb-sec {
+  padding: 10px 0;
+  border-top: 1px solid var(--border-default);
+}
+
+.nb-sec-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.nb-add-btn {
+  font-size: 12px;
+  padding: 4px 10px;
+  margin-left: auto;
+}
+
+.nb-mini-btn {
+  font-size: 12px;
+  padding: 4px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.nb-mini-btn.active {
+  color: var(--color-brand);
+  border-color: var(--color-brand);
+}
+
+.nb-error {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--color-danger);
+}
+
+.nb-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.nb-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px 3px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background-color: var(--surface-page);
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+}
+
+.nb-output-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-bottom: 6px;
+}
+
+.nb-row-top {
+  align-items: flex-start;
+}
+
+.nb-textarea {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background-color: var(--surface-page);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  resize: vertical;
+  outline: none;
+}
+
+.nb-textarea:focus {
+  border-color: var(--color-brand);
+}
+
+.nb-output-gap {
+  margin-top: 10px;
+}
+
+/* 色板色块（烟花/药水等编辑器共用） */
+.nb-color {
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  padding: 0;
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+
+.nb-color:hover {
+  transform: scale(1.15);
+}
+
+.nb-color.active {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 1px;
+}
+
+.nb-mini-color {
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.nb-color-pick {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  background: none;
+  cursor: pointer;
+}
+
+.nb-color-pick.active {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 1px;
+}
+
+.nb-hint {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.nb-note {
+  margin: 8px 0;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}

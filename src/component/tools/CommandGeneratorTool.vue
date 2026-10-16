@@ -62,7 +62,7 @@ for (const def of COMMANDS) valuesFor(def);
   <div class="tool-card">
     <div class="tool-card-hdr">
       <h3>指令生成器</h3>
-      <div class="tool-card-sub">原版 Java 指令可视化生成（一期热门指令）；目标选择器与 NBT 支持手写扩展</div>
+      <div class="tool-card-sub">原版 Java 指令可视化生成</div>
     </div>
 
     <div class="cmd-picker">

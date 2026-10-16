@@ -132,7 +132,8 @@ export function buildPotionCommand(opts: PotionOptions, format: "legacy" | "mode
   return `/give @p ${suffix} ${count}`;
 }
 
-function buildPotionLegacy(id: string, opts: PotionOptions): string {
+/** 药水 legacy 标签（含显示名）：/give 内文与物品栈共用。 */
+function potionLegacyTags(opts: PotionOptions): string[] {
   const tags: string[] = [];
   if (opts.potionId) {
     tags.push(`Potion:"minecraft:${opts.potionId}"`);
@@ -155,11 +156,12 @@ function buildPotionLegacy(id: string, opts: PotionOptions): string {
   if (name) {
     tags.push(`display:{Name:'{"text":"${name}"}'}`);
   }
-  return tags.length > 0 ? `${id}{${tags.join(",")}}` : id;
+  return tags;
 }
 
-function buildPotionModern(id: string, opts: PotionOptions): string {
-  const parts: string[] = [];
+/** 药水现代组件键值对（含 custom_name）：/give 内文 `k=v` 与物品栈 `"minecraft:k":v` 共用。 */
+function potionModernPairs(opts: PotionOptions): { key: string; value: string }[] {
+  const pairs: { key: string; value: string }[] = [];
   const pc: string[] = [];
   if (opts.potionId) {
     pc.push(`potion:"minecraft:${opts.potionId}"`);
@@ -178,13 +180,40 @@ function buildPotionModern(id: string, opts: PotionOptions): string {
     pc.push(`custom_effects:[${list}]`);
   }
   if (pc.length > 0) {
-    parts.push(`potion_contents={${pc.join(",")}}`);
+    pairs.push({ key: "potion_contents", value: `{${pc.join(",")}}` });
   }
   const name = `${opts.colorCode}${opts.customName}`.trim();
   if (name) {
-    parts.push(`custom_name='"${name.replace(/"/g, '\\"')}"'`);
+    pairs.push({ key: "custom_name", value: `'"${name.replace(/"/g, '\\"')}"'` });
   }
-  return parts.length > 0 ? `${id}[${parts.join(",")}]` : id;
+  return pairs;
+}
+
+function buildPotionLegacy(id: string, opts: PotionOptions): string {
+  const tags = potionLegacyTags(opts);
+  return tags.length > 0 ? `${id}{${tags.join(",")}}` : id;
+}
+
+function buildPotionModern(id: string, opts: PotionOptions): string {
+  const pairs = potionModernPairs(opts);
+  return pairs.length > 0 ? `${id}[${pairs.map((p) => `${p.key}=${p.value}`).join(",")}]` : id;
+}
+
+/** 药水物品栈片段（村民交易等场景引用）：modern `{id,count,components:{...}}` / legacy `{id,Count:Nb,标签...}`。 */
+export function buildPotionStack(opts: PotionOptions, format: "legacy" | "modern"): string {
+  const kind = POTION_ITEM_KINDS.some((k) => k.id === opts.itemKind) ? opts.itemKind : "potion";
+  const id = `minecraft:${kind}`;
+  const count = Math.max(1, Math.min(64, Math.floor(opts.count) || 1));
+  if (format === "modern") {
+    const pairs = potionModernPairs(opts);
+    const comps = pairs.length > 0
+      ? `,components:{${pairs.map((p) => `"minecraft:${p.key}":${p.value}`).join(",")}}`
+      : "";
+    return `{id:"${id}",count:${count}${comps}}`;
+  }
+  const tags = potionLegacyTags(opts);
+  const suffix = tags.length > 0 ? `,${tags.join(",")}` : "";
+  return `{id:"${id}",Count:${count}b${suffix}}`;
 }
 
 // ── 烟花 ──
@@ -238,14 +267,20 @@ function explosionLegacy(e: FireworkExplosion): string {
   return `{${colors},${fades},Type:${shape?.numId ?? 0}b,Trail:${e.trail ? "1b" : "0b"},Flicker:${e.twinkle ? "1b" : "0b"}}`;
 }
 
-function buildFireworkLegacy(id: string, isStar: boolean, opts: FireworkOptions): string {
+/** 烟花 legacy 内文（`Fireworks:{...}` / `Explosion:{...}`）：命令与物品栈共用；无内容返回 null。 */
+function fireworkLegacyInner(isStar: boolean, opts: FireworkOptions): string | null {
   if (isStar) {
     const e = opts.explosions[0];
-    return e ? `${id}{Explosion:${explosionLegacy(e)}}` : id;
+    return e ? `Explosion:${explosionLegacy(e)}` : null;
   }
   const flight = Math.max(1, Math.min(opts.flight, 3));
   const list = opts.explosions.map(explosionLegacy).join(",");
-  return `${id}{Fireworks:{Flight:${flight}b,Explosions:[${list}]}}`;
+  return `Fireworks:{Flight:${flight}b,Explosions:[${list}]}`;
+}
+
+function buildFireworkLegacy(id: string, isStar: boolean, opts: FireworkOptions): string {
+  const inner = fireworkLegacyInner(isStar, opts);
+  return inner ? `${id}{${inner}}` : id;
 }
 
 function explosionModern(e: FireworkExplosion): string {
@@ -255,15 +290,60 @@ function explosionModern(e: FireworkExplosion): string {
   return `{shape:"${shape?.id ?? "small_ball"}",colors:${colors},fade_colors:${fades},has_trail:${e.trail},has_twinkle:${e.twinkle}}`;
 }
 
-function buildFireworkModern(id: string, isStar: boolean, opts: FireworkOptions): string {
+/** 烟花现代组件键值对：/give 内文 `k=v` 与物品栈 `"minecraft:k":v` 共用。 */
+function fireworkModernPairs(isStar: boolean, opts: FireworkOptions): { key: string; value: string }[] {
   if (isStar) {
     const e = opts.explosions[0];
     // explosionModern 已含花括号，不能重复包裹
-    return e ? `${id}[firework_explosion=${explosionModern(e)}]` : id;
+    return e ? [{ key: "firework_explosion", value: explosionModern(e) }] : [];
   }
   const flight = Math.max(1, Math.min(opts.flight, 3));
   const list = opts.explosions.map(explosionModern).join(",");
-  return `${id}[fireworks={flight_duration:${flight},explosions:[${list}]}]`;
+  return [{ key: "fireworks", value: `{flight_duration:${flight},explosions:[${list}]}` }];
+}
+
+function buildFireworkModern(id: string, isStar: boolean, opts: FireworkOptions): string {
+  const pairs = fireworkModernPairs(isStar, opts);
+  return pairs.length > 0 ? `${id}[${pairs.map((p) => `${p.key}=${p.value}`).join(",")}]` : id;
+}
+
+/** 烟花物品栈片段（村民交易等场景引用）：modern `{id,count,components:{...}}` / legacy `{id,Count:Nb,内文}`。 */
+export function buildFireworkStack(opts: FireworkOptions, format: "legacy" | "modern"): string {
+  const isStar = opts.itemKind === "firework_star";
+  const id = `minecraft:${isStar ? "firework_star" : "firework_rocket"}`;
+  const count = Math.max(1, Math.min(64, Math.floor(opts.count) || 1));
+  if (format === "modern") {
+    const pairs = fireworkModernPairs(isStar, opts);
+    const comps = pairs.length > 0
+      ? `,components:{${pairs.map((p) => `"minecraft:${p.key}":${p.value}`).join(",")}}`
+      : "";
+    return `{id:"${id}",count:${count}${comps}}`;
+  }
+  const inner = fireworkLegacyInner(isStar, opts);
+  return inner
+    ? `{id:"${id}",Count:${count}b,${inner}}`
+    : `{id:"${id}",Count:${count}b}`;
+}
+
+/** 烟花附加内文（并入物品 NBT 生成的附加段）：modern 组件对（`"minecraft:k":v`）/ legacy 标签。 */
+export function fireworkRawInner(opts: FireworkOptions, format: "legacy" | "modern"): string {
+  const isStar = opts.itemKind === "firework_star";
+  if (format === "modern") {
+    return fireworkModernPairs(isStar, opts)
+      .map((p) => `"minecraft:${p.key}":${p.value}`)
+      .join(",");
+  }
+  return fireworkLegacyInner(isStar, opts) ?? "";
+}
+
+/** 药水附加内文（并入物品 NBT 生成的附加段）：modern 组件对 / legacy 标签。 */
+export function potionRawInner(opts: PotionOptions, format: "legacy" | "modern"): string {
+  if (format === "modern") {
+    return potionModernPairs(opts)
+      .map((p) => `"minecraft:${p.key}":${p.value}`)
+      .join(",");
+  }
+  return potionLegacyTags(opts).join(",");
 }
 
 // ── 村民交易 ──
@@ -331,7 +411,8 @@ export interface VillagerOptions {
   trades: VillagerTrade[];
 }
 
-export function buildVillagerCommand(opts: VillagerOptions, format: "legacy" | "modern"): string {
+/** 村民实体 NBT 内文（不含外层花括号）：`VillagerData:...,Offers:...`；不可用世代仅 Offers，无交易时为空串。 */
+export function buildVillagerNbt(opts: VillagerOptions, format: "legacy" | "modern"): string {
   const tags: string[] = [];
   if (opts.era === "1.14+") {
     const profession = VILLAGER_PROFESSIONS.some((p) => p.id === opts.profession)
@@ -365,8 +446,10 @@ export function buildVillagerCommand(opts: VillagerOptions, format: "legacy" | "
       .join(",");
     tags.push(`Offers:{Recipes:[${recipes}]}`);
   }
-  // 无标签时不带空 NBT 花括号（pre1.14 且未添加交易时的形态）
-  return tags.length > 0
-    ? `/summon villager ~ ~ ~ {${tags.join(",")}}`
-    : "/summon villager ~ ~ ~";
+  return tags.join(",");
+}
+
+export function buildVillagerCommand(opts: VillagerOptions, format: "legacy" | "modern"): string {
+  const body = buildVillagerNbt(opts, format);
+  return body.length > 0 ? `/summon villager ~ ~ ~ {${body}}` : "/summon villager ~ ~ ~";
 }
