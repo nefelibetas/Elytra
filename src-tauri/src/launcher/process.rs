@@ -4,6 +4,7 @@
 use std::ffi::c_void;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::SystemTime;
 
 use crate::auth::external::{ensure_jar, read};
@@ -246,6 +247,71 @@ where
     Ok(pid)
 }
 
+// ── 启动取消闸门 ──
+
+/// 取消请求标志：spawn_game 在拉起进程前查一次，命中即不启动。
+static LAUNCH_CANCELLED: AtomicBool = AtomicBool::new(false);
+/// 本次启动已拉起的游戏进程 pid（0 = 尚未拉起）：取消时按 pid 终止。
+static LAUNCH_PID: AtomicU32 = AtomicU32::new(0);
+
+/// 新一次启动开始：清掉上一次的取消标志与 pid 登记（前端在启动流程最前调用，此后到达的取消一律生效）。
+pub fn begin_launch() {
+    LAUNCH_PID.store(0, Ordering::SeqCst);
+    LAUNCH_CANCELLED.store(false, Ordering::SeqCst);
+}
+
+/// 本次启动是否已被请求取消。
+pub fn cancel_requested() -> bool {
+    LAUNCH_CANCELLED.load(Ordering::SeqCst)
+}
+
+/// 请求取消：置标志并终止已拉起的游戏进程。标志先于取 pid 写入，故与 `note_launched` 竞争时不会漏杀。
+pub fn request_cancel() {
+    LAUNCH_CANCELLED.store(true, Ordering::SeqCst);
+    let pid = LAUNCH_PID.swap(0, Ordering::SeqCst);
+    if pid != 0 {
+        kill_process(pid);
+    }
+}
+
+/// 登记已拉起的游戏进程；登记时若取消已到达则立即终止（返回 true 表示已终止）。
+pub fn note_launched(pid: u32) -> bool {
+    LAUNCH_PID.store(pid, Ordering::SeqCst);
+    if !cancel_requested() {
+        return false;
+    }
+    LAUNCH_PID.store(0, Ordering::SeqCst);
+    kill_process(pid);
+    true
+}
+
+/// 进程退出后注销 pid：否则后续取消可能误杀复用同一 pid 的其他进程。
+pub fn clear_launched(pid: u32) {
+    let _ = LAUNCH_PID.compare_exchange(pid, 0, Ordering::SeqCst, Ordering::SeqCst);
+}
+
+/// 强制终止进程（Windows 递归进程树；其他平台 SIGKILL）。
+fn kill_process(pid: u32) {
+    #[cfg(target_os = "windows")]
+    {
+        // taskkill 是控制台程序：不装配无窗口标志即一闪而过的命令行窗口
+        let mut kill = std::process::Command::new("taskkill");
+        kill.no_window();
+        let _ = kill
+            .args(["/T", "/F", "/PID", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        // SAFETY: kill(2) 对任意 pid 调用安全；SIGKILL 无内存安全影响，失败仅返回 -1。
+        unsafe {
+            libc::kill(pid as i32, libc::SIGKILL);
+        }
+    }
+}
+
 /// 合一监听循环（后台线程）：try_wait 非阻塞查退出 + 可见窗口轮询；退出回调 on_exit（含崩溃判定与证据定位），窗口首次可见回调 on_window_visible。
 pub fn watch_game_process<W, E>(
     mut child: std::process::Child,
@@ -477,5 +543,88 @@ mod crash_tests {
         );
         let since = SystemTime::now() - Duration::from_secs(60);
         assert_eq!(detect_crash(&game, Some(1), since), None);
+    }
+}
+
+#[cfg(test)]
+mod cancel_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// 长命子进程（作被终止目标）；Windows 走 cmd，其他平台走 sleep。
+    fn spawn_idle_child() -> std::process::Child {
+        #[cfg(target_os = "windows")]
+        {
+            let mut cmd = std::process::Command::new("cmd");
+            cmd.args(["/C", "ping", "-n", "30", "127.0.0.1"]);
+            cmd.no_window();
+            cmd.stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("启动测试子进程失败")
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            std::process::Command::new("sleep")
+                .arg("30")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("启动测试子进程失败")
+        }
+    }
+
+    /// 轮询至多 5s 等子进程退出。
+    fn wait_exit(child: &mut std::process::Child) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if child.try_wait().ok().flatten().is_some() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        false
+    }
+
+    #[test]
+    fn cancel_flag_survives_until_next_begin() {
+        begin_launch();
+        assert!(!cancel_requested(), "begin_launch 后不应处于已取消状态");
+        request_cancel();
+        assert!(cancel_requested(), "request_cancel 后应处于已取消状态");
+        // 重复请求与未登记 pid 时再取消都不得清除标志
+        request_cancel();
+        assert!(cancel_requested(), "重复取消不应清除标志");
+        begin_launch();
+        assert!(!cancel_requested(), "下一次启动开始必须清掉上一次的取消标志");
+    }
+
+    #[test]
+    fn note_launched_without_cancel_only_registers() {
+        begin_launch();
+        let mut child = spawn_idle_child();
+        assert!(!note_launched(child.id()), "未请求取消时不应终止进程");
+        let _ = child.kill();
+        let _ = child.wait();
+        clear_launched(child.id());
+    }
+
+    #[test]
+    fn note_launched_after_cancel_kills_process() {
+        begin_launch();
+        request_cancel(); // 尚未登记 pid：先置标志，模拟「进进程后注册前」到达的取消
+        let mut child = spawn_idle_child();
+        assert!(note_launched(child.id()), "取消已到达时应立即终止进程");
+        assert!(wait_exit(&mut child), "被取消的启动进程应已退出");
+        clear_launched(child.id());
+    }
+
+    #[test]
+    fn request_cancel_kills_registered_process() {
+        begin_launch();
+        let mut child = spawn_idle_child();
+        assert!(!note_launched(child.id()));
+        request_cancel();
+        assert!(wait_exit(&mut child), "取消应终止已登记的游戏进程");
     }
 }

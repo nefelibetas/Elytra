@@ -227,7 +227,7 @@ export function ensureListen() {
         const mapped = taskNames.get(p.task_id);
         taskNames.delete(p.task_id);
         const message = mapped
-          ? `下载任务[${mapped}]完成`
+          ? `${mapped} 下载完成`
           : `${p.name || "下载任务"} 已完成`;
         // 版本下载完成：携带安装目录名（App.vue 据此自动选中版本）
         const vdir = versionTargets.get(p.task_id);

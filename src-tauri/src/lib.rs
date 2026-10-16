@@ -47,7 +47,8 @@ use commands::jdk::{
     auto_scan_jdk, get_discovered_jdks, get_jdk_options, save_jdk_options, scan_custom_jdk,
 };
 use commands::launch::{
-    check_launch_env, get_game_log, get_launcher_log, open_launcher_log_dir, spawn_game,
+    begin_launch, cancel_launch, check_launch_env, get_game_log, get_launcher_log, open_launcher_log_dir,
+    spawn_game,
 };
 use commands::launch_options::{get_launch_options, get_memory_info, save_launch_options};
 use commands::launch_script::export_launch_script;
@@ -181,6 +182,8 @@ pub fn run() {
             resume_task,
             dismiss_interrupted_task,
             spawn_game,
+            begin_launch,
+            cancel_launch,
             get_game_log,
             get_launcher_log,
             open_launcher_log_dir,

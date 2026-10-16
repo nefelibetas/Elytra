@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, useSlots } from "vue";
+import { computed, onMounted, onUnmounted, nextTick, ref, useSlots, watch } from "vue";
+import { focusDialog, restoreFocus } from "../../utils/focusNav";
 
 const props = withDefaults(defineProps<{
   title?: string;
@@ -58,8 +59,23 @@ async function copyMessage() {
 }
 
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === "Escape") close();
+  // 只管自己这一个弹窗：同页多个弹窗实例都挂了监听，不判 modelValue 会被一次 ESC 全部清掉
+  if (e.key === "Escape" && props.modelValue) close();
 }
+
+const card = ref<HTMLElement | null>(null);
+let restoreTo: HTMLElement | null = null;
+
+/** 打开时焦点移入弹窗（Tab 遍历范围随之收窄到弹窗内），关闭后归还原焦点。 */
+watch(() => props.modelValue, async (open) => {
+  if (!open) {
+    restoreFocus(restoreTo);
+    restoreTo = null;
+    return;
+  }
+  await nextTick();
+  if (card.value) restoreTo = focusDialog(card.value);
+});
 
 onMounted(() => document.addEventListener("keydown", onKeydown));
 onUnmounted(() => document.removeEventListener("keydown", onKeydown));
@@ -68,7 +84,15 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
 <template>
   <Transition name="dialog">
     <div v-if="modelValue" class="dialog-overlay" @click.self="close">
-      <div class="dialog-card" :class="`dialog-card--${width}`">
+      <div
+        ref="card"
+        class="dialog-card"
+        :class="`dialog-card--${width}`"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="title"
+        tabindex="-1"
+      >
         <div class="dialog-header">
           <span class="dialog-title">{{ title }}</span>
         </div>        

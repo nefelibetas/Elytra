@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from "vue";
+import { onMounted, onUnmounted, nextTick, ref, watch } from "vue";
 import { useRouter } from "vue-router";
+import { X } from "@lucide/vue";
 import { initNavHistory, goBack, goForward } from "./store/app/nav";
 import TitleBar from "./component/common/TitleBar.vue";
 import AlertDialog from "./component/common/AlertDialog.vue";
@@ -10,7 +11,8 @@ import { ensureConfigRecoveryWatch } from "./store/config/configRecovery";
 import { ensureAutoTasksListen, lastAutoTasksFinished } from "./store/config/autoTasks";
 import { ensureVersionsWatch } from "./store/config/gameDirs";
 import { setSelected } from "./store/app/selectedVersion";
-import { toastState, showToast } from "./utils/toast";
+import { toasts, dismissToast, pauseToast, resumeToast, showToast } from "./utils/toast";
+import { moveFocus, clearFocusRing, focusDialog, restoreFocus } from "./utils/focusNav";
 
 const router = useRouter();
 
@@ -57,6 +59,19 @@ async function copyWaitingError() {
   }
 }
 
+/** 批量下载失败弹窗：出现时焦点移入（Tab 范围随之收窄到弹窗），关闭后归还原焦点。 */
+const waitingOverlay = ref<HTMLElement | null>(null);
+let waitingRestore: HTMLElement | null = null;
+watch(waitingUser, async (w) => {
+  if (!w) {
+    restoreFocus(waitingRestore);
+    waitingRestore = null;
+    return;
+  }
+  await nextTick();
+  if (waitingOverlay.value) waitingRestore = focusDialog(waitingOverlay.value);
+});
+
 /** 输入框 / 文本域 / contenteditable。 */
 function isEditableTarget(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;
@@ -87,9 +102,10 @@ function onKeyDown(e: KeyboardEvent) {
   ) {
     return;
   }
-  // 禁止 Tab 切换控件焦点
+  // Tab：转发给应用自管的焦点遍历（原生遍历绕过页面语义，直接改 DOM 焦点）
   if (e.key === "Tab") {
     e.preventDefault();
+    moveFocus(e.shiftKey ? -1 : 1);
     return;
   }
   // 禁止全选（Ctrl+A；输入上下文已在上面放行）
@@ -148,6 +164,8 @@ onMounted(() => {
   document.addEventListener("mouseup", onSideButton, true);
   document.addEventListener("pointerdown", onSideButton, true);
   document.addEventListener("pointerup", onSideButton, true);
+  // 鼠标交互后清掉键盘焦点环（键盘遍历打的标记）——用冒泡段，不与侧键捕获冲突
+  document.addEventListener("pointerdown", clearFocusRing);
   window.addEventListener("popstate", onPopState);
   ensureListen();
   // 崩溃/重启恢复：拉取上次未完成的任务（DownloadDetail 横幅询问恢复）
@@ -169,6 +187,7 @@ onUnmounted(() => {
   document.removeEventListener("mouseup", onSideButton, true);
   document.removeEventListener("pointerdown", onSideButton, true);
   document.removeEventListener("pointerup", onSideButton, true);
+  document.removeEventListener("pointerdown", clearFocusRing);
   window.removeEventListener("popstate", onPopState);
 });
 
@@ -185,9 +204,22 @@ onUnmounted(() => {
         </Transition>
       </router-view>
     </main>
-    <Transition name="toast">
-      <div v-if="toastState.msg" class="toast">{{ toastState.msg }}</div>
-    </Transition>
+    <!-- 提示堆叠：窗口右上角（标题栏下方留出间距）；进入自右向左、离开从左到右，hover 暂停自动关闭。
+         读屏经 role=status 播报；data-tabskip 让键盘遍历跳过这条通道（自动消失，入列会打断遍历顺序） -->
+    <TransitionGroup name="toast" tag="div" class="toast-stack" role="status" aria-live="polite" data-tabskip>
+      <div
+        v-for="t in toasts"
+        :key="t.id"
+        class="toast-item"
+        @mouseenter="pauseToast(t.id)"
+        @mouseleave="resumeToast(t.id)"
+      >
+        <span class="toast-msg">{{ t.msg }}</span>
+        <button class="toast-close" title="关闭" aria-label="关闭提示" @click="dismissToast(t.id)">
+          <X :size="12" :stroke-width="2.4" />
+        </button>
+      </div>
+    </TransitionGroup>
     <AlertDialog v-model="errorDialog" title="下载失败" :message="errorMessage" copyable>
       <p>下载失败，已清理该任务下载的文件，请重试</p>
     </AlertDialog>
@@ -198,7 +230,15 @@ onUnmounted(() => {
 
     <!-- 批量文件下载失败挂起：用户决策 跳过/重试/取消（WaitingForUser） -->
     <Transition name="fade">
-      <div v-if="waitingUser" class="dialog-overlay" @click.self.stop>
+      <div
+        v-if="waitingUser"
+        ref="waitingOverlay"
+        class="dialog-overlay"
+        role="dialog"
+        aria-modal="true"
+        aria-label="下载失败"
+        @click.self.stop
+      >
         <div class="waiting-dialog">
           <h3 class="wd-title">下载失败</h3>
           <p class="wd-file">{{ waitingUser.file_name }}</p>
@@ -232,9 +272,10 @@ html, body {
   user-select: none;
 }
 
-/* 点击聚焦不显示默认焦点框；键盘/编程聚焦保留品牌色轮廓（可访问性底线；Tab 已拦截，实际仅编程焦点生效） */
+/* 指针点击聚焦不显示默认焦点框；点过按钮再按键时 Chrome 会重新判定 :focus-visible 并画出 2px 品牌色轮廓
+   （圆角+缩放偏移下会被看成按钮外一圈异色杂边），故键盘焦点环不写在这里：由 utils/focusNav.ts 以内联内描边写入
+   （组件内 scoped `outline: none` 特异性高于全局单类规则，样式表写法会被盖掉）。 */
 :focus { outline: none; }
-:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
 
 /* 输入控件保持可选中/可编辑 */
 input, textarea {
@@ -501,19 +542,81 @@ input, textarea {
     inset 0 0 24px var(--edge-shade);
 }
 
-.toast {
-  position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+/* 提示堆叠：右上角、标题栏下方留白；同屏最多 5 条（store 侧排队补位）。
+   用块级排版而非 flex：离开项 position:absolute 需要静态位置保持原位，flex 容器会把绝对定位子项拉回主起点而跳位。 */
+.toast-stack {
+  position: fixed;
+  top: calc(var(--titlebar-h, 48px) + 12px);
+  right: 12px;
   z-index: var(--z-toast, 3000);
-  padding: 10px 24px; border-radius: var(--radius-md);
-  background: var(--toast-bg); color: var(--text-inverse);
-  font-size: 13px; font-weight: 500;
-  white-space: nowrap; box-shadow: var(--shadow-lg);
-  pointer-events: none;
+  width: 320px;
+  pointer-events: none; /* 仅条目本身接管事件，不遮挡下层内容 */
 }
-.toast-enter-active { transition: all 0.3s ease-out; }
-.toast-leave-active { transition: all 0.2s ease-in; }
-.toast-enter-from { opacity: 0; transform: translateX(-50%) translateY(16px); }
-.toast-leave-to   { opacity: 0; transform: translateX(-50%) translateY(16px); }
+
+.toast-item {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 9px 8px 9px 13px;
+  border: 1px solid var(--border-default);
+  border-left: 3px solid var(--color-brand);
+  border-radius: var(--radius-md);
+  /* 左深右浅：左侧品牌色浓，向右渐浅（底色不透明，故整体始终可见） */
+  background-color: var(--surface-card);
+  background-image: linear-gradient(90deg, var(--color-brand-bg), rgba(255, 255, 255, 0));
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.45;
+  box-shadow: var(--shadow-lg);
+}
+
+.toast-msg {
+  flex: 1;
+  min-width: 0;
+  padding-top: 1px;
+  word-break: break-word;
+}
+
+.toast-close {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.toast-close:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-hover);
+}
+
+/* 进入自右向左、离开从左到右（同侧进出）；离开项脱离文档流，其余条目随之带动画上移 */
+.toast-enter-active,
+.toast-leave-active,
+.toast-move {
+  transition: transform 0.28s cubic-bezier(0.22, 0.61, 0.36, 1), opacity 0.24s ease;
+}
+
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translateX(110%);
+}
+
+.toast-leave-active {
+  position: absolute;
+  left: 0;
+  right: 0;
+}
 
 /* 文件下载失败等待决策弹窗（WaitingForUser） */
 .dialog-overlay {

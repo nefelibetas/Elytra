@@ -1,4 +1,5 @@
 <script setup lang="ts">
+// 启动步骤状态标记（仅启动面板使用）：完成打勾 / 进行中脉冲点 / 未开始灰点。进行中不做环形滚动（与启动语义不符）
 import { Check } from "@lucide/vue";
 import type { StepStatus } from "../../store/task/download";
 
@@ -8,7 +9,7 @@ defineProps<{ status: StepStatus }>();
 <template>
   <span class="sd-icon">
     <Check v-if="status === 'done'" :size="13" :stroke-width="2" />
-    <span v-else-if="status === 'running'" class="sd-spin"></span>
+    <span v-else-if="status === 'running'" class="sd-dot sd-pulse"></span>
     <span v-else class="sd-dot"></span>
   </span>
 </template>
@@ -32,17 +33,14 @@ defineProps<{ status: StepStatus }>();
   display: block;
 }
 
-.sd-spin {
-  width: 12px;
-  height: 12px;
-  border: 2px solid var(--border-strong);
-  border-top-color: var(--text-secondary);
-  border-radius: 50%;
-  display: block;
-  animation: sd-rotate 0.7s linear infinite;
+/* 进行中：品牌色呼吸脉冲（用缩放/透明度，不用旋转环或外圈描边） */
+.sd-pulse {
+  background-color: var(--color-brand);
+  animation: sd-pulse 1.4s ease-in-out infinite;
 }
 
-@keyframes sd-rotate {
-  to { transform: rotate(360deg); }
+@keyframes sd-pulse {
+  0%, 100% { transform: scale(1);   opacity: 1; }
+  50%      { transform: scale(1.5); opacity: 0.45; }
 }
 </style>

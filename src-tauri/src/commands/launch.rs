@@ -34,6 +34,18 @@ pub async fn check_launch_env(version_dir_name: String) -> Result<String, String
     Ok(format!("环境校验通过（JDK: {}）", java_env))
 }
 
+/// 开始一次启动：清空上一次的取消标志与进程登记（前端在启动流程最前调用，此后到达的取消才作用于本次启动）。
+#[tauri::command]
+pub fn begin_launch() {
+    process::begin_launch();
+}
+
+/// 取消本次启动：尚未拉起进程则阻止启动，已拉起则终止游戏进程。
+#[tauri::command]
+pub fn cancel_launch() {
+    process::request_cancel();
+}
+
 /// 启动 Minecraft 游戏进程。返回子进程 PID。
 #[tauri::command]
 pub async fn spawn_game(
@@ -45,6 +57,10 @@ pub async fn spawn_game(
     uuid: String,
     xuid: String,
 ) -> Result<u32, String> {
+    // 启动流程开始即已收到取消请求（如重启前一次启动）：不再拉起进程
+    if process::cancel_requested() {
+        bail!("启动已取消");
+    }
     // online 模式改用后端有效 token（临近过期自动刷新；前端缓存 token 约 24h 失效）；离线/第三方沿用传入值。
     let access_token = if auth_mode == "online" {
         account::valid_access_token().await?
@@ -119,6 +135,11 @@ pub async fn spawn_game(
 
     platform::apply_gpu_preference(launcher_config.use_high_performance_gpu);
 
+    // 取消请求可能在安装 JDK / 检查文件 / 启动前自动任务期间到达：此时不再拉起游戏进程
+    if process::cancel_requested() {
+        bail!("启动已取消");
+    }
+
     // cwd = 版本隔离的 gameDir（与官方启动器一致）；装配在 launcher/process.rs，此处仅注入事件派发（队列线程，监听线程不等 webview 消费）。
     let log_path = mc_dir.join("logs").join("elytra-launch.log");
     let app_window = app.clone();
@@ -144,6 +165,8 @@ pub async fn spawn_game(
             );
         },
         move |pid, exit_code, crash_report| {
+            // 注销启动 pid：退出后到达的取消不得按此 pid 误杀其他进程
+            process::clear_launched(pid);
             // 退出码随事件送出：前端据非 0 判崩溃
             task::emit_event(
                 &app_exit,
@@ -178,6 +201,11 @@ pub async fn spawn_game(
             });
         },
     )?;
+
+    // 登记 pid 供取消终止；若取消在 spawn 与登记之间到达，登记时即终止并如实报错
+    if process::note_launched(pid) {
+        bail!("启动已取消");
+    }
 
     Ok(pid)
 }

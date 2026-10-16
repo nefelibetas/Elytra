@@ -6,6 +6,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { showToast } from "../utils/toast";
 import { errMsg } from "../utils/error";
 import { resourceDetail, openResourceDetail } from "../store/community/resourceDetail";
+import { goBack } from "../store/app/nav";
 import { selectedVersion } from "../store/app/selectedVersion";
 import { dlTranslateMode, dlShowReleaseOnly } from "../store/config/downloaderConfig";
 import {
@@ -332,10 +333,16 @@ async function submitModpackInstall() {
       // 平台项目图标：随请求透传，安装期持久化到版本目录供列表展示
       icon_url: item.value?.icon_url ?? null,
     });
-    showToast("已提交整合包安装（准备 → 游戏本体 → 内容）");
+    showToast("已提交整合包安装");
+    backAfterSubmit();
   } catch (e) {
     showToast(errMsg(e));
   }
+}
+
+/** 提交成功后退出一层：依赖链进入的回到上一层详情，从列表进入的回到列表（多层依赖无需逐级手动返回）。 */
+function backAfterSubmit() {
+  goBack();
 }
 
 /** 提交选中版本下载任务（download_single_file → 任务中心自动注册）；落盘 versions/{版本目录}/{kind_dir}/{filename}（后端兜底 _{n} 冲突）。 */
@@ -386,6 +393,7 @@ async function submitDownload() {
       registerTaskName(taskId, item.value?.title ?? v.filename);
     }
     showToast("已提交下载任务");
+    backAfterSubmit();
   } catch (e) {
     showToast(errMsg(e));
   }
