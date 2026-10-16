@@ -159,14 +159,17 @@ function onRefresh(e: MouseEvent, k: string) {
 }
 
 /* ===== 右侧内容 ===== */
+/* 滚动宿主保持全宽（滚动条贴窗口右缘）；内容宽度上界由子元素承担 */
 .sn-body {
   flex: 1;
   position: relative;
   min-width: 0;
   padding: 20px 24px;
-  /* 内容区宽度上界：+48 抵消左右 padding，令内容可用宽度恰为 --content-max */
-  max-width: calc(var(--content-max) + 48px);
   background: var(--surface-page);
+}
+
+.sn-body > :slotted(*) {
+  max-width: var(--content-max);
 }
 
 /* 默认：body 自身滚动（Settings/Tools 长表单页） */
