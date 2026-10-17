@@ -1,15 +1,21 @@
 //! SLP / RakNet 协议探测实现（公共接口由父模块 `mod.rs` 重导出）。
 
-use serde::{Deserialize, Serialize};
+use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::pin::Pin;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use futures_util::future::select_ok;
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
 
 /// 单次探测总超时（连接 + 读写）。
 const PING_TIMEOUT: Duration = Duration::from_secs(6);
-/// TCP 建连超时。
+/// TCP 建连 / DNS 解析超时。
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+/// 基岩版单地址等待 PONG 的超时（多地址时逐个尝试）。
+const BEDROCK_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(2);
 /// status 响应 JSON 上限（含 favicon base64，256KB 足够，防恶意超大响应）。
 const MAX_RESPONSE_BYTES: usize = 256 * 1024;
 /// 协议文本字段（地址等）最大长度。
@@ -145,27 +151,32 @@ async fn ping_java_with_timeout(
     timeout: Duration,
 ) -> Result<ServerStatus, String> {
     tokio::time::timeout(timeout, async {
-        let addr = resolve(host, port).await?;
-        let mut stream = TcpStream::connect(addr)
-            .await
-            .map_err(common_err_ctx!("连接失败"))?;
-        // 握手：packet 0x00 + protocol(-1) + host + port + next_state(1)
-        let mut buf = Vec::with_capacity(64);
-        write_varint(0, &mut buf);
-        write_varint(-1, &mut buf);
-        write_string(host, &mut buf)?;
-        buf.extend_from_slice(&port.to_be_bytes());
-        write_varint(1, &mut buf);
+        let addrs = resolve_all(host, port).await?;
+        let mut stream = connect_any(&addrs).await?;
+        // 握手：外层 VarInt 长度 + packet 0x00 + protocol(-1) + host + port + next_state(1)
+        let mut body = Vec::with_capacity(64);
+        write_varint(0, &mut body);
+        write_varint(-1, &mut body);
+        write_string(host, &mut body)?;
+        body.extend_from_slice(&port.to_be_bytes());
+        write_varint(1, &mut body);
+        let mut handshake = Vec::with_capacity(body.len() + 5);
+        write_varint(body.len() as i32, &mut handshake);
+        handshake.extend_from_slice(&body);
         stream
-            .write_all(&buf)
+            .write_all(&handshake)
             .await
             .map_err(common_err_ctx!("发送握手失败"))?;
-        // status 请求：packet 0x00
+        // status 请求：长度 1 + packet id 0
         stream
-            .write_all(&[0x00])
+            .write_all(&[0x01, 0x00])
             .await
             .map_err(common_err_ctx!("发送状态请求失败"))?;
-        // 响应：packet id + JSON 字符串
+        // 响应：外层包长度 + packet id + JSON 字符串
+        let packet_len = read_varint(&mut stream).await?;
+        if packet_len <= 0 || packet_len as usize > MAX_RESPONSE_BYTES + 16 {
+            bail!("服务器响应异常\n包长度 {packet_len}");
+        }
         let packet_id = read_varint(&mut stream).await?;
         if packet_id != 0 {
             bail!("服务器响应异常\n未知包 id {packet_id}");
@@ -179,24 +190,40 @@ async fn ping_java_with_timeout(
     })?
 }
 
-/// 把 host 解析为 SocketAddr（支持域名）。
-async fn resolve(host: &str, port: u16) -> Result<SocketAddr, String> {
+/// 把 host 解析为全部地址（支持域名）。
+async fn resolve_all(host: &str, port: u16) -> Result<Vec<SocketAddr>, String> {
     // 字面量 IP 直接构造，避免依赖系统解析
     if let Ok(ip) = host.parse::<Ipv4Addr>() {
-        return Ok(SocketAddr::new(IpAddr::V4(ip), port));
+        return Ok(vec![SocketAddr::new(IpAddr::V4(ip), port)]);
     }
     if let Ok(ip) = host.parse::<Ipv6Addr>() {
-        return Ok(SocketAddr::new(IpAddr::V6(ip), port));
+        return Ok(vec![SocketAddr::new(IpAddr::V6(ip), port)]);
     }
     tokio::time::timeout(CONNECT_TIMEOUT, async {
-        tokio::net::lookup_host((host, port))
+        let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host, port))
             .await
             .map_err(common_err_ctx!("域名解析失败"))?
-            .next()
-            .ok_or_else(|| "域名解析失败\n无可用地址".to_string())
+            .collect();
+        if addrs.is_empty() {
+            Err("域名解析失败\n无可用地址".to_string())
+        } else {
+            Ok(addrs)
+        }
     })
     .await
     .map_err(|_| "域名解析超时".to_string())?
+}
+
+/// 并发尝试全部地址，取首个成功连接（首个地址不可达时不拖死整个探测）。
+async fn connect_any(addrs: &[SocketAddr]) -> Result<TcpStream, String> {
+    let attempts = addrs.iter().map(|addr| {
+        Box::pin(TcpStream::connect(*addr))
+            as Pin<Box<dyn Future<Output = std::io::Result<TcpStream>> + Send>>
+    });
+    select_ok(attempts)
+        .await
+        .map(|(stream, _)| stream)
+        .map_err(common_err_ctx!("连接失败"))
 }
 
 /// 解析 SLP status JSON（宽松：description 兼容字符串/组件对象）。
@@ -287,30 +314,39 @@ async fn ping_bedrock_with_timeout(
     timeout: Duration,
 ) -> Result<ServerStatus, String> {
     tokio::time::timeout(timeout, async {
-        let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))
-            .await
-            .map_err(common_err_ctx!("UDP 套接字创建失败"))?;
-        let addr = resolve(host, port).await?;
-        socket
-            .connect(addr)
-            .await
-            .map_err(common_err_ctx!("连接失败"))?;
-        // UNCONNECTED_PING：id + 时间戳 + magic + client GUID(0)
-        let mut payload = Vec::with_capacity(32);
-        payload.push(RAKNET_PING_ID);
-        payload.extend_from_slice(&now_millis().to_be_bytes());
-        payload.extend_from_slice(&RAKNET_MAGIC);
-        payload.extend_from_slice(&0u64.to_be_bytes());
-        socket
-            .send(&payload)
-            .await
-            .map_err(common_err_ctx!("发送探测包失败"))?;
-        let mut buf = [0u8; 2048];
-        let n = socket
-            .recv(&mut buf)
-            .await
-            .map_err(common_err_ctx!("接收响应失败"))?;
-        parse_raknet_pong(&buf[..n])
+        let addrs = resolve_all(host, port).await?;
+        let mut last_err = "连接超时\n服务器无响应（检查地址与端口，服务器可能未开启）".to_string();
+        for addr in addrs {
+            let bind = if addr.is_ipv4() {
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0)
+            } else {
+                SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0)
+            };
+            let socket = UdpSocket::bind(bind)
+                .await
+                .map_err(common_err_ctx!("UDP 套接字创建失败"))?;
+            if let Err(e) = socket.connect(addr).await {
+                last_err = format!("连接失败\n{e}");
+                continue;
+            }
+            // UNCONNECTED_PING：id + 时间戳 + magic + client GUID(0)
+            let mut payload = Vec::with_capacity(32);
+            payload.push(RAKNET_PING_ID);
+            payload.extend_from_slice(&now_millis().to_be_bytes());
+            payload.extend_from_slice(&RAKNET_MAGIC);
+            payload.extend_from_slice(&0u64.to_be_bytes());
+            socket
+                .send(&payload)
+                .await
+                .map_err(common_err_ctx!("发送探测包失败"))?;
+            let mut buf = [0u8; 2048];
+            match tokio::time::timeout(BEDROCK_ATTEMPT_TIMEOUT, socket.recv(&mut buf)).await {
+                Ok(Ok(n)) => return parse_raknet_pong(&buf[..n]),
+                Ok(Err(e)) => last_err = format!("接收响应失败\n{e}"),
+                Err(_) => last_err = "连接超时\n服务器无响应（检查地址与端口，服务器可能未开启）".to_string(),
+            }
+        }
+        Err(last_err)
     })
     .await
     .map_err(|_| "连接超时\n服务器无响应（检查地址与端口，服务器可能未开启）".to_string())?
@@ -590,21 +626,30 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
-            // 握手：packet 0x00 + 忽略后续（协议版本/地址/端口/next state）
-            assert_eq!(read_varint(&mut stream).await.unwrap(), 0);
-            let _protocol = read_varint(&mut stream).await.unwrap();
-            let _host = read_string(&mut stream, MAX_STRING).await.unwrap();
+            // 握手：外层长度 + packet 0x00 + 协议版本/地址/端口/next state
+            let handshake_len = read_varint(&mut stream).await.unwrap();
+            let mut handshake = vec![0u8; handshake_len as usize];
+            stream.read_exact(&mut handshake).await.unwrap();
+            let mut body = &handshake[..];
+            assert_eq!(read_varint(&mut body).await.unwrap(), 0);
+            let _protocol = read_varint(&mut body).await.unwrap();
+            let _host = read_string(&mut body, MAX_STRING).await.unwrap();
             let mut port_buf = [0u8; 2];
-            stream.read_exact(&mut port_buf).await.unwrap();
-            assert_eq!(read_varint(&mut stream).await.unwrap(), 1, "next state 应为 1");
-            // status 请求
+            body.read_exact(&mut port_buf).await.unwrap();
+            assert_eq!(read_varint(&mut body).await.unwrap(), 1, "next state 应为 1");
+            assert!(body.is_empty(), "握手包长度应与内容一致");
+            // status 请求：长度 1 + packet id 0
+            assert_eq!(read_varint(&mut stream).await.unwrap(), 1);
             assert_eq!(read_varint(&mut stream).await.unwrap(), 0);
-            // 响应
+            // 响应：外层长度 + packet id + JSON 字符串
             let json = r#"{"version":{"name":"1.21.4","protocol":769},"players":{"max":10,"online":1,"sample":[{"name":"Tester","id":"t"}]},"description":{"text":"§a测试服"}}"#;
+            let mut payload = Vec::new();
+            write_varint(0, &mut payload);
+            write_varint(json.len() as i32, &mut payload);
+            payload.extend_from_slice(json.as_bytes());
             let mut out = Vec::new();
-            write_varint(0, &mut out);
-            write_varint(json.len() as i32, &mut out);
-            out.extend_from_slice(json.as_bytes());
+            write_varint(payload.len() as i32, &mut out);
+            out.extend_from_slice(&payload);
             stream.write_all(&out).await.unwrap();
         });
         let status = ping_java("127.0.0.1", addr.port()).await.unwrap();
