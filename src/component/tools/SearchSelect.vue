@@ -9,8 +9,6 @@ import { Search } from "@lucide/vue";
 export interface SearchOption {
   id: string;
   name: string;
-  /** 引入主版本（物品/效果表提供，用于版本过滤）。 */
-  since?: number;
 }
 
 const props = withDefaults(
@@ -20,22 +18,16 @@ const props = withDefaults(
     placeholder?: string;
     /** 额外允许的选项（与 options 合并去重，如村民交易的 emerald）。 */
     extraIds?: string[];
-    /** 版本上限（主版本号，如 20 = ≤1.20.x；null = 不过滤）。 */
-    maxVersion?: number | null;
     /** 宽度上限（宽面板场景可放宽）。 */
     maxWidth?: string;
     /** 允许自由输入：输入文本即为值（非列表项原样保留，精确匹配时归一化为 id）。 */
     allowCustom?: boolean;
-    /** 选项是否需要 since 字段过滤（物品/效果表有此字段；实体表无）。 */
-    filterByVersion?: boolean;
   }>(),
   {
     placeholder: "搜索…",
     extraIds: () => [],
-    maxVersion: null,
     maxWidth: "220px",
     allowCustom: false,
-    filterByVersion: true,
   },
 );
 
@@ -63,12 +55,9 @@ watch(
 const matches = computed(() => {
   const kw = keyword.value.trim().toLowerCase();
   if (!kw) return [];
-  const filtered = props.options.filter((o) => {
-    if (props.filterByVersion && props.maxVersion !== null && (o.since ?? 13) > props.maxVersion) {
-      return false;
-    }
-    return o.id.includes(kw) || o.name.toLowerCase().includes(kw);
-  });
+  const filtered = props.options.filter(
+    (o) => o.id.includes(kw) || o.name.toLowerCase().includes(kw),
+  );
   const extras = props.extraIds
     .filter((id) => id.includes(kw) && !filtered.some((o) => o.id === id))
     .map((id) => ({ id, name: nameOf(id) }));

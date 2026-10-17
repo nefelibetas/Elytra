@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 生物 NBT 生成：选实体 → 通用 NBT 快捷项（无 AI/无敌/静音/名字/血量…）+ 村民特化（职业/交易）
 // + 附加 NBT → 输出实体 NBT 片段（供 /summon 等场景粘贴）与完整 /summon 命令。
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { Copy } from "@lucide/vue";
 import CheckToggle from "../common/CheckToggle.vue";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
@@ -9,12 +9,19 @@ import SearchSelect from "./SearchSelect.vue";
 import VillagerTradeEditor from "./VillagerTradeEditor.vue";
 import { buildVillagerNbt, VILLAGER_PROFESSIONS, VILLAGER_TYPES, type VillagerTrade } from "../../utils/nbt";
 import { normalizeNbtFragment, checkNbtFragment } from "../../utils/nbtText";
-import { GIVE_FORMAT_OPTIONS, type GiveFormat } from "../../utils/give";
+import { GIVE_VERSION_OPTIONS, DEFAULT_GIVE_VERSION, maxVersionOf, type GiveVersion } from "../../utils/give";
 import { SUMMON_ENTITIES } from "../../utils/commands";
 import { copyText } from "../../utils/clipboard";
 
-const form = ref<GiveFormat>("modern");
-const formatOptions: SelOption[] = GIVE_FORMAT_OPTIONS.map((o) => ({
+const version = ref<GiveVersion>(DEFAULT_GIVE_VERSION);
+const maxVersion = computed(() => maxVersionOf(version.value));
+/** NoAI/Silent/Invulnerable/PersistenceRequired 自 1.8 起。 */
+const entityFlagsSupported = computed(() => maxVersion.value >= 8);
+/** Glowing 自 1.9 起。 */
+const glowingSupported = computed(() => maxVersion.value >= 9);
+/** NoGravity 在 1.10 起对所有实体生效。 */
+const noGravitySupported = computed(() => maxVersion.value >= 10);
+const versionOptions: SelOption[] = GIVE_VERSION_OPTIONS.map((o) => ({
   value: o.value,
   label: o.label,
 }));
@@ -35,10 +42,15 @@ const health = ref(0);
 
 // 村民特化（实体 == villager 时显示）
 const era = ref<"1.14+" | "pre1.14">("1.14+");
-const eraOptions: SelOption[] = [
-  { value: "1.14+", label: "1.14+（职业/等级体系）" },
-  { value: "pre1.14", label: "1.13 及以下（纯 Offers 交易）" },
-];
+const eraOptions = computed<SelOption[]>(() => {
+  const pre = { value: "pre1.14", label: "1.13 及以下（纯 Offers 交易）" };
+  return maxVersionOf(version.value) < 14
+    ? [pre]
+    : [{ value: "1.14+", label: "1.14+（职业/等级体系）" }, pre];
+});
+watch(version, (v) => {
+  if (maxVersionOf(v) < 14) era.value = "pre1.14";
+});
 const professionOptions: SelOption[] = VILLAGER_PROFESSIONS.map((p) => ({
   value: p.id,
   label: p.name,
@@ -63,19 +75,19 @@ function jsonStr(s: string): string {
 /** 实体 NBT 内文（各段拼接；为空时输出无 NBT）。 */
 const nbtBody = computed(() => {
   const parts: string[] = [];
-  if (noAI.value) parts.push("NoAI:1b");
-  if (invulnerable.value) parts.push("Invulnerable:1b");
-  if (silent.value) parts.push("Silent:1b");
-  if (persist.value) parts.push("PersistenceRequired:1b");
-  if (glowing.value) parts.push("Glowing:1b");
-  if (noGravity.value) parts.push("NoGravity:1b");
+  if (noAI.value && entityFlagsSupported.value) parts.push("NoAI:1b");
+  if (invulnerable.value && entityFlagsSupported.value) parts.push("Invulnerable:1b");
+  if (silent.value && entityFlagsSupported.value) parts.push("Silent:1b");
+  if (persist.value && entityFlagsSupported.value) parts.push("PersistenceRequired:1b");
+  if (glowing.value && glowingSupported.value) parts.push("Glowing:1b");
+  if (noGravity.value && noGravitySupported.value) parts.push("NoGravity:1b");
   const name = customName.value.trim();
   if (name) parts.push(`CustomName:'"${jsonStr(name)}"'`);
   if (health.value > 0) parts.push(`Health:${health.value}f`);
   if (entityId.value === "villager") {
     const villager = buildVillagerNbt(
       { era: era.value, profession: profession.value, type: type.value, level: level.value, trades: trades.value },
-      form.value,
+      version.value,
     );
     if (villager) parts.push(villager);
   }
@@ -100,12 +112,12 @@ async function copy(text: string, label: string) {
     </div>
 
     <div class="nb-row">
-      <span class="nb-label">命令格式</span>
+      <span class="nb-label">版本区间</span>
       <DropSelect
-        :model-value="form"
-        :options="formatOptions"
-        width="200px"
-        @update:model-value="(v: string) => (form = v as GiveFormat)"
+        :model-value="version"
+        :options="versionOptions"
+        width="230px"
+        @update:model-value="(v: string) => (version = v as GiveVersion)"
       />
     </div>
 
@@ -123,12 +135,13 @@ async function copy(text: string, label: string) {
     <div class="nb-sec">
       <div class="nb-sec-title">通用 NBT</div>
       <div class="nb-checks">
-        <CheckToggle v-model="noAI" :size="14">无 AI</CheckToggle>
-        <CheckToggle v-model="invulnerable" :size="14">无敌</CheckToggle>
-        <CheckToggle v-model="silent" :size="14">静音</CheckToggle>
-        <CheckToggle v-model="persist" :size="14">不消失</CheckToggle>
-        <CheckToggle v-model="glowing" :size="14">发光</CheckToggle>
-        <CheckToggle v-model="noGravity" :size="14">无重力</CheckToggle>
+        <CheckToggle v-if="entityFlagsSupported" v-model="noAI" :size="14">无 AI</CheckToggle>
+        <CheckToggle v-if="entityFlagsSupported" v-model="invulnerable" :size="14">无敌</CheckToggle>
+        <CheckToggle v-if="entityFlagsSupported" v-model="silent" :size="14">静音</CheckToggle>
+        <CheckToggle v-if="entityFlagsSupported" v-model="persist" :size="14">不消失</CheckToggle>
+        <CheckToggle v-if="glowingSupported" v-model="glowing" :size="14">发光</CheckToggle>
+        <CheckToggle v-if="noGravitySupported" v-model="noGravity" :size="14">无重力</CheckToggle>
+        <span v-if="!entityFlagsSupported" class="nb-hint">1.7.10 仅支持自定义名/血量</span>
       </div>
       <div class="nb-row">
         <span class="nb-label">自定义名</span>
@@ -178,7 +191,7 @@ async function copy(text: string, label: string) {
       <VillagerTradeEditor
         v-if="era === 'pre1.14' || (profession !== 'none' && profession !== 'nitwit')"
         :trades="trades"
-        :format="form"
+        :version="version"
         :profession="profession"
         :level="level"
       />

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 物品 NBT 生成：搜索选择物品 → 配置（名称颜色/背景故事/附魔/属性/选项/附加 NBT）→ 输出单个物品栈片段（供村民交易等 NBT 场景引用）。
-// 语法双口径：1.20.5+ 组件 / 1.13–1.20.4 NBT；物品 ID 用 1.13+ 命名空间，1.12 及以下数字 ID 不支持。
-import { computed, ref } from "vue";
+// 版本区间决定语法与可用选项（1.7.10–1.20.4 为 NBT；1.20.5+ 为组件）。
+import { computed, ref, watch } from "vue";
 import { Copy, Plus, Trash2 } from "@lucide/vue";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
 import CheckToggle from "../common/CheckToggle.vue";
@@ -10,19 +10,32 @@ import FireworkEditor from "./FireworkEditor.vue";
 import PotionEditor from "./PotionEditor.vue";
 import {
   GIVE_ITEMS, ENCHANTMENTS, ATTRIBUTES,
-  GIVE_FORMAT_OPTIONS, buildTradeItem, filterEnchantsByVersion,
-  type GiveFormat, type EnchantInput, type AttributeInput,
+  GIVE_VERSION_OPTIONS, DEFAULT_GIVE_VERSION, buildTradeItem,
+  filterEnchantsByVersion, filterAttributesByVersion,
+  supportsHexColor, syntaxOfVersion, maxVersionOf,
+  type GiveVersion, type EnchantInput, type AttributeInput,
 } from "../../utils/give";
 import { checkNbtFragment, parseItemStackFragment } from "../../utils/nbtText";
 import { MC_COLORS, MC_COLOR_KEYS, MC_COLOR_NAMES, hexToSectionX } from "../../utils/motd";
 import { copyText } from "../../utils/clipboard";
 
-/** 语法格式（modern = 1.20.5+ 组件 / legacy = 1.13–1.20.4 NBT）。 */
-const format = ref<GiveFormat>("modern");
-const formatOptions: SelOption[] = GIVE_FORMAT_OPTIONS.map((o) => ({
+/** 目标版本区间（决定语法与可用 NBT）。 */
+const version = ref<GiveVersion>(DEFAULT_GIVE_VERSION);
+const versionOptions: SelOption[] = GIVE_VERSION_OPTIONS.map((o) => ({
   value: o.value,
   label: o.label,
 }));
+const syntax = computed(() => syntaxOfVersion(version.value));
+const hexColorSupported = computed(() => supportsHexColor(version.value));
+/** 1.13 前使用扁平化前物品 ID/Damage。 */
+const legacyItems = computed(() => maxVersionOf(version.value) < 13);
+/** Unbreakable / HideFlags 自 1.8 起存在。 */
+const unbreakableSupported = computed(() => maxVersionOf(version.value) >= 8);
+/** Potion 标签自 1.9 起；更早版本药水类型由 Damage 决定。 */
+const potionEditorSupported = computed(() => maxVersionOf(version.value) >= 9);
+const versionRange = computed(
+  () => GIVE_VERSION_OPTIONS.find((o) => o.value === version.value)?.range ?? version.value,
+);
 
 /** 物品 ID（搜索选择；空串 = 未选）。 */
 const itemId = ref("");
@@ -62,7 +75,7 @@ const newEnch = ref("");
 const newEnchLevel = ref(1);
 
 const enchOptions = computed<SelOption[]>(() =>
-  filterEnchantsByVersion(ENCHANTMENTS, format.value).map((e) => ({
+  filterEnchantsByVersion(ENCHANTMENTS, version.value).map((e) => ({
     value: e.id,
     label: `${e.name}（原版最高 ${e.max}）`,
   })),
@@ -94,13 +107,16 @@ const attributes = ref<AttributeInput[]>([]);
 const newAttr = ref("");
 const newAttrAmount = ref(1);
 
-const attrOptions: SelOption[] = ATTRIBUTES.map((a) => ({
-  value: a.id,
-  label: a.name,
-}));
+const attrOptions = computed<SelOption[]>(() =>
+  filterAttributesByVersion(ATTRIBUTES, version.value).map((a) => ({
+    value: a.id,
+    label: a.name,
+  })),
+);
 
 function addAttribute() {
   if (!newAttr.value) return;
+  if (!attrOptions.value.some((o) => o.value === newAttr.value)) return;
   attributes.value.push({ id: newAttr.value, amount: newAttrAmount.value });
   newAttr.value = "";
   newAttrAmount.value = 1;
@@ -114,15 +130,31 @@ function attributeName(id: string): string {
   return ATTRIBUTES.find((a) => a.id === id)?.name ?? id;
 }
 
+/** 切换版本区间：丢弃该档不存在的附魔/属性与 §x 颜色。 */
+function onVersionChange(v: string) {
+  version.value = v as GiveVersion;
+  const enchantIds = new Set(filterEnchantsByVersion(ENCHANTMENTS, version.value).map((e) => e.id));
+  enchantments.value = enchantments.value.filter((e) => enchantIds.has(e.id));
+  if (newEnch.value && !enchantIds.has(newEnch.value)) newEnch.value = "";
+  const attrIds = new Set(attrOptions.value.map((o) => o.value));
+  attributes.value = attributes.value.filter((a) => attrIds.has(a.id));
+  if (newAttr.value && !attrIds.has(newAttr.value)) newAttr.value = "";
+  if (!hexColorSupported.value && colorCode.value.startsWith("§x")) colorCode.value = "";
+  if (!unbreakableSupported.value) {
+    unbreakable.value = false;
+    hideTooltip.value = false;
+  }
+}
+
 // ── 自定义 NBT 与输出 ──
 // 附加内容（两档分开保存，切档不丢）：按物品栈/组件语法写（modern `"minecraft:key":value` / legacy `Key:value`）。
 const rawModern = ref("");
 const rawLegacy = ref("");
 
 const rawText = computed({
-  get: () => (format.value === "modern" ? rawModern.value : rawLegacy.value),
+  get: () => (syntax.value === "modern" ? rawModern.value : rawLegacy.value),
   set: (v: string) => {
-    if (format.value === "modern") rawModern.value = v;
+    if (syntax.value === "modern") rawModern.value = v;
     else rawLegacy.value = v;
   },
 });
@@ -130,13 +162,16 @@ const rawText = computed({
 const rawError = computed(() => (rawText.value.trim() ? checkNbtFragment(rawText.value) : null));
 
 const rawPlaceholder = computed(() =>
-  format.value === "modern"
+  syntax.value === "modern"
     ? '附加组件（如 "minecraft:custom_model_data":7）'
     : "附加 NBT（如 CustomModelData:7）",
 );
 
 /** 烟花/药水专有编辑器产出的附加内文（随物品与格式；无条件块时为空）。 */
 const editorInner = ref("");
+watch([itemId, version], () => {
+  editorInner.value = "";
+});
 /** 当前物品对应的专用编辑器类型（映射 give 物品 id）。 */
 const editorKind = computed<"firework" | "potion" | null>(() => {
   if (!itemId.value) return null;
@@ -158,20 +193,20 @@ function currentMods() {
     enchantments: enchantments.value,
     attributes: attributes.value,
     rawModern:
-      format.value === "modern"
+      syntax.value === "modern"
         ? [editorInner.value.trim(), rawModern.value.trim()].filter((x) => x).join(",")
         : rawModern.value,
     rawLegacy:
-      format.value === "legacy"
+      syntax.value === "legacy"
         ? [editorInner.value.trim(), rawLegacy.value.trim()].filter((x) => x).join(",")
         : rawLegacy.value,
   };
 }
 
-/** 单个物品栈片段：与村民交易槽同一构建（含组件/NBT 双档）。 */
+/** 单个物品栈片段：与村民交易槽同一构建（按版本区间输出）。 */
 const output = computed(() => {
   if (!itemId.value) return "";
-  return buildTradeItem(itemId.value, 1, currentMods(), format.value);
+  return buildTradeItem(itemId.value, 1, currentMods(), version.value);
 });
 
 /** 附加 NBT 输入：粘贴完整物品栈片段（含 id）时自动导入——回填物品与组件内文，避免把整栈误当附加段。
@@ -198,12 +233,12 @@ async function copyOutput() {
     </div>
 
     <div class="give-row">
-      <span class="give-label">命令格式</span>
+      <span class="give-label">版本区间</span>
       <DropSelect
-        :model-value="format"
-        :options="formatOptions"
-        width="200px"
-        @update:model-value="(v: string) => (format = v as GiveFormat)"
+        :model-value="version"
+        :options="versionOptions"
+        width="230px"
+        @update:model-value="onVersionChange"
       />
     </div>
 
@@ -213,7 +248,6 @@ async function copyOutput() {
         <SearchSelect
           v-model="itemId"
           :options="GIVE_ITEMS"
-          :max-version="format === 'legacy' ? 20 : 21"
           placeholder="搜索物品（ID 或中文名）…"
           max-width="360px"
         />
@@ -224,15 +258,18 @@ async function copyOutput() {
       <FireworkEditor
         v-if="editorKind === 'firework'"
         :item-kind="itemId"
-        :format="format"
+        :version="version"
         @update:inner="(v: string) => (editorInner = v)"
       />
       <PotionEditor
-        v-else-if="editorKind === 'potion'"
+        v-else-if="editorKind === 'potion' && potionEditorSupported"
         :item-kind="itemId"
-        :format="format"
+        :version="version"
         @update:inner="(v: string) => (editorInner = v)"
       />
+      <div v-else-if="editorKind === 'potion'" class="give-hint">
+        1.9 之前的药水类型由物品 Damage 决定，当前只生成 1.9+ 的药水标签
+      </div>
 
       <div class="give-sec">
         <div class="give-row">
@@ -253,6 +290,7 @@ async function copyOutput() {
             @click="colorCode = `§${key}`"
           />
           <input
+            v-if="hexColorSupported"
             type="color"
             class="give-color-custom"
             :value="customColor"
@@ -283,10 +321,11 @@ async function copyOutput() {
             autocomplete="off"
           ></textarea>
         </div>
-        <div class="give-checks">
+        <div v-if="unbreakableSupported" class="give-checks">
           <CheckToggle v-model="unbreakable" :size="14">破坏无效</CheckToggle>
           <CheckToggle v-model="hideTooltip" :size="14">隐藏信息框</CheckToggle>
         </div>
+        <div v-else class="give-hint">1.7.10 无 Unbreakable/HideFlags</div>
       </div>
 
       <div class="give-sec">
@@ -343,7 +382,7 @@ async function copyOutput() {
 
       <div class="give-output">
         <div class="give-output-head">
-          <span>物品栈片段（{{ format === "modern" ? "1.20.5+" : "1.13–1.20.4" }}）</span>
+          <span>物品栈片段（{{ versionRange }}）</span>
           <button class="tool-btn give-copy-btn" @click="copyOutput">
             <Copy :size="14" />
             复制
@@ -364,10 +403,16 @@ async function copyOutput() {
         <p v-if="rawError" class="give-raw-err">{{ rawError }}</p>
         <code class="gen-output gen-output-cmd">{{ output }}</code>
         <div class="give-hint">
-          片段可直接粘贴到村民交易的「自定义 NBT」等 NBT 场景（任选一种语法档）
+          片段可直接粘贴到村民交易的「自定义 NBT」等 NBT 场景
         </div>
-        <div v-if="format === 'legacy' && attributes.length > 0" class="give-hint">
-          属性修饰符每次生成随机 UUID（避免多次引用相同属性不叠加）
+        <div v-if="syntax === 'legacy'" class="give-hint">
+          旧版物品栈的自定义数据位于 tag 内；粘贴到 /give 附加段时会自动提取内层
+        </div>
+        <div v-if="legacyItems" class="give-hint">
+          1.13 前使用扁平化前物品 ID/Damage；未映射或该版本之后新增的物品不可用
+        </div>
+        <div v-if="attributes.length > 0" class="give-hint">
+          属性修饰符使用随机 UUID/id，避免同属性修饰不叠加
         </div>
       </div>
     </template>

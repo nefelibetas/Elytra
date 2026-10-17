@@ -7,12 +7,12 @@ import DropSelect, { type SelOption } from "../common/DropSelect.vue";
 import CheckToggle from "../common/CheckToggle.vue";
 import { FIREWORK_SHAPES, fireworkRawInner, rgbToInt, type FireworkExplosion } from "../../utils/nbt";
 import { MC_COLORS, MC_COLOR_KEYS, MC_COLOR_NAMES } from "../../utils/motd";
-import type { GiveFormat } from "../../utils/give";
+import type { GiveVersion } from "../../utils/give";
 
 const props = defineProps<{
   /** 由外部物品 id 决定：firework_rocket / firework_star。 */
   itemKind: string;
-  format: GiveFormat;
+  version: GiveVersion;
 }>();
 
 const emit = defineEmits<{ (e: "update:inner", v: string): void }>();
@@ -63,9 +63,9 @@ function colorKeys(colors: number[]): string[] {
   return MC_COLOR_KEYS.filter((k) => colors.includes(rgbToInt(MC_COLORS[k])));
 }
 
-/** 输出内文（随物品类型/格式/爆炸列表变化）。 */
+/** 输出内文（随物品类型/版本/爆炸列表变化）。 */
 watch(
-  [() => props.itemKind, () => props.format, flight, explosions],
+  [() => props.itemKind, () => props.version, flight, explosions],
   () => {
     emit(
       "update:inner",
@@ -76,7 +76,7 @@ watch(
           explosions: explosions.value,
           count: 1,
         },
-        props.format,
+        props.version,
       ),
     );
   },

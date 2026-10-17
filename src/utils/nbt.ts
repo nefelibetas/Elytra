@@ -1,6 +1,9 @@
-// NBT 构造器：药水/烟花/村民交易，双版本命令（legacy = 1.13–1.20.4 NBT；modern = 1.20.5+ 组件，仅物品槽格式变化：{id,count} 无 b 后缀）。
+// NBT 构造器：药水/烟花/村民交易，按版本区间输出（1.7.10–1.20.4 为 NBT；1.20.5 起组件）。
 
-import { GIVE_ITEMS, buildTradeItem, EMPTY_MODS, type ItemMods, type GiveFormat } from "./give";
+import {
+  GIVE_ITEMS, buildTradeItem, EMPTY_MODS, legacyItemRef, maxVersionOf, syntaxOfVersion,
+  type GiveVersion, type ItemMods,
+} from "./give";
 
 // ── 公共助手 ──
 
@@ -21,14 +24,14 @@ export interface PotionEffect {
   id: string;
   name: string;
   numId: number;
-  /** 引入主版本，缺省 13。 */
+  /** 引入主版本，缺省 7（1.7.10 可用的经典效果）。 */
   since?: number;
 }
 
-/** 按格式过滤：legacy ≤1.20.4；modern ≤1.21。 */
-export function filterEffectsByVersion(effects: PotionEffect[], format: GiveFormat): PotionEffect[] {
-  const max = format === "legacy" ? 20 : 21;
-  return effects.filter((e) => (e.since ?? 13) <= max);
+/** 按目标区间过滤状态效果（查表取 since，兼容选项表与已选输入）。 */
+export function filterEffectsByVersion<T extends { id: string }>(effects: T[], version: GiveVersion): T[] {
+  const max = maxVersionOf(version);
+  return effects.filter((e) => (POTION_EFFECTS.find((x) => x.id === e.id)?.since ?? 7) <= max);
 }
 
 export const POTION_EFFECTS: PotionEffect[] = [
@@ -55,15 +58,15 @@ export const POTION_EFFECTS: PotionEffect[] = [
   { id: "health_boost", name: "生命提升", numId: 20 },
   { id: "absorption", name: "伤害吸收", numId: 21 },
   { id: "saturation", name: "饱和", numId: 22 },
-  { id: "glowing", name: "发光", numId: 23 },
-  { id: "levitation", name: "漂浮", numId: 24 },
-  { id: "luck", name: "幸运", numId: 25 },
-  { id: "unluck", name: "霉运", numId: 26 },
-  { id: "slow_falling", name: "缓降", numId: 27 },
-  { id: "conduit_power", name: "潮涌能量", numId: 28 },
-  { id: "dolphins_grace", name: "海豚的恩惠", numId: 29 },
-  { id: "bad_omen", name: "不祥之兆", numId: 30 },
-  { id: "hero_of_the_village", name: "村庄英雄", numId: 31 },
+  { id: "glowing", name: "发光", numId: 23, since: 9 },
+  { id: "levitation", name: "漂浮", numId: 24, since: 9 },
+  { id: "luck", name: "幸运", numId: 25, since: 9 },
+  { id: "unluck", name: "霉运", numId: 26, since: 9 },
+  { id: "slow_falling", name: "缓降", numId: 27, since: 13 },
+  { id: "conduit_power", name: "潮涌能量", numId: 28, since: 13 },
+  { id: "dolphins_grace", name: "海豚的恩惠", numId: 29, since: 13 },
+  { id: "bad_omen", name: "不祥之兆", numId: 30, since: 14 },
+  { id: "hero_of_the_village", name: "村庄英雄", numId: 31, since: 14 },
   { id: "darkness", name: "黑暗", numId: 32 , since: 19},
   { id: "trial_omen", name: "试炼之兆", numId: 33 , since: 21},
   { id: "raid_omen", name: "袭击之兆", numId: 34 , since: 21},
@@ -73,8 +76,15 @@ export const POTION_EFFECTS: PotionEffect[] = [
   { id: "infested", name: "寄生", numId: 38 , since: 21},
 ];
 
-/** 1.20.5+ 需 minecraft: 前缀。 */
-export const POTION_BASES: { id: string; name: string }[] = [
+/** 基础药水（现代组件中的 potion 值需 minecraft: 前缀）。 */
+export interface PotionBase {
+  id: string;
+  name: string;
+  /** 引入主版本，缺省 7（1.7.10 可用的经典药水）。 */
+  since?: number;
+}
+
+export const POTION_BASES: PotionBase[] = [
   { id: "swiftness", name: "迅捷" },
   { id: "slowness", name: "缓慢" },
   { id: "strength", name: "力量" },
@@ -88,14 +98,20 @@ export const POTION_BASES: { id: string; name: string }[] = [
   { id: "water_breathing", name: "水下呼吸" },
   { id: "invisibility", name: "隐身" },
   { id: "night_vision", name: "夜视" },
-  { id: "turtle_master", name: "神龟" },
-  { id: "slow_falling", name: "缓降" },
-  { id: "luck", name: "幸运" },
-  { id: "wind_charged", name: "风击" },
-  { id: "weaving", name: "盘丝" },
-  { id: "oozing", name: "渗浆" },
-  { id: "infestation", name: "寄生" },
+  { id: "turtle_master", name: "神龟", since: 13 },
+  { id: "slow_falling", name: "缓降", since: 13 },
+  { id: "luck", name: "幸运", since: 9 },
+  { id: "wind_charged", name: "风击", since: 21 },
+  { id: "weaving", name: "盘丝", since: 21 },
+  { id: "oozing", name: "渗浆", since: 21 },
+  { id: "infestation", name: "寄生", since: 21 },
 ];
+
+/** 按目标区间过滤基础药水（查表取 since）。 */
+export function filterPotionBasesByVersion<T extends { id: string }>(bases: T[], version: GiveVersion): T[] {
+  const max = maxVersionOf(version);
+  return bases.filter((b) => (POTION_BASES.find((x) => x.id === b.id)?.since ?? 7) <= max);
+}
 
 export const POTION_ITEM_KINDS: { id: string; name: string }[] = [
   { id: "potion", name: "药水" },
@@ -122,24 +138,32 @@ export interface PotionOptions {
   count: number;
 }
 
-export function buildPotionCommand(opts: PotionOptions, format: "legacy" | "modern"): string {
+export function buildPotionCommand(opts: PotionOptions, version: GiveVersion): string {
   const kind = POTION_ITEM_KINDS.some((k) => k.id === opts.itemKind)
     ? opts.itemKind
     : "potion";
   const id = `minecraft:${kind}`;
   const count = Math.max(1, Math.min(64, Math.floor(opts.count) || 1));
-  const suffix = format === "legacy" ? buildPotionLegacy(id, opts) : buildPotionModern(id, opts);
+  const suffix = syntaxOfVersion(version) === "legacy"
+    ? buildPotionLegacy(id, opts, version)
+    : buildPotionModern(id, opts, version);
   return `/give @p ${suffix} ${count}`;
 }
 
 /** 药水 legacy 标签（含显示名）：/give 内文与物品栈共用。 */
-function potionLegacyTags(opts: PotionOptions): string[] {
+function potionLegacyTags(opts: PotionOptions, version: GiveVersion): string[] {
   const tags: string[] = [];
-  if (opts.potionId) {
-    tags.push(`Potion:"minecraft:${opts.potionId}"`);
+  const max = maxVersionOf(version);
+  const potionId = opts.potionId && (POTION_BASES.find((b) => b.id === opts.potionId)?.since ?? 7) <= max
+    ? opts.potionId
+    : "";
+  // 1.9 起药水类型改用 Potion 标签；更早版本由物品 Damage 决定
+  if (potionId && max >= 9) {
+    tags.push(`Potion:"minecraft:${potionId}"`);
   }
-  if (opts.effects.length > 0) {
-    const list = opts.effects
+  const effects = filterEffectsByVersion(opts.effects, version);
+  if (effects.length > 0) {
+    const list = effects
       .map((e) => {
         const fx = POTION_EFFECTS.find((f) => f.id === e.id);
         const amp = Math.max(0, Math.min(e.amplifier, 255));
@@ -149,8 +173,9 @@ function potionLegacyTags(opts: PotionOptions): string[] {
       .join(",");
     tags.push(`CustomPotionEffects:[${list}]`);
   }
-  if (opts.customColor !== null) {
-    tags.push(`CustomColor:${opts.customColor}`);
+  // 1.9 起自定义液体颜色进入 NBT；1.20.5 前标签名是 CustomPotionColor
+  if (opts.customColor !== null && max >= 9) {
+    tags.push(`CustomPotionColor:${opts.customColor}`);
   }
   const name = `${opts.colorCode}${opts.customName}`.trim();
   if (name) {
@@ -160,17 +185,22 @@ function potionLegacyTags(opts: PotionOptions): string[] {
 }
 
 /** 药水现代组件键值对（含 custom_name）：/give 内文 `k=v` 与物品栈 `"minecraft:k":v` 共用。 */
-function potionModernPairs(opts: PotionOptions): { key: string; value: string }[] {
+function potionModernPairs(opts: PotionOptions, version: GiveVersion): { key: string; value: string }[] {
   const pairs: { key: string; value: string }[] = [];
   const pc: string[] = [];
-  if (opts.potionId) {
-    pc.push(`potion:"minecraft:${opts.potionId}"`);
+  const max = maxVersionOf(version);
+  const potionId = opts.potionId && (POTION_BASES.find((b) => b.id === opts.potionId)?.since ?? 7) <= max
+    ? opts.potionId
+    : "";
+  if (potionId) {
+    pc.push(`potion:"minecraft:${potionId}"`);
   }
   if (opts.customColor !== null) {
     pc.push(`custom_color:${opts.customColor}`);
   }
-  if (opts.effects.length > 0) {
-    const list = opts.effects
+  const effects = filterEffectsByVersion(opts.effects, version);
+  if (effects.length > 0) {
+    const list = effects
       .map((e) => {
         const amp = Math.max(0, Math.min(e.amplifier, 255));
         const dur = Math.max(1, Math.min(Math.floor(e.duration) || 1, 1000000));
@@ -189,31 +219,33 @@ function potionModernPairs(opts: PotionOptions): { key: string; value: string }[
   return pairs;
 }
 
-function buildPotionLegacy(id: string, opts: PotionOptions): string {
-  const tags = potionLegacyTags(opts);
+function buildPotionLegacy(id: string, opts: PotionOptions, version: GiveVersion): string {
+  const tags = potionLegacyTags(opts, version);
   return tags.length > 0 ? `${id}{${tags.join(",")}}` : id;
 }
 
-function buildPotionModern(id: string, opts: PotionOptions): string {
-  const pairs = potionModernPairs(opts);
+function buildPotionModern(id: string, opts: PotionOptions, version: GiveVersion): string {
+  const pairs = potionModernPairs(opts, version);
   return pairs.length > 0 ? `${id}[${pairs.map((p) => `${p.key}=${p.value}`).join(",")}]` : id;
 }
 
 /** 药水物品栈片段（村民交易等场景引用）：modern `{id,count,components:{...}}` / legacy `{id,Count:Nb,标签...}`。 */
-export function buildPotionStack(opts: PotionOptions, format: "legacy" | "modern"): string {
+export function buildPotionStack(opts: PotionOptions, version: GiveVersion): string {
   const kind = POTION_ITEM_KINDS.some((k) => k.id === opts.itemKind) ? opts.itemKind : "potion";
   const id = `minecraft:${kind}`;
   const count = Math.max(1, Math.min(64, Math.floor(opts.count) || 1));
-  if (format === "modern") {
-    const pairs = potionModernPairs(opts);
+  if (syntaxOfVersion(version) === "modern") {
+    const pairs = potionModernPairs(opts, version);
     const comps = pairs.length > 0
       ? `,components:{${pairs.map((p) => `"minecraft:${p.key}":${p.value}`).join(",")}}`
       : "";
     return `{id:"${id}",count:${count}${comps}}`;
   }
-  const tags = potionLegacyTags(opts);
-  const suffix = tags.length > 0 ? `,${tags.join(",")}` : "";
-  return `{id:"${id}",Count:${count}b${suffix}}`;
+  const tags = potionLegacyTags(opts, version);
+  const ref = legacyItemRef(kind, version);
+  const damageStr = ref.damage !== 0 ? `,Damage:${ref.damage}s` : "";
+  const tagStr = tags.length > 0 ? `,tag:{${tags.join(",")}}` : "";
+  return `{id:"minecraft:${ref.id}",Count:${count}b${damageStr}${tagStr}}`;
 }
 
 // ── 烟花 ──
@@ -250,11 +282,11 @@ export interface FireworkOptions {
   count: number;
 }
 
-export function buildFireworkCommand(opts: FireworkOptions, format: "legacy" | "modern"): string {
+export function buildFireworkCommand(opts: FireworkOptions, version: GiveVersion): string {
   const isStar = opts.itemKind === "firework_star";
   const id = `minecraft:${isStar ? "firework_star" : "firework_rocket"}`;
   const count = Math.max(1, Math.min(64, Math.floor(opts.count) || 1));
-  const suffix = format === "legacy"
+  const suffix = syntaxOfVersion(version) === "legacy"
     ? buildFireworkLegacy(id, isStar, opts)
     : buildFireworkModern(id, isStar, opts);
   return `/give @p ${suffix} ${count}`;
@@ -308,11 +340,11 @@ function buildFireworkModern(id: string, isStar: boolean, opts: FireworkOptions)
 }
 
 /** 烟花物品栈片段（村民交易等场景引用）：modern `{id,count,components:{...}}` / legacy `{id,Count:Nb,内文}`。 */
-export function buildFireworkStack(opts: FireworkOptions, format: "legacy" | "modern"): string {
+export function buildFireworkStack(opts: FireworkOptions, version: GiveVersion): string {
   const isStar = opts.itemKind === "firework_star";
   const id = `minecraft:${isStar ? "firework_star" : "firework_rocket"}`;
   const count = Math.max(1, Math.min(64, Math.floor(opts.count) || 1));
-  if (format === "modern") {
+  if (syntaxOfVersion(version) === "modern") {
     const pairs = fireworkModernPairs(isStar, opts);
     const comps = pairs.length > 0
       ? `,components:{${pairs.map((p) => `"minecraft:${p.key}":${p.value}`).join(",")}}`
@@ -320,15 +352,15 @@ export function buildFireworkStack(opts: FireworkOptions, format: "legacy" | "mo
     return `{id:"${id}",count:${count}${comps}}`;
   }
   const inner = fireworkLegacyInner(isStar, opts);
-  return inner
-    ? `{id:"${id}",Count:${count}b,${inner}}`
-    : `{id:"${id}",Count:${count}b}`;
+  const ref = legacyItemRef(isStar ? "firework_star" : "firework_rocket", version);
+  const tagStr = inner ? `,tag:{${inner}}` : "";
+  return `{id:"minecraft:${ref.id}",Count:${count}b${tagStr}}`;
 }
 
 /** 烟花附加内文（并入物品 NBT 生成的附加段）：modern 组件对（`"minecraft:k":v`）/ legacy 标签。 */
-export function fireworkRawInner(opts: FireworkOptions, format: "legacy" | "modern"): string {
+export function fireworkRawInner(opts: FireworkOptions, version: GiveVersion): string {
   const isStar = opts.itemKind === "firework_star";
-  if (format === "modern") {
+  if (syntaxOfVersion(version) === "modern") {
     return fireworkModernPairs(isStar, opts)
       .map((p) => `"minecraft:${p.key}":${p.value}`)
       .join(",");
@@ -337,13 +369,15 @@ export function fireworkRawInner(opts: FireworkOptions, format: "legacy" | "mode
 }
 
 /** 药水附加内文（并入物品 NBT 生成的附加段）：modern 组件对 / legacy 标签。 */
-export function potionRawInner(opts: PotionOptions, format: "legacy" | "modern"): string {
-  if (format === "modern") {
-    return potionModernPairs(opts)
+export function potionRawInner(opts: PotionOptions, version: GiveVersion): string {
+  // 1.9 前药水类型由物品 Damage 决定，当前 UI 不生成该组合
+  if (maxVersionOf(version) < 9) return "";
+  if (syntaxOfVersion(version) === "modern") {
+    return potionModernPairs(opts, version)
       .map((p) => `"minecraft:${p.key}":${p.value}`)
       .join(",");
   }
-  return potionLegacyTags(opts).join(",");
+  return potionLegacyTags(opts, version).join(",");
 }
 
 // ── 村民交易 ──
@@ -412,7 +446,8 @@ export interface VillagerOptions {
 }
 
 /** 村民实体 NBT 内文（不含外层花括号）：`VillagerData:...,Offers:...`；不可用世代仅 Offers，无交易时为空串。 */
-export function buildVillagerNbt(opts: VillagerOptions, format: "legacy" | "modern"): string {
+export function buildVillagerNbt(opts: VillagerOptions, version: GiveVersion): string {
+  const format = syntaxOfVersion(version);
   const tags: string[] = [];
   if (opts.era === "1.14+") {
     const profession = VILLAGER_PROFESSIONS.some((p) => p.id === opts.profession)
@@ -429,15 +464,15 @@ export function buildVillagerNbt(opts: VillagerOptions, format: "legacy" | "mode
       .map((t) => {
         const parts: string[] = [];
         parts.push(
-          `buy:${buildTradeItem(t.buyId, t.buyCount, t.buyMods ?? EMPTY_MODS, format, t.buyRaw?.[format])}`,
+          `buy:${buildTradeItem(t.buyId, t.buyCount, t.buyMods ?? EMPTY_MODS, version, t.buyRaw?.[format])}`,
         );
         if (t.buyBId) {
           parts.push(
-            `buyB:${buildTradeItem(t.buyBId, t.buyBCount, t.buyBMods ?? EMPTY_MODS, format, t.buyBRaw?.[format])}`,
+            `buyB:${buildTradeItem(t.buyBId, t.buyBCount, t.buyBMods ?? EMPTY_MODS, version, t.buyBRaw?.[format])}`,
           );
         }
         parts.push(
-          `sell:${buildTradeItem(t.sellId, t.sellCount, t.sellMods ?? EMPTY_MODS, format, t.sellRaw?.[format])}`,
+          `sell:${buildTradeItem(t.sellId, t.sellCount, t.sellMods ?? EMPTY_MODS, version, t.sellRaw?.[format])}`,
         );
         parts.push(`maxUses:${Math.max(1, Math.min(t.maxUses, 9999))}`);
         parts.push(`rewardExp:${t.rewardExp ? "1b" : "0b"}`);
@@ -449,7 +484,7 @@ export function buildVillagerNbt(opts: VillagerOptions, format: "legacy" | "mode
   return tags.join(",");
 }
 
-export function buildVillagerCommand(opts: VillagerOptions, format: "legacy" | "modern"): string {
-  const body = buildVillagerNbt(opts, format);
+export function buildVillagerCommand(opts: VillagerOptions, version: GiveVersion): string {
+  const body = buildVillagerNbt(opts, version);
   return body.length > 0 ? `/summon villager ~ ~ ~ {${body}}` : "/summon villager ~ ~ ~";
 }

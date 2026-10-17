@@ -7,23 +7,27 @@ import { Plus, Trash2 } from "@lucide/vue";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
 import CheckToggle from "../common/CheckToggle.vue";
 import {
-  POTION_EFFECTS, POTION_BASES, potionRawInner, rgbToInt, filterEffectsByVersion,
+  POTION_EFFECTS, POTION_BASES, potionRawInner, rgbToInt,
+  filterEffectsByVersion, filterPotionBasesByVersion,
   type PotionEffectInput,
 } from "../../utils/nbt";
-import type { GiveFormat } from "../../utils/give";
+import type { GiveVersion } from "../../utils/give";
 
 const props = defineProps<{
   /** 由外部物品 id 决定：potion / splash_potion / lingering_potion / tipped_arrow。 */
   itemKind: string;
-  format: GiveFormat;
+  version: GiveVersion;
 }>();
 
 const emit = defineEmits<{ (e: "update:inner", v: string): void }>();
 
-const baseOptions: SelOption[] = [
+const baseOptions = computed<SelOption[]>(() => [
   { value: "", label: "无（基础药水）" },
-  ...POTION_BASES.map((b) => ({ value: b.id, label: b.name })),
-];
+  ...filterPotionBasesByVersion(POTION_BASES, props.version).map((b) => ({
+    value: b.id,
+    label: b.name,
+  })),
+]);
 
 const potionId = ref("");
 const effects = ref<PotionEffectInput[]>([]);
@@ -32,7 +36,7 @@ const newAmp = ref(1);
 const newDurSec = ref(60);
 
 const effectOptions = computed<SelOption[]>(() =>
-  filterEffectsByVersion(POTION_EFFECTS, props.format).map((e) => ({
+  filterEffectsByVersion(POTION_EFFECTS, props.version).map((e) => ({
     value: e.id,
     label: e.name,
   })),
@@ -71,9 +75,9 @@ function onCustomColor(e: Event) {
   customColor.value = rgbToInt(customColorHex.value);
 }
 
-/** 输出内文（随物品/格式/药水配置变化）。 */
+/** 输出内文（随物品/版本/药水配置变化）。 */
 watch(
-  [() => props.itemKind, () => props.format, potionId, effects, customColor],
+  [() => props.itemKind, () => props.version, potionId, effects, customColor],
   () => {
     emit(
       "update:inner",
@@ -87,11 +91,23 @@ watch(
           colorCode: "",
           count: 1,
         },
-        props.format,
+        props.version,
       ),
     );
   },
   { deep: true, immediate: true },
+);
+
+/** 版本切换：清掉该区间不存在的基础药水与效果。 */
+watch(
+  () => props.version,
+  () => {
+    const bases = new Set(baseOptions.value.map((b) => b.value));
+    if (potionId.value && !bases.has(potionId.value)) potionId.value = "";
+    const ids = new Set(effectOptions.value.map((o) => o.value));
+    effects.value = effects.value.filter((e) => ids.has(e.id));
+    if (newEffect.value && !ids.has(newEffect.value)) newEffect.value = "";
+  },
 );
 </script>
 

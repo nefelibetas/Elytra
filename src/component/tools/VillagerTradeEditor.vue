@@ -9,12 +9,12 @@ import SearchSelect from "./SearchSelect.vue";
 import ModsEditor, { type ModsForm } from "./ModsEditor.vue";
 import { isKnownItem, type SlotRaw, type VillagerTrade } from "../../utils/nbt";
 import { VILLAGER_TRADE_PRESETS } from "../../utils/villagerTrades";
-import { GIVE_ITEMS, ENCHANTMENTS, type ItemMods, type GiveFormat } from "../../utils/give";
+import { GIVE_ITEMS, ENCHANTMENTS, type ItemMods, type GiveVersion } from "../../utils/give";
 
 const props = defineProps<{
   /** 已添加的交易列表（父持有；本组件直接 push/splice）。 */
   trades: VillagerTrade[];
-  format: GiveFormat;
+  version: GiveVersion;
   /** 当前职业/等级：用于原版预设过滤（等级 ≤ 当前）。 */
   profession: string;
   level: number;
@@ -168,7 +168,7 @@ function modsSummary(mods?: ItemMods): string {
     </div>
     <div class="nb-row">
       <span class="nb-label">购买</span>
-      <SearchSelect v-model="buyId" :options="GIVE_ITEMS" :extra-ids="['emerald']" placeholder="绿宝石 / emerald" :max-version="format === 'legacy' ? 20 : 21" />
+      <SearchSelect v-model="buyId" :options="GIVE_ITEMS" :extra-ids="['emerald']" placeholder="绿宝石 / emerald" />
       <span class="nb-label nb-label-short">×</span>
       <input v-model.number="buyCount" type="number" class="nb-num" min="1" max="64" autocomplete="off" />
       <button
@@ -180,10 +180,10 @@ function modsSummary(mods?: ItemMods): string {
         自定义
       </button>
     </div>
-    <ModsEditor v-if="editingKey === 'buy'" :form="modsForms.buy" :format="format" />
+    <ModsEditor v-if="editingKey === 'buy'" :form="modsForms.buy" :version="version" />
     <div class="nb-row">
       <span class="nb-label">第二购买</span>
-      <SearchSelect v-model="buyBId" :options="GIVE_ITEMS" :extra-ids="['emerald']" placeholder="可选，搜索物品" :max-version="format === 'legacy' ? 20 : 21" />
+      <SearchSelect v-model="buyBId" :options="GIVE_ITEMS" :extra-ids="['emerald']" placeholder="可选，搜索物品" />
       <span class="nb-label nb-label-short">×</span>
       <input v-model.number="buyBCount" type="number" class="nb-num" min="1" max="64" autocomplete="off" />
       <button
@@ -195,10 +195,10 @@ function modsSummary(mods?: ItemMods): string {
         自定义
       </button>
     </div>
-    <ModsEditor v-if="editingKey === 'buyB'" :form="modsForms.buyB" :format="format" />
+    <ModsEditor v-if="editingKey === 'buyB'" :form="modsForms.buyB" :version="version" />
     <div class="nb-row">
       <span class="nb-label">出售</span>
-      <SearchSelect v-model="sellId" :options="GIVE_ITEMS" placeholder="书 / book" :max-version="format === 'legacy' ? 20 : 21" />
+      <SearchSelect v-model="sellId" :options="GIVE_ITEMS" placeholder="书 / book" />
       <span class="nb-label nb-label-short">×</span>
       <input v-model.number="sellCount" type="number" class="nb-num" min="1" max="64" autocomplete="off" />
       <button
@@ -210,7 +210,7 @@ function modsSummary(mods?: ItemMods): string {
         自定义
       </button>
     </div>
-    <ModsEditor v-if="editingKey === 'sell'" :form="modsForms.sell" :format="format" />
+    <ModsEditor v-if="editingKey === 'sell'" :form="modsForms.sell" :version="version" />
     <div class="nb-row">
       <span class="nb-label">次数上限</span>
       <input v-model.number="maxUses" type="number" class="nb-num" min="1" max="9999" autocomplete="off" />

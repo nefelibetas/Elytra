@@ -99,7 +99,6 @@ const extraText = computed({
           v-model="sel.type"
           :options="entityOptions"
           :allow-custom="true"
-          :filter-by-version="false"
           placeholder="不限定 / 搜索实体"
           max-width="240px"
         />

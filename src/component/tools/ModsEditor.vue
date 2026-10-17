@@ -2,10 +2,13 @@
 // 交易物品修饰编辑器：名称（16 色/§x 自定义色）+ 附魔列表。
 // form 为父组件 reactive 对象，直接修改其字段（项目内无 props 变更 lint）。
 import { ref } from "vue";
-import { computed } from "vue";
+import { computed, watch } from "vue";
 import { Plus, Trash2 } from "@lucide/vue";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
-import { ENCHANTMENTS, filterEnchantsByVersion, type EnchantInput, type GiveFormat } from "../../utils/give";
+import {
+  ENCHANTMENTS, filterEnchantsByVersion, supportsHexColor, syntaxOfVersion,
+  type EnchantInput, type GiveVersion,
+} from "../../utils/give";
 import { checkNbtFragment } from "../../utils/nbtText";
 import { MC_COLORS, MC_COLOR_KEYS, MC_COLOR_NAMES, hexToSectionX } from "../../utils/motd";
 
@@ -21,15 +24,18 @@ export interface ModsForm {
 
 const props = defineProps<{
   form: ModsForm;
-  /** 命令格式（附魔按版本过滤）。 */
-  format: GiveFormat;
+  /** 目标版本区间（决定语法与可用附魔）。 */
+  version: GiveVersion;
 }>();
+
+const syntax = computed(() => syntaxOfVersion(props.version));
+const hexColorSupported = computed(() => supportsHexColor(props.version));
 
 /** 当前档的自定义 NBT（单框双绑定；换档切到该档原文）。 */
 const raw = computed({
-  get: () => (props.format === "modern" ? props.form.rawModern : props.form.rawLegacy),
+  get: () => (syntax.value === "modern" ? props.form.rawModern : props.form.rawLegacy),
   set: (v: string) => {
-    if (props.format === "modern") props.form.rawModern = v;
+    if (syntax.value === "modern") props.form.rawModern = v;
     else props.form.rawLegacy = v;
   },
 });
@@ -41,15 +47,27 @@ const newEnch = ref("");
 const newEnchLevel = ref(1);
 
 const enchOptions = computed<SelOption[]>(() =>
-  filterEnchantsByVersion(ENCHANTMENTS, props.format).map((e) => ({
+  filterEnchantsByVersion(ENCHANTMENTS, props.version).map((e) => ({
     value: e.id,
     label: `${e.name}（原版最高 ${e.max}）`,
   })),
 );
 
+/** 版本切换：清掉该区间不存在的附魔与 §x 颜色。 */
+watch(
+  () => props.version,
+  () => {
+    const ids = new Set(enchOptions.value.map((o) => o.value));
+    props.form.enchants = props.form.enchants.filter((e) => ids.has(e.id));
+    if (newEnch.value && !ids.has(newEnch.value)) newEnch.value = "";
+    if (!hexColorSupported.value && props.form.colorCode.startsWith("§x")) props.form.colorCode = "";
+  },
+  { immediate: true },
+);
+
 function addEnchant() {
   const item = ENCHANTMENTS.find((e) => e.id === newEnch.value);
-  if (!item) return;
+  if (!item || !enchOptions.value.some((o) => o.value === newEnch.value)) return;
   props.form.enchants.push({
     id: item.id,
     // 附魔等级不受原版上限限制（clamp 到 255 = NBT byte 上限）
@@ -93,6 +111,7 @@ function onCustomColor(e: Event) {
         @click="form.colorCode = `§${key}`"
       />
       <input
+        v-if="hexColorSupported"
         type="color"
         class="me-color-pick"
         :class="{ active: form.colorCode.startsWith('§x') }"
@@ -137,7 +156,7 @@ function onCustomColor(e: Event) {
         rows="2"
         spellcheck="false"
         autocomplete="off"
-        :placeholder="format === 'modern'
+        :placeholder="syntax === 'modern'
           ? '附加组件（如 &quot;minecraft:custom_model_data&quot;:7）；或 {id:...} 完整物品栈覆盖'
           : '附加 NBT（如 CustomModelData:7）；或 {id:...,Count:1b,...} 完整物品栈覆盖'"
       ></textarea>

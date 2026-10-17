@@ -197,6 +197,17 @@ export function parseItemStackFragment(raw: string): ParsedItemStack | null {
 					})
 					.join(",");
 			}
+		} else if (key === "tag") {
+			// 物品栈的自定义数据在 tag 内；/give 的附加段需要内层内容
+			const inner = kv[1].trim();
+			if (inner.startsWith("{") && inner.endsWith("}")) {
+				const tags = inner.slice(1, -1).trim();
+				if (tags) legacyParts.push(tags);
+			} else {
+				legacyParts.push(pair);
+			}
+		} else if (key === "Damage" || key === "Slot") {
+			// 物品栈的耐久/变种与槽位字段，不属于 give 附加标签
 		} else {
 			legacyParts.push(pair);
 		}

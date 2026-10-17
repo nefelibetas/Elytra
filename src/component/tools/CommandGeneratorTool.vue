@@ -107,7 +107,6 @@ for (const def of COMMANDS) valuesFor(def);
           :model-value="String(values[f.key] ?? '')"
           :options="f.options.map((o) => ({ id: o.value, name: o.label }))"
           :allow-custom="f.allowCustom ?? false"
-          :filter-by-version="false"
           :placeholder="'搜索或直接输入…'"
           max-width="360px"
           @update:model-value="(v: string) => (values[f.key] = v)"
