@@ -53,6 +53,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* stylelint-disable-next-line plugin/no-unsupported-browser-features -- 包装层仅承载 Transition，按钮自身仍进无障碍树 */
 .scroll-top-fab-wrap { display: contents; }
 .scroll-top-fab {
   position: fixed; z-index: var(--z-fab, 900);

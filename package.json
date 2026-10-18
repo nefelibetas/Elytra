@@ -4,9 +4,14 @@
   "version": "1.0.0",
   "license": "MIT",
   "type": "module",
+  "browserslist": [
+    "chrome 111",
+    "safari 16.4"
+  ],
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build",
+    "build": "vue-tsc --noEmit && pnpm lint:css && vite build",
+    "lint:css": "stylelint \"src/**/*.{css,vue}\"",
     "preview": "vite preview",
     "tauri": "tauri"
   },
@@ -21,6 +26,9 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.2",
     "@vitejs/plugin-vue": "^6.0.10",
+    "postcss-html": "^2.0.0",
+    "stylelint": "^17.16.0",
+    "stylelint-no-unsupported-browser-features": "^8.1.2",
     "typescript": "~6.0.3",
     "vite": "^8.3.4",
     "vue-tsc": "^3.3.13"

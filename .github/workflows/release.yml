@@ -48,6 +48,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: 前端类型检查
         run: npx vue-tsc --noEmit
+      - name: CSS 兼容性检查（Chrome 111 / Safari 16.4 基线）
+        run: pnpm lint:css
       - name: cargo check
         working-directory: src-tauri
         run: cargo check --lib

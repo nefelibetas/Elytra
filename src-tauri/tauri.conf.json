@@ -48,6 +48,9 @@
       "nsis": {
         "installerHooks": "./windows/hooks.nsh"
       }
+    },
+    "macOS": {
+      "minimumSystemVersion": "13.0"
     }
   },
   "mainBinaryName": "Elytra Launcher"

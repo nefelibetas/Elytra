@@ -8,6 +8,12 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(() => ({
   plugins: [vue()],
 
+  // 浏览器基线：WebView2 / WKWebView / WebKitGTK 2.40（≈ Safari 16.4）。
+  // 显式固定，勿依赖 Vite 默认 target——它随主版本上移会静默抬高前端基线。
+  build: {
+    target: ["chrome111", "safari16.4"],
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors
