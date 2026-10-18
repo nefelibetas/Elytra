@@ -4,7 +4,7 @@ version = "1.0.0"
 description = "A modern, lightweight Minecraft launcher built with Tauri and Rust, providing a great option for Linux and cross-platform users."
 authors = ["BridgeFishDev"]
 edition = "2021"
-license = "MIT"
+license = "GPL-3.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
