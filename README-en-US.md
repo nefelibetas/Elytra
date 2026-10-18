@@ -46,7 +46,7 @@ pnpm tauri build      # release build
 - 🖼️ `src/` — Vue 3 frontend (10 pages + module-level `reactive()` state singletons)
 - 🦀 `src-tauri/` — Rust backend: `commands/` command glue layer, `task/` task manager & download orchestration, `downloader/` pure transport layer (fetch/batch/probe/path-lock), `game/` content & assembly (version metadata, resources, ModLoader, community, modpacks, mod updates), `launcher/` launch build & env prep, `auth/` Microsoft login & skin API, `jdk/` JDK scan & managed runtime download, `online/` EasyTier LAN, `persist/` TOML config & secrets
 - 📚 `docs/` — icon assets and `code-audit.md` (code issue ledger)
-- 📄 `LICENSE` — MIT license
+- 📄 `LICENSE` — GPL-3.0 license
 
 See 📖 [AGENTS.md](AGENTS.md) (repository development guide).
 
@@ -57,4 +57,4 @@ See 📖 [AGENTS.md](AGENTS.md) (repository development guide).
 
 ## 📄 License
 
-Released under the [MIT](LICENSE) license.
+Released under the [GPL-3.0](LICENSE) license.
