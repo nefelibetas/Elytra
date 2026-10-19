@@ -51,10 +51,14 @@ watch(
   { immediate: true },
 );
 
-/** 匹配列表（中文名/ID 模糊匹配；显示条数由面板高度上限滚动，仅防御性割顶）。 */
+/** 未输入时的浏览条数（超大列表一次渲染过多会卡；输入关键字即全量筛选）。 */
+const BROWSE_LIMIT = 200;
+
+/** 匹配列表（中文名/ID 模糊匹配；未输入时展示可浏览列表）。 */
 const matches = computed(() => {
   const kw = keyword.value.trim().toLowerCase();
-  if (!kw) return [];
+  // 未输入关键字也出列表：不熟悉条目的人需要能直接浏览（原实现只在输入后才出结果）
+  if (!kw) return props.options.slice(0, BROWSE_LIMIT);
   const filtered = props.options.filter(
     (o) => o.id.includes(kw) || o.name.toLowerCase().includes(kw),
   );
@@ -71,7 +75,7 @@ function onInput() {
   } else {
     emit("update:modelValue", "");
   }
-  open.value = keyword.value.trim().length > 0;
+  open.value = true;
 }
 
 function pick(id: string) {
@@ -107,7 +111,7 @@ function onBlur() {
         :placeholder="placeholder"
         spellcheck="false"
         @input="onInput"
-        @focus="open = keyword.trim().length > 0"
+        @focus="open = true"
         @blur="onBlur"
         autocomplete="off"
       />

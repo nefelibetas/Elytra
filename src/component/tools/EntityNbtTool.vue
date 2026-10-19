@@ -98,6 +98,13 @@ const nbtBody = computed(() => {
 
 const nbtFragment = computed(() => (nbtBody.value.length > 0 ? `{${nbtBody.value}}` : ""));
 
+/** 完整 /summon 指令（无 NBT 时省略 NBT 段）。 */
+const summonCommand = computed(() => {
+  const id = entityId.value.trim();
+  if (!id) return "";
+  return nbtFragment.value ? `/summon ${id} ~ ~ ~ ${nbtFragment.value}` : `/summon ${id} ~ ~ ~`;
+});
+
 async function copy(text: string, label: string) {
   if (!text) return;
   await copyText(text, label);
@@ -223,6 +230,15 @@ async function copy(text: string, label: string) {
       </button>
     </div>
     <code class="gen-output gen-output-cmd">{{ nbtFragment || "（配置后生成）" }}</code>
+
+    <div class="nb-output-head nb-output-gap">
+      <span>完整指令</span>
+      <button class="tool-btn nb-copy-btn" @click="copy(summonCommand, '指令已复制')">
+        <Copy :size="14" />
+        复制
+      </button>
+    </div>
+    <code class="gen-output gen-output-cmd">{{ summonCommand }}</code>
 
 
   </div>

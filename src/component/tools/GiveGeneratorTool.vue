@@ -223,6 +223,32 @@ async function copyOutput() {
   if (!output.value) return;
   await copyText(output.value, "物品栈片段已复制");
 }
+
+/** 完整指令：按版本档给出带同一物品栈的可用命令（1.13–1.20.4 的 /give 不支持 NBT，用掉落物形式）。 */
+const outputCommand = computed(() => {
+  const frag = output.value;
+  if (!frag) return "";
+  const modern = /^\{id:"([^"]+)",count:(\d+)(?:,components:\{(.*)\})?\}$/s.exec(frag);
+  if (modern) {
+    const [, id, , comps] = modern;
+    return comps ? `/give @p ${id}[${comps}]` : `/give @p ${id}`;
+  }
+  const legacy = /^\{id:"([^"]+)",Count:(\d+)b(?:,Damage:(-?\d+)s)?(?:,tag:\{(.*)\})?\}$/s.exec(frag);
+  if (legacy) {
+    const [, id, count, damage, tag] = legacy;
+    const oldGive = ["1.7.10", "1.8-1.8.9", "1.9-1.10.2", "1.11-1.11.2", "1.12.2"].includes(
+      String(version.value),
+    );
+    if (oldGive) return `/give @p ${id} ${count} ${damage ?? "0"}${tag ? ` {${tag}}` : ""}`;
+    return `/summon item ~ ~ ~ {Item:${frag}}`;
+  }
+  return "";
+});
+
+async function copyCommand() {
+  if (!outputCommand.value) return;
+  await copyText(outputCommand.value, "指令已复制");
+}
 </script>
 
 <template>
@@ -402,6 +428,14 @@ async function copyOutput() {
         </div>
         <p v-if="rawError" class="give-raw-err">{{ rawError }}</p>
         <code class="gen-output gen-output-cmd">{{ output }}</code>
+        <div class="give-output-head nb-output-gap">
+          <span>完整指令（{{ versionRange }}）</span>
+          <button class="tool-btn give-copy-btn" @click="copyCommand">
+            <Copy :size="14" />
+            复制
+          </button>
+        </div>
+        <code class="gen-output gen-output-cmd">{{ outputCommand || "（配置后生成）" }}</code>
         <div class="give-hint">
           片段可直接粘贴到村民交易的「自定义 NBT」等 NBT 场景
         </div>
