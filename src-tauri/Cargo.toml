@@ -124,6 +124,7 @@ tempfile = "3"
 [profile.release]
 codegen-units = 1
 lto = true
-opt-level = 3
-panic = "abort"
+# 体积优先（Tauri 指南）：启动器无 CPU 密集热路径，体积收益大于性能损失
+opt-level = "s"
+# panic 保持默认 unwind：downloader/batch.rs 依赖 JoinError（worker panic 转任务错误），abort 会让 worker panic 直接终止进程
 strip = true
