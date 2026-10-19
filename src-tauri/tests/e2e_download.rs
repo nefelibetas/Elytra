@@ -81,10 +81,7 @@ async fn run_task_cancel_path() {
         TaskStatus::Cancelled,
         "取消令牌预置时应走 Cancelled 收口"
     );
-    assert!(
-        !task::global().exists(&task_id),
-        "终态收口应移除任务注册"
-    );
+    assert!(!task::global().exists(&task_id), "终态收口应移除任务注册");
     assert!(
         rec.saw("task-progress"),
         "应至少发出一次进度事件（阶段 A/B 的 set_phase/step_done）"
@@ -119,7 +116,10 @@ fn spawn_task_with_sink_registers_and_runs() {
     .expect("spawn 应成功");
 
     assert!(ran.load(Ordering::SeqCst), "执行闭包应被同步调用");
-    assert!(task::global().exists(&task_id), "闭包未收口时任务应仍在注册表");
+    assert!(
+        task::global().exists(&task_id),
+        "闭包未收口时任务应仍在注册表"
+    );
     assert!(
         task::store::load_spec(&task_id).is_some(),
         "spawn 应写入恢复快照（load_spec 命中）"
@@ -151,9 +151,6 @@ async fn run_task_full_download() {
         "完整下载应成功收口（实际 {final_status:?}，error={:?}）",
         progress.lock().error
     );
-    assert!(
-        !task::global().exists(&task_id),
-        "终态收口应移除任务注册"
-    );
+    assert!(!task::global().exists(&task_id), "终态收口应移除任务注册");
     assert!(rec.saw("task-progress"), "应发出进度事件");
 }

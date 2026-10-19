@@ -55,7 +55,9 @@ async fn serve(
     support_range: bool,
     pace: Option<(usize, Duration)>,
 ) -> (String, Arc<AtomicUsize>) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("绑定本地端口");
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("绑定本地端口");
     let addr = listener.local_addr().unwrap();
     let hits = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&hits);
@@ -170,11 +172,7 @@ fn find(id: &str) -> ToolDlSnapshot {
 }
 
 /// 轮询等待任务满足条件（避免固定 sleep 造成的抖动）。
-async fn wait_for(
-    id: &str,
-    timeout: Duration,
-    pred: impl Fn(&ToolDlSnapshot) -> bool,
-) -> bool {
+async fn wait_for(id: &str, timeout: Duration, pred: impl Fn(&ToolDlSnapshot) -> bool) -> bool {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
         if let Some(task) = tooldl::list().into_iter().find(|t| t.id == id) {
@@ -197,20 +195,35 @@ async fn enqueue_segmented_download_completes_with_progress_events() {
     let sink = Arc::new(RecordingSink::default());
 
     tooldl::set_max_files(2);
-    let ids = tooldl::enqueue(sink.clone(), vec![url], dir.to_string_lossy().to_string(), 4).expect("入队");
+    let ids = tooldl::enqueue(
+        sink.clone(),
+        vec![url],
+        dir.to_string_lossy().to_string(),
+        4,
+    )
+    .expect("入队");
     assert_eq!(ids.len(), 1);
     let id = &ids[0];
 
     assert!(
-        wait_for(id, Duration::from_secs(60), |t| t.status == ToolDlStatus::Done).await,
+        wait_for(id, Duration::from_secs(60), |t| t.status
+            == ToolDlStatus::Done)
+        .await,
         "任务应在超时内完成，当前状态 {:?}",
-        tooldl::list().into_iter().find(|t| t.id == *id).map(|t| t.status)
+        tooldl::list()
+            .into_iter()
+            .find(|t| t.id == *id)
+            .map(|t| t.status)
     );
 
     let snap = find(id);
     assert!(snap.ranged, "服务端支持 Range 时应走分段");
     assert_eq!(snap.segments, 4, "应按请求切 4 段");
-    assert_eq!(snap.downloaded, body.len() as u64, "完成字节数应等于文件长度");
+    assert_eq!(
+        snap.downloaded,
+        body.len() as u64,
+        "完成字节数应等于文件长度"
+    );
     assert_eq!(
         std::fs::read(&snap.dest).expect("读回下载文件"),
         body,
@@ -238,14 +251,24 @@ async fn enqueue_segmented_download_completes_with_progress_events() {
 async fn pause_keeps_partial_then_resume_finishes() {
     let _guard = TEST_LOCK.lock();
     let body = sample_bytes(8 * 1024 * 1024);
-    let (url, _) = serve(body.clone(), true, Some((32 * 1024, Duration::from_millis(20)))).await;
+    let (url, _) = serve(
+        body.clone(),
+        true,
+        Some((32 * 1024, Duration::from_millis(20))),
+    )
+    .await;
     let dir = temp_dir("pause");
     let sink = Arc::new(RecordingSink::default());
 
     tooldl::set_max_files(2);
-    let id = tooldl::enqueue(sink.clone(), vec![url], dir.to_string_lossy().to_string(), 4)
-        .expect("入队")
-        .remove(0);
+    let id = tooldl::enqueue(
+        sink.clone(),
+        vec![url],
+        dir.to_string_lossy().to_string(),
+        4,
+    )
+    .expect("入队")
+    .remove(0);
 
     assert!(
         wait_for(&id, Duration::from_secs(30), |t| {
@@ -257,7 +280,9 @@ async fn pause_keeps_partial_then_resume_finishes() {
 
     tooldl::pause(&id).expect("暂停请求");
     assert!(
-        wait_for(&id, Duration::from_secs(30), |t| t.status == ToolDlStatus::Paused).await,
+        wait_for(&id, Duration::from_secs(30), |t| t.status
+            == ToolDlStatus::Paused)
+        .await,
         "应进入暂停态，当前 {:?}",
         find(&id).status
     );
@@ -275,7 +300,9 @@ async fn pause_keeps_partial_then_resume_finishes() {
 
     tooldl::resume(sink.clone(), &id).expect("继续");
     assert!(
-        wait_for(&id, Duration::from_secs(180), |t| t.status == ToolDlStatus::Done).await,
+        wait_for(&id, Duration::from_secs(180), |t| t.status
+            == ToolDlStatus::Done)
+        .await,
         "续传应完成，当前 {:?}",
         find(&id).status
     );
@@ -317,7 +344,9 @@ async fn cancel_cleans_partial_files() {
 
     tooldl::cancel(&id).expect("取消");
     assert!(
-        wait_for(&id, Duration::from_secs(30), |t| t.status == ToolDlStatus::Cancelled).await,
+        wait_for(&id, Duration::from_secs(30), |t| t.status
+            == ToolDlStatus::Cancelled)
+        .await,
         "应进入取消态，当前 {:?}",
         find(&id).status
     );
@@ -352,7 +381,9 @@ async fn falls_back_to_single_connection() {
         .remove(0);
 
     assert!(
-        wait_for(&id, Duration::from_secs(60), |t| t.status == ToolDlStatus::Done).await,
+        wait_for(&id, Duration::from_secs(60), |t| t.status
+            == ToolDlStatus::Done)
+        .await,
         "回退下载应完成"
     );
 
@@ -381,7 +412,9 @@ async fn real_network_segmented_download() {
         .remove(0);
 
     assert!(
-        wait_for(&id, Duration::from_secs(300), |t| t.status == ToolDlStatus::Done).await,
+        wait_for(&id, Duration::from_secs(300), |t| t.status
+            == ToolDlStatus::Done)
+        .await,
         "真实下载应完成，当前 {:?}",
         find(&id).status
     );
@@ -392,11 +425,7 @@ async fn real_network_segmented_download() {
         snap.ranged, snap.segments, snap.downloaded, snap.speed
     );
     assert!(snap.ranged, "10Mb.dat 实测支持 Range，应走分段");
-    assert!(
-        snap.segments > 1,
-        "应实际切了多段，实际 {}",
-        snap.segments
-    );
+    assert!(snap.segments > 1, "应实际切了多段，实际 {}", snap.segments);
     let meta = std::fs::metadata(&snap.dest).expect("目标文件");
     assert_eq!(meta.len(), 10 * 1024 * 1024, "下载结果大小应为 10 MiB");
 
@@ -437,11 +466,16 @@ async fn segment_plan_visible_while_downloading() {
         mid.ranged,
         "下载途中就必须已标记为分段，实际 snapshot = {mid:?}"
     );
-    assert_eq!(mid.segments, 4, "下载途中应显示实际段数（而非请求值/占位值）");
+    assert_eq!(
+        mid.segments, 4,
+        "下载途中应显示实际段数（而非请求值/占位值）"
+    );
 
     tooldl::cancel(&id).expect("取消");
     assert!(
-        wait_for(&id, Duration::from_secs(30), |t| t.status == ToolDlStatus::Cancelled).await,
+        wait_for(&id, Duration::from_secs(30), |t| t.status
+            == ToolDlStatus::Cancelled)
+        .await,
         "取消应生效"
     );
 

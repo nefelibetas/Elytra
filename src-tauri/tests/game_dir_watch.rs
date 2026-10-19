@@ -24,7 +24,10 @@ impl EventSink for Recorder {
 }
 
 /// 建临时游戏目录并起监听（进程级单例只初始化一次）。
-fn harness() -> (PathBuf, &'static Mutex<Receiver<(String, serde_json::Value)>>) {
+fn harness() -> (
+    PathBuf,
+    &'static Mutex<Receiver<(String, serde_json::Value)>>,
+) {
     static MC_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
         let dir = tempfile::tempdir().unwrap().keep();
         std::fs::create_dir_all(dir.join("versions")).unwrap();
