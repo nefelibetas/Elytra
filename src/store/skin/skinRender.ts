@@ -331,6 +331,50 @@ interface PaintOpts {
   hits?: PickFace[];
 }
 
+/** 大面细分步长（体素）：面平均深度排序在斜视 + 部分重叠时失效（披风挡腿反被判远），
+ *  切成 ≤ 该步长的块逐块排序可消除；步长越小越准，面数按平方上升。 */
+const SUBDIV_STEP = 2;
+
+/** 细分后的面块：与 FaceDef 同构。 */
+interface FacePart {
+  readonly corners: readonly (readonly [number, number, number])[];
+  readonly uv: UvRect;
+}
+
+/** 把面按体素步长切成 n×m 小块；未超过步长则原样返回。角点双线性插值（顺序同 FaceDef：
+ *  左下、右下、右上、左上，从面外看）；贴图 v 轴向下、角的"上"方向向上，故行 j 的 v 偏移取 (m-j-1)/m。 */
+function subdivideFace(f: FaceDef, step: number): FacePart[] {
+  const a = f.corners[0]!;
+  const b = f.corners[1]!;
+  const c = f.corners[2]!;
+  const d = f.corners[3]!;
+  const lenU = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+  const lenV = Math.hypot(d[0] - a[0], d[1] - a[1], d[2] - a[2]);
+  const n = Math.max(1, Math.ceil(lenU / step - 1e-6));
+  const m = Math.max(1, Math.ceil(lenV / step - 1e-6));
+  if (n === 1 && m === 1) return [{ corners: f.corners, uv: f.uv }];
+  const [u, v, uw, uh] = f.uv;
+  const at = (s: number, t: number): readonly [number, number, number] => [
+    a[0] * (1 - s) * (1 - t) + b[0] * s * (1 - t) + c[0] * s * t + d[0] * (1 - s) * t,
+    a[1] * (1 - s) * (1 - t) + b[1] * s * (1 - t) + c[1] * s * t + d[1] * (1 - s) * t,
+    a[2] * (1 - s) * (1 - t) + b[2] * s * (1 - t) + c[2] * s * t + d[2] * (1 - s) * t,
+  ];
+  const parts: FacePart[] = [];
+  for (let j = 0; j < m; j++) {
+    for (let i = 0; i < n; i++) {
+      const s0 = i / n;
+      const s1 = (i + 1) / n;
+      const t0 = j / m;
+      const t1 = (j + 1) / m;
+      parts.push({
+        corners: [at(s0, t0), at(s1, t0), at(s1, t1), at(s0, t1)],
+        uv: [u + (uw * i) / n, v + (uh * (m - j - 1)) / m, uw / n, uh / m],
+      });
+    }
+  }
+  return parts;
+}
+
 function paint(
   canvas: HTMLCanvasElement,
   skin: CanvasImageSource,
@@ -359,6 +403,20 @@ function paint(
   let maxY = -Infinity;
 
   for (const b of boxes) {
+    // 姿态角量与支点在盒层算一次（细分后每个面块复用）
+    const swing = ((b.swing ?? 0) * Math.PI) / 180;
+    const cosS = Math.cos(swing);
+    const sinS = Math.sin(swing);
+    const swingY = ((b.swingY ?? 0) * Math.PI) / 180;
+    const cosYy = Math.cos(swingY);
+    const sinYy = Math.sin(swingY);
+    const swingZ = ((b.swingZ ?? 0) * Math.PI) / 180;
+    const cosZ = Math.cos(swingZ);
+    const sinZ = Math.sin(swingZ);
+    const px0 = b.pivot ? b.pivot[0] : b.cx;
+    const py0 = b.pivot ? b.pivot[1] : b.cy;
+    const pz0 = b.pivot ? b.pivot[2] : b.cz;
+
     for (const f of facesOf(b)) {
       // 背面剔除：本投影约定 +z 朝向观察者，法线转视空间后深度分量 >0 即面向观察者（noCull 盒子两面都画，靠画家算法定序）。
       if (!b.noCull) {
@@ -367,61 +425,51 @@ function paint(
         if (nDepth <= 1e-4) continue;
       }
 
-      const pts: number[] = [];
-      let depthSum = 0;
-      // 四肢/头部姿态：顶点绕支点依次做 X（前后摆）→ Y（转头）→ Z（外张）旋转
-      const swing = ((b.swing ?? 0) * Math.PI) / 180;
-      const cosS = Math.cos(swing);
-      const sinS = Math.sin(swing);
-      const swingY = ((b.swingY ?? 0) * Math.PI) / 180;
-      const cosYy = Math.cos(swingY);
-      const sinYy = Math.sin(swingY);
-      const swingZ = ((b.swingZ ?? 0) * Math.PI) / 180;
-      const cosZ = Math.cos(swingZ);
-      const sinZ = Math.sin(swingZ);
-      const px0 = b.pivot ? b.pivot[0] : b.cx;
-      const py0 = b.pivot ? b.pivot[1] : b.cy;
-      const pz0 = b.pivot ? b.pivot[2] : b.cz;
-      for (const c of f.corners) {
-        let wx = b.cx + c[0];
-        let wy = b.cy + c[1];
-        let wz = b.cz + c[2];
-        if (swing !== 0) {
-          const ry = wy - py0;
-          const rz = wz - pz0;
-          wy = py0 + ry * cosS - rz * sinS;
-          wz = pz0 + ry * sinS + rz * cosS;
+      for (const part of subdivideFace(f, SUBDIV_STEP)) {
+        const pts: number[] = [];
+        let depthSum = 0;
+        // 四肢/头部姿态：顶点绕支点依次做 X（前后摆）→ Y（转头）→ Z（外张）旋转
+        for (const c of part.corners) {
+          let wx = b.cx + c[0];
+          let wy = b.cy + c[1];
+          let wz = b.cz + c[2];
+          if (swing !== 0) {
+            const ry = wy - py0;
+            const rz = wz - pz0;
+            wy = py0 + ry * cosS - rz * sinS;
+            wz = pz0 + ry * sinS + rz * cosS;
+          }
+          if (swingY !== 0) {
+            const rx = wx - px0;
+            const rz = wz - pz0;
+            wx = px0 + rx * cosYy + rz * sinYy;
+            wz = pz0 - rx * sinYy + rz * cosYy;
+          }
+          if (swingZ !== 0) {
+            const rx = wx - px0;
+            const ry = wy - py0;
+            wx = px0 + rx * cosZ - ry * sinZ;
+            wy = py0 + rx * sinZ + ry * cosZ;
+          }
+          const [sx, sy, depth] = project(wx, wy, wz, cosY, sinY, cosP, sinP);
+          pts.push(sx, sy);
+          depthSum += depth;
+          if (sx < minX) minX = sx;
+          if (sx > maxX) maxX = sx;
+          if (sy < minY) minY = sy;
+          if (sy > maxY) maxY = sy;
         }
-        if (swingY !== 0) {
-          const rx = wx - px0;
-          const rz = wz - pz0;
-          wx = px0 + rx * cosYy + rz * sinYy;
-          wz = pz0 - rx * sinYy + rz * cosYy;
-        }
-        if (swingZ !== 0) {
-          const rx = wx - px0;
-          const ry = wy - py0;
-          wx = px0 + rx * cosZ - ry * sinZ;
-          wy = py0 + rx * sinZ + ry * cosZ;
-        }
-        const [sx, sy, depth] = project(wx, wy, wz, cosY, sinY, cosP, sinP);
-        pts.push(sx, sy);
-        depthSum += depth;
-        if (sx < minX) minX = sx;
-        if (sx > maxX) maxX = sx;
-        if (sy < minY) minY = sy;
-        if (sy > maxY) maxY = sy;
+        faces.push({
+          pts,
+          uv: part.uv,
+          shade: shadeFor(f.normal),
+          depth: depthSum / part.corners.length,
+          mirror: b.mirror === true,
+          layer: b.inflate > 0 ? 1 : 0,
+          cape: b.cape === true,
+          tex: b.cape ? opts.capeTex : undefined,
+        });
       }
-      faces.push({
-        pts,
-        uv: f.uv,
-        shade: shadeFor(f.normal),
-        depth: depthSum / f.corners.length,
-        mirror: b.mirror === true,
-        layer: b.inflate > 0 ? 1 : 0,
-        cape: b.cape === true,
-        tex: b.cape ? opts.capeTex : undefined,
-      });
     }
   }
   if (faces.length === 0) return false;
