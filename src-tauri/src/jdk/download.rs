@@ -471,7 +471,8 @@ async fn install_mojang_runtime(
     if parse_java_major(&info.version) != Some(major) {
         bail!(
             "安装的 Java 版本异常（需要 {}，实际 {}）",
-            major, info.version
+            major,
+            info.version
         );
     }
     Ok(info)
@@ -577,7 +578,8 @@ async fn install_adoptium_runtime(
     if parse_java_major(&info.version) != Some(major) {
         bail!(
             "Adoptium 安装版本异常（需要 {}，实际 {}）",
-            major, info.version
+            major,
+            info.version
         );
     }
     Ok(info)
@@ -764,10 +766,7 @@ async fn install_azul_runtime(
     let home = find_java_home(&dest_root).ok_or("解压后未找到 JDK 根目录")?;
     let info = scanner::inspect(&home).map_err(common_err_ctx!("校验 Azul JDK 失败"))?;
     if parse_java_major(&info.version) != Some(major) {
-        bail!(
-            "Azul 安装版本异常（需要 {}，实际 {}）",
-            major, info.version
-        );
+        bail!("Azul 安装版本异常（需要 {}，实际 {}）", major, info.version);
     }
     Ok(info)
 }

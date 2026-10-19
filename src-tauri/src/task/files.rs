@@ -609,12 +609,7 @@ mod tests {
             dest,
             Path::new("mc/versions/26.2-fabric-0.19.3/mods/fabric-api-15.0.0.jar")
         );
-        let dest = file_dest(
-            Path::new("mc"),
-            "26.2",
-            DownloadFileKind::World,
-            "map.zip",
-        );
+        let dest = file_dest(Path::new("mc"), "26.2", DownloadFileKind::World, "map.zip");
         assert_eq!(dest, Path::new("mc/versions/26.2/saves/map.zip"));
     }
 

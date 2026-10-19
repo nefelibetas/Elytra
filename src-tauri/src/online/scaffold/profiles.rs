@@ -82,7 +82,8 @@ impl ProfileTable {
             .skip(1)
             .find(|e| e.profile.machine_id == profile.machine_id)
         {
-            let changed = entry.profile.name != profile.name || entry.profile.vendor != profile.vendor;
+            let changed =
+                entry.profile.name != profile.name || entry.profile.vendor != profile.vendor;
             entry.profile = profile;
             entry.last_seen = now;
             changed
@@ -99,8 +100,13 @@ impl ProfileTable {
     pub fn purge_expired(&mut self) -> bool {
         let now = SystemTime::now();
         let before = self.entries.len();
-        self.entries
-            .retain(|e| e.profile.kind == ProfileKind::Host || now.duration_since(e.last_seen).map(|d| d < HEARTBEAT_TIMEOUT).unwrap_or(true));
+        self.entries.retain(|e| {
+            e.profile.kind == ProfileKind::Host
+                || now
+                    .duration_since(e.last_seen)
+                    .map(|d| d < HEARTBEAT_TIMEOUT)
+                    .unwrap_or(true)
+        });
         self.entries.len() != before
     }
 

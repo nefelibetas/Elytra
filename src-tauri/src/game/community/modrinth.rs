@@ -97,8 +97,7 @@ pub(super) async fn search_modrinth(
         .iter()
         .filter_map(|h| {
             let title = h["title"].as_str()?.to_string();
-            let entry =
-                wiki_entry::WIKI.lookup("modrinth", h["slug"].as_str().unwrap_or(""));
+            let entry = wiki_entry::WIKI.lookup("modrinth", h["slug"].as_str().unwrap_or(""));
             let title_zh = entry
                 .and_then(|e| e.chinese_raw.as_deref())
                 .and_then(wiki_entry::chinese_name);

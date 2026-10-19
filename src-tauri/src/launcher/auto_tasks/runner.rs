@@ -5,7 +5,8 @@ use std::time::{Duration, Instant};
 
 use super::ctx::AutoTaskCtx;
 use super::model::{
-    ordered_steps, AutoTaskAction, AutoTaskFailureInfo, AutoTasksFinished, AutoTaskPhase, AutoTaskProgress, AutoTasks,
+    ordered_steps, AutoTaskAction, AutoTaskFailureInfo, AutoTaskPhase, AutoTaskProgress, AutoTasks,
+    AutoTasksFinished,
 };
 use super::{backup, crashpack, record};
 use crate::events;
@@ -137,10 +138,7 @@ fn run_command(command: &str, timeout_secs: u32) -> Result<String, String> {
         match child.try_wait() {
             Ok(Some(status)) if status.success() => return Ok("命令执行成功".to_string()),
             Ok(Some(status)) => {
-                return Err(format!(
-                    "命令退出码 {}",
-                    status.code().unwrap_or(-1)
-                ));
+                return Err(format!("命令退出码 {}", status.code().unwrap_or(-1)));
             }
             Ok(None) => {}
             Err(e) => return Err(format!("等待命令失败\n{e}")),
@@ -254,7 +252,11 @@ mod tests {
             }
             let idx = payload["step_index"].as_u64().unwrap_or(0);
             let action = payload["action"].as_str().unwrap_or("").to_string();
-            if out.last().map(|(i, a)| *i != idx || *a != action).unwrap_or(true) {
+            if out
+                .last()
+                .map(|(i, a)| *i != idx || *a != action)
+                .unwrap_or(true)
+            {
                 out.push((idx, action));
             }
         }
@@ -295,7 +297,10 @@ mod tests {
         };
         let failures = run_auto_tasks(&sink, &ctx, AutoTaskPhase::PreLaunch, &auto_tasks);
         assert!(failures.is_empty(), "都应成功: {failures:?}");
-        assert!(config.join("records/inst/mods.json").exists(), "内置动作产物应存在");
+        assert!(
+            config.join("records/inst/mods.json").exists(),
+            "内置动作产物应存在"
+        );
         let steps = step_actions(&sink);
         assert_eq!(
             steps.first().map(|(_, a)| a.as_str()),

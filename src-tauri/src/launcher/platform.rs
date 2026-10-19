@@ -153,9 +153,9 @@ pub fn set_process_priority(pid: u32, priority: ProcessPriority) {
     #[cfg(target_os = "windows")]
     {
         let class = match priority {
-            ProcessPriority::Normal => return,        // 中（平衡）= 系统默认，无需设置
-            ProcessPriority::Low => 0x0000_4000,      // BELOW_NORMAL_PRIORITY_CLASS
-            ProcessPriority::High => 0x0000_0080,     // HIGH_PRIORITY_CLASS
+            ProcessPriority::Normal => return, // 中（平衡）= 系统默认，无需设置
+            ProcessPriority::Low => 0x0000_4000, // BELOW_NORMAL_PRIORITY_CLASS
+            ProcessPriority::High => 0x0000_0080, // HIGH_PRIORITY_CLASS
             ProcessPriority::RealTime => 0x0000_0100, // REALTIME_PRIORITY_CLASS
         };
         #[link(name = "Kernel32")]

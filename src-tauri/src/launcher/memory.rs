@@ -114,7 +114,9 @@ pub fn system_memory_mb() -> (u64, u64) {
     #[cfg(target_os = "macos")]
     {
         // sysctl hw.memsize（字节）→ 总内存；可用内存取 60% 保守估算（macOS 无直接 available sysctl）。
-        let total = sysctl_u64("hw.memsize").map(|b| b / 1024 / 1024).unwrap_or(16384);
+        let total = sysctl_u64("hw.memsize")
+            .map(|b| b / 1024 / 1024)
+            .unwrap_or(16384);
         (total, total * 60 / 100)
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]

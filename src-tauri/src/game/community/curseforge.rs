@@ -99,9 +99,7 @@ pub(crate) async fn curseforge_get(
     all.extend_from_slice(params);
     let urls: Vec<String> = api_urls(ApiPlatform::CurseForge, path, &all)?;
     get_json_multi(&urls, |u| {
-        http()
-            .get(u.to_string())
-            .header("x-api-key", key)
+        http().get(u.to_string()).header("x-api-key", key)
     })
     .await
 }
@@ -166,8 +164,7 @@ pub(super) async fn search_curseforge(
         .filter_map(|m| {
             let (loaders, version_range) = curseforge_support_fields(m);
             let title = m["name"].as_str()?.to_string();
-            let entry =
-                wiki_entry::WIKI.lookup("curseforge", m["slug"].as_str().unwrap_or(""));
+            let entry = wiki_entry::WIKI.lookup("curseforge", m["slug"].as_str().unwrap_or(""));
             let title_zh = entry
                 .and_then(|e| e.chinese_raw.as_deref())
                 .and_then(wiki_entry::chinese_name);

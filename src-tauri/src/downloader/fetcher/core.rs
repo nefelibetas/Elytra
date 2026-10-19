@@ -214,8 +214,16 @@ async fn fetch_from_sources<F: Fn(u64, u64) + Send + Sync>(
             return Err(FetchError::Cancelled);
         }
         for route in &routes {
-            match fetch_once(&client, &route.url, dest, progress, expected_sha1, cancel, total_timeout)
-                .await
+            match fetch_once(
+                &client,
+                &route.url,
+                dest,
+                progress,
+                expected_sha1,
+                cancel,
+                total_timeout,
+            )
+            .await
             {
                 Ok(out) => {
                     record_route_success(&route.url, out.ttfb_ms);
@@ -338,17 +346,16 @@ async fn fetch_once<F: Fn(u64, u64) + Send + Sync>(
             .as_ref()
             .map(|f| f as &(dyn Fn(u64, u64) + Send + Sync));
         let out = transfer_with_ranges(RangeTransfer {
-                client: http(),
-                url,
-                dest,
-                total: content_len,
-                count: seg_k,
-                // 上一轮失败遗留的 .part 位图（URL 相同）继续接传
-                resume: true,
-                callback: cb,
-                cancel,
-            },
-        )
+            client: http(),
+            url,
+            dest,
+            total: content_len,
+            count: seg_k,
+            // 上一轮失败遗留的 .part 位图（URL 相同）继续接传
+            resume: true,
+            callback: cb,
+            cancel,
+        })
         .await?;
         // 与单流路径同语义：不匹配视同此源失败（上层换源）
         if let Some(sha1) = expected_sha1 {
@@ -520,9 +527,7 @@ pub(crate) mod test_support {
                             .unwrap_or("0-");
                         let (b, e) = spec.split_once('-').unwrap_or((spec, ""));
                         let b: usize = b.parse().unwrap_or(0);
-                        let e = e
-                            .parse::<usize>()
-                            .unwrap_or(body.len().saturating_sub(1));
+                        let e = e.parse::<usize>().unwrap_or(body.len().saturating_sub(1));
                         let seg = &body[b..=e.min(body.len().saturating_sub(1))];
                         let out = format!(
                             "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {b}-{e}/{}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -597,8 +602,8 @@ mod tests {
     use super::{is_mirror_url, sort_routes_with_probes};
     use crate::config::downloader::ResourceClass;
     use crate::constants;
-    use crate::downloader::fetcher::routes::DownloadRoute;
     use crate::downloader::fetcher::fetch_verified;
+    use crate::downloader::fetcher::routes::DownloadRoute;
     use crate::downloader::probe::ProbeResult;
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -631,13 +636,17 @@ mod tests {
         let (url, heads) = super::test_support::serve_recording_heads(b"ok".to_vec()).await;
         let dest = temp_dest("ua");
         let urls = vec![url.clone(), format!("{url}?alt=1")];
-        let _ = crate::downloader::fetcher::fetch_fallback(&urls, &dest, None::<fn(u64, u64)>).await;
+        let _ =
+            crate::downloader::fetcher::fetch_fallback(&urls, &dest, None::<fn(u64, u64)>).await;
         let heads = heads.lock();
         let gets: Vec<&String> = heads
             .iter()
             .filter(|h| h.starts_with("GET ") || h.starts_with("get "))
             .collect();
-        assert!(!gets.is_empty(), "未捕获到 GET 请求，实收请求头:\n{heads:?}");
+        assert!(
+            !gets.is_empty(),
+            "未捕获到 GET 请求，实收请求头:\n{heads:?}"
+        );
         for head in gets {
             let lower = head.to_lowercase();
             assert!(
@@ -691,7 +700,8 @@ mod tests {
             let u = url.clone();
             let d = temp_dest(&format!("mirror_cap_{i}"));
             handles.push(tokio::spawn(async move {
-                let _ = fetch_verified(std::slice::from_ref(&u), &d, None::<fn(u64, u64)>, "").await;
+                let _ =
+                    fetch_verified(std::slice::from_ref(&u), &d, None::<fn(u64, u64)>, "").await;
                 let _ = std::fs::remove_file(&d);
             }));
         }

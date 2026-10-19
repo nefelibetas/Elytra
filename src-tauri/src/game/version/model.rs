@@ -178,8 +178,9 @@ mod tests {
             serde_json::from_str(&base(r#""arguments": null,"#)).expect("arguments: null 应能解析");
         assert!(vj2.arguments.is_none());
         // 新式对象形态仍照常
-        let vj3: VersionJson = serde_json::from_str(&base(r#""arguments": { "game": ["--demo"] },"#))
-            .expect("新式 arguments 应能解析");
+        let vj3: VersionJson =
+            serde_json::from_str(&base(r#""arguments": { "game": ["--demo"] },"#))
+                .expect("新式 arguments 应能解析");
         assert_eq!(vj3.game_args().map(Vec::len), Some(1));
     }
 

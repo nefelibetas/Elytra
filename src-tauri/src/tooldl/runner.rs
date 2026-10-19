@@ -8,9 +8,9 @@ use super::manager;
 use super::model::{StopReason, ToolDlStatus, ToolDlTask};
 use crate::downloader::fetcher::FetchError;
 use crate::downloader::segmented::{self, SegmentedOutcome, SegmentedRequest};
+use crate::events;
 use crate::task::progress::SpeedSampler;
 use crate::task::{emit_event, EventSink};
-use crate::events;
 
 /// 进度心跳间隔（与 `task` 域的 EmitLoop 同量级：够顺滑又不过量占 IPC）。
 const TICK: Duration = Duration::from_millis(250);
@@ -21,7 +21,9 @@ pub async fn run(task: Arc<ToolDlTask>, sink: Arc<dyn EventSink>) {
     let dest = task.dest.clone();
     let progress_task = Arc::clone(&task);
     let progress = move |downloaded: u64, total: u64| {
-        progress_task.downloaded.store(downloaded, Ordering::Relaxed);
+        progress_task
+            .downloaded
+            .store(downloaded, Ordering::Relaxed);
         if total > 0 {
             progress_task.total.store(total, Ordering::Relaxed);
         }
@@ -31,7 +33,9 @@ pub async fn run(task: Arc<ToolDlTask>, sink: Arc<dyn EventSink>) {
     let plan_task = Arc::clone(&task);
     let on_plan = move |ranged: bool, segments: usize| {
         plan_task.ranged.store(ranged, Ordering::Relaxed);
-        plan_task.segments_used.store(segments as u32, Ordering::Relaxed);
+        plan_task
+            .segments_used
+            .store(segments as u32, Ordering::Relaxed);
     };
 
     let download = segmented::download_segmented(

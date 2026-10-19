@@ -7,7 +7,6 @@ use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio::process::Child;
 
-
 fn maven_path(name: &str) -> String {
     // 坐标形态 `group:artifact:version[:classifier][@ext]`（classifier 与扩展名都必须进路径，否则 native 分类器会指向错误文件名）
     let (coord, ext) = match name.split_once('@') {
@@ -635,12 +634,19 @@ mod tests {
             .iter()
             .map(|a| a.as_str().unwrap().to_string())
             .collect();
-        assert_eq!(args, vec!["--gp", "--parent", "--child"], "参数应为 祖先→子 顺序");
+        assert_eq!(
+            args,
+            vec!["--gp", "--parent", "--child"],
+            "参数应为 祖先→子 顺序"
+        );
         assert_eq!(
             lvl2["mainClass"], "cpw.mods.bootstraplauncher.BootstrapLauncher",
             "子级 mainClass 必须覆盖父级"
         );
-        assert!(lvl2.get("inheritsFrom").is_none(), "链尾应清掉 inheritsFrom");
+        assert!(
+            lvl2.get("inheritsFrom").is_none(),
+            "链尾应清掉 inheritsFrom"
+        );
         assert_eq!(lvl2["id"], "pack-1.20.1");
     }
 
@@ -649,7 +655,8 @@ mod tests {
     fn libraries_dedup_child_wins() {
         let parent =
             r#"{"id":"1.20.1","libraries":[{"name":"org.ow2.asm:asm:9.3"},{"name":"keep:me:1"}]}"#;
-        let child = r#"{"id":"v","inheritsFrom":"1.20.1","libraries":[{"name":"org.ow2.asm:asm:9.10.1"}]}"#;
+        let child =
+            r#"{"id":"v","inheritsFrom":"1.20.1","libraries":[{"name":"org.ow2.asm:asm:9.10.1"}]}"#;
         let merged = expand_inheritance(parent, serde_json::from_str(child).unwrap(), "v").unwrap();
         let names: Vec<String> = merged["libraries"]
             .as_array()

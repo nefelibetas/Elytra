@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::auth::external::{AUTHLIB_JAR, is_ely_by};
+use crate::auth::external::{is_ely_by, AUTHLIB_JAR};
 use crate::constants;
 use crate::game::resource::extract::{
     extract_jar, legacy_classifier_artifact, matches_rules, modern_native_matches,
@@ -357,9 +357,7 @@ fn resolve_launch_paths(
     let (resolution_width, resolution_height, has_custom_resolution) = match config.window_size {
         WindowSize::Custom(w, h) => (w, h, true),
         // 占位值仅供模板替换兜底（带 feature 的参数组已被过滤）
-        WindowSize::Default => {
-            (DEFAULT_RESOLUTION_WIDTH, DEFAULT_RESOLUTION_HEIGHT, false)
-        }
+        WindowSize::Default => (DEFAULT_RESOLUTION_WIDTH, DEFAULT_RESOLUTION_HEIGHT, false),
     };
     // JAR 文件名不一定等于目录名；与启动前完整性检查共用 resolve_client_jar，避免两处选中不同文件
     let client_jar = resolve_client_jar(&version_dir, version_dir_name)
@@ -1051,7 +1049,10 @@ mod tests {
         );
 
         let empty = tempfile::tempdir().unwrap();
-        assert!(resolve_client_jar(empty.path(), "v").is_none(), "无 jar 应返回 None");
+        assert!(
+            resolve_client_jar(empty.path(), "v").is_none(),
+            "无 jar 应返回 None"
+        );
     }
 
     fn natives_vj(libs_json: &str) -> VersionJson {
@@ -1132,8 +1133,12 @@ mod tests {
             "指纹一致时应复用，不应重新解压"
         );
 
-        ensure_old_style_natives(&natives_vj(&format!("{lib1},{lib2}")), &lib_dir, &natives_dir)
-            .unwrap();
+        ensure_old_style_natives(
+            &natives_vj(&format!("{lib1},{lib2}")),
+            &lib_dir,
+            &natives_dir,
+        )
+        .unwrap();
         assert!(natives_dir.join("a.dll").is_file(), "重建后 a.dll 应回来");
         assert!(
             natives_dir.join("b.dll").is_file(),
@@ -1186,12 +1191,14 @@ mod tests {
         let args = build_game_args(&vj, &ctx, false, "");
         let idx = args.iter().position(|a| a == "--gameDir").unwrap();
         assert_eq!(
-            args[idx + 1], game_dir,
+            args[idx + 1],
+            game_dir,
             "含空格的 --gameDir 路径必须保持单个 argv 元素: {args:?}"
         );
         let aidx = args.iter().position(|a| a == "--assetsDir").unwrap();
         assert_eq!(
-            args[aidx + 1], assets_dir,
+            args[aidx + 1],
+            assets_dir,
             "含空格的 --assetsDir 路径必须保持单个 argv 元素: {args:?}"
         );
         assert!(!args.iter().any(|a| a == "San"), "路径被截断: {args:?}");

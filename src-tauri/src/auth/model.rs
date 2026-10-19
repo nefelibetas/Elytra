@@ -35,20 +35,26 @@ pub fn read() -> Option<MsAccount> {
 /// 原子读-改-写：并发（静默刷新与登录/删除重叠）下用陈旧列表整体写回会丢更新。
 pub fn save(account: &MsAccount) -> Result<(), String> {
     let account = account.clone();
-    persist::secrets::update_json_list(constants::SECT_MS_ACCOUNTS, move |list: &mut Vec<MsAccount>| {
-        list.retain(|a| a.uuid != account.uuid);
-        list.push(account);
-        Ok(())
-    })
+    persist::secrets::update_json_list(
+        constants::SECT_MS_ACCOUNTS,
+        move |list: &mut Vec<MsAccount>| {
+            list.retain(|a| a.uuid != account.uuid);
+            list.push(account);
+            Ok(())
+        },
+    )
 }
 
 /// 移除指定 uuid 的正版账号（连同其长期 refresh_token）。列表清空时删除存储键。
 pub fn remove(uuid: &str) -> Result<(), String> {
     let uuid = uuid.to_string();
-    persist::secrets::update_json_list(constants::SECT_MS_ACCOUNTS, move |list: &mut Vec<MsAccount>| {
-        list.retain(|a| a.uuid != uuid);
-        Ok(())
-    })
+    persist::secrets::update_json_list(
+        constants::SECT_MS_ACCOUNTS,
+        move |list: &mut Vec<MsAccount>| {
+            list.retain(|a| a.uuid != uuid);
+            Ok(())
+        },
+    )
 }
 
 #[cfg(test)]
@@ -67,10 +73,13 @@ mod tests {
     }
 
     fn cleanup() {
-        persist::secrets::update_json_list::<MsAccount, _, ()>(constants::SECT_MS_ACCOUNTS, |list| {
-            list.clear();
-            Ok(())
-        })
+        persist::secrets::update_json_list::<MsAccount, _, ()>(
+            constants::SECT_MS_ACCOUNTS,
+            |list| {
+                list.clear();
+                Ok(())
+            },
+        )
         .ok();
     }
 

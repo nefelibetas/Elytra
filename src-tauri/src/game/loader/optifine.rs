@@ -101,7 +101,7 @@ async fn download_optifabric(
             Some(cancel),
         )
         .await
-            .map_err(common_err_ctx!("下载 OptiFabric 失败"))?;
+        .map_err(common_err_ctx!("下载 OptiFabric 失败"))?;
     }
     Ok(())
 }
@@ -142,7 +142,9 @@ pub async fn install_optifine(
     ctx: InstallCtx<'_>,
 ) -> Result<(), String> {
     let VersionTarget { dir_name, vdir } = target;
-    let InstallCtx { config, pc, cancel, .. } = ctx;
+    let InstallCtx {
+        config, pc, cancel, ..
+    } = ctx;
     let config = config.clone();
     let source = config
         .file_primary_source()

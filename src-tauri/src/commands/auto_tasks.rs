@@ -31,7 +31,10 @@ pub fn get_instance_auto_tasks(version_id: String) -> InstanceAutoTasksState {
 
 /// 保存实例自动任务；`tasks = None` 表示删除实例配置（回退全局）。
 #[tauri::command]
-pub fn save_instance_auto_tasks(version_id: String, tasks: Option<AutoTasks>) -> Result<(), String> {
+pub fn save_instance_auto_tasks(
+    version_id: String,
+    tasks: Option<AutoTasks>,
+) -> Result<(), String> {
     instance::write_auto_tasks(&mc_dir(), &version_id, tasks.as_ref())
 }
 

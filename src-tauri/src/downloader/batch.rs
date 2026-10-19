@@ -160,10 +160,8 @@ mod tests {
     }
 
     fn item(index: usize) -> BatchItem {
-        let dest = std::env::temp_dir().join(format!(
-            "elytra_batch_{index}_{}.bin",
-            std::process::id()
-        ));
+        let dest =
+            std::env::temp_dir().join(format!("elytra_batch_{index}_{}.bin", std::process::id()));
         BatchItem {
             urls: vec![dead_url()],
             dest,

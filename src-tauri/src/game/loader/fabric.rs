@@ -57,7 +57,13 @@ async fn install_loader_via_profile(
     ctx: InstallCtx<'_>,
 ) -> Result<(), String> {
     let VersionTarget { dir_name, vdir } = target;
-    let InstallCtx { config, pc, hook, cancel, .. } = ctx;
+    let InstallCtx {
+        config,
+        pc,
+        hook,
+        cancel,
+        ..
+    } = ctx;
     let mc = config.minecraft_dir_abs();
 
     // profile 逐源回退：官方 maven 国内常不可达，镜像提供同一路径
@@ -80,15 +86,14 @@ async fn install_loader_via_profile(
             Err(e) => last_err = format!("获取 profile 失败\n{e}"),
         }
     }
-    let (profile, source) = fetched
-        .ok_or_else(|| format!("获取 profile 失败（所有下载源均不可用）\n{last_err}"))?;
+    let (profile, source) =
+        fetched.ok_or_else(|| format!("获取 profile 失败（所有下载源均不可用）\n{last_err}"))?;
 
     let merged = merge_loader_profile(parent_text, &profile, dir_name, &source.maven_url)?;
 
     std::fs::create_dir_all(vdir).map_err(common_err_ctx!("创建目录失败"))?;
     let json_path = vdir.join(format!("{}.json", dir_name));
-    let json_str =
-        serde_json::to_string_pretty(&merged).map_err(common_err_ctx!("序列化失败"))?;
+    let json_str = serde_json::to_string_pretty(&merged).map_err(common_err_ctx!("序列化失败"))?;
     std::fs::write(&json_path, &json_str).map_err(common_err_ctx!("写入 JSON 失败"))?;
     if let Some(h) = hook {
         h(LoaderEvent::ConfigDone);

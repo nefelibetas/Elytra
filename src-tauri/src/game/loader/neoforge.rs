@@ -142,5 +142,3 @@ pub(super) async fn extract_neoforge_client(
     }
     Ok(())
 }
-
-

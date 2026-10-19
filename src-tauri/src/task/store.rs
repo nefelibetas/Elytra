@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
 
-use crate::task::TaskStatus;
 use crate::task::model::{DownloadFilesTask, DownloadTask, ModpackInstallSpec};
+use crate::task::TaskStatus;
 use crate::util::{block_on, config_dir};
 
 /// 任务恢复凭证：重建任务所需的最小信息（各任务一）。
@@ -18,8 +18,12 @@ use crate::util::{block_on, config_dir};
 pub enum JobSpec {
     Download(DownloadTask),
     Files(DownloadFilesTask),
-    Repair { version_dir_name: String },
-    InstallJdk { major: u32 },
+    Repair {
+        version_dir_name: String,
+    },
+    InstallJdk {
+        major: u32,
+    },
     /// 整合包安装（单卡片全流程；恢复 = 重跑整卡，各环节幂等）
     ModpackInstall(ModpackInstallSpec),
 }

@@ -3,8 +3,8 @@
 use serde::Serialize;
 
 use super::shared::post_json_multi;
-use super::{curseforge, modrinth, wiki_entry};
 use super::translation::fetch_translations;
+use super::{curseforge, modrinth, wiki_entry};
 use crate::downloader::endpoints::CommunityEndpoints;
 use crate::downloader::fetcher;
 
@@ -182,7 +182,10 @@ pub async fn modrinth_version_files(hashes: &[String]) -> Result<serde_json::Val
     let body = serde_json::json!({"hashes": hashes, "algorithm": "sha1"});
     let urls = [
         format!("{}/v2/version_files", CommunityEndpoints::MODRINTH_API_BASE),
-        format!("{}/v2/version_files", CommunityEndpoints::MODRINTH_MIRROR_BASE),
+        format!(
+            "{}/v2/version_files",
+            CommunityEndpoints::MODRINTH_MIRROR_BASE
+        ),
     ];
     post_json_multi(&urls, &body, |u| fetcher::http().post(u), 5, 10).await
 }

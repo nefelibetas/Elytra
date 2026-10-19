@@ -5,9 +5,9 @@ use std::sync::Arc;
 use tauri::AppHandle;
 
 use crate::config::tooldl::ToolDlConfig;
+use crate::persist;
 use crate::task::EventSink;
 use crate::tooldl::{self, ToolDlSnapshot};
-use crate::persist;
 
 #[tauri::command]
 pub async fn tooldl_enqueue(

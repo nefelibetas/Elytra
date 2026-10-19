@@ -176,7 +176,13 @@ fn installer_entry_cache_path(work_dir: &Path, installer: &Path, entry: &str) ->
         .and_then(|n| n.to_str())
         .unwrap_or("installer")
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     work_dir.join(tag).join(entry.replace('/', "_"))
 }
@@ -235,7 +241,11 @@ fn resolve_data(raw: &str, ctx: &ProcessorCtx<'_>) -> Resolved {
 }
 
 /// 解析单个处理器参数：`{KEY}` 走 data，`[coord@ext]` 走输入构件（下载+按需解出成员）。
-async fn resolve_arg(arg: &str, profile: &InstallProfile, ctx: &ProcessorCtx<'_>) -> Result<String, String> {
+async fn resolve_arg(
+    arg: &str,
+    profile: &InstallProfile,
+    ctx: &ProcessorCtx<'_>,
+) -> Result<String, String> {
     if let Some(key) = arg.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
         return Ok(match key {
             "ROOT" => ctx.mc_dir.display().to_string(),
@@ -267,8 +277,7 @@ async fn ensure_artifact(
         Some((c, e)) => (c, Some(e)),
         None => (coord, None),
     };
-    let rel = coord_rel_path(coord, None)
-        .ok_or_else(|| format!("构件坐标格式异常\n{coord}"))?;
+    let rel = coord_rel_path(coord, None).ok_or_else(|| format!("构件坐标格式异常\n{coord}"))?;
     let dest = ctx.lib_dir.join(&rel);
 
     // 优先用官方声明的 path/url/sha1（名字里的 @ext 后缀要忽略后再比）
@@ -276,11 +285,7 @@ async fn ensure_artifact(
         let name = l.name.split('@').next().unwrap_or(&l.name);
         name == coord_base
     });
-    let artifact = declared.and_then(|l| {
-        l.downloads
-            .as_ref()
-            .and_then(|d| d.artifact.as_ref())
-    });
+    let artifact = declared.and_then(|l| l.downloads.as_ref().and_then(|d| d.artifact.as_ref()));
     let dest = match artifact.and_then(|a| a.path.as_deref()) {
         Some(p) => ctx.lib_dir.join(p),
         None => dest,
@@ -331,7 +336,11 @@ async fn ensure_artifact(
 }
 
 /// 若声明了 `@ext` 且与构件自身后缀不同，从构件（zip/jar）里解出该后缀的成员。
-fn finish_extract(dest: PathBuf, ext: Option<&str>, ctx: &ProcessorCtx<'_>) -> Result<PathBuf, String> {
+fn finish_extract(
+    dest: PathBuf,
+    ext: Option<&str>,
+    ctx: &ProcessorCtx<'_>,
+) -> Result<PathBuf, String> {
     let Some(ext) = ext else {
         return Ok(dest);
     };
@@ -342,7 +351,9 @@ fn finish_extract(dest: PathBuf, ext: Option<&str>, ctx: &ProcessorCtx<'_>) -> R
     }
     let out = ctx.work_dir.join(format!(
         "{}.{}",
-        dest.file_name().and_then(|n| n.to_str()).unwrap_or("artifact"),
+        dest.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("artifact"),
         ext
     ));
     if out.is_file() {
@@ -369,8 +380,7 @@ fn finish_extract(dest: PathBuf, ext: Option<&str>, ctx: &ProcessorCtx<'_>) -> R
 /// 读处理器 JAR 的主类（MANIFEST 的 `Main-Class`）。
 fn main_class_of(jar: &Path) -> Result<String, String> {
     let file = std::fs::File::open(jar).map_err(|e| format!("打开处理器失败\n{}", e))?;
-    let mut archive =
-        zip::ZipArchive::new(file).map_err(|e| format!("处理器不是 zip\n{e}"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("处理器不是 zip\n{e}"))?;
     let mut manifest = archive
         .by_name("META-INF/MANIFEST.MF")
         .map_err(|e| format!("处理器缺少 MANIFEST\n{e}"))?;
@@ -508,8 +518,11 @@ mod tests {
             Some("net/neoforged/neoform/1.21.1-20240808.144430/neoform-1.21.1-20240808.144430-mappings.txt")
         );
         assert_eq!(
-            coord_rel_path("net.neoforged.installertools:binarypatcher:2.1.2:fatjar@jar", None)
-                .as_deref(),
+            coord_rel_path(
+                "net.neoforged.installertools:binarypatcher:2.1.2:fatjar@jar",
+                None
+            )
+            .as_deref(),
             Some("net/neoforged/installertools/binarypatcher/2.1.2/binarypatcher-2.1.2-fatjar.jar")
         );
         // 无分类器 → 默认 .jar
@@ -542,8 +555,14 @@ mod tests {
         assert_eq!(p.libraries.len(), 1);
         assert_eq!(p.processors.len(), 1);
         assert_eq!(data_value(&p, "SIDE_LITERAL", "client"), Some("'1.21.1-x'"));
-        assert_eq!(data_value(&p, "BINPATCH", "client"), Some("/data/client.lzma"));
-        assert_eq!(data_value(&p, "BINPATCH", "server"), Some("/data/server.lzma"));
+        assert_eq!(
+            data_value(&p, "BINPATCH", "client"),
+            Some("/data/client.lzma")
+        );
+        assert_eq!(
+            data_value(&p, "BINPATCH", "server"),
+            Some("/data/server.lzma")
+        );
     }
 
     #[test]
@@ -592,13 +611,22 @@ mod tests {
             config: &DownloaderConfig::default(),
             cancel: &Arc::new(AtomicBool::new(false)),
         };
-        assert_eq!(resolve_arg("{SIDE}", &profile, &ctx).await.unwrap(), "client");
-        assert_eq!(resolve_arg("--version", &profile, &ctx).await.unwrap(), "--version");
+        assert_eq!(
+            resolve_arg("{SIDE}", &profile, &ctx).await.unwrap(),
+            "client"
+        );
+        assert_eq!(
+            resolve_arg("--version", &profile, &ctx).await.unwrap(),
+            "--version"
+        );
         assert_eq!(
             resolve_arg("{MCP_VERSION}", &profile, &ctx).await.unwrap(),
             "1.21.1-x"
         );
-        assert!(resolve_arg("{NOPE}", &profile, &ctx).await.is_err(), "缺 data 项应报错");
+        assert!(
+            resolve_arg("{NOPE}", &profile, &ctx).await.is_err(),
+            "缺 data 项应报错"
+        );
     }
 
     /// NeoForge 21.x 安装链端到端（真实网络 + 真实 JDK，默认 `#[ignore]`）：下载 installer → 按声明下载
@@ -663,7 +691,10 @@ mod tests {
         let client = &v["downloads"]["client"];
         let (curl, csha1) = (
             client["url"].as_str().expect("缺少 client.url").to_string(),
-            client["sha1"].as_str().expect("缺少 client.sha1").to_string(),
+            client["sha1"]
+                .as_str()
+                .expect("缺少 client.sha1")
+                .to_string(),
         );
         if !hash::file_sha1_matches(&vanilla, &csha1) {
             fetcher::fetch_verified(&[curl], &vanilla, None::<fn(u64, u64)>, &csha1)
@@ -738,8 +769,14 @@ mod tests {
             &read_profile_from_installer(&installer).expect("读 install_profile 失败"),
         )
         .expect("解析 install_profile 失败");
-        assert!(!profile.processors.is_empty(), "该 installer 应声明 processors");
-        eprintln!("Forge installer 声明的处理器数：{}", profile.processors.len());
+        assert!(
+            !profile.processors.is_empty(),
+            "该 installer 应声明 processors"
+        );
+        eprintln!(
+            "Forge installer 声明的处理器数：{}",
+            profile.processors.len()
+        );
 
         // 2) vanilla client.jar
         let dir_name = format!("{MC_VERSION}-forge-{FORGE_VERSION}");
@@ -756,12 +793,17 @@ mod tests {
             .expect("清单中找不到 1.20.1")
             .url
             .clone();
-        let vjson = fetch_version_json_text(&vurl, &cfg).await.expect("拉取版本 JSON 失败");
+        let vjson = fetch_version_json_text(&vurl, &cfg)
+            .await
+            .expect("拉取版本 JSON 失败");
         let v: serde_json::Value = serde_json::from_str(&vjson).expect("解析版本 JSON 失败");
         let client = &v["downloads"]["client"];
         let (curl, csha1) = (
             client["url"].as_str().expect("缺少 client.url").to_string(),
-            client["sha1"].as_str().expect("缺少 client.sha1").to_string(),
+            client["sha1"]
+                .as_str()
+                .expect("缺少 client.sha1")
+                .to_string(),
         );
         if !hash::file_sha1_matches(&vanilla, &csha1) {
             fetcher::fetch_verified(&[curl], &vanilla, None::<fn(u64, u64)>, &csha1)
@@ -900,7 +942,10 @@ mod tests {
         let client = &v["downloads"]["client"];
         let (curl, csha1) = (
             client["url"].as_str().expect("缺少 client.url").to_string(),
-            client["sha1"].as_str().expect("缺少 client.sha1").to_string(),
+            client["sha1"]
+                .as_str()
+                .expect("缺少 client.sha1")
+                .to_string(),
         );
         if !hash::file_sha1_matches(&vanilla, &csha1) {
             fetcher::fetch_verified(&[curl], &vanilla, None::<fn(u64, u64)>, &csha1)

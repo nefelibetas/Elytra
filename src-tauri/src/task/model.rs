@@ -37,7 +37,7 @@ pub struct TaskProgress {
     pub task_id: String,
     pub name: String,
     pub status: TaskStatus,
-    pub progress: f64,      // 0.0 – 100.0
+    pub progress: f64, // 0.0 – 100.0
     pub speed_bps: f64,
     /// 预计剩余秒数；停滞（>4s 无字节推进）或速度过低时 None。
     #[ts(type = "number | null")]
@@ -58,7 +58,7 @@ pub struct TaskProgress {
 pub struct StepInfo {
     pub name: String,
     pub status: StepStatus,
-    pub progress: f64,      // 0–100, meaningful only when status=running
+    pub progress: f64, // 0–100, meaningful only when status=running
 }
 
 /// ModLoader 种类。前端传 "fabric"/"forge"/"neoforge"/"quilt"。

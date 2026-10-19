@@ -6,10 +6,10 @@ use futures_util::StreamExt;
 use serde::Serialize;
 
 use super::identify::file_sha1;
-use super::scan::LocalModFile;
 use super::identify::QUERY_CONCURRENCY;
-use crate::game::community::{api_routes, api_urls, get_json_multi, ApiPlatform};
+use super::scan::LocalModFile;
 use crate::downloader::fetcher;
+use crate::game::community::{api_routes, api_urls, get_json_multi, ApiPlatform};
 
 /// 单个 mod 的更新信息（命中 Modrinth 且有新版本时产出）。
 #[derive(Debug, Clone, Serialize)]
@@ -42,11 +42,9 @@ async fn latest_version(
         ],
     )
     .ok()?;
-    let data = get_json_multi(&urls, |u| {
-        fetcher::http().get(u.to_string())
-    })
-    .await
-    .ok()?;
+    let data = get_json_multi(&urls, |u| fetcher::http().get(u.to_string()))
+        .await
+        .ok()?;
     let arr = data.as_array()?;
     let first = arr.iter().find(|v| {
         v["version_number"].as_str().is_some()
@@ -147,11 +145,9 @@ pub async fn check_updates(
                 ApiPlatform::Modrinth,
                 &format!("/v2/version_file/{sha1}?algorithm=sha1"),
             );
-            let cur = get_json_multi(&urls, |u| {
-                fetcher::http().get(u.to_string())
-            })
-            .await
-            .ok()?;
+            let cur = get_json_multi(&urls, |u| fetcher::http().get(u.to_string()))
+                .await
+                .ok()?;
             let project_id = cur["project_id"].as_str()?.to_string();
             let current_version = cur["version_number"].as_str()?.to_string();
             if current_version.is_empty() {

@@ -41,7 +41,11 @@ pub fn mods_json_path(config_dir: &Path, version_id: &str) -> PathBuf {
 }
 
 /// 扫描 mods 目录并写入清单（覆盖制）。返回写入路径。
-pub fn record_mods(config_dir: &Path, version_id: &str, game_dir: &Path) -> Result<PathBuf, String> {
+pub fn record_mods(
+    config_dir: &Path,
+    version_id: &str,
+    game_dir: &Path,
+) -> Result<PathBuf, String> {
     let mods_dir = game_dir.join("mods");
     let mods: Vec<ModRecord> = scan_mod_files(&mods_dir)
         .into_iter()
@@ -75,8 +79,8 @@ pub fn record_mods(config_dir: &Path, version_id: &str, game_dir: &Path) -> Resu
     if let Some(parent) = out.parent() {
         std::fs::create_dir_all(parent).map_err(common_err_ctx!("创建记录目录失败"))?;
     }
-    let text = serde_json::to_string_pretty(&snapshot)
-        .map_err(common_err_ctx!("序列化 mod 清单失败"))?;
+    let text =
+        serde_json::to_string_pretty(&snapshot).map_err(common_err_ctx!("序列化 mod 清单失败"))?;
     std::fs::write(&out, text).map_err(common_err_ctx!("写入 mod 清单失败"))?;
     Ok(out)
 }
@@ -142,10 +146,9 @@ mod tests {
         record_mods(&config, "inst", &game).unwrap();
         fs::remove_file(game.join("mods/only.jar")).unwrap();
         record_mods(&config, "inst", &game).unwrap();
-        let v: serde_json::Value = serde_json::from_str(
-            &fs::read_to_string(mods_json_path(&config, "inst")).unwrap(),
-        )
-        .unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(mods_json_path(&config, "inst")).unwrap())
+                .unwrap();
         assert_eq!(v["mods"].as_array().unwrap().len(), 0, "覆盖制：无残留");
     }
 }

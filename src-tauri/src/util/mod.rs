@@ -22,9 +22,9 @@ pub use path::{
     dir_entries, is_simple_name, java_bin_path, safe_relative_path, sanitize_fs_name, sha1_sub_dir,
     unique_child_dir, url_file_name,
 };
-pub use process::{ensure_hidden_console, NoWindow};
 #[cfg(target_os = "windows")]
 pub use process::CREATE_NO_WINDOW;
+pub use process::{ensure_hidden_console, NoWindow};
 pub use rt::block_on;
 pub use text::{fnv1a64, tail_lines};
 pub use time::{modified_secs, utc_stamp};

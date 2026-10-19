@@ -7,6 +7,11 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
+use super::emit::EventSink;
+use super::progress::{
+    cancelled, set_cancelled, set_completed, set_error, set_phase, set_total, spawn_tail_loop,
+    step_done, EmitLoop,
+};
 use crate::config::downloader::{DownloadSource, DownloaderConfig};
 use crate::downloader::fetcher;
 use crate::downloader::hash::file_sha1_matches;
@@ -18,11 +23,6 @@ use crate::launcher;
 use crate::persist;
 use crate::task::{self, StepStatus, TaskProgress, TaskStatus};
 use crate::util::sha1_sub_dir;
-use super::emit::EventSink;
-use super::progress::{
-    cancelled, set_cancelled, set_completed, set_error, set_phase, set_total, spawn_tail_loop,
-    step_done, EmitLoop,
-};
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct MissingReport {
@@ -447,11 +447,7 @@ pub async fn run_repair_task(
     }
 
     // 收尾心跳：EmitLoop 已 abort，natives 期间继续上报速度/字节进度
-    let _tail_loop = spawn_tail_loop(
-        Arc::clone(&sink),
-        progress,
-        Arc::clone(&ctx.ctr.bytes),
-    );
+    let _tail_loop = spawn_tail_loop(Arc::clone(&sink), progress, Arc::clone(&ctx.ctr.bytes));
 
     if let Some(i) = ctx.jar_idx {
         step_done(app, progress, i);
@@ -737,7 +733,11 @@ mod tests {
                     next += 1;
                 }
             }
-            assert_eq!(names.len(), next, "mask={mask}：步骤表长度应与出现的维度数一致");
+            assert_eq!(
+                names.len(),
+                next,
+                "mask={mask}：步骤表长度应与出现的维度数一致"
+            );
         }
     }
 

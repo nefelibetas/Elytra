@@ -32,7 +32,10 @@ pub async fn start_ms_login(app: AppHandle) -> Result<String, String> {
 
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", microsoft::CALLBACK_PORT))
         .await
-        .map_err(common_err_ctx!("回调端口 {} 被占用", microsoft::CALLBACK_PORT))?;
+        .map_err(common_err_ctx!(
+            "回调端口 {} 被占用",
+            microsoft::CALLBACK_PORT
+        ))?;
 
     let auth_url = microsoft::build_auth_url(&state, &pkce).map_err(|e| e.to_string())?;
 

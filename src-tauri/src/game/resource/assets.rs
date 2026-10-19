@@ -58,11 +58,9 @@ pub async fn fetch_asset_index(
     // 主源过慢（5s）自动降级到备用源
     eprintln!("[assets] 无有效缓存，走网络 fetch_with_fallback");
     let text = config
-        .fetch_with_fallback(
-            config.game_source_mode,
-            CacheBehaviour::DefaultTtl,
-            |s| s.mirror_url(index_url),
-        )
+        .fetch_with_fallback(config.game_source_mode, CacheBehaviour::DefaultTtl, |s| {
+            s.mirror_url(index_url)
+        })
         .await
         .map_err(common_err_ctx!("获取资源索引失败"))?;
     eprintln!("[assets] 索引文本获取完成: {}B", text.len());
@@ -148,7 +146,8 @@ pub async fn download_assets(
     }
 
     // 步骤进度分母（待下载条目数）
-    pc.step_files_total.store(items.len() as u32, Ordering::Relaxed);
+    pc.step_files_total
+        .store(items.len() as u32, Ordering::Relaxed);
     let errors = batch::run(items, concurrency, pc, cancel, Some(MAX_ASSET_ERRORS)).await;
     if errors.is_empty() {
         Ok(())

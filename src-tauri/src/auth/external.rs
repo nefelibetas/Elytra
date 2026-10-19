@@ -250,9 +250,7 @@ pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccoun
             let _ = remove(api_url, uuid); // 幂等；注销失败也不影响把错误报给前端
             bail!("登录凭据已失效，已退出该账号，请重新登录\n{msg}");
         }
-        bail!(
-            "刷新失败（服务端返回 {status}），账号已保留\n{msg}"
-        );
+        bail!("刷新失败（服务端返回 {status}），账号已保留\n{msg}");
     }
     let json: serde_json::Value = resp.json().await.map_err(common_err_ctx!("响应解析失败"))?;
     let new_token = json["accessToken"]
@@ -287,7 +285,12 @@ pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccoun
     let selected = json
         .get("selectedProfile")
         .filter(|p| !p.is_null())
-        .and_then(|sp| Some((sp["id"].as_str()?.to_string(), sp["name"].as_str()?.to_string())));
+        .and_then(|sp| {
+            Some((
+                sp["id"].as_str()?.to_string(),
+                sp["name"].as_str()?.to_string(),
+            ))
+        });
     // 原子读-改-写：网络 await 期间列表可能被并发改动，快照整体写回会丢改动。
     let (api, id) = (api_url.to_string(), uuid.to_string());
     let updated = persist::secrets::update_json_list(
@@ -579,10 +582,13 @@ mod tests {
     }
 
     fn cleanup() {
-        persist::secrets::update_json_list::<ExternalAccount, _, ()>(constants::SECT_EXTERNAL_ACCOUNTS, |list| {
-            list.clear();
-            Ok(())
-        })
+        persist::secrets::update_json_list::<ExternalAccount, _, ()>(
+            constants::SECT_EXTERNAL_ACCOUNTS,
+            |list| {
+                list.clear();
+                Ok(())
+            },
+        )
         .ok();
     }
 

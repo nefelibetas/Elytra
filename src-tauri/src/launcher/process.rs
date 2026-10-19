@@ -77,14 +77,8 @@ pub fn ensure_game_ready(
     version_dir_name: &str,
 ) -> Result<(), String> {
     pre_launch_check(version_json, mc_dir, version_dir_name)?;
-    let natives_dir = mc_dir
-        .join("natives")
-        .join(mc_version_of(version_dir_name));
-    ensure_old_style_natives(
-        version_json,
-        &mc_dir.join("libraries"),
-        &natives_dir,
-    )?;
+    let natives_dir = mc_dir.join("natives").join(mc_version_of(version_dir_name));
+    ensure_old_style_natives(version_json, &mc_dir.join("libraries"), &natives_dir)?;
     Ok(())
 }
 
@@ -384,9 +378,7 @@ pub fn build_auth(
             xuid: xuid.to_string(),
         },
         "external" => {
-            let api_url = read()
-                .map(|a| a.api_url)
-                .unwrap_or_default();
+            let api_url = read().map(|a| a.api_url).unwrap_or_default();
             AuthMode::External {
                 username: username.to_string(),
                 access_token: access_token.to_string(),
@@ -422,26 +414,16 @@ pub async fn prepare_launch(
     access_token: &str,
     uuid: &str,
     xuid: &str,
-) -> Result<
-    (
-        AuthMode,
-        PathBuf,
-        VersionJson,
-        PathBuf,
-        LaunchOptions,
-        u32,
-    ),
-    String,
-> {
+) -> Result<(AuthMode, PathBuf, VersionJson, PathBuf, LaunchOptions, u32), String> {
     let mut auth = build_auth(auth_mode, username, access_token, uuid, xuid);
     fill_missing_xuid(&mut auth);
     let (java_path, version_json, mc_dir, launcher_config, java_major) =
         load_launch_config(version_dir_name)?;
     // 第三方登录：启动前确保 authlib-injector.jar 就绪（缺失会启动失败）；先自动补齐（官方 → BMCLAPI），仍失败才报错。
     if matches!(auth, AuthMode::External { .. }) {
-        ensure_jar().await.map_err(|e| {
-            format!("第三方登录组件缺失且自动下载失败\n请检查网络后重试\n{e}")
-        })?;
+        ensure_jar()
+            .await
+            .map_err(|e| format!("第三方登录组件缺失且自动下载失败\n请检查网络后重试\n{e}"))?;
     }
     Ok((
         auth,
@@ -495,7 +477,10 @@ mod crash_tests {
         write(&report, "---- Minecraft Crash Report ----");
         let since = SystemTime::now() - Duration::from_secs(60);
         let detected = detect_crash(&game, Some(1), since).expect("本次窗口内的报告应被判定为崩溃");
-        assert!(detected.contains("crash-2026-10-12"), "应返回报告路径: {detected}");
+        assert!(
+            detected.contains("crash-2026-10-12"),
+            "应返回报告路径: {detected}"
+        );
     }
 
     #[test]
@@ -531,7 +516,10 @@ mod crash_tests {
         );
         let since = SystemTime::now() - Duration::from_secs(60);
         let detected = detect_crash(&game, Some(1), since).expect("OOM 应被日志特征判定为崩溃");
-        assert!(detected.ends_with("latest.log"), "应回退到 latest.log: {detected}");
+        assert!(
+            detected.ends_with("latest.log"),
+            "应回退到 latest.log: {detected}"
+        );
     }
 
     #[test]
@@ -596,7 +584,10 @@ mod cancel_tests {
         request_cancel();
         assert!(cancel_requested(), "重复取消不应清除标志");
         begin_launch();
-        assert!(!cancel_requested(), "下一次启动开始必须清掉上一次的取消标志");
+        assert!(
+            !cancel_requested(),
+            "下一次启动开始必须清掉上一次的取消标志"
+        );
     }
 
     #[test]

@@ -51,7 +51,10 @@ fn load_or_create(path: &PathBuf) -> String {
     }
     // 生成并写回（seek 到开头，保留旧文件截断）
     let bytes = generate_bytes();
-    if let Err(e) = file.seek(SeekFrom::Start(0)).and_then(|_| file.write_all(&bytes)) {
+    if let Err(e) = file
+        .seek(SeekFrom::Start(0))
+        .and_then(|_| file.write_all(&bytes))
+    {
         eprintln!("[online] machine-id 写入失败: {e}");
     }
     hex_encode(&bytes)

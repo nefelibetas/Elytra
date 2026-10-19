@@ -39,10 +39,7 @@ impl Response {
         }
     }
     pub fn fail(status: u8, body: Vec<u8>) -> Self {
-        Self {
-            status,
-            body,
-        }
+        Self { status, body }
     }
 }
 
@@ -67,7 +64,10 @@ pub fn read_request<R: Read>(r: &mut R) -> io::Result<Request> {
     r.read_exact(&mut kind_len)?;
     let kind_len = kind_len[0] as usize;
     if kind_len == 0 || kind_len > 255 {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "请求类型长度非法"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "请求类型长度非法",
+        ));
     }
     let mut kind = vec![0u8; kind_len];
     r.read_exact(&mut kind)?;
@@ -86,7 +86,12 @@ pub fn read_request<R: Read>(r: &mut R) -> io::Result<Request> {
     })
 }
 
-pub fn write_request<W: Write>(w: &mut W, namespace: &str, value: &str, body: &[u8]) -> io::Result<()> {
+pub fn write_request<W: Write>(
+    w: &mut W,
+    namespace: &str,
+    value: &str,
+    body: &[u8],
+) -> io::Result<()> {
     let kind = format!("{namespace}:{value}");
     let kind_len = kind.len();
     if kind_len == 0 || kind_len > 255 {
@@ -153,7 +158,12 @@ where
     })
 }
 
-pub async fn write_request_async<W>(w: &mut W, namespace: &str, value: &str, body: &[u8]) -> io::Result<()>
+pub async fn write_request_async<W>(
+    w: &mut W,
+    namespace: &str,
+    value: &str,
+    body: &[u8],
+) -> io::Result<()>
 where
     W: tokio::io::AsyncWrite + Unpin,
 {
@@ -194,7 +204,8 @@ where
     W: tokio::io::AsyncWrite + Unpin,
 {
     w.write_all(&[response.status]).await?;
-    w.write_all(&(response.body.len() as u32).to_be_bytes()).await?;
+    w.write_all(&(response.body.len() as u32).to_be_bytes())
+        .await?;
     w.write_all(&response.body).await?;
     w.flush().await
 }
@@ -208,10 +219,7 @@ fn split_kind(kind: &str) -> io::Result<(&str, &str)> {
         ));
     };
     if ns.is_empty() || value.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "请求类型为空段",
-        ));
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "请求类型为空段"));
     }
     if !ns.bytes().all(is_allowed_kind_char) || !value.bytes().all(is_allowed_kind_char) {
         return Err(io::Error::new(

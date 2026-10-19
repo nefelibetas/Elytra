@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering}
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use parking_lot::Mutex;
 use super::emit::EventSink;
+use parking_lot::Mutex;
 
 use super::{emit, global, update_and_emit, StepStatus, TaskProgress, TaskStatus};
 
@@ -360,7 +360,12 @@ pub fn update_progress(p: &mut TaskProgress) {
     };
 }
 
-pub fn set_total(sink: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>, files: u32, bytes: u64) {
+pub fn set_total(
+    sink: &dyn EventSink,
+    progress: &Arc<Mutex<TaskProgress>>,
+    files: u32,
+    bytes: u64,
+) {
     update_and_emit(sink, progress, |p| {
         p.total_files = files;
         p.total_bytes = bytes;
@@ -368,7 +373,12 @@ pub fn set_total(sink: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>, file
     });
 }
 
-pub fn set_completed(sink: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>, files: u32, bytes: u64) {
+pub fn set_completed(
+    sink: &dyn EventSink,
+    progress: &Arc<Mutex<TaskProgress>>,
+    files: u32,
+    bytes: u64,
+) {
     update_and_emit(sink, progress, |p| {
         p.completed_files = files;
         p.completed_bytes = bytes;
@@ -481,7 +491,10 @@ impl StepRef {
         }
         let files_total = self.files_total.load(Ordering::Relaxed);
         if files_total > 0 {
-            return percent(self.files.load(Ordering::Relaxed) as u64, files_total as u64);
+            return percent(
+                self.files.load(Ordering::Relaxed) as u64,
+                files_total as u64,
+            );
         }
         percent(
             self.step_bytes.load(Ordering::Relaxed),
@@ -681,7 +694,11 @@ mod tests {
         let p = progress.lock();
         assert_eq!(p.steps[0].progress, 25.0, "运行中步骤应按字节刷新");
         assert_eq!(p.steps[1].progress, 0.0, "未运行的步骤不得被改写");
-        assert_eq!(p.status, TaskStatus::Running, "心跳应把 Pending 置为 Running");
+        assert_eq!(
+            p.status,
+            TaskStatus::Running,
+            "心跳应把 Pending 置为 Running"
+        );
     }
 
     /// `percent_by_steps`：总进度按完成步骤数，**忽略** `total_bytes`（整合包 est 含永不回传的字节，故同一组计数在字节口径下会给出不同的数字）。

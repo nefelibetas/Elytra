@@ -7,8 +7,8 @@ use crate::auth::account;
 use crate::events;
 use crate::jdk;
 use crate::launcher::args::{build_launch_command, LaunchRequest};
-use crate::launcher::env;
 use crate::launcher::auto_tasks;
+use crate::launcher::env;
 use crate::launcher::platform;
 use crate::launcher::process;
 use crate::launcher::skin;
@@ -118,7 +118,8 @@ pub async fn spawn_game(
         auto_tasks::model::AutoTaskPhase::PreLaunch,
         &launcher_config.auto_tasks,
     );
-    if !failures.is_empty() && launcher_config.auto_tasks.pre_on_failure == auto_tasks::model::AutoTaskFailure::Abort
+    if !failures.is_empty()
+        && launcher_config.auto_tasks.pre_on_failure == auto_tasks::model::AutoTaskFailure::Abort
     {
         let detail = failures
             .iter()

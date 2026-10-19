@@ -228,7 +228,14 @@ fn spawn_guest_sync(
             Ok(st) => st,
             Err(_) => return,
         };
-        guest_sync_loop(sink.as_ref(), &mut stream, local_profile, supports_easytier_id, gen).await;
+        guest_sync_loop(
+            sink.as_ref(),
+            &mut stream,
+            local_profile,
+            supports_easytier_id,
+            gen,
+        )
+        .await;
     });
 }
 

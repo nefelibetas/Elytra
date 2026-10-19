@@ -23,7 +23,9 @@ use crate::util::safe_relative_path;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PackSource {
-    Local { path: String },
+    Local {
+        path: String,
+    },
     Online {
         url: String,
         #[serde(default)]
@@ -536,8 +538,8 @@ pub(crate) fn resolve_version_meta(
 ) -> (String, String, Option<String>) {
     let dir_mc = crate::util::mc_version_from_dir(version_name);
     let dir_loader = crate::util::loader_from_dir(version_name);
-    let Some(text) = find_version_json(vdir, version_name)
-        .and_then(|p| std::fs::read_to_string(p).ok())
+    let Some(text) =
+        find_version_json(vdir, version_name).and_then(|p| std::fs::read_to_string(p).ok())
     else {
         // 无 json（异常目录）：目录名兜底
         let (kind, ver) = match dir_loader {

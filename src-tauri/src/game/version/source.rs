@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 
 use crate::config::downloader::{DownloadSource, DownloadSourceMode, DownloaderConfig};
 use crate::downloader::endpoints::{BMCLAPI, MIRROR_ROUTES};
-use crate::downloader::meta_cache;
 use crate::downloader::fetcher::http;
+use crate::downloader::meta_cache;
 
 /// 元数据请求缓存行为：`DefaultTtl` 命中即返回否则网络写缓存；`CacheOnly` 只读缓存、
 /// 未命中直接报错且绝不发网络（离线模式）；`MustRevalidate` 忽略缓存读强制网络。
@@ -225,7 +225,10 @@ mod tests {
         crate::downloader::meta_cache::clear_all();
         list_cache().lock().clear();
         // 独立 key：磁盘层跨测试 run 持久，固定示例 URL 会命中上一轮的落盘条目
-        let url = format!("https://example.com/maven-metadata-{}.xml", std::process::id());
+        let url = format!(
+            "https://example.com/maven-metadata-{}.xml",
+            std::process::id()
+        );
         assert!(list_cache_get(&url, false).is_none(), "未写入时不应命中");
         list_cache_set(url.clone(), "v1".into());
         assert_eq!(list_cache_get(&url, false).as_deref(), Some("v1"));

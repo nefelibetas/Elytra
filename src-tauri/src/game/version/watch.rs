@@ -21,13 +21,7 @@ use crate::task::{emit_event, EventSink};
 const DEBOUNCE: Duration = Duration::from_millis(300);
 
 /// 聚焦版本目录内监听的一级子目录（前端各列表均取一级条目，不递归）。
-const RESOURCE_KINDS: [&str; 5] = [
-    "saves",
-    "mods",
-    "resourcepacks",
-    "datapacks",
-    "shaderpacks",
-];
+const RESOURCE_KINDS: [&str; 5] = ["saves", "mods", "resourcepacks", "datapacks", "shaderpacks"];
 
 /// 版本列表变化（`versions/` 一级条目增删改名，或版本 json 落盘导致 loader 推断变化）。
 #[derive(Debug, Clone, Serialize, TS)]
@@ -127,17 +121,16 @@ pub fn set_focus(version: Option<String>) {
 /// 监听线程：收事件 → 静默窗口合并 → 分类推送；`Retarget` 期间到达的批次整体丢弃（多属旧目录）。
 fn watch_loop(inner: &Arc<Inner>, rx: &Receiver<Msg>) {
     let tx = inner.tx.clone();
-    let mut watcher = match notify::recommended_watcher(
-        move |res: notify::Result<notify::Event>| {
+    let mut watcher =
+        match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             let _ = tx.send(Msg::Fs(res));
-        },
-    ) {
-        Ok(w) => w,
-        Err(e) => {
-            eprintln!("[watch] 初始化文件监听失败：{e}");
-            return;
-        }
-    };
+        }) {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!("[watch] 初始化文件监听失败：{e}");
+                return;
+            }
+        };
     let mut watched: Vec<(PathBuf, Target)> = Vec::new();
     loop {
         let Ok(mut msg) = rx.recv() else { return };
@@ -183,7 +176,10 @@ fn desired_targets(inner: &Inner) -> Vec<(PathBuf, Target)> {
     for kind in RESOURCE_KINDS {
         let path = version_dir.join(kind);
         if path.is_dir() {
-            out.push((path, Target::VersionResource(focus.clone(), kind.to_string())));
+            out.push((
+                path,
+                Target::VersionResource(focus.clone(), kind.to_string()),
+            ));
         }
     }
     out
@@ -288,7 +284,11 @@ fn classify(
 }
 
 /// 归类后推送：重定向请求回投线程，列表/资源变化各发一条事件。
-fn dispatch(inner: &Inner, watched: &[(PathBuf, Target)], batch: Vec<notify::Result<notify::Event>>) {
+fn dispatch(
+    inner: &Inner,
+    watched: &[(PathBuf, Target)],
+    batch: Vec<notify::Result<notify::Event>>,
+) {
     let (versions_changed, kinds, need_retarget) = classify(watched, &batch);
     if need_retarget {
         let _ = inner.tx.send(Msg::Retarget);

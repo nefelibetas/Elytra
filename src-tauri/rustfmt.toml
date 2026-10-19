@@ -1,0 +1,4 @@
+# rustfmt 配置（cargo fmt 从 crate 根目录读取）
+
+# 行宽沿用 rustfmt 默认 100：本仓注释较长，80 会频繁折行
+max_width = 100

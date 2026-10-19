@@ -21,9 +21,9 @@ pub fn config_dir() -> PathBuf {
 /// 平台用户数据根目录（Windows）：`%APPDATA%`（Roaming），缺省回退 `%USERPROFILE%\AppData\Roaming`。
 #[cfg(target_os = "windows")]
 fn platform_data_root() -> Option<PathBuf> {
-    std::env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("USERPROFILE").map(|h| PathBuf::from(h).join("AppData/Roaming")))
+    std::env::var_os("APPDATA").map(PathBuf::from).or_else(|| {
+        std::env::var_os("USERPROFILE").map(|h| PathBuf::from(h).join("AppData/Roaming"))
+    })
 }
 
 /// 平台用户数据根目录（macOS）：`~/Library/Application Support`。

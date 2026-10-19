@@ -245,7 +245,10 @@ fn unique_dest(dir: &Path, file_name: &str) -> PathBuf {
         return candidate;
     }
     let path = Path::new(file_name);
-    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("download");
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("download");
     let ext = path.extension().and_then(|s| s.to_str());
     for n in 1..1000 {
         let name = match ext {

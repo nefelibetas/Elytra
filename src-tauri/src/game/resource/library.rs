@@ -197,7 +197,8 @@ pub async fn download_libraries(
     }
 
     // 步骤进度分母（待下载条目数）
-    pc.step_files_total.store(items.len() as u32, Ordering::Relaxed);
+    pc.step_files_total
+        .store(items.len() as u32, Ordering::Relaxed);
     let errors = batch::run(items, concurrency, pc, cancel, None).await;
     if errors.is_empty() {
         Ok(())

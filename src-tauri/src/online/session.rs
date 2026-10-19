@@ -97,8 +97,7 @@ impl EasyTierSession {
     pub async fn start(config: SessionConfig) -> Result<Self, String> {
         init_easytier_logging();
         let toml = build_config(&config)?;
-        let instance =
-            create_native_instance(toml).map_err(common_err_ctx!("创建联机会话失败"))?;
+        let instance = create_native_instance(toml).map_err(common_err_ctx!("创建联机会话失败"))?;
         instance
             .clone()
             .start()
@@ -261,7 +260,10 @@ mod tests {
         let toml = build_config(&c).expect("host 建网应成功");
         let wl = toml.get_tcp_whitelist();
         assert!(wl.contains(&"13448".to_string()), "信息端口应入白名单");
-        assert!(wl.contains(&"25565".to_string()), "游戏端口应入白名单（proxy NAT 直连）");
+        assert!(
+            wl.contains(&"25565".to_string()),
+            "游戏端口应入白名单（proxy NAT 直连）"
+        );
         assert!(toml.get_port_forwards().is_empty(), "host 不配转发");
     }
 

@@ -34,9 +34,9 @@ const MAX_FILE_SEGMENTS: usize = 8;
 /// （返回 `< 2` 表示不值得分段，调用方回退单流）；实际切分仍由 `segment_count`
 /// 按 `MIN_SEGMENT_BYTES` 二次收敛。
 pub(crate) fn requested_segment_count(total: u64) -> usize {
-	let budget_bytes = TARGET_DOWNLOAD_SECS.saturating_mul(OFFICIAL_SINGLE_STREAM_BPS);
-	let k = (total as f64 / budget_bytes as f64).ceil() as usize;
-	k.clamp(1, MAX_FILE_SEGMENTS)
+    let budget_bytes = TARGET_DOWNLOAD_SECS.saturating_mul(OFFICIAL_SINGLE_STREAM_BPS);
+    let k = (total as f64 / budget_bytes as f64).ceil() as usize;
+    k.clamp(1, MAX_FILE_SEGMENTS)
 }
 
 /// 单次限速睡眠上限（秒）：保证暂停/取消能在一个小块间隔内被察觉。
@@ -275,7 +275,10 @@ pub(crate) async fn transfer_with_ranges(
 
 /// 分段中间产物路径（`.part` 数据 + `.part.json` 位图）；调用方取消时清理，暂停/失败保留以支持续传。
 pub fn partial_paths(dest: &Path) -> (PathBuf, PathBuf) {
-    (append_suffix(dest, ".part"), append_suffix(dest, ".part.json"))
+    (
+        append_suffix(dest, ".part"),
+        append_suffix(dest, ".part.json"),
+    )
 }
 
 /// 位图写入器：记录某段已完成字节并落盘（`.part.json`）。
@@ -448,7 +451,12 @@ impl Pace {
 
 /// 探测是否支持 Range 并取总长：`GET Range: bytes=0-0` 返回 206 时从 `Content-Range` 取总长；其余（200/4xx/网络错）返回 `None`，交调用方回退单连接。
 async fn probe_total(client: &Client, url: &str) -> Option<u64> {
-    let response = client.get(url).header(RANGE, "bytes=0-0").send().await.ok()?;
+    let response = client
+        .get(url)
+        .header(RANGE, "bytes=0-0")
+        .send()
+        .await
+        .ok()?;
     if response.status() != StatusCode::PARTIAL_CONTENT {
         return None;
     }
@@ -784,11 +792,7 @@ mod tests {
             body,
             "续传后内容完整"
         );
-        assert_eq!(
-            hits.load(Ordering::SeqCst),
-            3,
-            "1 次探测 + 仅 2 个未完成段"
-        );
+        assert_eq!(hits.load(Ordering::SeqCst), 3, "1 次探测 + 仅 2 个未完成段");
         let _ = std::fs::remove_file(&dest);
     }
 
@@ -829,7 +833,11 @@ mod tests {
         .expect("段内续传应成功");
 
         assert_eq!(out.bytes, total);
-        assert_eq!(std::fs::read(&dest).expect("读回文件"), body, "段内续传后内容完整");
+        assert_eq!(
+            std::fs::read(&dest).expect("读回文件"),
+            body,
+            "段内续传后内容完整"
+        );
         assert_eq!(
             hits.load(Ordering::SeqCst),
             5,

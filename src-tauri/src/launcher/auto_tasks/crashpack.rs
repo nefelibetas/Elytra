@@ -30,12 +30,7 @@ pub fn pack_crash_logs(ctx: &AutoTaskCtx<'_>) -> Result<PathBuf, String> {
     let mut zip = ZipWriter::new(file);
     let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
 
-    add_text(
-        &mut zip,
-        opts,
-        "info.txt",
-        &redact(&build_info(ctx)),
-    )?;
+    add_text(&mut zip, opts, "info.txt", &redact(&build_info(ctx)))?;
 
     if let Some(report) = ctx.crash_report {
         let name = Path::new(report)
@@ -54,7 +49,10 @@ pub fn pack_crash_logs(ctx: &AutoTaskCtx<'_>) -> Result<PathBuf, String> {
             "logs/latest.log",
             ctx.game_dir.join("logs").join("latest.log"),
         ),
-        ("logs/debug.log", ctx.game_dir.join("logs").join("debug.log")),
+        (
+            "logs/debug.log",
+            ctx.game_dir.join("logs").join("debug.log"),
+        ),
         (
             "logs/elytra-launch.log",
             ctx.mc_dir.join("logs").join("elytra-launch.log"),
@@ -68,12 +66,7 @@ pub fn pack_crash_logs(ctx: &AutoTaskCtx<'_>) -> Result<PathBuf, String> {
         &super::record::mods_json_path(ctx.config_dir, ctx.version_id),
         "mods.json",
     )?;
-    add_file(
-        &mut zip,
-        opts,
-        &ctx.instance_file(),
-        INSTANCE_FILE,
-    )?;
+    add_file(&mut zip, opts, &ctx.instance_file(), INSTANCE_FILE)?;
     // 版本 JSON：目录内文件名可能 ≠ 目录名，按目录名试一次（失败静默跳过）
     add_file(
         &mut zip,
@@ -220,7 +213,10 @@ mod tests {
         let info = entries.get("info.txt").expect("info.txt 应收录");
         assert!(info.contains("instance: 1.20.1-fabric"));
         assert!(info.contains("exit_code: 1"));
-        assert!(!entries.contains_key("logs/debug.log"), "缺失成员不产生条目");
+        assert!(
+            !entries.contains_key("logs/debug.log"),
+            "缺失成员不产生条目"
+        );
     }
 
     #[test]
@@ -228,7 +224,11 @@ mod tests {
         let (config, mc, game) = fixture("report");
         let report = game.join("crash-reports").join("crash-2026-10-12.txt");
         fs::create_dir_all(report.parent().unwrap()).unwrap();
-        fs::write(&report, "---- Minecraft Crash Report ----\nOutOfMemoryError").unwrap();
+        fs::write(
+            &report,
+            "---- Minecraft Crash Report ----\nOutOfMemoryError",
+        )
+        .unwrap();
         let report_str = report.display().to_string();
         let ctx = AutoTaskCtx {
             mc_dir: &mc,

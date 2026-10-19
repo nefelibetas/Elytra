@@ -6,23 +6,23 @@
 
 use ts_rs::TS;
 
+use crate::auth::external::{ExternalAccount, ExternalConfig, ExternalProfile, ExternalServer};
+use crate::auth::model::MsAccount;
+use crate::commands::auto_tasks::InstanceAutoTasksState;
 use crate::config::downloader::{
     DownloadSource, DownloadSourceMode, DownloaderConfig, JdkSourceMode, NetworkMode,
 };
 use crate::config::game_dirs::{GameDir, GameDirsConfig};
-use crate::auth::external::{ExternalAccount, ExternalConfig, ExternalProfile, ExternalServer};
-use crate::auth::model::MsAccount;
 use crate::config::online::OnlineConfig;
 use crate::config::tooldl::ToolDlConfig;
-use crate::jdk::model::{JdkInfo, JdkOptions, JdkScanCache, JdkSelection};
-use crate::launcher::model::{GcType, LaunchOptions, MemoryMode, ProcessPriority, WindowSize};
-use crate::launcher::auto_tasks::model::{
-    BackupScope, AutoTaskAction, AutoTaskFailure, AutoTaskFailureInfo, AutoTasksFinished, AutoTaskPhase, AutoTaskProgress,
-    AutoTaskStep, AutoTasks,
-};
-use crate::commands::auto_tasks::InstanceAutoTasksState;
 use crate::game::version::dir::InstalledVersionInfo;
 use crate::game::version::watch::{VersionDirChanged, VersionsChanged};
+use crate::jdk::model::{JdkInfo, JdkOptions, JdkScanCache, JdkSelection};
+use crate::launcher::auto_tasks::model::{
+    AutoTaskAction, AutoTaskFailure, AutoTaskFailureInfo, AutoTaskPhase, AutoTaskProgress,
+    AutoTaskStep, AutoTasks, AutoTasksFinished, BackupScope,
+};
+use crate::launcher::model::{GcType, LaunchOptions, MemoryMode, ProcessPriority, WindowSize};
 use crate::task::files::WaitingUserPayload;
 use crate::task::model::{
     DownloadFileKind, DownloadTask, FabricApi, LoaderChoice, LoaderKind, StepInfo, StepStatus,

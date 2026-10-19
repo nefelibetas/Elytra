@@ -317,7 +317,10 @@ mod tests {
         assert_eq!(AutoTaskPhase::OnCrash.steps(&auto_tasks).len(), 0);
         assert_eq!(AutoTaskPhase::PostExit.steps(&auto_tasks).len(), 0);
         assert_eq!(AutoTaskPhase::PostExit.as_str(), "post_exit");
-        assert_eq!(AutoTaskPhase::parse("on_crash"), Some(AutoTaskPhase::OnCrash));
+        assert_eq!(
+            AutoTaskPhase::parse("on_crash"),
+            Some(AutoTaskPhase::OnCrash)
+        );
         assert_eq!(AutoTaskPhase::parse("bogus"), None);
     }
 
@@ -325,7 +328,10 @@ mod tests {
     fn kind_labels_stable() {
         // 前端据标签选图标，标签是契约的一部分
         assert_eq!(AutoTaskAction::RecordMods.kind_label(), "record_mods");
-        assert_eq!(AutoTaskAction::PackCrashLogs.kind_label(), "pack_crash_logs");
+        assert_eq!(
+            AutoTaskAction::PackCrashLogs.kind_label(),
+            "pack_crash_logs"
+        );
         assert_eq!(
             AutoTaskAction::BackupSaves {
                 scope: BackupScope::All,

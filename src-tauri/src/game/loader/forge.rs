@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use super::processors;
 use super::neoforge::{download_neoforge_universal, extract_neoforge_client};
+use super::processors;
 use super::{expand_inheritance, InstallCtx, LoaderEvent, LoaderHook, VersionTarget};
 use crate::config::downloader::{DownloadSource, DownloaderConfig};
 use crate::downloader::endpoints;
@@ -58,7 +58,8 @@ pub(super) async fn download_and_extract(
     } = ctx;
     let source = config.file_primary_source().ok_or("no active source")?;
     let mc_dir = config.minecraft_dir_abs();
-    let (mut archive, installer_path) = fetch_installer(installer_urls, &mc_dir, pc, cancel).await?;
+    let (mut archive, installer_path) =
+        fetch_installer(installer_urls, &mc_dir, pc, cancel).await?;
 
     std::fs::create_dir_all(version_dir).map_err(common_err_ctx!("创建目录失败"))?;
     let jar_path = version_dir.join(format!("{}.jar", dir_name));
@@ -176,8 +177,7 @@ async fn fetch_installer(
     .await
     .map_err(common_err_ctx!("下载安装程序失败"))?;
 
-    let file =
-        std::fs::File::open(&installer_path).map_err(common_err_ctx!("打开安装程序失败"))?;
+    let file = std::fs::File::open(&installer_path).map_err(common_err_ctx!("打开安装程序失败"))?;
     let archive = zip::ZipArchive::new(file).map_err(common_err_ctx!("读取安装程序失败"))?;
     Ok((archive, installer_path))
 }
@@ -299,9 +299,9 @@ fn verify_profile_artifacts(profile: &serde_json::Value, lib_dir: &Path) -> Resu
 /// 在 install_profile.libraries 中查找 NeoForge universal 条目。
 fn find_neoforge_universal(profile: &Option<serde_json::Value>) -> Option<&serde_json::Value> {
     profile.as_ref()?["libraries"].as_array()?.iter().find(|l| {
-        l["name"].as_str().is_some_and(|n| {
-            n.starts_with("net.neoforged:neoforge:") && n.ends_with(":universal")
-        })
+        l["name"]
+            .as_str()
+            .is_some_and(|n| n.starts_with("net.neoforged:neoforge:") && n.ends_with(":universal"))
     })
 }
 
@@ -414,8 +414,7 @@ fn install_embedded_maven(
             .by_name(&format!("maven/{rel}"))
             .map_err(common_err_ctx!("读取安装程序条目失败"))?;
         let mut out = std::fs::File::create(&dest).map_err(common_err_ctx!("创建文件失败"))?;
-        std::io::copy(&mut member, &mut out)
-            .map_err(common_err_ctx!("解出安装器内嵌构件失败"))?;
+        std::io::copy(&mut member, &mut out).map_err(common_err_ctx!("解出安装器内嵌构件失败"))?;
     }
     Ok(())
 }
@@ -609,8 +608,7 @@ async fn resolve_version_json(
     // 提取 → 展开继承 → 序列化 → 写盘；三个策略共用
     let write_extracted = |v: serde_json::Value| -> Result<(), String> {
         let merged = expand_inheritance(parent_text, v, dir_name)?;
-        let out =
-            serde_json::to_string_pretty(&merged).map_err(common_err_ctx!("序列化失败"))?;
+        let out = serde_json::to_string_pretty(&merged).map_err(common_err_ctx!("序列化失败"))?;
         std::fs::write(json_path, &out).map_err(common_err_ctx!("写入 version.json 失败"))
     };
 
@@ -807,7 +805,6 @@ async fn resolve_jar_from_manifest(
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -843,7 +840,11 @@ mod tests {
         let mut archive = zip::ZipArchive::new(std::fs::File::open(&installer).unwrap()).unwrap();
         install_embedded_maven(&mut archive, &profile, &lib_dir).unwrap();
         let dest = lib_dir.join(rel);
-        assert_eq!(std::fs::read(&dest).unwrap(), content, "应解出声明路径下的构件");
+        assert_eq!(
+            std::fs::read(&dest).unwrap(),
+            content,
+            "应解出声明路径下的构件"
+        );
 
         // 幂等：删掉后内容被改动（sha1 不匹配）→ 重新解出正确内容
         std::fs::write(&dest, b"corrupted").unwrap();
@@ -882,7 +883,11 @@ mod tests {
         let dest = lib_dir
             .join("net/minecraftforge/forge/1.7.10-10.13.4.1614-1.7.10")
             .join("forge-1.7.10-10.13.4.1614-1.7.10.jar");
-        assert_eq!(std::fs::read(&dest).unwrap(), bytes, "应按坐标落位为普通构件名");
+        assert_eq!(
+            std::fs::read(&dest).unwrap(),
+            bytes,
+            "应按坐标落位为普通构件名"
+        );
 
         // 无 install 段（新版）→ 空转
         let mut a2 = zip::ZipArchive::new(std::fs::File::open(&installer).unwrap()).unwrap();
@@ -944,12 +949,21 @@ mod tests {
         let mut z = zip::ZipArchive::new(std::fs::File::open(&installer).unwrap()).unwrap();
         let mut src = Vec::new();
         std::io::Read::read_to_end(
-            &mut z.by_name("forge-1.7.10-10.13.4.1614-1.7.10-universal.jar").unwrap(),
+            &mut z
+                .by_name("forge-1.7.10-10.13.4.1614-1.7.10-universal.jar")
+                .unwrap(),
             &mut src,
         )
         .unwrap();
-        assert_eq!(std::fs::read(&dest).unwrap(), src, "落位内容应与 zip 内文件一致");
-        eprintln!("✅ 1.7.10 spec-0 install 段落位：{}（{size} 字节）", dest.display());
+        assert_eq!(
+            std::fs::read(&dest).unwrap(),
+            src,
+            "落位内容应与 zip 内文件一致"
+        );
+        eprintln!(
+            "✅ 1.7.10 spec-0 install 段落位：{}（{size} 字节）",
+            dest.display()
+        );
     }
 
     /// 真实 installer 验证（真实网络，默认 `#[ignore]`）：Forge 1.12.2 版本 json 里 `net.minecraftforge:forge`
@@ -991,8 +1005,7 @@ mod tests {
 
         let lib_dir = dir.join("libraries");
         std::fs::create_dir_all(&lib_dir).unwrap();
-        let mut archive =
-            zip::ZipArchive::new(std::fs::File::open(&installer).unwrap()).unwrap();
+        let mut archive = zip::ZipArchive::new(std::fs::File::open(&installer).unwrap()).unwrap();
         install_embedded_maven(&mut archive, &profile, &lib_dir).unwrap();
 
         // 断言：version.json 里 URL 为空的 forge client 库被真正解出且 sha1 命中
@@ -1023,7 +1036,11 @@ mod tests {
             vendor: "OpenJDK".into(),
             bits: 64,
         };
-        let jdks = vec![mk("/jdk8", "1.8.0_202"), mk("/jdk17", "17.0.8"), mk("/jdk21", "21")];
+        let jdks = vec![
+            mk("/jdk8", "1.8.0_202"),
+            mk("/jdk17", "17.0.8"),
+            mk("/jdk21", "21"),
+        ];
 
         assert_eq!(
             pick_auto_jdk(&jdks, 17).unwrap().path,

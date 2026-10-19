@@ -50,7 +50,7 @@ static HTTP_CLIENT: LazyLock<parking_lot::Mutex<Option<std::sync::Arc<Client>>>>
 mod tests {
     use super::super::api::{fetch, fetch_verified};
     use super::super::core::test_support::{serve, temp_dest};
-    use super::{reset_http_client, http};
+    use super::{http, reset_http_client};
     use crate::downloader::hash::{file_sha1_matches, sha1_hex};
     use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -151,10 +151,7 @@ mod tests {
         let dest = temp_dest("redirect_normal");
         let res = fetch_verified(&[url], &dest, None::<fn(u64, u64)>, &sha1_hex(&good)).await;
         assert!(res.is_ok(), "正常 302 应跟随成功: {:?}", res);
-        assert!(
-            file_sha1_matches(&dest, &sha1_hex(&good)),
-            "落地内容应正确"
-        );
+        assert!(file_sha1_matches(&dest, &sha1_hex(&good)), "落地内容应正确");
         let _ = std::fs::remove_file(&dest);
     }
 

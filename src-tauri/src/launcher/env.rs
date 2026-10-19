@@ -68,7 +68,10 @@ pub fn load_launch_config(
 
     // 实例级自动任务覆盖（实例文件存在则完全采用其自动任务，否则沿用全局）
     let launch_option = match persist::instance::read_auto_tasks(&mc_dir, version_dir_name) {
-        Some(auto_tasks) => LaunchOptions { auto_tasks, ..launch_option },
+        Some(auto_tasks) => LaunchOptions {
+            auto_tasks,
+            ..launch_option
+        },
         None => launch_option,
     };
 

@@ -12,11 +12,9 @@ pub async fn fetch_version_json_text(
     config: &DownloaderConfig,
 ) -> Result<String, String> {
     config
-        .fetch_with_fallback(
-            config.game_source_mode,
-            CacheBehaviour::DefaultTtl,
-            |s| s.mirror_url(version_url),
-        )
+        .fetch_with_fallback(config.game_source_mode, CacheBehaviour::DefaultTtl, |s| {
+            s.mirror_url(version_url)
+        })
         .await
         .map_err(common_err_ctx!("获取 version json 失败"))
 }

@@ -27,11 +27,17 @@ struct InstanceFileRef<'a> {
 /// 读取实例自动任务；文件缺失/损坏返回 `None`（回退全局）。
 pub fn read_auto_tasks(mc_dir: &Path, version_id: &str) -> Option<AutoTasks> {
     let text = std::fs::read_to_string(instance_path(mc_dir, version_id)).ok()?;
-    toml::from_str::<InstanceFile>(&text).ok().map(|f| f.auto_tasks)
+    toml::from_str::<InstanceFile>(&text)
+        .ok()
+        .map(|f| f.auto_tasks)
 }
 
 /// 写入实例自动任务；`None` = 删除实例文件（该实例回退全局）。
-pub fn write_auto_tasks(mc_dir: &Path, version_id: &str, auto_tasks: Option<&AutoTasks>) -> Result<(), String> {
+pub fn write_auto_tasks(
+    mc_dir: &Path,
+    version_id: &str,
+    auto_tasks: Option<&AutoTasks>,
+) -> Result<(), String> {
     let path = instance_path(mc_dir, version_id);
     let Some(auto_tasks) = auto_tasks else {
         if path.exists() {
@@ -52,7 +58,9 @@ pub fn write_auto_tasks(mc_dir: &Path, version_id: &str, auto_tasks: Option<&Aut
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::launcher::auto_tasks::model::{BackupScope, AutoTaskAction, AutoTaskStep, AutoTaskFailure};
+    use crate::launcher::auto_tasks::model::{
+        AutoTaskAction, AutoTaskFailure, AutoTaskStep, BackupScope,
+    };
     use std::fs;
 
     fn tmp_dir(name: &str) -> PathBuf {
@@ -116,13 +124,18 @@ mod tests {
     fn corrupt_file_falls_back_to_none() {
         let mc = tmp_dir("corrupt");
         fs::write(instance_path(&mc, "inst"), "auto_tasks = = broken").unwrap();
-        assert!(read_auto_tasks(&mc, "inst").is_none(), "损坏不应 panic，按未配置处理");
+        assert!(
+            read_auto_tasks(&mc, "inst").is_none(),
+            "损坏不应 panic，按未配置处理"
+        );
     }
 
     #[test]
     fn leaves_no_tmp_behind() {
         let mc = tmp_dir("tmp");
         write_auto_tasks(&mc, "inst", Some(&sample_auto_tasks())).unwrap();
-        assert!(!instance_path(&mc, "inst").with_file_name(".elytra-instance.toml.tmp").exists());
+        assert!(!instance_path(&mc, "inst")
+            .with_file_name(".elytra-instance.toml.tmp")
+            .exists());
     }
 }

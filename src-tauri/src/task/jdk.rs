@@ -64,7 +64,14 @@ pub async fn run_install_jdk(
     };
     let result = auto_install(major, &config, &hook).await;
 
-    settle_jdk_install(sink.as_ref(), progress, cancel, &dest_dir, emit_handle, result);
+    settle_jdk_install(
+        sink.as_ref(),
+        progress,
+        cancel,
+        &dest_dir,
+        emit_handle,
+        result,
+    );
 }
 
 /// 同目录互斥 + 半截目录清理登记 + Running 相位；锁冲突或已取消时自行收口返回 None，返回的锁由调用方持有至任务结束。

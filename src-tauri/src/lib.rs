@@ -23,11 +23,14 @@ use tauri::{Emitter, Manager};
 use commands::account::{
     cancel_ms_login, disable_cape, ensure_ms_account, external_login, fetch_account_skin,
     fetch_account_skin_profile, fetch_capes, fetch_default_skin, fetch_external_skin,
-    fetch_external_skin_profile, get_external_accounts, get_ms_account, get_ms_accounts,
-    get_external_config, refresh_external_account, refresh_ms_account, remove_external_account,
-    remove_ms_account, save_external_skin, save_skin, save_external_config, set_active_cape,
+    fetch_external_skin_profile, get_external_accounts, get_external_config, get_ms_account,
+    get_ms_accounts, refresh_external_account, refresh_ms_account, remove_external_account,
+    remove_ms_account, save_external_config, save_external_skin, save_skin, set_active_cape,
     start_ms_login, switch_external_account, switch_external_role, switch_ms_account,
     upload_skin_file,
+};
+use commands::auto_tasks::{
+    get_instance_auto_tasks, run_auto_tasks_now, save_global_auto_tasks, save_instance_auto_tasks,
 };
 use commands::community::{get_community_details, get_community_versions, search_community};
 use commands::config::take_config_recovery_notice;
@@ -40,15 +43,12 @@ use commands::gamedirs::{
     get_active_game_dir, get_game_dirs, open_folder, remove_game_dir, rename_game_dir,
     rename_version_dir, set_active_game_dir, set_watched_version,
 };
-use commands::auto_tasks::{
-    get_instance_auto_tasks, run_auto_tasks_now, save_global_auto_tasks, save_instance_auto_tasks,
-};
 use commands::jdk::{
     auto_scan_jdk, get_discovered_jdks, get_jdk_options, save_jdk_options, scan_custom_jdk,
 };
 use commands::launch::{
-    begin_launch, cancel_launch, check_launch_env, get_game_log, get_launcher_log, open_launcher_log_dir,
-    spawn_game,
+    begin_launch, cancel_launch, check_launch_env, get_game_log, get_launcher_log,
+    open_launcher_log_dir, spawn_game,
 };
 use commands::launch_options::{get_launch_options, get_memory_info, save_launch_options};
 use commands::launch_script::export_launch_script;

@@ -151,7 +151,13 @@ pub fn backup_saves(
     let mut copied = 0usize;
     let mut write_all = || -> Result<(), String> {
         for world in &worlds {
-            copy_tree(&saves.join(world), &tmp.join(world), &mut copied, total, on_step)?;
+            copy_tree(
+                &saves.join(world),
+                &tmp.join(world),
+                &mut copied,
+                total,
+                on_step,
+            )?;
         }
         Ok(())
     };
@@ -194,8 +200,14 @@ mod tests {
 
     fn seed_world(game_dir: &Path, world: &str) {
         write(&saves_dir(game_dir).join(world).join("level.dat"), "lvl");
-        write(&saves_dir(game_dir).join(world).join("region/r.0.0.mca"), "mcа");
-        write(&saves_dir(game_dir).join(world).join("session.lock"), "lock");
+        write(
+            &saves_dir(game_dir).join(world).join("region/r.0.0.mca"),
+            "mcа",
+        );
+        write(
+            &saves_dir(game_dir).join(world).join("session.lock"),
+            "lock",
+        );
     }
 
     #[test]
@@ -204,7 +216,10 @@ mod tests {
         seed_world(&game, "world");
         let out = backup_saves(&game, &BackupScope::All, 5, &mut |_, _| {}).unwrap();
         assert_eq!(out.worlds, 1);
-        assert_eq!(out.files, 2, "level.dat + region 文件，session.lock 应被排除");
+        assert_eq!(
+            out.files, 2,
+            "level.dat + region 文件，session.lock 应被排除"
+        );
         assert!(!out.dir.join("world/session.lock").exists());
         assert!(out.dir.join("world/level.dat").exists());
         assert!(out.dir.join("world/region/r.0.0.mca").exists());
@@ -228,7 +243,10 @@ mod tests {
     fn backup_missing_saves_is_error() {
         let game = tmp_dir("missing");
         let err = backup_saves(&game, &BackupScope::All, 5, &mut |_, _| {}).unwrap_err();
-        assert!(err.starts_with("未发现存档目录"), "错误首行应为中文短文案: {err}");
+        assert!(
+            err.starts_with("未发现存档目录"),
+            "错误首行应为中文短文案: {err}"
+        );
     }
 
     #[test]

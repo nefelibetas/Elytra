@@ -3,9 +3,7 @@
 use serde::Serialize;
 
 use crate::game::modpack::{pack_modpack, resolve_hosted_mods, resolve_version_meta};
-use crate::game::updates::{
-    self, ModFileDetail, ModListResult, ModUpdate, ResourceListResult,
-};
+use crate::game::updates::{self, ModFileDetail, ModListResult, ModUpdate, ResourceListResult};
 use crate::game::version::dir::{version_dir_path, version_server_section};
 use crate::util;
 
@@ -153,8 +151,7 @@ pub async fn check_mod_updates(version_name: String) -> Result<Vec<ModUpdate>, S
     if files.is_empty() {
         return Ok(Vec::new());
     }
-    let (mc_version, loader, _) =
-        resolve_version_meta(&vdir, &version_name);
+    let (mc_version, loader, _) = resolve_version_meta(&vdir, &version_name);
     Ok(updates::check_updates(&vdir.join("mods"), &files, &mc_version, &loader).await)
 }
 

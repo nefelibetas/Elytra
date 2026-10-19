@@ -13,11 +13,11 @@ use crate::downloader::fetcher;
 use crate::downloader::path_lock::PathLock;
 use crate::downloader::{progress, reuse};
 use crate::game::loader;
-use crate::game::resource::{assets, extract, library};
 use crate::game::resource::assets::AssetIndexRef;
-use crate::game::version::model::VersionJson;
+use crate::game::resource::{assets, extract, library};
 use crate::game::version::dir::resolve_version_dir;
 use crate::game::version::meta;
+use crate::game::version::model::VersionJson;
 use crate::persist;
 use crate::task::{
     self,
@@ -57,9 +57,8 @@ fn prepare_runtime(task: &DownloadTask) -> Result<TaskRuntime, String> {
     let reuse_root = reuse::LocalRuntimeSource::discover(&vdir);
     // 任务开始前目录是否已存在：全新下载失败整删残缺目录；补全（目录已存在）失败不删。
     let vdir_existed_before = vdir.exists();
-    let lock = PathLock::try_acquire(&vdir).ok_or_else(|| {
-        format!("该版本正在被其他任务下载:\n{}", vdir.display())
-    })?;
+    let lock = PathLock::try_acquire(&vdir)
+        .ok_or_else(|| format!("该版本正在被其他任务下载:\n{}", vdir.display()))?;
 
     Ok(TaskRuntime {
         started: std::time::Instant::now(),
@@ -437,10 +436,7 @@ async fn install_loader_step(
             loader.kind,
             mc_version,
             &loader.version,
-            loader::VersionTarget {
-                dir_name,
-                vdir,
-            },
+            loader::VersionTarget { dir_name, vdir },
             parent_text,
             loader::InstallCtx {
                 config,
@@ -484,12 +480,8 @@ async fn install_optifine_step(
     // OptiFine 场景随主 ModLoader：Fabric/Quilt → OptiFabric 桥接进 mods；Forge/NeoForge → 直接进 mods；无 loader → 纯净版独立版本 + classpath 库
     let mode = match loader_choice {
         Some(l) => match l.kind {
-            task::LoaderKind::Fabric | task::LoaderKind::Quilt => {
-                loader::OptifineMode::FabricLike
-            }
-            task::LoaderKind::Forge | task::LoaderKind::NeoForge => {
-                loader::OptifineMode::ForgeLike
-            }
+            task::LoaderKind::Fabric | task::LoaderKind::Quilt => loader::OptifineMode::FabricLike,
+            task::LoaderKind::Forge | task::LoaderKind::NeoForge => loader::OptifineMode::ForgeLike,
         },
         None => loader::OptifineMode::Vanilla,
     };
@@ -497,10 +489,7 @@ async fn install_optifine_step(
         mc_version,
         patch,
         "HD_U",
-        loader::VersionTarget {
-            dir_name,
-            vdir,
-        },
+        loader::VersionTarget { dir_name, vdir },
         mode,
         loader::InstallCtx {
             config,

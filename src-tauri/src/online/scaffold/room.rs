@@ -73,7 +73,10 @@ fn char_value(c: char) -> Option<u8> {
         'O' => '0',
         _ => c,
     };
-    ALPHABET.iter().position(|&a| a as char == c).map(|p| p as u8)
+    ALPHABET
+        .iter()
+        .position(|&a| a as char == c)
+        .map(|p| p as u8)
 }
 
 /// value（< 34^16，能被 7 整除）→ 房间码 / 网络名（前 8 字符）/ 密钥（后 8 字符）。
@@ -140,10 +143,7 @@ mod tests {
             room.network_name,
             format!("scaffolding-mc-{}-{}", segs[0], segs[1])
         );
-        assert_eq!(
-            room.network_secret,
-            format!("{}-{}", segs[2], segs[3])
-        );
+        assert_eq!(room.network_secret, format!("{}-{}", segs[2], segs[3]));
     }
 
     #[test]
@@ -157,10 +157,22 @@ mod tests {
     fn invalid_codes_rejected() {
         assert!(parse_room_code("").is_none());
         assert!(parse_room_code("U/1234").is_none());
-        assert!(parse_room_code("XXXX-XXXX-XXXX-XXXX").is_none(), "缺 U/ 前缀");
-        assert!(parse_room_code("U/ABCD-EFGH-JKMN-PQRS").is_none(), "长度不符");
-        assert!(parse_room_code("U/ABCD-EFGH-JKMN-PQRS:123").is_none(), "不允许附加段");
-        assert!(parse_room_code("U/ABCD-EFGH-JKMN-PQ^S").is_none(), "非法字符");
+        assert!(
+            parse_room_code("XXXX-XXXX-XXXX-XXXX").is_none(),
+            "缺 U/ 前缀"
+        );
+        assert!(
+            parse_room_code("U/ABCD-EFGH-JKMN-PQRS").is_none(),
+            "长度不符"
+        );
+        assert!(
+            parse_room_code("U/ABCD-EFGH-JKMN-PQRS:123").is_none(),
+            "不允许附加段"
+        );
+        assert!(
+            parse_room_code("U/ABCD-EFGH-JKMN-PQ^S").is_none(),
+            "非法字符"
+        );
         // 构造一个模 7 不为 0 的码：取合法码把首字符替换（大概率破坏校验）
         let mut bad = create_room().unwrap().code;
         let new = if bad.as_bytes()[2] == b'0' { "1" } else { "0" };

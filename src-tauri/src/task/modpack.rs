@@ -24,10 +24,11 @@ use crate::game::version::model::VersionJson;
 use crate::persist;
 use crate::task::progress::{
     cancelled, set_cancelled, set_done, set_error, set_phase, set_total, spawn_heartbeat,
-    step_done,
-    HeartbeatStats, StepRef,
+    step_done, HeartbeatStats, StepRef,
 };
-use crate::task::{global, update_and_emit, EventSink, StepInfo, StepStatus, TaskProgress, TaskStatus};
+use crate::task::{
+    global, update_and_emit, EventSink, StepInfo, StepStatus, TaskProgress, TaskStatus,
+};
 use crate::util::safe_relative_path;
 
 fn cache_dir() -> PathBuf {
@@ -547,10 +548,7 @@ impl<'a> PackInstall<'a> {
         );
         let parent_text = match race_cancel(
             self.cancel,
-            meta::fetch_version_json_text(
-                &self.plan.version_url,
-                self.config,
-            ),
+            meta::fetch_version_json_text(&self.plan.version_url, self.config),
         )
         .await
         {
@@ -605,8 +603,7 @@ impl<'a> PackInstall<'a> {
             let jar_path = self
                 .vdir
                 .join(format!("{}.jar", self.plan.version_dir_name));
-            let fresh = !(jar_path.exists()
-                && hash::file_sha1_matches(&jar_path, &cl.sha1));
+            let fresh = !(jar_path.exists() && hash::file_sha1_matches(&jar_path, &cl.sha1));
             if fresh {
                 let urls: Vec<String> = self
                     .sources
@@ -1150,9 +1147,7 @@ fn extract_overrides(ov: &OverridesRef, vdir: &Path) -> Result<(), String> {
 
 /// overrides 解压总量（未压缩字节，进度基线用；读不到按 0）。
 fn sum_override_bytes(ov: &OverridesRef) -> u64 {
-    let Ok(mut archive) =
-        extract::open_zip(Path::new(&ov.zip_path), "整合包缓存")
-    else {
+    let Ok(mut archive) = extract::open_zip(Path::new(&ov.zip_path), "整合包缓存") else {
         return 0;
     };
     let mut total = 0u64;
@@ -1370,7 +1365,11 @@ mod tests {
                 },
                 2,
             ),
-            ("本地包（A 段 1 步）", PackSource::Local { path: "p".into() }, 1),
+            (
+                "本地包（A 段 1 步）",
+                PackSource::Local { path: "p".into() },
+                1,
+            ),
         ] {
             let request = ModpackRequest {
                 name: "D".into(),
@@ -1408,7 +1407,11 @@ mod tests {
             let (names, idx, est) = build_step_plan(&request, &plan);
 
             assert_eq!(names[0], initial_steps(&request)[0], "{label}");
-            assert_eq!(names.len(), prefix + 5 + 2 + 2, "{label}：A + 5 固定步 + loader 2 + 内容 2");
+            assert_eq!(
+                names.len(),
+                prefix + 5 + 2 + 2,
+                "{label}：A + 5 固定步 + loader 2 + 内容 2"
+            );
             assert_eq!(names[idx.i_json], "版本清单", "{label}");
             assert_eq!(names[idx.i_jar], "游戏主文件", "{label}");
             assert_eq!(names[idx.i_libs], "依赖库", "{label}");
@@ -1417,7 +1420,11 @@ mod tests {
             assert_eq!(names[idx.i_cfg.unwrap()], "Fabric 配置", "{label}");
             assert_eq!(names[idx.i_lbs.unwrap()], "Fabric 文件", "{label}");
             assert_eq!(names[idx.content_start], "下载 mods/a.jar", "{label}");
-            assert_eq!(names[idx.content_start + 1], "下载 config/b.json", "{label}");
+            assert_eq!(
+                names[idx.content_start + 1],
+                "下载 config/b.json",
+                "{label}"
+            );
             assert_eq!(est, 30, "{label}：内容字节估算");
         }
     }

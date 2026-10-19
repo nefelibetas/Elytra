@@ -10,8 +10,8 @@ use serde::Serialize;
 use super::scan::ScanFilter;
 use crate::downloader::fetcher;
 use crate::downloader::hash::sha1_hex;
-use crate::game::community::{self, api_routes, get_json_multi, ApiPlatform};
 use crate::game::community::wiki_entry;
+use crate::game::community::{self, api_routes, get_json_multi, ApiPlatform};
 
 use crate::util;
 

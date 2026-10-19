@@ -250,7 +250,11 @@ mod tests {
             ),
             "不同实例必须分槽"
         );
-        assert!(coalesce_key(events::AUTO_TASK_PROGRESS, &json!({"action": "record_mods"})).is_none());
+        assert!(coalesce_key(
+            events::AUTO_TASK_PROGRESS,
+            &json!({"action": "record_mods"})
+        )
+        .is_none());
         // 阶段结束汇总是低频终态，直投不合并。
         assert!(coalesce_key(events::AUTO_TASKS_FINISHED, &json!({"version_id": "v1"})).is_none());
     }

@@ -165,8 +165,8 @@ fn key_encrypt(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, String> {
     let mut nonce_bytes = [0u8; 12];
     getrandom::getrandom(&mut nonce_bytes).map_err(common_err_ctx!("生成随机数失败"))?;
     // 定长来源走 fallible 转换（长度由类型保证，错误分支仅为消除 panic 路径）
-    let key_ref = Key::try_from(key.as_slice())
-        .map_err(|_| "内部错误：主密钥长度异常".to_string())?;
+    let key_ref =
+        Key::try_from(key.as_slice()).map_err(|_| "内部错误：主密钥长度异常".to_string())?;
     let nonce_ref = Nonce::try_from(nonce_bytes.as_slice())
         .map_err(|_| "内部错误：nonce 长度异常".to_string())?;
     let cipher = ChaCha20Poly1305::new(&key_ref);
@@ -189,10 +189,9 @@ fn key_decrypt(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, String> {
         return Err("密文格式异常".into());
     }
     let (nonce, ct) = rest.split_at(12);
-    let key_ref = Key::try_from(key.as_slice())
-        .map_err(|_| "内部错误：主密钥长度异常".to_string())?;
-    let nonce_ref =
-        Nonce::try_from(nonce).map_err(|_| "内部错误：nonce 长度异常".to_string())?;
+    let key_ref =
+        Key::try_from(key.as_slice()).map_err(|_| "内部错误：主密钥长度异常".to_string())?;
+    let nonce_ref = Nonce::try_from(nonce).map_err(|_| "内部错误：nonce 长度异常".to_string())?;
     let cipher = ChaCha20Poly1305::new(&key_ref);
     cipher
         .decrypt(&nonce_ref, ct)
@@ -516,7 +515,10 @@ mod tests {
     fn json_list_roundtrip_and_remove() {
         let key = format!("test_secret_{}", std::process::id());
         cleanup(&key);
-        assert!(read_json_list::<String>(&key).is_empty(), "未写入时不应命中");
+        assert!(
+            read_json_list::<String>(&key).is_empty(),
+            "未写入时不应命中"
+        );
 
         update_json_list::<String, _, ()>(&key, |list| {
             list.push("sensitive-token-123".to_string());

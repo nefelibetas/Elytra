@@ -21,10 +21,7 @@ pub use forge::install_forge;
 pub use hook::{LoaderEvent, LoaderHook};
 pub use neoforge::install_neoforge;
 pub use optifine::{install_optifine, OptifineMode};
-pub(crate) use shared::{
-    expand_inheritance, merge_loader_profile, run_installer_command,
-};
-
+pub(crate) use shared::{expand_inheritance, merge_loader_profile, run_installer_command};
 
 #[cfg(test)]
 mod matrix {
@@ -40,13 +37,13 @@ mod matrix {
     use std::time::Instant;
 
     use super::{install_loader, InstallCtx, VersionTarget};
-    use crate::task::LoaderKind;
     use crate::config::downloader::DownloaderConfig;
     use crate::config::game_dirs;
     use crate::downloader::progress::ProgressCounters;
     use crate::game::loader::version_query;
     use crate::game::version::manifest::fetch_version_list;
     use crate::game::version::meta::fetch_version_json_text;
+    use crate::task::LoaderKind;
 
     /// 一个安装用例：`ver` 为空表示取该 loader 当前最新稳定版（Fabric/Quilt）。
     struct Case {
@@ -57,16 +54,61 @@ mod matrix {
     }
 
     const CASES: &[Case] = &[
-        Case { name: "fabric-1.20.1", kind: "fabric", mc: "1.20.1", ver: "" },
-        Case { name: "quilt-1.20.1", kind: "quilt", mc: "1.20.1", ver: "" },
-        Case { name: "forge-1.7.10-spec0-root", kind: "forge", mc: "1.7.10", ver: "10.13.4.1614-1.7.10" },
-        Case { name: "forge-1.8.9-spec0-root", kind: "forge", mc: "1.8.9", ver: "11.15.1.2318-1.8.9" },
-        Case { name: "forge-1.12.2-legacy-maven", kind: "forge", mc: "1.12.2", ver: "14.23.5.2864" },
-        Case { name: "forge-1.16.5-proc-maven", kind: "forge", mc: "1.16.5", ver: "36.2.34" },
-        Case { name: "forge-1.20.1-proc", kind: "forge", mc: "1.20.1", ver: "47.1.0" },
+        Case {
+            name: "fabric-1.20.1",
+            kind: "fabric",
+            mc: "1.20.1",
+            ver: "",
+        },
+        Case {
+            name: "quilt-1.20.1",
+            kind: "quilt",
+            mc: "1.20.1",
+            ver: "",
+        },
+        Case {
+            name: "forge-1.7.10-spec0-root",
+            kind: "forge",
+            mc: "1.7.10",
+            ver: "10.13.4.1614-1.7.10",
+        },
+        Case {
+            name: "forge-1.8.9-spec0-root",
+            kind: "forge",
+            mc: "1.8.9",
+            ver: "11.15.1.2318-1.8.9",
+        },
+        Case {
+            name: "forge-1.12.2-legacy-maven",
+            kind: "forge",
+            mc: "1.12.2",
+            ver: "14.23.5.2864",
+        },
+        Case {
+            name: "forge-1.16.5-proc-maven",
+            kind: "forge",
+            mc: "1.16.5",
+            ver: "36.2.34",
+        },
+        Case {
+            name: "forge-1.20.1-proc",
+            kind: "forge",
+            mc: "1.20.1",
+            ver: "47.1.0",
+        },
         // NeoForge 支持自 MC 1.20.2 起（前端 LOADER_MIN_VERSION）；1.20.1 上的是另一坐标线（net.neoforged:forge），不在支持内
-        Case { name: "neoforge-20.4.237", kind: "neoforge", mc: "1.20.4", ver: "20.4.237" },
-        Case { name: "neoforge-1.21.1", kind: "neoforge", mc: "1.21.1", ver: "21.1.248" },
+        Case {
+            name: "neoforge-20.4.237",
+            kind: "neoforge",
+            mc: "1.20.4",
+            ver: "20.4.237",
+        },
+        Case {
+            name: "neoforge-1.21.1",
+            kind: "neoforge",
+            mc: "1.21.1",
+            ver: "21.1.248",
+        },
     ];
 
     fn out_root() -> PathBuf {
@@ -100,14 +142,22 @@ mod matrix {
         let url = meta.url.clone();
 
         if !json_path.is_file() {
-            let text = fetch_version_json_text(&url, cfg).await.expect("拉取版本 JSON 失败");
+            let text = fetch_version_json_text(&url, cfg)
+                .await
+                .expect("拉取版本 JSON 失败");
             std::fs::write(&json_path, &text).expect("写入版本 JSON 失败");
         }
         let text = std::fs::read_to_string(&json_path).expect("读版本 JSON 失败");
         let v: serde_json::Value = serde_json::from_str(&text).expect("解析版本 JSON 失败");
         let (cu, cs) = (
-            v["downloads"]["client"]["url"].as_str().unwrap_or("").to_string(),
-            v["downloads"]["client"]["sha1"].as_str().unwrap_or("").to_string(),
+            v["downloads"]["client"]["url"]
+                .as_str()
+                .unwrap_or("")
+                .to_string(),
+            v["downloads"]["client"]["sha1"]
+                .as_str()
+                .unwrap_or("")
+                .to_string(),
         );
         if !jar_path.is_file() && !cu.is_empty() {
             crate::downloader::fetcher::fetch_verified(&[cu], &jar_path, None::<fn(u64, u64)>, &cs)
@@ -193,9 +243,9 @@ mod matrix {
         mc: &str,
         ver: &str,
     ) -> Result<(serde_json::Value, serde_json::Value), String> {
+        use crate::game::version::model::VersionJson;
         use crate::launcher::args::{build_launch_command, LaunchRequest};
         use crate::launcher::model::{AuthMode, LaunchOptions};
-        use crate::game::version::model::VersionJson;
 
         let vj: VersionJson =
             serde_json::from_str(text).map_err(|e| format!("解析版本 JSON 失败\n{e}"))?;
@@ -253,7 +303,10 @@ mod matrix {
             "loader_jar_in": loader_in,
             "natives_flag": args.iter().any(|a| a.contains("java.library.path")),
         });
-        Ok((serde_json::to_value(&vj).unwrap_or(serde_json::Value::Null), v))
+        Ok((
+            serde_json::to_value(&vj).unwrap_or(serde_json::Value::Null),
+            v,
+        ))
     }
 
     /// classpath 里应出现的关键片段（按 loader 代际区分）。
@@ -302,8 +355,8 @@ mod matrix {
     fn missing_profile_libraries(installer: &Path, lib_dir: &Path) -> Vec<String> {
         let text = super::processors::read_profile_from_installer(installer)
             .unwrap_or_else(|e| panic!("读 install_profile.json 失败：{e}"));
-        let value: serde_json::Value =
-            serde_json::from_str(&text).unwrap_or_else(|e| panic!("解析 install_profile.json 失败：{e}"));
+        let value: serde_json::Value = serde_json::from_str(&text)
+            .unwrap_or_else(|e| panic!("解析 install_profile.json 失败：{e}"));
         super::forge::profile_libraries(&value)
             .into_iter()
             .filter_map(|lib| {
@@ -344,28 +397,34 @@ mod matrix {
 
         let cancel = Arc::new(AtomicBool::new(false));
         let pc = ProgressCounters::default();
-        let target = VersionTarget { dir_name: &dir_name, vdir: &vdir };
-        let ctx = InstallCtx { config: &case_cfg, pc: &pc, cancel: &cancel, hook: None };
+        let target = VersionTarget {
+            dir_name: &dir_name,
+            vdir: &vdir,
+        };
+        let ctx = InstallCtx {
+            config: &case_cfg,
+            pc: &pc,
+            cancel: &cancel,
+            hook: None,
+        };
 
-        let result = install_loader(
-            kind_of(case.kind),
-            case.mc,
-            &ver,
-            target,
-            &parent_text,
-            ctx,
-        )
-        .await;
+        let result =
+            install_loader(kind_of(case.kind), case.mc, &ver, target, &parent_text, ctx).await;
 
         // 关键检查：按**真实模型**解析安装出的版本 JSON 并构造启动命令（1.7.10/1.8.9 的 "arguments": null 就在这一步暴露：装得下、读不开）
-        let (vjson, launch_plan) = match std::fs::read_to_string(vdir.join(format!("{dir_name}.json")))
-        {
-            Ok(text) => match parse_and_plan(&text, &dir_name, &mc_dir, case.kind, case.mc, &ver) {
-                Ok((v, plan)) => (Some(v), Some(plan)),
-                Err(e) => (None, Some(serde_json::json!({ "error": e }))),
-            },
-            Err(e) => (None, Some(serde_json::json!({ "error": format!("读版本 JSON 失败: {e}") }))),
-        };
+        let (vjson, launch_plan) =
+            match std::fs::read_to_string(vdir.join(format!("{dir_name}.json"))) {
+                Ok(text) => {
+                    match parse_and_plan(&text, &dir_name, &mc_dir, case.kind, case.mc, &ver) {
+                        Ok((v, plan)) => (Some(v), Some(plan)),
+                        Err(e) => (None, Some(serde_json::json!({ "error": e }))),
+                    }
+                }
+                Err(e) => (
+                    None,
+                    Some(serde_json::json!({ "error": format!("读版本 JSON 失败: {e}") })),
+                ),
+            };
         if let Some(plan) = &launch_plan {
             if plan.get("error").is_some() {
                 return serde_json::json!({
@@ -395,7 +454,10 @@ mod matrix {
         };
         let ok = result.is_ok()
             && missing_libs.is_empty()
-            && launch_plan.as_ref().map(|p| p.get("error").is_none()).unwrap_or(false);
+            && launch_plan
+                .as_ref()
+                .map(|p| p.get("error").is_none())
+                .unwrap_or(false);
         let artifacts = loader_artifacts(&mc_dir);
 
         serde_json::json!({
@@ -450,7 +512,11 @@ mod matrix {
                 r["kind"].as_str().unwrap_or(""),
                 r["mc"].as_str().unwrap_or(""),
                 r["ver"].as_str().unwrap_or(""),
-                if r["ok"].as_bool().unwrap_or(false) { "✅" } else { "❌" },
+                if r["ok"].as_bool().unwrap_or(false) {
+                    "✅"
+                } else {
+                    "❌"
+                },
                 r["elapsed_s"],
                 r["lib_files"],
                 r["lib_bytes"].as_u64().unwrap_or(0) as f64 / 1e6,
@@ -464,7 +530,10 @@ mod matrix {
                             format!(
                                 "cp {} 项 | 占位符残留 {} | loader 本体在: {} | natives: {}",
                                 r["launch_plan"]["cp_entries"],
-                                r["launch_plan"]["unresolved_placeholders"].as_array().map(|a| a.len()).unwrap_or(0),
+                                r["launch_plan"]["unresolved_placeholders"]
+                                    .as_array()
+                                    .map(|a| a.len())
+                                    .unwrap_or(0),
                                 r["launch_plan"]["loader_jar_in"],
                                 r["launch_plan"]["natives_flag"],
                             )
@@ -477,7 +546,11 @@ mod matrix {
                     "\n> ❌ {} 失败：{} | {}: {} |\n",
                     r["case"].as_str().unwrap_or(""),
                     r["first_line"].as_str().unwrap_or(""),
-                    if r["error"].is_null() { "无" } else { "细节" },
+                    if r["error"].is_null() {
+                        "无"
+                    } else {
+                        "细节"
+                    },
                     r["error"].as_str().unwrap_or("").replace('\n', " ⏎ "),
                 ));
                 let missing = r["missing_libs"].as_array().cloned().unwrap_or_default();
@@ -495,7 +568,10 @@ mod matrix {
             }
         }
         let _ = std::fs::write(dir.join(format!("report-{label}.md")), &md);
-        eprintln!("\n📋 报告：{}", dir.join(format!("report-{label}.md")).display());
+        eprintln!(
+            "\n📋 报告：{}",
+            dir.join(format!("report-{label}.md")).display()
+        );
         eprintln!("{md}");
     }
 
@@ -522,7 +598,11 @@ mod matrix {
             let row = run_case(case, &cfg).await;
             eprintln!(
                 "{} {}（{}s）",
-                if row["ok"].as_bool().unwrap_or(false) { "✅" } else { "❌" },
+                if row["ok"].as_bool().unwrap_or(false) {
+                    "✅"
+                } else {
+                    "❌"
+                },
                 case.name,
                 row["elapsed_s"]
             );
@@ -554,7 +634,12 @@ mod matrix {
     const OF_TYPE: &str = "HD_U";
 
     const OF_CASES: &[OfCase] = &[
-        OfCase { name: "optifine-1.20.1-vanilla", mc: "1.20.1", mode: "vanilla", pre: None },
+        OfCase {
+            name: "optifine-1.20.1-vanilla",
+            mc: "1.20.1",
+            mode: "vanilla",
+            pre: None,
+        },
         OfCase {
             name: "optifine-1.20.1-forge",
             mc: "1.20.1",
@@ -567,7 +652,12 @@ mod matrix {
             mode: "fabric",
             pre: Some(("fabric", "")),
         },
-        OfCase { name: "optifine-1.12.2-vanilla", mc: "1.12.2", mode: "vanilla", pre: None },
+        OfCase {
+            name: "optifine-1.12.2-vanilla",
+            mc: "1.12.2",
+            mode: "vanilla",
+            pre: None,
+        },
         OfCase {
             name: "optifine-1.12.2-forge",
             mc: "1.12.2",
@@ -601,11 +691,21 @@ mod matrix {
         let (dir_name, pre_kind, pre_ver) = match case.pre {
             Some((kind, ver)) => {
                 let ver = if ver.is_empty() {
-                    resolve_ver(&Case { name: case.name, kind, mc: case.mc, ver: "" }).await
+                    resolve_ver(&Case {
+                        name: case.name,
+                        kind,
+                        mc: case.mc,
+                        ver: "",
+                    })
+                    .await
                 } else {
                     ver.to_string()
                 };
-                (format!("{}-{}-{}", case.mc, kind, ver), Some(kind), Some(ver))
+                (
+                    format!("{}-{}-{}", case.mc, kind, ver),
+                    Some(kind),
+                    Some(ver),
+                )
             }
             None => (format!("{}-optifine-{}", case.mc, patch), None, None),
         };
@@ -618,7 +718,8 @@ mod matrix {
         let (parent_text, vanilla_jar) = vanilla_inputs(cfg, case.mc).await;
         let parent_dir = mc_dir.join("versions").join(case.mc);
         std::fs::create_dir_all(&parent_dir).expect("创建父版本目录失败");
-        std::fs::write(parent_dir.join(format!("{}.json", case.mc)), &parent_text).expect("写父 JSON");
+        std::fs::write(parent_dir.join(format!("{}.json", case.mc)), &parent_text)
+            .expect("写父 JSON");
         let _ = std::fs::copy(&vanilla_jar, parent_dir.join(format!("{}.jar", case.mc)));
         let _ = std::fs::copy(&vanilla_jar, vdir.join(format!("{dir_name}.jar")));
 
@@ -635,13 +736,24 @@ mod matrix {
                 kind_of(kind),
                 case.mc,
                 ver,
-                VersionTarget { dir_name: &dir_name, vdir: &vdir },
+                VersionTarget {
+                    dir_name: &dir_name,
+                    vdir: &vdir,
+                },
                 &parent_text,
-                InstallCtx { config: &case_cfg, pc: &pc, cancel: &cancel, hook: None },
+                InstallCtx {
+                    config: &case_cfg,
+                    pc: &pc,
+                    cancel: &cancel,
+                    hook: None,
+                },
             )
             .await;
             if let Err(e) = r {
-                pre_err = Some(format!("先装 {kind} {ver} 失败：{}", e.lines().next().unwrap_or("")));
+                pre_err = Some(format!(
+                    "先装 {kind} {ver} 失败：{}",
+                    e.lines().next().unwrap_or("")
+                ));
             }
         }
 
@@ -658,9 +770,17 @@ mod matrix {
                 case.mc,
                 &patch,
                 OF_TYPE,
-                VersionTarget { dir_name: &dir_name, vdir: &vdir },
+                VersionTarget {
+                    dir_name: &dir_name,
+                    vdir: &vdir,
+                },
                 mode,
-                InstallCtx { config: &case_cfg, pc: &pc, cancel: &cancel, hook: None },
+                InstallCtx {
+                    config: &case_cfg,
+                    pc: &pc,
+                    cancel: &cancel,
+                    hook: None,
+                },
             )
             .await
         };
@@ -689,7 +809,14 @@ mod matrix {
                         serde_json::to_string(&merged).map_err(|e| format!("序列化失败\n{e}"))
                     }) {
                     Ok(merged_text) => {
-                        match parse_and_plan(&merged_text, &dir_name, &mc_dir, "optifine", case.mc, &patch) {
+                        match parse_and_plan(
+                            &merged_text,
+                            &dir_name,
+                            &mc_dir,
+                            "optifine",
+                            case.mc,
+                            &patch,
+                        ) {
                             Ok((_, p)) => p,
                             Err(e) => serde_json::json!({"error": e}),
                         }
@@ -716,7 +843,9 @@ mod matrix {
         let (lib_files, lib_bytes) = dir_bytes(&mc_dir.join("libraries"));
         // 失败原因必须可读：无错误但检查不过时，明确指出是哪个检查
         let check_err = if !of_jar_present {
-            Some(format!("OptiFine 未落位（期望 {of_name}，落位方式 {placement}）"))
+            Some(format!(
+                "OptiFine 未落位（期望 {of_name}，落位方式 {placement}）"
+            ))
         } else if plan.get("error").is_some() {
             plan["error"].as_str().map(|e| e.to_string())
         } else {
@@ -758,10 +887,18 @@ mod matrix {
             let row = run_optifine_case(case, &cfg).await;
             eprintln!(
                 "{} {}（{}s）{}",
-                if row["ok"].as_bool().unwrap_or(false) { "✅" } else { "❌" },
+                if row["ok"].as_bool().unwrap_or(false) {
+                    "✅"
+                } else {
+                    "❌"
+                },
                 case.name,
                 row["elapsed_s"],
-                if row["optifine_jar_placed"].as_bool().unwrap_or(false) { "OptiFine 已落位" } else { "OptiFine 未落位" }
+                if row["optifine_jar_placed"].as_bool().unwrap_or(false) {
+                    "OptiFine 已落位"
+                } else {
+                    "OptiFine 未落位"
+                }
             );
             if !row["ok"].as_bool().unwrap_or(false) {
                 eprintln!("   首行：{}", row["first_line"].as_str().unwrap_or(""));

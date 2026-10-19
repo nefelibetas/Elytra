@@ -343,7 +343,10 @@ async fn ping_bedrock_with_timeout(
             match tokio::time::timeout(BEDROCK_ATTEMPT_TIMEOUT, socket.recv(&mut buf)).await {
                 Ok(Ok(n)) => return parse_raknet_pong(&buf[..n]),
                 Ok(Err(e)) => last_err = format!("接收响应失败\n{e}"),
-                Err(_) => last_err = "连接超时\n服务器无响应（检查地址与端口，服务器可能未开启）".to_string(),
+                Err(_) => {
+                    last_err =
+                        "连接超时\n服务器无响应（检查地址与端口，服务器可能未开启）".to_string()
+                }
             }
         }
         Err(last_err)
@@ -455,7 +458,19 @@ mod tests {
 
     #[test]
     fn varint_roundtrip() {
-        for v in [0, 1, 127, 128, 255, 300, 32767, i32::MAX, -1, -100, i32::MIN] {
+        for v in [
+            0,
+            1,
+            127,
+            128,
+            255,
+            300,
+            32767,
+            i32::MAX,
+            -1,
+            -100,
+            i32::MIN,
+        ] {
             let mut buf = Vec::new();
             write_varint(v, &mut buf);
             // 手工解码校验（不依赖 read_varint 自身）
@@ -507,7 +522,10 @@ mod tests {
             ("2001:db8::1".to_string(), 25565)
         );
         assert!(parse_address("", 25565).is_err(), "空地址应报错");
-        assert!(parse_address("1.2.3.4:abc", 25565).is_err(), "非法端口应报错");
+        assert!(
+            parse_address("1.2.3.4:abc", 25565).is_err(),
+            "非法端口应报错"
+        );
         assert!(parse_address("1.2.3.4:0", 25565).is_err(), "端口 0 应报错");
         assert!(parse_address("[::1", 25565).is_err(), "未闭合 IPv6 应报错");
     }
@@ -520,9 +538,10 @@ mod tests {
         flatten_component(&v, &mut out);
         assert_eq!(out, "Hello §6World");
         // 组件对象 + extra 嵌套
-        let v: serde_json::Value =
-            serde_json::from_str(r#"{"text":"A","extra":[{"text":"B"},{"text":"C","extra":[{"text":"D"}]}]}"#)
-                .unwrap();
+        let v: serde_json::Value = serde_json::from_str(
+            r#"{"text":"A","extra":[{"text":"B"},{"text":"C","extra":[{"text":"D"}]}]}"#,
+        )
+        .unwrap();
         let mut out = String::new();
         flatten_component(&v, &mut out);
         assert_eq!(out, "ABCD");
@@ -548,7 +567,10 @@ mod tests {
         assert_eq!(s.online_players, 3);
         assert_eq!(s.max_players, 100);
         assert_eq!(s.motd, "§6欢迎!");
-        assert_eq!(s.player_sample, vec!["Alice".to_string(), "Bob".to_string()]);
+        assert_eq!(
+            s.player_sample,
+            vec!["Alice".to_string(), "Bob".to_string()]
+        );
         assert_eq!(s.favicon.as_deref(), Some("data:image/png;base64,AAAA"));
     }
 
@@ -636,7 +658,11 @@ mod tests {
             let _host = read_string(&mut body, MAX_STRING).await.unwrap();
             let mut port_buf = [0u8; 2];
             body.read_exact(&mut port_buf).await.unwrap();
-            assert_eq!(read_varint(&mut body).await.unwrap(), 1, "next state 应为 1");
+            assert_eq!(
+                read_varint(&mut body).await.unwrap(),
+                1,
+                "next state 应为 1"
+            );
             assert!(body.is_empty(), "握手包长度应与内容一致");
             // status 请求：长度 1 + packet id 0
             assert_eq!(read_varint(&mut stream).await.unwrap(), 1);
