@@ -2,7 +2,7 @@
 // 衣柜：左 = 3D 预览，右 = 皮肤 / 披风 tab；交互与状态都在 store/skinStudio（模块级单例）。
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { Check, Download, Plus, RefreshCw, RotateCcw, Shirt, Wind, X } from "@lucide/vue";
+import { Check, Download, Feather, Plus, RefreshCw, RotateCcw, Shirt, Wind, X } from "@lucide/vue";
 import AlertDialog from "../component/common/AlertDialog.vue";
 import EmptyState from "../component/common/EmptyState.vue";
 import LoadingSpinner from "../component/common/LoadingSpinner.vue";
@@ -45,6 +45,7 @@ function drawStage(): void {
     phase: (performance.now() - animStart) / 1000,
     fill: BASE_FILL * skinStudio.zoom,
     capeTex: stageCape ?? undefined,
+    elytra: skinStudio.elytra,
   });
 }
 
@@ -184,6 +185,13 @@ watch(
 watch(
   () => skinStudio.animation,
   () => syncAnimation(),
+);
+
+watch(
+  () => skinStudio.elytra,
+  () => {
+    if (!animRaf) drawStage();
+  },
 );
 
 const ANIM_OPTIONS = [
@@ -388,6 +396,16 @@ function savePickedSkin() {
             @click="skinStudio.refresh"
           >
             <RefreshCw :size="15" />
+          </button>
+          <button
+            class="tool fab icon-only"
+            :class="{ primary: skinStudio.elytra }"
+            :disabled="!skinStudio.currentCapeTexture"
+            v-tooltip="skinStudio.elytra ? '关闭鞘翅预览' : '鞘翅预览（使用当前披风纹理）'"
+            @pointerdown.stop
+            @click="skinStudio.elytra = !skinStudio.elytra"
+          >
+            <Feather :size="15" />
           </button>
           <button
             class="tool fab icon-only"

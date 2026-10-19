@@ -33,8 +33,10 @@ interface VoxelBox {
   uvW?: number;
   uvH?: number;
   uvD?: number;
-  /** 不剔背面（两面都画）。鞘翅贴图只画在朝外那一面，剔除会让翅膀从正面消失（MC `armorCutoutNoCull`）。 */
+  /** 不剔背面（两面都画）。鞘翅贴图只画在朝外面，剔除会让翅膀从正面消失（MC `armorCutoutNoCull`）。 */
   noCull?: boolean;
+  /** 跳过面细分（整面参与排序）。用于鞘翅：两片共面，切块后块级排序交错会把图案切碎。 */
+  noSubdiv?: boolean;
 }
 
 /** 一个面的静态定义：法线 + UV 取样矩形 + 四顶点（从面外看的左下、右下、右上、左上）。 */
@@ -97,11 +99,10 @@ function facesOf(b: VoxelBox): FaceDef[] {
   const uvZMinus: UvRect = b.flipZ
     ? [u + uvd, v + uvd, uvw, uvh]
     : [u + uvd + uvw + uvd, v + uvd, uvw, uvh];
-  return [
+  const faces: FaceDef[] = [
     { normal: [0, 1, 0], uv: [u + uvd, v, uvw, uvd], corners: cornersFor(1, 1, hw, hh, hd) },
     { normal: [0, -1, 0], uv: [u + uvd + uvw, v, uvw, uvd], corners: cornersFor(1, -1, hw, hh, hd) },
     { normal: [-1, 0, 0], uv: [u, v + uvd, uvd, uvh], corners: cornersFor(0, -1, hw, hh, hd) },
-    { normal: [0, 0, 1], uv: uvZPlus, corners: cornersFor(2, 1, hw, hh, hd) },
     {
       normal: [1, 0, 0],
       uv: [u + uvd + uvw, v + uvd, uvd, uvh],
@@ -109,6 +110,12 @@ function facesOf(b: VoxelBox): FaceDef[] {
     },
     { normal: [0, 0, -1], uv: uvZMinus, corners: cornersFor(2, -1, hw, hh, hd) },
   ];
+  // noCull 盒（鞘翅）不生成内表面：外表面本身两面绘制（对齐 skinview3d DoubleSide）；
+  // 内表面与外表面 x 共面，侧视时 depth 相同会排序交错（中空、左右不一致）
+  if (!b.noCull) {
+    faces.splice(3, 0, { normal: [0, 0, 1], uv: uvZPlus, corners: cornersFor(2, 1, hw, hh, hd) });
+  }
+  return faces;
 }
 
 /** 皮肤 UV 原点（64×64，Mojang 公开布局）。 */
@@ -216,7 +223,7 @@ const ELYTRA_REST_SPREAD_DEG = 15;
 function buildElytra(): VoxelBox[] {
   const mk = (sign: 1 | -1): VoxelBox => ({
     cx: 0,
-    // 位置换算自 skinview3d ElytraObject：盒中心 (0,14,-3)，支点 (±5,24,-2)，y=24 即肩线。
+    // 位置换算自 skinview3d ElytraObject：ElytraObject z=-2 + 网格 z=-1 ⇒ 盒中心 z=-3、翼组 z=-2；y=24 即肩线。
     cy: 14,
     cz: -3,
     w: 12,
@@ -230,9 +237,13 @@ function buildElytra(): VoxelBox[] {
     inflate: 0,
     cape: true,
     noCull: true,
+    noSubdiv: true,
     // 静止姿态＝官方默认（rotation.x/z = 0.2618 rad）：两片贴近竖直、在后背叠成壳状。
     swing: ELYTRA_TILT_DEG,
     swingZ: sign * ELYTRA_REST_SPREAD_DEG,
+    // 0.01 rad（≈0.573°）反向微转：对齐 skinview3d leftWing.rotation.y，给两片制造微小深度差，
+    // 否则共面时细分块排序交错、图案被切碎
+    swingY: sign * 0.573,
     // 旋转中心在肩部（对应 skinview3d leftWing.position=(5,0,0)）
     pivot: [sign * 5, 24, -2],
     mirror: sign < 0,
@@ -375,6 +386,28 @@ function subdivideFace(f: FaceDef, step: number): FacePart[] {
   return parts;
 }
 
+/** 纹理 alpha 二值化缓存：MC / skinview3d 用 cutout（alphaTest）——透明像素直接丢弃；
+ *  Canvas drawImage 是 alpha 混合，重叠面会互相透出导致图案错乱，故先按阈值硬化 alpha。 */
+const alphaHardened = new WeakMap<object, CanvasImageSource>();
+
+function hardenAlpha(src: CanvasImageSource): CanvasImageSource {
+  const cached = alphaHardened.get(src as unknown as object);
+  if (cached) return cached;
+  const w = (src as HTMLImageElement).naturalWidth || (src as HTMLCanvasElement).width;
+  const h = (src as HTMLImageElement).naturalHeight || (src as HTMLCanvasElement).height;
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const x = c.getContext("2d")!;
+  x.drawImage(src, 0, 0);
+  const img = x.getImageData(0, 0, w, h);
+  const d = img.data;
+  for (let i = 3; i < d.length; i += 4) d[i] = d[i]! > 25 ? 255 : 0;
+  x.putImageData(img, 0, 0);
+  alphaHardened.set(src as unknown as object, c);
+  return c;
+}
+
 function paint(
   canvas: HTMLCanvasElement,
   skin: CanvasImageSource,
@@ -418,14 +451,15 @@ function paint(
     const pz0 = b.pivot ? b.pivot[2] : b.cz;
 
     for (const f of facesOf(b)) {
-      // 背面剔除：本投影约定 +z 朝向观察者，法线转视空间后深度分量 >0 即面向观察者（noCull 盒子两面都画，靠画家算法定序）。
-      if (!b.noCull) {
+      // 背面剔除：本投影约定 +z 朝向观察者，法线转视空间后深度分量 >0 即面向观察者。
+      // noCull 盒只豁免外表面（-z）：它需两面可见；其它面照常剔除，否则侧面投影会盖住外表面。
+      if (!(b.noCull && f.normal[2] === -1)) {
         const nz1 = f.normal[0] * sinY + f.normal[2] * cosY;
         const nDepth = f.normal[1] * sinP + nz1 * cosP;
         if (nDepth <= 1e-4) continue;
       }
 
-      for (const part of subdivideFace(f, SUBDIV_STEP)) {
+      for (const part of subdivideFace(f, b.noSubdiv ? Number.POSITIVE_INFINITY : SUBDIV_STEP)) {
         const pts: number[] = [];
         let depthSum = 0;
         // 四肢/头部姿态：顶点绕支点依次做 X（前后摆）→ Y（转头）→ Z（外张）旋转
@@ -535,7 +569,7 @@ function paint(
     ctx.transform(m11, m12, m21, m22, tx, ty);
     // 明暗绑在**这一次 drawImage** 上（brightness 只作用本面像素）；不可「画完再 source-atop 涂一层」——会连别面已画像素一起压暗。
     ctx.filter = f.shade < 0.999 ? `brightness(${f.shade})` : "none";
-    ctx.drawImage(f.tex ?? skin, 0, 0);
+    ctx.drawImage(f.tex ? hardenAlpha(f.tex) : hardenAlpha(skin), 0, 0);
     ctx.restore();
   }
   return true;

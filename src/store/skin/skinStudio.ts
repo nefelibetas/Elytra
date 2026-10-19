@@ -100,6 +100,8 @@ export const skinStudio = reactive({
   dragging: false,
   /** 预览动作：`none` = 静止站姿，`idle` = 待机呼吸，`walk` = 行走 */
   animation: "none" as Animation,
+  /** 鞘翅预览：用当前披风纹理渲染鞘翅（无披风纹理时不可用） */
+  elytra: false,
   /** 初始视角见 DEFAULT_VIEW_*：3/4 正面 + 微俯。 */
   yaw: DEFAULT_VIEW_YAW,
   pitch: DEFAULT_VIEW_PITCH,
