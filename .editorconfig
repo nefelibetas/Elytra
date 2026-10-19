@@ -1,0 +1,23 @@
+# 编辑器统一配置：缩进 / 行尾 / 编码，与 .gitattributes 的 LF 策略一致
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.rs]
+indent_style = space
+indent_size = 4
+
+[*.{ts,tsx,js,vue,json,css,html}]
+indent_style = space
+indent_size = 2
+
+[*.{md,yml,yaml,toml}]
+indent_size = 2
+
+# Markdown 行尾双空格表示换行，不裁剪
+[*.md]
+trim_trailing_whitespace = false

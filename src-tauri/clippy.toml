@@ -1,0 +1,7 @@
+# clippy 配置（cargo clippy 从 crate 根目录读取本文件）
+
+# 最低支持的 Rust 版本，与 mise.toml 的 rust 版本保持同步
+msrv = "1.99"
+
+# 测试代码中允许 dbg! 宏
+allow-dbg-in-tests = true
