@@ -214,43 +214,6 @@ function buildCape(): VoxelBox[] {
   ];
 }
 
-/** 鞘翅静止姿态：绕 X 前倾 15°（官方 rotation.x = 0.2618 rad）。 */
-const ELYTRA_TILT_DEG = 15;
-/** 鞘翅绕 Z 张开 15°（官方 rotation.z = 0.2618 rad）：两片近垂直贴背叠成收拢壳状；15° 不可放大（图案按竖直朝向绘制）。 */
-const ELYTRA_REST_SPREAD_DEG = 15;
-
-/** 鞘翅（官方模型 1:1）：几何 12×22×4 = 基础盒 10×20×2 + CubeDeformation(1)，UV 按基础盒展开即 texOffs(22,0) ⇒ 取样区 (22,0)-(46,22)；必须 noCull（只画朝外面，否则正面全透明）。 */
-function buildElytra(): VoxelBox[] {
-  const mk = (sign: 1 | -1): VoxelBox => ({
-    cx: 0,
-    // 位置换算自 skinview3d ElytraObject：ElytraObject z=-2 + 网格 z=-1 ⇒ 盒中心 z=-3、翼组 z=-2；y=24 即肩线。
-    cy: 14,
-    cz: -3,
-    w: 12,
-    h: 22,
-    d: 4,
-    u: 22,
-    v: 0,
-    uvW: 10,
-    uvH: 20,
-    uvD: 2,
-    inflate: 0,
-    cape: true,
-    noCull: true,
-    noSubdiv: true,
-    // 静止姿态＝官方默认（rotation.x/z = 0.2618 rad）：两片贴近竖直、在后背叠成壳状。
-    swing: ELYTRA_TILT_DEG,
-    swingZ: sign * ELYTRA_REST_SPREAD_DEG,
-    // 0.01 rad（≈0.573°）反向微转：对齐 skinview3d leftWing.rotation.y，给两片制造微小深度差，
-    // 否则共面时细分块排序交错、图案被切碎
-    swingY: sign * 0.573,
-    // 旋转中心在肩部（对应 skinview3d leftWing.position=(5,0,0)）
-    pivot: [sign * 5, 24, -2],
-    mirror: sign < 0,
-  });
-  return [mk(-1), mk(1)];
-}
-
 /** 披风下垂外张角度（度）：底端向后摆开，使默认 3/4 视角能看到（12° 时底端摆出约 3.3 体素）。 */
 const CAPE_DRAPE_DEG = 12;
 
@@ -664,7 +627,7 @@ function applyAnimation(boxes: VoxelBox[], anim: Animation, phase: number): void
   setArms(phase * 2);
 }
 
-/** 把皮肤画到给定 canvas（衣柜实时预览 / 离屏取图共用）。`fill` = 模型占画布比例；`capeTex` 挂披风（独立 64×32 纹理），`elytra` 为真时渲染展开鞘翅。 */
+/** 把皮肤画到给定 canvas（衣柜实时预览 / 离屏取图共用）。`fill` = 模型占画布比例；`capeTex` 挂披风（独立 64×32 纹理）。 */
 export function drawFullCanvas(
   canvas: HTMLCanvasElement,
   skin: CanvasImageSource,
@@ -677,7 +640,6 @@ export function drawFullCanvas(
     phase?: number;
     fill?: number;
     capeTex?: CanvasImageSource;
-    elytra?: boolean;
     offsetX?: number;
     offsetY?: number;
     hiddenParts?: readonly SkinPart[];
@@ -693,15 +655,11 @@ export function drawFullCanvas(
   if (hidden && hidden.length) {
     boxes = boxes.filter((b) => !b.part || !hidden.includes(b.part));
   }
-  // 披风/鞘翅追加在四肢之后（applyAnimation 按固定下标 [4..11] 取四肢，追加不影响）；它们自己的摆动单独给。
+  // 披风追加在四肢之后（applyAnimation 按固定下标 [4..11] 取四肢，追加不影响）；摆动单独给。
   if (opts.capeTex) {
-    if (opts.elytra) {
-      boxes.push(...buildElytra());
-    } else {
-      const capes = buildCape();
-      applyCapeMotion(capes, anim, phase);
-      boxes.push(...capes);
-    }
+    const capes = buildCape();
+    applyCapeMotion(capes, anim, phase);
+    boxes.push(...capes);
   }
   return paint(canvas, skin, boxes, {
     yaw: opts.yaw,
