@@ -18,7 +18,7 @@ pub mod tooldl;
 pub mod ts_export;
 pub mod util;
 
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 use commands::account::{
     cancel_ms_login, disable_cape, ensure_ms_account, external_login, fetch_account_skin,
@@ -103,6 +103,15 @@ pub fn run() {
     });
 
     tauri::Builder::default()
+        // 单实例须最先注册（其窗口过程在插件初始化时挂钩）
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            // 第二实例的启动请求：把已有窗口带前（可能处于最小化或失焦）
+            for win in app.webview_windows().values() {
+                let _ = win.unminimize();
+                let _ = win.show();
+                let _ = win.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {

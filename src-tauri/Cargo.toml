@@ -49,6 +49,9 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
+# 单实例：二次启动聚焦已有窗口并由第二实例自行退出。配置与任务快照均为整段读-改-写，
+# 跨进程无锁，多开会互相覆盖
+tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 reqwest = { version = "0.13.4", features = ["json", "stream", "gzip", "http2", "multipart"] }
