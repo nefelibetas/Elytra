@@ -59,7 +59,7 @@
 ### 📦 Download & Install
 
 - 🎮 **Game versions**: official / China-mirror multi-source fallback (Auto · Official-only · Mirror-only), sha1 verification, concurrent downloads & rate limiting
-- 🧩 **ModLoaders**: one-click install for Fabric / Quilt / Forge / NeoForge / OptiFine (new and legacy versions)
+- 🧩 **ModLoaders**: one-click install for Fabric / Quilt / Forge / NeoForge / OptiFine; vanilla-only OptiFine is merged into a self-contained version
 - 🧰 **Missing-file repair**: scan a version install and re-download whatever is missing
 - ☕ **JDK management**: local JDK scan + managed runtime auto-download (Mojang → Azul fallback)
 - 📥 **Content Hub**: search & install mods / modpacks / datapacks / resource packs / shaders / worlds (Modrinth · CurseForge); modpacks can also be imported locally (`.mrpack` / `.zip`)
@@ -89,6 +89,7 @@
 ### 🎛️ Interface
 
 - 🎨 Four built-in themes (Grass · End · Nether · Ice) + custom theme editor
+- 🌐 Chinese & English UI: follow the system or switch manually, applied instantly at runtime (including task/step text and error messages)
 - ⌨️ Full keyboard navigation & focus management, borderless self-drawn window
 
 ## 📥 Download & Install
@@ -133,6 +134,7 @@ mise install          # install toolchain from mise.toml
 pnpm install          # install frontend deps
 pnpm tauri dev        # dev mode: vite :1420 + Rust dev window (restart for Rust changes)
 pnpm build            # frontend type-check + CSS compatibility check + build
+pnpm i18n:check       # validate locale files (missing keys / placeholder mismatch / raw Chinese)
 
 cd src-tauri
 cargo check                                        # compile check

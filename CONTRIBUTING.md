@@ -20,6 +20,7 @@ cargo clippy --lib                       # 保持零警告
 cargo test --lib -- --test-threads=1     # 必须串行（并行会因共享配置与网络抖动偶发失败）
 
 pnpm build                               # vue-tsc 类型检查 + CSS 兼容性检查
+pnpm i18n:check                          # 语言包校验（缺 key / 占位符不一致 / 裸中文）
 ```
 
 集成测试：`cargo test --test online_diag`（host/guest 双实例回环，走真实 EasyTier）、`cargo test --test tool_download`（本地 HTTP 服务驱动，无需外网）。

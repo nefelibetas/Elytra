@@ -59,7 +59,7 @@
 ### 📦 下载与安装
 
 - 🎮 **游戏版本**：官方源 / 国内镜像多源回退（自动 · 仅官方 · 仅镜像三态），sha1 校验，并发下载与限速
-- 🧩 **ModLoader**：Fabric / Quilt / Forge / NeoForge / OptiFine 一键安装（新老版本皆可）
+- 🧩 **ModLoader**：Fabric / Quilt / Forge / NeoForge / OptiFine 一键安装；纯原版 OptiFine 自动合并为自包含版本
 - 🧰 **缺失文件修复**：扫描版本安装完整性并一键补齐
 - ☕ **JDK 管理**：本机 JDK 扫描 + managed runtime 自动下载（Mojang → Azul 双源回退）
 - 📥 **内容下载**：Mod / 整合包 / 数据包 / 资源包 / 光影包 / 地图存档在线搜索与安装（Modrinth · CurseForge 双源），整合包支持本地导入（`.mrpack` / `.zip`）
@@ -89,6 +89,7 @@
 ### 🎛️ 界面
 
 - 🎨 四套内置主题（草方块绿 · 末影紫 · 下界橙 · 冰霜青）+ 自定义主题编辑器
+- 🌐 中英文界面：跟随系统或手动切换，运行时即时生效（含任务 / 步骤文本与错误提示）
 - ⌨️ 全键盘导航与焦点管理、无边框自绘窗口
 
 ## 📥 下载与安装
@@ -133,6 +134,7 @@ mise install          # 按 mise.toml 安装工具链
 pnpm install          # 安装前端依赖
 pnpm tauri dev        # 开发模式：vite :1420 + Rust dev 窗口（Rust 改动需重启）
 pnpm build            # 前端类型检查 + CSS 兼容性检查 + 构建
+pnpm i18n:check       # 校验语言包（缺 key / 占位符不一致 / 裸中文）
 
 cd src-tauri
 cargo check                                        # Rust 编译检查
