@@ -12,6 +12,14 @@ export default defineConfig(() => ({
   // 显式固定，勿依赖 Vite 默认 target——它随主版本上移会静默抬高前端基线。
   build: {
     target: ["chrome111", "safari16.4"],
+    // vendor 单独成块：入口 chunk 低于 Vite 默认 500 kB 告警阈值；Tauri 本地加载，拆块无网络收益。
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [{ name: "vendor", test: /node_modules/ }],
+        },
+      },
+    },
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
