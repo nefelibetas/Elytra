@@ -117,13 +117,15 @@ export const vdState = reactive({
     const mc = this.selectedVersion?.id;
     if (mc && !this.loaderSupported(ld, mc)) return false;
     if (!isMainLoader(ld)) {
-      if (!this.selectedMainLoader) return false;
-      // OptiFabric 桥接仅支持至 1.20.x：Fabric/Quilt + 1.21+ 组合过滤（安装时也会明确报错，这里提前隐藏）
-      if (ld === "optifine" && mc && versionGte(mc, "1.21")) {
-        const main = this.selectedMainLoader;
-        if (main === "fabric" || main === "quilt") return false;
+      // OptiFine 可独立于 ModLoader 安装；Fabric/Quilt 仅在 1.21+ 隐藏（OptiFabric 不支持）
+      if (ld === "optifine") {
+        if (mc && versionGte(mc, "1.21")) {
+          const main = this.selectedMainLoader;
+          if (main === "fabric" || main === "quilt") return false;
+        }
+        return true;
       }
-      return true;
+      return false;
     }
     if (!this.selectedMainLoader) return true;
     return ld === this.selectedMainLoader;
@@ -297,7 +299,12 @@ export const vdState = reactive({
     if (!sv) { this.resolvedDirName = ""; return; }
     const mainLd = this.selectedMainLoader;
     const mainVer = mainLd ? this.selectedLoaderVersions[mainLd] : undefined;
-    const base = mainLd && mainVer ? `${sv.id}-${mainLd}-${mainVer}` : sv.id;
+    const ofVer = this.selectedLoaderVersions["optifine"];
+    const base = mainLd && mainVer
+      ? `${sv.id}-${mainLd}-${mainVer}`
+      : ofVer
+        ? `${sv.id}-optifine-${ofVer}`
+        : sv.id;
     try {
       this.resolvedDirName = await invoke<string>("resolve_version_name", { baseName: base });
     } catch { this.resolvedDirName = base; }
@@ -395,8 +402,6 @@ watch(
 );
 
 watch(() => vdState.selectedMainLoader, (ld) => {
-  // 未选主 ModLoader 时隐藏 OptiFine：同时清掉残留选择，防止被静默提交
-  if (!ld) delete vdState.selectedLoaderVersions["optifine"];
   const mc = vdState.selectedVersion?.id;
   // OptiFabric 仅支持至 1.20.x：Fabric/Quilt + 1.21+ 时清掉 OptiFine 残留
   if ((ld === "fabric" || ld === "quilt") && mc && versionGte(mc, "1.21")) {

@@ -56,7 +56,7 @@ pnpm build          # vue-tsc --noEmit + lint:css + vite build → dist/
 pnpm lint:css       # CSS 兼容性检查（stylelint，基线见 package.json browserslist）
 cd src-tauri && cargo check              # Rust 编译检查
 cd src-tauri && cargo clippy --lib       # Rust lint（保持零代码警告）
-cd src-tauri && cargo test --lib -- --test-threads=1   # 单元测试（当前 388 passed + 8 ignored（OptiFabric 真实下载 + NeoForge 21.x/26.x 与 Forge 1.20.1/1.12.2/1.7.10 安装链端到端 + 安装矩阵 2 个：loader 9 形态 / OptiFine 5 组合）；串行防 persist/网络竞争）
+cd src-tauri && cargo test --lib -- --test-threads=1   # 单元测试（当前 392 passed + 8 ignored（OptiFabric 真实下载 + NeoForge 21.x/26.x 与 Forge 1.20.1/1.12.2/1.7.10 安装链端到端 + 安装矩阵 2 个：loader 9 形态 / OptiFine 5 组合）；串行防 persist/网络竞争）
 cd src-tauri && cargo run --bin gen_ts --features gen-ts    # 生成前端 TS 类型 → src/types/（改 Rust 数据结构后必跑；不在测试里生成）
 cd src-tauri && cargo test --test online_diag          # 联机集成测试（host/guest 双实例回环，走真实 easytier）
 cd src-tauri && cargo test --test tool_download        # 工具箱下载器集成测试（本地 HTTP 服务驱动完整链路：分段/暂停续传/取消/回退）
@@ -179,7 +179,7 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 
 ## Testing & QA
 
-- **无前端测试**；Rust 侧 388 个单元测试，全部内嵌各模块 `#[cfg(test)] mod tests`（含测试与实现同文件的约定），`cargo test --lib -- --test-threads=1` 运行；集成测试 `tests/online_diag.rs`（联机全链路：host/guest 双实例回环 + easytier 日志落盘）与 `tests/tool_download.rs`（工具箱下载器全链路：本地 HTTP 服务驱动入队 / 分段 / 暂停续传 / 取消 / 回退，5 用例，含 1 个真实网络 `#[ignore]`）
+- **无前端测试**；Rust 侧 392 个单元测试，全部内嵌各模块 `#[cfg(test)] mod tests`（含测试与实现同文件的约定），`cargo test --lib -- --test-threads=1` 运行；集成测试 `tests/online_diag.rs`（联机全链路：host/guest 双实例回环 + easytier 日志落盘）与 `tests/tool_download.rs`（工具箱下载器全链路：本地 HTTP 服务驱动入队 / 分段 / 暂停续传 / 取消 / 回退，5 用例，含 1 个真实网络 `#[ignore]`）
 - **发布前 GTK 冒烟**：CI 只构建不渲染，发版前在 WSLg / Linux VM 跑 `pnpm tauri dev` 过 10 个页面（重点：滚动条宽度、徽章底色、弹窗遮罩、皮肤工具画布），确认无布局错位
 - **单元测试只测纯函数**：PKCE、URL 组装、启动命令构建（`build_launch_command` + `minimal_version_json()` 助手）、离线皮肤 UUID 算法（与 Java `UUID.hashCode() & 1` 一致性）、内存分配公式、util（URL 文件名/版本目录解析/`sha1_sub_dir`/`safe_relative_path`）、maven XML 解析与语义化排序、Mod 双源搜索、修复步骤规划、persist 读写回环、secrets DPAPI、store 快照/恢复、**`store_ops_from_runtime_worker_no_panic`（worker 线程 block_on 回归）**、**`count_assets_all_end_to_end`（真实索引 + 5057 项多线程扫描，网络）**、**`find_java_home_finds_nested_bin`（Azul 布局幂等）**、`downloader/fetcher` 的取消/换源/校验/重定向/并发上限、`downloader/segmented` 的切分覆盖/小文件不分段/分段写一致性/不支持 Range 回退/段级与段内续传/陈旧位图作废、loader 的 profile 合并与继承展开、房间码解析/广播回环（online）、**`task/emit` 的派发器（进度帧按 `(事件, 任务)` 合并 / 低频事件 FIFO / 同任务帧严格保序 / 等待决策帧不被进度帧顶替）**、`task/progress` 的 `StepRef::percent`（文件口径优先 / 无分母或步骤结束返回 `None`）与整合包 `Counters` 的进入/离开步骤、**步骤索引↔名字对齐**（整合包 `step_index_points_at_matching_names`：Online/Local 两种前缀、`replace_steps_keeps_done_steps_at_100`：已完成步骤不得被重置；修复 `test_repair_indices_align_with_steps`：穷举 16 种缺失组合）
 - **断言风格**：`assert_eq!` 精确值为主（argv 位置、公式值、错误码消息）；行为不变量用 `assert!` + 中文 message
@@ -194,15 +194,6 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 
 ## Known Debt（已知遗留，待处理）
 
-- **OptiFabric 覆盖范围有限**：Fabric/Quilt + OptiFine 依赖 OptiFabric 桥接（CurseForge 渠道，slug `optifabric`）；OptiFabric 维护缓慢（CF 最新 1.14.3，2024-01，仅覆盖至 ~1.20.x），1.21+ 组合会明确报错而非静默失效
-- **指令生成器二期（2026-10 定，已完成）**：① 目标选择器组合器（`@e[...]` 条件可视化：type/distance/limit+sort/name/tag/gamemode + 额外条件保留，`utils/targetSelector.ts` + `TargetSelect.vue`，各指令共用 target 字段）；② 指令由 4 扩至 5 条：新增 `/enchant`、`/gamerule`。**不收录（决策）**：`/kill`、`/time`、`/weather`；`/xp`、`/playsound`、`/particle`、`/title`、`/tellraw`、`/spawnpoint`（公告/演出/经验向，产品判断用不上）；`/setblock`、`/fill`（建筑向需求由 WorldEdit 类 mod 覆盖）。三期另立（`/execute`、`/scoreboard`）。数据表在 `utils/mcData.ts`（游戏规则 49 条）
-- **已完成的重构**：全仓 >150 行函数批量拆分完成——`run_task`（534 → 192，阶段 7）+ 其余 9 个长函数（阶段 8，`run_repair_task`/`join`/`run_files_task`/`build_launch_command`/`download_and_extract`/`start_host`/`run_install_jdk`/`run_install`/`extract_forge_client_lzma`），共约 40 个新辅助单元（上下文结构体 + 阶段函数）；仅 `task/progress.rs::EmitLoop::spawn` 判定不拆（本体即采样循环）。事件出口已统一抽象为 `task::emit::EventSink`（覆盖 `task/` 全域含 spawn 入口、`tooldl/`、`online/`、`auth/` 登录回调——各域内部只见 `&dyn EventSink`/`Arc<dyn EventSink>`，`AppHandle` 仅保留在 `commands/` 边界与 `spawn_*` 入口的一次性包装处）；`run_task` 与联机链路均有真实网络端到端测试（`tests/e2e_download.rs` / `tests/online_diag.rs`）
-- **已解决**：`LauncherVisibility` 已删除（前后端同步）；离线皮肤配置层已砍（启动与头像固定随机哈希 Steve/Alex，后续计划接入自定义皮肤站登录）；OptiFine 分场景安装（纯净版 classpath 独立版本 / Forge-like 进 mods / Fabric-like OptiFabric 进 mods，mainClass 统一官方 Main；重定向黑洞黑名单精确放行 `minio.749333.xyz`——bmclapi 下载主存储）
-- **已解决**：guest 端 MC 局域网广播名参数化（房间码 `#MOTD` 段携带 host 存档名 → guest 广播真实世界名；`OnlineConfig.advertise_motd` 支持自定义广播名，优先级 自定义 > host 世界名 > 默认文案）
-- **联机遗留**：跨网联机依赖协调服务器（默认社区节点 `tcp://node.invalid:11010`，easytier 官方公共节点已下线）；MC 26.2 离线账号只能走"局域网发现"路径进入（手动 IP 会报无效会话，广播模拟已绕过）
-- **第三方皮肤站（LittleSkin / Blessing Skin）没有公开的材质上传端点** —— 逐条核对过：`routes/api.php` 只有 user/players/closet/admin 四组无材质创建路由；上传实现在网页侧（`SkinlibController@handleUpload`，依赖会话与 CSRF）；`POST /api/closet` 与 `PUT /api/players/{pid}/textures` 都只接受**已存在**的材质 TID；LittleSkin 的 OpenAPI 全文只有 4 个端点、OIDC `scopes_supported` 无任何材质写权限；实测 `PUT .../profile/{uuid}/skin` 返回 404。故启动器侧当时能做的上限是：**读**（角色/衣柜）+ **管理站点已有材质**（入柜/改名/移出/应用到角色/重置）。上传本地图片须由用户在站点网页完成，再按 TID（材质页 URL `/skinlib/show/{tid}` 末尾数字）交给启动器。**（曾按此结论实现过启动器内第三方站衣柜，产品决策变更后已整体移除——第三方账号不再进启动器衣柜，改为点头像用浏览器打开站点衣柜；仅保留调研事实备查。）** 将来若 LittleSkin 启用 `yggdrasil-api` 插件的 `PUT {yggdrasil}/api/user/profile/{uuid}/{type}` 路由，可补上上传通道
-- **（同上条的落地方式，已移除）曾实现过跨来源合并的第三方衣柜**：正版账号下也能列出站点衣柜的材质并「换」（后端下载站点原始 PNG 后直传 Mojang，不落本地衣柜）；第三方站点账号下能看到本地收藏中来自官方的皮肤；披风**只取当前账号来源支持的那一种**（正版 = Mojang 披风，站点账号 = 站点衣柜 cape 材质，离线无披风）。该实现随产品决策变更**整体移除**，第三方账号不再进启动器衣柜（改为点头像用浏览器打开站点衣柜）。仍有效的调研事实：材质贴图必须用 **`{site}/raw/{tid}`**（返回原始 PNG）；`{site}/preview/{tid}` 是渲染图（按高度缩放），不能用于 3D 建模或上传 Mojang
-- **LittleSkin 的 Yggdrasil 实现（Yggdrasil Connect 0.0.8）没有材质管理端点** —— 实测 `PUT|DELETE {api}/api/user/profile/{uuid}/skin`、`PUT .../cape` 全部 **404**（对照：`GET .../sessionserver/session/minecraft/profile/{uuid}` 返回 204，说明该实现只有 Auth Server + Session Server）。因此**不能用「已登录的第三方账号 accessToken」直接改皮肤**，材质读写只能走 OAuth（这一约束曾决定已移除的第三方外观实现形态，别再试图用 Yggdrasil 绕开）
-- **设备代码流仍需白名单，授权码流不需要** —— 实测：`POST open.littleskin.cn/oauth/device_code` 对未白名单的应用（含新建的）一律 `invalid_client / not whitelisted`，且与**根本不存在的 client_id 报错完全相同**（排查此类问题时务必用"不存在的 ID"做对照，否则会误判成"ID 无效"）；而 `POST littleskin.cn/oauth/token`（授权码流）对正确凭据会走到 `invalid_request / Cannot decrypt the authorization code`，即**客户端认证已通过**。故授权码流是当时唯一无需审核的路径，代价是站点不支持 PKCE、secret 必须内嵌客户端（由作者注册一次应用、全体用户共用，同 `MS_CLIENT_ID` 模式）；该实现已随第三方衣柜一并移除。
-- **备注**：README.md 是完整中文文档（`README-en-US.md` 为英文版）；AGENTS.md 已被 git 跟踪（修改会出现在 git status）
-- **`src-tauri/src/data/wiki_entries.txt`**：PCL `WikiEntries.txt` 的未修改快照（字节级一致，**行号 = MC 百科条目 id**，PCL 只在文件末尾追加条目）；更新该文件必须同步 `THIRD-PARTY-NOTICES.md` 的 commit 与版本，并重跑 `cargo test --lib wiki_entry`
+- **Fabric/Quilt + OptiFine 明确不推荐**：该组合依赖 OptiFabric 桥接（CurseForge 渠道，slug `optifabric`），上游维护缓慢、兼容性有限；UI 标注“不推荐”并建议 Sodium + Iris 或原版/Forge + OptiFine，1.21+ 组合隐藏并明确报错。
+- **跨网联机依赖协调服务器**：默认社区节点 `tcp://node.invalid:11010`（easytier 官方公共节点已下线）；MC 26.2 离线账号只能走“局域网发现”路径进入，手动 IP 会报无效会话（广播模拟已绕过）。
+- **`src-tauri/src/data/wiki_entries.txt` 维护**：PCL `WikiEntries.txt` 的未修改快照，行号 = MC 百科条目 id；更新文件必须同步 `THIRD-PARTY-NOTICES.md` 的 commit/版本，并重跑 `cargo test --lib wiki_entry`。

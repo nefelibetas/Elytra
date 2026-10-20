@@ -58,6 +58,7 @@ export default {
   backend: {
     name: {
       download: "Download {mc}",
+      optifine: "Install OptiFine for {mc}",
       install: "Install {loader} {version} for {mc}",
       files: "Download files ({count})",
       jdk: "Download Java {major}",

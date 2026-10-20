@@ -716,6 +716,8 @@ mod matrix {
         std::fs::create_dir_all(&vdir).expect("创建版本目录失败");
 
         let (parent_text, vanilla_jar) = vanilla_inputs(cfg, case.mc).await;
+        let parent_json: serde_json::Value =
+            serde_json::from_str(&parent_text).expect("解析原版版本 JSON 失败");
         let parent_dir = mc_dir.join("versions").join(case.mc);
         std::fs::create_dir_all(&parent_dir).expect("创建父版本目录失败");
         std::fs::write(parent_dir.join(format!("{}.json", case.mc)), &parent_text)
@@ -770,6 +772,7 @@ mod matrix {
                 case.mc,
                 &patch,
                 OF_TYPE,
+                Some(&parent_json),
                 VersionTarget {
                     dir_name: &dir_name,
                     vdir: &vdir,
@@ -799,7 +802,7 @@ mod matrix {
                 (lib.is_file(), format!("libraries/{}/", dir_name))
             }
         };
-        // 启动计划：纯净版 json 是"继承式 profile"（只有 id/mainClass/libraries/inheritsFrom），生产里由 launcher::env 展开继承后再解析 → 这里照做
+        // 启动计划：纯净版 JSON 已自包含原版数据，直接解析；组合场景仍走继承展开
         let plan = match std::fs::read_to_string(vdir.join(format!("{dir_name}.json"))) {
             Ok(text) if case.pre.is_none() => {
                 match serde_json::from_str::<serde_json::Value>(&text)

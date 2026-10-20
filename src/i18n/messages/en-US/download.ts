@@ -57,6 +57,9 @@ export default {
     compatibilityUnconfirmed: "Compatibility unconfirmed",
     compatibilityTip:
       "This loader builds are version-independent and meta is not filtered by MC version; the latest build may be incompatible with the current MC version. Please verify before installing.",
+    optifineFabricWarn: "Not recommended",
+    optifineFabricTip:
+      "Using OptiFine with Fabric / Quilt requires the OptiFabric bridge; it is poorly maintained and may not start. Use Sodium + Iris instead, or OptiFine with Vanilla/Forge.",
     remove: "Remove",
     startDownload: "Start download",
     queued: "Added to download queue",

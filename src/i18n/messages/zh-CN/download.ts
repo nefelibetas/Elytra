@@ -57,6 +57,9 @@ export default {
     compatibilityUnconfirmed: "兼容性需确认",
     compatibilityTip:
       "该加载器为版本无关构建，meta 不按 MC 版本过滤；最新版也可能与当前 MC 不兼容，安装前请确认",
+    optifineFabricWarn: "不推荐",
+    optifineFabricTip:
+      "Fabric / Quilt 搭配 OptiFine 需要 OptiFabric 桥接；上游维护缓慢、兼容性有限，可能无法启动。建议改用 Sodium + Iris，或使用原版/Forge + OptiFine",
     remove: "移除",
     startDownload: "开始下载",
     queued: "已加入下载队列",

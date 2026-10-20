@@ -162,7 +162,7 @@ function splitConditions(inner: string): string[] {
 }
 
 /** 每次调用返回一份独立模型（避免共享引用被 UI 改写）。 */
-export function emptyTarget(): TargetSelector {
+function emptyTarget(): TargetSelector {
   return {
     base: "@e",
     type: "",

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { ArrowLeft, X, ChevronDown } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import {
@@ -22,6 +23,9 @@ const EMPTY_VERSION: VersionMeta = {
 };
 const sv = () => vdState.selectedVersion ?? EMPTY_VERSION;
 const { t } = useI18n();
+const fabricLikeMain = computed(
+  () => vdState.selectedMainLoader === "fabric" || vdState.selectedMainLoader === "quilt",
+);
 </script>
 
 <template>
@@ -51,6 +55,7 @@ const { t } = useI18n();
               <template v-else>{{ t("download.vanilla.loaderUnavailable") }}</template>
               <!-- Fabric/Quilt loader 版本无关（meta 不按 MC 版本过滤）：任何版本兼容性均未验证，需手动确认 -->
               <span v-if="ld.key === 'fabric' || ld.key === 'quilt'" class="det-ld-warn" v-tooltip="t('download.vanilla.compatibilityTip')">{{ t("download.vanilla.compatibilityUnconfirmed") }}</span>
+              <span v-if="ld.key === 'optifine' && fabricLikeMain" class="det-ld-warn" v-tooltip="t('download.vanilla.optifineFabricTip')">{{ t("download.vanilla.optifineFabricWarn") }}</span>
             </span>
           </span>
           <span v-if="vdState.selectedLoaderVersions[ld.key] || vdState.getLoaderVersions(ld.key, sv().id).length" class="det-ld-actions">

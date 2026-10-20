@@ -1,4 +1,4 @@
-// 原版指令生成器（一期：热门指令）：schema 数据 + 纯构建函数，UI 由 CommandGeneratorTool 按字段渲染。
+// 原版指令生成器（精选指令）：schema 数据 + 纯构建函数，UI 由 CommandGeneratorTool 按字段渲染。
 // 仅收录 Java 版原版指令；语法基线 1.13+（命令改名后的形态），NBT/组件附加段原样透传、由调用方校验。
 
 import { POTION_EFFECTS } from "./nbt";
@@ -25,7 +25,6 @@ export function optionLabel(option: FieldOption): string {
 export type ParamField =
   | { kind: "item"; key: string; labelKey: string; placeholderKey?: string }
   | { kind: "target"; key: string; labelKey: string; default: string }
-  | { kind: "enum"; key: string; labelKey: string; options: FieldOption[]; default: string }
   | {
       kind: "search";
       key: string;
@@ -69,7 +68,7 @@ function ns(id: string): string {
 
 // ── 数据表 ──
 
-/** 常见可召唤实体（一期收录热门，按用途排序）。 */
+/** 常见可召唤实体（按用途排序）。 */
 export const SUMMON_ENTITIES: FieldOption[] = [
   { value: "zombie", label: "僵尸", labelEn: "Zombie" },
   { value: "skeleton", label: "骷髅", labelEn: "Skeleton" },
@@ -128,12 +127,6 @@ export const SUMMON_ENTITIES: FieldOption[] = [
   { value: "sniffer", label: "嗅探兽", labelEn: "Sniffer" },
   { value: "armadillo", label: "犰狳", labelEn: "Armadillo" },
   { value: "item", label: "掉落物（物品展示用）", labelEn: "Item (display)" },
-];
-
-/** 经验单位。 */
-export const XP_UNITS: FieldOption[] = [
-  { value: "points", label: "点数", labelEn: "Points" },
-  { value: "levels", label: "等级", labelEn: "Levels" },
 ];
 
 const EFFECT_OPTIONS: FieldOption[] = POTION_EFFECTS.map((e) => ({
@@ -315,7 +308,7 @@ export const COMMANDS: CommandDef[] = [
 export function defaultValues(def: CommandDef): CommandValues {
   const out: CommandValues = {};
   for (const f of def.fields) {
-    if (f.kind === "enum" || f.kind === "search" || f.kind === "target") out[f.key] = f.default;
+    if (f.kind === "search" || f.kind === "target") out[f.key] = f.default;
     else if (f.kind === "text") out[f.key] = f.default;
     else if (f.kind === "num") out[f.key] = f.default;
     else if (f.kind === "check") out[f.key] = f.default;

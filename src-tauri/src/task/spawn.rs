@@ -62,6 +62,10 @@ pub fn spawn_download(app: AppHandle, task: DownloadTask) -> Result<String, Stri
                 ("version", loader.version.clone()),
             ],
         ),
+        None if task.optifine_patch.is_some() => TaskText::new(
+            "task.backend.name.optifine",
+            &[("mc", task.version_id.clone())],
+        ),
         None => TaskText::new(
             "task.backend.name.download",
             &[("mc", task.version_id.clone())],

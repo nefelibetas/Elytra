@@ -106,9 +106,10 @@ async fn stage_fetch_version(
         return Err(());
     }
 
-    // 建目录；非 loader 模式写原版 version JSON（loader 模式由 installer 写合并 JSON）
+    // 建目录；纯原版写 version JSON；loader/纯 OptiFine 由安装器写最终 JSON（OptiFine 为自包含）
     std::fs::create_dir_all(vdir).ok();
-    if task.loader.is_none() {
+    let pure_optifine = task.loader.is_none() && task.optifine_patch.is_some();
+    if task.loader.is_none() && !pure_optifine {
         // 写盘失败必须报错：否则版本缺 json，启动时报"未找到版本 JSON"
         match serde_json::to_string_pretty(&vj) {
             Ok(json) => {
@@ -462,10 +463,14 @@ async fn install_optifine_step(
     patch: Option<&str>,
     loader_choice: Option<&LoaderChoice>,
     mc_version: &str,
+    parent_text: &str,
 ) -> Result<(), Vec<String>> {
     let Some(patch) = patch else {
         return Ok(());
     };
+    let parent_json: serde_json::Value = serde_json::from_str(parent_text)
+        .map_err(common_err_ctx_key!("errors.version.parse", "解析原版版本 JSON 失败"))
+        .map_err(|e| vec![e])?;
     let DownloadCtx {
         app,
         cancel,
@@ -489,6 +494,7 @@ async fn install_optifine_step(
         mc_version,
         patch,
         "HD_U",
+        Some(&parent_json),
         loader::VersionTarget { dir_name, vdir },
         mode,
         loader::InstallCtx {
@@ -713,7 +719,7 @@ pub async fn run_task(
         download_assets_step(&ctx),
         extract_natives_step(&ctx),
         install_loader_step(&ctx, loader, mc_version, &parent_text),
-        install_optifine_step(&ctx, optifine_patch, loader, mc_version),
+        install_optifine_step(&ctx, optifine_patch, loader, mc_version, &parent_text),
         download_fabric_api_step(&ctx, fabric_api),
     );
     eprintln!("[task] 阶段C 并行结束 ({:.1}s)", t0.elapsed().as_secs_f64());
@@ -780,6 +786,14 @@ fn resolve_target_dir(task: &DownloadTask, mc: &std::path::Path) -> TargetDir {
             loader.kind.name(),
             loader.version
         );
+        return TargetDir {
+            dir_name: dir_name.clone(),
+            vdir: mc.join("versions").join(&dir_name),
+        };
+    }
+    // 纯 OptiFine（无 ModLoader）使用独立目录，避免覆盖原版版本 JSON
+    if let Some(patch) = task.optifine_patch.as_deref().filter(|p| !p.trim().is_empty()) {
+        let dir_name = format!("{}-optifine-{}", task.mc_version, patch);
         return TargetDir {
             dir_name: dir_name.clone(),
             vdir: mc.join("versions").join(&dir_name),
@@ -975,3 +989,44 @@ async fn init_local_scan(
 }
 
 // JDK 安装任务在 task/jdk.rs；此处 re-export 兼容 commands/task.rs 的 runner:: 调用方。
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bare_task(patch: Option<&str>) -> DownloadTask {
+        DownloadTask {
+            version_id: "1.20.1".into(),
+            version_url: "https://example.com/1.20.1.json".into(),
+            mc_version: "1.20.1".into(),
+            loader: None,
+            optifine_patch: patch.map(str::to_string),
+            version_dir_name: None,
+            fabric_api: None,
+        }
+    }
+
+    #[test]
+    fn standalone_optifine_uses_dedicated_version_dir() {
+        let target = resolve_target_dir(&bare_task(Some("I6")), std::path::Path::new("mc"));
+        assert_eq!(target.dir_name, "1.20.1-optifine-I6");
+        assert_eq!(
+            target.vdir,
+            std::path::Path::new("mc")
+                .join("versions")
+                .join("1.20.1-optifine-I6")
+        );
+    }
+
+    #[test]
+    fn standalone_optifine_keeps_prescribed_dir() {
+        let mut task = bare_task(Some("I6"));
+        task.version_dir_name = Some("custom".into());
+        let target = resolve_target_dir(&task, std::path::Path::new("mc"));
+        assert_eq!(target.dir_name, "custom");
+        assert_eq!(
+            target.vdir,
+            std::path::Path::new("mc").join("versions").join("custom")
+        );
+    }
+}

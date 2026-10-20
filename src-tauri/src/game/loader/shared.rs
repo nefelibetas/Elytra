@@ -30,7 +30,7 @@ fn maven_path(name: &str) -> String {
 /// 老式库条目补全下载信息：spec-0 安装器（Forge 1.7.10~1.11.2）的 `versionInfo.libraries` 只有 `{name, url}`、
 /// 无 `downloads.artifact`；classpath 与缺库检查从 artifact.path 取路径，缺了静默丢失（装得下但起不来）。按坐标补出
 /// path/url/sha1/size；`url` 为空的老式条目（如 `net.minecraft:launchwrapper:1.12`）按 Mojang libraries 兜底。
-fn normalize_legacy_libraries(libs: &mut [serde_json::Value]) {
+pub(crate) fn normalize_legacy_libraries(libs: &mut [serde_json::Value]) {
     for lib in libs.iter_mut() {
         // 已有 artifact 或 classifiers（老式 natives 只有 classifiers、无普通构件，按坐标合成会得到 CDN 上不存在的普通 jar → 404）→ 都不动
         let has_download_info = lib

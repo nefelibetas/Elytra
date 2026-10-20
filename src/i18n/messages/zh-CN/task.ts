@@ -58,6 +58,7 @@ export default {
   backend: {
     name: {
       download: "下载 {mc}",
+      optifine: "OptiFine {mc} 安装",
       install: "{mc} {loader}-{version} 安装",
       files: "下载 {count} 个文件",
       jdk: "下载 Java {major}",

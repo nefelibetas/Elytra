@@ -4,7 +4,6 @@
 import { computed, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { Copy } from "@lucide/vue";
-import DropSelect from "../common/DropSelect.vue";
 import CheckToggle from "../common/CheckToggle.vue";
 import SearchSelect from "./SearchSelect.vue";
 import TargetSelect from "./TargetSelect.vue";
@@ -83,15 +82,7 @@ for (const def of COMMANDS) valuesFor(def);
 
     <div v-for="f in active.fields" :key="f.key" class="cmd-row" :class="{ 'cmd-row-top': f.kind === 'textarea' }">
       <span class="cmd-label">{{ t(f.labelKey) }}</span>
-      <template v-if="f.kind === 'enum'">
-        <DropSelect
-          :model-value="String(values[f.key] ?? '')"
-          :options="f.options"
-          width="220px"
-          @update:model-value="(v: string) => (values[f.key] = v)"
-        />
-      </template>
-      <template v-else-if="f.kind === 'target'">
+      <template v-if="f.kind === 'target'">
         <TargetSelect
           :model-value="String(values[f.key] ?? f.default)"
           @update:model-value="(v: string) => (values[f.key] = v)"

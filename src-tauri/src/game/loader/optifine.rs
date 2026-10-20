@@ -1,5 +1,5 @@
 // ── OptiFine 安装：分场景（纯净版 classpath / Forge-like mods / Fabric-like OptiFabric）──
-// 纯净版 → 继承式独立版本 + jar 作 classpath 库（1.13+ 为预补丁客户端，类覆盖 vanilla）；Forge/NeoForge → jar 放 mods/；Fabric/Quilt → 须搭配 OptiFabric 桥接一起放 mods/。
+// 纯净版 → 自包含独立版本 + jar 作 classpath 库（合并原版 JSON，不依赖父版本目录）；Forge/NeoForge → jar 放 mods/；Fabric/Quilt → 须搭配 OptiFabric 桥接一起放 mods/。
 
 use super::{InstallCtx, VersionTarget};
 use crate::downloader::{fetcher, progress};
@@ -8,7 +8,7 @@ use crate::game::community;
 /// OptiFine 安装场景（由 runner 按「主 ModLoader 组合」判定）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OptifineMode {
-    /// 纯净版（无 ModLoader）：独立版本 + classpath library
+    /// 纯净版（无 ModLoader）：自包含独立版本 + classpath library
     Vanilla,
     /// Forge / NeoForge：jar 放 mods 目录
     ForgeLike,
@@ -106,37 +106,51 @@ async fn download_optifabric(
     Ok(())
 }
 
-/// 生成纯净版（继承式）version.json。`artifact_path` 为 libraries 相对路径（须与 jar 实际落位一致）；`artifact_url` 为真实可下载 URL（不用 file://——reqwest 不支持）。
-fn build_vanilla_version_json(
+/// 生成纯 OptiFine 的自包含 version.json：合并原版 JSON（assetIndex/arguments/父库等），
+/// OptiFine 库前置（类覆盖 vanilla）。`artifact_path` 须与 jar 实际落位一致。
+fn build_optifine_version_json(
+    parent: &serde_json::Value,
     dir_name: &str,
-    mc_version: &str,
     patch: &str,
     artifact_path: &str,
     artifact_url: &str,
-) -> serde_json::Value {
-    serde_json::json!({
-        "id": dir_name,
-        // 统一官方主类：1.13+ 已移除 launchwrapper，写死必崩；≤1.12.2 的 Main 亦然（本实现不注入 tweak，行为等价于原版启动）
-        "mainClass": "net.minecraft.client.main.Main",
-        "libraries": [{
-            "name": format!("optifine:OptiFine:{}", patch),
-            "downloads": {
-                "artifact": {
-                    "path": artifact_path,
-                    "url": artifact_url,
-                    "sha1": "", "size": 0
-                }
+) -> Result<serde_json::Value, String> {
+    if !parent.is_object() {
+        bail_key!("errors.version.parse", "原版版本 JSON 格式无效");
+    }
+    let mut root = parent.clone();
+    let obj = root.as_object_mut().expect("已校验为 object");
+    obj.insert("id".into(), serde_json::json!(dir_name));
+    obj.remove("inheritsFrom");
+    // 统一官方主类：1.13+ 已移除 launchwrapper；纯 OptiFine 用 classpath 库覆盖原版类
+    obj.insert(
+        "mainClass".into(),
+        serde_json::json!("net.minecraft.client.main.Main"),
+    );
+    let mut libraries = vec![serde_json::json!({
+        "name": format!("optifine:OptiFine:{}", patch),
+        "downloads": {
+            "artifact": {
+                "path": artifact_path,
+                "url": artifact_url,
+                "sha1": "", "size": 0
             }
-        }],
-        "inheritsFrom": mc_version,
-        "type": "release"
-    })
+        }
+    })];
+    if let Some(parent_libs) = obj.get("libraries").and_then(|v| v.as_array()) {
+        let mut normalized = parent_libs.clone();
+        super::shared::normalize_legacy_libraries(&mut normalized);
+        libraries.extend(normalized);
+    }
+    obj.insert("libraries".into(), serde_json::Value::Array(libraries));
+    Ok(root)
 }
 
 pub async fn install_optifine(
     mc_version: &str,
     patch: &str,
     of_type: &str,
+    parent_json: Option<&serde_json::Value>,
     target: VersionTarget<'_>,
     mode: OptifineMode,
     ctx: InstallCtx<'_>,
@@ -181,10 +195,17 @@ pub async fn install_optifine(
 
     match mode {
         OptifineMode::Vanilla => {
-            // 继承式 version.json：继承原版，assetIndex/arguments/父库等由启动端
-            // env.rs load_version_json_with_inheritance 展开补齐（父版本须已安装，缺失时明确报错引导补装）。
-            let json =
-                build_vanilla_version_json(dir_name, mc_version, patch, &artifact_path, &jar_url);
+            // 自包含 version.json：直接合并原版数据，不依赖父版本目录
+            let Some(parent) = parent_json else {
+                bail_key!("errors.version.missing", "缺少原版版本 JSON，无法生成 OptiFine 版本");
+            };
+            let json = build_optifine_version_json(
+                parent,
+                dir_name,
+                patch,
+                &artifact_path,
+                &jar_url,
+            )?;
             let json_path = vdir.join(format!("{dir_name}.json"));
             std::fs::write(
                 &json_path,
@@ -208,32 +229,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn vanilla_json_uses_official_main_class() {
-        let j = build_vanilla_version_json(
+    fn optifine_json_merges_parent_and_prepends_optifine() {
+        let parent = serde_json::json!({
+            "id": "1.20.1",
+            "mainClass": "net.minecraft.client.main.Main",
+            "assetIndex": { "id": "5", "sha1": "asset-sha1" },
+            "downloads": { "client": { "url": "https://example.com/client.jar", "sha1": "", "size": 1 } },
+            "arguments": { "game": ["--demo"] },
+            "libraries": [{
+                "name": "org.lwjgl:lwjgl:3.3.1",
+                "downloads": { "artifact": { "path": "org/lwjgl/lwjgl/3.3.1/lwjgl-3.3.1.jar", "url": "https://example.com/lwjgl.jar", "sha1": "", "size": 1 } }
+            }]
+        });
+        let j = build_optifine_version_json(
+            &parent,
             "1.20.1-optifine-HD_U_I6",
-            "1.20.1",
             "HD_U_I6",
             "1.20.1-optifine-HD_U_I6/OptiFine_1.20.1_HD_U_I6.jar",
             "https://bmclapi2.bangbang93.com/optifine/1.20.1/HD_U/I6",
-        );
-        assert_eq!(
-            j["mainClass"], "net.minecraft.client.main.Main",
-            "1.13+ 无 launchwrapper"
-        );
-        assert_eq!(j["inheritsFrom"], "1.20.1", "继承原版（启动端展开）");
+        )
+        .expect("应能生成自包含 JSON");
+        assert_eq!(j["mainClass"], "net.minecraft.client.main.Main");
+        assert!(j.get("inheritsFrom").is_none(), "纯 OptiFine 不依赖父版本");
         assert_eq!(j["id"], "1.20.1-optifine-HD_U_I6");
+        assert_eq!(j["assetIndex"]["id"], "5");
+        assert_eq!(j["arguments"]["game"][0], "--demo");
+        assert_eq!(j["downloads"]["client"]["url"], "https://example.com/client.jar");
+        assert_eq!(j["libraries"][0]["name"], "optifine:OptiFine:HD_U_I6");
+        assert_eq!(j["libraries"][1]["name"], "org.lwjgl:lwjgl:3.3.1");
         let artifact = &j["libraries"][0]["downloads"]["artifact"];
-        // artifact.path 与 jar 实际落位一致（classpath/缺失检查按它找）
         assert_eq!(
             artifact["path"],
             "1.20.1-optifine-HD_U_I6/OptiFine_1.20.1_HD_U_I6.jar"
         );
-        // 真实可下载 URL：不用 file://（reqwest 不支持该 scheme，修复任务能重下）
-        assert!(
-            artifact["url"].as_str().unwrap().starts_with("http"),
-            "url 必须是 http(s) 可下载地址: {}",
-            artifact["url"]
-        );
+        assert!(artifact["url"].as_str().unwrap().starts_with("http"));
     }
 
     #[test]

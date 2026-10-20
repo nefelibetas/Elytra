@@ -16,14 +16,15 @@ pub trait TaskSpec {
 
 impl TaskSpec for DownloadTask {
     fn name(&self) -> String {
-        match &self.loader {
-            Some(l) => format!(
+        match (&self.loader, &self.optifine_patch) {
+            (Some(l), _) => format!(
                 "{} {}-{} 安装",
                 self.mc_version,
                 l.kind.display_name(),
                 l.version
             ),
-            None => format!("{} 下载", self.version_id),
+            (None, Some(_)) => format!("{} OptiFine 安装", self.version_id),
+            (None, None) => format!("{} 下载", self.version_id),
         }
     }
 
@@ -149,6 +150,9 @@ mod tests {
 
         // 任务名
         assert_eq!(valid_task().name(), "26.2 下载");
+        let mut t = valid_task();
+        t.optifine_patch = Some("G8".into());
+        assert_eq!(t.name(), "26.2 OptiFine 安装");
         let mut t = valid_task();
         t.loader = Some(crate::task::model::LoaderChoice {
             kind: crate::task::model::LoaderKind::Quilt,
