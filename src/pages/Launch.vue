@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 页面容器：业务在 store（launch/auth/accountUi/avatar/alert）
 import { onMounted } from "vue";
+import { useI18n } from "vue-i18n";
 import { FileText } from "@lucide/vue";
 import AlertDialog from "../component/common/AlertDialog.vue";
 import LaunchProgress from "../component/launch/LaunchProgress.vue";
@@ -14,6 +15,8 @@ import {
 } from "../store/auth/auth";
 import { launchState, loadVersions, ensureGameExitListener } from "../store/app/launch";
 import { selectedVersion } from "../store/app/selectedVersion";
+
+const { t } = useI18n();
 
 onMounted(async () => {
   await loadLastUsername();
@@ -46,7 +49,7 @@ onMounted(async () => {
       <Transition name="right-switch" mode="out-in">
         <div v-if="!selectedVersion" key="hint" class="right-hint">
           <FileText :size="48" opacity="0.3" />
-          <p>选择一个游戏版本</p>
+          <p>{{ t("launch.empty.selectVersion") }}</p>
         </div>
         <VersionDetailCard v-else key="card" />
       </Transition>
@@ -54,7 +57,7 @@ onMounted(async () => {
 
     <AlertDialog
       v-model="alertState.show"
-      title="启动失败"
+      :title="t('launch.alert.launchFailed')"
       :message="alertState.msg"
       :copyable="alertState.copyable"
     />

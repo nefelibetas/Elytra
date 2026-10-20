@@ -1,7 +1,10 @@
 <script setup lang="ts">
+import { useI18n } from "vue-i18n";
 import { datapackSearch, datapackTotalPages } from "../../store/community/categorySearch";
 import { Database } from "@lucide/vue";
 import CommunityResultList from "./CommunityResultList.vue";
+
+const { t } = useI18n();
 </script>
 
 <template>
@@ -9,6 +12,6 @@ import CommunityResultList from "./CommunityResultList.vue";
     :search="datapackSearch"
     :total-pages="datapackTotalPages"
     :empty-icon="Database"
-    label="数据包"
+    :label="t('download.categories.datapack')"
   />
 </template>

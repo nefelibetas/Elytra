@@ -76,7 +76,7 @@ pub fn delete_mod_file(mods_dir: &Path, file_name: &str) -> Result<(), String> {
         }
         disabled
     };
-    std::fs::remove_file(&target).map_err(common_err_ctx!("删除失败"))?;
+    std::fs::remove_file(&target).map_err(common_err_ctx_key!("errors.file.delete", "删除失败"))?;
     Ok(())
 }
 
@@ -98,7 +98,7 @@ pub async fn delete_resource_file(
     }
     tokio::fs::remove_file(&path)
         .await
-        .map_err(common_err_ctx!("删除失败"))
+        .map_err(common_err_ctx_key!("errors.file.delete", "删除失败"))
 }
 
 /// 切换 mod 启用/禁用：`name.jar` → `name.jar.disabled`（扫描按扩展名自动隐藏），反向即启用。
@@ -198,13 +198,13 @@ pub async fn update_mod_file(
         file_sha1,
     )
     .await
-    .map_err(common_err_ctx!("下载更新失败"))?;
+    .map_err(common_err_ctx_key!("errors.download.failed", "下载更新失败"))?;
 
     // 先删旧再改名（Windows 上 rename 覆盖已存在目标会失败）
     if target.exists() {
-        std::fs::remove_file(&target).map_err(common_err_ctx!("删除旧文件失败"))?;
+        std::fs::remove_file(&target).map_err(common_err_ctx_key!("errors.file.delete", "删除旧文件失败"))?;
     }
-    std::fs::rename(&tmp, &target).map_err(common_err_ctx!("替换文件失败"))?;
+    std::fs::rename(&tmp, &target).map_err(common_err_ctx_key!("errors.file.write", "替换文件失败"))?;
     Ok(())
 }
 

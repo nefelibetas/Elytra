@@ -1,3 +1,5 @@
+import { currentLocale } from "../i18n";
+
 export const MC_COLORS: Record<string, string> = {
   "0": "#000000",
   "1": "#0000AA",
@@ -35,6 +37,32 @@ export const MC_COLOR_NAMES: Record<string, string> = {
   e: "黄色",
   f: "白色",
 };
+
+export const MC_COLOR_NAMES_EN: Record<string, string> = {
+  "0": "Black",
+  "1": "Dark Blue",
+  "2": "Dark Green",
+  "3": "Dark Aqua",
+  "4": "Dark Red",
+  "5": "Dark Purple",
+  "6": "Gold",
+  "7": "Gray",
+  "8": "Dark Gray",
+  "9": "Blue",
+  a: "Green",
+  b: "Aqua",
+  c: "Red",
+  d: "Light Purple",
+  e: "Yellow",
+  f: "White",
+};
+
+/** 按当前界面语言取格式码颜色名。 */
+export function colorName(key: string): string {
+  return currentLocale.value === "en-US"
+    ? MC_COLOR_NAMES_EN[key] ?? key
+    : MC_COLOR_NAMES[key] ?? key;
+}
 
 export const MC_STYLES = {
   bold: "l",

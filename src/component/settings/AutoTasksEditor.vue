@@ -3,6 +3,7 @@
 // global 设置页直接编辑全局配置（无实例上下文，"立即执行"不可用）。
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
+import { useI18n } from "vue-i18n";
 import { Play, Plus, Trash2, Undo2 } from "@lucide/vue";
 import {
   DEFAULT_KEEP, DEFAULT_TIMEOUT, actionKind, actionLabel, builtinCatalog, makeAction,
@@ -19,6 +20,8 @@ import { errMsg } from "../../utils/error";
 const props = withDefaults(defineProps<{ mode?: "instance" | "global" }>(), {
   mode: "instance",
 });
+
+const { t } = useI18n();
 
 const route = useRoute();
 /** 游戏 id（版本目录名），来自路由 query。 */
@@ -84,10 +87,10 @@ async function save() {
   try {
     if (!isInstance.value) {
       await saveGlobalAutoTasks(draft.value);
-      showToast("已保存全局自动任务");
+      showToast(t("settings.autoTasks.savedGlobal"));
     } else {
       await saveInstanceAutoTasks(versionName.value, mode.value === "custom" ? draft.value : null);
-      showToast(mode.value === "custom" ? "已保存实例自动任务" : "已改为使用全局自动任务");
+      showToast(mode.value === "custom" ? t("settings.autoTasks.savedInstance") : t("settings.autoTasks.switchedGlobal"));
     }
   } catch (e) {
     showToast(errMsg(e));
@@ -104,7 +107,7 @@ function addAction(phase: AutoTaskPhase, kind: string) {
 async function runNow(phase: AutoTaskPhase) {
   try {
     await runAutoTasksNow(versionName.value, phase);
-    showToast("自动任务执行完成");
+    showToast(t("settings.autoTasks.runDone"));
   } catch (e) {
     showToast(errMsg(e));
   }
@@ -153,12 +156,12 @@ function toggleWorld(name: string, step: AutoTaskStep) {
     <div class="setup-card">
       <div class="setup-card-hdr">
         <div class="setup-card-titles">
-          <div class="setup-card-title">自动任务</div>
+          <div class="setup-card-title">{{ t("settings.autoTasks.title") }}</div>
           <div class="setup-desc">
-            启动前 / 崩溃时 / 退出后自动执行的动作；内置动作跨平台，自定义命令走系统命令行
+            {{ t("settings.autoTasks.subtitle") }}
           </div>
         </div>
-        <button class="vsh-save" :disabled="saving || !loaded" @click="save">保存</button>
+        <button class="vsh-save" :disabled="saving || !loaded" @click="save">{{ t("settings.autoTasks.save") }}</button>
       </div>
 
       <div v-if="isInstance" class="vsh-mode">
@@ -167,20 +170,20 @@ function toggleWorld(name: string, step: AutoTaskStep) {
           :class="{ active: mode === 'global' }"
           @click="switchToGlobal"
         >
-          使用全局自动任务
+          {{ t("settings.autoTasks.useGlobal") }}
         </button>
         <button
           class="vsh-mode-btn"
           :class="{ active: mode === 'custom' }"
           @click="switchToCustom"
         >
-          使用自定义自动任务
+          {{ t("settings.autoTasks.useCustom") }}
         </button>
         <span class="vsh-mode-hint">
           {{
             mode === "custom"
-              ? "该实例完全采用下方配置；全局改动不再影响它"
-              : "该实例跟随全局配置（在设置-启动选项里改）"
+              ? t("settings.autoTasks.hintCustom")
+              : t("settings.autoTasks.hintGlobal")
           }}
         </span>
       </div>
@@ -189,15 +192,15 @@ function toggleWorld(name: string, step: AutoTaskStep) {
       <div v-if="editing" class="vsh-phases">
         <div v-for="p in phases" :key="p.key" class="vsh-phase">
           <div class="vsh-phase-hdr">
-            <div class="vsh-phase-title">{{ p.label }}</div>
-            <div class="vsh-phase-desc">{{ p.desc }}</div>
+            <div class="vsh-phase-title">{{ t(p.labelKey) }}</div>
+            <div class="vsh-phase-desc">{{ t(p.descKey) }}</div>
             <button
               v-if="isInstance"
               class="vsh-run"
-              :title="`立即执行一次（${p.label}）`"
+              :title="t('settings.autoTasks.runOnce', { phase: t(p.labelKey) })"
               @click="runNow(p.key)"
             >
-              <Play :size="12" /> 立即执行
+              <Play :size="12" /> {{ t("settings.autoTasks.runNow") }}
             </button>
           </div>
 
@@ -206,18 +209,18 @@ function toggleWorld(name: string, step: AutoTaskStep) {
             ({{ autoTaskProgress.step_index + 1 }}/{{ autoTaskProgress.step_total }})
           </div>
 
-          <div v-if="!stepsOf(p.key).length" class="vsh-empty">尚未配置动作</div>
+          <div v-if="!stepsOf(p.key).length" class="vsh-empty">{{ t("settings.autoTasks.notConfigured") }}</div>
 
           <div v-for="(step, i) in stepsOf(p.key)" :key="i" class="vsh-step">
             <div class="vsh-step-hdr">
               <label class="vsh-step-enable">
                 <input v-model="step.enabled" type="checkbox" />
                 <span class="vsh-step-kind" :class="`kind-${actionKind(step.action)}`">
-                  {{ actionKind(step.action) === "command" ? "命令" : "内置" }}
+                  {{ actionKind(step.action) === "command" ? t("settings.autoTasks.kindCommand") : t("settings.autoTasks.kindBuiltin") }}
                 </span>
                 <span class="vsh-step-label">{{ actionLabel(step.action) }}</span>
               </label>
-              <button class="vsh-del" title="删除" @click="stepsOf(p.key).splice(i, 1)">
+              <button class="vsh-del" :title="t('settings.autoTasks.delete')" @click="stepsOf(p.key).splice(i, 1)">
                 <Trash2 :size="12" />
               </button>
             </div>
@@ -228,14 +231,14 @@ function toggleWorld(name: string, step: AutoTaskStep) {
                 v-model="commandAction(step).command"
                 class="vsh-input"
                 type="text"
-                placeholder="如：echo hello > D:\backup.txt（Windows cmd /C，其余 sh -c）"
+                :placeholder="t('settings.autoTasks.commandPlaceholder')"
                 spellcheck="false"
                 autocomplete="off"
               />
               <label class="vsh-timeout">
-                超时
+                {{ t("settings.autoTasks.timeout") }}
                 <input v-model.number="commandAction(step).timeout_secs" type="number" min="1" max="3600" />
-                秒
+                {{ t("settings.autoTasks.seconds") }}
               </label>
             </div>
 
@@ -248,7 +251,7 @@ function toggleWorld(name: string, step: AutoTaskStep) {
                     :checked="backupAction(step).scope === 'All'"
                     @change="backupAction(step).scope = 'All'"
                   />
-                  全部世界
+                  {{ t("settings.autoTasks.scopeAll") }}
                 </label>
                 <label class="vsh-radio">
                   <input
@@ -256,16 +259,16 @@ function toggleWorld(name: string, step: AutoTaskStep) {
                     :checked="backupAction(step).scope !== 'All'"
                     @change="toggleWorld(worlds[0]?.name ?? '', step)"
                   />
-                  指定世界
+                  {{ t("settings.autoTasks.scopeSelected") }}
                 </label>
                 <label class="vsh-timeout">
-                  保留
+                  {{ t("settings.autoTasks.keep") }}
                   <input v-model.number="backupAction(step).keep" type="number" min="1" max="50" />
-                  份
+                  {{ t("settings.autoTasks.copies") }}
                 </label>
               </div>
               <div v-if="backupAction(step).scope !== 'All'" class="vsh-worlds">
-                <div v-if="!worlds.length" class="vsh-empty">未发现存档</div>
+                <div v-if="!worlds.length" class="vsh-empty">{{ t("settings.autoTasks.noWorlds") }}</div>
                 <label v-for="w in worlds" :key="w.name" class="vsh-world">
                   <input
                     type="checkbox"
@@ -280,34 +283,34 @@ function toggleWorld(name: string, step: AutoTaskStep) {
 
           <div class="vsh-add">
             <button class="vsh-add-btn" @click="expandAdd = expandAdd === p.key ? null : p.key">
-              <Plus :size="12" /> 添加动作
+              <Plus :size="12" /> {{ t("settings.autoTasks.addAction") }}
             </button>
             <div v-if="expandAdd === p.key" class="vsh-add-menu">
               <button
                 v-for="b in builtinCatalog"
                 :key="b.kind"
                 class="vsh-add-item"
-                :title="b.desc"
+                :title="t(b.descKey)"
                 @click="addAction(p.key, b.kind)"
               >
-                {{ b.label }}
+                {{ t(b.labelKey) }}
               </button>
               <button class="vsh-add-item cmd" @click="addAction(p.key, 'command')">
-                自定义命令
+                {{ t("settings.autoTasks.customCommand") }}
               </button>
             </div>
           </div>
         </div>
 
         <div class="vsh-prefailure">
-          <span class="vsh-prefailure-label">启动前动作失败时</span>
+          <span class="vsh-prefailure-label">{{ t("settings.autoTasks.failureLabel") }}</span>
           <label class="vsh-radio">
             <input
               v-model="draft.pre_on_failure"
               type="radio"
               value="abort"
             />
-            终止启动
+            {{ t("settings.autoTasks.abortLaunch") }}
           </label>
           <label class="vsh-radio">
             <input
@@ -315,7 +318,7 @@ function toggleWorld(name: string, step: AutoTaskStep) {
               type="radio"
               value="continue"
             />
-            继续启动
+            {{ t("settings.autoTasks.continueLaunch") }}
           </label>
         </div>
       </div>
@@ -324,24 +327,24 @@ function toggleWorld(name: string, step: AutoTaskStep) {
       <div v-else-if="isInstance" class="vsh-phases">
         <div v-for="p in phases" :key="p.key" class="vsh-phase">
           <div class="vsh-phase-hdr">
-            <div class="vsh-phase-title">{{ p.label }}</div>
-            <div class="vsh-phase-desc">{{ p.desc }}</div>
+            <div class="vsh-phase-title">{{ t(p.labelKey) }}</div>
+            <div class="vsh-phase-desc">{{ t(p.descKey) }}</div>
             <button v-if="isInstance" class="vsh-run" @click="runNow(p.key)">
-              <Play :size="12" /> 立即执行
+              <Play :size="12" /> {{ t("settings.autoTasks.runNow") }}
             </button>
           </div>
-          <div v-if="!globalAutoTasks || !globalAutoTasks[p.key].length" class="vsh-empty">全局未配置动作</div>
+          <div v-if="!globalAutoTasks || !globalAutoTasks[p.key].length" class="vsh-empty">{{ t("settings.autoTasks.globalEmpty") }}</div>
           <div v-for="(step, i) in globalAutoTasks?.[p.key] ?? []" :key="i" class="vsh-step readonly">
             <span class="vsh-step-kind" :class="`kind-${actionKind(step.action)}`">
-              {{ actionKind(step.action) === "command" ? "命令" : "内置" }}
+              {{ actionKind(step.action) === "command" ? t("settings.autoTasks.kindCommand") : t("settings.autoTasks.kindBuiltin") }}
             </span>
             <span class="vsh-step-label">{{ actionLabel(step.action) }}</span>
-            <span v-if="!step.enabled" class="vsh-step-off">（已停用）</span>
+            <span v-if="!step.enabled" class="vsh-step-off">{{ t("settings.autoTasks.disabled") }}</span>
           </div>
         </div>
         <div class="vsh-note">
           <Undo2 :size="12" />
-          全局自动任务在「设置 → 启动设置」中编辑；本页点「使用自定义自动任务」可为该实例单独配置。
+          {{ t("settings.autoTasks.note") }}
         </div>
       </div>
     </div>

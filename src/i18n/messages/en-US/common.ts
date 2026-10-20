@@ -1,0 +1,46 @@
+export default {
+  appTitle: "Elytra Launcher",
+  action: {
+    confirm: "Confirm",
+    cancel: "Cancel",
+    close: "Close",
+    delete: "Delete",
+    edit: "Edit",
+    refresh: "Refresh",
+    copy: "Copy",
+    copied: "Copied",
+    copyError: "Copy error details",
+    copyFailed: "Copy failed",
+    copyFailedManual: "Copy failed. Please copy manually.",
+    retry: "Retry",
+    skip: "Skip",
+    back: "Back",
+    save: "Save",
+    saving: "Saving…",
+    loading: "Loading…",
+    add: "Add",
+    select: "Select",
+  },
+  dialog: {
+    tip: "Notice",
+  },
+  status: {
+    loading: "Loading…",
+    empty: "Nothing here",
+    error: "Failed to load",
+  },
+  language: {
+    title: "Language",
+    desc: "Interface language; Auto follows the system",
+    auto: "Auto",
+    zhCN: "中文（简体）", // i18n-ignore: native language name
+    enUS: "English",
+    autoCurrent: "Auto (currently: {locale})",
+  },
+  tooltip: {
+    minimize: "Minimize",
+    close: "Close",
+    refresh: "Refresh",
+    backToTop: "Back to top",
+  },
+};

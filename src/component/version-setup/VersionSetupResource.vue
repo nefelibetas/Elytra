@@ -2,6 +2,7 @@
 // 版本设置-资源管理 tab（材质包/数据包/光影包）：标题卡 + 列表卡；双态：识别到 Modrinth → 社区详情，未识别 → 本地文件 + 类型图标。
 import { computed, ref, onMounted } from "vue";
 import { useRoute } from "vue-router";
+import { useI18n } from "vue-i18n";
 import { Folder, Trash2, Palette, Database, Sun } from "@lucide/vue";
 import { deleteResourceFile } from "../../store/task/versionDetail";
 import { ensureGameFolder } from "../../store/config/gameDirs";
@@ -25,16 +26,20 @@ import {
 const props = defineProps<{ kind: ResourceKind }>();
 
 const route = useRoute();
+const { t } = useI18n();
 
 const versionName = computed(() => String(route.query.name ?? ""));
 
 const META = {
-  resourcepacks: { label: "材质包", icon: Palette },
-  datapacks: { label: "数据包", icon: Database },
-  shaderpacks: { label: "光影包", icon: Sun },
+  resourcepacks: { labelKey: "settings.version.setup.resource.kindResourcepacks", icon: Palette },
+  datapacks: { labelKey: "settings.version.setup.resource.kindDatapacks", icon: Database },
+  shaderpacks: { labelKey: "settings.version.setup.resource.kindShaderpacks", icon: Sun },
 } as const;
 
 const meta = computed(() => META[props.kind]);
+
+/** 类型名（材质包/数据包/光影包），用于标题、空态与加载文案。 */
+const kindLabel = computed(() => t(meta.value.labelKey));
 
 /** 当前类型的列表状态（store 按 kind 取 ref，此处解包供模板直用）。 */
 const res = computed(() => {
@@ -59,7 +64,9 @@ const deletePending = ref<string[]>([]);
 function doBatchDelete() {
   const names = [...selected.value];
   if (names.length === 0) return;
-  deleteLabel.value = names.length === 1 ? `「${names[0]}」` : `${names.length} 项资源`;
+  deleteLabel.value = names.length === 1
+    ? t("settings.version.setup.resource.targetOne", { name: names[0] })
+    : t("settings.version.setup.resource.targetMany", { count: names.length });
   deletePending.value = names;
   deleteDialog.value = true;
 }
@@ -71,7 +78,7 @@ async function confirmDelete() {
   for (const n of names) {
     try {
       await deleteResourceFile(versionName.value, props.kind, n);
-      showToast(`已删除 ${n}`);
+      showToast(t("settings.version.setup.resource.deleted", { name: n }));
     } catch (e) {
       showToast(errMsg(e));
     }
@@ -108,10 +115,10 @@ async function openResourceFolder() {
     <!-- 标题卡：类型名 + 打开文件夹 -->
     <div class="vsr-card vsr-head-card">
       <component :is="meta.icon" :size="16" class="vsr-head-icon" />
-      <span class="vsr-head-title">{{ meta.label }}管理</span>
+      <span class="vsr-head-title">{{ t("settings.version.setup.resource.title", { kind: kindLabel }) }}</span>
       <button class="vsr-act-btn" @click="openResourceFolder">
         <Folder :size="13" />
-        <span>打开文件夹</span>
+        <span>{{ t("settings.version.setup.common.openFolder") }}</span>
       </button>
     </div>
 
@@ -119,14 +126,14 @@ async function openResourceFolder() {
     <div class="vsr-card vsr-list-card">
       <div class="vsr-content">
         <Transition name="fade" mode="out-in">
-          <LoadingSpinner v-if="res.loading && res.list.length === 0" key="loading" :text="`加载${meta.label}信息…`" />
+          <LoadingSpinner v-if="res.loading && res.list.length === 0" key="loading" :text="t('settings.version.setup.resource.loading', { kind: kindLabel })" />
           <ErrorState v-else-if="res.error" key="err" :text="res.error" />
           <EmptyState v-else-if="res.list.length === 0" key="empty">
             <component :is="meta.icon" :size="40" :stroke-width="1.5" opacity="0.5" />
-            <p>{{ meta.label }}目录为空</p>
+            <p>{{ t("settings.version.setup.resource.empty", { kind: kindLabel }) }}</p>
           </EmptyState>
           <div v-else key="list">
-            <div v-if="res.networkError" class="vsr-net-warn">部分资源信息获取失败，已显示本地信息</div>
+            <div v-if="res.networkError" class="vsr-net-warn">{{ t("settings.version.setup.resource.networkWarn") }}</div>
             <div class="vsr-list">
               <div v-for="f in res.list" :key="f.file_name" class="vsr-item">
                 <div
@@ -141,7 +148,7 @@ async function openResourceFolder() {
                       <span class="vsr-title-row">
                         <span class="vsr-title">{{ f.title_zh ?? f.title ?? f.file_name }}</span>
                         <span v-if="f.title_zh" class="vsr-file">{{ f.file_name }}</span>
-                        <span v-if="f.downloads" class="vsr-sub">{{ fmtCount(f.downloads) }} 次下载</span>
+                        <span v-if="f.downloads" class="vsr-sub">{{ t("settings.version.setup.common.downloads", { count: fmtCount(f.downloads) }) }}</span>
                       </span>
                       <span v-if="f.description" class="vsr-desc">
                         {{ dlTranslateMode === "en" ? f.description : (f.description_zh ?? f.description) }}
@@ -171,27 +178,27 @@ async function openResourceFolder() {
     <Transition name="fade">
       <div v-if="selecting" class="vs-actions-bar vs-bar-attached">
         <button class="vs-ab-btn" @click="toggleAll">
-          {{ allVisibleSelected ? "取消全选" : "全选" }}
+          {{ allVisibleSelected ? t("settings.version.setup.common.deselectAll") : t("settings.version.setup.common.selectAll") }}
         </button>
-        <button class="vs-ab-btn" @click="clear">取消</button>
-        <span class="vs-ab-count">已选 {{ selected.length }} 项</span>
+        <button class="vs-ab-btn" @click="clear">{{ t("settings.version.setup.common.deselect") }}</button>
+        <span class="vs-ab-count">{{ t("settings.version.setup.common.selectedCount", { count: selected.length }) }}</span>
         <button class="vs-ab-btn danger" @click="doBatchDelete">
           <Trash2 :size="13" />
-          <span>删除（{{ selected.length }}）</span>
+          <span>{{ t("settings.version.setup.common.deleteCount", { count: selected.length }) }}</span>
         </button>
       </div>
     </Transition>
 
     <!-- 删除确认 dialog -->
-    <AlertDialog v-model="deleteDialog" title="删除资源">
+    <AlertDialog v-model="deleteDialog" :title="t('settings.version.setup.resource.deleteTitle')">
       <div class="vsr-dialog-body">
         <div class="vsr-dialog-text">
-          确定要删除 {{ deleteLabel }} 吗？该操作会删除文件且无法恢复。
+          {{ t("settings.version.setup.resource.deleteConfirm", { target: deleteLabel }) }}
         </div>
       </div>
       <template #actions>
-        <button class="dialog-btn danger" @click="confirmDelete">删除</button>
-        <button class="dialog-btn" @click="deleteDialog = false">取消</button>
+        <button class="dialog-btn danger" @click="confirmDelete">{{ t("settings.version.setup.common.delete") }}</button>
+        <button class="dialog-btn" @click="deleteDialog = false">{{ t("settings.version.setup.common.cancel") }}</button>
       </template>
     </AlertDialog>
   </div>

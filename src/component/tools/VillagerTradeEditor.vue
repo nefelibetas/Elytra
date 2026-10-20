@@ -2,6 +2,7 @@
 // 村民交易列表编辑器（村民交易生成器与「生物 NBT」工具共用）：原版预设回填 + 买/第二买/卖
 // 自由配置（含每槽修饰与自定义 NBT）+ 已添加交易列表。trades 由父组件持有并直接变更。
 import { computed, reactive, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { Plus, SlidersHorizontal, Trash2 } from "@lucide/vue";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
 import CheckToggle from "../common/CheckToggle.vue";
@@ -9,7 +10,9 @@ import SearchSelect from "./SearchSelect.vue";
 import ModsEditor, { type ModsForm } from "./ModsEditor.vue";
 import { isKnownItem, type SlotRaw, type VillagerTrade } from "../../utils/nbt";
 import { VILLAGER_TRADE_PRESETS } from "../../utils/villagerTrades";
-import { GIVE_ITEMS, ENCHANTMENTS, type ItemMods, type GiveVersion } from "../../utils/give";
+import { GIVE_ITEMS, itemName as giveItemName, enchantName, type ItemMods, type GiveVersion } from "../../utils/give";
+
+const { t } = useI18n();
 
 const props = defineProps<{
   /** 已添加的交易列表（父持有；本组件直接 push/splice）。 */
@@ -80,8 +83,11 @@ const presetOptions = computed<SelOption[]>(() =>
   ),
 );
 
+const itemOptions = computed(() => GIVE_ITEMS.map((i) => ({ id: i.id, name: giveItemName(i) })));
+
 function itemNameOf(id: string): string {
-  return GIVE_ITEMS.find((i) => i.id === id)?.name ?? id;
+  const item = GIVE_ITEMS.find((i) => i.id === id);
+  return item ? giveItemName(item) : id;
 }
 
 function presetSide(items: { id: string; n: number }[]): string {
@@ -104,15 +110,15 @@ function applyPreset(indexStr: string) {
 function addTrade() {
   addError.value = "";
   if (!isKnownItem(buyId.value.trim())) {
-    addError.value = `购买物品不存在：${buyId.value.trim()}`;
+    addError.value = t("tools.trade.buyItemMissing", { id: buyId.value.trim() });
     return;
   }
   if (!isKnownItem(sellId.value.trim())) {
-    addError.value = `出售物品不存在：${sellId.value.trim()}`;
+    addError.value = t("tools.trade.sellItemMissing", { id: sellId.value.trim() });
     return;
   }
   if (buyBId.value.trim() && !isKnownItem(buyBId.value.trim())) {
-    addError.value = `第二购买物品不存在：${buyBId.value.trim()}`;
+    addError.value = t("tools.trade.buyBItemMissing", { id: buyBId.value.trim() });
     return;
   }
   props.trades.push({
@@ -138,37 +144,38 @@ function removeTrade(idx: number) {
 }
 
 function itemName(id: string): string {
-  return GIVE_ITEMS.find((i) => i.id === id)?.name ?? id;
+  const item = GIVE_ITEMS.find((i) => i.id === id);
+  return item ? giveItemName(item) : id;
 }
 
 /** 修饰摘要（附魔等），如 （锋利5）。 */
 function modsSummary(mods?: ItemMods): string {
   if (!mods || mods.enchantments.length === 0) return "";
   const list = mods.enchantments
-    .map((e) => `${ENCHANTMENTS.find((x) => x.id === e.id)?.name ?? e.id}${e.level}`)
+    .map((e) => `${enchantName(e.id)}${e.level}`)
     .join(",");
-  return `（${list}）`;
+  return t("tools.trade.modsSummary", { list });
 }
 </script>
 
 <template>
   <div class="nb-sec">
-    <div class="nb-sec-title">交易</div>
+    <div class="nb-sec-title">{{ t("tools.trade.title") }}</div>
     <div class="nb-row">
-      <span class="nb-label">原版交易</span>
+      <span class="nb-label">{{ t("tools.trade.vanilla") }}</span>
       <DropSelect
         v-if="presetOptions.length > 0"
         :model-value="''"
         :options="presetOptions"
         width="320px"
-        placeholder="从该职业原版交易选择（回填下方）"
+        :placeholder="t('tools.trade.presetPlaceholder')"
         @update:model-value="applyPreset"
       />
-      <span v-else class="nb-note">该职业暂无原版交易预设</span>
+      <span v-else class="nb-note">{{ t("tools.trade.noPresets") }}</span>
     </div>
     <div class="nb-row">
-      <span class="nb-label">购买</span>
-      <SearchSelect v-model="buyId" :options="GIVE_ITEMS" :extra-ids="['emerald']" placeholder="绿宝石 / emerald" />
+      <span class="nb-label">{{ t("tools.trade.buy") }}</span>
+      <SearchSelect v-model="buyId" :options="itemOptions" :extra-ids="['emerald']" :placeholder="t('tools.trade.buyPlaceholder')" />
       <span class="nb-label nb-label-short">×</span>
       <input v-model.number="buyCount" type="number" class="nb-num" min="1" max="64" autocomplete="off" />
       <button
@@ -177,13 +184,13 @@ function modsSummary(mods?: ItemMods): string {
         @click="toggleEditing('buy')"
       >
         <SlidersHorizontal :size="13" />
-        自定义
+        {{ t("tools.trade.customize") }}
       </button>
     </div>
     <ModsEditor v-if="editingKey === 'buy'" :form="modsForms.buy" :version="version" />
     <div class="nb-row">
-      <span class="nb-label">第二购买</span>
-      <SearchSelect v-model="buyBId" :options="GIVE_ITEMS" :extra-ids="['emerald']" placeholder="可选，搜索物品" />
+      <span class="nb-label">{{ t("tools.trade.buyB") }}</span>
+      <SearchSelect v-model="buyBId" :options="itemOptions" :extra-ids="['emerald']" :placeholder="t('tools.trade.buyBPlaceholder')" />
       <span class="nb-label nb-label-short">×</span>
       <input v-model.number="buyBCount" type="number" class="nb-num" min="1" max="64" autocomplete="off" />
       <button
@@ -192,13 +199,13 @@ function modsSummary(mods?: ItemMods): string {
         @click="toggleEditing('buyB')"
       >
         <SlidersHorizontal :size="13" />
-        自定义
+        {{ t("tools.trade.customize") }}
       </button>
     </div>
     <ModsEditor v-if="editingKey === 'buyB'" :form="modsForms.buyB" :version="version" />
     <div class="nb-row">
-      <span class="nb-label">出售</span>
-      <SearchSelect v-model="sellId" :options="GIVE_ITEMS" placeholder="书 / book" />
+      <span class="nb-label">{{ t("tools.trade.sell") }}</span>
+      <SearchSelect v-model="sellId" :options="itemOptions" :placeholder="t('tools.trade.sellPlaceholder')" />
       <span class="nb-label nb-label-short">×</span>
       <input v-model.number="sellCount" type="number" class="nb-num" min="1" max="64" autocomplete="off" />
       <button
@@ -207,25 +214,25 @@ function modsSummary(mods?: ItemMods): string {
         @click="toggleEditing('sell')"
       >
         <SlidersHorizontal :size="13" />
-        自定义
+        {{ t("tools.trade.customize") }}
       </button>
     </div>
     <ModsEditor v-if="editingKey === 'sell'" :form="modsForms.sell" :version="version" />
     <div class="nb-row">
-      <span class="nb-label">次数上限</span>
+      <span class="nb-label">{{ t("tools.trade.maxUses") }}</span>
       <input v-model.number="maxUses" type="number" class="nb-num" min="1" max="9999" autocomplete="off" />
-      <CheckToggle v-model="rewardExp" :size="14">奖励经验</CheckToggle>
+      <CheckToggle v-model="rewardExp" :size="14">{{ t("tools.trade.rewardExp") }}</CheckToggle>
       <button class="tool-btn nb-add-btn" @click="addTrade">
         <Plus :size="14" />
-        添加交易
+        {{ t("tools.trade.addTrade") }}
       </button>
     </div>
     <div v-if="addError" class="nb-error">{{ addError }}</div>
     <div v-if="trades.length > 0" class="nb-tags">
-      <span v-for="(t, i) in trades" :key="i" class="nb-tag">
-        {{ t.buyCount }}×{{ itemName(t.buyId) }}{{ modsSummary(t.buyMods) }}
-        <template v-if="t.buyBId"> + {{ t.buyBCount }}×{{ itemName(t.buyBId) }}{{ modsSummary(t.buyBMods) }}</template>
-        → {{ t.sellCount }}×{{ itemName(t.sellId) }}{{ modsSummary(t.sellMods) }}（{{ t.maxUses }} 次）
+      <span v-for="(trade, i) in trades" :key="i" class="nb-tag">
+        {{ trade.buyCount }}×{{ itemName(trade.buyId) }}{{ modsSummary(trade.buyMods) }}
+        <template v-if="trade.buyBId"> + {{ trade.buyBCount }}×{{ itemName(trade.buyBId) }}{{ modsSummary(trade.buyBMods) }}</template>
+        → {{ trade.sellCount }}×{{ itemName(trade.sellId) }}{{ modsSummary(trade.sellMods) }}{{ t("tools.trade.usesSuffix", { count: trade.maxUses }) }}
         <button class="nb-tag-x" @click="removeTrade(i)">
           <Trash2 :size="12" />
         </button>

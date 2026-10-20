@@ -2,6 +2,7 @@
 // 自定义外观编辑器（子路由页）：点击骨架部位弹出内嵌调色板调色；保存后返回设置页。
 import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
+import { useI18n } from "vue-i18n";
 import { goBack } from "../store/app/nav";
 import { Check, RotateCcw } from "@lucide/vue";
 import {
@@ -11,6 +12,7 @@ import {
 } from "../store/app/theme";
 
 const route = useRoute();
+const { t } = useI18n();
 
 /** query.id：存在 = 编辑已有主题；缺失 = 新建。 */
 const editingId = computed(() => (route.query.id as string) || "");
@@ -30,13 +32,13 @@ function fromParam(): ThemeId | undefined {
 
 function initVars(): CustomThemeVars {
   if (editingId.value && customThemes.value[editingId.value]) {
-    const t = customThemes.value[editingId.value];
-    editName.value = t.name;
-    editDesc.value = t.desc ?? "";
-    return { ...t.vars };
+    const theme = customThemes.value[editingId.value];
+    editName.value = theme.name;
+    editDesc.value = theme.desc ?? "";
+    return { ...theme.vars };
   }
   const from = fromParam();
-  editName.value = "自定义外观";
+  editName.value = t("settings.appearance.editor.defaultName");
   editDesc.value = "";
   if (!from) return builtinVars("grass");
   if (THEMES.some((t) => t.id === from)) return builtinVars(from);
@@ -55,14 +57,14 @@ watch(
 
 type EditableVarKey = (typeof EDITABLE_VAR_KEYS)[number];
 
-const PART_LABELS: Record<EditableVarKey, string> = {
-  "--color-brand": "品牌色",
-  "--text-primary": "主文字",
-  "--text-secondary": "次要文字",
-  "--surface-page": "页面底色",
-  "--surface-hover": "悬停底色",
-  "--border-default": "常规边框",
-  "--border-strong": "强调边框",
+const PART_LABEL_KEYS: Record<EditableVarKey, string> = {
+  "--color-brand": "settings.appearance.editor.partBrand",
+  "--text-primary": "settings.appearance.editor.partTextPrimary",
+  "--text-secondary": "settings.appearance.editor.partTextSecondary",
+  "--surface-page": "settings.appearance.editor.partSurfacePage",
+  "--surface-hover": "settings.appearance.editor.partSurfaceHover",
+  "--border-default": "settings.appearance.editor.partBorderDefault",
+  "--border-strong": "settings.appearance.editor.partBorderStrong",
 };
 
 /** 预览变量透传（局部作用域，不污染全局主题）。 */
@@ -183,7 +185,7 @@ function resetField() {
 
 /** 保存：新建/更新并激活，返回设置页。 */
 function save() {
-  const name = editName.value.trim() || "自定义外观";
+  const name = editName.value.trim() || t("settings.appearance.editor.defaultName");
   const desc = editDesc.value.trim();
   const patch = { name, desc: desc || undefined, vars: { ...editVars.value } };
   if (editingId.value && customThemes.value[editingId.value]) {
@@ -192,9 +194,9 @@ function save() {
   } else {
     // 起点与 initVars 一致：内置起点由 createCustomTheme 写 basedOn，品牌衍生物直接取其 CSS 值
     const from = fromParam();
-    const t = createCustomTheme(from);
-    updateCustomTheme(t.id, patch);
-    activateCustomTheme(t.id as ThemeId);
+    const created = createCustomTheme(from);
+    updateCustomTheme(created.id, patch);
+    activateCustomTheme(created.id as ThemeId);
   }
   goBack();
 }
@@ -212,7 +214,7 @@ function save() {
             @click="pickField('--color-brand')"
           >
             <span class="pv-logo"></span>
-            <span class="pv-tag">品牌色</span>
+            <span class="pv-tag">{{ t(PART_LABEL_KEYS["--color-brand"]) }}</span>
           </span>
           <span
             class="pv-part pv-title"
@@ -220,7 +222,7 @@ function save() {
             @click="pickField('--text-primary')"
           >
             <span class="pv-title-text">Elytra</span>
-            <span class="pv-tag">主文字</span>
+            <span class="pv-tag">{{ t(PART_LABEL_KEYS["--text-primary"]) }}</span>
           </span>
           <span
             class="pv-part pv-window-btn"
@@ -259,7 +261,7 @@ function save() {
               @click="pickField('--border-default')"
             >
               <span class="pv-divider-line"></span>
-              <span class="pv-tag">常规边框</span>
+              <span class="pv-tag">{{ t(PART_LABEL_KEYS["--border-default"]) }}</span>
             </span>
             <div class="pv-card pv-card-list">
               <span
@@ -297,9 +299,9 @@ function save() {
           <div class="cte-palette-head">
             <span class="cte-palette-title">
               <span class="cte-title-dot" :style="{ background: currentHex }"></span>
-              {{ PART_LABELS[activeField] }}
+              {{ t(PART_LABEL_KEYS[activeField]) }}
             </span>
-            <button class="cte-palette-reset" title="重置" @click="resetField">
+            <button class="cte-palette-reset" :title="t('settings.appearance.editor.reset')" @click="resetField">
               <RotateCcw :size="13" />
             </button>
           </div>
@@ -334,7 +336,7 @@ function save() {
           </div>
         </template>
         <div v-else class="cte-palette-empty">
-          点击左侧预览中的色块<br />调整对应颜色
+          {{ t("settings.appearance.editor.emptyHint") }}
         </div>
       </div>
 
@@ -345,7 +347,7 @@ function save() {
             v-model="editName"
             class="cte-name"
             type="text"
-            placeholder="外观名称"
+            :placeholder="t('settings.appearance.editor.namePlaceholder')"
             maxlength="24"
             autocomplete="off"
           />
@@ -353,14 +355,14 @@ function save() {
             v-model="editDesc"
             class="cte-desc"
             type="text"
-            placeholder="副标题（可选）"
+            :placeholder="t('settings.appearance.editor.descPlaceholder')"
             maxlength="60"
             autocomplete="off"
           />
         </div>
         <button class="cte-save" @click="save">
           <Check :size="15" />
-          <span>保存</span>
+          <span>{{ t("common.action.save") }}</span>
         </button>
       </div>
       </div>

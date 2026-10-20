@@ -97,12 +97,12 @@ impl EasyTierSession {
     pub async fn start(config: SessionConfig) -> Result<Self, String> {
         init_easytier_logging();
         let toml = build_config(&config)?;
-        let instance = create_native_instance(toml).map_err(common_err_ctx!("创建联机会话失败"))?;
+        let instance = create_native_instance(toml).map_err(common_err_ctx_key!("errors.online.failed", "创建联机会话失败"))?;
         instance
             .clone()
             .start()
             .await
-            .map_err(common_err_ctx!("启动联机会话失败"))?;
+            .map_err(common_err_ctx_key!("errors.online.failed", "启动联机会话失败"))?;
         let local_port = config.local_port.unwrap_or(0);
         Ok(Self {
             instance,
@@ -125,7 +125,7 @@ impl EasyTierSession {
         self.instance
             .data_plane_tcp_connect(addr, timeout)
             .await
-            .map_err(common_err_ctx!("数据面连接失败"))
+            .map_err(common_err_ctx_key!("errors.online.failed", "数据面连接失败"))
     }
 
     /// 路由快照（guest 发现中心：匹配 hostname 前缀得虚拟 IP + 端口）。
@@ -160,7 +160,7 @@ fn build_config(config: &SessionConfig) -> Result<TomlConfigLoader, String> {
     for uri_str in nodes {
         let uri = uri_str
             .parse()
-            .map_err(common_err_ctx!("协调节点地址非法"))?;
+            .map_err(common_err_ctx_key!("errors.online.failed", "协调节点地址非法"))?;
         peers.push(PeerConfig {
             uri,
             peer_public_key: None,
@@ -175,14 +175,14 @@ fn build_config(config: &SessionConfig) -> Result<TomlConfigLoader, String> {
     };
     cfg.set_listeners(vec![listen
         .parse()
-        .map_err(common_err_ctx!("监听地址非法"))?]);
+        .map_err(common_err_ctx_key!("errors.online.failed", "监听地址非法"))?]);
 
     match config.role {
         SessionRole::Host => {
             cfg.set_ipv4(Some(
                 HOST_VIRTUAL_IP
                     .parse()
-                    .map_err(common_err_ctx!("host 虚拟 IP 非法"))?,
+                    .map_err(common_err_ctx_key!("errors.online.failed", "host 虚拟 IP 非法"))?,
             ));
             // Scaffolding 中心 hostname：guest 凭它发现中心虚拟 IP + 端口
             if let Some(port) = config.scaffold_port {

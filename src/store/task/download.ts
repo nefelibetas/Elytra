@@ -7,12 +7,16 @@ export type { StepStatus, StepInfo, ProgressPayload, WaitingUserPayload };
 import { invoke } from "@tauri-apps/api/core"
 import { showToast } from "../../utils/toast"
 import { errMsg } from "../../utils/error"
+import { t } from "../../i18n"
 
 export type TaskKind = "jdk";
 
 export interface TaskItem {
   taskId: string
   name: string
+  /** 后端任务名 key/参数；缺失时显示 name（旧快照/未迁移任务）。 */
+  nameKey?: string
+  nameParams?: Record<string, string | undefined>
   status: "pending" | "running" | "done" | "error" | "cancelled" | "paused"
   progress: number
   speedBps: number
@@ -23,9 +27,31 @@ export interface TaskItem {
   completedBytes: number
   totalBytes: number
   currentPhase: string
+  currentPhaseKey?: string
+  currentPhaseParams?: Record<string, string | undefined>
   steps: StepInfo[]
   error?: string
   kind?: TaskKind
+}
+
+/** 任务名优先用后端 key；旧任务回退原文。 */
+export function taskLabel(task: TaskItem): string {
+  return task.nameKey ? t(task.nameKey, task.nameParams) : task.name;
+}
+
+function progressLabel(p: ProgressPayload): string {
+  return p.name_key ? t(p.name_key, p.name_params ?? undefined) : p.name;
+}
+
+/** 当前阶段优先用后端 key。 */
+export function taskPhase(task: TaskItem): string {
+  return task.currentPhaseKey ? t(task.currentPhaseKey, task.currentPhaseParams) : task.currentPhase;
+}
+
+/** 步骤名：文件步骤显示文件名，其余按 StepKind 翻译。 */
+export function stepLabel(step: StepInfo): string {
+  if (!step.kind || step.kind === "file") return step.name;
+  return t(`task.backend.step.${step.kind}`);
 }
 
 // ── 任务入参（ts-rs 生成物，勿手写镜像；snake_case 与 Rust 一致）──
@@ -155,7 +181,7 @@ export const dlState = reactive({
       totalFiles: 0,
       completedBytes: 0,
       totalBytes: 0,
-      currentPhase: "等待中",
+      currentPhase: t("task.status.pending"),
       steps: [],
       ...init,
     })
@@ -165,7 +191,7 @@ export const dlState = reactive({
       terminalTaskIds.add(taskId)
       this.removeTask(taskId)
       if (!alreadyHandled && !silentFastExit) {
-        showToast("任务已结束（可能极快完成或失败）")
+        showToast(t("task.finishedFast"))
       }
     }
   },
@@ -227,8 +253,8 @@ export function ensureListen() {
         const mapped = taskNames.get(p.task_id);
         taskNames.delete(p.task_id);
         const message = mapped
-          ? `${mapped} 下载完成`
-          : `${p.name || "下载任务"} 已完成`;
+          ? t("task.doneNamed", { name: mapped })
+          : t("task.done", { name: progressLabel(p) || t("task.defaultName") });
         // 版本下载完成：携带安装目录名（App.vue 据此自动选中版本）
         const vdir = versionTargets.get(p.task_id);
         versionTargets.delete(p.task_id);
@@ -246,7 +272,7 @@ export function ensureListen() {
         // 终态即清理资源名/版本目标映射，防条目泄漏
         taskNames.delete(p.task_id)
         versionTargets.delete(p.task_id)
-        dlState.onTaskError?.(p.name || "下载任务", p.error || "未知错误");
+        dlState.onTaskError?.(progressLabel(p) || t("task.defaultName"), p.error || t("task.unknownError"));
         dlState.removeTask(p.task_id);
         taskDoneHooks.delete(p.task_id);
         return
@@ -263,6 +289,8 @@ export function ensureListen() {
         return
       }
       dlState.tasks[idx].name = p.name
+      dlState.tasks[idx].nameKey = p.name_key ?? undefined
+      dlState.tasks[idx].nameParams = p.name_params ?? undefined
       dlState.tasks[idx].status = p.status as TaskItem["status"]
       dlState.tasks[idx].progress = p.progress
       dlState.tasks[idx].speedBps = p.speed_bps
@@ -272,6 +300,8 @@ export function ensureListen() {
       dlState.tasks[idx].completedBytes = p.completed_bytes
       dlState.tasks[idx].totalBytes = p.total_bytes
       dlState.tasks[idx].currentPhase = p.current_phase
+      dlState.tasks[idx].currentPhaseKey = p.current_phase_key ?? undefined
+      dlState.tasks[idx].currentPhaseParams = p.current_phase_params ?? undefined
       dlState.tasks[idx].steps = p.steps
       dlState.tasks[idx].error = p.error ?? undefined
     } else if (
@@ -281,6 +311,8 @@ export function ensureListen() {
       dlState.addTask({
         taskId: p.task_id,
         name: p.name,
+        nameKey: p.name_key ?? undefined,
+        nameParams: p.name_params ?? undefined,
         status: p.status as TaskItem["status"],
         progress: p.progress,
         speedBps: p.speed_bps,
@@ -290,6 +322,8 @@ export function ensureListen() {
         completedBytes: p.completed_bytes,
         totalBytes: p.total_bytes,
         currentPhase: p.current_phase,
+        currentPhaseKey: p.current_phase_key ?? undefined,
+        currentPhaseParams: p.current_phase_params ?? undefined,
         steps: p.steps,
         error: p.error ?? undefined,
       })
@@ -343,9 +377,9 @@ export async function resumeAllInterrupted() {
   }
   interruptedJobs.value = [];
   if (failed === 0) {
-    showToast(`已恢复 ${jobs.length} 个未完成的任务`);
+    showToast(t("task.restored", { count: jobs.length }, jobs.length));
   } else if (jobs.length > 0) {
-    showToast(`恢复完成（${failed} 个失败，可能已过期）`);
+    showToast(t("task.restorePartial", { failed }));
   }
 }
 

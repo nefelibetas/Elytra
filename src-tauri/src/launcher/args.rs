@@ -664,10 +664,10 @@ fn natives_fingerprint(version_json: &VersionJson) -> String {
 }
 
 fn clear_dir_contents(dir: &Path) -> Result<(), String> {
-    let entries = std::fs::read_dir(dir).map_err(common_err_ctx!("读取 natives 目录失败"))?;
+    let entries = std::fs::read_dir(dir).map_err(common_err_ctx_key!("errors.file.read", "读取 natives 目录失败"))?;
     for entry in entries {
         let path = entry
-            .map_err(common_err_ctx!("读取 natives 目录项失败"))?
+            .map_err(common_err_ctx_key!("errors.file.read", "读取 natives 目录项失败"))?
             .path();
         let res = if path.is_dir() {
             std::fs::remove_dir_all(&path)
@@ -685,12 +685,12 @@ fn clear_dir_contents(dir: &Path) -> Result<(), String> {
 /// 原子写标记：先写临时文件再改名，避免半写内容被当成有效指纹。
 fn write_marker(marker: &Path, fingerprint: &str) -> Result<(), String> {
     let tmp = marker.with_extension("tmp");
-    std::fs::write(&tmp, fingerprint).map_err(common_err_ctx!("写入 natives 标记失败"))?;
+    std::fs::write(&tmp, fingerprint).map_err(common_err_ctx_key!("errors.file.write", "写入 natives 标记失败"))?;
     if marker.exists() {
         // Windows 的 rename 不覆盖已存在文件；先删旧标记（删后崩溃 → 无标记 → 下次重建，安全）
-        std::fs::remove_file(marker).map_err(common_err_ctx!("清理旧 natives 标记失败"))?;
+        std::fs::remove_file(marker).map_err(common_err_ctx_key!("errors.file.delete", "清理旧 natives 标记失败"))?;
     }
-    std::fs::rename(&tmp, marker).map_err(common_err_ctx!("提交 natives 标记失败"))?;
+    std::fs::rename(&tmp, marker).map_err(common_err_ctx_key!("errors.file.write", "提交 natives 标记失败"))?;
     Ok(())
 }
 
@@ -701,7 +701,7 @@ pub fn ensure_old_style_natives(
     natives_dir: &Path,
 ) -> Result<(), String> {
     // 所有版本：确保 natives 根目录存在（LWJGL/Netty 运行时在其中创建子目录）
-    std::fs::create_dir_all(natives_dir).map_err(common_err_ctx!("创建 natives 目录失败"))?;
+    std::fs::create_dir_all(natives_dir).map_err(common_err_ctx_key!("errors.file.createDir", "创建 natives 目录失败"))?;
 
     if !has_old_style_natives(version_json) {
         return Ok(());

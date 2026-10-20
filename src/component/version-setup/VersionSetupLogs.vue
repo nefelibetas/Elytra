@@ -2,12 +2,14 @@
 // 版本设置-游戏日志：logs/latest.log（游戏 cwd 为版本目录）与 .minecraft/logs/elytra-launch.log，尾部 200 行。
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
+import { useI18n } from "vue-i18n";
 import { loadGameLog } from "../../store/app/launch";
 import { openFolder } from "../../utils/fs";
 import { RefreshCw, FolderOpen } from "@lucide/vue";
 import { activePath } from "../../store/config/gameDirs";
 
 const route = useRoute();
+const { t } = useI18n();
 const versionName = computed(() => String(route.query.name ?? ""));
 
 const logText = ref("");
@@ -15,13 +17,13 @@ const loading = ref(false);
 
 async function loadLog() {
   if (!activePath.value) {
-    logText.value = "未选择游戏目录（设置 → 游戏目录）";
+    logText.value = t("settings.version.setup.logs.noDir");
     return;
   }
   loading.value = true;
   try {
     const text = await loadGameLog(activePath.value, versionName.value);
-    logText.value = text || "暂无日志（尚未启动过该版本）";
+    logText.value = text || t("settings.version.setup.logs.empty");
   } catch (e) {
     logText.value = String(e);
   }
@@ -47,17 +49,17 @@ async function openLogDir() {
     <div class="setup-card">
       <div class="setup-card-hdr">
         <div class="setup-card-titles">
-          <div class="setup-card-title">游戏日志</div>
-          <div class="setup-desc">该版本 logs/latest.log 与启动器捕获日志的尾部 200 行</div>
+          <div class="setup-card-title">{{ t("settings.version.setup.logs.title") }}</div>
+          <div class="setup-desc">{{ t("settings.version.setup.logs.subtitle") }}</div>
         </div>
         <div class="vslog-actions">
           <button class="vslog-refresh" @click="openLogDir">
             <FolderOpen :size="13" />
-            打开目录
+            {{ t("settings.version.setup.logs.openDir") }}
           </button>
           <button class="vslog-refresh" :disabled="loading" @click="loadLog">
             <RefreshCw :size="13" :class="{ spin: loading }" />
-            刷新
+            {{ t("settings.version.setup.logs.refresh") }}
           </button>
         </div>
       </div>

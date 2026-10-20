@@ -97,7 +97,7 @@ pub fn open_folder(app: tauri::AppHandle, path: String) -> Result<(), String> {
     }
     app.opener()
         .open_path(path, None::<&str>)
-        .map_err(common_err_ctx!("打开文件夹失败"))
+        .map_err(common_err_ctx_key!("errors.unknown", "打开文件夹失败"))
 }
 
 /// 激活第一个含版本的目录并返回其第一个版本（目录按配置顺序，版本按字母序）。

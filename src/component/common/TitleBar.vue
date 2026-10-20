@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 
 import { goBack } from "../../store/app/nav";
@@ -10,6 +11,7 @@ import { dlState } from "../../store/task/download";
 
 const route = useRoute();
 const appWindow = getCurrentWindow();
+const { t } = useI18n();
 
 const isDetail = computed(
   () =>
@@ -22,28 +24,28 @@ const isDetail = computed(
 
 /** 次级页面标题栏文案。 */
 const barTitle = computed(() => {
-  if (route.path === "/version-select") return "版本选择";
+  if (route.path === "/version-select") return t("nav.title.versionSelect");
   if (route.path === "/version-setup") {
-    return `版本设置 - ${String(route.query.name ?? "")}`;
+    return t("nav.title.versionSetup", { name: String(route.query.name ?? "") });
   }
   if (route.path === "/custom-theme") {
     // 新建（无 id）与编辑（有 id）区分标题
-    return route.query.id ? "编辑自定义外观" : "新建自定义外观";
+    return route.query.id ? t("nav.title.customThemeEdit") : t("nav.title.customThemeNew");
   }
-  if (route.path === "/skin-studio") return "衣柜";
+  if (route.path === "/skin-studio") return t("nav.title.skinStudio");
   if (route.path === "/resource-detail") {
     // 资源详情：有译名时 "翻译名（原名）"，否则原名
-    return detailTitle() || "资源详情";
+    return detailTitle() || t("nav.title.resourceDetail");
   }
   return "";
 });
 
 const items = [
-  { path: "/", label: "启动", icon: "play" },
-  { path: "/download", label: "资源中心", icon: "download" },
-  { path: "/download-detail", label: "任务中心", icon: "list" },
-  { path: "/tools", label: "工具", icon: "tools" },
-  { path: "/settings", label: "设置", icon: "settings" },
+  { path: "/", labelKey: "nav.launch", icon: "play" },
+  { path: "/download", labelKey: "nav.download", icon: "download" },
+  { path: "/download-detail", labelKey: "nav.downloadDetail", icon: "list" },
+  { path: "/tools", labelKey: "nav.tools", icon: "tools" },
+  { path: "/settings", labelKey: "nav.settings", icon: "settings" },
 ] as const;
 
 /** 任务中心导航项：有活动任务时显示进行中徽标。 */
@@ -91,7 +93,7 @@ function onMouseDown(e: MouseEvent) {
             <ListChecks v-if="item.icon === 'list'" :size="16" />
             <Settings v-if="item.icon === 'settings'" :size="16" />
             <Wrench v-if="item.icon === 'tools'" :size="16" />
-            <span class="label">{{ item.label }}</span>
+            <span class="label">{{ t(item.labelKey) }}</span>
             <span
               v-if="item.path === '/download-detail' && activeTasks > 0"
               class="nav-badge"
@@ -102,10 +104,10 @@ function onMouseDown(e: MouseEvent) {
     </Transition>
 
     <div class="tr">
-      <button class="win" @click="minimize" v-tooltip="'最小化'">
+      <button class="win" @click="minimize" v-tooltip="t('common.tooltip.minimize')">
         <Minus :size="12" />
       </button>
-      <button class="win close" @click="closeWindow" v-tooltip="'关闭'">
+      <button class="win close" @click="closeWindow" v-tooltip="t('common.tooltip.close')">
         <X :size="12" />
       </button>
     </div>
@@ -174,6 +176,7 @@ function onMouseDown(e: MouseEvent) {
 .nav {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   padding: 6px 14px;
   border-radius: var(--radius-sm);
@@ -184,6 +187,13 @@ function onMouseDown(e: MouseEvent) {
   transition: all 0.15s;
   outline: none;
 }
+
+/* 语言切换稳定：按中英较长标签预留宽度，避免整组导航随文案横移（顺序与 items 一致） */
+.nav:nth-child(1) { min-width: 94px; }
+.nav:nth-child(2) { min-width: 112px; }
+.nav:nth-child(3) { min-width: 102px; }
+.nav:nth-child(4) { min-width: 82px; }
+.nav:nth-child(5) { min-width: 100px; }
 
 .nav:hover {
   color: var(--titlebar-fg);

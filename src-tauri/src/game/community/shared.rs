@@ -58,7 +58,7 @@ pub(crate) fn api_urls(
         .map(|base| {
             reqwest::Url::parse_with_params(base, params)
                 .map(|u| u.as_str().to_string())
-                .map_err(common_err_ctx!("URL 构造失败"))
+                .map_err(common_err_ctx_key!("errors.network", "URL 构造失败"))
         })
         .collect::<Result<Vec<_>, String>>()
 }
@@ -92,7 +92,7 @@ where
             }
         };
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
-            bail!("请求失败\nHTTP {}", resp.status());
+            bail_key!("errors.network", "请求失败\nHTTP {}", resp.status());
         }
         if !resp.status().is_success() {
             last_err = format!("请求失败\nHTTP {}", resp.status());
@@ -101,7 +101,7 @@ where
         return resp
             .json::<serde_json::Value>()
             .await
-            .map_err(common_err_ctx!("解析 JSON 失败"));
+            .map_err(common_err_ctx_key!("errors.parse", "解析 JSON 失败"));
     }
     Err(last_err)
 }
@@ -138,7 +138,7 @@ where
             }
         };
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
-            bail!("请求失败\nHTTP {}", resp.status());
+            bail_key!("errors.network", "请求失败\nHTTP {}", resp.status());
         }
         if !resp.status().is_success() {
             last_err = format!("请求失败\nHTTP {}", resp.status());
@@ -147,7 +147,7 @@ where
         return resp
             .json::<serde_json::Value>()
             .await
-            .map_err(common_err_ctx!("响应解析失败"));
+            .map_err(common_err_ctx_key!("errors.parse", "响应解析失败"));
     }
     Err(last_err)
 }

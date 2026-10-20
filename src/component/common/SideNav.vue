@@ -2,6 +2,7 @@
 // 左侧垂直导航 + 内容区骨架，Settings / Tools / VersionSetup 三页共用：
 // 导航项 v-for + active 高亮 + 可选刷新按钮 + 内容区过渡。tab 根用 div（可内嵌刷新 button）。
 import { RefreshCw } from "@lucide/vue";
+import { useI18n } from "vue-i18n";
 import type { Component } from "vue";
 
 export interface NavTab {
@@ -28,6 +29,8 @@ withDefaults(
   { width: 180, refreshable: false, internalScroll: false, noRefreshKeys: () => [] },
 );
 
+const { t } = useI18n();
+
 const emit = defineEmits<{
   "update:modelValue": [k: string];
   refresh: [k: string];
@@ -44,19 +47,19 @@ function onRefresh(e: MouseEvent, k: string) {
     <nav class="sn-nav" :style="{ flex: `0 0 ${width}px`, minWidth: `${width - 20}px` }">
       <div v-if="title" class="sn-divider"><span>{{ title }}</span></div>
       <div
-        v-for="t in tabs"
-        :key="t.key"
+        v-for="tab in tabs"
+        :key="tab.key"
         class="sn-tab"
-        :class="{ active: modelValue === t.key }"
-        @click="emit('update:modelValue', t.key)"
+        :class="{ active: modelValue === tab.key }"
+        @click="emit('update:modelValue', tab.key)"
       >
-        <component :is="t.icon" :size="16" />
-        <span>{{ t.label }}</span>
+        <component :is="tab.icon" :size="16" />
+        <span>{{ tab.label }}</span>
         <button
-          v-if="refreshable && !noRefreshKeys.includes(t.key)"
+          v-if="refreshable && !noRefreshKeys.includes(tab.key)"
           class="sn-refresh"
-          v-tooltip="'刷新'"
-          @click="onRefresh($event, t.key)"
+          v-tooltip="t('common.tooltip.refresh')"
+          @click="onRefresh($event, tab.key)"
         >
           <RefreshCw :size="12" />
         </button>

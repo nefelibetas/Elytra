@@ -91,10 +91,10 @@ async fn install_loader_via_profile(
 
     let merged = merge_loader_profile(parent_text, &profile, dir_name, &source.maven_url)?;
 
-    std::fs::create_dir_all(vdir).map_err(common_err_ctx!("创建目录失败"))?;
+    std::fs::create_dir_all(vdir).map_err(common_err_ctx_key!("errors.file.createDir", "创建目录失败"))?;
     let json_path = vdir.join(format!("{}.json", dir_name));
     let json_str = serde_json::to_string_pretty(&merged).map_err(common_err_ctx!("序列化失败"))?;
-    std::fs::write(&json_path, &json_str).map_err(common_err_ctx!("写入 JSON 失败"))?;
+    std::fs::write(&json_path, &json_str).map_err(common_err_ctx_key!("errors.file.write", "写入 JSON 失败"))?;
     if let Some(h) = hook {
         h(LoaderEvent::ConfigDone);
     }

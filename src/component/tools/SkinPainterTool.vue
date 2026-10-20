@@ -2,6 +2,7 @@
 // 皮肤绘画器：在 64×64 展开图上绘制皮肤，右侧实时等距 3D 预览。与衣柜无关，不要求正版账号，离线/第三方可用。
 // 成果以 PNG 导入 / 导出，不写衣柜索引；像素缓冲在 store/skinEditor（刻意非响应式），本组件只管视口变换、指针交互与重绘调度。
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import {
   Brush, Download, Eraser, Frame, Grid3x3, Hand, Maximize, PaintBucket, Pipette, Redo2,
   RotateCcw, Undo2, Upload, ZoomIn, ZoomOut,
@@ -15,7 +16,7 @@ import type { Animation, PickFace } from "../../store/skin/skinRender";
 import {
   EDITOR_REGIONS, SKIN_SIZE, beginStroke, editorPixels, endStroke, exportEditorPng,
   exportSkinPng,
-  floodFillAt, loadImageIntoEditor, newEditorCanvas, paintAt, pickColorAt, redo, regionKeyAt,
+  floodFillAt, loadImageIntoEditor, newEditorCanvas, paintAt, pickColorAt, redo, regionKeyAt, regionLabel,
   importSkinPng,
   skinEditor, undo,
 } from "../../store/skin/skinEditor";
@@ -23,19 +24,21 @@ import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 import DropSelect from "../common/DropSelect.vue";
 
+const { t, locale } = useI18n();
+
 /** 工具定义（顺序即左侧工具栏顺序）。 */
 const TOOLS = [
-  { value: "brush", label: "画笔", icon: Brush },
-  { value: "eraser", label: "橡皮", icon: Eraser },
-  { value: "fill", label: "油漆桶", icon: PaintBucket },
-  { value: "picker", label: "吸管", icon: Pipette },
-  { value: "hand", label: "抓手（平移画布）", icon: Hand },
+  { value: "brush", labelKey: "tools.skinpainter.tools.brush", icon: Brush },
+  { value: "eraser", labelKey: "tools.skinpainter.tools.eraser", icon: Eraser },
+  { value: "fill", labelKey: "tools.skinpainter.tools.fill", icon: PaintBucket },
+  { value: "picker", labelKey: "tools.skinpainter.tools.picker", icon: Pipette },
+  { value: "hand", labelKey: "tools.skinpainter.tools.hand", icon: Hand },
 ] as const;
 
 /** 手臂模型选项（slim 手臂贴图仅 3 列宽，选错会采样错位）。 */
 const MODEL_OPTIONS = [
-  { value: "CLASSIC", label: "经典", desc: "Steve · 4 px 宽手臂" },
-  { value: "SLIM", label: "纤细", desc: "Alex · 3 px 窄手臂" },
+  { value: "CLASSIC", labelKey: "tools.skinpainter.model.classic", descKey: "tools.skinpainter.model.classicDesc" },
+  { value: "SLIM", labelKey: "tools.skinpainter.model.slim", descKey: "tools.skinpainter.model.slimDesc" },
 ] as const;
 
 /** 笔刷边长选项。 */
@@ -47,21 +50,21 @@ const SIZE_OPTIONS = [
 
 /** 预览动作选项（与衣柜页同一套语义）。 */
 const ANIM_OPTIONS = [
-  { value: "none", label: "静止" },
-  { value: "idle", label: "待机" },
-  { value: "walk", label: "行走" },
+  { value: "none", labelKey: "tools.skinpainter.anim.none" },
+  { value: "idle", labelKey: "tools.skinpainter.anim.idle" },
+  { value: "walk", labelKey: "tools.skinpainter.anim.walk" },
 ] as const;
 
 /** 编辑模式选项。 */
 const MODE_OPTIONS = [
-  { value: "2d", label: "展开图" },
-  { value: "3d", label: "3D 直绘" },
+  { value: "2d", labelKey: "tools.skinpainter.mode.2d" },
+  { value: "3d", labelKey: "tools.skinpainter.mode.3d" },
 ] as const;
 
 /** 3D 直绘图层：MC 1.8+ 双层皮肤结构，手动指定落笔层；不做「透明处自动穿透」，否则外层永远画不到。 */
 const LAYER_OPTIONS = [
-  { value: "0", label: "内层" },
-  { value: "1", label: "外层" },
+  { value: "0", labelKey: "tools.skinpainter.layer.inner" },
+  { value: "1", labelKey: "tools.skinpainter.layer.outer" },
 ] as const;
 
 /** 画布缩放范围（每皮肤像素的 CSS px），上限 96 以便单像素铺满屏做细节。 */
@@ -226,11 +229,12 @@ function drawEditor() {
       ctx.strokeRect(r.x + lw / 2, r.y + lw / 2, r.w - lw, r.h - lw);
       if (view.scale >= LABEL_MIN_SCALE) {
         // 标签垫同色底以在皮肤图案上可读
-        const tw = ctx.measureText(r.label).width;
+        const label = regionLabel(r);
+        const tw = ctx.measureText(label).width;
         ctx.fillStyle = `${r.color}dd`;
         ctx.fillRect(r.x + lw, r.y + lw, tw + labelPx * 0.6, labelPx * 1.3);
         ctx.fillStyle = "#ffffff";
-        ctx.fillText(r.label, r.x + lw + labelPx * 0.3, r.y + lw + labelPx * 0.15);
+        ctx.fillText(label, r.x + lw + labelPx * 0.3, r.y + lw + labelPx * 0.15);
       }
     }
   }
@@ -419,13 +423,13 @@ function zoomAt(px: number, py: number, factor: number) {
 }
 
 /** 可单独隐藏的身体部位（对应渲染器 SkinPart，配色沿用展开图区域标注）。 */
-const PART_OPTIONS: { key: SkinPart; label: string; color: string }[] = [
-  { key: "head", label: "头", color: "#f59e0b" },
-  { key: "body", label: "身体", color: "#4f8ef7" },
-  { key: "rightArm", label: "右臂", color: "#10b981" },
-  { key: "leftArm", label: "左臂", color: "#8b5cf6" },
-  { key: "rightLeg", label: "右腿", color: "#ef4444" },
-  { key: "leftLeg", label: "左腿", color: "#ec4899" },
+const PART_OPTIONS: { key: SkinPart; labelKey: string; color: string }[] = [
+  { key: "head", labelKey: "tools.skinpainter.parts.head", color: "#f59e0b" },
+  { key: "body", labelKey: "tools.skinpainter.parts.body", color: "#4f8ef7" },
+  { key: "rightArm", labelKey: "tools.skinpainter.parts.rightArm", color: "#10b981" },
+  { key: "leftArm", labelKey: "tools.skinpainter.parts.leftArm", color: "#8b5cf6" },
+  { key: "rightLeg", labelKey: "tools.skinpainter.parts.rightLeg", color: "#ef4444" },
+  { key: "leftLeg", labelKey: "tools.skinpainter.parts.leftLeg", color: "#ec4899" },
 ];
 
 /** 切换部位显示；`alt` = 只看该部位。隐藏的盒子不进可拾取面，故隐藏处不会被误画。 */
@@ -718,15 +722,15 @@ function onPreviewWheel(e: WheelEvent) {
 async function doImport() {
   const picked = await open({
     multiple: false,
-    filters: [{ name: "皮肤图片", extensions: ["png", "jpg", "jpeg", "gif", "webp"] }],
+    filters: [{ name: t("tools.skinpainter.importFilter"), extensions: ["png", "jpg", "jpeg", "gif", "webp"] }],
   });
   if (!picked || Array.isArray(picked)) return;
   try {
     const b64 = await importSkinPng(picked);
-    const file = picked.split(/[\\/]/).pop() ?? "导入的皮肤";
+    const file = picked.split(/[\\/]/).pop() ?? t("tools.skinpainter.importedSkinName");
     await loadImageIntoEditor(b64, file.replace(/\.[^.]+$/, ""), skinEditor.variant);
     fitToViewport();
-    showToast(`已导入 ${file}`);
+    showToast(t("tools.skinpainter.imported", { file }));
   } catch (e) {
     showToast(errMsg(e));
   }
@@ -735,17 +739,17 @@ async function doImport() {
 async function doExport() {
   const b64 = exportEditorPng();
   if (!b64) {
-    showToast("画布为空");
+    showToast(t("tools.skinpainter.canvasEmpty"));
     return;
   }
   const target = await save({
     defaultPath: `${skinEditor.name.trim() || "skin"}.png`,
-    filters: [{ name: "PNG 图片", extensions: ["png"] }],
+    filters: [{ name: t("tools.skinpainter.pngFilter"), extensions: ["png"] }],
   });
   if (!target) return;
   try {
     await exportSkinPng(target, b64);
-    showToast("已导出 PNG");
+    showToast(t("tools.skinpainter.exported"));
   } catch (e) {
     showToast(errMsg(e));
   }
@@ -834,6 +838,7 @@ watch(
 );
 watch(() => skinEditor.variant, () => drawPreview());
 watch(() => preview.animation, () => syncAnimation());
+watch(locale, () => drawEditor());
 // 模式切换改变布局（画布 ↔ 预览互换），须待 DOM 重排后按新尺寸重绘
 watch(mode, () => {
   lastPointer = null;
@@ -850,9 +855,9 @@ watch(mode, () => {
   <div class="painter" :class="{ 'mode-3d': mode === '3d' }">
     <header class="pp-hd">
       <div class="pp-hd-text">
-        <h3>皮肤绘画器</h3>
-        <p v-if="mode === '2d'">滚轮缩放 · 空格或抓手工具 / 中键平移 · Ctrl+Z 撤销</p>
-        <p v-else>左键落笔 · 抓手工具 / 右键拖动旋转 · 滚轮缩放 · Ctrl+Z 撤销</p>
+        <h3>{{ t("tools.skinpainter.title") }}</h3>
+        <p v-if="mode === '2d'">{{ t("tools.skinpainter.hint2d") }}</p>
+        <p v-else>{{ t("tools.skinpainter.hint3d") }}</p>
       </div>
       <div class="pp-hd-actions">
         <div class="pp-kind">
@@ -862,7 +867,7 @@ watch(mode, () => {
             :class="{ on: mode === m.value }"
             @click="mode = m.value"
           >
-            {{ m.label }}
+            {{ t(m.labelKey) }}
           </button>
         </div>
         <!-- 图层：MC 1.8+ 双层结构，指定本次落笔层（否则外层永远画不到） -->
@@ -873,7 +878,7 @@ watch(mode, () => {
             :class="{ on: String(paintLayer) === l.value }"
             @click="paintLayer = Number(l.value) as 0 | 1"
           >
-            {{ l.label }}
+            {{ t(l.labelKey) }}
           </button>
         </div>
         <!-- 模型：slim 手臂贴图仅 3 列宽，按 classic 采样会错位 -->
@@ -882,19 +887,19 @@ watch(mode, () => {
             v-for="m in MODEL_OPTIONS"
             :key="m.value"
             :class="{ on: skinEditor.variant === m.value }"
-            v-tooltip="m.desc"
+            v-tooltip="t(m.descKey)"
             @click="skinEditor.variant = m.value"
           >
-            {{ m.label }}
+            {{ t(m.labelKey) }}
           </button>
         </div>
         <button class="pp-ghost" @click="doImport">
           <Upload :size="14" />
-          导入
+          {{ t("tools.skinpainter.import") }}
         </button>
         <button class="pp-primary" @click="doExport">
           <Download :size="14" />
-          导出
+          {{ t("tools.skinpainter.export") }}
         </button>
       </div>
     </header>
@@ -902,14 +907,14 @@ watch(mode, () => {
     <div class="pp-body">
       <nav class="pp-tools">
         <button
-          v-for="t in TOOLS"
-          :key="t.value"
+          v-for="tool in TOOLS"
+          :key="tool.value"
           class="pp-tool"
-          :class="{ on: skinEditor.tool === t.value }"
-          v-tooltip="t.label"
-          @click="skinEditor.tool = t.value"
+          :class="{ on: skinEditor.tool === tool.value }"
+          v-tooltip="t(tool.labelKey)"
+          @click="skinEditor.tool = tool.value"
         >
-          <component :is="t.icon" :size="16" />
+          <component :is="tool.icon" :size="16" />
         </button>
       </nav>
 
@@ -962,20 +967,20 @@ watch(mode, () => {
               :class="{ on: preview.animation === a.value }"
               @click="preview.animation = a.value"
             >
-              {{ a.label }}
+              {{ t(a.labelKey) }}
             </button>
           </div>
 
           <!-- 部位显示开关（仅 3D）：画某一处时把挡住视线的其他部分藏起来 -->
           <div v-if="mode === '3d'" class="pp-parts">
             <div class="pp-parts-hd">
-              <span>显示部位</span>
+              <span>{{ t("tools.skinpainter.showParts") }}</span>
               <button
                 class="pp-parts-all"
                 :disabled="!preview.hiddenParts.length"
                 @click="showAllParts"
               >
-                全部
+                {{ t("tools.skinpainter.allParts") }}
               </button>
             </div>
             <div class="pp-parts-grid">
@@ -984,11 +989,11 @@ watch(mode, () => {
                 :key="p.key"
                 class="pp-part"
                 :class="{ off: preview.hiddenParts.includes(p.key) }"
-                v-tooltip="`${p.label}（Alt+点击 = 只看此处）`"
+                v-tooltip="t('tools.skinpainter.partTooltip', { part: t(p.labelKey) })"
                 @click="togglePart(p.key, $event.altKey)"
               >
                 <span class="pp-part-dot" :style="{ background: p.color }" />
-                <span class="pp-part-label">{{ p.label }}</span>
+                <span class="pp-part-label">{{ t(p.labelKey) }}</span>
               </button>
             </div>
           </div>
@@ -997,14 +1002,14 @@ watch(mode, () => {
     </div>
 
     <footer class="pp-foot">
-      <label class="pp-color" v-tooltip="'画笔颜色'">
+      <label class="pp-color" v-tooltip="t('tools.skinpainter.brushColor')">
         <span
           class="pp-swatch"
           :style="{ background: skinEditor.color, opacity: Math.max(0.15, skinEditor.alpha / 255) }"
         />
         <input v-model="skinEditor.color" type="color" />
       </label>
-      <label class="pp-alpha" v-tooltip="'不透明度'">
+      <label class="pp-alpha" v-tooltip="t('tools.skinpainter.opacity')">
         <span class="pp-foot-label">A</span>
         <input v-model.number="skinEditor.alpha" type="range" min="0" max="255" />
       </label>
@@ -1023,7 +1028,7 @@ watch(mode, () => {
         v-if="mode === '2d'"
         class="pp-tool flat"
         :class="{ on: skinEditor.showGrid }"
-        v-tooltip="'像素网格'"
+        v-tooltip="t('tools.skinpainter.pixelGrid')"
         @click="skinEditor.showGrid = !skinEditor.showGrid"
       >
         <Grid3x3 :size="15" />
@@ -1032,7 +1037,7 @@ watch(mode, () => {
         v-if="mode === '2d'"
         class="pp-tool flat"
         :class="{ on: skinEditor.showRegions }"
-        v-tooltip="'部位标注'"
+        v-tooltip="t('tools.skinpainter.partLabels')"
         @click="skinEditor.showRegions = !skinEditor.showRegions"
       >
         <Frame :size="15" />
@@ -1042,7 +1047,7 @@ watch(mode, () => {
       <button
         class="pp-tool flat"
         :disabled="!skinEditor.undoDepth"
-        v-tooltip="'撤销（Ctrl+Z）'"
+        v-tooltip="t('tools.skinpainter.undo')"
         @click="undo()"
       >
         <Undo2 :size="15" />
@@ -1050,7 +1055,7 @@ watch(mode, () => {
       <button
         class="pp-tool flat"
         :disabled="!skinEditor.redoDepth"
-        v-tooltip="'重做（Ctrl+Y）'"
+        v-tooltip="t('tools.skinpainter.redo')"
         @click="redo()"
       >
         <Redo2 :size="15" />
@@ -1058,17 +1063,17 @@ watch(mode, () => {
 
       <span class="pp-spacer" />
 
-      <button class="pp-tool flat" v-tooltip="'缩小'" @click="zoomByButton(1 / 1.25)">
+      <button class="pp-tool flat" v-tooltip="t('tools.skinpainter.zoomOut')" @click="zoomByButton(1 / 1.25)">
         <ZoomOut :size="15" />
       </button>
       <span class="pp-zoom pp-mono">{{ zoomLabel }}</span>
-      <button class="pp-tool flat" v-tooltip="'放大'" @click="zoomByButton(1.25)">
+      <button class="pp-tool flat" v-tooltip="t('tools.skinpainter.zoomIn')" @click="zoomByButton(1.25)">
         <ZoomIn :size="15" />
       </button>
       <button
         v-if="mode === '2d'"
         class="pp-tool flat"
-        v-tooltip="'适应窗口'"
+        v-tooltip="t('tools.skinpainter.fit')"
         @click="fitToViewport()"
       >
         <Maximize :size="15" />
@@ -1076,7 +1081,7 @@ watch(mode, () => {
       <button
         v-if="mode === '3d'"
         class="pp-tool flat"
-        v-tooltip="'重置视角'"
+        v-tooltip="t('tools.skinpainter.resetView')"
         @click="resetPreview"
       >
         <RotateCcw :size="15" />

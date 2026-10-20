@@ -1,14 +1,15 @@
 // 4 套内置主题（grass 默认 / end / nether / ice）+ 自定义色板；持久化 localStorage，向 <html> 注入 data-theme（无属性 = grass）。
 
 import { ref, watch } from "vue";
+import { t } from "../../i18n";
 
 export type ThemeId = "grass" | "end" | "nether" | "ice" | `custom-${string}`;
 
-export const THEMES: { id: ThemeId; label: string; desc: string; swatch: string[] }[] = [
-  { id: "grass", label: "草方块绿", desc: "Minecraft 草方块 / 翡翠", swatch: ["#059669", "#10B981", "#F2F6F3", "#1F2937"] },
-  { id: "end", label: "末影紫", desc: "末地 / 紫颂果", swatch: ["#7C3AED", "#A855F7", "#F6F3FB", "#241B45"] },
-  { id: "nether", label: "下界橙", desc: "烈焰 / 下界岩", swatch: ["#EA580C", "#F97316", "#FBF5F0", "#292524"] },
-  { id: "ice", label: "冰霜青", desc: "冰霜 / 钻石", swatch: ["#0EA5E9", "#38BDF8", "#F2F7FA", "#1E293B"] },
+export const THEMES: { id: ThemeId; labelKey: string; descKey: string; swatch: string[] }[] = [
+  { id: "grass", labelKey: "settings.appearance.theme.grass.label", descKey: "settings.appearance.theme.grass.desc", swatch: ["#059669", "#10B981", "#F2F6F3", "#1F2937"] },
+  { id: "end", labelKey: "settings.appearance.theme.end.label", descKey: "settings.appearance.theme.end.desc", swatch: ["#7C3AED", "#A855F7", "#F6F3FB", "#241B45"] },
+  { id: "nether", labelKey: "settings.appearance.theme.nether.label", descKey: "settings.appearance.theme.nether.desc", swatch: ["#EA580C", "#F97316", "#FBF5F0", "#292524"] },
+  { id: "ice", labelKey: "settings.appearance.theme.ice.label", descKey: "settings.appearance.theme.ice.desc", swatch: ["#0EA5E9", "#38BDF8", "#F2F7FA", "#1E293B"] },
 ];
 
 const CUSTOM_PREFIX = "custom-";
@@ -118,7 +119,7 @@ function loadCustoms(): Record<string, CustomTheme> {
     for (const [id, t] of Object.entries(parsed)) {
       if (!t || typeof t.id !== "string" || typeof t.name !== "string" || typeof t.vars !== "object") continue;
       if (required.every((k) => typeof t.vars[k] === "string")) {
-        if (typeof t.desc !== "string") t.desc = "自定义配色";
+        if (typeof t.desc !== "string") t.desc = "";
         // 旧数据无 basedOn（按主色反查兼容）；非内置来源残留值丢弃
         if (t.basedOn !== undefined && !THEMES.some((b) => b.id === t.basedOn)) delete t.basedOn;
         out[id] = t;
@@ -146,25 +147,25 @@ export function createCustomTheme(from: ThemeId = themeId.value): CustomTheme {
     n += 1;
     id = `${CUSTOM_PREFIX}${n}`;
   }
-  const t: CustomTheme = {
+  const theme: CustomTheme = {
     id,
-    name: `自定义 ${n}`,
-    desc: "自定义配色",
+    name: t("settings.appearance.customName", { n }),
+    desc: t("settings.appearance.customDesc"),
     // 仅内置来源记录 basedOn；自定义来源按主色反查兼容
     ...(fromBuiltin ? { basedOn: fromBuiltin } : {}),
     vars: { ...base },
   };
-  customThemes.value = { ...customThemes.value, [id]: t };
+  customThemes.value = { ...customThemes.value, [id]: theme };
   saveCustoms();
-  return t;
+  return theme;
 }
 
 export function updateCustomTheme(id: string, patch: Partial<CustomTheme>) {
-  const t = customThemes.value[id];
-  if (!t) return;
+  const theme = customThemes.value[id];
+  if (!theme) return;
   customThemes.value = {
     ...customThemes.value,
-    [id]: { ...t, ...patch, vars: patch.vars ? { ...t.vars, ...patch.vars } : t.vars },
+    [id]: { ...theme, ...patch, vars: patch.vars ? { ...theme.vars, ...patch.vars } : theme.vars },
   };
   saveCustoms();
   if (themeId.value === id) applyTheme();

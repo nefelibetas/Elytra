@@ -61,7 +61,7 @@ pub fn tooldl_get_config() -> ToolDlConfig {
 /// 保存配置（保存目录 / 并发文件数 / 分段数）；并发上限同步到调度缓存。
 #[tauri::command]
 pub fn tooldl_save_config(config: ToolDlConfig) -> Result<(), String> {
-    persist::save_tooldl_config(&config).map_err(common_err_ctx!("保存配置失败"))?;
+    persist::save_tooldl_config(&config).map_err(common_err_ctx_key!("errors.config.write", "保存配置失败"))?;
     tooldl::set_max_files(config.max_files);
     Ok(())
 }

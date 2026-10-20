@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 主页右侧版本卡片：Tab 切换资源列表 + 底部操作。业务在 store/versionDetail。
 import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { Pencil, Folder, FolderOpen, CloudDownload, Puzzle, Map, Settings2, Palette, Database, Sun, ImagePlus } from "@lucide/vue";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -36,6 +37,7 @@ import {
   type ResourceKind,
 } from "../../store/task/versionDetail";
 
+const { t } = useI18n();
 const versionName = computed(() => selectedVersion.value);
 
 const info = computed(() => classifyVersion(versionName.value));
@@ -47,12 +49,12 @@ watch(versionName, name => void loadVersionIcon(name), { immediate: true });
 async function changeIcon() {
   const path = await open({
     multiple: false,
-    filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
+    filters: [{ name: t("launch.version.imageFilter"), extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
   });
   if (!path) return;
   try {
     await setVersionIcon(versionName.value, String(path));
-    showToast("图标已更新");
+    showToast(t("launch.version.iconUpdated"));
   } catch (e) {
     showToast(errMsg(e));
   }
@@ -63,7 +65,7 @@ const loaderVersion = computed(() =>
 );
 const subtitle = computed(() =>
   category.value === "vanilla"
-    ? "原版"
+    ? t("launch.version.vanilla")
     : loaderVersion.value || (LOADER_TITLES[category.value] ?? category.value),
 );
 
@@ -78,12 +80,12 @@ function goSetup() {
 type TabKind = "worlds" | "mods" | "resourcepacks" | "datapacks" | "shaderpacks";
 const tab = ref<TabKind>("worlds");
 
-const TAB_LABELS: Record<TabKind, string> = {
-  worlds: "存档",
-  mods: "Mod",
-  resourcepacks: "材质包",
-  datapacks: "数据包",
-  shaderpacks: "光影包",
+const TAB_LABEL_KEYS: Record<TabKind, string> = {
+  worlds: "launch.version.tabs.worlds",
+  mods: "launch.version.tabs.mods",
+  resourcepacks: "launch.version.tabs.resourcepacks",
+  datapacks: "launch.version.tabs.datapacks",
+  shaderpacks: "launch.version.tabs.shaderpacks",
 };
 
 const SIDE_ICONS = {
@@ -96,10 +98,10 @@ const SIDE_ICONS = {
 
 /** 可见 Tab：存档/光影/材质包恒显，数据包需 1.13+（兼容 26.x 命名版本号），Mod 仅 ModLoader 版本。 */
 function supportsDatapacks(mc: string): boolean {
-  const t = mc.split(".").map(Number);
+  const parts = mc.split(".").map(Number);
   const min = [1, 13];
-  for (let i = 0; i < Math.max(t.length, min.length); i++) {
-    const a = t[i] ?? 0;
+  for (let i = 0; i < Math.max(parts.length, min.length); i++) {
+    const a = parts[i] ?? 0;
     const b = min[i] ?? 0;
     if (a !== b) return a > b;
   }
@@ -112,22 +114,22 @@ const tabs = computed<TabKind[]>(() => {
   return list;
 });
 
-watch(tabs, t => {
-  if (!t.includes(tab.value)) tab.value = "worlds";
+watch(tabs, kinds => {
+  if (!kinds.includes(tab.value)) tab.value = "worlds";
 });
 
 const folderMeta = computed(() => {
   switch (tab.value) {
     case "mods":
-      return { kind: "mods" as const, label: "打开 Mod" };
+      return { kind: "mods" as const, labelKey: "launch.action.openMods" };
     case "resourcepacks":
-      return { kind: "resourcepacks" as const, label: "打开材质包" };
+      return { kind: "resourcepacks" as const, labelKey: "launch.action.openResourcepacks" };
     case "datapacks":
-      return { kind: "datapacks" as const, label: "打开数据包" };
+      return { kind: "datapacks" as const, labelKey: "launch.action.openDatapacks" };
     case "shaderpacks":
-      return { kind: "shaderpacks" as const, label: "打开光影包" };
+      return { kind: "shaderpacks" as const, labelKey: "launch.action.openShaderpacks" };
     default:
-      return { kind: "saves" as const, label: "打开存档" };
+      return { kind: "saves" as const, labelKey: "launch.action.openSaves" };
   }
 });
 
@@ -151,13 +153,15 @@ const res = computed(() => {
 });
 
 const RES_ICONS = { resourcepacks: Palette, datapacks: Database, shaderpacks: Sun } as const;
-const RES_EMPTY_TEXTS: Record<ResourceKind, string> = {
-  resourcepacks: "还没有材质包\n可将 zip 包放入 resourcepacks 目录",
-  datapacks: "还没有数据包\n可将 zip 包放入 datapacks 目录",
-  shaderpacks: "还没有光影包\n可将 zip 包放入 shaderpacks 目录",
+const RES_EMPTY_KEYS: Record<ResourceKind, string> = {
+  resourcepacks: "launch.version.emptyResourcepacks",
+  datapacks: "launch.version.emptyDatapacks",
+  shaderpacks: "launch.version.emptyShaderpacks",
 };
 const resIcon = computed(() => (isResourceTab(tab.value) ? RES_ICONS[tab.value] : Palette));
-const resEmptyText = computed(() => (isResourceTab(tab.value) ? RES_EMPTY_TEXTS[tab.value] : ""));
+const resEmptyText = computed(() =>
+  isResourceTab(tab.value) ? t(RES_EMPTY_KEYS[tab.value]) : "",
+);
 
 // ── 版本切换：重置 + 加载 loader/存档/Mod/资源目录 ──
 watch(
@@ -198,14 +202,16 @@ async function repairFiles() {
     const total =
       (report.client_jar ? 1 : 0) + report.libraries + report.assets + report.natives;
     if (total === 0) {
-      showToast("游戏文件完整，无需补全");
+      showToast(t("launch.version.repairComplete"));
       return;
     }
     const taskId = await submitMissingDownload(versionName.value);
     // 预注册任务：徽标立即出现，不等首次 task-progress 事件
     dlState.addTask({
       taskId,
-      name: `${versionName.value} 版本修复`,
+      name: t("launch.version.repairTaskName", { version: versionName.value }),
+      nameKey: "task.backend.name.repair",
+      nameParams: { version: versionName.value },
       status: "pending",
       progress: 0,
       speedBps: 0,
@@ -214,10 +220,11 @@ async function repairFiles() {
       totalFiles: 0,
       completedBytes: 0,
       totalBytes: 0,
-      currentPhase: "等待中",
+      currentPhase: t("launch.version.waiting"),
+      currentPhaseKey: "task.backend.phase.waiting",
       steps: [],
     });
-    showToast(`已提交 ${total} 个缺失文件到任务中心`);
+    showToast(t("launch.version.repairSubmitted", { count: total }));
   } catch (e) {
     showToast(errMsg(e));
   } finally {
@@ -239,11 +246,11 @@ function openRename() {
 async function confirmRename() {
   const newName = renameInput.value.trim();
   if (!newName) {
-    renameError.value = "名称不能为空";
+    renameError.value = t("launch.version.nameRequired");
     return;
   }
   if (newName === versionName.value) {
-    renameError.value = "新名称与当前名称相同";
+    renameError.value = t("launch.version.nameSame");
     return;
   }
   try {
@@ -264,13 +271,13 @@ async function confirmRename() {
     <div class="vdc-head">
       <VersionItem :icon-src="displayIcon" :version-id="versionName" :subtitle="subtitle">
         <template #action>
-          <button class="vdc-icon-btn" v-tooltip="'版本设置'" @click="goSetup">
+          <button class="vdc-icon-btn" v-tooltip="t('launch.action.setup')" @click="goSetup">
             <Settings2 :size="15" />
           </button>
-          <button class="vdc-icon-btn" v-tooltip="'修改图标'" @click="changeIcon">
+          <button class="vdc-icon-btn" v-tooltip="t('launch.action.addIcon')" @click="changeIcon">
             <ImagePlus :size="15" />
           </button>
-          <button class="vdc-icon-btn" v-tooltip="'重命名版本'" @click="openRename">
+          <button class="vdc-icon-btn" v-tooltip="t('launch.action.rename')" @click="openRename">
             <Pencil :size="15" />
           </button>
         </template>
@@ -282,21 +289,21 @@ async function confirmRename() {
       <nav class="vdc-side">
         <div class="vdc-side-nav">
           <button
-            v-for="t in tabs"
-            :key="t"
+            v-for="kind in tabs"
+            :key="kind"
             type="button"
             class="vdc-side-btn"
-            :class="{ active: tab === t }"
-            v-tooltip="TAB_LABELS[t]"
-            @click="tab = t"
+            :class="{ active: tab === kind }"
+            v-tooltip="t(TAB_LABEL_KEYS[kind])"
+            @click="tab = kind"
           >
-            <component :is="SIDE_ICONS[t]" :size="17" />
+            <component :is="SIDE_ICONS[kind]" :size="17" />
           </button>
         </div>
         <button
           type="button"
           class="vdc-side-open"
-          v-tooltip="folderMeta.label"
+          v-tooltip="t(folderMeta.labelKey)"
           @click="openVersionFolder(folderMeta.kind)"
         >
           <FolderOpen :size="15" />
@@ -306,11 +313,11 @@ async function confirmRename() {
         <Transition name="vdc-fade" mode="out-in">
       <!-- ── 存档 tab ── -->
       <div v-if="tab === 'worlds'" key="worlds" class="vdc-pane">
-        <LoadingSpinner v-if="worldsLoading" text="加载存档…" />
+        <LoadingSpinner v-if="worldsLoading" :text="t('launch.version.loadingWorlds')" />
         <ErrorState v-else-if="worldsError" :text="worldsError" />
         <EmptyState v-else-if="worlds.length === 0">
           <Map :size="40" :stroke-width="1.5" opacity="0.5" />
-          <p>还没有存档<br />启动游戏后会自动创建</p>
+          <p>{{ t("launch.version.emptyWorlds") }}</p>
         </EmptyState>
         <div v-else class="vdc-list">
           <div v-for="w in worlds" :key="w.name" class="vdc-row vdc-world-row">
@@ -323,7 +330,7 @@ async function confirmRename() {
             <Map v-else :size="18" class="vdc-row-icon" />
             <div class="vdc-row-info">
               <span class="vdc-row-name">{{ w.name }}</span>
-              <span class="vdc-row-meta">最后游玩 {{ fmtUnix(w.last_modified) }}</span>
+              <span class="vdc-row-meta">{{ t("launch.version.lastPlayed", { date: fmtUnix(w.last_modified) }) }}</span>
             </div>
           </div>
         </div>
@@ -331,16 +338,16 @@ async function confirmRename() {
 
       <!-- ── Mod tab ── -->
       <div v-else-if="tab === 'mods'" key="mods" class="vdc-pane">
-        <LoadingSpinner v-if="modsLoading && mods.length === 0" text="正在加载 Mod 信息…" />
+        <LoadingSpinner v-if="modsLoading && mods.length === 0" :text="t('launch.version.loadingMods')" />
         <ErrorState v-else-if="modsError" :text="modsError" />
         <EmptyState v-else-if="mods.length === 0">
           <Puzzle :size="40" :stroke-width="1.5" opacity="0.5" />
-          <p v-if="isModLoaderVersion">mods 目录为空<br />可从资源中心下载 Mod</p>
-          <p v-else>mods 目录为空</p>
+          <p v-if="isModLoaderVersion">{{ t("launch.version.emptyModsLoader") }}</p>
+          <p v-else>{{ t("launch.version.emptyMods") }}</p>
         </EmptyState>
         <template v-else>
           <div v-if="modsNetworkError" class="vdc-net-warn">
-            部分 Mod 信息获取失败，已显示本地信息
+            {{ t("launch.version.modInfoPartial") }}
           </div>
           <div class="vdc-mod-list">
             <template v-for="m in mods" :key="m.file_name">
@@ -351,7 +358,7 @@ async function confirmRename() {
                   <span class="vdc-mod-title-row">
                     <span class="vdc-mod-title">{{ m.title_zh ?? m.title ?? m.file_name }}</span>
                     <span v-if="m.title_zh" class="vdc-mod-file">{{ m.file_name }}</span>
-                    <span v-if="m.downloads" class="vdc-mod-sub">{{ fmtCount(m.downloads) }} 次下载</span>
+                    <span v-if="m.downloads" class="vdc-mod-sub">{{ t("launch.version.downloads", { count: fmtCount(m.downloads) }, m.downloads) }}</span>
                   </span>
                   <span v-if="m.description" class="vdc-mod-desc">
                     {{ dlTranslateMode === "en" ? m.description : (m.description_zh ?? m.description) }}
@@ -376,7 +383,7 @@ async function confirmRename() {
 
       <!-- ── 材质包 / 数据包 / 光影包 tab（Modrinth 识别双态列表）── -->
       <div v-else key="resources" class="vdc-pane">
-        <LoadingSpinner v-if="res.loading && res.list.length === 0" text="加载中…" />
+        <LoadingSpinner v-if="res.loading && res.list.length === 0" :text="t('launch.version.loading')" />
         <ErrorState v-else-if="res.error" :text="res.error" />
         <EmptyState v-else-if="res.list.length === 0">
           <component :is="resIcon" :size="40" :stroke-width="1.5" opacity="0.5" />
@@ -384,7 +391,7 @@ async function confirmRename() {
         </EmptyState>
         <template v-else>
           <div v-if="res.networkError" class="vdc-net-warn">
-            部分资源信息获取失败，已显示本地信息
+            {{ t("launch.version.resourceInfoPartial") }}
           </div>
           <div class="vdc-mod-list">
             <template v-for="f in res.list" :key="f.file_name">
@@ -395,7 +402,7 @@ async function confirmRename() {
                   <span class="vdc-mod-title-row">
                     <span class="vdc-mod-title">{{ f.title_zh ?? f.title ?? f.file_name }}</span>
                     <span v-if="f.title_zh" class="vdc-mod-file">{{ f.file_name }}</span>
-                    <span v-if="f.downloads" class="vdc-mod-sub">{{ fmtCount(f.downloads) }} 次下载</span>
+                    <span v-if="f.downloads" class="vdc-mod-sub">{{ t("launch.version.downloads", { count: fmtCount(f.downloads) }, f.downloads) }}</span>
                   </span>
                   <span v-if="f.description" class="vdc-mod-desc">
                     {{ dlTranslateMode === "en" ? f.description : (f.description_zh ?? f.description) }}
@@ -425,17 +432,17 @@ async function confirmRename() {
     <div class="vdc-foot">
       <button class="vdc-foot-btn" @click="openVersionFolder('version')">
         <Folder :size="14" />
-        <span>游戏文件夹</span>
+        <span>{{ t("launch.action.gameFolder") }}</span>
       </button>
-      <button class="vdc-foot-btn" :disabled="checking || isLaunching" :title="isLaunching ? '游戏启动中' : ''" @click="repairFiles">
+      <button class="vdc-foot-btn" :disabled="checking || isLaunching" :title="isLaunching ? t('launch.status.gameStarting') : ''" @click="repairFiles">
         <span v-if="checking" class="vdc-repair-spinner"></span>
         <CloudDownload v-else :size="14" />
-        <span>{{ checking ? "检测中…" : "修复" }}</span>
+        <span>{{ checking ? t("launch.action.checking") : t("launch.action.repair") }}</span>
       </button>
     </div>
 
     <!-- 重命名版本 dialog -->
-    <AlertDialog v-model="renameDialog" title="重命名版本">
+    <AlertDialog v-model="renameDialog" :title="t('launch.version.renameTitle')">
       <div class="vdc-dialog-body">
         <input
           v-model="renameInput"
@@ -448,8 +455,8 @@ async function confirmRename() {
         <div v-if="renameError" class="vdc-err">{{ renameError }}</div>
       </div>
       <template #actions>
-        <button class="dialog-btn primary" @click="confirmRename">确定</button>
-        <button class="dialog-btn" @click="renameDialog = false">取消</button>
+        <button class="dialog-btn primary" @click="confirmRename">{{ t("launch.version.confirm") }}</button>
+        <button class="dialog-btn" @click="renameDialog = false">{{ t("launch.version.cancel") }}</button>
       </template>
     </AlertDialog>
   </div>

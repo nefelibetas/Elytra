@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, nextTick, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { X } from "@lucide/vue";
 import { initNavHistory, goBack, goForward } from "./store/app/nav";
@@ -13,8 +14,10 @@ import { ensureVersionsWatch } from "./store/config/gameDirs";
 import { setSelected } from "./store/app/selectedVersion";
 import { toasts, dismissToast, pauseToast, resumeToast, showToast } from "./utils/toast";
 import { moveFocus, clearFocusRing, focusDialog, restoreFocus } from "./utils/focusNav";
+import { errMsg, formatError } from "./utils/error";
 
 const router = useRouter();
+const { t } = useI18n();
 
 
 /** body 只放短提示，完整错误由复制按钮带走。 */
@@ -27,7 +30,7 @@ const autoTaskFailMessage = ref("");
 watch(lastAutoTasksFinished, (finished) => {
   if (!finished || !finished.failures.length) return;
   autoTaskFailMessage.value = finished.failures
-    .map((f) => `[${f.action}] ${f.message}`)
+    .map((f) => `[${f.action}] ${errMsg(f.message)}`)
     .join("\n");
   autoTaskFailDialog.value = true;
 });
@@ -52,10 +55,10 @@ async function copyWaitingError() {
   const w = waitingUser.value;
   if (!w?.error) return;
   try {
-    await navigator.clipboard.writeText(w.error);
-    showToast("已复制错误信息");
+    await navigator.clipboard.writeText(formatError(w.error).full);
+    showToast(t("common.action.copied"));
   } catch {
-    showToast("复制失败");
+    showToast(t("common.action.copyFailed"));
   }
 }
 
@@ -208,24 +211,24 @@ onUnmounted(() => {
          读屏经 role=status 播报；data-tabskip 让键盘遍历跳过这条通道（自动消失，入列会打断遍历顺序） -->
     <TransitionGroup name="toast" tag="div" class="toast-stack" role="status" aria-live="polite" data-tabskip>
       <div
-        v-for="t in toasts"
-        :key="t.id"
+        v-for="toast in toasts"
+        :key="toast.id"
         class="toast-item"
-        @mouseenter="pauseToast(t.id)"
-        @mouseleave="resumeToast(t.id)"
+        @mouseenter="pauseToast(toast.id)"
+        @mouseleave="resumeToast(toast.id)"
       >
-        <span class="toast-msg">{{ t.msg }}</span>
-        <button class="toast-close" title="关闭" aria-label="关闭提示" @click="dismissToast(t.id)">
+        <span class="toast-msg">{{ toast.msg }}</span>
+        <button class="toast-close" :title="t('common.tooltip.close')" :aria-label="t('common.tooltip.close')" @click="dismissToast(toast.id)">
           <X :size="12" :stroke-width="2.4" />
         </button>
       </div>
     </TransitionGroup>
-    <AlertDialog v-model="errorDialog" title="下载失败" :message="errorMessage" copyable>
-      <p>下载失败，已清理该任务下载的文件，请重试</p>
+    <AlertDialog v-model="errorDialog" :title="t('task.dialog.downloadFailed')" :message="errorMessage" copyable>
+      <p>{{ t("task.dialog.downloadFailedBody") }}</p>
     </AlertDialog>
 
-    <AlertDialog v-model="autoTaskFailDialog" title="自动任务执行失败" :message="autoTaskFailMessage" copyable>
-      <p>部分自动任务动作未成功（游戏启动/退出不受影响）</p>
+    <AlertDialog v-model="autoTaskFailDialog" :title="t('task.dialog.autoTaskFailed')" :message="autoTaskFailMessage" copyable>
+      <p>{{ t("task.dialog.autoTaskFailedBody") }}</p>
     </AlertDialog>
 
     <!-- 批量文件下载失败挂起：用户决策 跳过/重试/取消（WaitingForUser） -->
@@ -236,18 +239,18 @@ onUnmounted(() => {
         class="dialog-overlay"
         role="dialog"
         aria-modal="true"
-        aria-label="下载失败"
+        :aria-label="t('task.waiting.title')"
         @click.self.stop
       >
         <div class="waiting-dialog">
-          <h3 class="wd-title">下载失败</h3>
+          <h3 class="wd-title">{{ t("task.waiting.title") }}</h3>
           <p class="wd-file">{{ waitingUser.file_name }}</p>
-          <p class="wd-err">{{ waitingUser.error }}</p>
+          <p class="wd-err">{{ errMsg(waitingUser.error) }}</p>
           <div class="wd-actions">
-            <button class="wd-btn wd-retry" @click="decideWaitingTask('retry')">重试</button>
-            <button class="wd-btn" @click="decideWaitingTask('skip')">跳过</button>
-            <button class="wd-btn wd-cancel" @click="decideWaitingTask('cancel')">取消任务</button>
-            <button class="wd-btn wd-copy" @click="copyWaitingError">复制错误信息</button>
+            <button class="wd-btn wd-retry" @click="decideWaitingTask('retry')">{{ t("common.action.retry") }}</button>
+            <button class="wd-btn" @click="decideWaitingTask('skip')">{{ t("common.action.skip") }}</button>
+            <button class="wd-btn wd-cancel" @click="decideWaitingTask('cancel')">{{ t("task.waiting.cancelTask") }}</button>
+            <button class="wd-btn wd-copy" @click="copyWaitingError">{{ t("common.action.copyError") }}</button>
           </div>
         </div>
       </div>
@@ -502,6 +505,14 @@ input, textarea {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
+}
+
+/* 语言切换期间禁用过渡/动画：文本重排不应被 hover、主题或布局过渡放大成抖动 */
+html.i18n-switching *,
+html.i18n-switching *::before,
+html.i18n-switching *::after {
+  transition-duration: 0s !important;
+  animation-duration: 0s !important;
 }
 
 ::-webkit-scrollbar { width: 6px; }

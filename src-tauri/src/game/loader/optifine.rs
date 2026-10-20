@@ -54,7 +54,7 @@ async fn download_optifabric(
         ],
     )
     .await
-    .map_err(common_err_ctx!("查询 OptiFabric 项目失败"))?;
+    .map_err(common_err_ctx_key!("errors.install.loader", "查询 OptiFabric 项目失败"))?;
     let mod_id = search["data"]
         .as_array()
         .and_then(|a| a.first())
@@ -71,7 +71,7 @@ async fn download_optifabric(
         ],
     )
     .await
-    .map_err(common_err_ctx!("查询 OptiFabric 版本失败"))?;
+    .map_err(common_err_ctx_key!("errors.install.loader", "查询 OptiFabric 版本失败"))?;
     let Some((filename, download_url, sha1)) = pick_curseforge_file(&files) else {
         bail!(
             "下载 OptiFabric 失败\nMC {mc_version} 暂无兼容的 OptiFabric 版本（OptiFabric 仅支持至 1.20.x）"
@@ -79,7 +79,7 @@ async fn download_optifabric(
     };
 
     // 3. forgecdn 直链下载（x-api-key 由查询环节承担，下载可匿名）
-    std::fs::create_dir_all(mods_dir).map_err(common_err_ctx!("创建 mods 目录失败"))?;
+    std::fs::create_dir_all(mods_dir).map_err(common_err_ctx_key!("errors.file.createDir", "创建 mods 目录失败"))?;
     let dest = mods_dir.join(&filename);
     // CurseForge 文件条目自带 sha1，用它校验（否则镜像/CDN 截断内容会被静默接受）
     let sha1 = sha1.unwrap_or_default();
@@ -91,7 +91,7 @@ async fn download_optifabric(
             Some(cancel),
         )
         .await
-        .map_err(common_err_ctx!("下载 OptiFabric 失败"))?;
+        .map_err(common_err_ctx_key!("errors.download.failed", "下载 OptiFabric 失败"))?;
     } else {
         fetcher::fetch_verified_c(
             &[download_url],
@@ -101,7 +101,7 @@ async fn download_optifabric(
             Some(cancel),
         )
         .await
-        .map_err(common_err_ctx!("下载 OptiFabric 失败"))?;
+        .map_err(common_err_ctx_key!("errors.download.failed", "下载 OptiFabric 失败"))?;
     }
     Ok(())
 }
@@ -170,14 +170,14 @@ pub async fn install_optifine(
         }
     };
     if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).map_err(common_err_ctx!("创建目录失败"))?;
+        std::fs::create_dir_all(parent).map_err(common_err_ctx_key!("errors.file.createDir", "创建目录失败"))?;
     }
 
     // 字节级进度：step_progress 工厂（增量累加进全局与 OptiFine 步骤计数，total 为分母）。
     // 不用 byte_callback：后者不写 step_total，而 OptiFine jar 需要步骤分母显示总字节。
     fetcher::fetch(&jar_url, &dest, Some(pc.step_progress()))
         .await
-        .map_err(common_err_ctx!("下载 OptiFine 失败"))?;
+        .map_err(common_err_ctx_key!("errors.download.failed", "下载 OptiFine 失败"))?;
 
     match mode {
         OptifineMode::Vanilla => {
@@ -190,7 +190,7 @@ pub async fn install_optifine(
                 &json_path,
                 serde_json::to_string_pretty(&json).map_err(common_err_ctx!("序列化失败"))?,
             )
-            .map_err(common_err_ctx!("写入 version.json 失败"))?;
+            .map_err(common_err_ctx_key!("errors.file.write", "写入 version.json 失败"))?;
         }
         OptifineMode::ForgeLike => {
             // loader 的合并 version.json 由 install_forge/neoforge 生成，OptiFine 不写 json（否则会顶掉它）

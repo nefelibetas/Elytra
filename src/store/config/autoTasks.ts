@@ -10,23 +10,24 @@ import type { AutoTaskAction } from "../../types/launcher/AutoTaskAction";
 import type { AutoTasks } from "../../types/launcher/AutoTasks";
 import type { InstanceAutoTasksState } from "../../types/launcher/InstanceAutoTasksState";
 import type { LaunchOptions } from "../../types/launcher/LaunchOptions";
+import { t } from "../../i18n";
 
 /** 备份默认保留份数（与 Rust `default_keep` 一致）。 */
 export const DEFAULT_KEEP = 5;
 /** 自定义命令默认超时秒数（与 Rust `default_timeout_secs` 一致）。 */
 export const DEFAULT_TIMEOUT = 120;
 
-/** 三个执行阶段（顺序即 UI 展示顺序）。 */
-export const phases: { key: AutoTaskPhase; label: string; desc: string }[] = [
-  { key: "pre_launch", label: "启动前", desc: "启动游戏前执行；失败是否中止由下方开关决定" },
-  { key: "on_crash", label: "崩溃时", desc: "检测到崩溃（非零退出且有崩溃证据）后执行" },
-  { key: "post_exit", label: "退出后", desc: "游戏退出后总是执行" },
+/** 三个执行阶段（顺序即 UI 展示顺序）；label/desc 存 i18n key，渲染侧翻译。 */
+export const phases: { key: AutoTaskPhase; labelKey: string; descKey: string }[] = [
+  { key: "pre_launch", labelKey: "settings.autoTasks.phases.preLaunch.label", descKey: "settings.autoTasks.phases.preLaunch.desc" },
+  { key: "on_crash", labelKey: "settings.autoTasks.phases.onCrash.label", descKey: "settings.autoTasks.phases.onCrash.desc" },
+  { key: "post_exit", labelKey: "settings.autoTasks.phases.postExit.label", descKey: "settings.autoTasks.phases.postExit.desc" },
 ];
 
-export const builtinCatalog: { kind: string; label: string; desc: string }[] = [
-  { kind: "backup_saves", label: "备份存档", desc: "按时间戳备份存档到 back/saves，保留最近 N 份" },
-  { kind: "record_mods", label: "记录 Mod 清单", desc: "写 mods.json（文件名 + 大小 + sha1）" },
-  { kind: "pack_crash_logs", label: "打包崩溃日志", desc: "崩溃报告 + 游戏/启动器日志打包（已脱敏）" },
+export const builtinCatalog: { kind: string; labelKey: string; descKey: string }[] = [
+  { kind: "backup_saves", labelKey: "settings.autoTasks.builtin.backupSaves.label", descKey: "settings.autoTasks.builtin.backupSaves.desc" },
+  { kind: "record_mods", labelKey: "settings.autoTasks.builtin.recordMods.label", descKey: "settings.autoTasks.builtin.recordMods.desc" },
+  { kind: "pack_crash_logs", labelKey: "settings.autoTasks.builtin.packCrashLogs.label", descKey: "settings.autoTasks.builtin.packCrashLogs.desc" },
 ];
 
 export function actionKind(action: AutoTaskAction): string {
@@ -37,15 +38,17 @@ export function actionKind(action: AutoTaskAction): string {
 }
 
 export function actionLabel(action: AutoTaskAction): string {
-  if (action === "RecordMods") return "记录 Mod 清单";
-  if (action === "PackCrashLogs") return "打包崩溃日志";
+  if (action === "RecordMods") return t("settings.autoTasks.builtin.recordMods.label");
+  if (action === "PackCrashLogs") return t("settings.autoTasks.builtin.packCrashLogs.label");
   if ("BackupSaves" in action) {
     const { scope, keep } = action.BackupSaves;
-    const scopeText = scope === "All" ? "全部世界" : `指定 ${scope.Selected.worlds.length} 个世界`;
-    return `备份存档（${scopeText}，保留 ${keep} 份）`;
+    const scopeText = scope === "All"
+      ? t("settings.autoTasks.scopeAll")
+      : t("settings.autoTasks.scopeSelectedCount", { count: scope.Selected.worlds.length });
+    return t("settings.autoTasks.backupSummary", { scope: scopeText, keep });
   }
-  if ("Command" in action) return action.Command.command.trim() || "（空命令）";
-  return "未知动作";
+  if ("Command" in action) return action.Command.command.trim() || t("settings.autoTasks.emptyCommand");
+  return t("settings.autoTasks.unknownAction");
 }
 
 export function makeAction(kind: string): AutoTaskAction {

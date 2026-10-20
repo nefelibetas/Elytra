@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { MS_LOGIN_COMPLETE } from "../app/events";
 import { showError } from "../app/alert";
+import { t } from "../../i18n";
 import { avatarState, renderPremiumAvatar, renderExternalAvatar } from "../auth/avatar";
 import type { MsAccount as MsAccountInfo } from "../../types/auth/MsAccount";
 import type { ExternalAccount as ExternalAccountInfo } from "../../types/auth/ExternalAccount";
@@ -230,7 +231,7 @@ export async function ensureLoginListener() {
         msAccount.value = ev.payload.account;
         await loadMsAccounts(); // 新账号已 upsert 进列表（置为末尾）
       } else {
-        showError(ev.payload.error || "登录失败", true);
+        showError(ev.payload.error || t("launch.error.loginFailed"), true);
       }
     },
   );

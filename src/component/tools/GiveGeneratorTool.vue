@@ -2,6 +2,7 @@
 // 物品 NBT 生成：搜索选择物品 → 配置（名称颜色/背景故事/附魔/属性/选项/附加 NBT）→ 输出单个物品栈片段（供村民交易等 NBT 场景引用）。
 // 版本区间决定语法与可用选项（1.7.10–1.20.4 为 NBT；1.20.5+ 为组件）。
 import { computed, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { Copy, Plus, Trash2 } from "@lucide/vue";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
 import CheckToggle from "../common/CheckToggle.vue";
@@ -13,18 +14,21 @@ import {
   GIVE_VERSION_OPTIONS, DEFAULT_GIVE_VERSION, buildTradeItem,
   filterEnchantsByVersion, filterAttributesByVersion,
   supportsHexColor, syntaxOfVersion, maxVersionOf,
+  itemName, enchantName, attributeName, versionLabel,
   type GiveVersion, type EnchantInput, type AttributeInput,
 } from "../../utils/give";
 import { checkNbtFragment, parseItemStackFragment } from "../../utils/nbtText";
-import { MC_COLORS, MC_COLOR_KEYS, MC_COLOR_NAMES, hexToSectionX } from "../../utils/motd";
+import { MC_COLORS, MC_COLOR_KEYS, colorName, hexToSectionX } from "../../utils/motd";
 import { copyText } from "../../utils/clipboard";
+
+const { t } = useI18n();
 
 /** 目标版本区间（决定语法与可用 NBT）。 */
 const version = ref<GiveVersion>(DEFAULT_GIVE_VERSION);
-const versionOptions: SelOption[] = GIVE_VERSION_OPTIONS.map((o) => ({
-  value: o.value,
-  label: o.label,
-}));
+const versionOptions = computed<SelOption[]>(() =>
+  GIVE_VERSION_OPTIONS.map((o) => ({ value: o.value, label: versionLabel(o) })),
+);
+const itemOptions = computed(() => GIVE_ITEMS.map((i) => ({ id: i.id, name: itemName(i) })));
 const syntax = computed(() => syntaxOfVersion(version.value));
 const hexColorSupported = computed(() => supportsHexColor(version.value));
 /** 1.13 前使用扁平化前物品 ID/Damage。 */
@@ -77,7 +81,7 @@ const newEnchLevel = ref(1);
 const enchOptions = computed<SelOption[]>(() =>
   filterEnchantsByVersion(ENCHANTMENTS, version.value).map((e) => ({
     value: e.id,
-    label: `${e.name}（原版最高 ${e.max}）`,
+    label: t("tools.give.enchantOption", { name: enchantName(e.id), max: e.max }),
   })),
 );
 
@@ -98,10 +102,6 @@ function removeEnchant(idx: number) {
   enchantments.value.splice(idx, 1);
 }
 
-function enchantName(id: string): string {
-  return ENCHANTMENTS.find((e) => e.id === id)?.name ?? id;
-}
-
 // ── 属性 ──
 const attributes = ref<AttributeInput[]>([]);
 const newAttr = ref("");
@@ -110,7 +110,7 @@ const newAttrAmount = ref(1);
 const attrOptions = computed<SelOption[]>(() =>
   filterAttributesByVersion(ATTRIBUTES, version.value).map((a) => ({
     value: a.id,
-    label: a.name,
+    label: attributeName(a.id),
   })),
 );
 
@@ -124,10 +124,6 @@ function addAttribute() {
 
 function removeAttribute(idx: number) {
   attributes.value.splice(idx, 1);
-}
-
-function attributeName(id: string): string {
-  return ATTRIBUTES.find((a) => a.id === id)?.name ?? id;
 }
 
 /** 切换版本区间：丢弃该档不存在的附魔/属性与 §x 颜色。 */
@@ -163,8 +159,8 @@ const rawError = computed(() => (rawText.value.trim() ? checkNbtFragment(rawText
 
 const rawPlaceholder = computed(() =>
   syntax.value === "modern"
-    ? '附加组件（如 "minecraft:custom_model_data":7）'
-    : "附加 NBT（如 CustomModelData:7）",
+    ? t("tools.give.rawPlaceholderModern")
+    : t("tools.give.rawPlaceholderLegacy"),
 );
 
 /** 烟花/药水专有编辑器产出的附加内文（随物品与格式；无条件块时为空）。 */
@@ -221,7 +217,7 @@ function onRawInput(v: string) {
 
 async function copyOutput() {
   if (!output.value) return;
-  await copyText(output.value, "物品栈片段已复制");
+  await copyText(output.value, t("tools.give.stackCopied"));
 }
 
 /** 完整指令：按版本档给出带同一物品栈的可用命令（1.13–1.20.4 的 /give 不支持 NBT，用掉落物形式）。 */
@@ -247,19 +243,19 @@ const outputCommand = computed(() => {
 
 async function copyCommand() {
   if (!outputCommand.value) return;
-  await copyText(outputCommand.value, "指令已复制");
+  await copyText(outputCommand.value, t("tools.give.commandCopied"));
 }
 </script>
 
 <template>
   <div class="tool-card">
     <div class="tool-card-hdr">
-      <h3>物品 NBT 生成</h3>
-      <div class="tool-card-sub">构造物品栈片段，供指令生成器等场景引用</div>
+      <h3>{{ t("tools.give.title") }}</h3>
+      <div class="tool-card-sub">{{ t("tools.give.subtitle") }}</div>
     </div>
 
     <div class="give-row">
-      <span class="give-label">版本区间</span>
+      <span class="give-label">{{ t("tools.give.version") }}</span>
       <DropSelect
         :model-value="version"
         :options="versionOptions"
@@ -270,11 +266,11 @@ async function copyCommand() {
 
     <div class="give-sec">
       <div class="give-row">
-        <span class="give-label">物品</span>
+        <span class="give-label">{{ t("tools.give.item") }}</span>
         <SearchSelect
           v-model="itemId"
-          :options="GIVE_ITEMS"
-          placeholder="搜索物品（ID 或中文名）…"
+          :options="itemOptions"
+          :placeholder="t('tools.give.itemPlaceholder')"
           max-width="360px"
         />
       </div>
@@ -294,25 +290,25 @@ async function copyCommand() {
         @update:inner="(v: string) => (editorInner = v)"
       />
       <div v-else-if="editorKind === 'potion'" class="give-hint">
-        1.9 之前的药水类型由物品 Damage 决定，当前只生成 1.9+ 的药水标签
+        {{ t("tools.give.potionLegacyHint") }}
       </div>
 
       <div class="give-sec">
         <div class="give-row">
-          <span class="give-label">名称颜色</span>
+          <span class="give-label">{{ t("tools.give.nameColor") }}</span>
           <button
             class="give-color-none"
             :class="{ active: colorCode === '' }"
-            title="不染色"
+            :title="t('tools.give.noColor')"
             @click="colorCode = ''"
-          >无</button>
+          >{{ t("tools.give.noColor") }}</button>
           <button
             v-for="key in MC_COLOR_KEYS"
             :key="key"
             class="give-color"
             :class="{ active: colorCode === `§${key}` }"
             :style="{ backgroundColor: MC_COLORS[key] }"
-            :title="`§${key} ${MC_COLOR_NAMES[key]}`"
+            :title="`§${key} ${colorName(key)}`"
             @click="colorCode = `§${key}`"
           />
           <input
@@ -321,53 +317,53 @@ async function copyCommand() {
             class="give-color-custom"
             :value="customColor"
             :class="{ active: colorCode.startsWith('§x') }"
-            title="自定义颜色（§x，需 1.16+）"
+            :title="t('tools.give.customColorTitle')"
             @input="onCustomColor"
             autocomplete="off"
           />
         </div>
         <div class="give-row">
-          <span class="give-label">自定义名称</span>
+          <span class="give-label">{{ t("tools.give.customName") }}</span>
           <input
             v-model="customName"
             class="give-input"
-            placeholder="留空使用默认名称"
+            :placeholder="t('tools.give.customNamePlaceholder')"
             spellcheck="false"
             autocomplete="off"
           />
         </div>
         <div class="give-row give-row-top">
-          <span class="give-label">背景故事</span>
+          <span class="give-label">{{ t("tools.give.lore") }}</span>
           <textarea
             v-model="loreText"
             class="give-textarea"
             rows="2"
-            placeholder="每行一条（可多行）"
+            :placeholder="t('tools.give.lorePlaceholder')"
             spellcheck="false"
             autocomplete="off"
           ></textarea>
         </div>
         <div v-if="unbreakableSupported" class="give-checks">
-          <CheckToggle v-model="unbreakable" :size="14">破坏无效</CheckToggle>
-          <CheckToggle v-model="hideTooltip" :size="14">隐藏信息框</CheckToggle>
+          <CheckToggle v-model="unbreakable" :size="14">{{ t("tools.give.unbreakable") }}</CheckToggle>
+          <CheckToggle v-model="hideTooltip" :size="14">{{ t("tools.give.hideTooltip") }}</CheckToggle>
         </div>
-        <div v-else class="give-hint">1.7.10 无 Unbreakable/HideFlags</div>
+        <div v-else class="give-hint">{{ t("tools.give.oldVersionHint") }}</div>
       </div>
 
       <div class="give-sec">
-        <div class="give-sec-title">附魔</div>
+        <div class="give-sec-title">{{ t("tools.give.enchantments") }}</div>
         <div class="give-row">
           <DropSelect
             :model-value="newEnch"
             :options="enchOptions"
             width="180px"
-            placeholder="选择附魔"
+            :placeholder="t('tools.give.chooseEnchant')"
             @update:model-value="(v: string) => (newEnch = v)"
           />
           <input v-model.number="newEnchLevel" type="number" class="give-num" min="1" max="255" autocomplete="off" />
           <button class="tool-btn give-add-btn" :disabled="!newEnch" @click="addEnchant">
             <Plus :size="14" />
-            添加
+            {{ t("common.action.add") }}
           </button>
         </div>
         <div v-if="enchantments.length > 0" class="give-tags">
@@ -381,19 +377,19 @@ async function copyCommand() {
       </div>
 
       <div class="give-sec">
-        <div class="give-sec-title">属性</div>
+        <div class="give-sec-title">{{ t("tools.give.attributes") }}</div>
         <div class="give-row">
           <DropSelect
             :model-value="newAttr"
             :options="attrOptions"
             width="180px"
-            placeholder="选择属性"
+            :placeholder="t('tools.give.chooseAttribute')"
             @update:model-value="(v: string) => (newAttr = v)"
           />
           <input v-model.number="newAttrAmount" type="number" class="give-num" min="0" autocomplete="off" />
           <button class="tool-btn give-add-btn" :disabled="!newAttr" @click="addAttribute">
             <Plus :size="14" />
-            添加
+            {{ t("common.action.add") }}
           </button>
         </div>
         <div v-if="attributes.length > 0" class="give-tags">
@@ -408,14 +404,14 @@ async function copyCommand() {
 
       <div class="give-output">
         <div class="give-output-head">
-          <span>物品栈片段（{{ versionRange }}）</span>
+          <span>{{ t("tools.give.stackFragment", { range: versionRange }) }}</span>
           <button class="tool-btn give-copy-btn" @click="copyOutput">
             <Copy :size="14" />
-            复制
+            {{ t("common.action.copy") }}
           </button>
         </div>
         <div class="give-raw-row">
-          <span class="give-raw-label">附加 NBT</span>
+          <span class="give-raw-label">{{ t("tools.give.rawNbt") }}</span>
           <textarea
             :value="rawText"
             class="give-raw"
@@ -429,29 +425,29 @@ async function copyCommand() {
         <p v-if="rawError" class="give-raw-err">{{ rawError }}</p>
         <code class="gen-output gen-output-cmd">{{ output }}</code>
         <div class="give-output-head nb-output-gap">
-          <span>完整指令（{{ versionRange }}）</span>
+          <span>{{ t("tools.give.fullCommand", { range: versionRange }) }}</span>
           <button class="tool-btn give-copy-btn" @click="copyCommand">
             <Copy :size="14" />
-            复制
+            {{ t("common.action.copy") }}
           </button>
         </div>
-        <code class="gen-output gen-output-cmd">{{ outputCommand || "（配置后生成）" }}</code>
+        <code class="gen-output gen-output-cmd">{{ outputCommand || t("tools.give.outputEmpty") }}</code>
         <div class="give-hint">
-          片段可直接粘贴到村民交易的「自定义 NBT」等 NBT 场景
+          {{ t("tools.give.pasteHint") }}
         </div>
         <div v-if="syntax === 'legacy'" class="give-hint">
-          旧版物品栈的自定义数据位于 tag 内；粘贴到 /give 附加段时会自动提取内层
+          {{ t("tools.give.legacyTagHint") }}
         </div>
         <div v-if="legacyItems" class="give-hint">
-          1.13 前使用扁平化前物品 ID/Damage；未映射或该版本之后新增的物品不可用
+          {{ t("tools.give.legacyItemHint") }}
         </div>
         <div v-if="attributes.length > 0" class="give-hint">
-          属性修饰符使用随机 UUID/id，避免同属性修饰不叠加
+          {{ t("tools.give.attributeHint") }}
         </div>
       </div>
     </template>
 
-    <div v-else class="give-empty give-hint">请先选择物品</div>
+    <div v-else class="give-empty give-hint">{{ t("tools.give.selectItemFirst") }}</div>
   </div>
 </template>
 

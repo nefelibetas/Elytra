@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // 多线程下载器：粘贴多个链接 → 队列并发 + 单文件 HTTP Range 分段，任务列表独立于启动器下载任务。
 // 服务端不支持 Range（或链路吃掉 Range 头）时后端自动回退单连接。
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { Download, FolderOpen, Pause, Play, Trash2, X } from "@lucide/vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
@@ -26,28 +27,30 @@ import { fmtEta, fmtSize, fmtSpeed } from "../../utils/format";
 import DropSelect from "../common/DropSelect.vue";
 import EmptyState from "../common/EmptyState.vue";
 
+const { t } = useI18n();
+
 const urlsText = ref("");
 const saveDir = ref("");
 const maxFiles = ref("3");
 const segments = ref("8");
 const busy = ref(false);
 
-const maxFilesOptions = [
-  { value: "1", label: "1", desc: "串行，逐个下载" },
+const maxFilesOptions = computed(() => [
+  { value: "1", label: "1", desc: t("tools.download.maxFilesSerial") },
   { value: "2", label: "2" },
-  { value: "3", label: "3", desc: "默认" },
+  { value: "3", label: "3", desc: t("tools.download.defaultLabel") },
   { value: "5", label: "5" },
-  { value: "8", label: "8", desc: "带宽充足时可提高" },
-];
+  { value: "8", label: "8", desc: t("tools.download.maxFilesHigh") },
+]);
 
-const segmentOptions = [
-  { value: "1", label: "1", desc: "单连接，兼容性最好" },
+const segmentOptions = computed(() => [
+  { value: "1", label: "1", desc: t("tools.download.segmentsSingle") },
   { value: "2", label: "2" },
   { value: "4", label: "4" },
-  { value: "8", label: "8", desc: "默认" },
+  { value: "8", label: "8", desc: t("tools.download.defaultLabel") },
   { value: "16", label: "16" },
-  { value: "32", label: "32", desc: "上限" },
-];
+  { value: "32", label: "32", desc: t("tools.download.segmentsMax") },
+]);
 
 onMounted(async () => {
   ensureToolDlListen();
@@ -86,11 +89,11 @@ async function handleStart() {
     .map((line) => line.trim())
     .filter(Boolean);
   if (urls.length === 0) {
-    showToast("请先粘贴下载链接（每行一个）");
+    showToast(t("tools.download.urlsRequired"));
     return;
   }
   if (!saveDir.value.trim()) {
-    showToast("请先选择保存目录");
+    showToast(t("tools.download.dirRequired"));
     return;
   }
   busy.value = true;
@@ -98,7 +101,7 @@ async function handleStart() {
     await enqueueToolDl(urls, saveDir.value.trim(), Number(segments.value));
     await persistConfig();
     urlsText.value = "";
-    showToast(`已加入 ${urls.length} 个下载任务`);
+    showToast(t("tools.download.queued", { count: urls.length }, urls.length));
   } catch (e) {
     showToast(errMsg(e));
   } finally {
@@ -174,34 +177,36 @@ function sizeText(task: ToolDlSnapshot): string {
 function statusText(task: ToolDlSnapshot): string {
   switch (task.status) {
     case "queued":
-      return "排队中";
+      return t("tools.download.statusQueued");
     case "downloading":
-      return "下载中";
+      return t("tools.download.statusDownloading");
     case "paused":
-      return "已暂停";
+      return t("tools.download.statusPaused");
     case "done":
-      return "已完成";
+      return t("tools.download.statusDone");
     case "error":
-      return "失败";
+      return t("tools.download.statusError");
     case "cancelled":
-      return "已取消";
+      return t("tools.download.statusCancelled");
   }
 }
 
 function modeText(task: ToolDlSnapshot): string {
-  if (task.status === "queued") return "等待线程";
+  if (task.status === "queued") return t("tools.download.modeWaiting");
   // 探测前 ranged 未定、segments 仍是请求值 → 显示"探测中"，避免短暂误报单连接（内核探测完即回写真实方案）
-  if (!task.ranged && task.segments > 1) return "探测中…";
-  return task.ranged ? `${task.segments} 线程分段` : "单连接";
+  if (!task.ranged && task.segments > 1) return t("tools.download.modeProbing");
+  return task.ranged
+    ? t("tools.download.modeSegments", { count: task.segments }, task.segments)
+    : t("tools.download.modeSingle");
 }
 </script>
 
 <template>
   <div class="tool-card">
     <div class="tool-card-hdr">
-      <h3>多线程下载器</h3>
+      <h3>{{ t("tools.download.title") }}</h3>
       <div class="tool-card-sub">
-        粘贴链接即可多线程下载：队列内多个文件并发，单个大文件再按 HTTP Range 分段
+        {{ t("tools.download.subtitle") }}
       </div>
     </div>
 
@@ -210,35 +215,35 @@ function modeText(task: ToolDlSnapshot): string {
         v-model="urlsText"
         class="tdl-urls"
         rows="3"
-        placeholder="每行一个下载链接，例如：&#10;https://example.com/file.jar"
+        :placeholder="t('tools.download.urlsPlaceholder')"
         autocomplete="off"
         spellcheck="false"
       />
 
       <div class="tdl-row">
-        <span class="tdl-label">保存目录</span>
+        <span class="tdl-label">{{ t("tools.download.saveDir") }}</span>
         <input
           v-model="saveDir"
           class="tdl-input"
-          placeholder="选择下载文件的保存位置"
+          :placeholder="t('tools.download.saveDirPlaceholder')"
           autocomplete="off"
         />
-        <button class="tdl-icon-btn" v-tooltip="'选择目录'" @click="handlePickDir">
+        <button class="tdl-icon-btn" v-tooltip="t('tools.download.chooseDir')" @click="handlePickDir">
           <FolderOpen :size="14" />
         </button>
       </div>
 
       <div class="tdl-row">
-        <span class="tdl-label">同时下载</span>
+        <span class="tdl-label">{{ t("tools.download.concurrent") }}</span>
         <DropSelect v-model="maxFiles" :options="maxFilesOptions" width="150px" />
-        <span class="tdl-label">单文件线程</span>
+        <span class="tdl-label">{{ t("tools.download.segments") }}</span>
         <DropSelect v-model="segments" :options="segmentOptions" width="150px" />
       </div>
 
       <div class="tdl-actions">
         <button class="tdl-btn tdl-btn-primary" :disabled="busy" @click="handleStart">
           <Download :size="14" />
-          {{ busy ? "提交中…" : "开始下载" }}
+          {{ busy ? t("tools.download.submitting") : t("tools.download.start") }}
         </button>
       </div>
     </div>
@@ -246,7 +251,7 @@ function modeText(task: ToolDlSnapshot): string {
     <!-- 任务列表（占满剩余高度，列表在卡内滚动） -->
     <div class="tdl-sec tdl-tasks">
       <div class="tdl-list-hdr">
-        <span class="tdl-sec-title">任务（{{ toolDlState.tasks.length }}）</span>
+        <span class="tdl-sec-title">{{ t("tools.download.tasks", { count: toolDlState.tasks.length }, toolDlState.tasks.length) }}</span>
         <span v-if="toolDlState.totalSpeed > 0" class="tdl-speed tdl-mono">
           {{ fmtSpeed(toolDlState.totalSpeed) }}
         </span>
@@ -257,14 +262,14 @@ function modeText(task: ToolDlSnapshot): string {
           @click="handleClearFinished"
         >
           <Trash2 :size="13" />
-          清除已完成
+          {{ t("tools.download.clearFinished") }}
         </button>
       </div>
 
       <div v-if="toolDlState.tasks.length === 0" class="tdl-empty">
         <EmptyState>
           <Download :size="40" :stroke-width="1.5" opacity="0.5" />
-          <p>暂无下载任务</p>
+          <p>{{ t("tools.download.empty") }}</p>
         </EmptyState>
       </div>
 
@@ -279,7 +284,7 @@ function modeText(task: ToolDlSnapshot): string {
             <button
               v-if="task.status === 'downloading'"
               class="tdl-icon-btn"
-              v-tooltip="'暂停（保留断点）'"
+              v-tooltip="t('tools.download.pause')"
               @click="handlePause(task)"
             >
               <Pause :size="13" />
@@ -287,7 +292,7 @@ function modeText(task: ToolDlSnapshot): string {
             <button
               v-if="task.status === 'paused' || task.status === 'error'"
               class="tdl-icon-btn"
-              v-tooltip="'继续下载'"
+              v-tooltip="t('tools.download.resume')"
               @click="handleResume(task)"
             >
               <Play :size="13" />
@@ -295,7 +300,7 @@ function modeText(task: ToolDlSnapshot): string {
             <button
               v-if="task.status === 'downloading' || task.status === 'queued'"
               class="tdl-icon-btn"
-              v-tooltip="'取消并清理'"
+              v-tooltip="t('tools.download.cancel')"
               @click="handleCancel(task)"
             >
               <X :size="13" />
@@ -303,7 +308,7 @@ function modeText(task: ToolDlSnapshot): string {
             <button
               v-if="task.status === 'done'"
               class="tdl-icon-btn"
-              v-tooltip="'打开所在目录'"
+              v-tooltip="t('tools.download.openFolder')"
               @click="handleOpenFolder(task)"
             >
               <FolderOpen :size="13" />
@@ -311,7 +316,7 @@ function modeText(task: ToolDlSnapshot): string {
             <button
               v-if="isFinished(task)"
               class="tdl-icon-btn"
-              v-tooltip="'移除记录'"
+              v-tooltip="t('tools.download.remove')"
               @click="handleRemove(task)"
             >
               <Trash2 :size="13" />
@@ -331,7 +336,7 @@ function modeText(task: ToolDlSnapshot): string {
               {{ fmtSpeed(task.speed) }}
             </span>
             <span v-if="toolDlEta(task) !== null" class="tdl-mono">
-              剩余 {{ fmtEta(toolDlEta(task)) }}
+              {{ t("tools.download.remaining", { eta: fmtEta(toolDlEta(task)) }) }}
             </span>
             <span v-if="task.total > 0" class="tdl-mono">{{ percentOf(task) }}%</span>
           </div>

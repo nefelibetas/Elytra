@@ -4,36 +4,43 @@ import { invoke } from "@tauri-apps/api/core";
 import { useConfigSection } from "../../utils/useConfigSection";
 import type { DownloaderConfig } from "../../types/config/DownloaderConfig";
 
-export const sourceModeOptions = [
-  { value: "auto", label: "智能模式", desc: "程序自动判断更快源：按资源类型与健康度自动选源，官方过慢自动降级镜像" },
-  { value: "officialOnly", label: "官方源", desc: "仅使用官方源，不自动回退" },
-  { value: "mirrorOnly", label: "仅镜像源", desc: "文件仅走 BMCLAPI 镜像、不自动回退；版本清单等元数据仍官方优先" },
+/** 下拉选项文案存 key，渲染侧再翻译（避免模块级 t()）。 */
+export interface OptionKeys {
+  value: string;
+  labelKey: string;
+  descKey: string;
+}
+
+export const sourceModeOptions: OptionKeys[] = [
+  { value: "auto", labelKey: "settings.download.sourceMode.auto.label", descKey: "settings.download.sourceMode.auto.desc" },
+  { value: "officialOnly", labelKey: "settings.download.sourceMode.officialOnly.label", descKey: "settings.download.sourceMode.officialOnly.desc" },
+  { value: "mirrorOnly", labelKey: "settings.download.sourceMode.mirrorOnly.label", descKey: "settings.download.sourceMode.mirrorOnly.desc" },
 ];
 
 // 网络代理模式：auto 检测系统代理（Win 注册表 / Linux 环境变量或 gsettings）；system 强制系统代理；direct 强制直连（TUN 由网络层接管）
-export const networkModeOptions = [
-  { value: "auto", label: "自动检测", desc: "自动使用系统代理；未开启代理时直连（TUN 模式自动生效）" },
-  { value: "system", label: "系统代理", desc: "强制使用系统代理（检测不到时回退直连）" },
-  { value: "direct", label: "直连", desc: "不走应用层代理，直连网络（TUN 模式仍由系统接管）" },
+export const networkModeOptions: OptionKeys[] = [
+  { value: "auto", labelKey: "settings.download.networkMode.auto.label", descKey: "settings.download.networkMode.auto.desc" },
+  { value: "system", labelKey: "settings.download.networkMode.system.label", descKey: "settings.download.networkMode.system.desc" },
+  { value: "direct", labelKey: "settings.download.networkMode.direct.label", descKey: "settings.download.networkMode.direct.desc" },
 ];
 
-export const communitySourceOptions = [
-  { value: "auto", label: "智能模式", desc: "优先Modrinth/CurseForge官方，加载缓慢时自动使用MCIM镜像站" },
-  { value: "officialOnly", label: "仅Modrinth/CurseForge", desc: "仅使用Modrinth/CurseForge官方" },
-  { value: "mirrorOnly", label: "仅镜像源", desc: "仅使用 MCIM 镜像站，不自动回退" },
+export const communitySourceOptions: OptionKeys[] = [
+  { value: "auto", labelKey: "settings.download.communityMode.auto.label", descKey: "settings.download.communityMode.auto.desc" },
+  { value: "officialOnly", labelKey: "settings.download.communityMode.officialOnly.label", descKey: "settings.download.communityMode.officialOnly.desc" },
+  { value: "mirrorOnly", labelKey: "settings.download.communityMode.mirrorOnly.label", descKey: "settings.download.communityMode.mirrorOnly.desc" },
 ];
 
 // JDK（managed runtime）下载源三态：auto 并发探测三源（Mojang/Adoptium/Azul）最快优先、不可达兜底；officialOnly 固定 Mojang→Azul；mirrorOnly 固定 Mojang（文件走镜像）→Adoptium 仅 TUNA（元数据走官方 API）。
-export const jdkSourceOptions = [
-  { value: "auto", label: "智能测速", desc: "Mojang / Adoptium / Azul 三源并发测速，最快者优先下载，不可达源自动兜底" },
-  { value: "officialOnly", label: "仅官方源", desc: "仅使用 Mojang 官方与 Azul，不启用国内镜像" },
-  { value: "mirrorOnly", label: "仅镜像源", desc: "Mojang 走文件源镜像，Adoptium 仅从清华 TUNA 下载（元数据例外走官方 API）" },
+export const jdkSourceOptions: OptionKeys[] = [
+  { value: "auto", labelKey: "settings.download.jdkMode.auto.label", descKey: "settings.download.jdkMode.auto.desc" },
+  { value: "officialOnly", labelKey: "settings.download.jdkMode.officialOnly.label", descKey: "settings.download.jdkMode.officialOnly.desc" },
+  { value: "mirrorOnly", labelKey: "settings.download.jdkMode.mirrorOnly.label", descKey: "settings.download.jdkMode.mirrorOnly.desc" },
 ];
 
 // 社区翻译显示模式（默认仅中文，en 后端跳过翻译请求）；标题译名来自内置表，简介翻译来自 MCIM
-export const translateDisplayOptions = [
-  { value: "zh", label: "仅中文", desc: "标题与简介显示中文（默认）" },
-  { value: "en", label: "仅英文", desc: "不请求翻译，显示英文原文" },
+export const translateDisplayOptions: OptionKeys[] = [
+  { value: "zh", labelKey: "settings.download.translateMode.zh.label", descKey: "settings.download.translateMode.zh.desc" },
+  { value: "en", labelKey: "settings.download.translateMode.en.label", descKey: "settings.download.translateMode.en.desc" },
 ];
 
 const section = useConfigSection();

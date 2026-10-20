@@ -13,7 +13,7 @@ use crate::downloader::fetcher;
 use crate::downloader::path_lock::PathLock;
 use crate::game::resource::extract::extract_zip_safe;
 use crate::persist;
-use crate::task::model::{DownloadFileItem, DownloadFileKind, DownloadFilesTask};
+use crate::task::model::{DownloadFileItem, DownloadFileKind, DownloadFilesTask, TaskText};
 use crate::task::{self, StepStatus, TaskProgress, TaskSpec, TaskStatus, WaitingDecision};
 
 use super::progress::{
@@ -515,6 +515,11 @@ async fn run_file_steps(
         step_done(app, progress, i);
         task::update_and_emit(app, progress, |p| {
             p.current_phase = format!("已完成 {}/{}", i + 1, total_files);
+            p.current_phase_key = Some("task.backend.phase.files_progress".into());
+            p.current_phase_params = Some(std::collections::BTreeMap::from([
+                ("done".to_string(), (i + 1).to_string()),
+                ("total".to_string(), total_files.to_string()),
+            ]));
         });
         if cancelled(cancel) {
             emit_handle.abort();
@@ -534,6 +539,8 @@ fn finish_files(app: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>, total_
         p.completed_files = total_files;
         p.total_files = total_files;
         p.current_phase = "完成".into();
+        p.current_phase_key = Some("task.backend.phase.done".into());
+        p.current_phase_params = None;
     });
     if let Some(p) = progress.try_lock() {
         let task_id = p.task_id.clone();
@@ -550,7 +557,7 @@ pub(crate) fn spawn_files_task(app: AppHandle, task: DownloadFilesTask) -> Resul
         .join("versions")
         .join(&task.version_dir_name);
     if !dir.is_dir() {
-        bail!(
+        bail_key!("errors.version.missing", 
             "目标版本目录不存在（请先在版本选择页选择已安装的版本）\n版本目录: {}",
             dir.display()
         );
@@ -559,6 +566,10 @@ pub(crate) fn spawn_files_task(app: AppHandle, task: DownloadFilesTask) -> Resul
     super::spawn_task(
         app,
         task.name(),
+        TaskText::new(
+            "task.backend.name.files",
+            &[("count", task.files.len().to_string())],
+        ),
         task.steps(),
         task::store::JobSpec::Files(task.clone()),
         move |a, cancel, progress| {

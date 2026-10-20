@@ -48,7 +48,7 @@ pub async fn fetch_asset_index(
                 if sha1_hex(&data) == sha1 {
                     eprintln!("[assets] 缓存命中: {}", path.display());
                     return String::from_utf8(data)
-                        .map_err(common_err_ctx!("读取缓存资源索引失败"));
+                        .map_err(common_err_ctx_key!("errors.file.read", "读取缓存资源索引失败"));
                 }
             }
         }
@@ -62,14 +62,14 @@ pub async fn fetch_asset_index(
             s.mirror_url(index_url)
         })
         .await
-        .map_err(common_err_ctx!("获取资源索引失败"))?;
+        .map_err(common_err_ctx_key!("errors.download.fetch", "获取资源索引失败"))?;
     eprintln!("[assets] 索引文本获取完成: {}B", text.len());
 
     if let Some(path) = &index_path {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(common_err_ctx!("创建索引目录失败"))?;
+            std::fs::create_dir_all(parent).map_err(common_err_ctx_key!("errors.file.createDir", "创建索引目录失败"))?;
         }
-        std::fs::write(path, &text).map_err(common_err_ctx!("写入资源索引失败"))?;
+        std::fs::write(path, &text).map_err(common_err_ctx_key!("errors.file.write", "写入资源索引失败"))?;
     }
     Ok(text)
 }

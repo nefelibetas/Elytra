@@ -3,10 +3,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { showError } from "../app/alert";
 import { CONFIG_RECOVERY, type RecoveryNotice } from "../app/events";
+import { t } from "../../i18n";
 
 function notify(n: RecoveryNotice) {
   showError(
-    `配置文件已损坏，已重置为默认配置。\n原文件已备份到：${n.backup_path ?? "（备份失败）"}\n原因：${n.reason}`,
+    t("settings.recovery.message", {
+      path: n.backup_path ?? t("settings.recovery.backupFailed"),
+      reason: n.reason,
+    }),
     true,
   );
 }

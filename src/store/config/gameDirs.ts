@@ -10,6 +10,7 @@ import { LOADER_TITLES, LOADER_ICONS } from "../../utils/versionMeta";
 import { classifyVersion } from "../../utils/versionClassify";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
+import { t } from "../../i18n";
 import { openFolder } from "../../utils/fs";
 import { selectedVersion, setSelected, clearSelected } from "../app/selectedVersion";
 import { VERSIONS_CHANGED, type VersionsChanged } from "../app/events";
@@ -136,16 +137,16 @@ export function menuRename() {
 }
 
 export async function confirmRename() {
-  const t = renameTarget.value;
-  if (!t) return;
+  const target = renameTarget.value;
+  if (!target) return;
   const name = renameInput.value.trim();
   if (!name) {
-    renameError.value = "名称不能为空";
+    renameError.value = t("settings.version.select.nameRequired");
     return;
   }
   try {
     dirs.value = await invoke<GameDir[]>("rename_game_dir", {
-      path: t.path,
+      path: target.path,
       newName: name,
     });
     renameDialog.value = false;
@@ -173,7 +174,7 @@ export async function addFolder() {
 export async function confirmAdd() {
   const name = addInput.value.trim();
   if (!name) {
-    addError.value = "名称不能为空";
+    addError.value = t("settings.version.select.nameRequired");
     return;
   }
   try {
@@ -198,10 +199,10 @@ const {
   deleteDialog, deleteTarget, openDelete, confirmDelete: runConfirmDelete,
 } = useConfirmDelete(async (versionName) => {
   // 先关 dialog 并提示删除中（delete_version_dir 递归删除可能耗时数秒）
-  showToast("正在删除版本…");
+  showToast(t("settings.version.select.deleting"));
   try {
     await invoke("delete_version_dir", { versionName });
-    showToast(`版本「${versionName}」已经删除`);
+    showToast(t("settings.version.select.deleted", { name: versionName }));
     // 删除的是当前选中版本 → 清理持久化选择
     if (selectedVersion.value === versionName) {
       clearSelected();
@@ -255,7 +256,7 @@ export const allVersions = computed(() =>
         category,
         title,
         loaderVersion,
-        subtitle: category === "vanilla" ? "原版" : loaderVersion || title,
+        subtitle: category === "vanilla" ? t("settings.version.select.vanilla") : loaderVersion || title,
         icon: LOADER_ICONS[category] ?? LOADER_ICONS.vanilla,
       };
     })

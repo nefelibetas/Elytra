@@ -2,7 +2,10 @@
 // 外观设置：内置亮色主题（Grass/End/Nether/Ice）+ 自定义色板。
 // 即时生效并持久化 localStorage；自定义卡片 hover 显示编辑/删除。
 import { computed, onMounted } from "vue";
+import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
+import DropSelect from "../common/DropSelect.vue";
+import { currentLocale, languageSetting, setLanguage, type LanguageSetting } from "../../i18n";
 import {
   THEMES, themeId, customThemes, isCustom,
   deleteCustomTheme, activateCustomTheme, ensureCustomThemesApplied,
@@ -10,22 +13,46 @@ import {
 } from "../../store/app/theme";
 import { Trash2, Pencil, Plus } from "@lucide/vue";
 
+const { t } = useI18n();
+
 // 挂载时注入已保存自定义主题样式（刷新后 style 不持久）。
 onMounted(() => ensureCustomThemesApplied());
 
 const allThemes = computed(() => {
-  const customs = Object.values(customThemes.value).map((t) => ({
-    id: t.id,
-    label: t.name,
-    desc: t.desc || "自定义外观",
+  const builtins = THEMES.map((theme) => ({
+    id: theme.id,
+    label: t(theme.labelKey),
+    desc: t(theme.descKey),
+    swatch: theme.swatch,
+  }));
+  const customs = Object.values(customThemes.value).map((theme) => ({
+    id: theme.id,
+    label: theme.name,
+    desc: theme.desc || t("settings.appearance.customDesc"),
     swatch: [
-      t.vars["--color-brand"],
-      t.vars["--text-primary"],
-      t.vars["--surface-page"],
+      theme.vars["--color-brand"],
+      theme.vars["--text-primary"],
+      theme.vars["--surface-page"],
     ] as string[],
   }));
-  return [...THEMES, ...customs];
+  return [...builtins, ...customs];
 });
+
+const languageOptions = computed(() => [
+  {
+    value: "auto",
+    label: t("common.language.autoCurrent", {
+      locale: currentLocale.value === "zh-CN" ? t("common.language.zhCN") : t("common.language.enUS"),
+    }),
+    desc: t("common.language.desc"),
+  },
+  { value: "zh-CN", label: t("common.language.zhCN") },
+  { value: "en-US", label: t("common.language.enUS") },
+]);
+
+function onLanguage(value: string) {
+  setLanguage(value as LanguageSetting);
+}
 
 
 function isActive(id: string) {
@@ -75,9 +102,9 @@ function openEdit(id: string) {
 }
 
 function removeCustom(id: string) {
-  const t = customThemes.value[id];
-  if (!t) return;
-  if (window.confirm(`删除自定义外观「${t.name}」？`)) {
+  const theme = customThemes.value[id];
+  if (!theme) return;
+  if (window.confirm(t("settings.appearance.deleteConfirm", { name: theme.name }))) {
     deleteCustomTheme(id);
   }
 }
@@ -87,25 +114,39 @@ function removeCustom(id: string) {
 <template>
   <section class="stg-card">
     <div class="stg-card-hdr">
-      <h3>外观</h3>
-      <p class="stg-card-sub">选择主题（内置均为亮色，accent 取自 Minecraft 生态；可添加自定义外观）</p>
+      <h3>{{ t("common.language.title") }}</h3>
+      <p class="stg-card-sub">{{ t("common.language.desc") }}</p>
+    </div>
+    <div class="lang-select">
+      <DropSelect
+        :model-value="languageSetting"
+        :options="languageOptions"
+        @update:model-value="onLanguage"
+      />
+    </div>
+  </section>
+
+  <section class="stg-card">
+    <div class="stg-card-hdr">
+      <h3>{{ t("settings.appearance.title") }}</h3>
+      <p class="stg-card-sub">{{ t("settings.appearance.subtitle") }}</p>
     </div>
     <div class="appearance-grid">
       <button
-        v-for="t in allThemes"
-        :key="t.id"
+        v-for="theme in allThemes"
+        :key="theme.id"
         class="appearance-item"
-        :class="{ active: isActive(t.id), 'appearance-item--custom': isCustom(t.id) }"
-        @click="onPick(t.id)"
+        :class="{ active: isActive(theme.id), 'appearance-item--custom': isCustom(theme.id) }"
+        @click="onPick(theme.id)"
       >
-        <span class="appearance-icon" :style="iconStyle(t.swatch)"></span>
-        <span class="appearance-name">{{ t.label }}</span>
-        <span class="appearance-desc">{{ t.desc }}</span>
-        <span v-if="isCustom(t.id)" class="appearance-custom-ops" @click.stop>
-          <button class="appearance-op" v-tooltip="'编辑'" @click="openEdit(t.id)">
+        <span class="appearance-icon" :style="iconStyle(theme.swatch)"></span>
+        <span class="appearance-name">{{ theme.label }}</span>
+        <span class="appearance-desc">{{ theme.desc }}</span>
+        <span v-if="isCustom(theme.id)" class="appearance-custom-ops" @click.stop>
+          <button class="appearance-op" v-tooltip="t('common.action.edit')" @click="openEdit(theme.id)">
             <Pencil :size="13" />
           </button>
-          <button class="appearance-op danger" v-tooltip="'删除'" @click="removeCustom(t.id)">
+          <button class="appearance-op danger" v-tooltip="t('common.action.delete')" @click="removeCustom(theme.id)">
             <Trash2 :size="13" />
           </button>
         </span>
@@ -113,8 +154,8 @@ function removeCustom(id: string) {
 
       <button class="appearance-item appearance-add" @click="openNew(themeId)">
         <span class="appearance-icon appearance-add-icon"><Plus :size="26" /></span>
-        <span class="appearance-name">添加自定义</span>
-        <span class="appearance-desc">自定义品牌色与文本配色</span>
+        <span class="appearance-name">{{ t("settings.appearance.addCustom") }}</span>
+        <span class="appearance-desc">{{ t("settings.appearance.addCustomDesc") }}</span>
       </button>
     </div>
 
@@ -126,6 +167,10 @@ function removeCustom(id: string) {
 </style>
 
 <style scoped>
+.lang-select {
+  max-width: 320px;
+}
+
 .appearance-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));

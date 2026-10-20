@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { modpackSearch } from "../../store/community/categorySearch";
 import { importLocalModpack } from "../../store/task/modpack";
 import CommunitySearchBar from "./CommunitySearchBar.vue";
+
+const { t } = useI18n();
 
 /** 本地导入：选 .mrpack/.zip → install_modpack（后端自动嗅探 Modrinth/CurseForge 清单）。 */
 const importing = ref(false);
@@ -17,9 +20,13 @@ async function importLocal() {
 </script>
 
 <template>
-  <CommunitySearchBar :search="modpackSearch" title="搜索整合包" id-prefix="modpack">
+  <CommunitySearchBar
+    :search="modpackSearch"
+    :title="t('download.search.title', { category: t('download.categories.modpack') })"
+    id-prefix="modpack"
+  >
     <template #prepend-actions>
-      <button class="cs-btn" :disabled="importing" @click="importLocal">导入本地</button>
+      <button class="cs-btn" :disabled="importing" @click="importLocal">{{ t("download.search.importLocal") }}</button>
     </template>
   </CommunitySearchBar>
 </template>

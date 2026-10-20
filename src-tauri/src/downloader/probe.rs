@@ -128,9 +128,9 @@ async fn probe_url_uncached(url: &str) -> ProbeResult {
             .timeout(Duration::from_secs(PROBE_TIMEOUT_SECS))
             .send()
             .await
-            .map_err(common_err_ctx!("请求失败"))?;
+            .map_err(common_err_ctx_key!("errors.network", "请求失败"))?;
         if !resp.status().is_success() {
-            bail!("请求失败\nHTTP {}", resp.status());
+            bail_key!("errors.network", "请求失败\nHTTP {}", resp.status());
         }
         Ok::<(), String>(())
     };

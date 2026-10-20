@@ -22,13 +22,13 @@ mod spawn;
 pub use manager::{global, init, TaskManager, WaitingDecision};
 pub use model::{
     DownloadFileItem, DownloadFileKind, DownloadFileTask, DownloadFilesTask, DownloadTask,
-    FabricApi, LoaderChoice, LoaderKind, ModpackInstallSpec, StepInfo, StepStatus, TaskProgress,
-    TaskStatus,
+    FabricApi, LoaderChoice, LoaderKind, ModpackInstallSpec, StepInfo, StepKind, StepStatus,
+    TaskProgress, TaskStatus, TaskText,
 };
 pub use spawn::{spawn_download, spawn_install_jdk, spawn_task_with_sink};
-pub use steps::{StepKind, StepSpec, TaskSpec};
+pub use steps::{StepSpec, TaskSpec};
 
 pub(crate) use ctx::TaskCtx;
 pub use emit::EventSink;
 pub(crate) use emit::{emit, emit_event, update_and_emit};
-pub(crate) use spawn::{spawn_task, steps_by_names};
+pub(crate) use spawn::spawn_task;

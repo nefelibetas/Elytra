@@ -2,6 +2,7 @@
 // 通用自定义下拉（原生 <select> 替代品）：自定义面板统一风格（对齐 jdk-dropdown 视觉）。
 // 纯展示控件：v-model 双向绑定 + 点击外部关闭。
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from "vue";
+import { useI18n } from "vue-i18n";
 import { Check, ChevronDown } from "@lucide/vue";
 
 export interface SelOption {
@@ -23,12 +24,14 @@ const props = withDefaults(
   {
     disabled: false,
     width: "100%",
-    placeholder: "请选择",
+    placeholder: "",
     maxHeight: "280px",
   },
 );
 
 const emit = defineEmits<{ (e: "update:modelValue", v: string): void }>();
+const { t } = useI18n();
+const placeholderText = computed(() => props.placeholder || t("common.action.select"));
 
 const open = ref(false);
 const rootEl = ref<HTMLElement>();
@@ -99,7 +102,7 @@ function select(o: SelOption) {
       type="button"
       @click="open = !open"
     >
-      <span class="ds-label">{{ current?.label ?? placeholder }}</span>
+      <span class="ds-label">{{ current?.label ?? placeholderText }}</span>
       <ChevronDown class="ds-chev" :class="{ flip: open }" :size="12" />
     </button>
 

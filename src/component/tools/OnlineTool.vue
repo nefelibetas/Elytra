@@ -2,6 +2,7 @@
 // 联机工具：EasyTier 虚拟局域网（host 开房间 / guest 加入 / 停止）；配置（协调服务器、广播名）在「设置 → 联机设置」。
 // host 可先开联机（等待态）再「对局域网开放」，检测到端口自动生成房间码 U/XXXX-XXXX-XXXX-XXXX；正版 host 由服务器验证会话（朋友需正版），离线 host 任意可进。
 import { onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { Copy, Link2, Unplug } from "@lucide/vue";
 import {
   onlineStatus, onlineRoomCode, onlineLocalPort, onlinePlayers,
@@ -11,6 +12,8 @@ import {
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 import { copyText } from "../../utils/clipboard";
+
+const { t } = useI18n();
 
 onMounted(() => {
   ensureOnlineListen();
@@ -25,7 +28,7 @@ async function handleStartHost() {
   busy.value = true;
   try {
     await startHost();
-    showToast("联机已开启，等待游戏开放局域网");
+    showToast(t("tools.online.hostStarted"));
   } catch (e) {
     showToast(errMsg(e));
   } finally {
@@ -37,7 +40,7 @@ async function handleJoin() {
   busy.value = true;
   try {
     await joinRoom(roomCodeInput.value.trim());
-    showToast(`已加入，游戏内局域网标签页点 "Elytra 联机"`);
+    showToast(t("tools.online.joined"));
   } catch (e) {
     showToast(errMsg(e));
   } finally {
@@ -48,43 +51,43 @@ async function handleJoin() {
 async function handleStop() {
   try {
     await stopOnline();
-    showToast("联机已停止");
+    showToast(t("tools.online.stopped"));
   } catch (e) {
     showToast(errMsg(e));
   }
 }
 
 async function copyRoomCode() {
-  await copyText(onlineRoomCode.value, "房间码已复制");
+  await copyText(onlineRoomCode.value, t("tools.online.roomCodeCopied"));
 }
 </script>
 
 <template>
   <div class="tool-card">
     <div class="tool-card-hdr">
-      <h3>联机</h3>
-      <div class="tool-card-sub">EasyTier 虚拟局域网：无需公网服务器，房间码互连</div>
+      <h3>{{ t("tools.online.title") }}</h3>
+      <div class="tool-card-sub">{{ t("tools.online.subtitle") }}</div>
     </div>
 
     <div class="online-status">
       <span class="online-dot" :class="{ active: onlineStatus !== 'idle', pulse: onlineStatus === 'waiting' }" />
       <span class="online-status-text">
         {{
-          onlineStatus === "hosting" ? "联机中（主机）"
-          : onlineStatus === "joining" ? "联机中（已加入）"
-          : onlineStatus === "waiting" ? "等待游戏中开启局域网…"
-          : "未联机"
+          onlineStatus === "hosting" ? t("tools.online.statusHosting")
+          : onlineStatus === "joining" ? t("tools.online.statusJoining")
+          : onlineStatus === "waiting" ? t("tools.online.statusWaiting")
+          : t("tools.online.statusIdle")
         }}
       </span>
     </div>
 
     <div class="online-sec">
-      <div class="online-sec-title">作为主机</div>
-      <p class="online-desc">点"开启联机"后，游戏里"对局域网开放"即可——启动器自动生成房间码，发给朋友即可加入。</p>
-      <p class="online-desc">联机昵称与广播名可在 设置 → 联机设置 中配置（昵称显示给其他玩家，广播名是 guest 端看到的房间名）。</p>
+      <div class="online-sec-title">{{ t("tools.online.hostSection") }}</div>
+      <p class="online-desc">{{ t("tools.online.hostDesc1") }}</p>
+      <p class="online-desc">{{ t("tools.online.hostDesc2") }}</p>
 
       <div v-if="onlineStatus === 'waiting'" class="online-waiting">
-        游戏开放局域网后这里会显示房间码
+        {{ t("tools.online.waitingHint") }}
       </div>
 
       <div v-if="onlineStatus === 'hosting'" class="online-room">
@@ -100,7 +103,7 @@ async function copyRoomCode() {
           @click="copyRoomCode"
         >
           <Copy :size="14" />
-          复制房间码
+          {{ t("tools.online.copyRoomCode") }}
         </button>
         <button
           v-if="onlineStatus === 'hosting' || onlineStatus === 'waiting'"
@@ -108,7 +111,7 @@ async function copyRoomCode() {
           @click="handleStop"
         >
           <Unplug :size="14" />
-          停止联机
+          {{ t("tools.online.stop") }}
         </button>
         <button
           v-else-if="onlineStatus === 'idle'"
@@ -117,17 +120,17 @@ async function copyRoomCode() {
           @click="handleStartHost"
         >
           <Link2 :size="14" />
-          {{ busy ? "开启中..." : "开启联机" }}
+          {{ busy ? t("tools.online.startingHost") : t("tools.online.startHost") }}
         </button>
       </div>
     </div>
 
     <div class="online-sec">
-      <div class="online-sec-title">加入联机</div>
-      <p class="online-desc">输入主机分享的房间码，加入后游戏内多人游戏 → 局域网标签页点 "Elytra 联机" 进入。</p>
+      <div class="online-sec-title">{{ t("tools.online.joinSection") }}</div>
+      <p class="online-desc">{{ t("tools.online.joinDesc") }}</p>
 
       <div class="online-row">
-        <span class="online-label">房间码</span>
+        <span class="online-label">{{ t("tools.online.roomCode") }}</span>
         <input
           v-model="roomCodeInput"
           class="online-input"
@@ -139,8 +142,8 @@ async function copyRoomCode() {
       </div>
 
       <div v-if="onlineStatus === 'joining' && onlineLocalPort" class="online-room">
-        <span class="online-room-code">Elytra 联机</span>
-        <span class="online-hint">游戏内局域网标签页已出现，点击进入（本地端口 {{ onlineLocalPort }}）</span>
+        <span class="online-room-code">{{ t("tools.online.roomDisplayName") }}</span>
+        <span class="online-hint">{{ t("tools.online.joiningHint", { port: onlineLocalPort }) }}</span>
       </div>
 
       <div v-if="onlineErrorGuest" class="online-error">{{ errMsg(onlineErrorGuest) }}</div>
@@ -152,7 +155,7 @@ async function copyRoomCode() {
           @click="handleStop"
         >
           <Unplug :size="14" />
-          停止联机
+          {{ t("tools.online.stop") }}
         </button>
         <button
           v-else-if="onlineStatus === 'idle'"
@@ -161,18 +164,18 @@ async function copyRoomCode() {
           @click="handleJoin"
         >
           <Link2 :size="14" />
-          {{ busy ? "加入中..." : "加入联机" }}
+          {{ busy ? t("tools.online.joining") : t("tools.online.join") }}
         </button>
       </div>
     </div>
 
     <div v-if="onlinePlayers.length > 0" class="online-sec">
-      <div class="online-sec-title">玩家（{{ onlinePlayers.length }}）</div>
+      <div class="online-sec-title">{{ t("tools.online.players", { count: onlinePlayers.length }, onlinePlayers.length) }}</div>
       <ul class="online-players">
         <li v-for="p in onlinePlayers" :key="p.machine_id" class="online-player">
           <span class="online-player-dot" :class="p.kind === 'HOST' ? 'host' : 'guest'" />
           <span class="online-player-name">{{ p.name }}</span>
-          <span class="online-player-tag">{{ p.kind === "HOST" ? "主机" : p.kind === "LOCAL" ? "我" : "房客" }}</span>
+          <span class="online-player-tag">{{ p.kind === "HOST" ? t("tools.online.roleHost") : p.kind === "LOCAL" ? t("tools.online.roleSelf") : t("tools.online.roleGuest") }}</span>
         </li>
       </ul>
     </div>

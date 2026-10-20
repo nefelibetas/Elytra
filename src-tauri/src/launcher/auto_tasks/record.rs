@@ -77,11 +77,11 @@ pub fn record_mods(
 
     let out = mods_json_path(config_dir, version_id);
     if let Some(parent) = out.parent() {
-        std::fs::create_dir_all(parent).map_err(common_err_ctx!("创建记录目录失败"))?;
+        std::fs::create_dir_all(parent).map_err(common_err_ctx_key!("errors.file.createDir", "创建记录目录失败"))?;
     }
     let text =
         serde_json::to_string_pretty(&snapshot).map_err(common_err_ctx!("序列化 mod 清单失败"))?;
-    std::fs::write(&out, text).map_err(common_err_ctx!("写入 mod 清单失败"))?;
+    std::fs::write(&out, text).map_err(common_err_ctx_key!("errors.file.write", "写入 mod 清单失败"))?;
     Ok(out)
 }
 

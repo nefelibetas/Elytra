@@ -41,7 +41,7 @@ fn read_version_json(vdir: &Path) -> Result<VersionJson, String> {
             vdir.display()
         )
     })?;
-    let text = std::fs::read_to_string(&vj_path).map_err(common_err_ctx!("读取版本文件失败"))?;
+    let text = std::fs::read_to_string(&vj_path).map_err(common_err_ctx_key!("errors.version.read", "读取版本文件失败"))?;
     serde_json::from_str(&text).map_err(|e| {
         format!(
             "版本 JSON 损坏\n{} 解析失败: {e}，请删除该版本后重新下载安装",
@@ -130,18 +130,38 @@ pub async fn scan_missing(version_dir_name: &str) -> Result<MissingReport, Strin
 
 /// 按缺失情况生成修复步骤（顺序与 run_repair_task 的索引构造一致）。
 pub fn repair_steps(report: &MissingReport) -> Vec<String> {
+    repair_step_specs(report)
+        .into_iter()
+        .map(|s| s.name)
+        .collect()
+}
+
+/// 修复步骤（带 kind，前端可翻译）；顺序与 [`repair_steps`] 一致。
+pub fn repair_step_specs(report: &MissingReport) -> Vec<task::StepSpec> {
     let mut steps = Vec::new();
     if report.client_jar {
-        steps.push("下载客户端文件".to_string());
+        steps.push(task::StepSpec {
+            name: "下载客户端文件".to_string(),
+            kind: task::StepKind::RepairClient,
+        });
     }
     if report.libraries > 0 {
-        steps.push("下载支持库文件".to_string());
+        steps.push(task::StepSpec {
+            name: "下载支持库文件".to_string(),
+            kind: task::StepKind::RepairLibraries,
+        });
     }
     if report.assets > 0 {
-        steps.push("下载资源文件".to_string());
+        steps.push(task::StepSpec {
+            name: "下载资源文件".to_string(),
+            kind: task::StepKind::RepairAssets,
+        });
     }
     if report.natives > 0 {
-        steps.push("处理 native 库".to_string());
+        steps.push(task::StepSpec {
+            name: "处理 native 库".to_string(),
+            kind: task::StepKind::RepairNatives,
+        });
     }
     steps
 }
@@ -258,6 +278,8 @@ fn close_repair_noop(app: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>) {
         p.status = TaskStatus::Done;
         p.progress = 100.0;
         p.current_phase = "文件完整，无需修复".into();
+        p.current_phase_key = Some("task.backend.phase.no_repair".into());
+        p.current_phase_params = None;
     });
     if let Some(p) = progress.try_lock() {
         let task_id = p.task_id.clone();
@@ -473,6 +495,8 @@ pub async fn run_repair_task(
         p.completed_files = p.total_files;
         p.progress = 100.0;
         p.current_phase = "修复完成".into();
+        p.current_phase_key = Some("task.backend.phase.repair_done".into());
+        p.current_phase_params = None;
     });
     if let Some(p) = progress.try_lock() {
         let task_id = p.task_id.clone();
@@ -570,7 +594,7 @@ pub async fn count_assets_all(
         assets::fetch_asset_index(config, mc_dir, asset_index_url, index_id, index_sha1).await?;
     eprintln!("[assets] 索引文本: {}B", text.len());
     let idx: serde_json::Value =
-        serde_json::from_str(&text).map_err(common_err_ctx!("解析资源索引失败"))?;
+        serde_json::from_str(&text).map_err(common_err_ctx_key!("errors.parse", "解析资源索引失败"))?;
     eprintln!("[assets] JSON 解析完成");
     let objects_dir = mc_dir.join("assets").join("objects");
 

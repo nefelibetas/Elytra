@@ -213,6 +213,8 @@ fn settle_jdk_install(
                 p.progress = 100.0;
                 p.completed_files = p.total_files;
                 p.current_phase = "完成".into();
+                p.current_phase_key = Some("task.backend.phase.done".into());
+                p.current_phase_params = None;
             });
             if let Some(p) = progress.try_lock() {
                 let task_id = p.task_id.clone();

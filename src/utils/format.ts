@@ -1,9 +1,21 @@
 // 通用格式化（各页面共用，勿重复定义）
+import { currentLocale, t } from "../i18n";
+
+let countLocale = "";
+let countFormatter = new Intl.NumberFormat("zh-CN", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
 
 export function fmtCount(n: number): string {
-  if (n >= 100_000_000) return (n / 100_000_000).toFixed(1).replace(/\.0$/, "") + "亿";
-  if (n >= 10_000) return (n / 10_000).toFixed(1).replace(/\.0$/, "") + "万";
-  return String(n);
+  if (currentLocale.value !== countLocale) {
+    countLocale = currentLocale.value;
+    countFormatter = new Intl.NumberFormat(countLocale, {
+      notation: "compact",
+      maximumFractionDigits: 1,
+    });
+  }
+  return countFormatter.format(n);
 }
 
 export function fmtSize(bytes: number): string {
@@ -30,10 +42,10 @@ export function fmtSpeed(bps: number): string {
 /** 剩余秒数；null（停滞/速度过低）显示 —。 */
 export function fmtEta(secs: number | null): string {
   if (secs == null) return "—";
-  if (secs < 60) return `${secs} 秒`;
+  if (secs < 60) return t("task.eta.seconds", { count: secs });
   const m = Math.floor(secs / 60);
-  if (m < 60) return `${m} 分 ${secs % 60} 秒`;
-  return `${Math.floor(m / 60)} 时 ${m % 60} 分`;
+  if (m < 60) return t("task.eta.minutes", { m, s: secs % 60 });
+  return t("task.eta.hours", { h: Math.floor(m / 60), m: m % 60 });
 }
 
 export function fmtUnix(sec: number): string {

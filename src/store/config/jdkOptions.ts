@@ -5,6 +5,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useConfigSection } from "../../utils/useConfigSection";
 import { dlState, registerTaskDoneHook, type TaskKind } from "../task/download";
 import { showToast } from "../../utils/toast";
+import { t } from "../../i18n";
 
 import type { JdkInfo } from "../../types/jdk/JdkInfo";
 import type { JdkOptions } from "../../types/jdk/JdkOptions";
@@ -81,10 +82,10 @@ export async function installJdk(major: number): Promise<void> {
     // 预注册任务卡片（kind=jdk：App.vue 完成回调据此跳过 toast/跳转）并做统一竞态校正；silentFastExit：已有「已提交」提示，不叠加中性提示。
     await dlState.adoptTask(
       taskId,
-      { name: `下载 Java ${major}`, kind: "jdk" as TaskKind },
+      { name: t("settings.jdk.taskName", { major }), kind: "jdk" as TaskKind },
       true,
     );
-    showToast(`已提交 Java ${major} 下载任务`);
+    showToast(t("settings.jdk.submitted", { major }));
   } finally {
     loading.value = false;
   }
@@ -109,12 +110,12 @@ async function onJdkInstalled(major: number) {
       autoMode.value = false;
       activeJdk.value = info;
       await saveConfig();
-      showToast(`Java ${major} 已安装并自动选择`);
+      showToast(t("settings.jdk.installedSelected", { major }));
     } else {
-      showToast(`Java ${major} 已安装完成`);
+      showToast(t("settings.jdk.installed", { major }));
     }
   } catch {
-    showToast(`Java ${major} 已安装完成，自动选择失败`);
+    showToast(t("settings.jdk.installedSelectFailed", { major }));
   }
 }
 

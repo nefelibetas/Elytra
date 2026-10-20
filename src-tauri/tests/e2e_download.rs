@@ -33,6 +33,16 @@ impl RecordingSink {
     }
 }
 
+fn step_specs(names: &[&str]) -> Vec<task::StepSpec> {
+    names
+        .iter()
+        .map(|name| task::StepSpec {
+            name: (*name).to_string(),
+            kind: task::StepKind::File,
+        })
+        .collect()
+}
+
 /// 从官方清单取指定版本的 JSON URL（避免硬编码会随版本更新失效的 packages 路径）。
 async fn version_url_for(version_id: &str) -> String {
     let cfg = DownloaderConfig::default();
@@ -69,7 +79,11 @@ async fn run_task_cancel_path() {
     let sink: Arc<dyn EventSink> = rec.clone();
 
     let task = vanilla_task("1.20.1", version_url_for("1.20.1").await);
-    let (task_id, cancel, progress) = task::global().create("e2e-cancel", &["测试步骤"]);
+    let (task_id, cancel, progress) = task::global().create(
+        "e2e-cancel",
+        &task::TaskText::default(),
+        &step_specs(&["测试步骤"]),
+    );
 
     // 阶段 C 前置位取消：A/B 仍会真实执行（验证其编排），下载前即收口
     cancel.store(true, Ordering::SeqCst);
@@ -104,6 +118,7 @@ fn spawn_task_with_sink_registers_and_runs() {
     let task_id = task::spawn_task_with_sink(
         sink,
         task.name().to_string(),
+        task::TaskText::default(),
         task.steps(),
         task::store::JobSpec::Download(task.clone()),
         move |_sink, cancel, progress| {
@@ -140,7 +155,11 @@ async fn run_task_full_download() {
 
     let version_id = "1.20.1";
     let task = vanilla_task(version_id, version_url_for(version_id).await);
-    let (task_id, cancel, progress) = task::global().create("e2e-full", &["版本 JSON"]);
+    let (task_id, cancel, progress) = task::global().create(
+        "e2e-full",
+        &task::TaskText::default(),
+        &step_specs(&["版本 JSON"]),
+    );
 
     run_task(sink, &cancel, &progress, &task).await;
 

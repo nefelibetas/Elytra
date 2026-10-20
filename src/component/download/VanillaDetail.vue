@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ArrowLeft, X, ChevronDown } from "@lucide/vue";
+import { useI18n } from "vue-i18n";
 import {
   vdState, displayLoaders, loaderIcon, vanillaIcon,
 } from "../../store/task/versionDownload";
@@ -20,17 +21,18 @@ const EMPTY_VERSION: VersionMeta = {
   id: "", type: "", url: "", time: "", releaseTime: "", sha1: "", complianceLevel: 0,
 };
 const sv = () => vdState.selectedVersion ?? EMPTY_VERSION;
+const { t } = useI18n();
 </script>
 
 <template>
   <div class="det-card">
     <div class="det-hdr">
-      <button class="det-back" @click="vdState.backToList" v-tooltip="'返回'">
+      <button class="det-back" @click="vdState.backToList" v-tooltip="t('download.vanilla.back')">
         <ArrowLeft :size="16" />
       </button>
       <img :src="vdState.selectedMainLoader && loaderIcon[vdState.selectedMainLoader] ? loaderIcon[vdState.selectedMainLoader] : versionIcon(sv())" width="28" height="28" class="det-icon" alt="" />
       <input class="det-input" v-model="vdState.versionInput" autocomplete="off" />
-      <span v-if="vdState.resolvedDirName" class="det-dir">目录: {{ vdState.resolvedDirName }}</span>
+      <span v-if="vdState.resolvedDirName" class="det-dir">{{ t("download.vanilla.directory", { name: vdState.resolvedDirName }) }}</span>
     </div>
   </div>
 
@@ -44,15 +46,15 @@ const sv = () => vdState.selectedVersion ?? EMPTY_VERSION;
             <span class="det-ld-title">{{ ld.name }}</span>
             <span class="det-ld-sub">
               <template v-if="vdState.selectedLoaderVersions[ld.key]">{{ ld.name }} {{ vdState.selectedLoaderVersions[ld.key] }}</template>
-              <template v-else-if="vdState.loaderLoading[ld.key]">正在加载...</template>
-              <template v-else-if="vdState.getLoaderVersions(ld.key, sv().id).length">可以添加</template>
-              <template v-else>无</template>
+              <template v-else-if="vdState.loaderLoading[ld.key]">{{ t("download.vanilla.loaderLoading") }}</template>
+              <template v-else-if="vdState.getLoaderVersions(ld.key, sv().id).length">{{ t("download.vanilla.loaderAvailable") }}</template>
+              <template v-else>{{ t("download.vanilla.loaderUnavailable") }}</template>
               <!-- Fabric/Quilt loader 版本无关（meta 不按 MC 版本过滤）：任何版本兼容性均未验证，需手动确认 -->
-              <span v-if="ld.key === 'fabric' || ld.key === 'quilt'" class="det-ld-warn" v-tooltip="'该加载器为版本无关构建，meta 不按 MC 版本过滤；最新版也可能与当前 MC 不兼容，安装前请确认'">兼容性需确认</span>
+              <span v-if="ld.key === 'fabric' || ld.key === 'quilt'" class="det-ld-warn" v-tooltip="t('download.vanilla.compatibilityTip')">{{ t("download.vanilla.compatibilityUnconfirmed") }}</span>
             </span>
           </span>
           <span v-if="vdState.selectedLoaderVersions[ld.key] || vdState.getLoaderVersions(ld.key, sv().id).length" class="det-ld-actions">
-            <button v-if="vdState.selectedLoaderVersions[ld.key]" class="det-ld-remove" @click.stop="vdState.clearLoaderVer(ld.key)" v-tooltip="'移除'">
+            <button v-if="vdState.selectedLoaderVersions[ld.key]" class="det-ld-remove" @click.stop="vdState.clearLoaderVer(ld.key)" v-tooltip="t('download.vanilla.remove')">
               <X :size="10" />
             </button>
             <ChevronDown v-if="vdState.getLoaderVersions(ld.key, sv().id).length" class="det-ld-arrow" :class="{ open: vdState.expandedLoader[ld.key] }" :size="12" />
@@ -77,13 +79,13 @@ const sv = () => vdState.selectedVersion ?? EMPTY_VERSION;
             <span class="det-ld-title">Fabric API</span>
             <span class="det-ld-sub">
               <template v-if="vdState.selectedLoaderVersions['fabric-api']">Fabric API {{ vdState.selectedLoaderVersions['fabric-api'] }}</template>
-              <template v-else-if="vdState.fabricApiLoading">正在加载...</template>
-              <template v-else-if="vdState.getFabricApiVersions(sv().id).length">可以添加</template>
-              <template v-else>无</template>
+              <template v-else-if="vdState.fabricApiLoading">{{ t("download.vanilla.loaderLoading") }}</template>
+              <template v-else-if="vdState.getFabricApiVersions(sv().id).length">{{ t("download.vanilla.loaderAvailable") }}</template>
+              <template v-else>{{ t("download.vanilla.loaderUnavailable") }}</template>
             </span>
           </span>
           <span v-if="vdState.selectedLoaderVersions['fabric-api'] || vdState.getFabricApiVersions(sv().id).length" class="det-ld-actions">
-            <button v-if="vdState.selectedLoaderVersions['fabric-api']" class="det-ld-remove" @click.stop="vdState.clearFabricApi()" v-tooltip="'移除'">
+            <button v-if="vdState.selectedLoaderVersions['fabric-api']" class="det-ld-remove" @click.stop="vdState.clearFabricApi()" v-tooltip="t('download.vanilla.remove')">
               <X :size="10" />
             </button>
             <ChevronDown v-if="vdState.getFabricApiVersions(sv().id).length" class="det-ld-arrow" :class="{ open: vdState.fabricApiExpanded }" :size="12" />
@@ -106,9 +108,9 @@ const sv = () => vdState.selectedVersion ?? EMPTY_VERSION;
   <div class="dl-spacer"></div>
   <div class="dl-footer">
     <button v-if="!vdState.dlSubmitting" class="dl-btn" :disabled="vdState.fabricApiUnready()" @click="startDownload">
-      开始下载
+      {{ t("download.vanilla.startDownload") }}
     </button>
-    <p v-else class="dl-done">已加入下载队列</p>
+    <p v-else class="dl-done">{{ t("download.vanilla.queued") }}</p>
   </div>
 </template>
 

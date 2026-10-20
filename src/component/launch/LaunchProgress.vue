@@ -1,16 +1,19 @@
 <script setup lang="ts">
 // 启动进度面板（启动时替换左侧内容，游戏窗口出现后切回）：顶部启动动画 + 步骤 + 底部取消启动
+import { useI18n } from "vue-i18n";
 import { Rocket, X } from "@lucide/vue";
 import StepDot from "../common/StepDot.vue";
 import { launchState, cancelLaunch } from "../../store/app/launch";
 import { selectedVersion } from "../../store/app/selectedVersion";
+
+const { t } = useI18n();
 </script>
 
 <template>
   <div class="lp-panel">
     <div class="lp-main">
       <div class="lp-head">
-        <div class="lp-title">正在启动游戏</div>
+        <div class="lp-title">{{ t("launch.progress.title") }}</div>
         <div class="lp-version">{{ selectedVersion }}</div>
       </div>
 
@@ -23,16 +26,16 @@ import { selectedVersion } from "../../store/app/selectedVersion";
       <div class="lp-steps">
         <div v-for="(st, i) in launchState.steps" :key="i" class="lp-step" :class="st.status">
           <StepDot :status="st.status" />
-          <span class="lp-name">{{ st.name }}</span>
+          <span class="lp-name">{{ t(st.key) }}</span>
         </div>
       </div>
 
-      <div v-if="launchState.phase === 'done'" class="lp-done">启动完成，游戏窗口即将出现</div>
+      <div v-if="launchState.phase === 'done'" class="lp-done">{{ t("launch.progress.done") }}</div>
     </div>
 
     <button v-if="launchState.phase === 'running'" class="lp-cancel" @click="cancelLaunch">
       <X :size="14" />
-      <span>取消启动</span>
+      <span>{{ t("launch.progress.cancel") }}</span>
     </button>
   </div>
 </template>

@@ -2,6 +2,7 @@
 // 版本设置-存档管理 tab：标题卡（打开存档文件夹）+ 列表卡（缩略图 + 名称 + 最后游玩），支持多选批量删除。
 import { computed, ref, onMounted, onUnmounted } from "vue";
 import { useRoute } from "vue-router";
+import { useI18n } from "vue-i18n";
 import { Folder, Trash2, Map } from "@lucide/vue";
 import { deleteWorld } from "../../store/task/versionDetail";
 import { ensureGameFolder } from "../../store/config/gameDirs";
@@ -21,6 +22,7 @@ import {
 } from "../../store/task/versionDetail";
 
 const route = useRoute();
+const { t } = useI18n();
 
 const versionName = computed(() => String(route.query.name ?? ""));
 
@@ -34,7 +36,9 @@ const deletePending = ref<string[]>([]);
 function doBatchDelete() {
   const names = [...selected.value];
   if (names.length === 0) return;
-  deleteLabel.value = names.length === 1 ? `「${names[0]}」` : `${names.length} 个存档`;
+  deleteLabel.value = names.length === 1
+    ? t("settings.version.setup.saves.targetOne", { name: names[0] })
+    : t("settings.version.setup.saves.targetMany", { count: names.length });
   deletePending.value = names;
   deleteDialog.value = true;
 }
@@ -46,7 +50,7 @@ async function confirmDelete() {
   for (const n of names) {
     try {
       await deleteWorld(versionName.value, n);
-      showToast(`已删除存档 ${n}`);
+      showToast(t("settings.version.setup.saves.deleted", { name: n }));
     } catch (e) {
       showToast(errMsg(e));
     }
@@ -85,10 +89,10 @@ async function openSavesFolder() {
     <!-- 标题卡 -->
     <div class="vss-card vss-head-card">
       <Map :size="16" class="vss-head-icon" />
-      <span class="vss-head-title">存档管理</span>
+      <span class="vss-head-title">{{ t("settings.version.setup.saves.title") }}</span>
       <button class="vss-act-btn" @click="openSavesFolder">
         <Folder :size="13" />
-        <span>打开存档文件夹</span>
+        <span>{{ t("settings.version.setup.saves.openFolder") }}</span>
       </button>
     </div>
 
@@ -96,11 +100,11 @@ async function openSavesFolder() {
     <div class="vss-card vss-list-card">
       <div class="vss-content">
         <Transition name="fade" mode="out-in">
-          <LoadingSpinner v-if="worldsLoading" key="loading" text="加载存档…" />
+          <LoadingSpinner v-if="worldsLoading" key="loading" :text="t('settings.version.setup.saves.loading')" />
           <ErrorState v-else-if="worldsError" key="err" :text="worldsError" />
           <EmptyState v-else-if="worlds.length === 0" key="empty">
             <Map :size="40" :stroke-width="1.5" opacity="0.5" />
-            <p>还没有存档，启动游戏后会自动创建</p>
+            <p>{{ t("settings.version.setup.saves.empty") }}</p>
           </EmptyState>
           <div v-else key="list" class="vss-list">
             <div v-for="w in worlds" :key="w.name" class="vss-item">
@@ -118,7 +122,7 @@ async function openSavesFolder() {
                 <Map v-else :size="18" class="vss-local-icon" />
                 <span class="vss-info">
                   <span class="vss-local-name">{{ w.name }}</span>
-                  <span class="vss-local-meta">最后游玩 {{ fmtUnix(w.last_modified) }}</span>
+                  <span class="vss-local-meta">{{ t("settings.version.setup.saves.lastPlayed", { date: fmtUnix(w.last_modified) }) }}</span>
                 </span>
               </div>
             </div>
@@ -131,27 +135,27 @@ async function openSavesFolder() {
     <Transition name="fade">
       <div v-if="selecting" class="vs-actions-bar vs-bar-boxed">
         <button class="vs-ab-btn" @click="toggleAll">
-          {{ allVisibleSelected ? "取消全选" : "全选" }}
+          {{ allVisibleSelected ? t("settings.version.setup.common.deselectAll") : t("settings.version.setup.common.selectAll") }}
         </button>
-        <button class="vs-ab-btn" @click="clear">取消</button>
-        <span class="vs-ab-count">已选 {{ selected.length }} 项</span>
+        <button class="vs-ab-btn" @click="clear">{{ t("settings.version.setup.common.deselect") }}</button>
+        <span class="vs-ab-count">{{ t("settings.version.setup.common.selectedCount", { count: selected.length }) }}</span>
         <button class="vs-ab-btn danger" @click="doBatchDelete">
           <Trash2 :size="13" />
-          <span>删除（{{ selected.length }}）</span>
+          <span>{{ t("settings.version.setup.common.deleteCount", { count: selected.length }) }}</span>
         </button>
       </div>
     </Transition>
 
     <!-- 删除确认 dialog -->
-    <AlertDialog v-model="deleteDialog" title="删除存档">
+    <AlertDialog v-model="deleteDialog" :title="t('settings.version.setup.saves.deleteTitle')">
       <div class="vss-dialog-body">
         <div class="vss-dialog-text">
-          确定要删除 {{ deleteLabel }} 吗？该操作会删除整个世界文件夹且无法恢复。
+          {{ t("settings.version.setup.saves.deleteConfirm", { target: deleteLabel }) }}
         </div>
       </div>
       <template #actions>
-        <button class="dialog-btn danger" @click="confirmDelete">删除</button>
-        <button class="dialog-btn" @click="deleteDialog = false">取消</button>
+        <button class="dialog-btn danger" @click="confirmDelete">{{ t("settings.version.setup.common.delete") }}</button>
+        <button class="dialog-btn" @click="deleteDialog = false">{{ t("settings.version.setup.common.cancel") }}</button>
       </template>
     </AlertDialog>
   </div>

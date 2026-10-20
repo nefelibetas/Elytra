@@ -1,9 +1,12 @@
 <script setup lang="ts">
 // 每类 xSearchBar 与 xResultList 成对，必须绑定同一 search 单例（同名的 store 搜索状态）。
 import { computed, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { releases } from "../../store/task/versionDownload";
 import { modLoaderOptions } from "../../store/community/communitySearch";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
+
+const { t } = useI18n();
 
 /** 搜索状态实例的最小结构（communitySearch 与 createCategorySearch 单例均满足）。 */
 export interface CommunitySearchState {
@@ -34,14 +37,14 @@ const props = withDefaults(
   },
 );
 
-const sourceOptions: SelOption[] = [
-  { value: "all", label: "全部" },
+const sourceOptions = computed<SelOption[]>(() => [
+  { value: "all", label: t("download.search.all") },
   { value: "curseforge", label: "CurseForge" },
   { value: "modrinth", label: "Modrinth" },
-];
+]);
 
 const versionOptions = computed<SelOption[]>(() => [
-  { value: "", label: "全部" },
+  { value: "", label: t("download.search.all") },
   ...releases.value.map((r) => ({ value: r.id, label: r.id })),
 ]);
 
@@ -61,7 +64,7 @@ watch(
     <div class="card-title">{{ title }}</div>
     <div class="card-body cs-search-form">
       <div class="cs-form-row">
-        <label class="cs-form-label" :for="`${idPrefix}QueryInput`">名称</label>
+        <label class="cs-form-label" :for="`${idPrefix}QueryInput`">{{ t("download.search.name") }}</label>
         <input
           :id="`${idPrefix}QueryInput`"
           class="cs-input"
@@ -70,7 +73,7 @@ watch(
           autocomplete="off"
         />
         <template v-if="showSource && showLoader">
-          <label class="cs-form-label" :for="`${idPrefix}SourceSelect`">来源</label>
+          <label class="cs-form-label" :for="`${idPrefix}SourceSelect`">{{ t("download.search.source") }}</label>
           <DropSelect
             :id="`${idPrefix}SourceSelect`"
             :model-value="search.source"
@@ -82,7 +85,7 @@ watch(
       </div>
       <div v-if="showSource || showLoader" class="cs-form-row">
         <template v-if="showSource && !showLoader">
-          <label class="cs-form-label" :for="`${idPrefix}SourceSelect`">来源</label>
+          <label class="cs-form-label" :for="`${idPrefix}SourceSelect`">{{ t("download.search.source") }}</label>
           <DropSelect
             :id="`${idPrefix}SourceSelect`"
             :model-value="search.source"
@@ -91,7 +94,7 @@ watch(
             @update:model-value="search.source = $event as CommunitySearchState['source']"
           />
         </template>
-        <label class="cs-form-label" :for="`${idPrefix}VerSelect`">版本</label>
+        <label class="cs-form-label" :for="`${idPrefix}VerSelect`">{{ t("download.search.version") }}</label>
         <DropSelect
           :id="`${idPrefix}VerSelect`"
           :model-value="search.gameVersion"
@@ -100,7 +103,7 @@ watch(
           @update:model-value="search.gameVersion = $event"
         />
         <template v-if="showLoader && search.loader !== undefined">
-          <label class="cs-form-label" :for="`${idPrefix}LoaderSelect`">加载器</label>
+          <label class="cs-form-label" :for="`${idPrefix}LoaderSelect`">{{ t("download.search.loader") }}</label>
           <DropSelect
             :id="`${idPrefix}LoaderSelect`"
             :model-value="search.loader"
@@ -113,9 +116,9 @@ watch(
       <div class="cs-form-actions">
         <slot name="prepend-actions"></slot>
         <button class="cs-btn cs-btn-primary" :disabled="search.searching" @click="search.search()">
-          <span v-if="search.searching" class="cs-spin"></span>{{ search.searching ? "搜索中" : "搜索" }}
+          <span v-if="search.searching" class="cs-spin"></span>{{ search.searching ? t("download.search.searching") : t("download.search.submit") }}
         </button>
-        <button class="cs-btn" @click="search.reset()">重置条件</button>
+        <button class="cs-btn" @click="search.reset()">{{ t("download.search.reset") }}</button>
       </div>
     </div>
   </div>

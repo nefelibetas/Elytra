@@ -165,7 +165,7 @@ pub(super) fn free_tcp_port() -> Result<u16, String> {
     std::net::TcpListener::bind(("127.0.0.1", 0))
         .and_then(|l| l.local_addr())
         .map(|a| a.port())
-        .map_err(common_err_ctx!("分配本地端口失败"))
+        .map_err(common_err_ctx_key!("errors.online.host", "分配本地端口失败"))
 }
 
 /// 联机昵称：配置为空则回退系统用户名。

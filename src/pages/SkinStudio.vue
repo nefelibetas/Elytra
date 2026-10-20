@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 衣柜：左 = 3D 预览，右 = 皮肤 / 披风 tab；交互与状态都在 store/skinStudio（模块级单例）。
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { Check, Download, Plus, RefreshCw, RotateCcw, Shirt, Wind, X } from "@lucide/vue";
 import AlertDialog from "../component/common/AlertDialog.vue";
@@ -13,6 +14,7 @@ import { skinStudio, type LocalSkin } from "../store/skin/skinStudio";
 import { showToast } from "../utils/toast";
 
 const router = useRouter();
+const { t } = useI18n();
 
 const stageCanvas = ref<HTMLCanvasElement | null>(null);
 let stageImg: HTMLImageElement | null = null;
@@ -140,7 +142,7 @@ onMounted(async () => {
   // 账号列表是异步 IPC：未就绪就判定来源会把正版账号误判为离线（store 的 loadOfficial 同样先 await）
   await ensureAuthReady();
   if (!skinStudio.premium) {
-    showToast("皮肤衣柜仅对正版账号开放");
+    showToast(t("skin.studio.premiumOnly"));
     void router.replace("/");
     return;
   }
@@ -186,15 +188,15 @@ watch(
   () => syncAnimation(),
 );
 
-const ANIM_OPTIONS = [
-  { value: "none", label: "静止" },
-  { value: "idle", label: "待机" },
-  { value: "walk", label: "行走" },
-] as const;
+const ANIM_OPTIONS = computed(() => [
+  { value: "none", label: t("skin.studio.anim.none") },
+  { value: "idle", label: t("skin.studio.anim.idle") },
+  { value: "walk", label: t("skin.studio.anim.walk") },
+] as const);
 
-/** 模型中文名（与左侧标签、模型弹窗同套；CLASSIC/SLIM 为后端取值不直接暴露）；缺失/未知按「经典」兜底。 */
+/** 模型显示名（与左侧标签、模型弹窗同套；CLASSIC/SLIM 为后端取值不直接暴露）；缺失/未知按「经典」兜底。 */
 function variantLabel(variant?: string | null): string {
-  return variant?.toUpperCase() === "SLIM" ? "纤细" : "经典";
+  return variant?.toUpperCase() === "SLIM" ? t("skin.studio.model.slim") : t("skin.studio.model.classic");
 }
 
 /** 平面皮肤图（3D 兜底）：64×64 纹理取头部正面 (8,8,8,8)，size 800% + position 14.286%（= 8/56）对准该 UV 区。 */
@@ -320,10 +322,10 @@ function removeCard(c: SkinCard) {
   if (c.local) void skinStudio.removeSkin(c.local);
 }
 
-const MODEL_OPTIONS = [
-  { variant: "CLASSIC", label: "经典模型", sub: "Steve · 4px 宽手臂" },
-  { variant: "SLIM", label: "纤细模型", sub: "Alex · 3px 窄手臂" },
-] as const;
+const MODEL_OPTIONS = computed(() => [
+  { variant: "CLASSIC", label: t("skin.studio.model.classicModel"), sub: t("skin.studio.model.classicSub") },
+  { variant: "SLIM", label: t("skin.studio.model.slimModel"), sub: t("skin.studio.model.slimSub") },
+] as const);
 
 /** 上传弹窗里当前选中的模型；空串 = 还没选（确认按钮不可用，逼出一次明确的点击）。 */
 const pickedModel = ref<"" | "CLASSIC" | "SLIM">("");
@@ -358,16 +360,16 @@ function savePickedSkin() {
         <canvas v-show="!!skinStudio.currentSkin" ref="stageCanvas" class="frame"></canvas>
         <LoadingSpinner
           v-if="!skinStudio.currentSkin && skinStudio.phase === 'loading'"
-          text="正在加载皮肤与披风…"
+          :text="t('skin.studio.loadingPreview')"
         />
         <EmptyState v-else-if="!skinStudio.currentSkin">
-          <p>暂无可预览的皮肤</p>
-          <p>登录账号或从本地衣柜选一件</p>
+          <p>{{ t("skin.studio.emptyPreview") }}</p>
+          <p>{{ t("skin.studio.emptyPreviewHint") }}</p>
         </EmptyState>
 
         <div class="layer type-layer">
           <span class="type-tag" :class="{ slim: skinStudio.currentSlim }">
-            {{ skinStudio.currentSlim ? "纤细" : "经典" }}
+            {{ skinStudio.currentSlim ? t("skin.studio.model.slim") : t("skin.studio.model.classic") }}
           </span>
         </div>
 
@@ -375,7 +377,7 @@ function savePickedSkin() {
         <div class="layer action-layer">
           <button
             class="tool fab icon-only"
-            v-tooltip="'重置视角与缩放'"
+            v-tooltip="t('skin.studio.resetView')"
             @pointerdown.stop
             @click="skinStudio.resetView"
           >
@@ -383,7 +385,7 @@ function savePickedSkin() {
           </button>
           <button
             class="tool fab icon-only"
-            v-tooltip="'重新拉取皮肤与披风'"
+            v-tooltip="t('skin.studio.refreshTooltip')"
             @pointerdown.stop
             @click="skinStudio.refresh"
           >
@@ -392,7 +394,7 @@ function savePickedSkin() {
           <button
             class="tool fab icon-only"
             :disabled="!skinStudio.premium"
-            v-tooltip="'导出账号当前皮肤 PNG'"
+            v-tooltip="t('skin.studio.exportTooltip')"
             @pointerdown.stop
             @click="skinStudio.saveSkinFile"
           >
@@ -402,12 +404,12 @@ function savePickedSkin() {
             v-if="skinStudio.selectedLocal"
             class="tool fab primary"
             :disabled="!skinStudio.canApply"
-            v-tooltip="'上传为账号当前皮肤'"
+            v-tooltip="t('skin.studio.applyTooltip')"
             @pointerdown.stop
             @click="skinStudio.applySelected"
           >
             <Check :size="15" />
-            <span>{{ skinStudio.applyBusy ? "应用中" : "应用" }}</span>
+            <span>{{ skinStudio.applyBusy ? t("skin.studio.applying") : t("skin.studio.apply") }}</span>
           </button>
         </div>
 
@@ -438,25 +440,25 @@ function savePickedSkin() {
               :class="{ active: skinStudio.tab === 'skins' }"
               @click="skinStudio.tab = 'skins'"
             >
-              <Shirt :size="14" /><span>皮肤</span>
+              <Shirt :size="14" /><span>{{ t("skin.studio.tabSkins") }}</span>
             </button>
             <button
               class="tab"
               :class="{ active: skinStudio.tab === 'capes' }"
               @click="skinStudio.tab = 'capes'"
             >
-              <Wind :size="14" /><span>披风</span>
+              <Wind :size="14" /><span>{{ t("skin.studio.tabCapes") }}</span>
             </button>
           </div>
           <div class="panel-hd-right">
             <span v-if="skinStudio.tab === 'skins' && visibleSkinCount" class="panel-count">
-              {{ visibleSkinCount }} 件收藏
+              {{ t("skin.studio.favorites", { count: visibleSkinCount }, visibleSkinCount) }}
             </span>
             <span
               v-else-if="skinStudio.tab === 'capes' && skinStudio.premium && skinStudio.capes.length"
               class="panel-count"
             >
-              {{ skinStudio.capes.filter(c => c.active).length ? "已装备" : "未装备" }}
+              {{ skinStudio.capes.filter(c => c.active).length ? t("skin.studio.equipped") : t("skin.studio.notEquipped") }}
             </span>
           </div>
         </header>
@@ -464,7 +466,7 @@ function savePickedSkin() {
         <!-- 皮肤 tab：3D 侧视缩略图网格（3 列 × 2 行，超出滚动；末尾一格为上传卡片） -->
         <div v-if="skinStudio.tab === 'skins'" class="panel-body">
           <!-- 刷新态：整个右侧只显示刷新中；LoadingSpinner 自身占满父容器居中，勿再包一层 -->
-          <LoadingSpinner v-if="skinStudio.phase === 'loading'" text="正在获取皮肤与披风…" />
+          <LoadingSpinner v-if="skinStudio.phase === 'loading'" :text="t('skin.studio.loadingSkins')" />
           <template v-else>
           <div class="grid skins">
             <div
@@ -485,7 +487,7 @@ function savePickedSkin() {
               <button
                 v-if="c.local"
                 class="card-del"
-                v-tooltip="'从衣柜删除'"
+                v-tooltip="t('skin.studio.deleteTooltip')"
                 @click.stop="removeCard(c)"
               >
                 <X :size="12" />
@@ -494,18 +496,18 @@ function savePickedSkin() {
 
             <div
               class="card upload"
-              v-tooltip="'选择本地 64×64 皮肤 PNG，上传为账号当前皮肤'"
+              v-tooltip="t('skin.studio.uploadTooltip')"
               @click="skinStudio.pickSkinFile()"
             >
               <span class="upload-plus"><Plus :size="20" /></span>
-              <div class="card-name"><span class="nm">上传本地皮肤</span></div>
+              <div class="card-name"><span class="nm">{{ t("skin.studio.uploadLocal") }}</span></div>
             </div>
           </div>
 
           <!-- 空态只看「有没有实时卡」：账号当前皮肤即使没进本地衣柜也已有卡片，算不得空 -->
           <EmptyState v-if="!visibleSkinCount && !skinStudio.officialSkin">
-            <p>衣柜还是空的</p>
-            <p>点下方「上传本地皮肤」把皮肤文件收进来</p>
+            <p>{{ t("skin.studio.wardrobeEmpty") }}</p>
+            <p>{{ t("skin.studio.wardrobeEmptyHint") }}</p>
           </EmptyState>
           <p v-if="skinStudio.skinsError" class="err">{{ skinStudio.skinsError }}</p>
           </template>
@@ -515,18 +517,18 @@ function savePickedSkin() {
         <div v-else class="panel-body">
           <LoadingSpinner
             v-if="skinStudio.premium && skinStudio.phase === 'loading'"
-            text="正在获取披风…"
+            :text="t('skin.studio.loadingCapes')"
           />
           <template v-else-if="skinStudio.premium">
             <div class="grid">
               <div
                 class="card"
                 :class="{ active: skinStudio.selectedCapeId === '' }"
-                v-tooltip="'不装备披风'"
+                v-tooltip="t('skin.studio.noCapeTooltip')"
                 @click="skinStudio.useCape('')"
               >
                 <div class="thumb cape none"><X :size="18" /></div>
-                <div class="card-name">无披风</div>
+                <div class="card-name">{{ t("skin.studio.noCape") }}</div>
               </div>
               <div
                 v-for="c in skinStudio.capes"
@@ -544,29 +546,29 @@ function savePickedSkin() {
             </div>
 
             <EmptyState v-if="!skinStudio.capes.length">
-              <p>该账号暂无可用披风</p>
+              <p>{{ t("skin.studio.noCapes") }}</p>
             </EmptyState>
             <p v-if="skinStudio.capesError" class="err">{{ skinStudio.capesError }}</p>
           </template>
           <EmptyState v-else>
-            <p>披风需要正版账号</p>
-            <p>登录微软账号后可在此切换 / 移除披风</p>
+            <p>{{ t("skin.studio.capePremiumRequired") }}</p>
+            <p>{{ t("skin.studio.capePremiumHint") }}</p>
           </EmptyState>
         </div>
       </section>
 
       <footer v-if="!skinStudio.premium || skinStudio.officialError" class="wardrobe-foot">
         <p v-if="!skinStudio.premium" class="hint">
-          本地衣柜可用于预览；应用皮肤 / 管理披风需登录正版账号
+          {{ t("skin.studio.footerHint") }}
         </p>
         <p v-if="skinStudio.officialError" class="err">{{ skinStudio.officialError }}</p>
       </footer>
     </div>
 
     <!-- 上传皮肤前选择模型：经典（Steve 宽）/ 纤细（Alex 窄）。无默认值，必须点一次再确认 -->
-    <AlertDialog v-model="skinStudio.skinModelDialog" title="选择皮肤模型">
+    <AlertDialog v-model="skinStudio.skinModelDialog" :title="t('skin.studio.modelDialogTitle')">
       <div class="model-desc">
-        皮肤将直接上传为账号当前皮肤；模型不可中途更换（需重新上传），按所选模型应用。
+        {{ t("skin.studio.modelDialogDesc") }}
       </div>
       <div class="model-pick">
         <button
@@ -582,9 +584,9 @@ function savePickedSkin() {
         </button>
       </div>
       <template #actions>
-        <button class="dialog-btn" @click="skinStudio.skinModelDialog = false">取消</button>
+        <button class="dialog-btn" @click="skinStudio.skinModelDialog = false">{{ t("common.action.cancel") }}</button>
         <button class="dialog-btn primary" :disabled="!pickedModel" @click="savePickedSkin">
-          确认
+          {{ t("common.action.confirm") }}
         </button>
       </template>
     </AlertDialog>

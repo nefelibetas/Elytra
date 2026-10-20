@@ -38,5 +38,5 @@ pub fn get_online_config() -> OnlineConfig {
 
 #[tauri::command]
 pub fn save_online_config(config: OnlineConfig) -> Result<(), String> {
-    persist::save_online_config(&config).map_err(common_err_ctx!("保存联机配置失败"))
+    persist::save_online_config(&config).map_err(common_err_ctx_key!("errors.config.write", "保存联机配置失败"))
 }

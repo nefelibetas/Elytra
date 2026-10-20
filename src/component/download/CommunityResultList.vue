@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Component } from "vue";
+import { useI18n } from "vue-i18n";
 import type { CommunityDisplayItem } from "../../store/community/communitySearch";
 import { dlTranslateMode } from "../../store/config/downloaderConfig";
 import { openResourceDetail } from "../../store/community/resourceDetail";
@@ -37,6 +38,8 @@ const props = withDefaults(
     detailLoader: "",
   },
 );
+
+const { t } = useI18n();
 </script>
 
 <template>
@@ -44,11 +47,11 @@ const props = withDefaults(
     <ErrorState v-if="search.error" :text="search.error" />
     <LoadingSpinner
       v-else-if="search.searching"
-      :text="search.query.trim() ? `正在搜索${label}...` : `正在加载热门${label}...`"
+      :text="search.query.trim() ? t('download.search.searchingHint', { category: label }) : t('download.search.loadingPopular', { category: label })"
     />
     <EmptyState v-else-if="search.searched && search.results.length === 0">
       <component :is="emptyIcon" :size="40" :stroke-width="1.5" opacity="0.5" />
-      <p>未找到相关{{ label }}，试试更换关键字或放宽筛选条件</p>
+      <p>{{ t("download.search.emptyHint", { category: label }) }}</p>
     </EmptyState>
     <template v-else-if="search.searched">
       <div class="cs-list">
@@ -63,7 +66,7 @@ const props = withDefaults(
                 <span class="cs-title">{{ m.title_zh ?? m.title }}</span>
                 <span v-if="dlTranslateMode === 'zh' && m.title_zh" class="cs-title-en"> | {{ m.title }}</span>
                 <span v-if="search.source === 'all'" class="cs-badge" :class="m.source">{{ m.source === "modrinth" ? "Modrinth" : "CurseForge" }}</span>
-                <span class="cs-sub">{{ fmtCount(m.downloads) }} 次下载</span>
+                <span class="cs-sub">{{ t("download.search.downloads", { count: fmtCount(m.downloads) }) }}</span>
               </span>
               <span v-if="dlTranslateMode !== 'en'" class="cs-desc">{{ m.translated ?? m.description }}</span>
               <span v-if="m.loaders.length || m.game_version_range" class="cs-support">
@@ -76,17 +79,17 @@ const props = withDefaults(
       </div>
       <div class="cs-footer">
         <div v-if="totalPages > 1" class="cs-pager">
-          <button class="cs-pager-btn" :disabled="search.page <= 1" @click="search.search(search.page - 1)">上一页</button>
+          <button class="cs-pager-btn" :disabled="search.page <= 1" @click="search.search(search.page - 1)">{{ t("download.search.prev") }}</button>
           <span class="cs-pager-info">{{ search.page }} / {{ totalPages }}</span>
-          <button class="cs-pager-btn" :disabled="search.page >= totalPages" @click="search.search(search.page + 1)">下一页</button>
+          <button class="cs-pager-btn" :disabled="search.page >= totalPages" @click="search.search(search.page + 1)">{{ t("download.search.next") }}</button>
         </div>
         <!-- 聚合 all 的 total 是去重后下限，故用「至少」；单源精确用「共」 -->
-        <span class="cs-result-count">{{ search.source === "all" ? "至少" : "共" }} {{ search.total }} 个结果</span>
+        <span class="cs-result-count">{{ t(search.source === "all" ? "download.search.resultCountAtLeast" : "download.search.resultCountExact", { count: search.total }, search.total) }}</span>
       </div>
     </template>
     <EmptyState v-else>
       <component :is="emptyIcon" :size="40" :stroke-width="1.5" opacity="0.5" />
-      <p>输入关键字搜索，或直接搜索查看热门{{ label }}</p>
+      <p>{{ t("download.search.idleHint", { category: label }) }}</p>
     </EmptyState>
   </div>
 </template>

@@ -18,21 +18,24 @@ import {
   loadMods, loadModsQuick,
   loadWorlds, loadResourceDetailed, loadResourceQuick,
 } from "../store/task/versionDetail";
+import { useI18n } from "vue-i18n";
 
 type TabKey = "mods" | "saves" | "resourcepacks" | "shaderpacks" | "datapacks" | "export" | "logs" | "server" | "auto_tasks" | "misc";
 
-const tabs: { key: TabKey; label: string; icon: Component }[] = [
-  { key: "mods", label: "Mod 管理", icon: Puzzle },
-  { key: "saves", label: "存档管理", icon: Map },
-  { key: "resourcepacks", label: "资源包管理", icon: Palette },
-  { key: "shaderpacks", label: "光影包管理", icon: Sun },
-  { key: "datapacks", label: "数据包管理", icon: Database },
-  { key: "server", label: "服务器", icon: Server },
-  { key: "auto_tasks", label: "自动任务", icon: Play },
-  { key: "misc", label: "图标", icon: ImagePlus },
-  { key: "logs", label: "游戏日志", icon: FileText },
-  { key: "export", label: "导出", icon: Upload },
-];
+const { t } = useI18n();
+
+const tabs = computed<{ key: TabKey; label: string; icon: Component }[]>(() => [
+  { key: "mods", label: t("settings.version.setup.tabs.mods"), icon: Puzzle },
+  { key: "saves", label: t("settings.version.setup.tabs.saves"), icon: Map },
+  { key: "resourcepacks", label: t("settings.version.setup.tabs.resourcepacks"), icon: Palette },
+  { key: "shaderpacks", label: t("settings.version.setup.tabs.shaderpacks"), icon: Sun },
+  { key: "datapacks", label: t("settings.version.setup.tabs.datapacks"), icon: Database },
+  { key: "server", label: t("settings.version.setup.tabs.server"), icon: Server },
+  { key: "auto_tasks", label: t("settings.version.setup.tabs.autoTasks"), icon: Play },
+  { key: "misc", label: t("settings.version.setup.tabs.misc"), icon: ImagePlus },
+  { key: "logs", label: t("settings.version.setup.tabs.logs"), icon: FileText },
+  { key: "export", label: t("settings.version.setup.tabs.export"), icon: Upload },
+]);
 
 const activeTab = ref<TabKey>("mods");
 

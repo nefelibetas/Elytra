@@ -2,12 +2,13 @@
 // MOTD 生成器：编辑含 § 格式码的文本（16 色/样式/1.16+ 渐变），实时预览，可复制原始文本或 server.properties 转义。
 // 可一键设为联机广播名（guest 端 MC 局域网标签页显示名，支持 § 颜色渲染）。
 import { onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import {
   Bold, Italic, Underline, Strikethrough, Sparkles, Eraser, Copy, Save, Server,
 } from "@lucide/vue";
 import MotdPreview from "./MotdPreview.vue";
 import {
-  MC_COLORS, MC_COLOR_KEYS, MC_COLOR_NAMES, MC_STYLES,
+  MC_COLORS, MC_COLOR_KEYS, colorName, MC_STYLES,
   gradientMotd, escapeServerProperties, visibleLength, hexToSectionX,
 } from "../../utils/motd";
 import {
@@ -17,8 +18,10 @@ import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 import { copyText } from "../../utils/clipboard";
 
+const { t } = useI18n();
+
 /** 当前编辑的 MOTD 文本（含 § 码）。 */
-const text = ref("§6Elytra §f联机服务器");
+const text = ref(t("tools.motd.defaultText"));
 /** 渐变起止色（hex）。 */
 const gradFrom = ref("#FFAA00");
 const gradTo = ref("#FF5555");
@@ -76,11 +79,11 @@ function applyGradient() {
 }
 
 async function copyRaw() {
-  await copyText(text.value, "已复制（§ 原始格式）");
+  await copyText(text.value, t("tools.motd.copiedRaw"));
 }
 
 async function copyEscaped() {
-  await copyText(escapeServerProperties(text.value), "已复制（server.properties 转义格式）");
+  await copyText(escapeServerProperties(text.value), t("tools.motd.copiedEscaped"));
 }
 
 /** 设为联机广播名（guest 端局域网标签页显示名）。 */
@@ -89,7 +92,7 @@ async function handleSaveAsAdvertise() {
   try {
     onlineAdvertiseMotd.value = text.value;
     await saveAdvertiseMotd();
-    showToast("已设为联机广播名");
+    showToast(t("tools.motd.advertiseSet"));
   } catch (e) {
     showToast(errMsg(e));
   } finally {
@@ -103,8 +106,8 @@ const charCount = () => visibleLength(text.value);
 <template>
   <div class="tool-card">
     <div class="tool-card-hdr">
-      <h3>MOTD 生成器</h3>
-      <div class="tool-card-sub">编辑服务器欢迎语 / 联机广播名，支持 16 色、样式与 1.16+ 渐变（§x 代码）</div>
+      <h3>{{ t("tools.motd.title") }}</h3>
+      <div class="tool-card-sub">{{ t("tools.motd.subtitle") }}</div>
     </div>
 
     <textarea
@@ -112,84 +115,84 @@ const charCount = () => visibleLength(text.value);
       v-model="text"
       class="motd-input"
       rows="3"
-      placeholder="输入 MOTD 文本，用下方按钮插入格式代码…"
+      :placeholder="t('tools.motd.placeholder')"
       spellcheck="false"
       autocomplete="off"
     ></textarea>
 
     <div class="motd-toolbar">
       <div class="motd-toolbar-row">
-        <span class="motd-tool-label">颜色</span>
+        <span class="motd-tool-label">{{ t("tools.motd.color") }}</span>
         <button
           v-for="key in MC_COLOR_KEYS"
           :key="key"
           class="motd-color"
           :style="{ backgroundColor: MC_COLORS[key] }"
-          :title="`§${key} ${MC_COLOR_NAMES[key]}`"
+          :title="`§${key} ${colorName(key)}`"
           @click="insertCode(key)"
         />
         <input
           type="color"
           class="motd-color-custom"
-          title="自定义颜色（§x，需 1.16+）"
+          :title="t('tools.motd.customColorTitle')"
           @input="onCustomColor"
           autocomplete="off"
         />
       </div>
       <div class="motd-toolbar-row">
-        <span class="motd-tool-label">样式</span>
-        <button class="motd-style" title="粗体 §l" @click="insertCode(MC_STYLES.bold)">
+        <span class="motd-tool-label">{{ t("tools.motd.style") }}</span>
+        <button class="motd-style" :title="t('tools.motd.boldTitle')" @click="insertCode(MC_STYLES.bold)">
           <Bold :size="14" />
         </button>
-        <button class="motd-style" title="斜体 §o" @click="insertCode(MC_STYLES.italic)">
+        <button class="motd-style" :title="t('tools.motd.italicTitle')" @click="insertCode(MC_STYLES.italic)">
           <Italic :size="14" />
         </button>
-        <button class="motd-style" title="下划线 §n" @click="insertCode(MC_STYLES.underline)">
+        <button class="motd-style" :title="t('tools.motd.underlineTitle')" @click="insertCode(MC_STYLES.underline)">
           <Underline :size="14" />
         </button>
-        <button class="motd-style" title="删除线 §m" @click="insertCode(MC_STYLES.strikethrough)">
+        <button class="motd-style" :title="t('tools.motd.strikeTitle')" @click="insertCode(MC_STYLES.strikethrough)">
           <Strikethrough :size="14" />
         </button>
-        <button class="motd-style" title="乱码 §k（游戏内随机字符）" @click="insertCode(MC_STYLES.obfuscated)">
+        <button class="motd-style" :title="t('tools.motd.obfTitle')" @click="insertCode(MC_STYLES.obfuscated)">
           <Sparkles :size="14" />
         </button>
-        <button class="motd-style" title="重置格式 §r" @click="insertCode(MC_STYLES.reset)">
+        <button class="motd-style" :title="t('tools.motd.resetTitle')" @click="insertCode(MC_STYLES.reset)">
           <Eraser :size="14" />
         </button>
-        <button class="tool-btn motd-clear-btn" @click="stripCodes">清除格式</button>
+        <button class="tool-btn motd-clear-btn" @click="stripCodes">{{ t("tools.motd.clearFormat") }}</button>
       </div>
       <div class="motd-toolbar-row">
-        <span class="motd-tool-label">渐变</span>
-        <input v-model="gradFrom" type="color" class="motd-grad" title="渐变起色" autocomplete="off" />
+        <span class="motd-tool-label">{{ t("tools.motd.gradient") }}</span>
+        <input v-model="gradFrom" type="color" class="motd-grad" :title="t('tools.motd.gradientFrom')" autocomplete="off" />
         <span class="motd-grad-arrow">→</span>
-        <input v-model="gradTo" type="color" class="motd-grad" title="渐变止色" autocomplete="off" />
-        <button class="tool-btn motd-grad-btn" @click="applyGradient">应用渐变</button>
+        <input v-model="gradTo" type="color" class="motd-grad" :title="t('tools.motd.gradientTo')" autocomplete="off" />
+        <button class="tool-btn motd-grad-btn" @click="applyGradient">{{ t("tools.motd.applyGradient") }}</button>
       </div>
     </div>
 
     <div class="motd-preview-label">
-      <span>预览</span>
-      <span class="motd-count">{{ charCount() }} 字符</span>
+      <span>{{ t("tools.motd.preview") }}</span>
+      <span class="motd-count">{{ t("tools.motd.charCount", { count: charCount() }, charCount()) }}</span>
     </div>
     <MotdPreview :motd="text" />
 
     <div class="motd-output">
       <button class="tool-btn" @click="copyRaw">
         <Copy :size="14" />
-        复制（§ 原始格式）
+        {{ t("tools.motd.copyRaw") }}
       </button>
       <button class="tool-btn" @click="copyEscaped">
         <Copy :size="14" />
-        复制（server.properties 转义）
+        {{ t("tools.motd.copyEscaped") }}
       </button>
     </div>
 
     <div class="motd-online">
       <Server :size="14" class="motd-online-icon" />
       <span class="motd-online-text">
-        当前联机广播名：
-        <template v-if="onlineAdvertiseMotd">自定义（在联机设置中可清除恢复自动）</template>
-        <template v-else>自动（host 世界名）</template>
+        {{ t("tools.motd.onlineCurrent") }}
+        <template v-if="onlineAdvertiseMotd">{{ t("tools.motd.onlineCustom") }}</template>
+        <template v-else>{{ t("tools.motd.onlineAuto") }}</template>
       </span>
       <button
         class="tool-btn motd-online-btn"
@@ -197,7 +200,7 @@ const charCount = () => visibleLength(text.value);
         @click="handleSaveAsAdvertise"
       >
         <Save :size="14" />
-        {{ saving ? "保存中…" : "设为联机广播名" }}
+        {{ saving ? t("common.action.saving") : t("tools.motd.setAdvertise") }}
       </button>
     </div>
   </div>

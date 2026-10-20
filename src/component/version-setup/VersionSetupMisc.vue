@@ -3,6 +3,7 @@
 // 图标优先级：自定义（version-icon.png）> 整合包项目图（pack-icon.png）> loader 图标。
 import { computed, onMounted } from "vue";
 import { useRoute } from "vue-router";
+import { useI18n } from "vue-i18n";
 import { ImagePlus, Undo2 } from "@lucide/vue";
 import {
   versionIcons, iconSources,
@@ -14,16 +15,19 @@ import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 
 const route = useRoute();
+const { t } = useI18n();
 const versionName = computed(() => String(route.query.name ?? ""));
 
 const currentIcon = computed(() => versionIcons[versionName.value]);
 const source = computed<VersionIconSource>(() => iconSources[versionName.value] ?? "default");
 
-const SOURCE_LABELS: Record<VersionIconSource, string> = {
-  custom: "当前使用：自定义图标",
-  pack: "当前使用：整合包项目图标",
-  default: "当前使用：默认加载器图标",
+const SOURCE_LABEL_KEYS: Record<VersionIconSource, string> = {
+  custom: "settings.version.setup.misc.sourceCustom",
+  pack: "settings.version.setup.misc.sourcePack",
+  default: "settings.version.setup.misc.sourceDefault",
 };
+
+const sourceLabel = computed(() => t(SOURCE_LABEL_KEYS[source.value]));
 
 onMounted(() => {
   void loadVersionIcon(versionName.value);
@@ -34,12 +38,12 @@ onMounted(() => {
 async function pickCustomIcon() {
   const path = await open({
     multiple: false,
-    filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
+    filters: [{ name: t("settings.version.setup.misc.imageFilter"), extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
   });
   if (!path) return;
   try {
     await setVersionIcon(versionName.value, String(path));
-    showToast("图标已更新");
+    showToast(t("settings.version.setup.misc.updated"));
   } catch (e) {
     showToast(errMsg(e));
   }
@@ -49,7 +53,7 @@ async function pickCustomIcon() {
 async function restoreDefault() {
   try {
     await resetVersionIcon(versionName.value);
-    showToast("已还原为默认图标");
+    showToast(t("settings.version.setup.misc.resetDone"));
   } catch (e) {
     showToast(errMsg(e));
   }
@@ -59,33 +63,31 @@ async function restoreDefault() {
 <template>
   <div class="vs-page">
     <div class="setup-card">
-      <div class="setup-card-title">版本图标</div>
+      <div class="setup-card-title">{{ t("settings.version.setup.misc.title") }}</div>
       <div class="vs-icon-row">
-        <img v-if="currentIcon" :src="currentIcon" class="vs-icon-preview" alt="版本图标" />
-        <div v-else class="vs-icon-preview vs-icon-empty">无</div>
-        <span class="setup-desc">{{ SOURCE_LABELS[source] }}</span>
+        <img v-if="currentIcon" :src="currentIcon" class="vs-icon-preview" :alt="t('settings.version.setup.misc.alt')" />
+        <div v-else class="vs-icon-preview vs-icon-empty">{{ t("settings.version.setup.misc.none") }}</div>
+        <span class="setup-desc">{{ sourceLabel }}</span>
       </div>
     </div>
 
     <div class="setup-card">
-      <div class="setup-card-title">自定义图标</div>
+      <div class="setup-card-title">{{ t("settings.version.setup.misc.customTitle") }}</div>
       <div class="setup-desc">
-        为该版本选择一张本地图片作为显示图标（支持 png / jpg / webp / gif，1MB 以内），
-        版本列表与主页卡片将展示它。
+        {{ t("settings.version.setup.misc.customDesc") }}
       </div>
       <div class="setup-btn-row">
         <button class="setup-btn" @click="pickCustomIcon">
           <ImagePlus :size="15" />
-          <span>选择图片</span>
+          <span>{{ t("settings.version.setup.misc.pickImage") }}</span>
         </button>
       </div>
     </div>
 
     <div class="setup-card">
-      <div class="setup-card-title">还原为默认图标</div>
+      <div class="setup-card-title">{{ t("settings.version.setup.misc.resetTitle") }}</div>
       <div class="setup-desc">
-        移除自定义图标。整合包安装自带的封面图不受影响；
-        两者都没有时显示默认加载器图标。
+        {{ t("settings.version.setup.misc.resetDesc") }}
       </div>
       <div class="setup-btn-row">
         <button
@@ -95,7 +97,7 @@ async function restoreDefault() {
           @click="restoreDefault"
         >
           <Undo2 :size="15" />
-          <span>还原为默认图标</span>
+          <span>{{ t("settings.version.setup.misc.resetButton") }}</span>
         </button>
       </div>
     </div>

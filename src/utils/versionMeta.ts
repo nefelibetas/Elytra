@@ -30,7 +30,7 @@ export const LOADER_MIN_VERSION: Record<string, string> & Record<LoaderKey, stri
 export type LoaderDisplayKey = LoaderKey | "vanilla";
 
 export const LOADER_TITLES: Record<string, string> & Record<LoaderDisplayKey, string> = {
-  vanilla: "原版",
+  vanilla: "Vanilla",
   forge: "Forge",
   neoforge: "NeoForge",
   fabric: "Fabric",

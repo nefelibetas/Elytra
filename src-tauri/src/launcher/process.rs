@@ -32,7 +32,7 @@ pub fn spawn_game_child(
             Err(e) if e.raw_os_error() == Some(5) && flags & CREATE_BREAKAWAY_FROM_JOB != 0 => {
                 flags &= !CREATE_BREAKAWAY_FROM_JOB; // 最多重试一次
             }
-            Err(e) => bail!("启动游戏失败\n{e}"),
+            Err(e) => bail_key!("errors.launch.failed", "启动游戏失败\n{e}"),
         }
     }
 }
@@ -41,7 +41,7 @@ pub fn spawn_game_child(
 pub fn spawn_game_child(
     command: &mut std::process::Command,
 ) -> Result<std::process::Child, String> {
-    command.spawn().map_err(common_err_ctx!("启动游戏失败"))
+    command.spawn().map_err(common_err_ctx_key!("errors.launch.failed", "启动游戏失败"))
 }
 
 pub fn drain_output(reader: &mut impl std::io::Read, path: &Path, is_stderr: bool) {

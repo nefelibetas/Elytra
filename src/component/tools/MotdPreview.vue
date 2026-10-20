@@ -2,7 +2,10 @@
 // MOTD 预览：把含 § 格式码的文本渲染成游戏内效果（16 色/自定义色/粗斜体/下划线/删除线/乱码）。
 // MOTD 生成器与服务器状态检测共用；§k 乱码无法复刻随机跳动，用闪烁模拟 + title 说明。
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import { parseMotd } from "../../utils/motd";
+
+const { t } = useI18n();
 
 const props = defineProps<{
   motd: string;
@@ -26,10 +29,10 @@ const segments = computed(() => parseMotd(props.motd));
           obf: seg.obfuscated,
         }"
         :style="seg.color ? { color: seg.color } : undefined"
-        :title="seg.obfuscated ? '乱码效果（§k）：游戏内为随机字符跳动' : undefined"
+        :title="seg.obfuscated ? t('tools.preview.obfTitle') : undefined"
       >{{ seg.text }}</span>
     </template>
-    <span v-else class="motd-placeholder">（无文本）</span>
+    <span v-else class="motd-placeholder">{{ t("tools.preview.empty") }}</span>
   </div>
 </template>
 

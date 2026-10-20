@@ -98,7 +98,7 @@ pub struct PackPlan {
 /// 解析 modrinth.index.json（规范：docs.modrinth.com/#spec/modrinth-index-json）；剔除 env.client == "unsupported"。
 pub fn parse_modrinth_index(text: &str) -> Result<ModrinthParsed, String> {
     let idx: serde_json::Value =
-        serde_json::from_str(text).map_err(common_err_ctx!("解析 modrinth.index.json 失败"))?;
+        serde_json::from_str(text).map_err(common_err_ctx_key!("errors.install.modpack", "解析 modrinth.index.json 失败"))?;
     if idx["formatVersion"].as_i64() != Some(1) {
         bail!(
             "不支持的整合包格式版本\nformatVersion: {}",
@@ -179,7 +179,7 @@ pub struct CfManifestParsed {
 /// 解析 CurseForge manifest.json：manifestType == "minecraftModpack"、manifestVersion == 1；modLoaders[].id 形如 "forge-47.3.0"。
 pub fn parse_curseforge_manifest(text: &str) -> Result<CfManifestParsed, String> {
     let m: serde_json::Value =
-        serde_json::from_str(text).map_err(common_err_ctx!("解析 manifest.json 失败"))?;
+        serde_json::from_str(text).map_err(common_err_ctx_key!("errors.install.modpack", "解析 manifest.json 失败"))?;
     if m["manifestType"].as_str() != Some("minecraftModpack") {
         bail!(
             "不是 CurseForge 整合包清单\nmanifestType: {}",
@@ -289,7 +289,7 @@ pub fn read_manifest(
             let mut text = String::new();
             entry
                 .read_to_string(&mut text)
-                .map_err(common_err_ctx!("读取清单失败"))?;
+                .map_err(common_err_ctx_key!("errors.file.read", "读取清单失败"))?;
             return Ok((text, kind));
         }
     }
@@ -596,7 +596,7 @@ pub(crate) fn pack_modpack(
     .filter(|d| vdir.join(d).is_dir())
     .collect();
 
-    let file = std::fs::File::create(save_path).map_err(common_err_ctx!("创建文件失败"))?;
+    let file = std::fs::File::create(save_path).map_err(common_err_ctx_key!("errors.file.write", "创建文件失败"))?;
     let mut writer = zip::ZipWriter::new(file);
     // mrpack 惯例 Deflated（config/资源包压缩收益明显）
     let opts = zip::write::SimpleFileOptions::default()
@@ -630,10 +630,10 @@ pub(crate) fn pack_modpack(
     let content = serde_json::to_vec_pretty(&manifest).map_err(common_err_ctx!("序列化失败"))?;
     writer
         .start_file("modrinth.index.json", opts)
-        .map_err(common_err_ctx!("写入清单失败"))?;
+        .map_err(common_err_ctx_key!("errors.file.write", "写入清单失败"))?;
     writer
         .write_all(&content)
-        .map_err(common_err_ctx!("写入清单失败"))?;
+        .map_err(common_err_ctx_key!("errors.file.write", "写入清单失败"))?;
 
     for sub in subdirs {
         // 在线分发 mod 不物理打包进 overrides
@@ -650,7 +650,7 @@ pub(crate) fn pack_modpack(
             skip,
         )?;
     }
-    writer.finish().map_err(common_err_ctx!("写入 zip 失败"))?;
+    writer.finish().map_err(common_err_ctx_key!("errors.file.write", "写入 zip 失败"))?;
     Ok(())
 }
 

@@ -2,15 +2,19 @@
 // 指令生成器：顶部指令选择 + 按 schema（`utils/commands.ts`）动态渲染参数字段 + 输出命令。
 // 新增指令 = 在 COMMANDS 里加一条定义，本组件零改动。
 import { computed, reactive, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { Copy } from "@lucide/vue";
 import DropSelect from "../common/DropSelect.vue";
 import CheckToggle from "../common/CheckToggle.vue";
 import SearchSelect from "./SearchSelect.vue";
 import TargetSelect from "./TargetSelect.vue";
-import { GIVE_ITEMS } from "../../utils/give";
-import { COMMANDS, defaultValues, type CommandDef, type CommandValues } from "../../utils/commands";
+import { GIVE_ITEMS, itemName } from "../../utils/give";
+import { COMMANDS, defaultValues, optionLabel, type CommandDef, type CommandValues } from "../../utils/commands";
 import { checkNbtFragment, parseItemStackFragment } from "../../utils/nbtText";
 import { copyText } from "../../utils/clipboard";
+
+const { t } = useI18n();
+const itemOptions = computed(() => GIVE_ITEMS.map((i) => ({ id: i.id, name: itemName(i) })));
 
 const activeId = ref(COMMANDS[0].id);
 const active = computed<CommandDef>(
@@ -52,7 +56,7 @@ function onNbtInput(fieldKey: string, raw: string) {
 
 async function copyOutput() {
   if (!output.value) return;
-  await copyText(output.value, "命令已复制");
+  await copyText(output.value, t("tools.command.copied"));
 }
 
 // 首次进入即初始化全部指令的默认值（切换时字段立即可用）
@@ -62,8 +66,8 @@ for (const def of COMMANDS) valuesFor(def);
 <template>
   <div class="tool-card">
     <div class="tool-card-hdr">
-      <h3>指令生成器</h3>
-      <div class="tool-card-sub">原版 Java 指令可视化生成</div>
+      <h3>{{ t("tools.command.title") }}</h3>
+      <div class="tool-card-sub">{{ t("tools.command.subtitle") }}</div>
     </div>
 
     <div class="cmd-picker">
@@ -75,10 +79,10 @@ for (const def of COMMANDS) valuesFor(def);
         @click="activeId = c.id"
       >{{ c.name }}</button>
     </div>
-    <p class="cmd-desc">{{ active.desc }}</p>
+    <p class="cmd-desc">{{ t(active.descKey) }}</p>
 
     <div v-for="f in active.fields" :key="f.key" class="cmd-row" :class="{ 'cmd-row-top': f.kind === 'textarea' }">
-      <span class="cmd-label">{{ f.label }}</span>
+      <span class="cmd-label">{{ t(f.labelKey) }}</span>
       <template v-if="f.kind === 'enum'">
         <DropSelect
           :model-value="String(values[f.key] ?? '')"
@@ -96,8 +100,8 @@ for (const def of COMMANDS) valuesFor(def);
       <template v-else-if="f.kind === 'item'">
         <SearchSelect
           :model-value="String(values[f.key] ?? '')"
-          :options="GIVE_ITEMS"
-          :placeholder="f.placeholder"
+          :options="itemOptions"
+          :placeholder="f.placeholderKey ? t(f.placeholderKey) : undefined"
           max-width="360px"
           @update:model-value="(v: string) => (values[f.key] = v)"
         />
@@ -105,9 +109,9 @@ for (const def of COMMANDS) valuesFor(def);
       <template v-else-if="f.kind === 'search'">
         <SearchSelect
           :model-value="String(values[f.key] ?? '')"
-          :options="f.options.map((o) => ({ id: o.value, name: o.label }))"
+          :options="f.options.map((o) => ({ id: o.value, name: optionLabel(o) }))"
           :allow-custom="f.allowCustom ?? false"
-          :placeholder="'搜索或直接输入…'"
+          :placeholder="t('tools.command.searchPlaceholder')"
           max-width="360px"
           @update:model-value="(v: string) => (values[f.key] = v)"
         />
@@ -116,7 +120,7 @@ for (const def of COMMANDS) valuesFor(def);
         <input
           :value="String(values[f.key] ?? '')"
           class="cmd-input"
-          :placeholder="f.placeholder"
+          :placeholder="f.placeholderKey ? t(f.placeholderKey) : undefined"
           spellcheck="false"
           autocomplete="off"
           @input="values[f.key] = ($event.target as HTMLInputElement).value"
@@ -137,14 +141,14 @@ for (const def of COMMANDS) valuesFor(def);
           :model-value="Boolean(values[f.key])"
           :size="14"
           @update:model-value="(v: string | boolean) => (values[f.key] = v)"
-        >{{ f.label }}</CheckToggle>
+        >{{ t(f.labelKey) }}</CheckToggle>
       </template>
       <template v-else-if="f.kind === 'textarea'">
         <textarea
           :value="String(values[f.key] ?? '')"
           class="cmd-textarea"
           :rows="f.rows ?? 2"
-          :placeholder="f.placeholder"
+          :placeholder="f.placeholderKey ? t(f.placeholderKey) : undefined"
           spellcheck="false"
           autocomplete="off"
           @input="onNbtInput(f.key, ($event.target as HTMLTextAreaElement).value)"
@@ -155,13 +159,13 @@ for (const def of COMMANDS) valuesFor(def);
 
     <div class="cmd-output">
       <div class="cmd-output-head">
-        <span>命令（{{ active.name }}）</span>
+        <span>{{ t("tools.command.outputTitle", { name: active.name }) }}</span>
         <button class="tool-btn cmd-copy-btn" @click="copyOutput">
           <Copy :size="14" />
-          复制
+          {{ t("common.action.copy") }}
         </button>
       </div>
-      <code class="gen-output gen-output-cmd">{{ output || "（填写参数后生成）" }}</code>
+      <code class="gen-output gen-output-cmd">{{ output || t("tools.command.outputEmpty") }}</code>
     </div>
   </div>
 </template>

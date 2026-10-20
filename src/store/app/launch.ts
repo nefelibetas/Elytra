@@ -8,11 +8,14 @@ import { GAME_EXITED, GAME_WINDOW_VISIBLE } from "../app/events";
 import { authMode, msAccount, username, externalAccount, refreshExternalAccount, type MsAccountInfo } from "../auth/auth";
 import { selectedVersion, setSelected, getSavedDir } from "../app/selectedVersion";
 import { showError } from "../app/alert";
+import { t } from "../../i18n";
+import { errMsg } from "../../utils/error";
 
 export const launchState = reactive({
   /** 启动流程："" 空闲 | "running" 启动中 | "done" 完成 */
   phase: "" as "" | "running" | "done",
-  steps: [] as { name: string; status: StepStatus }[],
+  /** key 为 i18n 消息 key：语言切换时步骤文案即时更新。 */
+  steps: [] as { key: string; status: StepStatus }[],
 });
 
 export const isLaunching = computed(() => launchState.phase === "running");
@@ -23,8 +26,8 @@ let launchSeq = 0;
 /** 已请求取消的启动标签（版本目录名）：被终止进程的 GAME_EXITED（非零退出码）不再按崩溃提示。 */
 const cancelledLabels = new Set<string>();
 
-function step(name: string, status: StepStatus) {
-  const s = launchState.steps.find(s => s.name === name);
+function step(key: string, status: StepStatus) {
+  const s = launchState.steps.find(s => s.key === key);
   if (s) s.status = status;
 }
 
@@ -89,18 +92,18 @@ export async function doLaunch(navigateToDownload: () => void) {
   const isExternal = authMode.value === "external";
 
   if (isOffline && !username.value.trim()) {
-    showError("请输入用户名后再启动游戏");
+    showError(t("launch.error.usernameRequired"));
     return;
   }
 
   // 正版须已登录；启动前静默刷新 token（界面切换在前，避免点击后无反馈）
   if (!isOffline && !isExternal && !msAccount.value) {
-    showError("请先登录 Microsoft 账号");
+    showError(t("launch.error.premiumRequired"));
     return;
   }
 
   if (isExternal && !externalAccount.value) {
-    showError("请先登录第三方账号");
+    showError(t("launch.error.externalRequired"));
     return;
   }
 
@@ -111,10 +114,10 @@ export async function doLaunch(navigateToDownload: () => void) {
       : (msAccount.value?.name ?? "");
   launchState.phase = "running";
   launchState.steps = [
-    { name: "检查 Java 环境", status: "running" },
-    { name: "检查游戏文件", status: "pending" },
-    { name: "启动游戏", status: "pending" },
-    { name: "等待游戏窗口", status: "pending" },
+    { key: "launch.steps.java", status: "running" },
+    { key: "launch.steps.files", status: "pending" },
+    { key: "launch.steps.start", status: "pending" },
+    { key: "launch.steps.window", status: "pending" },
   ];
 
   // 本次启动代际号：取消启动会自增，使在飞 await 的落点全部作废（后端同步收到取消请求）
@@ -135,7 +138,7 @@ export async function doLaunch(navigateToDownload: () => void) {
           if (seq !== launchSeq) return;
           externalAccount.value = null;
           resetLaunch();
-          showError(`第三方账号登录已失效，请重新登录：${String(e)}`, true);
+          showError(t("launch.error.externalExpired", { error: errMsg(e) }), true);
           return;
         }
       }
@@ -146,7 +149,7 @@ export async function doLaunch(navigateToDownload: () => void) {
         if (seq !== launchSeq) return;
         msAccount.value = null;
         resetLaunch();
-        showError(`正版登录已失效，请重新登录：${String(e)}`, true);
+        showError(t("launch.error.premiumExpired", { error: errMsg(e) }), true);
         return;
       }
     }
@@ -155,14 +158,14 @@ export async function doLaunch(navigateToDownload: () => void) {
     // ① 环境 + 完整性校验
     await invoke("check_launch_env", { versionDirName: selectedVersion.value });
     if (seq !== launchSeq) return;
-    step("检查 Java 环境", "done");
-    step("检查游戏文件", "running");
+    step("launch.steps.java", "done");
+    step("launch.steps.files", "running");
     await new Promise(r => setTimeout(r, 100)); // 让用户看到完整性检查过程
     if (seq !== launchSeq) return;
-    step("检查游戏文件", "done");
+    step("launch.steps.files", "done");
 
     // ② 启动游戏进程
-    step("启动游戏", "running");
+    step("launch.steps.start", "running");
     const pid = await invoke("spawn_game", {
       versionDirName: selectedVersion.value,
       authMode: isOffline ? "offline" : isExternal ? "external" : "online",
@@ -180,8 +183,8 @@ export async function doLaunch(navigateToDownload: () => void) {
       xuid: isOffline || isExternal ? "" : (msAccount.value?.xuid ?? ""),
     });
     if (seq !== launchSeq) return; // 已取消：后端已按取消终止该进程
-    step("启动游戏", "done");
-    step("等待游戏窗口", "running");
+    step("launch.steps.start", "done");
+    step("launch.steps.window", "running");
     console.log("Game started, PID:", pid);
 
     // 记录最后离线用户名（与正版隔离）
@@ -190,17 +193,13 @@ export async function doLaunch(navigateToDownload: () => void) {
     }
 
     // ③ 等待游戏窗口（后端轮询可见窗口推送事件；90s 兜底防卡死）
-    step("等待游戏窗口", "running");
+    step("launch.steps.window", "running");
     const windowShown = await waitGameWindow(selectedVersion.value);
     if (seq !== launchSeq) return;
-    step("等待游戏窗口", "done");
+    step("launch.steps.window", "done");
     launchState.phase = "done";
     if (!windowShown) {
-      showError(
-        "未检测到游戏窗口（启动可能缓慢或进程已退出），请查看日志\n" +
-        "版本：\n日志：.minecraft/logs/elytra-launch.log",
-        true,
-      );
+      showError(t("launch.error.windowNotFound", { version: selectedVersion.value }), true);
     }
 
     setTimeout(() => {
@@ -210,7 +209,7 @@ export async function doLaunch(navigateToDownload: () => void) {
     // 已取消：本次流程的落点全部作废（取消路径不放错误弹窗，后端「启动已取消」亦不提示）
     if (seq !== launchSeq) return;
     resetLaunch();
-    showError(String(e), true);
+    showError(errMsg(e), true);
   }
 }
 
@@ -256,12 +255,8 @@ export async function ensureGameExitListener() {
     const [, label, exitCode, crashReport] = ev.payload;
     // 取消启动会终止已拉起的进程（非零退出码）：不算崩溃
     if (exitCode !== null && exitCode !== 0 && !cancelledLabels.has(label)) {
-      showError(
-        `游戏异常退出（退出码 ${exitCode}），请查看崩溃报告或重新启动\n` +
-        `版本：${label}\n退出码：${exitCode}\n日志：.minecraft/logs/elytra-launch.log` +
-        (crashReport ? `\n崩溃报告：${crashReport}` : ""),
-        true,
-      );
+      const key = crashReport ? "launch.error.crashedWithReport" : "launch.error.crashed";
+      showError(t(key, { code: exitCode, version: label, report: crashReport ?? "" }), true);
     }
   });
 }

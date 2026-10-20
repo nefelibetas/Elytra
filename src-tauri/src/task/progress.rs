@@ -145,8 +145,16 @@ impl EmitLoop {
                     p.completed_bytes = completed_bytes;
                     // 总数每 tick 写回（含 natives/安装步骤），剩余文件不会变负
                     p.total_files = self.total_files;
-                    if let Some(st) = p.steps.iter().find(|s| s.status == StepStatus::Running) {
-                        p.current_phase = st.name.clone();
+                    let running = p
+                        .steps
+                        .iter()
+                        .find(|s| s.status == StepStatus::Running)
+                        .map(|st| (st.name.clone(), st.kind));
+                    if let Some((name, kind)) = running {
+                        p.current_phase = name;
+                        p.current_phase_key =
+                            kind.map(|k| format!("task.backend.step.{}", k.i18n_key()));
+                        p.current_phase_params = None;
                     }
 
                     if let Some(i) = self.jar_step {
@@ -335,7 +343,14 @@ pub fn set_phase(
         if let Some(s) = status {
             p.status = s;
         }
+        let key = p
+            .steps
+            .get(step)
+            .and_then(|st| st.kind)
+            .map(|k| format!("task.backend.step.{}", k.i18n_key()));
         p.current_phase = phase.into();
+        p.current_phase_key = key;
+        p.current_phase_params = None;
         if let Some(st) = p.steps.get_mut(step) {
             st.status = step_status;
         }
@@ -394,6 +409,8 @@ pub fn set_done(sink: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>, phase
         p.progress = 100.0;
         p.completed_files = p.total_files;
         p.current_phase = phase.into();
+        p.current_phase_key = Some("task.backend.phase.done".into());
+        p.current_phase_params = None;
     });
     // 终态统一移除任务注册（remove 同清挂起登记）；先释放 progress 锁再 remove，防死锁。
     if let Some(p) = progress.try_lock() {
@@ -408,6 +425,8 @@ pub fn set_error(sink: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>, msg:
     update_and_emit(sink, progress, |p| {
         p.status = TaskStatus::Error;
         p.error = Some(msg);
+        p.current_phase_key = Some("task.backend.phase.error".into());
+        p.current_phase_params = None;
     });
     // 先释放 progress 锁再 take_cleanup_path（后者持 inner 锁），保持 inner→progress 锁序。
     let task_id = progress.try_lock().map(|p| p.task_id.clone());
@@ -462,6 +481,8 @@ pub fn set_cancelled(sink: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>) 
     update_and_emit(sink, progress, |p| {
         p.status = TaskStatus::Cancelled;
         p.current_phase = "已取消".into();
+        p.current_phase_key = Some("task.backend.phase.cancelled".into());
+        p.current_phase_params = None;
     });
     if let Some(p) = progress.try_lock() {
         let task_id = p.task_id.clone();
@@ -637,6 +658,8 @@ mod tests {
         let progress = Arc::new(Mutex::new(TaskProgress {
             task_id: "t1".into(),
             name: "整合包".into(),
+            name_key: None,
+            name_params: None,
             status: TaskStatus::Pending,
             progress: 0.0,
             speed_bps: 0.0,
@@ -646,14 +669,18 @@ mod tests {
             completed_bytes: 0,
             total_bytes: 0,
             current_phase: "游戏主文件".into(),
+            current_phase_key: None,
+            current_phase_params: None,
             steps: vec![
                 StepInfo {
                     name: "游戏主文件".into(),
+                    kind: None,
                     status: StepStatus::Running,
                     progress: 0.0,
                 },
                 StepInfo {
                     name: "依赖库".into(),
+                    kind: None,
                     status: StepStatus::Pending,
                     progress: 0.0,
                 },
@@ -711,6 +738,8 @@ mod tests {
         let progress = Arc::new(Mutex::new(TaskProgress {
             task_id: "t1".into(),
             name: "整合包：愚者".into(),
+            name_key: None,
+            name_params: None,
             status: TaskStatus::Running,
             progress: 0.0,
             speed_bps: 0.0,
@@ -720,6 +749,8 @@ mod tests {
             completed_bytes: 0,
             total_bytes: 0,
             current_phase: "依赖库".into(),
+            current_phase_key: None,
+            current_phase_params: None,
             steps: vec![],
             error: None,
         }));

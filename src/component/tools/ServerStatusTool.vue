@@ -1,12 +1,15 @@
 <script setup lang="ts">
 // 服务器状态检测：输入地址（Java/基岩版，自动识别）探测在线状态。
 // 后端 commands/server_status.rs → server_status.rs（SLP / RakNet）。
-import { ref } from "vue";
+import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { invoke } from "@tauri-apps/api/core";
 import { Radio, RefreshCw } from "@lucide/vue";
 import MotdPreview from "./MotdPreview.vue";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
 import { errMsg } from "../../utils/error";
+
+const { t } = useI18n();
 
 /** 服务器状态（镜像 Rust ServerStatus）。 */
 interface ServerStatus {
@@ -25,11 +28,11 @@ type Edition = "" | "java" | "bedrock";
 const address = ref("");
 const edition = ref<Edition>("");
 /** 协议选择选项（DropSelect 用）。 */
-const editionOptions: SelOption[] = [
-  { value: "", label: "自动识别" },
-  { value: "java", label: "Java 版" },
-  { value: "bedrock", label: "基岩版" },
-];
+const editionOptions = computed<SelOption[]>(() => [
+  { value: "", label: t("tools.status.editionAuto") },
+  { value: "java", label: t("tools.status.editionJava") },
+  { value: "bedrock", label: t("tools.status.editionBedrock") },
+]);
 const loading = ref(false);
 const status = ref<ServerStatus | null>(null);
 const error = ref("");
@@ -39,7 +42,7 @@ const elapsedMs = ref(0);
 async function handlePing() {
   const addr = address.value.trim();
   if (!addr) {
-    error.value = "请输入服务器地址";
+    error.value = t("tools.status.addressRequired");
     status.value = null;
     return;
   }
@@ -62,30 +65,30 @@ async function handlePing() {
 
 /** 结果头部提示：在线（绿点）/ 无响应（红点）。 */
 function statusLine(): string {
-  if (status.value?.edition === "java") return "Java 版 · 在线";
-  if (status.value?.edition === "bedrock") return "基岩版 · 在线";
-  return "无响应";
+  if (status.value?.edition === "java") return t("tools.status.onlineJava");
+  if (status.value?.edition === "bedrock") return t("tools.status.onlineBedrock");
+  return t("tools.status.noResponse");
 }
 
 function editionLabel(): string {
-  if (status.value?.edition === "java") return "Java 版";
-  if (status.value?.edition === "bedrock") return "基岩版";
-  return "未知";
+  if (status.value?.edition === "java") return t("tools.status.editionJava");
+  if (status.value?.edition === "bedrock") return t("tools.status.editionBedrock");
+  return t("tools.status.editionUnknown");
 }
 </script>
 
 <template>
   <div class="tool-card">
     <div class="tool-card-hdr">
-      <h3>服务器状态检测</h3>
-      <div class="tool-card-sub">探测任意 Java / 基岩版服务器的在线状态、版本、人数与 MOTD</div>
+      <h3>{{ t("tools.status.title") }}</h3>
+      <div class="tool-card-sub">{{ t("tools.status.subtitle") }}</div>
     </div>
 
     <div class="ping-row">
       <input
         v-model="address"
         class="ping-input"
-        placeholder="服务器地址[:端口]，如 play.example.com 或 1.2.3.4:25565"
+        :placeholder="t('tools.status.addressPlaceholder')"
         :disabled="loading"
         @keyup.enter="handlePing"
         autocomplete="off"
@@ -99,7 +102,7 @@ function editionLabel(): string {
       />
       <button class="tool-btn ping-btn" :disabled="loading || !address.trim()" @click="handlePing">
         <RefreshCw :size="14" :class="{ spin: loading }" />
-        {{ loading ? "检测中…" : "检测" }}
+        {{ loading ? t("tools.status.checking") : t("tools.status.check") }}
       </button>
     </div>
 
@@ -107,7 +110,7 @@ function editionLabel(): string {
 
     <div v-if="status" class="ping-result">
       <div class="ping-head">
-        <img v-if="status.favicon" class="ping-icon" :src="status.favicon" alt="服务器图标" />
+        <img v-if="status.favicon" class="ping-icon" :src="status.favicon" :alt="t('tools.status.iconAlt')" />
         <div class="ping-meta">
           <div class="ping-line1">
             <span class="ping-dot" :class="{ online: status.edition === 'java' || status.edition === 'bedrock' }" />
@@ -117,13 +120,12 @@ function editionLabel(): string {
           </div>
           <div class="ping-line2">
             <span class="ping-ver">{{ status.version_name }}</span>
-            <span v-if="status.protocol" class="ping-protocol">协议 {{ status.protocol }}</span>
+            <span v-if="status.protocol" class="ping-protocol">{{ t("tools.status.protocol", { protocol: status.protocol }) }}</span>
           </div>
           <div class="ping-players">
             <span :class="{ full: status.online_players >= status.max_players && status.max_players > 0 }">
-              {{ status.online_players }} / {{ status.max_players }}
+              {{ t("tools.status.playersOnline", { online: status.online_players, max: status.max_players }) }}
             </span>
-            人在线
           </div>
         </div>
       </div>
@@ -132,11 +134,11 @@ function editionLabel(): string {
       <MotdPreview :motd="status.motd" />
 
       <div v-if="status.player_sample.length > 0" class="ping-sample">
-        <span class="ping-sample-label">在线玩家</span>
+        <span class="ping-sample-label">{{ t("tools.status.playerSample") }}</span>
         <div class="ping-sample-list">
           <span v-for="(name, i) in status.player_sample" :key="i" class="ping-sample-item">{{ name }}</span>
           <span v-if="status.online_players > status.player_sample.length" class="ping-sample-more">
-            等 {{ status.online_players }} 人
+            {{ t("tools.status.andMore", { count: status.online_players }) }}
           </span>
         </div>
       </div>
@@ -144,7 +146,7 @@ function editionLabel(): string {
 
     <div v-else class="ping-hint">
       <Radio :size="13" />
-      联机时可用它确认主机游戏端口是否已开放；地址不填端口时默认 Java 25565 / 基岩版 19132。
+      {{ t("tools.status.hint") }}
     </div>
   </div>
 </template>

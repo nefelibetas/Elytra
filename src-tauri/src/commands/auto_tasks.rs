@@ -43,7 +43,7 @@ pub fn save_instance_auto_tasks(
 pub fn save_global_auto_tasks(tasks: AutoTasks) -> Result<(), String> {
     let mut options = persist::launch_options();
     options.auto_tasks = tasks;
-    persist::save_launch_options(&options).map_err(common_err_ctx!("保存配置失败"))
+    persist::save_launch_options(&options).map_err(common_err_ctx_key!("errors.config.write", "保存配置失败"))
 }
 
 /// 立即执行一次某阶段自动任务（跳过启动流程，便于调试/应急）；在阻塞线程执行（备份可能数十秒）。
@@ -57,7 +57,7 @@ pub async fn run_auto_tasks_now(
     let root = mc_dir();
     let game_dir = root.join("versions").join(&version_id);
     if !game_dir.is_dir() {
-        bail!("版本目录不存在\n{}", game_dir.display());
+        bail_key!("errors.version.missing", "版本目录不存在\n{}", game_dir.display());
     }
     let auto_tasks = instance::read_auto_tasks(&root, &version_id)
         .unwrap_or_else(|| persist::launch_options().auto_tasks);

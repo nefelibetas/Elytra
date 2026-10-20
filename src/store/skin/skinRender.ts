@@ -1,5 +1,7 @@
 // 自研等距 3D 渲染器（Canvas 2D 零依赖）：正交投影 + 画家算法 + Mojang 皮肤 UV 规范（64×64，旧版 64×32；UV 展开 [深度][正面][深度][背面]，上下贴右上角）。
 
+import { t } from "../../i18n";
+
 type UvRect = readonly [number, number, number, number];
 
 /** 一个待绘制的体素立方体：中心 + 尺寸（1 体素 = 皮肤 1 像素）。 */
@@ -546,7 +548,7 @@ export function loadSkinImage(dataUrl: string): Promise<HTMLImageElement> {
   const p = new Promise<HTMLImageElement>((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error("皮肤解码失败"));
+    img.onerror = () => reject(new Error(t("skin.painter.decodeFailed")));
     img.src = dataUrl;
   });
   skinImageCache.set(dataUrl, p);

@@ -94,7 +94,7 @@ static POOL: LazyLock<Result<SqlitePool, String>> = LazyLock::new(|| {
             .acquire_timeout(std::time::Duration::from_secs(2))
             .connect_with(opts)
             .await
-            .map_err(common_err_ctx!("打开任务数据库失败"))?;
+            .map_err(common_err_ctx_key!("errors.unknown", "打开任务数据库失败"))?;
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS install_jobs (
                 id TEXT PRIMARY KEY,

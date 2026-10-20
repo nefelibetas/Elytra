@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 版本选择页左侧：游戏目录列表 + 右键菜单 + 添加游戏目录 + 重命名 dialog
 import { onMounted, onUnmounted } from "vue";
+import { useI18n } from "vue-i18n";
 import { Ellipsis, FolderPlus } from "@lucide/vue";
 import MenuPopover from "../common/MenuPopover.vue";
 import AlertDialog from "../common/AlertDialog.vue";
@@ -16,6 +17,8 @@ import {
 
 onMounted(() => window.addEventListener("click", onWindowClick));
 onUnmounted(() => window.removeEventListener("click", onWindowClick));
+
+const { t } = useI18n();
 
 /** 导入整合包：先切到该目录（整合包装进「当前游戏目录」），再选文件提交安装。 */
 async function menuImportPack() {
@@ -34,12 +37,12 @@ async function menuImportPack() {
 
 <template>
   <div class="vs-left">
-    <div class="vs-group-label">游戏列表</div>
+    <div class="vs-group-label">{{ t("settings.version.select.gameList") }}</div>
     <div class="vs-dir-list">
       <!-- 无目录：macOS/Linux 无平台默认，Windows 仅只读安装位置为空 -->
       <div v-if="!dirs.length" class="vs-dir-empty">
-        尚未添加游戏目录<br />
-        <span class="vs-dir-empty-hint">游戏本体、版本与模组都存在游戏目录里，请先添加一个</span>
+        {{ t("settings.version.select.emptyTitle") }}<br />
+        <span class="vs-dir-empty-hint">{{ t("settings.version.select.emptyHint") }}</span>
       </div>
       <div
         v-for="d in dirs"
@@ -55,7 +58,7 @@ async function menuImportPack() {
         </div>
         <button
           class="vs-dir-more"
-          v-tooltip="'更多操作'"
+          v-tooltip="t('settings.version.select.moreActions')"
           @click.stop="openItemMenu($event, d)"
         >
           <Ellipsis :size="15" :fill="'currentColor'" :stroke="'none'" />
@@ -63,11 +66,11 @@ async function menuImportPack() {
       </div>
     </div>
 
-    <div class="vs-group-label">添加或导入</div>
+    <div class="vs-group-label">{{ t("settings.version.select.addOrImport") }}</div>
     <div class="vs-add-list">
       <div class="vs-add-item" @click="addFolder">
         <FolderPlus :size="14" />
-        <span>添加已有游戏目录</span>
+        <span>{{ t("settings.version.select.addExistingDir") }}</span>
       </div>
     </div>
     <div v-if="dirsError" class="vs-err">{{ dirsError }}</div>
@@ -79,17 +82,17 @@ async function menuImportPack() {
       :y="itemMenu.y"
       min-width="120px"
     >
-      <div class="menu-item" @click="menuRename">重命名</div>
-      <div class="menu-item" @click="menuOpen">打开</div>
-      <div class="menu-item" @click="menuRemove">删除</div>
-      <div class="menu-item" @click="menuRefresh">刷新</div>
-      <div class="menu-item" @click="menuImportPack">导入整合包</div>
+      <div class="menu-item" @click="menuRename">{{ t("settings.version.select.rename") }}</div>
+      <div class="menu-item" @click="menuOpen">{{ t("settings.version.select.open") }}</div>
+      <div class="menu-item" @click="menuRemove">{{ t("settings.version.select.delete") }}</div>
+      <div class="menu-item" @click="menuRefresh">{{ t("settings.version.select.refresh") }}</div>
+      <div class="menu-item" @click="menuImportPack">{{ t("settings.version.select.importModpack") }}</div>
     </MenuPopover>
 
     <!-- 重命名 dialog -->
-    <AlertDialog v-model="renameDialog" title="重命名游戏">
+    <AlertDialog v-model="renameDialog" :title="t('settings.version.select.renameTitle')">
       <div class="vs-dialog-body">
-        <div class="vs-dialog-label">输入该游戏在左侧列表中显示的名称</div>
+        <div class="vs-dialog-label">{{ t("settings.version.select.renameLabel") }}</div>
         <input
           v-model="renameInput"
           class="vs-input"
@@ -101,15 +104,15 @@ async function menuImportPack() {
         <div v-if="renameError" class="vs-err">{{ renameError }}</div>
       </div>
       <template #actions>
-        <button class="dialog-btn primary" @click="confirmRename">确定</button>
-        <button class="dialog-btn" @click="renameDialog = false">取消</button>
+        <button class="dialog-btn primary" @click="confirmRename">{{ t("settings.version.setup.common.confirm") }}</button>
+        <button class="dialog-btn" @click="renameDialog = false">{{ t("settings.version.setup.common.cancel") }}</button>
       </template>
     </AlertDialog>
 
     <!-- 添加已有文件夹 dialog -->
-    <AlertDialog v-model="addDialog" title="输入显示名称">
+    <AlertDialog v-model="addDialog" :title="t('settings.version.select.addTitle')">
       <div class="vs-dialog-body">
-        <div class="vs-dialog-label">输入该游戏在左侧列表中显示的名称</div>
+        <div class="vs-dialog-label">{{ t("settings.version.select.renameLabel") }}</div>
         <input
           v-model="addInput"
           class="vs-input"
@@ -121,8 +124,8 @@ async function menuImportPack() {
         <div v-if="addError" class="vs-err">{{ addError }}</div>
       </div>
       <template #actions>
-        <button class="dialog-btn primary" @click="confirmAdd">确定</button>
-        <button class="dialog-btn" @click="addDialog = false">取消</button>
+        <button class="dialog-btn primary" @click="confirmAdd">{{ t("settings.version.setup.common.confirm") }}</button>
+        <button class="dialog-btn" @click="addDialog = false">{{ t("settings.version.setup.common.cancel") }}</button>
       </template>
     </AlertDialog>
   </div>

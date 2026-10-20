@@ -5,6 +5,7 @@ import { POTION_EFFECTS } from "./nbt";
 import { hasTopLevelEquals, normalizeNbtFragment } from "./nbtText";
 import { ENCHANTMENTS } from "./give";
 import { GAMERULES } from "./mcData";
+import { currentLocale } from "../i18n";
 
 // ── 字段模型 ──
 
@@ -12,25 +13,32 @@ import { GAMERULES } from "./mcData";
 export interface FieldOption {
   value: string;
   label: string;
+  /** 英文界面标签（缺失时回退 label）。 */
+  labelEn?: string;
+}
+
+/** 按当前界面语言取选项标签。 */
+export function optionLabel(option: FieldOption): string {
+  return currentLocale.value === "en-US" ? option.labelEn ?? option.label : option.label;
 }
 
 export type ParamField =
-  | { kind: "item"; key: string; label: string; placeholder?: string }
-  | { kind: "target"; key: string; label: string; default: string }
-  | { kind: "enum"; key: string; label: string; options: FieldOption[]; default: string }
+  | { kind: "item"; key: string; labelKey: string; placeholderKey?: string }
+  | { kind: "target"; key: string; labelKey: string; default: string }
+  | { kind: "enum"; key: string; labelKey: string; options: FieldOption[]; default: string }
   | {
       kind: "search";
       key: string;
-      label: string;
+      labelKey: string;
       options: FieldOption[];
       default: string;
       /** 允许自由输入（实体/效果等：列表未收录的 id 可直接写）。 */
       allowCustom?: boolean;
     }
-  | { kind: "text"; key: string; label: string; placeholder?: string; default: string }
-  | { kind: "textarea"; key: string; label: string; placeholder?: string; rows?: number }
-  | { kind: "num"; key: string; label: string; min: number; max: number; default: number }
-  | { kind: "check"; key: string; label: string; default: boolean };
+  | { kind: "text"; key: string; labelKey: string; placeholderKey?: string; default: string }
+  | { kind: "textarea"; key: string; labelKey: string; placeholderKey?: string; rows?: number }
+  | { kind: "num"; key: string; labelKey: string; min: number; max: number; default: number }
+  | { kind: "check"; key: string; labelKey: string; default: boolean };
 
 export type CommandValues = Record<string, string | number | boolean>;
 
@@ -38,7 +46,7 @@ export interface CommandDef {
   id: string;
   /** 显示名（含斜杠）。 */
   name: string;
-  desc: string;
+  descKey: string;
   fields: ParamField[];
   build: (v: CommandValues) => string;
 }
@@ -63,98 +71,106 @@ function ns(id: string): string {
 
 /** 常见可召唤实体（一期收录热门，按用途排序）。 */
 export const SUMMON_ENTITIES: FieldOption[] = [
-  { value: "zombie", label: "僵尸" },
-  { value: "skeleton", label: "骷髅" },
-  { value: "creeper", label: "苦力怕" },
-  { value: "spider", label: "蜘蛛" },
-  { value: "cave_spider", label: "洞穴蜘蛛" },
-  { value: "enderman", label: "末影人" },
-  { value: "witch", label: "女巫" },
-  { value: "slime", label: "史莱姆" },
-  { value: "magma_cube", label: "岩浆怪" },
-  { value: "blaze", label: "烈焰人" },
-  { value: "ghast", label: "恶魂" },
-  { value: "wither_skeleton", label: "凋灵骷髅" },
-  { value: "guardian", label: "守卫者" },
-  { value: "elder_guardian", label: "远古守卫者" },
-  { value: "drowned", label: "溺尸" },
-  { value: "phantom", label: "幻翼" },
-  { value: "shulker", label: "潜影贝" },
-  { value: "vex", label: "恼鬼" },
-  { value: "vindicator", label: "卫道士" },
-  { value: "evoker", label: "唤魔者" },
-  { value: "pillager", label: "掠夺者" },
-  { value: "ravager", label: "劫掠兽" },
-  { value: "piglin", label: "猪灵" },
-  { value: "piglin_brute", label: "猪灵蛮兵" },
-  { value: "hoglin", label: "疣猪兽" },
-  { value: "zoglin", label: "僵尸疣猪兽" },
-  { value: "warden", label: "监守者" },
-  { value: "breeze", label: "旋风人" },
-  { value: "allay", label: "悦灵" },
-  { value: "villager", label: "村民" },
-  { value: "wandering_trader", label: "流浪商人" },
-  { value: "iron_golem", label: "铁傀儡" },
-  { value: "snow_golem", label: "雪傀儡" },
-  { value: "armor_stand", label: "盔甲架" },
-  { value: "cow", label: "牛" },
-  { value: "pig", label: "猪" },
-  { value: "sheep", label: "绵羊" },
-  { value: "chicken", label: "鸡" },
-  { value: "rabbit", label: "兔子" },
-  { value: "horse", label: "马" },
-  { value: "donkey", label: "驴" },
-  { value: "llama", label: "羊驼" },
-  { value: "cat", label: "猫" },
-  { value: "wolf", label: "狼" },
-  { value: "fox", label: "狐狸" },
-  { value: "bee", label: "蜜蜂" },
-  { value: "panda", label: "熊猫" },
-  { value: "polar_bear", label: "北极熊" },
-  { value: "turtle", label: "海龟" },
-  { value: "dolphin", label: "海豚" },
-  { value: "axolotl", label: "美西螈" },
-  { value: "frog", label: "青蛙" },
-  { value: "goat", label: "山羊" },
-  { value: "camel", label: "骆驼" },
-  { value: "sniffer", label: "嗅探兽" },
-  { value: "armadillo", label: "犰狳" },
-  { value: "item", label: "掉落物（物品展示用）" },
+  { value: "zombie", label: "僵尸", labelEn: "Zombie" },
+  { value: "skeleton", label: "骷髅", labelEn: "Skeleton" },
+  { value: "creeper", label: "苦力怕", labelEn: "Creeper" },
+  { value: "spider", label: "蜘蛛", labelEn: "Spider" },
+  { value: "cave_spider", label: "洞穴蜘蛛", labelEn: "Cave Spider" },
+  { value: "enderman", label: "末影人", labelEn: "Enderman" },
+  { value: "witch", label: "女巫", labelEn: "Witch" },
+  { value: "slime", label: "史莱姆", labelEn: "Slime" },
+  { value: "magma_cube", label: "岩浆怪", labelEn: "Magma Cube" },
+  { value: "blaze", label: "烈焰人", labelEn: "Blaze" },
+  { value: "ghast", label: "恶魂", labelEn: "Ghast" },
+  { value: "wither_skeleton", label: "凋灵骷髅", labelEn: "Wither Skeleton" },
+  { value: "guardian", label: "守卫者", labelEn: "Guardian" },
+  { value: "elder_guardian", label: "远古守卫者", labelEn: "Elder Guardian" },
+  { value: "drowned", label: "溺尸", labelEn: "Drowned" },
+  { value: "phantom", label: "幻翼", labelEn: "Phantom" },
+  { value: "shulker", label: "潜影贝", labelEn: "Shulker" },
+  { value: "vex", label: "恼鬼", labelEn: "Vex" },
+  { value: "vindicator", label: "卫道士", labelEn: "Vindicator" },
+  { value: "evoker", label: "唤魔者", labelEn: "Evoker" },
+  { value: "pillager", label: "掠夺者", labelEn: "Pillager" },
+  { value: "ravager", label: "劫掠兽", labelEn: "Ravager" },
+  { value: "piglin", label: "猪灵", labelEn: "Piglin" },
+  { value: "piglin_brute", label: "猪灵蛮兵", labelEn: "Piglin Brute" },
+  { value: "hoglin", label: "疣猪兽", labelEn: "Hoglin" },
+  { value: "zoglin", label: "僵尸疣猪兽", labelEn: "Zoglin" },
+  { value: "warden", label: "监守者", labelEn: "Warden" },
+  { value: "breeze", label: "旋风人", labelEn: "Breeze" },
+  { value: "allay", label: "悦灵", labelEn: "Allay" },
+  { value: "villager", label: "村民", labelEn: "Villager" },
+  { value: "wandering_trader", label: "流浪商人", labelEn: "Wandering Trader" },
+  { value: "iron_golem", label: "铁傀儡", labelEn: "Iron Golem" },
+  { value: "snow_golem", label: "雪傀儡", labelEn: "Snow Golem" },
+  { value: "armor_stand", label: "盔甲架", labelEn: "Armor Stand" },
+  { value: "cow", label: "牛", labelEn: "Cow" },
+  { value: "pig", label: "猪", labelEn: "Pig" },
+  { value: "sheep", label: "绵羊", labelEn: "Sheep" },
+  { value: "chicken", label: "鸡", labelEn: "Chicken" },
+  { value: "rabbit", label: "兔子", labelEn: "Rabbit" },
+  { value: "horse", label: "马", labelEn: "Horse" },
+  { value: "donkey", label: "驴", labelEn: "Donkey" },
+  { value: "llama", label: "羊驼", labelEn: "Llama" },
+  { value: "cat", label: "猫", labelEn: "Cat" },
+  { value: "wolf", label: "狼", labelEn: "Wolf" },
+  { value: "fox", label: "狐狸", labelEn: "Fox" },
+  { value: "bee", label: "蜜蜂", labelEn: "Bee" },
+  { value: "panda", label: "熊猫", labelEn: "Panda" },
+  { value: "polar_bear", label: "北极熊", labelEn: "Polar Bear" },
+  { value: "turtle", label: "海龟", labelEn: "Turtle" },
+  { value: "dolphin", label: "海豚", labelEn: "Dolphin" },
+  { value: "axolotl", label: "美西螈", labelEn: "Axolotl" },
+  { value: "frog", label: "青蛙", labelEn: "Frog" },
+  { value: "goat", label: "山羊", labelEn: "Goat" },
+  { value: "camel", label: "骆驼", labelEn: "Camel" },
+  { value: "sniffer", label: "嗅探兽", labelEn: "Sniffer" },
+  { value: "armadillo", label: "犰狳", labelEn: "Armadillo" },
+  { value: "item", label: "掉落物（物品展示用）", labelEn: "Item (display)" },
 ];
 
 /** 经验单位。 */
 export const XP_UNITS: FieldOption[] = [
-  { value: "points", label: "点数" },
-  { value: "levels", label: "等级" },
+  { value: "points", label: "点数", labelEn: "Points" },
+  { value: "levels", label: "等级", labelEn: "Levels" },
 ];
 
 const EFFECT_OPTIONS: FieldOption[] = POTION_EFFECTS.map((e) => ({
   value: e.id,
   label: e.name,
+  labelEn: e.nameEn ?? e.id,
 }));
 
 const ENCHANT_OPTIONS: FieldOption[] = ENCHANTMENTS.map((e) => ({
   value: e.id,
   label: e.name,
+  labelEn: e.nameEn ?? e.id,
 }));
 
 const GAMERULE_OPTIONS: FieldOption[] = GAMERULES.map((g) => ({
   value: g.name,
   label: `${g.label}（${g.name}）`,
+  labelEn: `${g.labelEn} (${g.name})`,
 }));
 
 const giveDef: CommandDef = {
   id: "give",
   name: "/give",
-  desc: "给予玩家物品（附加段可贴「物品 NBT 生成」的修饰内容）",
+  descKey: "tools.command.defs.give.desc",
   fields: [
-    { kind: "item", key: "item", label: "物品", placeholder: "搜索物品…" },
-    { kind: "num", key: "count", label: "数量", min: 1, max: 99, default: 1 },
+    {
+      kind: "item",
+      key: "item",
+      labelKey: "tools.command.defs.give.fields.item",
+      placeholderKey: "tools.command.defs.give.placeholders.item",
+    },
+    { kind: "num", key: "count", labelKey: "tools.command.defs.give.fields.count", min: 1, max: 99, default: 1 },
     {
       kind: "textarea",
       key: "nbt",
-      label: "附加 NBT",
-      placeholder: "按组件/NBT 语法书写（如 custom_model_data=7 或 CustomModelData:7）；完整修饰用「物品 NBT 生成」",
+      labelKey: "tools.command.defs.give.fields.nbt",
+      placeholderKey: "tools.command.defs.give.placeholders.nbt",
       rows: 2,
     },
   ],
@@ -175,15 +191,22 @@ const giveDef: CommandDef = {
 const summonDef: CommandDef = {
   id: "summon",
   name: "/summon",
-  desc: "生成实体（位置默认跟随执行者，NBT 可贴村民交易等场景的构造）",
+  descKey: "tools.command.defs.summon.desc",
   fields: [
-    { kind: "search", key: "entity", label: "实体", options: SUMMON_ENTITIES, default: "zombie", allowCustom: true },
-    { kind: "text", key: "pos", label: "位置", placeholder: "~ ~ ~", default: "~ ~ ~" },
+    {
+      kind: "search",
+      key: "entity",
+      labelKey: "tools.command.defs.summon.fields.entity",
+      options: SUMMON_ENTITIES,
+      default: "zombie",
+      allowCustom: true,
+    },
+    { kind: "text", key: "pos", labelKey: "tools.command.defs.summon.fields.pos", default: "~ ~ ~" },
     {
       kind: "textarea",
       key: "nbt",
-      label: "NBT",
-      placeholder: "实体 NBT（如 {NoAI:1b}；村民整套 NBT 可贴村民交易工具的产物）",
+      labelKey: "tools.command.defs.summon.fields.nbt",
+      placeholderKey: "tools.command.defs.summon.placeholders.nbt",
       rows: 2,
     },
   ],
@@ -199,13 +222,20 @@ const summonDef: CommandDef = {
 const effectDef: CommandDef = {
   id: "effect",
   name: "/effect",
-  desc: "给予状态效果",
+  descKey: "tools.command.defs.effect.desc",
   fields: [
-    { kind: "target", key: "target", label: "目标", default: "@p" },
-    { kind: "search", key: "effect", label: "效果", options: EFFECT_OPTIONS, default: "speed", allowCustom: true },
-    { kind: "num", key: "duration", label: "时长（秒）", min: 1, max: 1000000, default: 30 },
-    { kind: "num", key: "amplifier", label: "等级", min: 0, max: 255, default: 0 },
-    { kind: "check", key: "hide", label: "隐藏粒子", default: false },
+    { kind: "target", key: "target", labelKey: "tools.command.defs.effect.fields.target", default: "@p" },
+    {
+      kind: "search",
+      key: "effect",
+      labelKey: "tools.command.defs.effect.fields.effect",
+      options: EFFECT_OPTIONS,
+      default: "speed",
+      allowCustom: true,
+    },
+    { kind: "num", key: "duration", labelKey: "tools.command.defs.effect.fields.duration", min: 1, max: 1000000, default: 30 },
+    { kind: "num", key: "amplifier", labelKey: "tools.command.defs.effect.fields.amplifier", min: 0, max: 255, default: 0 },
+    { kind: "check", key: "hide", labelKey: "tools.command.defs.effect.fields.hide", default: false },
   ],
   build: (v) => {
     const target = s(v, "target") || "@p";
@@ -221,11 +251,18 @@ const effectDef: CommandDef = {
 const enchantDef: CommandDef = {
   id: "enchant",
   name: "/enchant",
-  desc: "给手持物品附加魔咒",
+  descKey: "tools.command.defs.enchant.desc",
   fields: [
-    { kind: "target", key: "target", label: "目标", default: "@p" },
-    { kind: "search", key: "enchantment", label: "附魔", options: ENCHANT_OPTIONS, default: "sharpness", allowCustom: true },
-    { kind: "num", key: "level", label: "等级", min: 1, max: 255, default: 1 },
+    { kind: "target", key: "target", labelKey: "tools.command.defs.enchant.fields.target", default: "@p" },
+    {
+      kind: "search",
+      key: "enchantment",
+      labelKey: "tools.command.defs.enchant.fields.enchantment",
+      options: ENCHANT_OPTIONS,
+      default: "sharpness",
+      allowCustom: true,
+    },
+    { kind: "num", key: "level", labelKey: "tools.command.defs.enchant.fields.level", min: 1, max: 255, default: 1 },
   ],
   build: (v) => {
     const target = s(v, "target") || "@p";
@@ -239,10 +276,23 @@ const enchantDef: CommandDef = {
 const gameruleDef: CommandDef = {
   id: "gamerule",
   name: "/gamerule",
-  desc: "查询或修改游戏规则",
+  descKey: "tools.command.defs.gamerule.desc",
   fields: [
-    { kind: "search", key: "rule", label: "规则", options: GAMERULE_OPTIONS, default: "keepInventory", allowCustom: true },
-    { kind: "text", key: "value", label: "值", placeholder: "true / false / 数字（留空 = 查询）", default: "" },
+    {
+      kind: "search",
+      key: "rule",
+      labelKey: "tools.command.defs.gamerule.fields.rule",
+      options: GAMERULE_OPTIONS,
+      default: "keepInventory",
+      allowCustom: true,
+    },
+    {
+      kind: "text",
+      key: "value",
+      labelKey: "tools.command.defs.gamerule.fields.value",
+      placeholderKey: "tools.command.defs.gamerule.placeholders.value",
+      default: "",
+    },
   ],
   build: (v) => {
     const rule = s(v, "rule");

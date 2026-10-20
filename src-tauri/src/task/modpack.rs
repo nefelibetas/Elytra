@@ -27,7 +27,8 @@ use crate::task::progress::{
     step_done, HeartbeatStats, StepRef,
 };
 use crate::task::{
-    global, update_and_emit, EventSink, StepInfo, StepStatus, TaskProgress, TaskStatus,
+    global, update_and_emit, EventSink, StepInfo, StepKind, StepSpec, StepStatus, TaskProgress,
+    TaskStatus,
 };
 use crate::util::safe_relative_path;
 
@@ -57,10 +58,20 @@ pub fn plan_path_for(request: &ModpackRequest) -> PathBuf {
 }
 
 /// 命令层创建任务时的初始步骤（A 段；B/C 段在解析完成后动态追加）。
-pub fn initial_steps(request: &ModpackRequest) -> Vec<&'static str> {
+pub fn initial_step_specs(request: &ModpackRequest) -> Vec<StepSpec> {
+    let parse = || StepSpec {
+        name: "解析整合包".into(),
+        kind: StepKind::ModpackParse,
+    };
     match request.source {
-        PackSource::Online { .. } => vec!["下载整合包", "解析整合包"],
-        PackSource::Local { .. } => vec!["解析整合包"],
+        PackSource::Online { .. } => vec![
+            StepSpec {
+                name: "下载整合包".into(),
+                kind: StepKind::ModpackDownload,
+            },
+            parse(),
+        ],
+        PackSource::Local { .. } => vec![parse()],
     }
 }
 
@@ -190,15 +201,16 @@ fn fail_or_cancel(
 fn replace_steps(
     app: &dyn EventSink,
     progress: &Arc<Mutex<TaskProgress>>,
-    names: &[String],
+    steps: &[StepSpec],
     done_count: usize,
 ) {
     update_and_emit(app, progress, |p| {
-        p.steps = names
+        p.steps = steps
             .iter()
             .enumerate()
-            .map(|(i, n)| StepInfo {
-                name: n.clone(),
+            .map(|(i, s)| StepInfo {
+                name: s.name.clone(),
+                kind: Some(s.kind),
                 // 已完成步骤（A 段前缀）保持 Done + 100%，不得重置为 0%
                 status: if i < done_count {
                     StepStatus::Done
@@ -208,7 +220,7 @@ fn replace_steps(
                 progress: if i < done_count { 100.0 } else { 0.0 },
             })
             .collect();
-        p.total_files = names.len() as u32;
+        p.total_files = steps.len() as u32;
     });
 }
 
@@ -360,9 +372,9 @@ fn prepare_pack_install(
     a_done: usize,
 ) -> PackPrep {
     let app = sink.as_ref();
-    let (full_names, idx, content_est) = build_step_plan(request, plan);
-    replace_steps(app, progress, &full_names, a_done);
-    let c = Counters::new(full_names.len() as u32, content_est);
+    let (full_steps, idx, content_est) = build_step_plan(request, plan);
+    replace_steps(app, progress, &full_steps, a_done);
+    let c = Counters::new(full_steps.len() as u32, content_est);
     // A 段已完成步骤在最终表里就是前 prefix 项：分子要与其对齐，否则总百分比从 0 重算
     c.done_steps.store(a_done as u32, Ordering::Relaxed);
     set_total(app, progress, c.total_steps, 0);
@@ -409,13 +421,28 @@ struct StepIndex {
 }
 
 /// 重建完整步骤表：B 段本体 + loader 两步（可选）+ 内容文件逐步 + overrides（可选）；返回（步骤名，索引表，内容字节估算）。
-fn build_step_plan(request: &ModpackRequest, plan: &PackPlan) -> (Vec<String>, StepIndex, u64) {
-    let mut names: Vec<String> = vec![
-        "版本清单".into(),
-        "游戏主文件".into(),
-        "依赖库".into(),
-        "资源文件".into(),
-        "原生库".into(),
+fn build_step_plan(request: &ModpackRequest, plan: &PackPlan) -> (Vec<StepSpec>, StepIndex, u64) {
+    let mut steps: Vec<StepSpec> = vec![
+        StepSpec {
+            name: "版本清单".into(),
+            kind: StepKind::ModpackVersionJson,
+        },
+        StepSpec {
+            name: "游戏主文件".into(),
+            kind: StepKind::ModpackGame,
+        },
+        StepSpec {
+            name: "依赖库".into(),
+            kind: StepKind::ModpackLibraries,
+        },
+        StepSpec {
+            name: "资源文件".into(),
+            kind: StepKind::ModpackAssets,
+        },
+        StepSpec {
+            name: "原生库".into(),
+            kind: StepKind::ModpackNatives,
+        },
     ];
     let (i_json, i_jar, i_libs, i_asst, i_nat) = (0, 1, 2, 3, 4);
     let (i_cfg, i_lbs) = if plan.loader.is_some() {
@@ -424,35 +451,44 @@ fn build_step_plan(request: &ModpackRequest, plan: &PackPlan) -> (Vec<String>, S
             .as_ref()
             .map(|l| l.kind.display_name())
             .unwrap_or("");
-        let cfg = names.len();
-        names.push(format!("{label} 配置"));
-        let lbs = names.len();
-        names.push(format!("{label} 文件"));
+        let cfg = steps.len();
+        steps.push(StepSpec {
+            name: format!("{label} 配置"),
+            kind: StepKind::ModpackLoaderConfig,
+        });
+        let lbs = steps.len();
+        steps.push(StepSpec {
+            name: format!("{label} 文件"),
+            kind: StepKind::ModpackLoaderFiles,
+        });
         (Some(cfg), Some(lbs))
     } else {
         (None, None)
     };
-    let content_start = names.len();
+    let content_start = steps.len();
     for f in &plan.files {
-        names.push(format!("下载 {}", f.path));
+        steps.push(StepSpec {
+            name: format!("下载 {}", f.path),
+            kind: StepKind::File,
+        });
     }
     let i_overrides = plan.overrides.as_ref().map(|_| {
-        let idx = names.len();
-        names.push("解压覆盖文件".into());
+        let idx = steps.len();
+        steps.push(StepSpec {
+            name: "解压覆盖文件".into(),
+            kind: StepKind::ModpackOverrides,
+        });
         idx
     });
 
-    let mut full_names: Vec<String> = initial_steps(request)
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let mut full_steps = initial_step_specs(request);
     // A 段步骤排在最终表最前，B/C 段索引必须整体后移此前缀长度，否则步骤索引错位。
-    let prefix = full_names.len();
-    full_names.extend(names.iter().cloned());
+    let prefix = full_steps.len();
+    full_steps.extend(steps);
     let content_bytes: u64 = plan.files.iter().map(|f| f.size).sum();
     let override_bytes = plan.overrides.as_ref().map(sum_override_bytes).unwrap_or(0);
     (
-        full_names,
+        full_steps,
         StepIndex {
             i_json: i_json + prefix,
             i_jar: i_jar + prefix,
@@ -553,10 +589,10 @@ impl<'a> PackInstall<'a> {
         .await
         {
             Ok(t) => t,
-            Err(e) => bail!("拉取版本清单失败\n{e}"),
+            Err(e) => bail_key!("errors.download.fetch", "拉取版本清单失败\n{e}"),
         };
         let vj: VersionJson =
-            serde_json::from_str(&parent_text).map_err(common_err_ctx!("解析版本清单失败"))?;
+            serde_json::from_str(&parent_text).map_err(common_err_ctx_key!("errors.version.parse", "解析版本清单失败"))?;
         let lib_est: u64 = vj
             .libraries
             .iter()
@@ -576,7 +612,7 @@ impl<'a> PackInstall<'a> {
             let jp = self
                 .vdir
                 .join(format!("{}.json", self.plan.version_dir_name));
-            std::fs::write(&jp, &json).map_err(common_err_ctx!("写入版本 JSON 失败"))?;
+            std::fs::write(&jp, &json).map_err(common_err_ctx_key!("errors.file.write", "写入版本 JSON 失败"))?;
         }
         finish_step(self.app, self.progress, self.idx.i_json, &self.c);
         if cancelled(self.cancel) {
@@ -620,7 +656,7 @@ impl<'a> PackInstall<'a> {
                 )
                 .await
                 {
-                    bail!("下载游戏主文件失败\n{e}");
+                    bail_key!("errors.download.failed", "下载游戏主文件失败\n{e}");
                 }
             }
         }
@@ -655,7 +691,7 @@ impl<'a> PackInstall<'a> {
         )
         .await
         {
-            bail!("下载依赖库失败\n{}", e.join("; "));
+            bail_key!("errors.download.failed", "下载依赖库失败\n{}", e.join("; "));
         }
         finish_step(self.app, self.progress, self.idx.i_libs, &self.c);
 
@@ -682,7 +718,7 @@ impl<'a> PackInstall<'a> {
         )
         .await
         {
-            bail!("下载资源文件失败\n{}", e.join("; "));
+            bail_key!("errors.download.failed", "下载资源文件失败\n{}", e.join("; "));
         }
         finish_step(self.app, self.progress, self.idx.i_asst, &self.c);
 
@@ -704,7 +740,7 @@ impl<'a> PackInstall<'a> {
         )
         .await
         {
-            bail!("处理原生库失败\n{}", e.join("; "));
+            bail_key!("errors.file.extract", "处理原生库失败\n{}", e.join("; "));
         }
         finish_step(self.app, self.progress, self.idx.i_nat, &self.c);
         Ok(())
@@ -779,7 +815,7 @@ impl<'a> PackInstall<'a> {
                     if !cfg_marked { if let Some(idx) = self.idx.i_cfg { finish_step(self.app, self.progress, idx, &self.c); } }
                     if !lbs_marked { if let Some(idx) = self.idx.i_lbs { finish_step(self.app, self.progress, idx, &self.c); } }
                     if let Err(e) = res {
-                        bail!("ModLoader 安装失败\n{e}");
+                        bail_key!("errors.install.loader", "ModLoader 安装失败\n{e}");
                     }
                     break;
                 }
@@ -836,7 +872,7 @@ impl<'a> PackInstall<'a> {
                         Some(ar) => extract_member(ar, &member, &dest),
                         None => Ok(()),
                     };
-                    res.map_err(common_err_ctx!("释放包内资源失败"))?;
+                    res.map_err(common_err_ctx_key!("errors.file.extract", "释放包内资源失败"))?;
                     self.c.est_bytes.fetch_sub(f.size, Ordering::Relaxed);
                     finish_step(self.app, self.progress, step_idx, &self.c);
                 }
@@ -882,7 +918,7 @@ impl<'a> PackInstall<'a> {
                 ));
                 if let Some(parent) = dest.parent() {
                     if let Err(e) = std::fs::create_dir_all(parent) {
-                        bail!("创建目录失败\n{e}\n{}", parent.display());
+                        bail_key!("errors.file.createDir", "创建目录失败\n{e}\n{}", parent.display());
                     }
                 }
                 set_phase(
@@ -945,7 +981,7 @@ impl<'a> PackInstall<'a> {
                         finish_step(self.app, self.progress, idx, &self.c);
                     }
                     Ok(Err((_, msg))) => return Err(msg),
-                    Err(e) => bail!("下载工作线程异常\n{e}"),
+                    Err(e) => bail_key!("errors.download.failed", "下载工作线程异常\n{e}"),
                 }
             }
         }
@@ -970,7 +1006,7 @@ impl<'a> PackInstall<'a> {
         race_cancel(self.cancel, async move {
             tokio::task::spawn_blocking(move || extract_overrides(&ov, &vd))
                 .await
-                .map_err(common_err_ctx!("解压工作线程异常"))?
+                .map_err(common_err_ctx_key!("errors.file.extract", "解压工作线程异常"))?
         })
         .await?;
         finish_step(self.app, self.progress, idx, &self.c);
@@ -1051,7 +1087,7 @@ async fn phase_fetch_pack(
             if let Err(e) =
                 fetcher::fetch_verified_c(&urls, zip_path, Some(dl_cb), sha1, Some(cancel)).await
             {
-                bail!("下载整合包失败\n{e}");
+                bail_key!("errors.download.failed", "下载整合包失败\n{e}");
             }
             pack_bytes_est = std::fs::metadata(zip_path)
                 .map(|m| m.len())
@@ -1083,7 +1119,7 @@ async fn phase_parse_plan(
     );
     let plan = race_cancel(cancel, build_plan(zip_path, request, config)).await?;
     if let Err(e) = write_plan(&plan_path_for(request), &plan) {
-        bail!("写入安装计划失败\n{e}");
+        bail_key!("errors.file.write", "写入安装计划失败\n{e}");
     }
     step_done(app, progress, parse_idx);
     Ok(plan)
@@ -1117,7 +1153,7 @@ fn extract_member(
 ) -> Result<(), String> {
     let mut entry = archive
         .by_name(name)
-        .map_err(common_err_ctx!("读取包内资源失败"))?;
+        .map_err(common_err_ctx_key!("errors.file.read", "读取包内资源失败"))?;
     extract::extract_entry_to(&mut entry, out)
 }
 
@@ -1128,17 +1164,17 @@ fn extract_overrides(ov: &OverridesRef, vdir: &Path) -> Result<(), String> {
     for i in 0..archive.len() {
         let mut entry = archive
             .by_index(i)
-            .map_err(common_err_ctx!("读取条目失败"))?;
+            .map_err(common_err_ctx_key!("errors.file.read", "读取条目失败"))?;
         let Some(rel) = override_rel(entry.name(), &ov.prefix) else {
             continue;
         };
         let out = vdir.join(safe_relative_path(rel)?);
         if entry.is_dir() {
-            std::fs::create_dir_all(&out).map_err(common_err_ctx!("创建目录失败"))?;
+            std::fs::create_dir_all(&out).map_err(common_err_ctx_key!("errors.file.createDir", "创建目录失败"))?;
             continue;
         }
         if let Some(parent) = out.parent() {
-            std::fs::create_dir_all(parent).map_err(common_err_ctx!("创建目录失败"))?;
+            std::fs::create_dir_all(parent).map_err(common_err_ctx_key!("errors.file.createDir", "创建目录失败"))?;
         }
         extract::extract_entry_to(&mut entry, &out)?;
     }
@@ -1294,8 +1330,16 @@ mod tests {
             icon_url: None,
             source: PackSource::Local { path: "p".into() },
         };
-        assert_eq!(initial_steps(&online), vec!["下载整合包", "解析整合包"]);
-        assert_eq!(initial_steps(&local), vec!["解析整合包"]);
+        let online_steps: Vec<_> = initial_step_specs(&online)
+            .into_iter()
+            .map(|s| s.name)
+            .collect();
+        let local_steps: Vec<_> = initial_step_specs(&local)
+            .into_iter()
+            .map(|s| s.name)
+            .collect();
+        assert_eq!(online_steps, vec!["下载整合包", "解析整合包"]);
+        assert_eq!(local_steps, vec!["解析整合包"]);
     }
 
     /// `replace_steps` 必须让已完成步骤保持 **Done + 100%**（不得重置为 0%）。
@@ -1309,6 +1353,8 @@ mod tests {
         let progress = Arc::new(Mutex::new(TaskProgress {
             task_id: "t1".into(),
             name: "整合包：D".into(),
+            name_key: None,
+            name_params: None,
             status: TaskStatus::Running,
             progress: 0.0,
             speed_bps: 0.0,
@@ -1318,14 +1364,18 @@ mod tests {
             completed_bytes: 0,
             total_bytes: 0,
             current_phase: "解析整合包".into(),
+            current_phase_key: None,
+            current_phase_params: None,
             steps: vec![
                 StepInfo {
                     name: "下载整合包".into(),
+                    kind: None,
                     status: StepStatus::Done,
                     progress: 100.0,
                 },
                 StepInfo {
                     name: "解析整合包".into(),
+                    kind: None,
                     status: StepStatus::Done,
                     progress: 100.0,
                 },
@@ -1333,12 +1383,26 @@ mod tests {
             error: None,
         }));
         let sink: Arc<dyn EventSink> = Arc::new(NullSink);
-        let names: Vec<String> = ["下载整合包", "解析整合包", "版本清单", "游戏主文件"]
-            .iter()
-            .map(|s| (*s).to_string())
-            .collect();
+        let steps = vec![
+            StepSpec {
+                name: "下载整合包".into(),
+                kind: StepKind::ModpackDownload,
+            },
+            StepSpec {
+                name: "解析整合包".into(),
+                kind: StepKind::ModpackParse,
+            },
+            StepSpec {
+                name: "版本清单".into(),
+                kind: StepKind::ModpackVersionJson,
+            },
+            StepSpec {
+                name: "游戏主文件".into(),
+                kind: StepKind::ModpackGame,
+            },
+        ];
 
-        replace_steps(sink.as_ref(), &progress, &names, 2);
+        replace_steps(sink.as_ref(), &progress, &steps, 2);
 
         let p = progress.lock();
         assert_eq!(p.steps.len(), 4);
@@ -1404,24 +1468,24 @@ mod tests {
                 overrides: None,
             };
 
-            let (names, idx, est) = build_step_plan(&request, &plan);
+            let (steps, idx, est) = build_step_plan(&request, &plan);
 
-            assert_eq!(names[0], initial_steps(&request)[0], "{label}");
+            assert_eq!(steps[0].name, initial_step_specs(&request)[0].name, "{label}");
             assert_eq!(
-                names.len(),
+                steps.len(),
                 prefix + 5 + 2 + 2,
                 "{label}：A + 5 固定步 + loader 2 + 内容 2"
             );
-            assert_eq!(names[idx.i_json], "版本清单", "{label}");
-            assert_eq!(names[idx.i_jar], "游戏主文件", "{label}");
-            assert_eq!(names[idx.i_libs], "依赖库", "{label}");
-            assert_eq!(names[idx.i_asst], "资源文件", "{label}");
-            assert_eq!(names[idx.i_nat], "原生库", "{label}");
-            assert_eq!(names[idx.i_cfg.unwrap()], "Fabric 配置", "{label}");
-            assert_eq!(names[idx.i_lbs.unwrap()], "Fabric 文件", "{label}");
-            assert_eq!(names[idx.content_start], "下载 mods/a.jar", "{label}");
+            assert_eq!(steps[idx.i_json].name, "版本清单", "{label}");
+            assert_eq!(steps[idx.i_jar].name, "游戏主文件", "{label}");
+            assert_eq!(steps[idx.i_libs].name, "依赖库", "{label}");
+            assert_eq!(steps[idx.i_asst].name, "资源文件", "{label}");
+            assert_eq!(steps[idx.i_nat].name, "原生库", "{label}");
+            assert_eq!(steps[idx.i_cfg.unwrap()].name, "Fabric 配置", "{label}");
+            assert_eq!(steps[idx.i_lbs.unwrap()].name, "Fabric 文件", "{label}");
+            assert_eq!(steps[idx.content_start].name, "下载 mods/a.jar", "{label}");
             assert_eq!(
-                names[idx.content_start + 1],
+                steps[idx.content_start + 1].name,
                 "下载 config/b.json",
                 "{label}"
             );

@@ -11,11 +11,11 @@ pub async fn texture_value(uuid: &str) -> Result<String, String> {
         ))
         .send()
         .await
-        .map_err(common_err_ctx!("获取档案失败"))?;
+        .map_err(common_err_ctx_key!("errors.account.failed", "获取档案失败"))?;
     if !resp.status().is_success() {
-        bail!("获取档案失败\nHTTP {}", resp.status());
+        bail_key!("errors.account.failed", "获取档案失败\nHTTP {}", resp.status());
     }
-    let profile: serde_json::Value = resp.json().await.map_err(common_err_ctx!("解析响应失败"))?;
+    let profile: serde_json::Value = resp.json().await.map_err(common_err_ctx_key!("errors.parse", "解析响应失败"))?;
     let props = profile
         .get("properties")
         .and_then(|v| v.as_array())
@@ -36,8 +36,8 @@ pub async fn profile_textures(uuid: &str) -> Result<serde_json::Value, String> {
     let value_b64 = texture_value(uuid).await?;
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(value_b64)
-        .map_err(common_err_ctx!("皮肤数据解码失败"))?;
-    serde_json::from_slice(&decoded).map_err(common_err_ctx!("皮肤数据解析失败"))
+        .map_err(common_err_ctx_key!("errors.skin.load", "皮肤数据解码失败"))?;
+    serde_json::from_slice(&decoded).map_err(common_err_ctx_key!("errors.skin.load", "皮肤数据解析失败"))
 }
 
 /// 拉取正版玩家皮肤（含模型类型）；官方 sessionserver 失败时回退 minotar

@@ -120,7 +120,7 @@ pub async fn delete_world(version_name: String, world_name: String) -> Result<()
     }
     tokio::fs::remove_dir_all(&path)
         .await
-        .map_err(common_err_ctx!("删除失败"))
+        .map_err(common_err_ctx_key!("errors.file.delete", "删除失败"))
 }
 
 #[tauri::command]
@@ -224,7 +224,7 @@ pub async fn export_modpack(version_name: String, save_path: String) -> Result<(
         pack_modpack(&vdir, &name, &save_path, &hosted, &hosted_names)
     })
     .await
-    .map_err(common_err_ctx!("打包任务失败"))?
+    .map_err(common_err_ctx_key!("errors.file.write", "打包任务失败"))?
 }
 
 #[cfg(test)]

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 页面容器：导航 + 各 tab 编排；业务在 store/组件，本文件不做业务
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from "vue";
+import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import DownloadTab from "../component/download/DownloadTab.vue";
 import VanillaList from "../component/download/VanillaList.vue";
@@ -32,6 +33,7 @@ import {
 } from "../store/community/categorySearch";
 
 const tab = computed(() => downloadTabState.current);
+const { t } = useI18n();
 /** 右侧滚动容器（切 tab 时复位滚动位置） */
 const bodyEl = ref<HTMLElement>();
 const route = useRoute();
@@ -104,9 +106,9 @@ watch(tab, (t) => {
         <template #icon>
           <Box :size="16" :stroke-width="1.4" />
         </template>
-        原版游戏
+        {{ t("download.tabs.vanilla") }}
       </DownloadTab>
-      <div class="nav-divider"><span>社区资源</span></div>
+      <div class="nav-divider"><span>{{ t("download.tabs.community") }}</span></div>
       <DownloadTab :active="tab === 'mod'" @click="downloadTabState.current = 'mod'" @refresh="communitySearch.reset()">
         <template #icon>
           <Puzzle :size="16" :stroke-width="1.4" />
@@ -115,27 +117,27 @@ watch(tab, (t) => {
       <DownloadTab :active="tab === 'modpack'" @click="downloadTabState.current = 'modpack'" @refresh="modpackSearch.reset()">
         <template #icon>
           <Archive :size="16" :stroke-width="1.4" />
-        </template>整合包
+        </template>{{ t("download.tabs.modpack") }}
       </DownloadTab>
       <DownloadTab :active="tab === 'datapack'" @click="downloadTabState.current = 'datapack'" @refresh="datapackSearch.reset()">
         <template #icon>
           <CodeXml :size="16" :stroke-width="1.4" />
-        </template>数据包
+        </template>{{ t("download.tabs.datapack") }}
       </DownloadTab>
       <DownloadTab :active="tab === 'resourcepack'" @click="downloadTabState.current = 'resourcepack'" @refresh="resourcepackSearch.reset()">
         <template #icon>
           <Layers :size="16" :stroke-width="1.4" />
-        </template>资源包
+        </template>{{ t("download.tabs.resourcepack") }}
       </DownloadTab>
       <DownloadTab :active="tab === 'shader'" @click="downloadTabState.current = 'shader'" @refresh="shaderSearch.reset()">
         <template #icon>
           <Sun :size="16" :stroke-width="1.4" />
-        </template>光影包
+        </template>{{ t("download.tabs.shader") }}
       </DownloadTab>
       <DownloadTab :active="tab === 'worlds'" @click="downloadTabState.current = 'worlds'" @refresh="worldsSearch.reset()">
         <template #icon>
           <Map :size="16" :stroke-width="1.4" />
-        </template>地图存档
+        </template>{{ t("download.tabs.worlds") }}
       </DownloadTab>
     </nav>
 

@@ -41,14 +41,14 @@ pub fn write_auto_tasks(
     let path = instance_path(mc_dir, version_id);
     let Some(auto_tasks) = auto_tasks else {
         if path.exists() {
-            std::fs::remove_file(&path).map_err(common_err_ctx!("删除实例配置失败"))?;
+            std::fs::remove_file(&path).map_err(common_err_ctx_key!("errors.file.delete", "删除实例配置失败"))?;
         }
         return Ok(());
     };
     let text = toml::to_string(&InstanceFileRef { auto_tasks })
         .map_err(common_err_ctx!("序列化实例配置失败"))?;
     let tmp = path.with_file_name(format!("{INSTANCE_FILE}.tmp"));
-    std::fs::write(&tmp, text).map_err(common_err_ctx!("写入实例配置失败"))?;
+    std::fs::write(&tmp, text).map_err(common_err_ctx_key!("errors.file.write", "写入实例配置失败"))?;
     std::fs::rename(&tmp, &path).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
         format!("保存实例配置失败\n{e}")

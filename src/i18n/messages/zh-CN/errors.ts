@@ -1,0 +1,70 @@
+export default {
+  unknown: "操作失败，请重试",
+  network: "网络请求失败",
+  timeout: "查询超时",
+  parse: "解析数据失败",
+  file: {
+    read: "读取文件失败",
+    write: "写入文件失败",
+    delete: "删除文件失败",
+    copy: "复制文件失败",
+    create: "创建文件失败",
+    createDir: "创建目录失败",
+    extract: "解压文件失败",
+  },
+  download: {
+    failed: "下载失败",
+    fetch: "获取下载信息失败",
+    verify: "文件校验失败",
+    write: "写入下载文件失败",
+    timeout: "下载超时",
+    noSource: "没有可用的下载源",
+  },
+  install: {
+    failed: "安装失败",
+    loader: "ModLoader 安装失败",
+    modpack: "整合包安装失败",
+  },
+  login: {
+    failed: "登录失败",
+    refresh: "登录状态刷新失败",
+    expired: "登录已失效，请重新登录",
+    external: "第三方账号操作失败",
+  },
+  account: {
+    failed: "账号操作失败",
+  },
+  launch: {
+    failed: "启动失败",
+    env: "启动环境检查失败",
+  },
+  online: {
+    failed: "联机操作失败",
+    host: "创建房间失败",
+    join: "加入房间失败",
+  },
+  jdk: {
+    failed: "JDK 操作失败",
+    install: "JDK 安装失败",
+    scan: "JDK 扫描失败",
+  },
+  skin: {
+    failed: "皮肤操作失败",
+    load: "加载皮肤失败",
+    upload: "上传皮肤失败",
+  },
+  version: {
+    failed: "版本操作失败",
+    read: "读取版本信息失败",
+    parse: "解析版本信息失败",
+    missing: "版本文件不完整",
+  },
+  mod: {
+    failed: "Mod 操作失败",
+    search: "搜索 Mod 失败",
+  },
+  config: {
+    read: "读取配置失败",
+    write: "保存配置失败",
+  },
+};

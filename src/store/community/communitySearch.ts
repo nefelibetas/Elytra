@@ -3,6 +3,7 @@ import { reactive, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { dlTranslateMode } from "../config/downloaderConfig";
 import { errMsg } from "../../utils/error";
+import { t } from "../../i18n";
 
 export interface CommunitySearchResult {
   id: string;
@@ -76,13 +77,13 @@ const MOD_PAGE_SIZE = 30;
 /** 聚合模式每源条数（页大小一半）：两源合并去重后展示 ≤15 条，每页图片请求量减半 */
 const AGG_PAGE_SIZE = 15;
 
-export const modLoaderOptions = [
-  { value: "", label: "不限加载器" },
+export const modLoaderOptions = computed<{ value: string; label: string }[]>(() => [
+  { value: "", label: t("download.search.allLoaders") },
   { value: "fabric", label: "Fabric" },
   { value: "forge", label: "Forge" },
   { value: "neoforge", label: "NeoForge" },
   { value: "quilt", label: "Quilt" },
-];
+]);
 
 let autoSearched = false;
 

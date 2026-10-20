@@ -50,11 +50,14 @@ pub async fn submit_missing_download(
 ) -> Result<String, String> {
     let report = repair::scan_missing(&version_dir_name).await?;
 
-    let names = repair::repair_steps(&report);
-    let steps = crate::task::steps_by_names(names);
+    let steps = repair::repair_step_specs(&report);
     crate::task::spawn_task(
         app,
         format!("{} 版本修复", version_dir_name),
+        model::TaskText::new(
+            "task.backend.name.repair",
+            &[("version", version_dir_name.clone())],
+        ),
         steps,
         task::store::JobSpec::Repair {
             version_dir_name: version_dir_name.clone(),
@@ -173,15 +176,14 @@ pub async fn install_modpack(app: AppHandle, request: ModpackRequest) -> Result<
         }
     }
 
-    let steps = crate::task::steps_by_names(
-        task::modpack::initial_steps(&request)
-            .into_iter()
-            .map(str::to_string)
-            .collect(),
-    );
+    let steps = task::modpack::initial_step_specs(&request);
     crate::task::spawn_task(
         app,
         format!("整合包：{}", request.name),
+        model::TaskText::new(
+            "task.backend.name.modpack",
+            &[("name", request.name.clone())],
+        ),
         steps,
         task::store::JobSpec::ModpackInstall(task::model::ModpackInstallSpec {
             request: request.clone(),

@@ -1,27 +1,6 @@
 // ── 步骤分析：任务 → 步骤序列（TaskSpec 统一入口，命令层与 runner 共用）──
 
-use super::model::{DownloadFilesTask, DownloadTask};
-
-/// 步骤种类：runner 按 kind 定位执行点（索引动态计算）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StepKind {
-    /// 下载原版 version json（唯一硬前置，恒在，索引 0）
-    VersionJson,
-    /// client.jar（恒在，与 libraries/assets 并行）
-    ClientJar,
-    Libraries,
-    Assets,
-    /// native classifier 下载/解压
-    Natives,
-    /// ModLoader 配置（合并 json 写入）
-    LoaderConfig,
-    /// ModLoader 本体（fabric libs / installer→jar）
-    LoaderLibs,
-    OptiFine,
-    FabricApi,
-    /// 批量文件下载的单个文件步骤
-    File,
-}
+use super::model::{DownloadFilesTask, DownloadTask, StepKind};
 
 #[derive(Debug, Clone)]
 pub struct StepSpec {

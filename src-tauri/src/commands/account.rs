@@ -32,7 +32,7 @@ pub async fn start_ms_login(app: AppHandle) -> Result<String, String> {
 
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", microsoft::CALLBACK_PORT))
         .await
-        .map_err(common_err_ctx!(
+        .map_err(common_err_ctx_key!("errors.login.failed", 
             "回调端口 {} 被占用",
             microsoft::CALLBACK_PORT
         ))?;
@@ -48,7 +48,7 @@ pub async fn start_ms_login(app: AppHandle) -> Result<String, String> {
 
     app.opener()
         .open_url(auth_url.clone(), None::<&str>)
-        .map_err(common_err_ctx!("打开浏览器失败"))?;
+        .map_err(common_err_ctx_key!("errors.login.failed", "打开浏览器失败"))?;
 
     Ok(auth_url)
 }
@@ -156,10 +156,10 @@ pub async fn fetch_external_skin_profile(
 async fn write_b64_file(b64: &str, path: &str) -> Result<(), String> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(b64)
-        .map_err(common_err_ctx!("皮肤数据解码失败"))?;
+        .map_err(common_err_ctx_key!("errors.skin.load", "皮肤数据解码失败"))?;
     tokio::fs::write(path, bytes)
         .await
-        .map_err(common_err_ctx!("写入文件失败"))
+        .map_err(common_err_ctx_key!("errors.file.write", "写入文件失败"))
 }
 
 #[tauri::command]
@@ -282,5 +282,5 @@ pub fn get_external_config() -> external::ExternalConfig {
 
 #[tauri::command]
 pub fn save_external_config(config: external::ExternalConfig) -> Result<(), String> {
-    persist::save(constants::SECT_EXTERNAL, &config).map_err(common_err_ctx!("保存失败"))
+    persist::save(constants::SECT_EXTERNAL, &config).map_err(common_err_ctx_key!("errors.config.write", "保存失败"))
 }

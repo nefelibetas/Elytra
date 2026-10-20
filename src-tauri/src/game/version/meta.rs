@@ -16,7 +16,7 @@ pub async fn fetch_version_json_text(
             s.mirror_url(version_url)
         })
         .await
-        .map_err(common_err_ctx!("获取 version json 失败"))
+        .map_err(common_err_ctx_key!("errors.version.read", "获取 version json 失败"))
 }
 
 /// 下载并落盘版本 JSON（保留原始文本，避免序列化丢失未知字段）。
@@ -28,11 +28,11 @@ pub async fn download_version_json(
     let text = fetch_version_json_text(version_url, config).await?;
 
     let version_json: VersionJson =
-        serde_json::from_str(&text).map_err(common_err_ctx!("解析 version json 失败"))?;
+        serde_json::from_str(&text).map_err(common_err_ctx_key!("errors.version.parse", "解析 version json 失败"))?;
 
     let json_path = dest_dir.join(format!("{}.json", version_json.id));
-    std::fs::create_dir_all(dest_dir).map_err(common_err_ctx!("创建目录失败"))?;
-    std::fs::write(&json_path, &text).map_err(common_err_ctx!("写入 version json 失败"))?;
+    std::fs::create_dir_all(dest_dir).map_err(common_err_ctx_key!("errors.file.createDir", "创建目录失败"))?;
+    std::fs::write(&json_path, &text).map_err(common_err_ctx_key!("errors.file.write", "写入 version json 失败"))?;
 
     Ok(version_json)
 }

@@ -58,12 +58,12 @@ export const loDisableAgent = ref(false);
 export const loHighGpu = ref(false);
 export const loVerifySsl = ref(false);
 
-export const gcOptions: { value: string; label: string }[] = [
-  { value: "PreferZgc", label: "首选 ZGC（实验性）" },
-  { value: "PreferGenerationalZgc", label: "首选分代 ZGC（实验性）" },
-  { value: "StandardG1Gc", label: "标准 G1" },
-  { value: "TunedG1Gc", label: "调优 G1（默认）" },
-  { value: "Custom", label: "自定义（不追加 GC 参数）" },
+export const gcOptions: { value: string; labelKey: string }[] = [
+  { value: "PreferZgc", labelKey: "settings.jdk.gc.preferZgc" },
+  { value: "PreferGenerationalZgc", labelKey: "settings.jdk.gc.preferGenerationalZgc" },
+  { value: "StandardG1Gc", labelKey: "settings.jdk.gc.standardG1" },
+  { value: "TunedG1Gc", labelKey: "settings.jdk.gc.tunedG1" },
+  { value: "Custom", labelKey: "settings.jdk.gc.custom" },
 ];
 
 export async function loadLaunchOptions() {

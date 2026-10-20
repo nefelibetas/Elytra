@@ -25,8 +25,8 @@ use crate::launcher::auto_tasks::model::{
 use crate::launcher::model::{GcType, LaunchOptions, MemoryMode, ProcessPriority, WindowSize};
 use crate::task::files::WaitingUserPayload;
 use crate::task::model::{
-    DownloadFileKind, DownloadTask, FabricApi, LoaderChoice, LoaderKind, StepInfo, StepStatus,
-    TaskProgress, TaskStatus,
+    DownloadFileKind, DownloadTask, FabricApi, LoaderChoice, LoaderKind, StepInfo, StepKind,
+    StepStatus, TaskProgress, TaskStatus,
 };
 use crate::tooldl::{ToolDlSnapshot, ToolDlStatus};
 
@@ -46,6 +46,7 @@ pub fn export_all() {
     TaskStatus::export().unwrap();
     TaskProgress::export().unwrap();
     StepStatus::export().unwrap();
+    StepKind::export().unwrap();
     StepInfo::export().unwrap();
     LoaderKind::export().unwrap();
     LoaderChoice::export().unwrap();

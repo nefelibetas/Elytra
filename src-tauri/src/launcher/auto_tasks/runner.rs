@@ -131,7 +131,7 @@ fn run_command(command: &str, timeout_secs: u32) -> Result<String, String> {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .map_err(common_err_ctx!("启动命令失败"))?;
+        .map_err(common_err_ctx_key!("errors.launch.failed", "启动命令失败"))?;
     let timeout = Duration::from_secs(u64::from(timeout_secs.max(1)));
     let deadline = Instant::now() + timeout;
     loop {

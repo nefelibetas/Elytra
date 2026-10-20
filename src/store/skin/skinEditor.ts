@@ -4,6 +4,7 @@
 import { reactive } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { loadSkinImage } from "../skin/skinRender";
+import { currentLocale, t } from "../../i18n";
 
 export async function exportSkinPng(path: string, b64: string): Promise<void> {
   await invoke("export_skin_png", { path, b64 });
@@ -25,6 +26,8 @@ export type EditorVariant = "CLASSIC" | "SLIM";
 export interface EditorRegion {
   key: string;
   label: string;
+  /** 英文界面标签。 */
+  labelEn: string;
   x: number;
   y: number;
   w: number;
@@ -35,19 +38,24 @@ export interface EditorRegion {
 
 /** 皮肤 64×64 部位标注。矩形为立方体展开取样区（宽 2(d+w)、高 d+h）；十字形外四角为空像素，矩形仅作定位参考、不校验像素归属。第二层取本体浅色以便区分。 */
 export const EDITOR_REGIONS: readonly EditorRegion[] = [
-  { key: "head", label: "头", x: 0, y: 0, w: 32, h: 16, color: "#f59e0b", layer: 0 },
-  { key: "hat", label: "帽子层", x: 32, y: 0, w: 32, h: 16, color: "#fcd34d", layer: 1 },
-  { key: "rightLeg", label: "右腿", x: 0, y: 16, w: 16, h: 16, color: "#ef4444", layer: 0 },
-  { key: "body", label: "身体", x: 16, y: 16, w: 24, h: 16, color: "#4f8ef7", layer: 0 },
-  { key: "rightArm", label: "右臂", x: 40, y: 16, w: 16, h: 16, color: "#10b981", layer: 0 },
-  { key: "rightPants", label: "右裤层", x: 0, y: 32, w: 16, h: 16, color: "#fca5a5", layer: 1 },
-  { key: "jacket", label: "外套层", x: 16, y: 32, w: 24, h: 16, color: "#93c5fd", layer: 1 },
-  { key: "rightSleeve", label: "右袖层", x: 40, y: 32, w: 16, h: 16, color: "#6ee7b7", layer: 1 },
-  { key: "leftPants", label: "左裤层", x: 0, y: 48, w: 16, h: 16, color: "#f9a8d4", layer: 1 },
-  { key: "leftLeg", label: "左腿", x: 16, y: 48, w: 16, h: 16, color: "#ec4899", layer: 0 },
-  { key: "leftArm", label: "左臂", x: 32, y: 48, w: 16, h: 16, color: "#8b5cf6", layer: 0 },
-  { key: "leftSleeve", label: "左袖层", x: 48, y: 48, w: 16, h: 16, color: "#c4b5fd", layer: 1 },
+  { key: "head", label: "头", labelEn: "Head", x: 0, y: 0, w: 32, h: 16, color: "#f59e0b", layer: 0 },
+  { key: "hat", label: "帽子层", labelEn: "Hat", x: 32, y: 0, w: 32, h: 16, color: "#fcd34d", layer: 1 },
+  { key: "rightLeg", label: "右腿", labelEn: "Right Leg", x: 0, y: 16, w: 16, h: 16, color: "#ef4444", layer: 0 },
+  { key: "body", label: "身体", labelEn: "Body", x: 16, y: 16, w: 24, h: 16, color: "#4f8ef7", layer: 0 },
+  { key: "rightArm", label: "右臂", labelEn: "Right Arm", x: 40, y: 16, w: 16, h: 16, color: "#10b981", layer: 0 },
+  { key: "rightPants", label: "右裤层", labelEn: "Right Pant Layer", x: 0, y: 32, w: 16, h: 16, color: "#fca5a5", layer: 1 },
+  { key: "jacket", label: "外套层", labelEn: "Jacket", x: 16, y: 32, w: 24, h: 16, color: "#93c5fd", layer: 1 },
+  { key: "rightSleeve", label: "右袖层", labelEn: "Right Sleeve", x: 40, y: 32, w: 16, h: 16, color: "#6ee7b7", layer: 1 },
+  { key: "leftPants", label: "左裤层", labelEn: "Left Pant Layer", x: 0, y: 48, w: 16, h: 16, color: "#f9a8d4", layer: 1 },
+  { key: "leftLeg", label: "左腿", labelEn: "Left Leg", x: 16, y: 48, w: 16, h: 16, color: "#ec4899", layer: 0 },
+  { key: "leftArm", label: "左臂", labelEn: "Left Arm", x: 32, y: 48, w: 16, h: 16, color: "#8b5cf6", layer: 0 },
+  { key: "leftSleeve", label: "左袖层", labelEn: "Left Sleeve", x: 48, y: 48, w: 16, h: 16, color: "#c4b5fd", layer: 1 },
 ];
+
+/** 按当前界面语言取部位标注。 */
+export function regionLabel(region: EditorRegion): string {
+  return currentLocale.value === "en-US" ? region.labelEn : region.label;
+}
 
 /** 撤销栈上限（每帧快照 16KB，30 步约 480KB）。 */
 const UNDO_LIMIT = 30;
@@ -106,7 +114,7 @@ function resetState() {
 
 export function newEditorCanvas() {
   pixels = new Uint8ClampedArray(SKIN_SIZE * SKIN_SIZE * 4);
-  skinEditor.name = "新皮肤";
+  skinEditor.name = t("skin.painter.newSkinName");
   skinEditor.sourceHeight = 0;
   resetState();
 }
@@ -123,7 +131,7 @@ export async function loadImageIntoEditor(
   canvas.width = SKIN_SIZE;
   canvas.height = SKIN_SIZE;
   const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("画布不可用");
+  if (!ctx) throw new Error(t("skin.painter.canvasUnavailable"));
   ctx.clearRect(0, 0, SKIN_SIZE, SKIN_SIZE);
   ctx.drawImage(img, 0, 0);
   pixels = ctx.getImageData(0, 0, SKIN_SIZE, SKIN_SIZE).data;

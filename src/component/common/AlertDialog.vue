@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, nextTick, ref, useSlots, watch } from "vue";
+import { useI18n } from "vue-i18n";
+import { formatError } from "../../utils/error";
 import { focusDialog, restoreFocus } from "../../utils/focusNav";
 
 const props = withDefaults(defineProps<{
@@ -11,7 +13,7 @@ const props = withDefaults(defineProps<{
   width?: "md" | "lg";
   modelValue: boolean;
 }>(), {
-  title: "提示",
+  title: "",
   message: "",
   copyable: false,
   width: "md",
@@ -23,9 +25,12 @@ const emit = defineEmits<{
 
 const copied = ref(false);
 const slots = useSlots();
+const { t } = useI18n();
 
-/** 正文只显示第一行（友好短提示），详细技术信息由复制按钮带走。 */
-const shortMessage = computed(() => props.message.split("\n")[0] || "");
+/** 正文只显示翻译后的短摘要，详细技术信息由复制按钮带走。 */
+const formatted = computed(() => formatError(props.message));
+const shortMessage = computed(() => formatted.value.summary);
+const dialogTitle = computed(() => props.title || t("common.dialog.tip"));
 
 /** footer 是否有内容：有复制按钮或外部 actions slot。无内容时不渲染 footer，取消分割线。 */
 const hasFooter = computed(
@@ -38,7 +43,7 @@ function close() {
 
 /** 复制错误信息到剪贴板（WebView2 下 clipboard API 可用，失败时降级 execCommand）。 */
 async function copyMessage() {
-  const text = props.message || props.title || "";
+  const text = formatted.value.full || dialogTitle.value;
   if (!text) return;
   try {
     await navigator.clipboard.writeText(text);
@@ -90,11 +95,11 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
         :class="`dialog-card--${width}`"
         role="dialog"
         aria-modal="true"
-        :aria-label="title"
+        :aria-label="dialogTitle"
         tabindex="-1"
       >
         <div class="dialog-header">
-          <span class="dialog-title">{{ title }}</span>
+          <span class="dialog-title">{{ dialogTitle }}</span>
         </div>        
         <div class="dialog-body">
           <slot>
@@ -103,7 +108,7 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
         </div>
         <div v-if="hasFooter" class="dialog-footer">
           <button v-if="message && copyable" class="dialog-copy" @click="copyMessage">
-            {{ copied ? "已复制" : "复制错误信息" }}
+            {{ copied ? t("common.action.copied") : t("common.action.copyError") }}
           </button>
           <slot name="actions" />
         </div>

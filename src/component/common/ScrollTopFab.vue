@@ -2,8 +2,10 @@
 // 长列表滚动回顶 FAB：自动绑定最近的滚动祖先（overflow-y: auto/scroll 且内容可滚动）。
 // 滚动超阈值出现、近顶隐藏（带动画）；固定右下 24px（任务中心为顶级路由，无需避让全局 FAB）。
 import { onBeforeUnmount, onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { ArrowUp } from "@lucide/vue";
 
+const { t } = useI18n();
 const visible = ref(false);
 const THRESHOLD = 300;
 
@@ -45,7 +47,7 @@ onBeforeUnmount(() => {
 <template>
   <div ref="wrap" class="scroll-top-fab-wrap">
     <Transition name="fab-up">
-      <button v-if="visible" class="scroll-top-fab" @click="scrollTop" v-tooltip="'回到顶部'">
+      <button v-if="visible" class="scroll-top-fab" @click="scrollTop" v-tooltip="t('common.tooltip.backToTop')">
         <ArrowUp :size="16" />
       </button>
     </Transition>

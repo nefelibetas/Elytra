@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 版本选择页右侧：当前目录版本列表（按 ModLoader/原版分类卡片）+ 删除版本 dialog
 import { useRouter } from "vue-router";
+import { useI18n } from "vue-i18n";
 import { Settings2, Trash2 } from "@lucide/vue";
 import AlertDialog from "../common/AlertDialog.vue";
 import VersionCard from "../download/VersionCard.vue";
@@ -24,6 +25,7 @@ watch(
 );
 
 const router = useRouter();
+const { t } = useI18n();
 
 function selectAndBack(v: string) {
   pickVersion(v);
@@ -41,11 +43,11 @@ function goDownload() {
 
 <template>
   <div class="vs-right">
-    <LoadingSpinner v-if="versionsLoading" text="加载中…" />
+    <LoadingSpinner v-if="versionsLoading" :text="t('common.status.loading')" />
     <ErrorState v-else-if="versionsError" :text="versionsError" />
     <EmptyState v-else-if="versions.length === 0">
-      <p>该目录下没有已安装的游戏版本</p>
-      <button class="vs-empty-btn" @click="goDownload">下载游戏</button>
+      <p>{{ t("settings.version.select.noVersions") }}</p>
+      <button class="vs-empty-btn" @click="goDownload">{{ t("launch.action.downloadGame") }}</button>
     </EmptyState>
     <template v-else>
       <div class="vs-search">
@@ -53,16 +55,16 @@ function goDownload() {
           v-model="searchQuery"
           class="vs-search-input"
           type="text"
-          placeholder="搜索版本…"
+          :placeholder="t('settings.version.select.searchPlaceholder')"
           autocomplete="off"
         />
       </div>
       <div v-if="allVersions.length === 0" class="vs-empty">
-        <p>没有匹配「{{ searchQuery.trim() }}」的版本</p>
+        <p>{{ t("settings.version.select.noMatch", { query: searchQuery.trim() }) }}</p>
       </div>
       <div v-else class="vs-cards">
         <VersionCard
-          title="全部版本"
+          :title="t('settings.version.select.allVersions')"
           :count="allVersions.length"
           :expanded="expanded['all']"
           @toggle="expanded['all'] = !expanded['all']"
@@ -78,14 +80,14 @@ function goDownload() {
             <template #action>
               <button
                 class="vs-item-setup"
-                v-tooltip="'版本设置'"
+                v-tooltip="t('settings.version.select.versionSetup')"
                 @click.stop="goSetup(v.name)"
               >
                 <Settings2 :size="15" />
               </button>
               <button
                 class="vs-item-del"
-                v-tooltip="'删除版本'"
+                v-tooltip="t('settings.version.select.deleteVersion')"
                 @click.stop="openDelete(v.name)"
               >
                 <Trash2 :size="15" />
@@ -97,15 +99,15 @@ function goDownload() {
     </template>
 
     <!-- 删除版本确认 dialog -->
-    <AlertDialog v-model="deleteDialog" title="删除版本">
+    <AlertDialog v-model="deleteDialog" :title="t('settings.version.select.deleteVersion')">
       <div class="vs-dialog-body">
         <div class="vs-dialog-text">
-          确定要删除版本「{{ deleteTarget }}」吗？该操作会删除版本文件夹及其全部文件，且无法恢复。
+          {{ t("settings.version.select.deleteConfirm", { name: deleteTarget }) }}
         </div>
       </div>
       <template #actions>
-        <button class="dialog-btn danger" @click="confirmDeleteVersion">删除</button>
-        <button class="dialog-btn" @click="deleteDialog = false">取消</button>
+        <button class="dialog-btn danger" @click="confirmDeleteVersion">{{ t("settings.version.setup.common.delete") }}</button>
+        <button class="dialog-btn" @click="deleteDialog = false">{{ t("settings.version.setup.common.cancel") }}</button>
       </template>
     </AlertDialog>
   </div>

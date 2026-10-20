@@ -196,16 +196,16 @@ pub async fn process_natives(
 
 /// 打开 ZIP 归档（统一错误文案）；整合包/地图/压缩包读取共用。
 pub fn open_zip(path: &Path, err_prefix: &str) -> Result<zip::ZipArchive<std::fs::File>, String> {
-    let file = std::fs::File::open(path).map_err(common_err_ctx!("打开{}失败", err_prefix))?;
-    zip::ZipArchive::new(file).map_err(common_err_ctx!("读取{}失败", err_prefix))
+    let file = std::fs::File::open(path).map_err(common_err_ctx_key!("errors.file.read", "打开{}失败", err_prefix))?;
+    zip::ZipArchive::new(file).map_err(common_err_ctx_key!("errors.file.read", "读取{}失败", err_prefix))
 }
 /// 把 ZIP 条目解压到目标文件（父目录自动创建）；ModLoader installer 解 jar、整合包单成员共用。
 pub fn extract_entry_to(entry: &mut zip::read::ZipFile, dest: &Path) -> Result<(), String> {
     if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).map_err(common_err_ctx!("创建目录失败"))?;
+        std::fs::create_dir_all(parent).map_err(common_err_ctx_key!("errors.file.createDir", "创建目录失败"))?;
     }
-    let mut out = std::fs::File::create(dest).map_err(common_err_ctx!("创建文件失败"))?;
-    std::io::copy(entry, &mut out).map_err(common_err_ctx!("解压失败"))?;
+    let mut out = std::fs::File::create(dest).map_err(common_err_ctx_key!("errors.file.write", "创建文件失败"))?;
+    std::io::copy(entry, &mut out).map_err(common_err_ctx_key!("errors.file.extract", "解压失败"))?;
     Ok(())
 }
 
@@ -216,12 +216,12 @@ pub(crate) fn extract_zip_safe(
     dest_root: &Path,
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<(), String> {
-    let file = std::fs::File::open(zip_path).map_err(common_err_ctx!("打开存档文件失败"))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(common_err_ctx!("读取存档文件失败"))?;
+    let file = std::fs::File::open(zip_path).map_err(common_err_ctx_key!("errors.file.read", "打开存档文件失败"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(common_err_ctx_key!("errors.file.read", "读取存档文件失败"))?;
     for i in 0..archive.len() {
         let mut entry = archive
             .by_index(i)
-            .map_err(common_err_ctx!("读取存档条目失败"))?;
+            .map_err(common_err_ctx_key!("errors.file.read", "读取存档条目失败"))?;
         let name = entry.name().to_string();
         let out = dest_root.join(safe_relative_path(&name)?);
         if entry.is_dir() {
@@ -232,12 +232,12 @@ pub(crate) fn extract_zip_safe(
             return Err("任务已取消\n".into());
         }
         if let Some(parent) = out.parent() {
-            std::fs::create_dir_all(parent).map_err(common_err_ctx!("创建目录失败"))?;
+            std::fs::create_dir_all(parent).map_err(common_err_ctx_key!("errors.file.createDir", "创建目录失败"))?;
         }
         let mut file_out =
-            std::fs::File::create(&out).map_err(common_err_ctx!("创建 {} 失败", out.display()))?;
+            std::fs::File::create(&out).map_err(common_err_ctx_key!("errors.file.write", "创建 {} 失败", out.display()))?;
         std::io::copy(&mut entry, &mut file_out)
-            .map_err(common_err_ctx!("解压 {} 失败", out.display()))?;
+            .map_err(common_err_ctx_key!("errors.file.extract", "解压 {} 失败", out.display()))?;
     }
     Ok(())
 }
@@ -248,8 +248,8 @@ pub fn extract_jar(
     out_dir: &Path,
     extract: Option<&ExtractRules>,
 ) -> Result<(), String> {
-    let file = std::fs::File::open(jar_path).map_err(common_err_ctx!("打开 JAR 失败"))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(common_err_ctx!("读取 JAR 失败"))?;
+    let file = std::fs::File::open(jar_path).map_err(common_err_ctx_key!("errors.file.read", "打开 JAR 失败"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(common_err_ctx_key!("errors.file.read", "读取 JAR 失败"))?;
 
     let excludes: Vec<&str> = extract
         .map(|e| e.exclude.iter().map(|s| s.as_str()).collect())
@@ -258,7 +258,7 @@ pub fn extract_jar(
     for i in 0..archive.len() {
         let mut entry = archive
             .by_index(i)
-            .map_err(common_err_ctx!("读取 ZIP 条目失败"))?;
+            .map_err(common_err_ctx_key!("errors.file.read", "读取 ZIP 条目失败"))?;
 
         let name = entry.name().to_string();
 

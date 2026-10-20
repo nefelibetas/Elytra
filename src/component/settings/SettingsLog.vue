@@ -1,8 +1,11 @@
 <script setup lang="ts">
 // 启动器日志：查看 launcher.log（stdout/stderr 重定向到 exe 旁 Elytra/）。
 import { onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { loadLauncherLog, openLauncherLogDir } from "../../store/app/appLog";
 import { RefreshCw, FolderOpen } from "@lucide/vue";
+
+const { t } = useI18n();
 
 const logText = ref("");
 const loading = ref(false);
@@ -11,7 +14,7 @@ async function loadLog() {
   loading.value = true;
   try {
     const text = await loadLauncherLog();
-    logText.value = text || "暂无启动器日志（launcher.log 尚未产生内容）";
+    logText.value = text || t("settings.log.empty");
   } catch (e) {
     logText.value = String(e);
   }
@@ -33,17 +36,17 @@ async function openLogDir() {
   <div class="stg-card">
     <div class="stg-card-hdr slog-hdr">
       <div class="slog-titles">
-        <h3>启动器日志</h3>
-        <div class="stg-card-sub">启动器自身输出（exe 旁 Elytra/launcher.log 尾部 200 行）</div>
+        <h3>{{ t("settings.log.title") }}</h3>
+        <div class="stg-card-sub">{{ t("settings.log.subtitle") }}</div>
       </div>
       <div class="slog-actions">
         <button class="slog-refresh" @click="openLogDir">
           <FolderOpen :size="13" />
-          打开目录
+          {{ t("settings.log.openDir") }}
         </button>
         <button class="slog-refresh" :disabled="loading" @click="loadLog">
           <RefreshCw :size="13" :class="{ spin: loading }" />
-          刷新
+          {{ t("settings.log.refresh") }}
         </button>
       </div>
     </div>

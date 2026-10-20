@@ -1,5 +1,6 @@
 // NBT 文本片段的轻量工具：括号/引号配对校验与归一化。不做语义解析——片段原样透传给命令，
 // 语法对错以游戏为准；这里只拦「括号没配平」这类必然出错的写法。
+import { t } from "../i18n";
 
 /**
  * 校验 NBT 片段是否括号/引号配平：返回 `null` 合法；否则给首个问题的中文描述。
@@ -26,17 +27,17 @@ export function checkNbtFragment(raw: string): string | null {
 			const open = stack.pop();
 			const want = ch === "}" ? "{" : "[";
 			if (open !== want) {
-				return `第 ${i + 1} 个字符处括号不匹配：见到「${ch}」但缺少「${want}」`;
+				return t("tools.nbtText.bracketMismatch", { pos: i + 1, seen: ch, want });
 			}
 		}
 	}
-	if (quote) return `字符串引号「${quote}」未闭合`;
+	if (quote) return t("tools.nbtText.quoteUnclosed", { quote });
 	if (stack.length > 0) {
 		const missing = stack
 			.map((c) => (c === "{" ? "}" : "]"))
 			.reverse()
 			.join("");
-		return `括号未闭合，缺少「${missing}」`;
+		return t("tools.nbtText.bracketsUnclosed", { missing });
 	}
 	return null;
 }

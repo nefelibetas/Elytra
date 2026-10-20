@@ -30,12 +30,122 @@ pub enum StepStatus {
     Done,
 }
 
+/// 步骤种类：前端按枚举翻译步骤名（`File` 仍显示文件名）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "task/")]
+#[serde(rename_all = "snake_case")]
+pub enum StepKind {
+    /// 下载原版 version json（唯一硬前置，恒在，索引 0）
+    VersionJson,
+    /// client.jar（恒在，与 libraries/assets 并行）
+    ClientJar,
+    Libraries,
+    Assets,
+    /// native classifier 下载/解压
+    Natives,
+    /// ModLoader 配置（合并 json 写入）
+    LoaderConfig,
+    /// ModLoader 本体（fabric libs / installer→jar）
+    LoaderLibs,
+    #[serde(rename = "optifine")]
+    OptiFine,
+    FabricApi,
+    /// managed JDK 运行时安装
+    JavaRuntime,
+    /// 修复任务：客户端主体
+    RepairClient,
+    /// 修复任务：支持库
+    RepairLibraries,
+    /// 修复任务：资源文件
+    RepairAssets,
+    /// 修复任务：原生库
+    RepairNatives,
+    /// 整合包安装：下载包体
+    ModpackDownload,
+    /// 整合包安装：解析清单
+    ModpackParse,
+    /// 整合包安装：版本清单
+    ModpackVersionJson,
+    /// 整合包安装：游戏主文件
+    ModpackGame,
+    /// 整合包安装：依赖库
+    ModpackLibraries,
+    /// 整合包安装：资源文件
+    ModpackAssets,
+    /// 整合包安装：原生库
+    ModpackNatives,
+    /// 整合包安装：ModLoader 配置
+    ModpackLoaderConfig,
+    /// 整合包安装：ModLoader 文件
+    ModpackLoaderFiles,
+    /// 整合包安装：解压 overrides
+    ModpackOverrides,
+    /// 批量文件下载的单个文件步骤
+    File,
+}
+
+impl StepKind {
+    /// 前端消息 key 后缀（与 serde 名一致）。
+    pub fn i18n_key(self) -> &'static str {
+        match self {
+            StepKind::VersionJson => "version_json",
+            StepKind::ClientJar => "client_jar",
+            StepKind::Libraries => "libraries",
+            StepKind::Assets => "assets",
+            StepKind::Natives => "natives",
+            StepKind::LoaderConfig => "loader_config",
+            StepKind::LoaderLibs => "loader_libs",
+            StepKind::OptiFine => "optifine",
+            StepKind::FabricApi => "fabric_api",
+            StepKind::JavaRuntime => "java_runtime",
+            StepKind::RepairClient => "repair_client",
+            StepKind::RepairLibraries => "repair_libraries",
+            StepKind::RepairAssets => "repair_assets",
+            StepKind::RepairNatives => "repair_natives",
+            StepKind::ModpackDownload => "modpack_download",
+            StepKind::ModpackParse => "modpack_parse",
+            StepKind::ModpackVersionJson => "modpack_version_json",
+            StepKind::ModpackGame => "modpack_game",
+            StepKind::ModpackLibraries => "modpack_libraries",
+            StepKind::ModpackAssets => "modpack_assets",
+            StepKind::ModpackNatives => "modpack_natives",
+            StepKind::ModpackLoaderConfig => "modpack_loader_config",
+            StepKind::ModpackLoaderFiles => "modpack_loader_files",
+            StepKind::ModpackOverrides => "modpack_overrides",
+            StepKind::File => "file",
+        }
+    }
+}
+
+/// 任务名/阶段的 i18n 文本（与中文原文并行，前端优先 key）。
+#[derive(Debug, Clone, Default)]
+pub struct TaskText {
+    pub key: Option<String>,
+    pub params: Option<std::collections::BTreeMap<String, String>>,
+}
+
+impl TaskText {
+    pub fn new(key: &str, params: &[(&str, String)]) -> Self {
+        let params: std::collections::BTreeMap<_, _> = params
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), v.clone()))
+            .collect();
+        Self {
+            key: Some(key.to_string()),
+            params: if params.is_empty() { None } else { Some(params) },
+        }
+    }
+}
+
 /// 任务进度快照（task-progress 事件推送体）。
 #[derive(Debug, Clone, Serialize, ts_rs::TS)]
 #[ts(export_to = "task/")]
 pub struct TaskProgress {
     pub task_id: String,
     pub name: String,
+    /// 任务名的 i18n key；旧快照/未迁移任务为 None，前端回退 name。
+    pub name_key: Option<String>,
+    pub name_params: Option<std::collections::BTreeMap<String, String>>,
     pub status: TaskStatus,
     pub progress: f64, // 0.0 – 100.0
     pub speed_bps: f64,
@@ -49,6 +159,9 @@ pub struct TaskProgress {
     #[ts(type = "number")]
     pub total_bytes: u64,
     pub current_phase: String,
+    /// 阶段的 i18n key；动态文件名/进度等仍看 current_phase。
+    pub current_phase_key: Option<String>,
+    pub current_phase_params: Option<std::collections::BTreeMap<String, String>>,
     pub steps: Vec<StepInfo>,
     pub error: Option<String>,
 }
@@ -57,6 +170,8 @@ pub struct TaskProgress {
 #[ts(export_to = "task/")]
 pub struct StepInfo {
     pub name: String,
+    /// 步骤枚举；None 时前端显示 name（旧事件/动态步骤）。
+    pub kind: Option<StepKind>,
     pub status: StepStatus,
     pub progress: f64, // 0–100, meaningful only when status=running
 }

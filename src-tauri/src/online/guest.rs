@@ -107,7 +107,7 @@ async fn connect_center(
         Ok(st) => st,
         Err(e) => {
             rollback_join_and_emit(sink, gen).await;
-            bail!("连接联机中心失败\n{e}");
+            bail_key!("errors.online.join", "连接联机中心失败\n{e}");
         }
     };
     Ok((stream, center_addr, center_ip))
@@ -138,15 +138,15 @@ async fn negotiate_guest_session(
         ping_body.to_string().as_bytes(),
     )
     .await
-    .map_err(common_err_ctx!("发送心跳失败"))?;
+    .map_err(common_err_ctx_key!("errors.online.failed", "发送心跳失败"))?;
     let _ = read_response_async(&mut stream).await;
 
     write_request_async(&mut stream, "c", "protocols", b"")
         .await
-        .map_err(common_err_ctx!("协议协商失败"))?;
+        .map_err(common_err_ctx_key!("errors.online.failed", "协议协商失败"))?;
     let protocols_resp = read_response_async(&mut stream)
         .await
-        .map_err(common_err_ctx!("协议协商失败"))?;
+        .map_err(common_err_ctx_key!("errors.online.failed", "协议协商失败"))?;
     let supports_easytier_id = protocols_resp.status == 0 && {
         let server = String::from_utf8_lossy(&protocols_resp.body);
         server.split('\0').any(|p| p == "c:player_easytier_id")
@@ -155,10 +155,10 @@ async fn negotiate_guest_session(
     // c:server_port（游戏端口；proxy NAT 直连 host 本机 MC 监听）
     write_request_async(&mut stream, "c", "server_port", b"")
         .await
-        .map_err(common_err_ctx!("获取服务器端口失败"))?;
+        .map_err(common_err_ctx_key!("errors.online.failed", "获取服务器端口失败"))?;
     let port_resp = read_response_async(&mut stream)
         .await
-        .map_err(common_err_ctx!("获取服务器端口失败"))?;
+        .map_err(common_err_ctx_key!("errors.online.failed", "获取服务器端口失败"))?;
     if port_resp.status != 0 || port_resp.body.len() != 2 {
         rollback_join_and_emit(sink, gen).await;
         return Err("服务器未启动\n请让主机先在游戏里开启局域网世界".to_string());

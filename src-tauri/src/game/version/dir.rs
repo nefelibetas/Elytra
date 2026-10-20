@@ -29,7 +29,7 @@ pub fn auto_activate_first_version() -> Result<AutoActivate, String> {
             continue;
         }
         let mut names: Vec<String> = std::fs::read_dir(&vdir)
-            .map_err(common_err_ctx!("读取目录失败"))?
+            .map_err(common_err_ctx_key!("errors.file.read", "读取目录失败"))?
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
             .map(|e| e.file_name().to_string_lossy().to_string())
@@ -52,7 +52,7 @@ pub fn auto_activate_first_version() -> Result<AutoActivate, String> {
 pub fn version_dir_path(version_name: &str) -> Result<PathBuf, String> {
     let dir = active_minecraft_dir().join("versions").join(version_name);
     if !dir.exists() {
-        bail!("版本目录不存在\n{}", dir.display());
+        bail_key!("errors.version.missing", "版本目录不存在\n{}", dir.display());
     }
     Ok(dir)
 }
@@ -81,7 +81,7 @@ pub fn list_installed() -> Result<Vec<InstalledVersionInfo>, String> {
         return Ok(vec![]);
     }
     let mut items: Vec<InstalledVersionInfo> = std::fs::read_dir(&versions_dir)
-        .map_err(common_err_ctx!("读取版本目录失败"))?
+        .map_err(common_err_ctx_key!("errors.version.read", "读取版本目录失败"))?
         .filter_map(|entry| {
             let entry = entry.ok()?;
             if !entry.file_type().ok()?.is_dir() {
@@ -114,7 +114,7 @@ pub fn ensure_kind_folder(kind: &str, version_name: &str) -> Result<String, Stri
         _ => return Err("未知文件夹类型".to_string()),
     };
     let dir = base.join(sub);
-    std::fs::create_dir_all(&dir).map_err(common_err_ctx!("创建目录失败"))?;
+    std::fs::create_dir_all(&dir).map_err(common_err_ctx_key!("errors.file.createDir", "创建目录失败"))?;
     Ok(dir.to_string_lossy().to_string())
 }
 
@@ -147,7 +147,7 @@ pub async fn delete_version_dir(version_name: &str) -> Result<(), String> {
     }
     tokio::fs::remove_dir_all(&dir)
         .await
-        .map_err(common_err_ctx!("删除失败"))
+        .map_err(common_err_ctx_key!("errors.file.delete", "删除失败"))
 }
 
 /// 版本目录名：`versions/{id}` 已存在且含 client jar 时追加 `_{n}`；缺 jar（下载中断）则复用原目录。

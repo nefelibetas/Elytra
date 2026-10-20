@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref } from "vue"
+import { useI18n } from "vue-i18n"
 import { X, Check, LoaderCircle, RotateCcw, HardDriveDownload, Pause } from "@lucide/vue"
-import { dlState, TaskItem, interruptedJobs, resumeAllInterrupted, dismissAllInterrupted } from "../store/task/download"
+import { dlState, TaskItem, interruptedJobs, resumeAllInterrupted, dismissAllInterrupted, taskLabel, stepLabel } from "../store/task/download"
 import { errMsg } from "../utils/error"
 import { fmtSpeed, fmtEta } from "../utils/format"
 import { showToast } from "../utils/toast"
@@ -10,6 +11,7 @@ import ScrollTopFab from "../component/common/ScrollTopFab.vue"
 /** 批量任务的步骤可能很多，默认只显示前 N 个。 */
 const MAX_VISIBLE_STEPS = 8
 const expandedSteps = ref<Set<string>>(new Set())
+const { t } = useI18n()
 
 function visibleSteps(task: TaskItem) {
   if (expandedSteps.value.has(task.taskId) || task.steps.length <= MAX_VISIBLE_STEPS) {
@@ -27,14 +29,14 @@ function toggleSteps(taskId: string) {
 
 /** 状态徽标文案与色调。 */
 function statusChip(task: TaskItem): { text: string; cls: string } {
-  if (task.status === "error") return { text: "失败", cls: "err" }
-  if (task.status === "pending") return { text: "等待中", cls: "pending" }
-  if (task.status === "paused") return { text: "已暂停", cls: "pending" }
-  return { text: "下载中", cls: "running" }
+  if (task.status === "error") return { text: t("task.status.failed"), cls: "err" }
+  if (task.status === "pending") return { text: t("task.status.pending"), cls: "pending" }
+  if (task.status === "paused") return { text: t("task.status.paused"), cls: "pending" }
+  return { text: t("task.status.downloading"), cls: "running" }
 }
 
 async function handleCancel(task: TaskItem) {
-  const name = task.name || "下载任务";
+  const name = taskLabel(task) || t("task.defaultName");
   try {
     await dlState.cancelTask(task.taskId)
   } catch {
@@ -43,22 +45,22 @@ async function handleCancel(task: TaskItem) {
     // 无论 cancel 成败都移除卡片，避免抛错（任务已终态）时残留
     dlState.removeTask(task.taskId)
   }
-  showToast(`${name} 已取消`)
+  showToast(t("task.cancelled", { name }))
   // 取消后停留本页（与完成一致，任务中心为顶级 tab）
 }
 
 async function handleResume(task: TaskItem) {
   try {
     await dlState.resumePausedTask(task.taskId)
-    showToast(`${task.name || "下载任务"} 已继续下载`)
+    showToast(t("task.resumed", { name: taskLabel(task) || t("task.defaultName") }))
   } catch (e) {
-    showToast(`继续失败：${errMsg(String(e))}`)
+    showToast(t("task.resumeFailed", { error: errMsg(String(e)) }))
   }
 }
 
 async function handleDismissPaused(task: TaskItem) {
   await dlState.dismissPausedTask(task.taskId)
-  showToast(`${task.name || "下载任务"} 已放弃`)
+  showToast(t("task.dismissed", { name: taskLabel(task) || t("task.defaultName") }))
 }
 </script>
 
@@ -72,21 +74,21 @@ async function handleDismissPaused(task: TaskItem) {
           <div class="ov-bar-fill" :style="{ width: dlState.totalProgress + '%' }"></div>
         </div>
         <div class="ov-sub">
-          {{ dlState.tasks.length }} 个任务
-          <span v-if="dlState.remainingFiles > 0"> · 剩余 {{ dlState.remainingFiles }} 个文件</span>
+          {{ t("task.count", { count: dlState.tasks.length }, dlState.tasks.length) }}
+          <span v-if="dlState.remainingFiles > 0">{{ t("task.remainingFilesInline", { count: dlState.remainingFiles }, dlState.remainingFiles) }}</span>
         </div>
       </div>
       <div class="ov-stats">
         <div class="ov-stat">
-          <span class="ov-label">下载速度</span>
+          <span class="ov-label">{{ t("task.speed") }}</span>
           <span class="ov-value mono">{{ fmtSpeed(dlState.totalSpeedBps) }}</span>
         </div>
         <div class="ov-stat">
-          <span class="ov-label">预计剩余</span>
+          <span class="ov-label">{{ t("task.estimatedRemaining") }}</span>
           <span class="ov-value mono">{{ fmtEta(dlState.totalEtaSeconds) }}</span>
         </div>
         <div class="ov-stat">
-          <span class="ov-label">剩余文件</span>
+          <span class="ov-label">{{ t("task.remainingFiles") }}</span>
           <span class="ov-value mono">{{ dlState.remainingFiles }}</span>
         </div>
       </div>
@@ -96,46 +98,46 @@ async function handleDismissPaused(task: TaskItem) {
       <!-- 崩溃/重启恢复横幅：可一键恢复上次未完成的任务（幂等重跑） -->
       <div v-if="interruptedJobs.length" class="resume-banner">
         <span class="rb-text">
-          检测到 {{ interruptedJobs.length }} 个上次未完成的任务
-          <span class="rb-sub">{{ interruptedJobs.map(j => j.name).join("、") }}</span>
+          {{ t("task.interrupted", { count: interruptedJobs.length }, interruptedJobs.length) }}
+          <span class="rb-sub">{{ interruptedJobs.map(j => j.name).join(t("task.listSeparator")) }}</span>
         </span>
         <button class="rb-btn rb-primary" @click="resumeAllInterrupted">
           <RotateCcw :size="12" />
-          恢复
+          {{ t("task.resume") }}
         </button>
         <button
           class="rb-btn"
-          v-tooltip="'放弃全部任务，不再提示'"
+          v-tooltip="t('task.ignoreAllTip')"
           @click="dismissAllInterrupted"
         >
-          全部忽略
+          {{ t("task.ignoreAll") }}
         </button>
       </div>
 
       <div v-if="dlState.tasks.length === 0" class="empty">
         <HardDriveDownload :size="44" class="empty-icon" />
-        <p>暂无下载任务</p>
-        <p class="empty-sub">在资源中心选择版本后，任务进度会显示在这里</p>
+        <p>{{ t("task.empty") }}</p>
+        <p class="empty-sub">{{ t("task.emptyHint") }}</p>
       </div>
 
       <TransitionGroup name="task" class="task-list">
         <div v-for="task in dlState.tasks" :key="task.taskId" class="task-card">
           <div class="tc-hdr">
-            <span class="tc-name" :title="task.name">{{ task.name || "下载任务" }}</span>
+            <span class="tc-name" :title="taskLabel(task)">{{ taskLabel(task) || t("task.defaultName") }}</span>
             <span class="tc-chip" :class="statusChip(task).cls">{{ statusChip(task).text }}</span>
             <template v-if="task.status === 'running'">
-              <button class="tc-cancel" v-tooltip="'暂停'" @click="dlState.pauseTask(task.taskId)">
+              <button class="tc-cancel" v-tooltip="t('task.pause')" @click="dlState.pauseTask(task.taskId)">
                 <Pause :size="13" />
               </button>
-              <button class="tc-cancel" v-tooltip="'取消并清理'" @click="handleCancel(task)">
+              <button class="tc-cancel" v-tooltip="t('task.cancelCleanup')" @click="handleCancel(task)">
                 <X :size="13" />
               </button>
             </template>
             <template v-else-if="task.status === 'paused'">
-              <button class="tc-cancel" v-tooltip="'继续下载'" @click="handleResume(task)">
+              <button class="tc-cancel" v-tooltip="t('task.resumeDownload')" @click="handleResume(task)">
                 <RotateCcw :size="13" />
               </button>
-              <button class="tc-cancel" v-tooltip="'放弃（删除快照）'" @click="handleDismissPaused(task)">
+              <button class="tc-cancel" v-tooltip="t('task.dismissPaused')" @click="handleDismissPaused(task)">
                 <X :size="13" />
               </button>
             </template>
@@ -162,7 +164,7 @@ async function handleDismissPaused(task: TaskItem) {
                   <LoaderCircle v-else-if="st.status === 'running'" class="tc-spin" :size="10" :stroke-width="2" />
                   <span v-else class="tc-dot"></span>
                 </span>
-                <span class="tc-st-name">{{ st.name }}</span>
+                <span class="tc-st-name">{{ stepLabel(st) }}</span>
                 <div v-if="st.status === 'running'" class="tc-st-bar">
                   <div class="tc-st-bar-fill" :style="{ width: st.progress + '%' }"></div>
                 </div>
@@ -170,7 +172,7 @@ async function handleDismissPaused(task: TaskItem) {
               </div>
             </div>
             <button v-if="task.steps.length > MAX_VISIBLE_STEPS" class="tc-more" @click="toggleSteps(task.taskId)">
-              {{ expandedSteps.has(task.taskId) ? "收起" : `显示全部 ${task.steps.length} 项` }}
+              {{ expandedSteps.has(task.taskId) ? t("task.collapse") : t("task.showAllSteps", { count: task.steps.length }, task.steps.length) }}
             </button>
           </div>
         </div>

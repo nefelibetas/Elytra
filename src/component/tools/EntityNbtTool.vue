@@ -2,16 +2,19 @@
 // 生物 NBT 生成：选实体 → 通用 NBT 快捷项（无 AI/无敌/静音/名字/血量…）+ 村民特化（职业/交易）
 // + 附加 NBT → 输出实体 NBT 片段（供 /summon 等场景粘贴）与完整 /summon 命令。
 import { computed, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { Copy } from "@lucide/vue";
 import CheckToggle from "../common/CheckToggle.vue";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
 import SearchSelect from "./SearchSelect.vue";
 import VillagerTradeEditor from "./VillagerTradeEditor.vue";
-import { buildVillagerNbt, VILLAGER_PROFESSIONS, VILLAGER_TYPES, type VillagerTrade } from "../../utils/nbt";
+import { buildVillagerNbt, VILLAGER_PROFESSIONS, VILLAGER_TYPES, localizedName, type VillagerTrade } from "../../utils/nbt";
 import { normalizeNbtFragment, checkNbtFragment } from "../../utils/nbtText";
-import { GIVE_VERSION_OPTIONS, DEFAULT_GIVE_VERSION, maxVersionOf, type GiveVersion } from "../../utils/give";
-import { SUMMON_ENTITIES } from "../../utils/commands";
+import { GIVE_VERSION_OPTIONS, DEFAULT_GIVE_VERSION, maxVersionOf, versionLabel, type GiveVersion } from "../../utils/give";
+import { SUMMON_ENTITIES, optionLabel } from "../../utils/commands";
 import { copyText } from "../../utils/clipboard";
+
+const { t } = useI18n();
 
 const version = ref<GiveVersion>(DEFAULT_GIVE_VERSION);
 const maxVersion = computed(() => maxVersionOf(version.value));
@@ -21,13 +24,14 @@ const entityFlagsSupported = computed(() => maxVersion.value >= 8);
 const glowingSupported = computed(() => maxVersion.value >= 9);
 /** NoGravity 在 1.10 起对所有实体生效。 */
 const noGravitySupported = computed(() => maxVersion.value >= 10);
-const versionOptions: SelOption[] = GIVE_VERSION_OPTIONS.map((o) => ({
-  value: o.value,
-  label: o.label,
-}));
+const versionOptions = computed<SelOption[]>(() =>
+  GIVE_VERSION_OPTIONS.map((o) => ({ value: o.value, label: versionLabel(o) })),
+);
 
 /** 实体（可搜索可选列表，也允许直接输入 id）。 */
-const entityOptions = SUMMON_ENTITIES.map((o) => ({ id: o.value, name: o.label }));
+const entityOptions = computed(() =>
+  SUMMON_ENTITIES.map((o) => ({ id: o.value, name: optionLabel(o) })),
+);
 const entityId = ref("zombie");
 
 // 通用 NBT 快捷项
@@ -43,22 +47,20 @@ const health = ref(0);
 // 村民特化（实体 == villager 时显示）
 const era = ref<"1.14+" | "pre1.14">("1.14+");
 const eraOptions = computed<SelOption[]>(() => {
-  const pre = { value: "pre1.14", label: "1.13 及以下（纯 Offers 交易）" };
+  const pre = { value: "pre1.14", label: t("tools.entity.eraPre") };
   return maxVersionOf(version.value) < 14
     ? [pre]
-    : [{ value: "1.14+", label: "1.14+（职业/等级体系）" }, pre];
+    : [{ value: "1.14+", label: t("tools.entity.eraModern") }, pre];
 });
 watch(version, (v) => {
   if (maxVersionOf(v) < 14) era.value = "pre1.14";
 });
-const professionOptions: SelOption[] = VILLAGER_PROFESSIONS.map((p) => ({
-  value: p.id,
-  label: p.name,
-}));
-const typeOptions: SelOption[] = VILLAGER_TYPES.map((t) => ({
-  value: t.id,
-  label: t.name,
-}));
+const professionOptions = computed<SelOption[]>(() =>
+  VILLAGER_PROFESSIONS.map((p) => ({ value: p.id, label: localizedName(p) })),
+);
+const typeOptions = computed<SelOption[]>(() =>
+  VILLAGER_TYPES.map((t) => ({ value: t.id, label: localizedName(t) })),
+);
 const profession = ref("librarian");
 const type = ref("plains");
 const level = ref(2);
@@ -114,12 +116,12 @@ async function copy(text: string, label: string) {
 <template>
   <div class="tool-card">
     <div class="tool-card-hdr">
-      <h3>生物 NBT 生成</h3>
-      <div class="tool-card-sub">构造实体 NBT 片段（含村民职业/交易），供指令生成器等场景引用</div>
+      <h3>{{ t("tools.entity.title") }}</h3>
+      <div class="tool-card-sub">{{ t("tools.entity.subtitle") }}</div>
     </div>
 
     <div class="nb-row">
-      <span class="nb-label">版本区间</span>
+      <span class="nb-label">{{ t("tools.entity.version") }}</span>
       <DropSelect
         :model-value="version"
         :options="versionOptions"
@@ -129,43 +131,43 @@ async function copy(text: string, label: string) {
     </div>
 
     <div class="nb-row">
-      <span class="nb-label">实体</span>
+      <span class="nb-label">{{ t("tools.entity.entity") }}</span>
       <SearchSelect
         v-model="entityId"
         :options="entityOptions"
         :allow-custom="true"
-        placeholder="搜索实体或直接输入 id…"
+        :placeholder="t('tools.entity.entityPlaceholder')"
         max-width="360px"
       />
     </div>
 
     <div class="nb-sec">
-      <div class="nb-sec-title">通用 NBT</div>
+      <div class="nb-sec-title">{{ t("tools.entity.commonNbt") }}</div>
       <div class="nb-checks">
-        <CheckToggle v-if="entityFlagsSupported" v-model="noAI" :size="14">无 AI</CheckToggle>
-        <CheckToggle v-if="entityFlagsSupported" v-model="invulnerable" :size="14">无敌</CheckToggle>
-        <CheckToggle v-if="entityFlagsSupported" v-model="silent" :size="14">静音</CheckToggle>
-        <CheckToggle v-if="entityFlagsSupported" v-model="persist" :size="14">不消失</CheckToggle>
-        <CheckToggle v-if="glowingSupported" v-model="glowing" :size="14">发光</CheckToggle>
-        <CheckToggle v-if="noGravitySupported" v-model="noGravity" :size="14">无重力</CheckToggle>
-        <span v-if="!entityFlagsSupported" class="nb-hint">1.7.10 仅支持自定义名/血量</span>
+        <CheckToggle v-if="entityFlagsSupported" v-model="noAI" :size="14">{{ t("tools.entity.noAi") }}</CheckToggle>
+        <CheckToggle v-if="entityFlagsSupported" v-model="invulnerable" :size="14">{{ t("tools.entity.invulnerable") }}</CheckToggle>
+        <CheckToggle v-if="entityFlagsSupported" v-model="silent" :size="14">{{ t("tools.entity.silent") }}</CheckToggle>
+        <CheckToggle v-if="entityFlagsSupported" v-model="persist" :size="14">{{ t("tools.entity.persist") }}</CheckToggle>
+        <CheckToggle v-if="glowingSupported" v-model="glowing" :size="14">{{ t("tools.entity.glowing") }}</CheckToggle>
+        <CheckToggle v-if="noGravitySupported" v-model="noGravity" :size="14">{{ t("tools.entity.noGravity") }}</CheckToggle>
+        <span v-if="!entityFlagsSupported" class="nb-hint">{{ t("tools.entity.oldVersionHint") }}</span>
       </div>
       <div class="nb-row">
-        <span class="nb-label">自定义名</span>
-        <input v-model="customName" class="nb-input" placeholder="留空使用默认名" spellcheck="false" autocomplete="off" />
+        <span class="nb-label">{{ t("tools.entity.customName") }}</span>
+        <input v-model="customName" class="nb-input" :placeholder="t('tools.entity.customNamePlaceholder')" spellcheck="false" autocomplete="off" />
       </div>
       <div class="nb-row">
-        <span class="nb-label">血量</span>
+        <span class="nb-label">{{ t("tools.entity.health") }}</span>
         <input v-model.number="health" type="number" class="nb-num" min="0" max="2048" autocomplete="off" />
-        <span class="nb-hint">0 = 不设置</span>
+        <span class="nb-hint">{{ t("tools.entity.healthHint") }}</span>
       </div>
     </div>
 
     <template v-if="entityId.trim() === 'villager'">
       <div class="nb-sec">
-        <div class="nb-sec-title">村民</div>
+        <div class="nb-sec-title">{{ t("tools.entity.villager") }}</div>
         <div class="nb-row">
-          <span class="nb-label">村民世代</span>
+          <span class="nb-label">{{ t("tools.entity.era") }}</span>
           <DropSelect
             :model-value="era"
             :options="eraOptions"
@@ -174,21 +176,21 @@ async function copy(text: string, label: string) {
           />
         </div>
         <div v-if="era === '1.14+'" class="nb-row">
-          <span class="nb-label">职业</span>
+          <span class="nb-label">{{ t("tools.entity.profession") }}</span>
           <DropSelect
             :model-value="profession"
             :options="professionOptions"
             width="140px"
             @update:model-value="(v: string) => (profession = v)"
           />
-          <span class="nb-label nb-label-short">类型</span>
+          <span class="nb-label nb-label-short">{{ t("tools.entity.type") }}</span>
           <DropSelect
             :model-value="type"
             :options="typeOptions"
             width="110px"
             @update:model-value="(v: string) => (type = v)"
           />
-          <span class="nb-label nb-label-short">等级</span>
+          <span class="nb-label nb-label-short">{{ t("tools.entity.level") }}</span>
           <input v-model.number="level" type="number" class="nb-num" min="1" max="5" autocomplete="off" />
         </div>
       </div>
@@ -203,39 +205,39 @@ async function copy(text: string, label: string) {
         :level="level"
       />
       <p v-else class="nb-note">
-        {{ profession === "nitwit" ? "傻子不就业、不交易，无法配置交易" : "失业村民不交易；预置交易会在其获得职业时被游戏清除" }}
+        {{ profession === "nitwit" ? t("tools.entity.nitwitNote") : t("tools.entity.unemployedNote") }}
       </p>
     </template>
 
     <div class="nb-sec">
       <div class="nb-row nb-row-top">
-        <span class="nb-label">附加 NBT</span>
+        <span class="nb-label">{{ t("tools.entity.extraNbt") }}</span>
         <textarea
           v-model="extraNbt"
           class="nb-textarea"
           rows="2"
           spellcheck="false"
           autocomplete="off"
-          placeholder="自由 NBT（如 {Tags:[&quot;boss&quot;]}，外层括号可省略）"
+          :placeholder="t('tools.entity.extraPlaceholder')"
         ></textarea>
       </div>
       <p v-if="extraError" class="nb-error">{{ extraError }}</p>
     </div>
 
     <div class="nb-output-head">
-      <span>实体 NBT 片段</span>
-      <button class="tool-btn nb-copy-btn" @click="copy(nbtFragment, 'NBT 片段已复制')">
+      <span>{{ t("tools.entity.nbtFragment") }}</span>
+      <button class="tool-btn nb-copy-btn" @click="copy(nbtFragment, t('tools.entity.nbtCopied'))">
         <Copy :size="14" />
-        复制
+        {{ t("common.action.copy") }}
       </button>
     </div>
-    <code class="gen-output gen-output-cmd">{{ nbtFragment || "（配置后生成）" }}</code>
+    <code class="gen-output gen-output-cmd">{{ nbtFragment || t("tools.entity.outputEmpty") }}</code>
 
     <div class="nb-output-head nb-output-gap">
-      <span>完整指令</span>
-      <button class="tool-btn nb-copy-btn" @click="copy(summonCommand, '指令已复制')">
+      <span>{{ t("tools.entity.fullCommand") }}</span>
+      <button class="tool-btn nb-copy-btn" @click="copy(summonCommand, t('tools.entity.commandCopied'))">
         <Copy :size="14" />
-        复制
+        {{ t("common.action.copy") }}
       </button>
     </div>
     <code class="gen-output gen-output-cmd">{{ summonCommand }}</code>

@@ -141,14 +141,14 @@ pub async fn login(
         .timeout(std::time::Duration::from_secs(15))
         .send()
         .await
-        .map_err(common_err_ctx!("登录请求失败"))?;
+        .map_err(common_err_ctx_key!("errors.login.failed", "登录请求失败"))?;
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         let msg = extract_yggdrasil_error(&text, status);
-        bail!("登录失败\n{msg}");
+        bail_key!("errors.login.failed", "登录失败\n{msg}");
     }
-    let json: serde_json::Value = resp.json().await.map_err(common_err_ctx!("响应解析失败"))?;
+    let json: serde_json::Value = resp.json().await.map_err(common_err_ctx_key!("errors.parse", "响应解析失败"))?;
     let token = json["accessToken"]
         .as_str()
         .ok_or("登录响应缺少 accessToken")?
@@ -239,7 +239,7 @@ pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccoun
         .timeout(std::time::Duration::from_secs(15))
         .send()
         .await
-        .map_err(common_err_ctx!("刷新请求失败"))?;
+        .map_err(common_err_ctx_key!("errors.login.refresh", "刷新请求失败"))?;
     if !resp.status().is_success() {
         let status = resp.status();
         let code = status.as_u16();
@@ -248,11 +248,11 @@ pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccoun
         // 401/403 = 凭据彻底失效 → 注销该账号；其它非 2xx（5xx/网关）→ 保留账号。
         if code == 401 || code == 403 {
             let _ = remove(api_url, uuid); // 幂等；注销失败也不影响把错误报给前端
-            bail!("登录凭据已失效，已退出该账号，请重新登录\n{msg}");
+            bail_key!("errors.login.expired", "登录凭据已失效，已退出该账号，请重新登录\n{msg}");
         }
-        bail!("刷新失败（服务端返回 {status}），账号已保留\n{msg}");
+        bail_key!("errors.login.refresh", "刷新失败（服务端返回 {status}），账号已保留\n{msg}");
     }
-    let json: serde_json::Value = resp.json().await.map_err(common_err_ctx!("响应解析失败"))?;
+    let json: serde_json::Value = resp.json().await.map_err(common_err_ctx_key!("errors.parse", "响应解析失败"))?;
     let new_token = json["accessToken"]
         .as_str()
         .ok_or("刷新响应缺少 accessToken")?
@@ -352,14 +352,14 @@ pub async fn switch_role(
         .timeout(std::time::Duration::from_secs(15))
         .send()
         .await
-        .map_err(common_err_ctx!("切换角色请求失败"))?;
+        .map_err(common_err_ctx_key!("errors.account.failed", "切换角色请求失败"))?;
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         let msg = extract_yggdrasil_error(&text, status);
-        bail!("切换角色失败\n{msg}");
+        bail_key!("errors.account.failed", "切换角色失败\n{msg}");
     }
-    let json: serde_json::Value = resp.json().await.map_err(common_err_ctx!("响应解析失败"))?;
+    let json: serde_json::Value = resp.json().await.map_err(common_err_ctx_key!("errors.parse", "响应解析失败"))?;
     let new_token = json["accessToken"]
         .as_str()
         .ok_or("切换响应缺少 accessToken")?
@@ -402,11 +402,11 @@ pub async fn external_skin_info(api_url: &str, uuid: &str) -> Result<(String, St
         .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
-        .map_err(common_err_ctx!("请求皮肤失败"))?;
+        .map_err(common_err_ctx_key!("errors.skin.load", "请求皮肤失败"))?;
     if !resp.status().is_success() {
         bail!("该账号未设置皮肤\nHTTP {}", resp.status());
     }
-    let json: serde_json::Value = resp.json().await.map_err(common_err_ctx!("响应解析失败"))?;
+    let json: serde_json::Value = resp.json().await.map_err(common_err_ctx_key!("errors.parse", "响应解析失败"))?;
     // properties[0].value = base64 的 {textures:{SKIN:{url}}}（标准格式）
     let prop = json["properties"]
         .as_array()
@@ -415,9 +415,9 @@ pub async fn external_skin_info(api_url: &str, uuid: &str) -> Result<(String, St
         .ok_or("该账号未设置皮肤")?;
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(prop)
-        .map_err(common_err_ctx!("皮肤数据解码失败"))?;
+        .map_err(common_err_ctx_key!("errors.skin.load", "皮肤数据解码失败"))?;
     let textures: serde_json::Value =
-        serde_json::from_slice(&decoded).map_err(common_err_ctx!("皮肤信息解析失败"))?;
+        serde_json::from_slice(&decoded).map_err(common_err_ctx_key!("errors.skin.load", "皮肤信息解析失败"))?;
     let skin = textures["textures"]["SKIN"].clone();
     let skin_url = skin["url"].as_str().ok_or("该账号未设置皮肤")?.to_string();
     let model = skin["metadata"]["model"]
@@ -512,7 +512,7 @@ pub async fn ensure_jar() -> Result<std::path::PathBuf, String> {
                         continue;
                     }
                 }
-                std::fs::rename(&tmp, &path).map_err(common_err_ctx!("写入失败"))?;
+                std::fs::rename(&tmp, &path).map_err(common_err_ctx_key!("errors.file.write", "写入失败"))?;
                 return Ok(path);
             }
             Ok(_) => last_err = "元数据请求失败".into(),

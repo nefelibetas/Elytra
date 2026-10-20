@@ -374,7 +374,7 @@ fn finish_extract(
         std::io::copy(&mut entry, &mut out_file).map_err(|e| format!("解出成员失败\n{e}"))?;
         return Ok(out);
     }
-    bail!("构件内没有 .{ext} 成员\n{}", dest.display())
+    bail_key!("errors.install.loader", "构件内没有 .{ext} 成员\n{}", dest.display())
 }
 
 /// 读处理器 JAR 的主类（MANIFEST 的 `Main-Class`）。
@@ -394,7 +394,7 @@ fn main_class_of(jar: &Path) -> Result<String, String> {
             return Ok(v.trim().to_string());
         }
     }
-    bail!("处理器 MANIFEST 未声明 Main-Class\n{}", jar.display())
+    bail_key!("errors.install.loader", "处理器 MANIFEST 未声明 Main-Class\n{}", jar.display())
 }
 
 /// 目标版本声明的 Java 主版本（`javaVersion.majorVersion`），供 `resolve_java` 按需选 JDK。调用方已把展开继承后
@@ -416,7 +416,7 @@ pub async fn run_client_processors(
     ctx: &ProcessorCtx<'_>,
 ) -> Result<(), String> {
     if profile.processors.is_empty() {
-        bail!("install_profile 未声明 processors（该版本可能只支持官方 installer 图形安装）");
+        bail_key!("errors.install.loader", "install_profile 未声明 processors（该版本可能只支持官方 installer 图形安装）");
     }
     std::fs::create_dir_all(ctx.work_dir).map_err(|e| format!("创建临时目录失败\n{e}"))?;
     let sep = if cfg!(windows) { ";" } else { ":" };
@@ -469,7 +469,7 @@ pub async fn run_client_processors(
             let stderr = String::from_utf8_lossy(&output.stderr);
             let tail: Vec<&str> = stderr.lines().rev().take(15).collect();
             let tail = tail.iter().rev().cloned().collect::<Vec<_>>().join("\n");
-            bail!(
+            bail_key!("errors.install.loader", 
                 "ModLoader 安装失败\n步骤 {}/{}（{}）退出码 {:?}\n{}",
                 i + 1,
                 profile.processors.len(),

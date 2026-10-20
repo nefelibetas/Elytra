@@ -8,6 +8,7 @@ import { DEFAULT_VIEW_PITCH, DEFAULT_VIEW_YAW } from "../skin/skinRender";
 import type { Animation } from "../skin/skinRender";
 import { showError } from "../app/alert";
 import { showToast } from "../../utils/toast";
+import { t } from "../../i18n";
 
 /** 本地衣柜条目（后端 LocalSkinView）。 */
 export interface LocalSkin {
@@ -200,7 +201,7 @@ export const skinStudio = reactive({
         this.officialModel = "classic";
       }
     } catch (e) {
-      this.officialError = `当前皮肤加载失败\n${String(e)}`;
+      this.officialError = t("skin.studio.errors.officialLoad", { error: String(e) });
       try {
         this.officialSkin = await invoke<string>("fetch_default_skin", { skin: "steve" });
         this.officialModel = "classic";
@@ -220,7 +221,7 @@ export const skinStudio = reactive({
         this.selectedKey = "official";
       }
     } catch (e) {
-      this.skinsError = `读取本地衣柜失败\n${String(e)}`;
+      this.skinsError = t("skin.studio.errors.skinsLoad", { error: String(e) });
     } finally {
     }
   },
@@ -243,7 +244,7 @@ export const skinStudio = reactive({
       this.selectedCapeId = list.find((c) => c.active)?.id ?? "";
       writeCapeCache(list);
     } catch (e) {
-      this.capesError = `披风列表加载失败\n${String(e)}`;
+      this.capesError = t("skin.studio.errors.capesLoad", { error: String(e) });
     } finally {
     }
   },
@@ -253,7 +254,7 @@ export const skinStudio = reactive({
     await Promise.allSettled([this.loadOfficial(), this.loadSkins(), this.loadCapes()]);
     this.phase = "ready";
     void this.cacheCurrent();
-    showToast("已刷新");
+    showToast(t("skin.studio.refreshed"));
   },
 
   dispose() {
@@ -316,7 +317,7 @@ export const skinStudio = reactive({
     if (this.skins.some((s) => s.source === "microsoft" && s.skin === skin)) return; // 已缓存
     try {
       const item = await invoke<LocalSkin>("save_local_skin", {
-        name: "当前",
+        name: t("skin.studio.currentSkinName"),
         b64: skin,
         variant: this.officialModel.toLowerCase() === "slim" ? "SLIM" : "CLASSIC",
         source: "microsoft",
@@ -335,7 +336,7 @@ export const skinStudio = reactive({
   async pickSkinFile() {
     const path = await open({
       multiple: false,
-      filters: [{ name: "PNG 图片", extensions: ["png"] }],
+      filters: [{ name: t("skin.studio.pngFilter"), extensions: ["png"] }],
     });
     if (!path || typeof path !== "string") return;
     this.pendingSkinPath = path;
@@ -352,10 +353,10 @@ export const skinStudio = reactive({
     this.applyBusy = true;
     try {
       await invoke("upload_skin_file", { filePath: path, variant });
-      showToast("皮肤已上传，等待生效…");
+      showToast(t("skin.studio.uploadedPending"));
       await this.settleAfterSkinChange(acc.uuid);
     } catch (e) {
-      showError(`更换皮肤失败：${String(e)}`, true);
+      showError(t("skin.studio.changeFailed", { error: String(e) }), true);
     } finally {
       this.applyBusy = false;
     }
@@ -367,9 +368,9 @@ export const skinStudio = reactive({
       if (this.selectedKey === item.id) {
         this.selectedKey = "official";
       }
-      showToast(`已删除：${item.name}`);
+      showToast(t("skin.studio.deleted", { name: item.name }));
     } catch (e) {
-      showError(`删除衣柜皮肤失败：${String(e)}`, true);
+      showError(t("skin.studio.deleteFailed", { error: String(e) }), true);
     }
   },
 
@@ -380,10 +381,10 @@ export const skinStudio = reactive({
     this.applyBusy = true;
     try {
       await invoke("upload_skin_file", { filePath: local.path, variant: local.variant });
-      showToast("皮肤已上传，等待生效…");
+      showToast(t("skin.studio.uploadedPending"));
       await this.settleAfterSkinChange(acc.uuid);
     } catch (e) {
-      showError(`应用皮肤失败：${String(e)}`, true);
+      showError(t("skin.studio.applyFailed", { error: String(e) }), true);
     } finally {
       this.applyBusy = false;
     }
@@ -396,7 +397,7 @@ export const skinStudio = reactive({
     await this.cacheCurrent();
     this.selectedKey = "official";
     void renderPremiumAvatar(uuid, true); // 启动页头像同步
-    showToast("皮肤已更新");
+    showToast(t("skin.studio.skinUpdated"));
   },
 
   async saveSkinFile() {
@@ -404,14 +405,14 @@ export const skinStudio = reactive({
     if (!this.premium || !acc) return;
     const path = await save({
       defaultPath: `${acc.name}.png`,
-      filters: [{ name: "PNG 图片", extensions: ["png"] }],
+      filters: [{ name: t("skin.studio.pngFilter"), extensions: ["png"] }],
     });
     if (!path) return;
     try {
       await invoke("save_skin", { uuid: acc.uuid, path });
-      showToast("皮肤已保存");
+      showToast(t("skin.studio.skinSaved"));
     } catch (e) {
-      showError(`保存皮肤失败：${String(e)}`, true);
+      showError(t("skin.studio.saveFailed", { error: String(e) }), true);
     }
   },
 
@@ -428,14 +429,14 @@ export const skinStudio = reactive({
       else await invoke("disable_cape");
       if (id) {
         const alias = this.capes.find((c) => c.id === id)?.alias || id.slice(0, 8);
-        showToast(`已切换到披风「${alias}」`);
+        showToast(t("skin.studio.capeSwitched", { name: alias }));
       } else {
-        showToast("已移除披风");
+        showToast(t("skin.studio.capeRemoved"));
       }
       await this.loadCapes();
     } catch (e) {
       this.selectedCapeId = prev;
-      showError(`切换披风失败：${String(e)}`, true);
+      showError(t("skin.studio.capeFailed", { error: String(e) }), true);
     } finally {
       this.capeBusy = false;
     }

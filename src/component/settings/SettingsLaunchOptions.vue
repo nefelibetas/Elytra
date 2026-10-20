@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 启动选项 + 内存分配卡片
-import { onMounted } from "vue";
+import { computed, onMounted } from "vue";
+import { useI18n } from "vue-i18n";
 import { memState } from "../../store/app/memory";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
 import AutoTasksEditor from "./AutoTasksEditor.vue";
@@ -13,6 +14,8 @@ import {
 } from "../../store/config/launchOptions";
 import { memLabelLeft, fmtGb } from "../../utils/format";
 
+const { t } = useI18n();
+
 onMounted(loadLaunchOptions);
 
 /** 最小内存开关：null = 不设置（JVM 默认），开启取 512MB。 */
@@ -21,34 +24,38 @@ function toggleMinMem() {
   saveLaunchOptions();
 }
 
-const priorityOptions: SelOption[] = [
-  { value: "Low", label: "低" },
-  { value: "Normal", label: "中（平衡）" },
-  { value: "High", label: "高" },
-  { value: "RealTime", label: "实时" },
-];
+const priorityOptions = computed<SelOption[]>(() => [
+  { value: "Low", label: t("settings.launch.priorityLow") },
+  { value: "Normal", label: t("settings.launch.priorityNormal") },
+  { value: "High", label: t("settings.launch.priorityHigh") },
+  { value: "RealTime", label: t("settings.launch.priorityRealtime") },
+]);
 
-const winsizeOptions: SelOption[] = [
-  { value: "Default", label: "默认（不设置）" },
-  { value: "Custom", label: "自定义" },
-];
+const winsizeOptions = computed<SelOption[]>(() => [
+  { value: "Default", label: t("settings.launch.windowDefault") },
+  { value: "Custom", label: t("settings.launch.windowCustom") },
+]);
+
+const gameLangOptions = computed<SelOption[]>(() => [
+  { value: "auto_zh_CN", label: t("settings.launch.gameLanguageAuto") },
+]);
 </script>
 
 <template>
   <div class="stg-card">
     <div class="stg-card-hdr">
-      <h3>启动选项</h3>
-      <div class="stg-card-sub">游戏启动行为设置</div>
+      <h3>{{ t("settings.launch.title") }}</h3>
+      <div class="stg-card-sub">{{ t("settings.launch.subtitle") }}</div>
     </div>
     <div class="launch-opts">
       <div class="lo-row">
-        <label class="lo-label" for="lo-title">游戏窗口标题</label>
+        <label class="lo-label" for="lo-title">{{ t("settings.launch.windowTitle") }}</label>
         <input
           id="lo-title"
           v-model="loWindowTitle"
           class="lo-input"
           type="text"
-          placeholder="不修改（默认）"
+          :placeholder="t('settings.launch.windowTitlePlaceholder')"
           maxlength="64"
           @change="saveLaunchOptions"
           autocomplete="off"
@@ -56,7 +63,7 @@ const winsizeOptions: SelOption[] = [
       </div>
 
       <div class="lo-row">
-        <label class="lo-label" for="lo-prio">进程优先级</label>
+        <label class="lo-label" for="lo-prio">{{ t("settings.launch.priority") }}</label>
         <DropSelect
           id="lo-prio"
           :model-value="loPriority"
@@ -67,7 +74,7 @@ const winsizeOptions: SelOption[] = [
       </div>
 
       <div class="lo-row">
-        <label class="lo-label" for="lo-winsize">窗口大小</label>
+        <label class="lo-label" for="lo-winsize">{{ t("settings.launch.windowSize") }}</label>
         <div class="lo-winsize">
           <DropSelect
             id="lo-winsize"
@@ -84,7 +91,7 @@ const winsizeOptions: SelOption[] = [
                 type="number"
                 min="320"
                 max="7680"
-                placeholder="宽"
+                :placeholder="t('settings.launch.width')"
                 @change="saveLaunchOptions"
                 autocomplete="off"
               />
@@ -95,7 +102,7 @@ const winsizeOptions: SelOption[] = [
                 type="number"
                 min="240"
                 max="4320"
-                placeholder="高"
+                :placeholder="t('settings.launch.height')"
                 @change="saveLaunchOptions"
                 autocomplete="off"
               />
@@ -105,18 +112,18 @@ const winsizeOptions: SelOption[] = [
       </div>
 
       <div class="lo-row">
-        <label class="lo-label" for="lo-lang">游戏语言</label>
+        <label class="lo-label" for="lo-lang">{{ t("settings.launch.gameLanguage") }}</label>
         <DropSelect
           id="lo-lang"
           :model-value="loGameLang"
-          :options="[{ value: 'auto_zh_CN', label: '自动设置为中文' }]"
+          :options="gameLangOptions"
           width="150px"
           @update:model-value="loGameLang = $event; saveLaunchOptions()"
         />
       </div>
 
       <div class="lo-row">
-        <CheckToggle v-model="loVerifySsl" @change="saveLaunchOptions">在正版登录时验证 SSL 证书</CheckToggle>
+        <CheckToggle v-model="loVerifySsl" @change="saveLaunchOptions">{{ t("settings.launch.verifySsl") }}</CheckToggle>
       </div>
     </div>
     <div v-if="launchError" class="err">{{ launchError }}</div>
@@ -124,15 +131,15 @@ const winsizeOptions: SelOption[] = [
 
   <div class="stg-card">
     <div class="stg-card-hdr">
-      <h3>内存分配</h3>
-      <div class="stg-card-sub">游戏内存分配与系统内存状态</div>
+      <h3>{{ t("settings.launch.memoryTitle") }}</h3>
+      <div class="stg-card-sub">{{ t("settings.launch.memorySubtitle") }}</div>
     </div>
     <div class="launch-opts">
       <div class="lo-row">
-        <CheckToggle type="radio" value="Auto" v-model="loMemMode" @change="saveLaunchOptions">自动配置</CheckToggle>
+        <CheckToggle type="radio" value="Auto" v-model="loMemMode" @change="saveLaunchOptions">{{ t("settings.launch.memoryAuto") }}</CheckToggle>
       </div>
       <div class="lo-row">
-        <CheckToggle type="radio" value="Custom" v-model="loMemMode" @change="saveLaunchOptions">自定义</CheckToggle>
+        <CheckToggle type="radio" value="Custom" v-model="loMemMode" @change="saveLaunchOptions">{{ t("settings.launch.memoryCustom") }}</CheckToggle>
         <input
           v-model.number="loMemMb"
           class="mem-slider"
@@ -149,7 +156,7 @@ const winsizeOptions: SelOption[] = [
         <span class="mem-slider-val" :class="{ disabled: loMemMode !== 'Custom' }">{{ fmtGb(loMemMb) }}</span>
       </div>
       <div class="lo-row">
-        <CheckToggle :model-value="loMinMem !== null" :disabled="loMemMode !== 'Custom'" :dim="loMemMode !== 'Custom'" @change="toggleMinMem">最小内存（-Xms）</CheckToggle>
+        <CheckToggle :model-value="loMinMem !== null" :disabled="loMemMode !== 'Custom'" :dim="loMemMode !== 'Custom'" @change="toggleMinMem">{{ t("settings.launch.minMemory") }}</CheckToggle>
         <input
           v-if="loMinMem !== null"
           v-model.number="loMinMem"
@@ -166,12 +173,12 @@ const winsizeOptions: SelOption[] = [
         <span v-if="loMinMem !== null" class="mem-slider-val" :class="{ disabled: loMemMode !== 'Custom' }">{{ loMinMem }} MB</span>
       </div>
       <div class="lo-row">
-        <CheckToggle v-model="loMemOptimize" @change="saveLaunchOptions">启动游戏前进行内存优化</CheckToggle>
+        <CheckToggle v-model="loMemOptimize" @change="saveLaunchOptions">{{ t("settings.launch.memoryOptimize") }}</CheckToggle>
       </div>
       <div class="mem-status">
         <div class="mem-bar-labels">
-          <span class="mem-bar-label">已使用 {{ fmtGb(memUsedMb) }}</span>
-          <span v-if="memGamePct > 0" class="mem-bar-label" :style="{ left: memLabelLeft(memUsedPct) }">游戏分配 {{ fmtGb(memGameMb) }}</span>
+          <span class="mem-bar-label">{{ t("settings.launch.memoryUsed", { size: fmtGb(memUsedMb) }) }}</span>
+          <span v-if="memGamePct > 0" class="mem-bar-label" :style="{ left: memLabelLeft(memUsedPct) }">{{ t("settings.launch.memoryGame", { size: fmtGb(memGameMb) }) }}</span>
         </div>
         <div class="mem-bar">
           <div class="mem-seg mem-used" :style="{ width: memUsedPct + '%' }"></div>

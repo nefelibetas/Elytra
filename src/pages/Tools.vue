@@ -17,6 +17,7 @@ export const toolsTab = ref<ToolsTab>("status");
 
 <script setup lang="ts">
 // 页面容器：SideNav + 各工具编排（业务在组件内）
+import { useI18n } from "vue-i18n";
 import { Server, Type, Link2, Sword, Download, Paintbrush, Terminal, PawPrint } from "@lucide/vue";
 import ServerStatusTool from "../component/tools/ServerStatusTool.vue";
 import MotdGeneratorTool from "../component/tools/MotdGeneratorTool.vue";
@@ -28,22 +29,24 @@ import DownloadTool from "../component/tools/DownloadTool.vue";
 import OnlineTool from "../component/tools/OnlineTool.vue";
 import ScrollTopFab from "../component/common/ScrollTopFab.vue";
 import SideNav from "../component/common/SideNav.vue";
+
+const { t } = useI18n();
 </script>
 
 <template>
   <div class="tools">
     <SideNav
       v-model="toolsTab"
-      title="工具"
+      :title="t('tools.tabs.title')"
       :tabs="[
-        { key: 'status', label: '服务器状态', icon: Server },
-        { key: 'motd', label: 'MOTD 生成器', icon: Type },
-        { key: 'give', label: '物品 NBT 生成', icon: Sword },
-        { key: 'entity', label: '生物 NBT 生成', icon: PawPrint },
-        { key: 'command', label: '指令生成器', icon: Terminal },
-        { key: 'skinpaint', label: '皮肤绘画', icon: Paintbrush },
-        { key: 'download', label: '多线程下载', icon: Download },
-        { key: 'online', label: '联机', icon: Link2 },
+        { key: 'status', label: t('tools.tabs.status'), icon: Server },
+        { key: 'motd', label: t('tools.tabs.motd'), icon: Type },
+        { key: 'give', label: t('tools.tabs.give'), icon: Sword },
+        { key: 'entity', label: t('tools.tabs.entity'), icon: PawPrint },
+        { key: 'command', label: t('tools.tabs.command'), icon: Terminal },
+        { key: 'skinpaint', label: t('tools.tabs.skinpaint'), icon: Paintbrush },
+        { key: 'download', label: t('tools.tabs.download'), icon: Download },
+        { key: 'online', label: t('tools.tabs.online'), icon: Link2 },
       ]"
     >
       <ServerStatusTool v-if="toolsTab === 'status'" key="status" />

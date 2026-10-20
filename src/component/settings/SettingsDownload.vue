@@ -1,8 +1,9 @@
 <script setup lang="ts">
 // 下载设置卡片：下载源主开关 + 细分折叠 + 网络代理 + 线程数；下拉统一用共享 DropSelect。
-import { onMounted } from "vue";
+import { computed, onMounted } from "vue";
+import { useI18n } from "vue-i18n";
 import { ChevronDown } from "@lucide/vue";
-import DropSelect from "../common/DropSelect.vue";
+import DropSelect, { type SelOption } from "../common/DropSelect.vue";
 import CheckToggle from "../common/CheckToggle.vue";
 import { fmtSpeed } from "../../utils/format";
 import {
@@ -17,11 +18,25 @@ import {
   saveDownloadConfig, setGameMode, setCommunityMode, setJdkMode, setNetworkMode,
   setTranslateMode, loadDownloadConfig,
   dlSourceMaster, dlDetailOpen, setSourceMaster,
+  type OptionKeys,
 } from "../../store/config/downloaderConfig";
+
+const { t } = useI18n();
+
+/** key 列表 → 渲染用文案（locale 切换时 computed 自动重算）。 */
+function localized(options: OptionKeys[]): SelOption[] {
+  return options.map(o => ({ value: o.value, label: t(o.labelKey), desc: t(o.descKey) }));
+}
+
+const sourceOptions = computed(() => localized(sourceModeOptions));
+const communityOptions = computed(() => localized(communitySourceOptions));
+const jdkOptions = computed(() => localized(jdkSourceOptions));
+const networkOptions = computed(() => localized(networkModeOptions));
+const translateOptions = computed(() => localized(translateDisplayOptions));
 
 onMounted(loadDownloadConfig);
 /** 主开关 custom 态文案（custom 值不在选项中，经 placeholder 呈现）。 */
-const masterPlaceholder = "自定义（已单独设置）";
+const masterPlaceholder = computed(() => t("settings.download.masterCustom"));
 
 function onMaster(v: string) {
   setSourceMaster(v as Parameters<typeof setSourceMaster>[0]);
@@ -31,17 +46,17 @@ function onMaster(v: string) {
 <template>
   <div class="stg-card">
     <div class="stg-card-hdr">
-      <h3>管理游戏下载源</h3>
-      <div class="stg-card-sub">游戏文件、版本列表、社区资源与 JDK 的下载来源与线程数</div>
+      <h3>{{ t("settings.download.title") }}</h3>
+      <div class="stg-card-sub">{{ t("settings.download.subtitle") }}</div>
     </div>
 
     <!-- 下载源（主开关）：切换三细分；明细区可展开单独调整 -->
     <div class="dl-row">
-      <span class="dl-label">下载源</span>
+      <span class="dl-label">{{ t("settings.download.source") }}</span>
       <div class="dl-field">
         <DropSelect
           :model-value="dlSourceMaster"
-          :options="sourceModeOptions"
+          :options="sourceOptions"
           :placeholder="masterPlaceholder"
           @update:model-value="onMaster"
         />
@@ -49,7 +64,7 @@ function onMaster(v: string) {
       <button
         class="dl-detail-toggle"
         :class="{ open: dlDetailOpen }"
-        v-tooltip="'单独调整各细分源'"
+        v-tooltip="t('settings.download.adjustDetail')"
         @click="dlDetailOpen = !dlDetailOpen"
       >
         <ChevronDown :size="14" />
@@ -61,22 +76,22 @@ function onMaster(v: string) {
       <div v-if="dlDetailOpen" class="dl-source-detail">
         <!-- 游戏下载源：版本列表/json/资源/库/ModLoader/JDK runtime 统一走此源 -->
         <div class="dl-row">
-          <span class="dl-label">游戏下载源</span>
+          <span class="dl-label">{{ t("settings.download.gameSource") }}</span>
           <div class="dl-field">
             <DropSelect
               :model-value="dlGameMode"
-              :options="sourceModeOptions"
+              :options="sourceOptions"
               @update:model-value="setGameMode"
             />
           </div>
         </div>
 
         <div class="dl-row">
-          <span class="dl-label">社区下载源</span>
+          <span class="dl-label">{{ t("settings.download.communitySource") }}</span>
           <div class="dl-field">
             <DropSelect
               :model-value="dlCommunityMode"
-              :options="communitySourceOptions"
+              :options="communityOptions"
               @update:model-value="setCommunityMode"
             />
           </div>
@@ -84,11 +99,11 @@ function onMaster(v: string) {
 
         <!-- JDK 下载源：auto 测速取最快；officialOnly 固定 Mojang→Azul；mirrorOnly 固定 Mojang(镜像)→Adoptium 仅 TUNA -->
         <div class="dl-row">
-          <span class="dl-label">JDK 下载源</span>
+          <span class="dl-label">{{ t("settings.download.jdkSource") }}</span>
           <div class="dl-field">
             <DropSelect
               :model-value="dlJdkMode"
-              :options="jdkSourceOptions"
+              :options="jdkOptions"
               @update:model-value="setJdkMode"
             />
           </div>
@@ -98,11 +113,11 @@ function onMaster(v: string) {
 
     <!-- 网络代理：自动 / 强制系统代理 / 直连（TUN 由网络层接管） -->
     <div class="dl-row">
-      <span class="dl-label">网络代理</span>
+      <span class="dl-label">{{ t("settings.download.network") }}</span>
       <div class="dl-field">
         <DropSelect
           :model-value="dlNetworkMode"
-          :options="networkModeOptions"
+          :options="networkOptions"
           @update:model-value="setNetworkMode"
         />
       </div>
@@ -110,23 +125,23 @@ function onMaster(v: string) {
 
     <!-- 翻译显示 -->
     <div class="dl-row">
-      <span class="dl-label">翻译显示</span>
+      <span class="dl-label">{{ t("settings.download.translate") }}</span>
       <div class="dl-field">
         <DropSelect
           :model-value="dlTranslateMode"
-          :options="translateDisplayOptions"
+          :options="translateOptions"
           @update:model-value="(v: string) => setTranslateMode(v)"
         />
       </div>
     </div>
 
     <div class="dl-row">
-      <CheckToggle v-model="dlShowReleaseOnly" @change="saveDownloadConfig">社区资源仅显示正式版（过滤快照/预发布版本）</CheckToggle>
+      <CheckToggle v-model="dlShowReleaseOnly" @change="saveDownloadConfig">{{ t("settings.download.releaseOnly") }}</CheckToggle>
     </div>
 
     <!-- 最大线程数：官方源并发；镜像模式固定 16，隐藏该行 -->
     <div v-if="!concurrencyLocked" class="dl-row">
-      <span class="dl-label">最大线程数</span>
+      <span class="dl-label">{{ t("settings.download.threads") }}</span>
       <input
         class="dl-range"
         type="range"
@@ -142,7 +157,7 @@ function onMaster(v: string) {
     </div>
     <!-- 下载限速：0 = 不限制 -->
     <div class="dl-row">
-      <span class="dl-label">下载限速</span>
+      <span class="dl-label">{{ t("settings.download.speedLimit") }}</span>
       <input
         class="dl-range"
         type="range"
@@ -154,11 +169,11 @@ function onMaster(v: string) {
         @input="saveDownloadConfig"
         autocomplete="off"
       />
-      <span class="dl-val">{{ dlMaxSpeed === 0 ? '不限' : fmtSpeed(dlMaxSpeed) }}</span>
+      <span class="dl-val">{{ dlMaxSpeed === 0 ? t('settings.download.unlimited') : fmtSpeed(dlMaxSpeed) }}</span>
     </div>
     <!-- Auto 模式：官方源优先+镜像降级；并发仅作用官方源，镜像固定 16 -->
     <p v-if="dlGameMode === 'auto' && !concurrencyLocked" class="dl-note">
-      该并发仅对官方源生效，镜像源固定 16 线程
+      {{ t("settings.download.autoNote") }}
     </p>
 
     <div v-if="dlError" class="dl-error">{{ dlError }}</div>

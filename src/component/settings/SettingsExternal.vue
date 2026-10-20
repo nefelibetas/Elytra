@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 设置-第三方登录：登录（服务器下拉）+ 预设管理（label + value）；下拉选项 = 内置预设 + 用户预设。
 import { computed, onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { loadExternalConfig, saveExternalConfig } from "../../store/config/externalConfig";
 import { Plus, Trash2, ExternalLink } from "@lucide/vue";
 import DropSelect from "../common/DropSelect.vue";
@@ -16,6 +17,8 @@ interface ServerOption {
   label: string;
   value: string;
 }
+
+const { t } = useI18n();
 
 const presetServers = ref<ServerOption[]>([]);
 
@@ -34,8 +37,8 @@ const newValue = ref("");
 
 async function doLogin() {
   if (extBusy.value) return;
-  if (!extApi.value.trim()) { extError.value = "请选择验证服务器"; return; }
-  if (!extUser.value.trim() || !extPass.value) { extError.value = "请输入账号与密码"; return; }
+  if (!extApi.value.trim()) { extError.value = t("settings.external.errorServer"); return; }
+  if (!extUser.value.trim() || !extPass.value) { extError.value = t("settings.external.errorCredentials"); return; }
   extBusy.value = true;
   extError.value = "";
   try {
@@ -43,7 +46,7 @@ async function doLogin() {
     extUser.value = "";
     extPass.value = "";
     showLoginForm.value = false;
-    showToast("登录成功");
+    showToast(t("settings.external.loginSuccess"));
   } catch (e) {
     extError.value = errMsg(e);
   } finally {
@@ -82,11 +85,11 @@ function addPreset() {
   const label = newLabel.value.trim();
   const value = newValue.value.trim();
   if (!label || !value) {
-    showToast("请填写名称与地址");
+    showToast(t("settings.external.nameAndUrlRequired"));
     return;
   }
   if (presetServers.value.some(s => s.value === value)) {
-    showToast("该地址已存在");
+    showToast(t("settings.external.urlExists"));
     return;
   }
   presetServers.value.push({ label, value });
@@ -113,8 +116,8 @@ onMounted(() => {
 <template>
   <div class="stg-card">
     <div class="stg-card-hdr">
-      <h3>第三方登录</h3>
-      <div class="stg-card-sub">外置认证（authlib-injector），登录后游戏内显示该站皮肤</div>
+      <h3>{{ t("settings.external.title") }}</h3>
+      <div class="stg-card-sub">{{ t("settings.external.subtitle") }}</div>
     </div>
 
     <div v-if="externalAccounts.length" class="tp-accounts">
@@ -126,11 +129,11 @@ onMounted(() => {
         @click="switchExternalAccount(acc.api_url, acc.uuid)"
       >
         <span class="tp-acct-check">{{ acc.uuid === externalAccount?.uuid && acc.api_url === externalAccount?.api_url ? "✓" : "" }}</span>
-        <span class="tp-acct-name">{{ acc.site_username || "未知账号" }}</span>
+        <span class="tp-acct-name">{{ acc.site_username || t("settings.external.unknownAccount") }}</span>
         <span class="tp-acct-server" :title="acc.api_url">{{ acc.server_name || acc.api_url }}</span>
         <button
           class="tp-del"
-          title="移除该账号"
+          :title="t('settings.external.removeAccount')"
           @click.stop="removeExternalAccount(acc.api_url, acc.uuid)"
         >×</button>
       </div>
@@ -139,7 +142,7 @@ onMounted(() => {
     <!-- 登录新账号：分隔线中插文本可点击；未登录时表单直接显示 -->
     <div v-if="externalAccount" class="tp-divider" @click="showLoginForm = !showLoginForm">
       <span class="tp-divider-line"></span>
-      <span class="tp-divider-text">{{ showLoginForm ? "收起" : "登录新账号" }}</span>
+      <span class="tp-divider-text">{{ showLoginForm ? t("settings.external.collapse") : t("settings.external.loginNew") }}</span>
       <span class="tp-divider-line"></span>
     </div>
 
@@ -147,35 +150,35 @@ onMounted(() => {
     <div v-if="!externalAccount || showLoginForm" class="tp-login">
 
       <div class="tp-row tp-field">
-        <span class="tp-label">服务器</span>
+        <span class="tp-label">{{ t("settings.external.server") }}</span>
         <DropSelect
           :model-value="extApi"
           :options="serverOptions"
-          placeholder="选择服务器"
+          :placeholder="t('settings.external.selectServer')"
           width="220px"
           @update:model-value="extApi = $event"
         />
         <button
           class="tp-btn tp-open"
           :disabled="!extApi.trim()"
-          title="打开该皮肤站官网"
+          :title="t('settings.external.openSite')"
           @click="openServerLink(extApi)"
         >
           <ExternalLink :size="13" />
         </button>
       </div>
       <div class="tp-row tp-field">
-        <input v-model="extUser" class="tp-input" type="text" placeholder="皮肤站账号" autocomplete="off" />
+        <input v-model="extUser" class="tp-input" type="text" :placeholder="t('settings.external.accountPlaceholder')" autocomplete="off" />
         <input
           v-model="extPass"
           class="tp-input"
           type="password"
-          placeholder="密码"
+          :placeholder="t('settings.external.password')"
           @keyup.enter="doLogin"
           autocomplete="new-password"
         />
         <button class="tp-btn tp-primary tp-login-btn" :disabled="extBusy" @click="doLogin">
-          {{ extBusy ? "登录中…" : "登录" }}
+          {{ extBusy ? t("settings.external.loggingIn") : t("settings.external.login") }}
         </button>
       </div>
       <div v-if="extError" class="tp-error-row">{{ extError }}</div>
@@ -186,32 +189,32 @@ onMounted(() => {
   <!-- 预设服务器管理 -->
   <div class="stg-card">
     <div class="stg-card-hdr">
-      <h3>预设服务器</h3>
-      <div class="stg-card-sub">登录下拉选项来自此处（含内置）；新增填名称 + 地址</div>
+      <h3>{{ t("settings.external.presetTitle") }}</h3>
+      <div class="stg-card-sub">{{ t("settings.external.presetSubtitle") }}</div>
       <div class="tp-compat">
-        <div>兼容说明：内置 LittleSkin 与自建皮肤站为标准 Yggdrasil 格式（如 https://xxx/api/yggdrasil）</div>
-        <div><b>Ely.by 为内置特殊适配</b>（非标准路径，自动处理）</div>
-        <div>自定义添加请使用标准格式地址</div>
+        <div>{{ t("settings.external.compatYggdrasil") }}</div>
+        <div>{{ t("settings.external.compatElyby") }}</div>
+        <div>{{ t("settings.external.compatCustom") }}</div>
       </div>
     </div>
     <div class="tp-list">
       <div v-for="(sv, i) in presetServers" :key="sv.value" class="tp-row">
         <span class="tp-name" :title="sv.value">{{ sv.label }}</span>
         <span class="tp-url" :title="sv.value">{{ sv.value }}</span>
-        <button class="tp-del" title="打开站点" @click="openServerLink(sv.value)">
+        <button class="tp-del" :title="t('settings.external.openPresetSite')" @click="openServerLink(sv.value)">
           <ExternalLink :size="13" />
         </button>
-        <button class="tp-del" title="移除" @click="removePreset(i)">
+        <button class="tp-del" :title="t('settings.external.remove')" @click="removePreset(i)">
           <Trash2 :size="13" />
         </button>
       </div>
-      <div v-if="presetServers.length === 0" class="tp-empty">暂无预设</div>
+      <div v-if="presetServers.length === 0" class="tp-empty">{{ t("settings.external.emptyPresets") }}</div>
       <div class="tp-add-row">
         <input
           v-model="newLabel"
           class="tp-input tp-add-label"
           type="text"
-          placeholder="名称（如 LittleSkin）"
+          :placeholder="t('settings.external.labelPlaceholder')"
           @keyup.enter="addPreset"
           autocomplete="off"
         />
@@ -219,13 +222,13 @@ onMounted(() => {
           v-model="newValue"
           class="tp-input"
           type="text"
-          placeholder="地址（如 https://littleskin.cn/api/yggdrasil）"
+          :placeholder="t('settings.external.urlPlaceholder')"
           @keyup.enter="addPreset"
           autocomplete="off"
         />
         <button class="tp-btn" @click="addPreset">
           <Plus :size="13" />
-          添加
+          {{ t("settings.external.add") }}
         </button>
       </div>
     </div>

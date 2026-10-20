@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useI18n } from "vue-i18n";
 import VersionCard from "../download/VersionCard.vue";
 import VersionItem from "../download/VersionItem.vue";
 import {
@@ -10,29 +11,31 @@ import ErrorState from "../common/ErrorState.vue";
 import commandIcon from "../../assets/command.png";
 import emeraldIcon from "../../assets/emerald.png";
 import cobbleIcon from "../../assets/cobble.png";
+
+const { t } = useI18n();
 </script>
 
 <template>
-  <LoadingSpinner v-if="vdState.loading" text="正在获取版本列表" />
+  <LoadingSpinner v-if="vdState.loading" :text="t('download.vanilla.loadingList')" />
   <ErrorState v-else-if="vdState.error" :text="vdState.error" />
   <template v-else-if="vdState.manifest">
     <div class="card">
-      <div class="card-title">最新版本</div>
+      <div class="card-title">{{ t("download.vanilla.latestTitle") }}</div>
       <div class="card-body">
-        <VersionItem :icon-src="vanillaIcon" :version-id="vdState.manifest.latest.release" :subtitle="'最新正式版，发布于 ' + (latestRelease ? fmtDateTime(latestRelease.releaseTime) : '')" @select="latestRelease && vdState.selectVersion(latestRelease)" />
-        <VersionItem :icon-src="commandIcon" :version-id="vdState.manifest.latest.snapshot" :subtitle="'最新预览版，发布于 ' + (latestSnapshot ? fmtDateTime(latestSnapshot.releaseTime) : '')" @select="latestSnapshot && vdState.selectVersion(latestSnapshot)" />
+        <VersionItem :icon-src="vanillaIcon" :version-id="vdState.manifest.latest.release" :subtitle="t('download.vanilla.latestRelease', { date: latestRelease ? fmtDateTime(latestRelease.releaseTime) : '' })" @select="latestRelease && vdState.selectVersion(latestRelease)" />
+        <VersionItem :icon-src="commandIcon" :version-id="vdState.manifest.latest.snapshot" :subtitle="t('download.vanilla.latestSnapshot', { date: latestSnapshot ? fmtDateTime(latestSnapshot.releaseTime) : '' })" @select="latestSnapshot && vdState.selectVersion(latestSnapshot)" />
       </div>
     </div>
-    <VersionCard title="正式版" :count="releases.length" :expanded="vdState.expanded.release" @toggle="vdState.toggle('release')">
+    <VersionCard :title="t('download.vanilla.release')" :count="releases.length" :expanded="vdState.expanded.release" @toggle="vdState.toggle('release')">
       <VersionItem v-for="v in releases" :key="v.id" :icon-src="vanillaIcon" :version-id="v.id" :subtitle="fmtDateTime(v.releaseTime)" @select="vdState.selectVersion(v)" />
     </VersionCard>
-    <VersionCard title="预览版" :count="snapshots.length" :expanded="vdState.expanded.snapshot" @toggle="vdState.toggle('snapshot')">
+    <VersionCard :title="t('download.vanilla.snapshot')" :count="snapshots.length" :expanded="vdState.expanded.snapshot" @toggle="vdState.toggle('snapshot')">
       <VersionItem v-for="v in snapshots" :key="v.id" :icon-src="commandIcon" :version-id="v.id" :subtitle="fmtDateTime(v.releaseTime)" @select="vdState.selectVersion(v)" />
     </VersionCard>
-    <VersionCard title="远古版" :count="oldVersions.length" :expanded="vdState.expanded.old" @toggle="vdState.toggle('old')">
+    <VersionCard :title="t('download.vanilla.old')" :count="oldVersions.length" :expanded="vdState.expanded.old" @toggle="vdState.toggle('old')">
       <VersionItem v-for="v in oldVersions" :key="v.id" :icon-src="cobbleIcon" :version-id="v.id" :subtitle="fmtDateTime(v.releaseTime)" :badge="v.type" :badge-class="v.type" @select="vdState.selectVersion(v)" />
     </VersionCard>
-    <VersionCard title="愚人节版" :count="aprilFools.length" :expanded="vdState.expanded.aprilfools" @toggle="vdState.toggle('aprilfools')">
+    <VersionCard :title="t('download.vanilla.aprilFools')" :count="aprilFools.length" :expanded="vdState.expanded.aprilfools" @toggle="vdState.toggle('aprilfools')">
       <VersionItem v-for="v in aprilFools" :key="v.id" :icon-src="emeraldIcon" :version-id="v.id" :subtitle="fmtDateTime(v.releaseTime)" @select="vdState.selectVersion(v)" />
     </VersionCard>
   </template>

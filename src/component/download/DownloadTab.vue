@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import { useI18n } from "vue-i18n";
 import { RefreshCw } from "@lucide/vue";
 defineProps<{ active?: boolean }>();
 const emit = defineEmits<{ click: []; refresh: [] }>();
+const { t } = useI18n();
 </script>
 
 <template>
@@ -10,7 +12,7 @@ const emit = defineEmits<{ click: []; refresh: [] }>();
       <slot name="icon" />
       <span><slot /></span>
     </button>
-    <button class="tab-refresh" @click.stop="emit('refresh')" v-tooltip="'刷新'">
+    <button class="tab-refresh" @click.stop="emit('refresh')" v-tooltip="t('download.tabs.refresh')">
       <RefreshCw :size="14" />
     </button>
   </div>

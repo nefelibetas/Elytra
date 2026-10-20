@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
 
-use super::model::{StepInfo, StepStatus, TaskProgress, TaskStatus};
+use super::model::{StepInfo, StepStatus, TaskProgress, TaskStatus, TaskText};
+use super::steps::StepSpec;
 use super::store;
 
 /// 全局任务管理器（首次访问即构造，无独立初始化路径）。
@@ -75,7 +76,8 @@ impl TaskManager {
     pub fn create(
         &self,
         name: &str,
-        steps: &[&str],
+        text: &TaskText,
+        steps: &[StepSpec],
     ) -> (String, Arc<AtomicBool>, Arc<Mutex<TaskProgress>>) {
         let mut inner = self.inner.lock();
         let id = format!("t{}-{}", process_prefix(), inner.counter);
@@ -84,6 +86,8 @@ impl TaskManager {
         let progress = Arc::new(Mutex::new(TaskProgress {
             task_id: id.clone(),
             name: name.to_string(),
+            name_key: text.key.clone(),
+            name_params: text.params.clone(),
             status: TaskStatus::Pending,
             progress: 0.0,
             speed_bps: 0.0,
@@ -93,10 +97,13 @@ impl TaskManager {
             completed_bytes: 0,
             total_bytes: 0,
             current_phase: "等待中".into(),
+            current_phase_key: Some("task.backend.phase.waiting".into()),
+            current_phase_params: None,
             steps: steps
                 .iter()
                 .map(|s| StepInfo {
-                    name: s.to_string(),
+                    name: s.name.clone(),
+                    kind: Some(s.kind),
                     status: StepStatus::Pending,
                     progress: 0.0,
                 })
@@ -256,13 +263,24 @@ impl TaskManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::task::StepKind;
+
+    fn file_steps(names: &[&str]) -> Vec<StepSpec> {
+        names
+            .iter()
+            .map(|name| StepSpec {
+                name: (*name).to_string(),
+                kind: StepKind::File,
+            })
+            .collect()
+    }
 
     /// 任务 id 跨进程唯一（带启动前缀），否则重启后 `t0` 撞崩溃残留行主键。
     #[test]
     fn task_ids_carry_process_prefix_and_increment() {
         let tm = TaskManager::default();
-        let (id1, ..) = tm.create("a", &["step"]);
-        let (id2, ..) = tm.create("b", &["step"]);
+        let (id1, ..) = tm.create("a", &TaskText::default(), &file_steps(&["step"]));
+        let (id2, ..) = tm.create("b", &TaskText::default(), &file_steps(&["step"]));
         assert_ne!(id1, id2);
         assert!(
             id1.starts_with(&format!("t{}-", process_prefix())),
@@ -307,7 +325,8 @@ mod tests {
     #[test]
     fn remove_persists_terminal_status_to_snapshot() {
         let tm = Arc::new(TaskManager::default());
-        let (task_id, _cancel, progress) = tm.create("测试任务", &["步骤"]);
+        let (task_id, _cancel, progress) =
+            tm.create("测试任务", &TaskText::default(), &file_steps(&["步骤"]));
         store::save_snapshot(
             &task_id,
             "测试任务",

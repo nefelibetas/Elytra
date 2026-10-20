@@ -11,20 +11,23 @@ import SettingsLog from "../component/settings/SettingsLog.vue";
 import ScrollTopFab from "../component/common/ScrollTopFab.vue";
 import SideNav from "../component/common/SideNav.vue";
 import { settingsTab } from "../store/app/settingsTab";
+import { useI18n } from "vue-i18n";
+
+const { t } = useI18n();
 </script>
 
 <template>
   <div class="stg">
     <SideNav
       v-model="settingsTab"
-      title="设置"
+      :title="t('nav.settings')"
       :tabs="[
-        { key: 'launch', label: '启动设置', icon: SlidersHorizontal },
-        { key: 'external', label: '第三方登录', icon: KeyRound },
-        { key: 'download', label: '下载设置', icon: Download },
-        { key: 'appearance', label: '外观', icon: Palette },
-        { key: 'online', label: '联机设置', icon: Link2 },
-        { key: 'log', label: '启动器日志', icon: FileText },
+        { key: 'launch', label: t('settings.tabs.launch'), icon: SlidersHorizontal },
+        { key: 'external', label: t('settings.tabs.external'), icon: KeyRound },
+        { key: 'download', label: t('settings.tabs.download'), icon: Download },
+        { key: 'appearance', label: t('settings.tabs.appearance'), icon: Palette },
+        { key: 'online', label: t('settings.tabs.online'), icon: Link2 },
+        { key: 'log', label: t('settings.tabs.log'), icon: FileText },
       ]"
     >
       <div v-if="settingsTab === 'launch'" key="launch" class="stg-page">

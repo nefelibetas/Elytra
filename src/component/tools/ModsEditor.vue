@@ -3,14 +3,15 @@
 // form 为父组件 reactive 对象，直接修改其字段（项目内无 props 变更 lint）。
 import { ref } from "vue";
 import { computed, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { Plus, Trash2 } from "@lucide/vue";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
 import {
-  ENCHANTMENTS, filterEnchantsByVersion, supportsHexColor, syntaxOfVersion,
+  ENCHANTMENTS, enchantName, filterEnchantsByVersion, supportsHexColor, syntaxOfVersion,
   type EnchantInput, type GiveVersion,
 } from "../../utils/give";
 import { checkNbtFragment } from "../../utils/nbtText";
-import { MC_COLORS, MC_COLOR_KEYS, MC_COLOR_NAMES, hexToSectionX } from "../../utils/motd";
+import { MC_COLORS, MC_COLOR_KEYS, colorName, hexToSectionX } from "../../utils/motd";
 
 /** 交易物品修饰表单（与 ItemMods 对应，省略不常用字段）。 */
 export interface ModsForm {
@@ -21,6 +22,8 @@ export interface ModsForm {
   rawLegacy: string;
   rawModern: string;
 }
+
+const { t } = useI18n();
 
 const props = defineProps<{
   form: ModsForm;
@@ -49,7 +52,7 @@ const newEnchLevel = ref(1);
 const enchOptions = computed<SelOption[]>(() =>
   filterEnchantsByVersion(ENCHANTMENTS, props.version).map((e) => ({
     value: e.id,
-    label: `${e.name}（原版最高 ${e.max}）`,
+    label: t("tools.give.enchantOption", { name: enchantName(e.id), max: e.max }),
   })),
 );
 
@@ -90,24 +93,24 @@ function onCustomColor(e: Event) {
 <template>
   <div class="me">
     <div class="nb-row">
-      <span class="nb-label">名称</span>
+      <span class="nb-label">{{ t("tools.mods.name") }}</span>
       <input
         v-model="form.name"
         class="nb-input"
-        placeholder="留空使用默认名称"
+        :placeholder="t('tools.mods.namePlaceholder')"
         spellcheck="false"
         autocomplete="off"
       />
     </div>
     <div class="nb-row">
-      <span class="nb-label">名称颜色</span>
+      <span class="nb-label">{{ t("tools.mods.nameColor") }}</span>
       <button
         v-for="key in MC_COLOR_KEYS"
         :key="key"
         class="me-color"
         :class="{ active: form.colorCode === `§${key}` }"
         :style="{ backgroundColor: MC_COLORS[key] }"
-        :title="`§${key} ${MC_COLOR_NAMES[key]}`"
+        :title="`§${key} ${colorName(key)}`"
         @click="form.colorCode = `§${key}`"
       />
       <input
@@ -115,41 +118,41 @@ function onCustomColor(e: Event) {
         type="color"
         class="me-color-pick"
         :class="{ active: form.colorCode.startsWith('§x') }"
-        title="自定义颜色（§x，需 1.16+）"
+        :title="t('tools.mods.customColorTitle')"
         @input="onCustomColor"
         autocomplete="off"
       />
       <button
         class="me-clear"
-        title="清除颜色"
+        :title="t('tools.mods.clearColor')"
         @click="form.colorCode = ''"
-      >无</button>
+      >{{ t("tools.mods.clearColor") }}</button>
     </div>
     <div class="nb-row">
-      <span class="nb-label">附魔</span>
+      <span class="nb-label">{{ t("tools.mods.enchantments") }}</span>
       <DropSelect
         :model-value="newEnch"
         :options="enchOptions"
         width="150px"
-        placeholder="选择附魔"
+        :placeholder="t('tools.give.chooseEnchant')"
         @update:model-value="(v: string) => (newEnch = v)"
       />
       <input v-model.number="newEnchLevel" type="number" class="nb-num" min="1" max="255" autocomplete="off" />
       <button class="tool-btn nb-add-btn" :disabled="!newEnch" @click="addEnchant">
         <Plus :size="14" />
-        添加
+        {{ t("common.action.add") }}
       </button>
     </div>
     <div v-if="form.enchants.length > 0" class="nb-tags">
       <span v-for="(e, i) in form.enchants" :key="i" class="nb-tag">
-        {{ ENCHANTMENTS.find((x) => x.id === e.id)?.name ?? e.id }} {{ e.level }}
+        {{ enchantName(e.id) }} {{ e.level }}
         <button class="nb-tag-x" @click="removeEnchant(i)">
           <Trash2 :size="12" />
         </button>
       </span>
     </div>
     <div class="nb-row me-raw-row">
-      <span class="nb-label">自定义 NBT</span>
+      <span class="nb-label">{{ t("tools.mods.customNbt") }}</span>
       <textarea
         v-model="raw"
         class="me-raw"
@@ -157,8 +160,8 @@ function onCustomColor(e: Event) {
         spellcheck="false"
         autocomplete="off"
         :placeholder="syntax === 'modern'
-          ? '附加组件（如 &quot;minecraft:custom_model_data&quot;:7）；或 {id:...} 完整物品栈覆盖'
-          : '附加 NBT（如 CustomModelData:7）；或 {id:...,Count:1b,...} 完整物品栈覆盖'"
+          ? t('tools.mods.rawPlaceholderModern')
+          : t('tools.mods.rawPlaceholderLegacy')"
       ></textarea>
     </div>
     <p v-if="rawError" class="me-raw-err">{{ rawError }}</p>

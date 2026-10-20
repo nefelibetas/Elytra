@@ -2,11 +2,13 @@
 // 版本设置-服务器：快速进服（--server/--port），per-version 存储，启动时优先于全局配置。
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
+import { useI18n } from "vue-i18n";
 import { loadVersionServer, saveVersionServer } from "../../store/task/versionSetup";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 
 const route = useRoute();
+const { t } = useI18n();
 const versionName = computed(() => String(route.query.name ?? ""));
 
 const server = ref("");
@@ -43,26 +45,26 @@ async function save() {
     <div class="setup-card">
       <div class="setup-card-hdr">
         <div class="setup-card-titles">
-          <div class="setup-card-title">服务器</div>
-          <div class="setup-desc">启动时自动连接该服务器（--server/--port），仅对当前版本生效</div>
+          <div class="setup-card-title">{{ t("settings.version.setup.server.title") }}</div>
+          <div class="setup-desc">{{ t("settings.version.setup.server.subtitle") }}</div>
         </div>
       </div>
       <div class="vssrv">
         <div class="vssrv-row">
-          <label class="vssrv-label" for="vssrv-server">服务器地址</label>
+          <label class="vssrv-label" for="vssrv-server">{{ t("settings.version.setup.server.address") }}</label>
           <input
             id="vssrv-server"
             v-model="server"
             class="vssrv-input"
             type="text"
-            placeholder="留空不直连（如 mc.example.com）"
+            :placeholder="t('settings.version.setup.server.addressPlaceholder')"
             maxlength="128"
             @change="save"
             autocomplete="off"
           />
         </div>
         <div class="vssrv-row">
-          <label class="vssrv-label" for="vssrv-port">端口</label>
+          <label class="vssrv-label" for="vssrv-port">{{ t("settings.version.setup.server.port") }}</label>
           <input
             id="vssrv-port"
             v-model="port"
@@ -74,10 +76,10 @@ async function save() {
             @change="save"
             autocomplete="off"
           />
-          <span v-if="saved" class="vssrv-saved">已保存</span>
+          <span v-if="saved" class="vssrv-saved">{{ t("settings.version.setup.server.saved") }}</span>
         </div>
         <p class="vssrv-note">
-          启动游戏时自动连接该服务器（--server/--port）。仅对当前版本生效；留空则按全局配置。
+          {{ t("settings.version.setup.server.note") }}
         </p>
       </div>
     </div>

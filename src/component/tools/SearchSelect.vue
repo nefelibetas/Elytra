@@ -4,7 +4,10 @@
 // （实体/效果等场景，输入文本直接为值，失焦时精确匹配中文名/ID 则归一化，否则原样保留）。
 // 用于物品/实体/效果等需手填 ID 的场景（替代裸文本输入）。
 import { computed, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { Search } from "@lucide/vue";
+
+const { t } = useI18n();
 
 export interface SearchOption {
   id: string;
@@ -24,7 +27,7 @@ const props = withDefaults(
     allowCustom?: boolean;
   }>(),
   {
-    placeholder: "搜索…",
+    placeholder: "",
     extraIds: () => [],
     maxWidth: "220px",
     allowCustom: false,
@@ -108,7 +111,7 @@ function onBlur() {
       <input
         v-model="keyword"
         class="ss-input"
-        :placeholder="placeholder"
+        :placeholder="placeholder || t('tools.search.placeholder')"
         spellcheck="false"
         @input="onInput"
         @focus="open = true"
@@ -129,7 +132,7 @@ function onBlur() {
       </button>
     </div>
     <div v-if="open && matches.length === 0 && !allowCustom" class="ss-panel">
-      <span class="ss-empty">无匹配项</span>
+      <span class="ss-empty">{{ t("tools.search.empty") }}</span>
     </div>
   </div>
 </template>

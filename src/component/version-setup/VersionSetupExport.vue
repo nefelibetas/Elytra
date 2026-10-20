@@ -2,6 +2,7 @@
 // 版本设置-导出 tab：启动脚本（PCL 风格 .bat/.sh）+ 整合包（MRPACK zip）。
 import { computed } from "vue";
 import { useRoute } from "vue-router";
+import { useI18n } from "vue-i18n";
 import { CodeXml, Package } from "@lucide/vue";
 import { loadLastUsername } from "../../store/auth/auth";
 import { exportLaunchScript, exportModpack as exportModpackCommand } from "../../store/task/versionSetup";
@@ -13,6 +14,7 @@ import {
 } from "../../store/auth/auth";
 
 const route = useRoute();
+const { t } = useI18n();
 
 /** 平台判定：Windows → .bat，其余 → .sh（模板展示与导出共用）。 */
 const isWin = /windows/i.test(navigator.userAgent);
@@ -24,8 +26,8 @@ const versionName = computed(() => String(route.query.name ?? ""));
 async function exportScript() {
   try {
     const path = await save({
-      defaultPath: `启动 ${versionName.value}.${scriptExt}`,
-      filters: [{ name: "启动脚本", extensions: [scriptExt] }],
+      defaultPath: t("settings.version.setup.export.scriptFileName", { version: versionName.value, ext: scriptExt }),
+      filters: [{ name: t("settings.version.setup.export.scriptFilter"), extensions: [scriptExt] }],
     });
     if (!path) return; // 用户取消
 
@@ -38,7 +40,7 @@ async function exportScript() {
       if (!msAccount.value) await loadMsAccount();
       const acc = msAccount.value;
       if (!acc) {
-        showToast("未登录正版账号，请先在启动页登录");
+        showToast(t("settings.version.setup.export.notLoggedIn"));
         return;
       }
       username = acc.name;
@@ -61,7 +63,7 @@ async function exportScript() {
       uuid,
       xuid,
     });
-    showToast("启动脚本已导出");
+    showToast(t("settings.version.setup.export.scriptExported"));
   } catch (e) {
     showToast(errMsg(e));
   }
@@ -72,11 +74,11 @@ async function exportModpack() {
   try {
     const path = await save({
       defaultPath: `${versionName.value}.zip`,
-      filters: [{ name: "整合包 (mrpack/zip)", extensions: ["zip"] }],
+      filters: [{ name: t("settings.version.setup.export.modpackFilter"), extensions: ["zip"] }],
     });
     if (!path) return; // 用户取消
     await exportModpackCommand(versionName.value, path);
-    showToast("整合包已导出");
+    showToast(t("settings.version.setup.export.modpackExported"));
   } catch (e) {
     showToast(errMsg(e));
   }
@@ -86,29 +88,27 @@ async function exportModpack() {
 <template>
   <div class="vs-page">
     <div class="setup-card">
-      <div class="setup-card-title">导出启动脚本</div>
+      <div class="setup-card-title">{{ t("settings.version.setup.export.scriptTitle") }}</div>
       <div class="setup-desc">
-        生成可直接双击启动游戏的 {{ scriptExt.toUpperCase() }} 脚本，
-        携带当前版本与登录信息，无需启动器即可启动。
+        {{ t("settings.version.setup.export.scriptDesc", { ext: scriptExt.toUpperCase() }) }}
       </div>
       <div class="setup-btn-row">
         <button class="setup-btn" @click="exportScript">
           <CodeXml :size="15" />
-          <span>导出启动脚本</span>
+          <span>{{ t("settings.version.setup.export.scriptButton") }}</span>
         </button>
       </div>
     </div>
 
     <div class="setup-card">
-      <div class="setup-card-title">导出整合包</div>
+      <div class="setup-card-title">{{ t("settings.version.setup.export.modpackTitle") }}</div>
       <div class="setup-desc">
-        将当前版本的 mods / config / shaderpacks / resourcepacks / datapacks 打包为
-        标准 MRPACK（Modrinth 格式），可用于分享或备份（不含游戏本体与存档）。
+        {{ t("settings.version.setup.export.modpackDesc") }}
       </div>
       <div class="setup-btn-row">
         <button class="setup-btn" @click="exportModpack">
           <Package :size="15" />
-          <span>导出整合包</span>
+          <span>{{ t("settings.version.setup.export.modpackButton") }}</span>
         </button>
       </div>
     </div>

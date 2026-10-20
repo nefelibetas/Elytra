@@ -126,7 +126,7 @@ pub async fn spawn_game(
             .map(|f| format!("[{}] {}", f.action, f.message))
             .collect::<Vec<_>>()
             .join("\n");
-        bail!("启动前自动任务执行失败\n{detail}");
+        bail_key!("errors.launch.failed", "启动前自动任务执行失败\n{detail}");
     }
 
     // 启动前清理启动器工作集腾内存（仅 Windows）
@@ -226,7 +226,7 @@ pub fn open_launcher_log_dir(app: AppHandle) -> Result<(), String> {
     }
     app.opener()
         .open_path(path, None::<&str>)
-        .map_err(common_err_ctx!("打开文件夹失败"))
+        .map_err(common_err_ctx_key!("errors.unknown", "打开文件夹失败"))
 }
 
 /// 读取启动器日志尾部（≤200 行）：exe 旁 Elytra/launcher.log；文件不存在/不可读返回空串（不报错）。

@@ -1,13 +1,16 @@
 <script setup lang="ts">
 // 烟花构造块（嵌入「物品 NBT 生成」：物品为 firework_rocket/firework_star 时出现）。
 // 维护爆炸列表并输出该物品的附加内文（modern 组件对 / legacy 标签），由父组件并入输出。
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { Plus, Trash2 } from "@lucide/vue";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
 import CheckToggle from "../common/CheckToggle.vue";
-import { FIREWORK_SHAPES, fireworkRawInner, rgbToInt, type FireworkExplosion } from "../../utils/nbt";
-import { MC_COLORS, MC_COLOR_KEYS, MC_COLOR_NAMES } from "../../utils/motd";
+import { FIREWORK_SHAPES, fireworkRawInner, rgbToInt, localizedName, type FireworkExplosion } from "../../utils/nbt";
+import { MC_COLORS, MC_COLOR_KEYS, colorName } from "../../utils/motd";
 import type { GiveVersion } from "../../utils/give";
+
+const { t } = useI18n();
 
 const props = defineProps<{
   /** 由外部物品 id 决定：firework_rocket / firework_star。 */
@@ -25,10 +28,9 @@ const newFades = ref<number[]>([]);
 const newTrail = ref(false);
 const newTwinkle = ref(false);
 
-const shapeOptions: SelOption[] = FIREWORK_SHAPES.map((s) => ({
-  value: s.id,
-  label: s.name,
-}));
+const shapeOptions = computed<SelOption[]>(() =>
+  FIREWORK_SHAPES.map((s) => ({ value: s.id, label: localizedName(s) })),
+);
 
 function toggleColor(list: number[], hex: string): number[] {
   const v = rgbToInt(hex);
@@ -55,7 +57,8 @@ function removeExplosion(idx: number) {
 }
 
 function shapeName(id: string): string {
-  return FIREWORK_SHAPES.find((s) => s.id === id)?.name ?? id;
+  const shape = FIREWORK_SHAPES.find((s) => s.id === id);
+  return shape ? localizedName(shape) : id;
 }
 
 /** 颜色 int → 色板 key（显示用）。 */
@@ -86,14 +89,14 @@ watch(
 
 <template>
   <div class="nb-sec">
-    <div class="nb-sec-title">烟花构造</div>
+    <div class="nb-sec-title">{{ t("tools.firework.title") }}</div>
     <div v-if="itemKind === 'firework_rocket'" class="nb-row">
-      <span class="nb-label">飞行时长</span>
+      <span class="nb-label">{{ t("tools.firework.flight") }}</span>
       <input v-model.number="flight" type="number" class="nb-num" min="1" max="3" autocomplete="off" />
       <span class="nb-hint">1–3</span>
     </div>
     <div class="nb-row">
-      <span class="nb-label">形状</span>
+      <span class="nb-label">{{ t("tools.firework.shape") }}</span>
       <DropSelect
         :model-value="newShape"
         :options="shapeOptions"
@@ -102,37 +105,37 @@ watch(
       />
     </div>
     <div class="nb-row">
-      <span class="nb-label">主色</span>
+      <span class="nb-label">{{ t("tools.firework.primaryColors") }}</span>
       <button
         v-for="key in MC_COLOR_KEYS"
         :key="key"
         class="nb-color"
         :class="{ active: newColors.includes(rgbToInt(MC_COLORS[key])) }"
         :style="{ backgroundColor: MC_COLORS[key] }"
-        :title="`§${key} ${MC_COLOR_NAMES[key]}`"
+        :title="`§${key} ${colorName(key)}`"
         @click="newColors = toggleColor(newColors, MC_COLORS[key])"
       />
-      <span v-if="newColors.length === 0" class="nb-hint">至少选一个</span>
+      <span v-if="newColors.length === 0" class="nb-hint">{{ t("tools.firework.atLeastOne") }}</span>
     </div>
     <div class="nb-row">
-      <span class="nb-label">渐隐色</span>
+      <span class="nb-label">{{ t("tools.firework.fadeColors") }}</span>
       <button
         v-for="key in MC_COLOR_KEYS"
         :key="key"
         class="nb-color"
         :class="{ active: newFades.includes(rgbToInt(MC_COLORS[key])) }"
         :style="{ backgroundColor: MC_COLORS[key] }"
-        :title="`§${key} ${MC_COLOR_NAMES[key]}`"
+        :title="`§${key} ${colorName(key)}`"
         @click="newFades = toggleColor(newFades, MC_COLORS[key])"
       />
-      <span v-if="newFades.length === 0" class="nb-hint">可选</span>
+      <span v-if="newFades.length === 0" class="nb-hint">{{ t("tools.firework.optional") }}</span>
     </div>
     <div class="nb-row">
-      <CheckToggle v-model="newTrail" :size="14">拖尾</CheckToggle>
-      <CheckToggle v-model="newTwinkle" :size="14">闪烁</CheckToggle>
+      <CheckToggle v-model="newTrail" :size="14">{{ t("tools.firework.trail") }}</CheckToggle>
+      <CheckToggle v-model="newTwinkle" :size="14">{{ t("tools.firework.twinkle") }}</CheckToggle>
       <button class="tool-btn nb-add-btn" :disabled="newColors.length === 0" @click="addExplosion">
         <Plus :size="14" />
-        添加爆炸
+        {{ t("tools.firework.addExplosion") }}
       </button>
     </div>
     <div v-if="explosions.length > 0" class="nb-tags">
@@ -144,7 +147,7 @@ watch(
           class="nb-mini-color"
           :style="{ backgroundColor: MC_COLORS[key] }"
         />
-        {{ e.trail ? "拖尾" : "" }}{{ e.twinkle ? "闪烁" : "" }}
+        {{ e.trail ? t("tools.firework.trail") : "" }}{{ e.twinkle ? t("tools.firework.twinkle") : "" }}
         <button class="nb-tag-x" @click="removeExplosion(i)">
           <Trash2 :size="12" />
         </button>

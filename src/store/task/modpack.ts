@@ -4,6 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { errMsg } from "../../utils/error";
 import { showToast } from "../../utils/toast";
 import { registerTaskName } from "./download";
+import { t } from "../../i18n";
 
 /** 整合包来源（镜像 Rust `game::modpack::PackSource`，serde tag = "type"）。 */
 export type ModpackSource =
@@ -26,14 +27,14 @@ export async function importLocalModpack(): Promise<string | null> {
   try {
     const path = await open({
       multiple: false,
-      filters: [{ name: "整合包", extensions: ["mrpack", "zip"] }],
+      filters: [{ name: t("task.modpack.filter"), extensions: ["mrpack", "zip"] }],
     });
     if (!path) return null;
     // 展示名取文件名去扩展名（后端计划/任务卡同用该名称）
-    const fileName = String(path).split(/[\\/]/).pop() ?? "整合包";
-    const name = fileName.replace(/\.(mrpack|zip)$/i, "") || "整合包";
+    const fileName = String(path).split(/[\\/]/).pop() ?? t("task.modpack.defaultName");
+    const name = fileName.replace(/\.(mrpack|zip)$/i, "") || t("task.modpack.defaultName");
     await installModpack({ name, source: { type: "local", path: String(path) } });
-    showToast("已提交整合包安装（准备 → 游戏本体 → 内容）");
+    showToast(t("task.modpack.submitted"));
     return name;
   } catch (e) {
     showToast(errMsg(e));

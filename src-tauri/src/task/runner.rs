@@ -756,7 +756,7 @@ async fn fetch_version_json(
 ) -> Result<(VersionJson, String), String> {
     let text = meta::fetch_version_json_text(version_url, config).await?;
     let vj: VersionJson =
-        serde_json::from_str(&text).map_err(common_err_ctx!("解析 version json 失败"))?;
+        serde_json::from_str(&text).map_err(common_err_ctx_key!("errors.version.parse", "解析 version json 失败"))?;
     Ok((vj, text))
 }
 
@@ -858,7 +858,11 @@ async fn init_local_scan(
     // 资源清单：fetch asset index（网络）→ 报资产总数（文件+字节）→ 多线程 sha1 检测本地（逐批上报）
     let mut asst_total_all = 0u32;
     let mut asst_total_bytes = 0u64;
-    task::update_and_emit(app, progress, |p| p.current_phase = "获取资源清单".into());
+    task::update_and_emit(app, progress, |p| {
+        p.current_phase = "获取资源清单".into();
+        p.current_phase_key = Some("task.backend.phase.fetch_assets".into());
+        p.current_phase_params = None;
+    });
     eprintln!("[task]   B2: fetch asset index ({})", vj.asset_index.url);
     let (asst_pending, asst_pending_bytes) = count_assets_all(
         AssetIndexRef {
@@ -887,7 +891,9 @@ async fn init_local_scan(
             set_completed(app, progress, 1, 1);
             eprintln!("[assets] on_total: set_completed 完成");
             task::update_and_emit(app, progress, |p| {
-                p.current_phase = "检测本地资源文件".into()
+                p.current_phase = "检测本地资源文件".into();
+                p.current_phase_key = Some("task.backend.phase.scan_local".into());
+                p.current_phase_params = None;
             });
             eprintln!("[assets] on_total: phase 更新完成");
         },
@@ -927,6 +933,7 @@ async fn init_local_scan(
             .enumerate()
             .map(|(i, s)| StepInfo {
                 name: s.name.clone(),
+                kind: Some(s.kind),
                 status: if i == 0 {
                     StepStatus::Done
                 } else {

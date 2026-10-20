@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 账号区：正版/离线切换 + 用户区；菜单 Teleport 到 body，window click 关闭（挂载期注册）。
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { ShieldCheck, User, UserRound, Pencil, LogOut, Users, ChevronDown, Link2, RotateCcw, RefreshCw } from "@lucide/vue";
 import {
   authMode, msAccount, msAccounts, offlineAccounts, username, setAuthMode, msLoginState,
@@ -12,6 +13,7 @@ import {
 import { avatarState, scheduleOfflineRender, renderAccountHead, renderOfflineHead, accountHeads, offlineHeads, renderSkinHead3D, renderExternalAvatar, renderPremiumAvatar } from "../../store/auth/avatar";
 import { accountUi } from "../../store/auth/accountUi";
 import { showToast } from "../../utils/toast";
+import { errMsg } from "../../utils/error";
 import { invoke } from "@tauri-apps/api/core";
 import { showError } from "../../store/app/alert";
 import { settingsTab } from "../../store/app/settingsTab";
@@ -20,6 +22,7 @@ import { useRouter } from "vue-router";
 import MenuPopover from "../common/MenuPopover.vue";
 
 const router = useRouter();
+const { t } = useI18n();
 
 const avatarUrl = computed(() =>
   authMode.value === "premium"
@@ -76,19 +79,19 @@ const siteClosetUrl = computed(() => {
 });
 
 const avatarTip = computed(() => {
-  if (canOpenSiteCloset.value) return "在站点衣柜中管理";
-  if (canOpenSkinStudio.value) return "衣柜";
-  if (authMode.value === "external") return "第三方账号的外观在站点衣柜管理，请先登录第三方账号";
+  if (canOpenSiteCloset.value) return t("launch.auth.siteCloset");
+  if (canOpenSkinStudio.value) return t("launch.auth.wardrobe");
+  if (authMode.value === "external") return t("launch.auth.externalTip");
   return authMode.value === "offline"
-    ? "离线模式没有皮肤来源，登录账号后可用"
-    : "登录 Microsoft 账号后可管理皮肤与披风";
+    ? t("launch.auth.offlineTip")
+    : t("launch.auth.premiumTip");
 });
 
 function openSkinStudio() {
   accountUi.closeMenus();
   if (canOpenSiteCloset.value) {
     void openUrl(siteClosetUrl.value).catch((e) =>
-      showError(`打开站点衣柜失败：${String(e)}`, true),
+      showError(t("launch.auth.openClosetFailed", { error: errMsg(e) }), true),
     );
     return;
   }
@@ -118,7 +121,7 @@ watch(showRoles, async (open) => {
   try {
     await refreshExternalAccount(acc.api_url, acc.uuid);
   } catch (e) {
-    showError(`角色列表刷新失败：${String(e)}`, true);
+    showError(t("launch.auth.refreshRolesFailed", { error: errMsg(e) }), true);
     showRoles.value = false;
     return;
   }
@@ -136,9 +139,9 @@ async function refreshExternalSkin() {
     await refreshExternalAccount(acc.api_url, acc.uuid);
     const fresh = externalAccount.value;
     if (fresh) void renderExternalAvatar(fresh.api_url, fresh.uuid, true);
-    showToast("角色与皮肤已刷新");
+    showToast(t("launch.auth.refreshed"));
   } catch (e) {
-    showError(`刷新失败：${String(e)}`, true);
+    showError(t("launch.auth.refreshFailed", { error: errMsg(e) }), true);
   }
 }
 
@@ -148,9 +151,9 @@ async function doSwitchRole(profileId: string, profileName: string) {
   showRoles.value = false;
   try {
     await switchExternalRole(acc.api_url, acc.uuid, profileId, profileName);
-    showToast(`已切换到角色 ${profileName}`);
+    showToast(t("launch.auth.switchedRole", { name: profileName }));
   } catch (e) {
-    showError(`切换角色失败：${String(e)}`, true);
+    showError(t("launch.auth.switchRoleFailed", { error: errMsg(e) }), true);
   }
 }
 
@@ -193,11 +196,11 @@ async function ensureOfflineHeads() {
 /** 正版 access_token 约 24h 有效，过期后经后端 valid_access_token 自动续签；<5 分钟或已过期才标警示。 */
 function credHint(acc: MsAccountInfo): string {
   const left = acc.expires_at - Date.now() / 1000;
-  if (left <= 0) return "登录凭证已过期，将在使用时自动续签";
+  if (left <= 0) return t("launch.auth.tokenExpired");
   const hours = Math.floor(left / 3600);
-  if (hours >= 1) return `凭证有效，约 ${hours} 小时后到期（自动续签）`;
+  if (hours >= 1) return t("launch.auth.tokenHours", { hours });
   const mins = Math.max(1, Math.floor(left / 60));
-  return `凭证有效，约 ${mins} 分钟后到期（自动续签）`;
+  return t("launch.auth.tokenMinutes", { mins });
 }
 
 function credWarn(acc: MsAccountInfo): boolean {
@@ -211,7 +214,7 @@ async function switchAccount(uuid: string) {
   try {
     await switchMsAccount(uuid);
   } catch (e) {
-    showError(`切换账号失败：${String(e)}`, true);
+    showError(t("launch.auth.switchAccountFailed", { error: errMsg(e) }), true);
   } finally {
     accountUi.accountsBusy = false;
     accountUi.closeAccountsMenu();
@@ -223,7 +226,7 @@ async function removeAccount(uuid: string) {
   try {
     await removeMsAccount(uuid);
   } catch (e) {
-    showError(`移除账号失败：${String(e)}`, true);
+    showError(t("launch.auth.removeAccountFailed", { error: errMsg(e) }), true);
   }
   accountUi.closeAccountsMenu();
 }
@@ -250,7 +253,7 @@ function useOfflineName(name: string) {
           @click="setAuthMode('premium')"
         >
           <ShieldCheck :size="16" />
-          <span>正版</span>
+          <span>{{ t("launch.auth.premium") }}</span>
         </button>
         <button
           class="auth-btn"
@@ -258,7 +261,7 @@ function useOfflineName(name: string) {
           @click="setAuthMode('offline')"
         >
           <User :size="16" />
-          <span>离线</span>
+          <span>{{ t("launch.auth.offline") }}</span>
         </button>
         <button
           class="auth-btn"
@@ -266,7 +269,7 @@ function useOfflineName(name: string) {
           @click="setAuthMode('external')"
         >
           <Link2 :size="16" />
-          <span>第三方</span>
+          <span>{{ t("launch.auth.external") }}</span>
         </button>
       </div>
     </div>
@@ -297,23 +300,23 @@ function useOfflineName(name: string) {
             <button
               v-if="avatarState.avatarError && authMode !== 'offline'"
               class="avatar-retry"
-              title="重新加载头像"
+              :title="t('launch.auth.reloadAvatar')"
               @click.stop="retryAvatar"
             >
               <RefreshCw :size="14" />
             </button>
           </div>
           <div v-if="authMode === 'premium'" class="uname" :class="{ 'uname-empty': !msAccount }">
-            {{ msAccount?.name || '未登录' }}
+            {{ msAccount?.name || t("launch.auth.notLoggedIn") }}
           </div>
           <div v-else-if="authMode === 'external'" class="uname" :class="{ 'uname-empty': !externalAccount }">
             <template v-if="externalAccount">
               <div class="ext-name">{{ externalAccount.name }}</div>
               <div class="ext-actions" :class="{ show: extHover || showRoles }">
-                <button class="ext-icon" title="切换角色" @click.stop="showRoles = !showRoles">
+                <button class="ext-icon" :title="t('launch.auth.switchRole')" @click.stop="showRoles = !showRoles">
                   <RotateCcw :size="12" />
                 </button>
-                <button class="ext-icon" title="刷新角色和皮肤" @click="refreshExternalSkin">
+                <button class="ext-icon" :title="t('launch.auth.refreshRole')" @click="refreshExternalSkin">
                   <RefreshCw :size="12" />
                 </button>
                 <Transition name="ext-pop">
@@ -331,14 +334,14 @@ function useOfflineName(name: string) {
                       <span class="ext-role-name">{{ r.name }}</span>
                     </div>
                   </template>
-                  <div v-else class="ext-role-empty">暂无角色信息</div>
+                  <div v-else class="ext-role-empty">{{ t("launch.auth.noRoles") }}</div>
                 </div>
                 </Transition>
               </div>
             </template>
             <div v-else class="ext-status">
-              <span class="ext-hint">未登录第三方账号</span>
-              <button class="ext-goto" @click="goExternalLogin">去登录</button>
+              <span class="ext-hint">{{ t("launch.auth.externalNotLoggedIn") }}</span>
+              <button class="ext-goto" @click="goExternalLogin">{{ t("launch.auth.loginExternal") }}</button>
             </div>
           </div>
           <div v-else class="offline-name">
@@ -346,14 +349,14 @@ function useOfflineName(name: string) {
               v-model="username"
               class="name-input"
               type="text"
-              placeholder="输入用户名"
+              :placeholder="t('launch.auth.usernamePlaceholder')"
               maxlength="16"
               autocomplete="off"
             />
             <button
               class="icon-btn hist-btn"
               :class="{ open: accountUi.offlineMenu.visible }"
-              v-tooltip="'历史用户名'"
+              v-tooltip="t('launch.auth.history')"
               @click.stop="accountUi.openOfflineMenu(); ensureOfflineHeads()"
             >
               <ChevronDown :size="14" />
@@ -378,12 +381,12 @@ function useOfflineName(name: string) {
                     <span class="acct-name">{{ name }}</span>
                     <button
                       class="acct-del"
-                      title="移除该用户名"
+                      :title="t('launch.auth.removeUsername')"
                       @click.stop="removeOfflineAccount(name)"
                     >×</button>
                   </div>
                 </template>
-                <div v-else class="menu-item acct-empty">暂无历史用户名</div>
+                <div v-else class="menu-item acct-empty">{{ t("launch.auth.noOfflineNames") }}</div>
               </div>
             </Transition>
           </div>
@@ -392,28 +395,28 @@ function useOfflineName(name: string) {
         <div v-if="authMode === 'premium'" class="user-actions">
           <div v-if="msLoginState === 'waiting'" class="ms-login-waiting">
             <span class="ls-spin"></span>
-            <span>请在浏览器中完成登录…</span>
-            <button class="ms-cancel" @click="cancelMsLogin">取消</button>
+            <span>{{ t("launch.auth.completeInBrowser") }}</span>
+            <button class="ms-cancel" @click="cancelMsLogin">{{ t("launch.auth.cancel") }}</button>
           </div>
           <template v-else-if="msAccount">
             <button
               class="icon-btn"
-              v-tooltip="'账号列表'"
+              v-tooltip="t('launch.auth.accountList')"
               @click.stop="accountUi.openAccountsMenu($event); ensureAccountHeads()"
             >
               <Users :size="14" />
             </button>
-            <button class="icon-btn" v-tooltip="'编辑信息'" @click.stop="accountUi.openEditMenu($event)">
+            <button class="icon-btn" v-tooltip="t('launch.auth.editInfo')" @click.stop="accountUi.openEditMenu($event)">
               <Pencil :size="14" />
             </button>
             <!-- 登出：仅从列表移除当前账号 -->
-            <button class="icon-btn" v-tooltip="'移除当前账号'" @click="removeCurrentMsAccount">
+            <button class="icon-btn" v-tooltip="t('launch.auth.removeCurrent')" @click="removeCurrentMsAccount">
               <LogOut :size="14" />
             </button>
           </template>
           <button v-else class="act-btn" @click="startMsLogin">
             <ShieldCheck :size="14" />
-            <span>登录微软账号</span>
+            <span>{{ t("launch.auth.loginMicrosoft") }}</span>
           </button>
         </div>
 
@@ -422,8 +425,8 @@ function useOfflineName(name: string) {
           :x="accountUi.editMenu.x"
           :y="accountUi.editMenu.y"
         >
-          <div class="menu-item" @click="accountUi.openPasswordPage">修改密码</div>
-          <div class="menu-item" @click="accountUi.openNameChangePage">修改玩家名</div>
+          <div class="menu-item" @click="accountUi.openPasswordPage">{{ t("launch.auth.changePassword") }}</div>
+          <div class="menu-item" @click="accountUi.openNameChangePage">{{ t("launch.auth.changeName") }}</div>
         </MenuPopover>
 
         <MenuPopover
@@ -458,14 +461,14 @@ function useOfflineName(name: string) {
                 <span v-if="acc.uuid === msAccount?.uuid" class="acct-check">✓</span>
                 <button
                   class="acct-del"
-                  title="移除该账号"
+                  :title="t('launch.auth.removeAccount')"
                   @click.stop="removeAccount(acc.uuid)"
                 >×</button>
               </div>
             </template>
-            <div v-else class="menu-item acct-empty">暂无历史账号</div>
+            <div v-else class="menu-item acct-empty">{{ t("launch.auth.noAccounts") }}</div>
             <div class="menu-sep"></div>
-            <div class="menu-item" @click="accountUi.closeAccountsMenu(); startMsLogin()">登录新账号</div>
+            <div class="menu-item" @click="accountUi.closeAccountsMenu(); startMsLogin()">{{ t("launch.auth.loginNew") }}</div>
         </MenuPopover>
       </div>
     </div>

@@ -1,11 +1,13 @@
 <script setup lang="ts">
 // 启动区：启动按钮（下载游戏入口）+ 版本选择 / 版本设置
+import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { LayoutGrid } from "@lucide/vue";
 import { isLaunching, doLaunch } from "../../store/app/launch";
 import { selectedVersion } from "../../store/app/selectedVersion";
 
 const router = useRouter();
+const { t } = useI18n();
 
 function goDownload() {
   router.push("/download");
@@ -22,15 +24,15 @@ function goDownload() {
         @click="doLaunch(goDownload)"
       >
         <template v-if="!selectedVersion">
-          <span class="launch-label">下载游戏</span>
-          <span class="launch-version">未找到可用的游戏版本</span>
+          <span class="launch-label">{{ t("launch.action.downloadGame") }}</span>
+          <span class="launch-version">{{ t("launch.status.noVersion") }}</span>
         </template>
         <template v-else-if="isLaunching">
-          <span class="launch-label">启动中...</span>
+          <span class="launch-label">{{ t("launch.action.launching") }}</span>
           <span class="launch-version">{{ selectedVersion }}</span>
         </template>
         <template v-else>
-          <span class="launch-label">启动游戏</span>
+          <span class="launch-label">{{ t("launch.action.launch") }}</span>
           <span class="launch-version">{{ selectedVersion }}</span>
         </template>
       </button>
@@ -38,7 +40,7 @@ function goDownload() {
       <div class="launch-actions">
         <button class="secondary-btn" @click="router.push('/version-select')">
           <LayoutGrid :size="14" />
-          <span>版本选择</span>
+          <span>{{ t("launch.action.selectVersion") }}</span>
         </button>
       </div>
 

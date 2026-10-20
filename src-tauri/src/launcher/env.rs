@@ -78,7 +78,7 @@ pub fn load_launch_config(
     // 读取版本 JSON（扫描目录，文件名不一定是目录名），并展开 inheritsFrom 继承
     let vdir = mc_dir.join("versions").join(version_dir_name);
     if !vdir.is_dir() {
-        bail!("版本目录不存在\n{}", vdir.display());
+        bail_key!("errors.version.missing", "版本目录不存在\n{}", vdir.display());
     }
     let version_json = load_version_json_with_inheritance(&mc_dir, version_dir_name)?;
 
@@ -105,11 +105,11 @@ pub fn load_launch_config(
     // java_env.path 是 JAVA_HOME（目录），需要拼上 bin/java.exe
     let java_home = PathBuf::from(&java_env.path);
     if !java_home.exists() {
-        bail!("JDK 路径不存在\n{}", java_home.display());
+        bail_key!("errors.jdk.failed", "JDK 路径不存在\n{}", java_home.display());
     }
     let java_path = java_bin_path(&java_home);
     if !java_path.exists() {
-        bail!("未找到 Java 可执行文件\n{}", java_path.display());
+        bail_key!("errors.jdk.failed", "未找到 Java 可执行文件\n{}", java_path.display());
     }
 
     let java_major = parse_java_major(&java_env.version)
@@ -127,9 +127,9 @@ fn load_version_json_with_inheritance(
     let vj_path = find_version_json(&vdir, version_dir_name)
         .ok_or_else(|| format!("版本目录下未找到版本 JSON\n{}", vdir.display()))?;
     let vj_text =
-        std::fs::read_to_string(&vj_path).map_err(common_err_ctx!("读取版本 JSON 失败"))?;
+        std::fs::read_to_string(&vj_path).map_err(common_err_ctx_key!("errors.version.read", "读取版本 JSON 失败"))?;
     let mut vj_value: serde_json::Value =
-        serde_json::from_str(&vj_text).map_err(common_err_ctx!("解析版本 JSON 失败"))?;
+        serde_json::from_str(&vj_text).map_err(common_err_ctx_key!("errors.version.parse", "解析版本 JSON 失败"))?;
 
     while let Some(parent_id) = vj_value.get("inheritsFrom").and_then(|v| v.as_str()) {
         let parent_path = mc_dir
@@ -145,7 +145,7 @@ fn load_version_json_with_inheritance(
         vj_value = expand_inheritance(&parent_text, vj_value, version_dir_name)?;
     }
 
-    serde_json::from_value(vj_value).map_err(common_err_ctx!("解析版本 JSON 失败"))
+    serde_json::from_value(vj_value).map_err(common_err_ctx_key!("errors.version.parse", "解析版本 JSON 失败"))
 }
 
 /// 启动前完整性检测：校验 client JAR 和所有必需 library 是否已下载。

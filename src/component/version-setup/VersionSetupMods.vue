@@ -2,6 +2,7 @@
 // 版本设置-Mod 管理 tab：搜索卡 + Tab（全部/可更新）+ 列表；双态：识别到 Modrinth → 详情，未识别 → 本地文件，可更新 item 行右侧有更新按钮。
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
+import { useI18n } from "vue-i18n";
 import { Search, RefreshCw, Upload, Puzzle, Folder, Trash2, Ban, Power } from "@lucide/vue";
 import { ensureGameFolder } from "../../store/config/gameDirs";
 import { openFolder } from "../../utils/fs";
@@ -22,6 +23,7 @@ import {
 } from "../../store/task/versionDetail";
 
 const route = useRoute();
+const { t } = useI18n();
 
 const versionName = computed(() => String(route.query.name ?? ""));
 
@@ -71,7 +73,9 @@ const deletePending = ref<string[]>([]);
 function doBatchDelete() {
   const names = [...selected.value];
   if (names.length === 0) return;
-  deleteLabel.value = names.length === 1 ? `「${names[0]}」` : `${names.length} 个 Mod`;
+  deleteLabel.value = names.length === 1
+    ? t("settings.version.setup.mods.targetOne", { name: names[0] })
+    : t("settings.version.setup.mods.targetMany", { count: names.length });
   deletePending.value = names;
   deleteDialog.value = true;
 }
@@ -83,7 +87,7 @@ async function confirmDelete() {
   for (const name of names) {
     try {
       await deleteMod(versionName.value, name);
-      showToast(`已删除 ${name}`);
+      showToast(t("settings.version.setup.mods.deleted", { name }));
     } catch (e) {
       showToast(errMsg(e));
     }
@@ -97,30 +101,32 @@ const selectedDisabled = computed(() => selected.value.filter(n => disabledMods.
 /** 选中项全为已禁用 → 按钮转为「启用」，否则禁用其中仍启用的项（混合选择按禁用处理）。 */
 const toggleEnabling = computed(() => selected.value.length > 0 && selectedEnabled.value.length === 0);
 const toggleTargets = computed(() => (toggleEnabling.value ? selectedDisabled.value : selectedEnabled.value));
-const toggleLabel = computed(() => `${toggleEnabling.value ? "启用" : "禁用"}（${toggleTargets.value.length}）`);
+const toggleLabel = computed(() => t("settings.version.setup.mods.toggleWithCount", {
+  action: toggleEnabling.value ? t("settings.version.setup.mods.enable") : t("settings.version.setup.mods.disable"),
+  count: toggleTargets.value.length,
+}));
 
 const toggling = ref(false);
 
 /** 批量启用/禁用：逐个重命名后统一重扫一次列表；完成后清空选中避免误操作。 */
 async function doBatchToggle() {
   if (toggling.value) {
-    showToast("上一个禁用/启用操作还在进行中");
+    showToast(t("settings.version.setup.mods.opInProgress"));
     return;
   }
   const enabling = toggleEnabling.value;
   const names = [...toggleTargets.value];
   if (names.length === 0) {
-    showToast(enabling ? "选中的 Mod 都已启用" : "选中的 Mod 都已禁用");
+    showToast(enabling ? t("settings.version.setup.mods.allEnabled") : t("settings.version.setup.mods.allDisabled"));
     return;
   }
   toggling.value = true;
   try {
     const { ok, failed } = await toggleModsBulk(versionName.value, names);
-    const verb = enabling ? "启用" : "禁用";
     showToast(
       failed.length === 0
-        ? `已${verb} ${ok} 项`
-        : `${ok} 项已${verb}，${failed.length} 项失败：${failed[0]}`,
+        ? t(enabling ? "settings.version.setup.mods.toggledEnabled" : "settings.version.setup.mods.toggledDisabled", { count: ok })
+        : t(enabling ? "settings.version.setup.mods.toggledPartialEnabled" : "settings.version.setup.mods.toggledPartialDisabled", { ok, failed: failed.length, error: failed[0] }),
     );
     clear();
   } finally {
@@ -140,7 +146,7 @@ async function doCheckUpdates() {
   if (updatesError.value) {
     showToast(errMsg(updatesError.value));
   } else if (!updates.value.length) {
-    showToast("所有 Mod 已是最新");
+    showToast(t("settings.version.setup.mods.allUpToDate"));
   }
 }
 
@@ -164,7 +170,7 @@ async function openModsFolder() {
         v-model="searchQuery"
         class="vsm-search-input"
         type="text"
-        placeholder="搜索 Mod…"
+        :placeholder="t('settings.version.setup.mods.searchPlaceholder')"
         autocomplete="off"
       />
     </div>
@@ -178,12 +184,12 @@ async function openModsFolder() {
             class="vsm-tab"
             :class="{ active: tab === 'all' }"
             @click="tab = 'all'"
-          >全部（{{ mods.length }}）</div>
+          >{{ t("settings.version.setup.mods.tabAll", { count: mods.length }) }}</div>
           <div
             class="vsm-tab"
             :class="{ active: tab === 'updatable' }"
             @click="tab = 'updatable'"
-          >可更新（{{ updates.length }}）</div>
+          >{{ t("settings.version.setup.mods.tabUpdatable", { count: updates.length }) }}</div>
         </div>
         <div class="vsm-actions">
           <button
@@ -192,11 +198,11 @@ async function openModsFolder() {
             @click="doCheckUpdates"
           >
             <RefreshCw :size="13" :class="{ spin: checkingUpdates }" />
-            <span>{{ checkingUpdates ? "检查中…" : "检查更新" }}</span>
+            <span>{{ checkingUpdates ? t("settings.version.setup.mods.checking") : t("settings.version.setup.mods.checkUpdates") }}</span>
           </button>
           <button class="vsm-act-btn" @click="openModsFolder">
             <Folder :size="13" />
-            <span>打开文件夹</span>
+            <span>{{ t("settings.version.setup.common.openFolder") }}</span>
           </button>
         </div>
       </div>
@@ -204,22 +210,22 @@ async function openModsFolder() {
       <!-- 内容：Mod items -->
       <div class="vsm-content">
         <Transition name="fade" mode="out-in">
-          <LoadingSpinner v-if="modsLoading && mods.length === 0" key="loading" text="加载 Mod 信息…" />
+          <LoadingSpinner v-if="modsLoading && mods.length === 0" key="loading" :text="t('settings.version.setup.mods.loading')" />
           <ErrorState v-else-if="modsError" key="err" :text="modsError" />
           <EmptyState v-else-if="mods.length === 0" key="empty">
             <Puzzle :size="40" :stroke-width="1.5" opacity="0.5" />
-            <p>mods 目录为空，可从资源中心下载 Mod</p>
+            <p>{{ t("settings.version.setup.mods.empty") }}</p>
           </EmptyState>
           <EmptyState v-else-if="items.length === 0" key="filtered">
             <Puzzle :size="40" :stroke-width="1.5" opacity="0.5" />
             <p>
               {{ tab === "updatable"
-                ? (updatesChecked ? "没有可更新的 Mod" : "点击检查更新查看可更新的 Mod")
-                : `没有匹配「${searchQuery.trim()}」的 Mod` }}
+                ? (updatesChecked ? t("settings.version.setup.mods.noUpdate") : t("settings.version.setup.mods.clickCheck"))
+                : t("settings.version.setup.mods.noMatch", { query: searchQuery.trim() }) }}
             </p>
           </EmptyState>
           <div v-else key="list">
-            <div v-if="modsNetworkError" class="vsm-net-warn">部分 Mod 信息获取失败，已显示本地信息</div>
+            <div v-if="modsNetworkError" class="vsm-net-warn">{{ t("settings.version.setup.mods.networkWarn") }}</div>
             <div class="vsm-list">
               <div v-for="m in items" :key="m.file_name" class="vsm-item">
                 <div
@@ -234,7 +240,7 @@ async function openModsFolder() {
                       <span class="vsm-title-row">
                         <span class="vsm-title">{{ m.title_zh ?? m.title }}</span>
                         <span v-if="m.title_zh" class="vsm-file">{{ m.file_name }}</span>
-                        <span v-if="m.downloads" class="vsm-sub">{{ fmtCount(m.downloads) }} 次下载</span>
+                        <span v-if="m.downloads" class="vsm-sub">{{ t("settings.version.setup.common.downloads", { count: fmtCount(m.downloads) }) }}</span>
                       </span>
                       <span v-if="m.description" class="vsm-desc">
                         {{ dlTranslateMode === "en" ? m.description : (m.description_zh ?? m.description) }}
@@ -253,10 +259,10 @@ async function openModsFolder() {
                       <span class="vsm-local-meta">
                         {{ fmtSize(m.size) }}
                         <span v-if="m.identify === 'pending'" class="vsm-query-hint">
-                          <RefreshCw :size="10" class="spin" />查询中
+                          <RefreshCw :size="10" class="spin" />{{ t("settings.version.setup.mods.querying") }}
                         </span>
-                        <span v-else-if="m.identify === 'failed'" class="vsm-query-hint">未查询到</span>
-                        <span v-if="disabledMods.has(m.file_name)" class="vsm-off-badge">已禁用</span>
+                        <span v-else-if="m.identify === 'failed'" class="vsm-query-hint">{{ t("settings.version.setup.mods.notFound") }}</span>
+                        <span v-if="disabledMods.has(m.file_name)" class="vsm-off-badge">{{ t("settings.version.setup.mods.disabledBadge") }}</span>
                       </span>
                     </span>
                   </template>
@@ -271,17 +277,17 @@ async function openModsFolder() {
       <Transition name="fade">
         <div v-if="selecting" class="vs-actions-bar vs-bar-attached">
           <button class="vs-ab-btn" @click="toggleAll">
-            {{ allVisibleSelected ? "取消全选" : "全选" }}
+            {{ allVisibleSelected ? t("settings.version.setup.common.deselectAll") : t("settings.version.setup.common.selectAll") }}
           </button>
-          <button class="vs-ab-btn" @click="clear">取消</button>
-          <span class="vs-ab-count">已选 {{ selected.length }} 项</span>
+          <button class="vs-ab-btn" @click="clear">{{ t("settings.version.setup.common.deselect") }}</button>
+          <span class="vs-ab-count">{{ t("settings.version.setup.common.selectedCount", { count: selected.length }) }}</span>
           <button
             class="vs-ab-btn update"
             :disabled="updatableSelected.length === 0 || updatingFiles.size > 0"
             @click="doBatchUpdate"
           >
             <Upload :size="13" />
-            <span>更新（{{ updatableSelected.length }}）</span>
+            <span>{{ t("settings.version.setup.mods.updateCount", { count: updatableSelected.length }) }}</span>
           </button>
           <button
             class="vs-ab-btn"
@@ -294,22 +300,22 @@ async function openModsFolder() {
           </button>
           <button class="vs-ab-btn danger" @click="doBatchDelete">
             <Trash2 :size="13" />
-            <span>删除（{{ selected.length }}）</span>
+            <span>{{ t("settings.version.setup.common.deleteCount", { count: selected.length }) }}</span>
           </button>
         </div>
       </Transition>
     </div>
 
     <!-- 删除 Mod 确认 dialog -->
-    <AlertDialog v-model="deleteDialog" title="删除 Mod">
+    <AlertDialog v-model="deleteDialog" :title="t('settings.version.setup.mods.deleteTitle')">
       <div class="vsm-dialog-body">
         <div class="vsm-dialog-text">
-          确定要删除 {{ deleteLabel }} 吗？该操作会删除文件且无法恢复。
+          {{ t("settings.version.setup.mods.deleteConfirm", { target: deleteLabel }) }}
         </div>
       </div>
       <template #actions>
-        <button class="dialog-btn danger" @click="confirmDelete">删除</button>
-        <button class="dialog-btn" @click="deleteDialog = false">取消</button>
+        <button class="dialog-btn danger" @click="confirmDelete">{{ t("settings.version.setup.common.delete") }}</button>
+        <button class="dialog-btn" @click="deleteDialog = false">{{ t("settings.version.setup.common.cancel") }}</button>
       </template>
     </AlertDialog>
   </div>

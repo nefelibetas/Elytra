@@ -6,6 +6,7 @@ import { VERSION_DIR_CHANGED, type VersionDirChanged } from "../app/events";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 import { createBoundedCache } from "../../utils/boundedCache";
+import { t } from "../../i18n";
 import { classifyVersion } from "../../utils/versionClassify";
 import type { InstalledVersionInfo } from "../config/gameDirs";
 
@@ -239,7 +240,7 @@ const identifyFailed = ref<Set<string>>(new Set());
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("查询超时")), ms);
+    const timer = setTimeout(() => reject(new Error(t("errors.timeout"))), ms);
     p.then(
       (v) => {
         clearTimeout(timer);
@@ -472,7 +473,7 @@ export async function updateMod(versionName: string, upd: ModUpdate) {
       fileUrl: upd.file_url,
       fileSha1: upd.file_sha1,
     });
-    showToast(`已更新 ${upd.file_name}`);
+    showToast(t("task.modUpdated", { name: upd.file_name }));
     updates.value = updates.value.filter(u => u.file_name !== upd.file_name);
     await loadMods(versionName);
   } catch (e) {

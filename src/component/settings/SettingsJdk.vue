@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // Java 运行时卡片：选择器 + 扫描/自定义目录 + 下载缺失 JDK + 高级项（JVM 参数/GC/复选框）
 import { computed, onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { RefreshCw, FolderPlus, Download } from "@lucide/vue";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
 import {
@@ -18,6 +19,8 @@ import LoadingSpinner from "../common/LoadingSpinner.vue";
 import CheckToggle from "../common/CheckToggle.vue";
 
 onMounted(loadConfig);
+
+const { t } = useI18n();
 
 /** 下载目标 Java 主版本（Mojang runtime 组件覆盖 8/17/21/25）。 */
 const downloadMajor = ref(17);
@@ -42,13 +45,17 @@ async function handleInstallJdk() {
 const AUTO_VALUE = "__auto__";
 
 const jdkOptions = computed<SelOption[]>(() => [
-  { value: AUTO_VALUE, label: "自动选择", desc: "根据游戏版本需求自动匹配" },
+  { value: AUTO_VALUE, label: t("settings.jdk.autoLabel"), desc: t("settings.jdk.autoDesc") },
   ...jdkList.value.map(j => ({
     value: j.path,
     label: j.version,
-    desc: `${j.vendor} · ${j.bits} 位 · ${j.path}`,
+    desc: t("settings.jdk.optionDesc", { vendor: j.vendor, bits: j.bits, path: j.path }),
   })),
 ]);
+
+const gcSelectOptions = computed<SelOption[]>(() =>
+  gcOptions.map(g => ({ value: g.value, label: t(g.labelKey) })),
+);
 
 /** 当前选中值：自动模式固定 AUTO_VALUE；手动为 activeJdk 的 path。 */
 const jdkValue = computed(() => (autoMode.value ? AUTO_VALUE : activeJdk.value?.path ?? ""));
@@ -67,8 +74,8 @@ function onJdkPick(value: string) {
 <template>
   <div class="stg-card">
     <div class="stg-card-hdr">
-      <h3>Java 运行时</h3>
-      <span class="stg-card-sub">选择用于启动游戏的 Java 版本，或由启动器自动匹配</span>
+      <h3>{{ t("settings.jdk.title") }}</h3>
+      <span class="stg-card-sub">{{ t("settings.jdk.subtitle") }}</span>
     </div>
 
     <div class="jdk-toolbar">
@@ -84,16 +91,16 @@ function onJdkPick(value: string) {
 
         <button class="tool-btn" :disabled="loading" @click="refreshJdks">
           <RefreshCw :size="14" />
-          刷新
+          {{ t("settings.jdk.refresh") }}
         </button>
         <button class="tool-btn" :disabled="loading" @click="selectCustomDir">
           <FolderPlus :size="14" />
-          自定义目录
+          {{ t("settings.jdk.customDir") }}
         </button>
       </div>
 
       <div class="jdk-dl-group">
-        <span class="jdk-dl-label">下载缺失 JDK</span>
+        <span class="jdk-dl-label">{{ t("settings.jdk.downloadMissing") }}</span>
         <div class="jdk-dl-controls">
           <DropSelect
             :model-value="String(downloadMajor)"
@@ -103,13 +110,13 @@ function onJdkPick(value: string) {
           />
           <button class="tool-btn jdk-dl-btn" :disabled="loading" @click="handleInstallJdk">
             <Download :size="14" />
-            {{ loading ? "下载中..." : "下载" }}
+            {{ loading ? t("settings.jdk.downloading") : t("settings.jdk.download") }}
           </button>
         </div>
       </div>
     </div>
 
-    <LoadingSpinner v-if="loading" text="正在处理…" />
+    <LoadingSpinner v-if="loading" :text="t('settings.jdk.processing')" />
     <div v-else-if="jdkError" class="err">{{ jdkError }}</div>
 
     <div class="jdk-divider"></div>
@@ -117,14 +124,14 @@ function onJdkPick(value: string) {
     <!-- Java 高级项 -->
     <div class="launch-opts jdk-opts">
       <div class="lo-row lo-top">
-        <label class="lo-label" for="lo-jvm">Java 虚拟机参数</label>
+        <label class="lo-label" for="lo-jvm">{{ t("settings.jdk.jvmArgs") }}</label>
         <textarea
           id="lo-jvm"
           v-model="loJvmArgs"
           class="lo-textarea"
           rows="4"
           wrap="off"
-          placeholder="每行一个 JVM 参数"
+          :placeholder="t('settings.jdk.jvmArgsPlaceholder')"
           spellcheck="false"
           @change="saveLaunchOptions"
           autocomplete="off"
@@ -132,14 +139,14 @@ function onJdkPick(value: string) {
       </div>
 
       <div class="lo-row lo-top">
-        <label class="lo-label" for="lo-game">游戏参数</label>
+        <label class="lo-label" for="lo-game">{{ t("settings.jdk.gameArgs") }}</label>
         <textarea
           id="lo-game"
           v-model="loGameArgs"
           class="lo-textarea"
           rows="2"
           wrap="off"
-          placeholder="每行一个游戏参数"
+          :placeholder="t('settings.jdk.gameArgsPlaceholder')"
           spellcheck="false"
           @change="saveLaunchOptions"
           autocomplete="off"
@@ -147,20 +154,20 @@ function onJdkPick(value: string) {
       </div>
 
       <div class="lo-row">
-        <label class="lo-label" for="lo-gc">内存管理</label>
+        <label class="lo-label" for="lo-gc">{{ t("settings.jdk.memoryManagement") }}</label>
         <DropSelect
           id="lo-gc"
           :model-value="loGc"
-          :options="gcOptions.map(g => ({ value: g.value, label: g.label }))"
+          :options="gcSelectOptions"
           width="180px"
           @update:model-value="loGc = $event; saveLaunchOptions()"
         />
       </div>
 
       <div class="lo-checks">
-        <CheckToggle v-model="loDisableWrapper" @change="saveLaunchOptions">禁用 Java Launch Wrapper</CheckToggle>
-        <CheckToggle v-model="loDisableAgent" @change="saveLaunchOptions">禁用 LWJGL Unsafe Agent</CheckToggle>
-        <CheckToggle v-model="loHighGpu" @change="saveLaunchOptions">使用高性能显卡</CheckToggle>
+        <CheckToggle v-model="loDisableWrapper" @change="saveLaunchOptions">{{ t("settings.jdk.disableWrapper") }}</CheckToggle>
+        <CheckToggle v-model="loDisableAgent" @change="saveLaunchOptions">{{ t("settings.jdk.disableAgent") }}</CheckToggle>
+        <CheckToggle v-model="loHighGpu" @change="saveLaunchOptions">{{ t("settings.jdk.highGpu") }}</CheckToggle>
       </div>
     </div>
   </div>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 资源详情页（Mod/光影/资源包/数据包/整合包共用）：信息卡片 + 版本文件列表（本地过滤）；仅 Mod 显示 ModLoader 筛选。
 import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue";
+import { useI18n } from "vue-i18n";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { showToast } from "../utils/toast";
@@ -19,6 +20,7 @@ import { fmtCount, fmtSize, fmtModDate } from "../utils/format";
 import IconImage from "../component/common/IconImage.vue";
 
 const item = computed(() => resourceDetail.item);
+const { t } = useI18n();
 
 const sourceLabel = computed(() =>
   item.value?.source === "modrinth" ? "Modrinth" : "CurseForge",
@@ -313,12 +315,12 @@ const isModpack = computed(() => resourceDetail.backTab === "modpack");
 
 async function submitModpackInstall() {
   if (!selectedVersionId.value) {
-    showToast("请先选择一个版本文件");
+    showToast(t("download.detail.selectFileFirst"));
     return;
   }
   const v = versions.value.find(x => x.version_id === selectedVersionId.value);
   if (!v) {
-    showToast("所选版本文件不存在，请重新选择");
+    showToast(t("download.detail.selectedFileMissing"));
     return;
   }
   try {
@@ -333,7 +335,7 @@ async function submitModpackInstall() {
       // 平台项目图标：随请求透传，安装期持久化到版本目录供列表展示
       icon_url: item.value?.icon_url ?? null,
     });
-    showToast("已提交整合包安装");
+    showToast(t("download.detail.modpackSubmitted"));
     backAfterSubmit();
   } catch (e) {
     showToast(errMsg(e));
@@ -354,23 +356,23 @@ async function submitDownload() {
   }
   // 任何未满足条件都明确提示（不静默）
   if (!selectedVersionId.value) {
-    showToast("请先选择一个版本文件");
+    showToast(t("download.detail.selectFileFirst"));
     return;
   }
   const kind = fileKind.value;
   if (!kind) {
-    showToast("该资源类型暂不支持下载");
+    showToast(t("download.detail.unsupportedType"));
     return;
   }
   const v = versions.value.find(x => x.version_id === selectedVersionId.value);
   if (!v) {
-    showToast("所选版本文件不存在，请重新选择");
+    showToast(t("download.detail.selectedFileMissing"));
     return;
   }
   // 下载目标版本：实时读取 selectedVersion（下载完成后 onTaskDone 自动选中更新）
   const targetVersion = selectedVersion.value;
   if (!targetVersion) {
-    showToast("请先在版本选择页选择版本（版本下载完成后会自动选中）");
+    showToast(t("download.detail.noTargetVersion"));
     return;
   }
   try {
@@ -385,14 +387,14 @@ async function submitDownload() {
         },
       }),
       new Promise<never>((_, rej) =>
-        setTimeout(() => rej(new Error("下载请求超时（后端无响应），请查看日志")), 5000),
+        setTimeout(() => rej(new Error(t("download.detail.requestTimeout"))), 5000),
       ),
     ]);
     // 注册资源名：完成提示显示 "下载任务[资源名]完成"（fallback 文件名）
     if (taskId) {
       registerTaskName(taskId, item.value?.title ?? v.filename);
     }
-    showToast("已提交下载任务");
+    showToast(t("download.detail.submitted"));
     backAfterSubmit();
   } catch (e) {
     showToast(errMsg(e));
@@ -404,7 +406,7 @@ async function submitDownload() {
 function gotoSource() {
   const it = item.value;
   if (!it?.page_url) return;
-  openUrl(it.page_url).catch(() => showToast("打开链接失败"));
+  openUrl(it.page_url).catch(() => showToast(t("download.detail.openLinkFailed")));
 }
 
 function gotoMcmod() {
@@ -413,7 +415,7 @@ function gotoMcmod() {
   const url = it.mcmod_id
     ? `https://www.mcmod.cn/class/${it.mcmod_id}.html`
     : `https://search.mcmod.cn/s?key=${encodeURIComponent(it.title_zh ?? it.title)}&mold=0`;
-  openUrl(url).catch(() => showToast("打开链接失败"));
+  openUrl(url).catch(() => showToast(t("download.detail.openLinkFailed")));
 }
 
 async function copyName() {
@@ -422,9 +424,9 @@ async function copyName() {
   const text = it.title_zh ? `${it.title_zh} | ${it.title}` : it.title;
   try {
     await navigator.clipboard.writeText(text);
-    showToast("已复制名称");
+    showToast(t("download.detail.copiedName"));
   } catch {
-    showToast("复制失败");
+    showToast(t("download.detail.copyFailed"));
   }
 }
 </script>
@@ -443,55 +445,55 @@ async function copyName() {
                 <span class="md-title">{{ item.title_zh ?? item.title }}</span>
                 <span v-if="dlTranslateMode === 'zh' && item.title_zh" class="md-title-en"> | {{ item.title }}</span>
                 <span class="md-badge" :class="item.source">{{ sourceLabel }}</span>
-                <span class="md-sub">{{ fmtCount(item.downloads) }} 次下载</span>
+                <span class="md-sub">{{ t("download.detail.downloads", { count: fmtCount(item.downloads) }) }}</span>
               </span>
             </span>
           </div>
           <div class="md-desc">{{ item.translated ?? item.description }}</div>
 
           <div class="md-actions">
-            <button class="md-btn" @click="gotoSource">转到{{ sourceLabel }}</button>
+            <button class="md-btn" @click="gotoSource">{{ t("download.detail.gotoSource", { source: sourceLabel }) }}</button>
             <!-- 光影包/地图存档无 MC百科条目，隐藏跳转 -->
             <button
               v-if="item.category !== 'shader' && item.category !== 'worlds'"
               class="md-btn"
               @click="gotoMcmod"
-            >转到 MC百科</button>
-            <button class="md-btn" @click="copyName">复制名称</button>
+            >{{ t("download.detail.gotoMcmod") }}</button>
+            <button class="md-btn" @click="copyName">{{ t("download.detail.copyName") }}</button>
           </div>
         </div>
 
         <div class="md-cards-row">
           <div class="md-card md-versions">
             <div class="mv-head">
-              <span class="mv-title">版本文件<span v-if="!loadingVersions" class="mv-count"> | {{ filteredVersions.length }} 个版本</span></span>
+              <span class="mv-title">{{ t("download.detail.versionFiles") }}<span v-if="!loadingVersions" class="mv-count"> | {{ t("download.detail.versionCount", { count: filteredVersions.length }, filteredVersions.length) }}</span></span>
               <span class="mv-spacer"></span>
 
               <button
                 v-if="fileKind || isModpack"
                 class="mv-dl"
                 :class="{ 'mv-dl-disabled': !selectedVersionId }"
-                v-tooltip="selectedVersionId ? (isModpack ? '安装所选版本整合包' : '下载所选版本') : '先选择一个版本'"
+                v-tooltip="selectedVersionId ? (isModpack ? t('download.detail.installTooltip') : t('download.detail.downloadTooltip')) : t('download.detail.selectVersionTooltip')"
                 @click="submitDownload"
-              >{{ isModpack ? "安装" : "下载" }}</button>
+              >{{ isModpack ? t("download.detail.install") : t("download.detail.download") }}</button>
 
               <div v-if="isMod" ref="loaderDrop" class="mv-drop" @pointerdown.stop @click.stop="toggleFilter('loader')">
-                <span class="mv-drop-label">{{ loaderFilter ? loaderLabel(loaderFilter) : "全部加载器" }}</span>
+                <span class="mv-drop-label">{{ loaderFilter ? loaderLabel(loaderFilter) : t("download.search.allLoaders") }}</span>
                 <span class="mv-drop-arrow" :class="{ open: openFilter === 'loader' }"></span>
                 <Transition name="expand">
                   <div v-if="openFilter === 'loader'" class="mv-drop-pop" :style="{ '--expand-h': popMaxH + 'px' }">
-                    <div class="mv-drop-opt" :class="{ sel: !loaderFilter }" @click.stop="pickLoader('')">全部加载器</div>
+                    <div class="mv-drop-opt" :class="{ sel: !loaderFilter }" @click.stop="pickLoader('')">{{ t("download.search.allLoaders") }}</div>
                     <div v-for="l in loaderOptions" :key="l" class="mv-drop-opt" :class="{ sel: loaderFilter === l }" @click.stop="pickLoader(l)">{{ loaderLabel(l) }}</div>
                   </div>
                 </Transition>
               </div>
 
               <div ref="gameDrop" class="mv-drop" @pointerdown.stop @click.stop="toggleFilter('game')">
-                <span class="mv-drop-label">{{ gameVersionFilter || "全部版本" }}</span>
+                <span class="mv-drop-label">{{ gameVersionFilter || t("download.search.allVersions") }}</span>
                 <span class="mv-drop-arrow" :class="{ open: openFilter === 'game' }"></span>
                 <Transition name="expand">
                   <div v-if="openFilter === 'game'" class="mv-drop-pop" :style="{ '--expand-h': popMaxH + 'px' }">
-                    <div class="mv-drop-opt" :class="{ sel: !gameVersionFilter }" @click.stop="pickGame('')">全部版本</div>
+                    <div class="mv-drop-opt" :class="{ sel: !gameVersionFilter }" @click.stop="pickGame('')">{{ t("download.search.allVersions") }}</div>
                     <div v-for="gv in gameVersionOptions" :key="gv" class="mv-drop-opt" :class="{ sel: gameVersionFilter === gv }" @click.stop="pickGame(gv)">{{ gv }}</div>
                   </div>
                 </Transition>
@@ -500,15 +502,15 @@ async function copyName() {
 
             <div v-if="loadingVersions" class="mv-state">
               <div class="spinner"></div>
-              <p class="mv-state-text">正在加载版本列表...</p>
+              <p class="mv-state-text">{{ t("download.detail.loadingVersions") }}</p>
             </div>
             <div v-else-if="versionError" class="mv-state err">
               <p>{{ versionError }}</p>
-              <button class="md-btn mv-retry" @click="loadVersions">重试</button>
+              <button class="md-btn mv-retry" @click="loadVersions">{{ t("download.detail.retry") }}</button>
             </div>
-            <div v-else-if="versions.length === 0" class="mv-state">暂无可用版本</div>
+            <div v-else-if="versions.length === 0" class="mv-state">{{ t("download.detail.noVersions") }}</div>
             <div v-else class="mv-list">
-              <div v-if="filteredVersions.length === 0" class="mv-state">没有匹配的版本，试试调整过滤条件</div>
+              <div v-if="filteredVersions.length === 0" class="mv-state">{{ t("download.detail.noMatchingVersions") }}</div>
               <div
                 v-for="v in filteredVersions"
                 :key="v.version_id"
@@ -538,19 +540,19 @@ async function copyName() {
           <Transition name="mv-side">
             <div v-if="selectedVersionId && (selectedDepIds.length > 0 || selectedIncompatIds.length > 0)" class="md-card md-deps-card">
               <div class="mv-head">
-                <span class="mv-title">前置依赖<span v-if="!loadingDeps" class="mv-count"> | {{ selectedDepIds.length }} 个</span></span>
+                <span class="mv-title">{{ t("download.detail.dependencies") }}<span v-if="!loadingDeps" class="mv-count"> | {{ t("download.detail.dependencyCount", { count: selectedDepIds.length }, selectedDepIds.length) }}</span></span>
               </div>
               <div v-if="!loadingDeps && incompatItems.length > 0" class="md-dep-warn">
-                <div class="md-dep-warn-title">不兼容冲突（{{ incompatItems.length }} 个）</div>
+                <div class="md-dep-warn-title">{{ t("download.detail.incompatibleTitle", { count: incompatItems.length }) }}</div>
                 <div v-for="d in incompatItems" :key="d.id" class="md-dep-warn-item">{{ d.title }}</div>
-                <div class="md-dep-warn-tip">该版本与以上 Mod 不兼容，安装后可能无法正常游戏</div>
+                <div class="md-dep-warn-tip">{{ t("download.detail.incompatibleTip") }}</div>
               </div>
               <div v-if="loadingDeps" class="md-dep-state">
                 <div class="spinner"></div>
-                <p class="md-dep-state-text">正在加载前置依赖...</p>
+                <p class="md-dep-state-text">{{ t("download.detail.loadingDependencies") }}</p>
               </div>
               <div v-else-if="depError" class="md-dep-state err">{{ depError }}</div>
-              <div v-else-if="depItems.length === 0" class="md-dep-empty">未找到前置依赖信息</div>
+              <div v-else-if="depItems.length === 0" class="md-dep-empty">{{ t("download.detail.noDependencies") }}</div>
               <div v-else class="md-dep-list">
                 <div v-for="d in requiredItems" :key="d.id" class="md-dep-item" @click="openResourceDetail(
                   depToItem(d),
@@ -570,7 +572,7 @@ async function copyName() {
       </div>
     </Transition>
   </div>
-  <div v-else class="md-empty">未找到资源信息</div>
+  <div v-else class="md-empty">{{ t("download.detail.notFound") }}</div>
 </template>
 
 <style scoped>
