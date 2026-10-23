@@ -189,14 +189,14 @@ fn installer_entry_cache_path(work_dir: &Path, installer: &Path, entry: &str) ->
 
 /// 从 installer jar 解出内部条目到 `dest`（zip 内名不含前导 `/`）。
 fn extract_installer_entry(installer: &Path, entry: &str, dest: &Path) -> Result<(), String> {
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("创建临时目录失败\n{e}"))?;
-    }
     let file = std::fs::File::open(installer).map_err(|e| format!("打开安装程序失败\n{e}"))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("安装程序不是 zip\n{e}"))?;
     let mut member = archive
         .by_name(entry)
-        .map_err(|_| format!("安装程序内没有 {entry}"))?;
+        .map_err(|e| format!("安装程序内没有 {entry}\n{e}"))?;
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建临时目录失败\n{e}"))?;
+    }
     let mut out = std::fs::File::create(dest).map_err(|e| format!("创建文件失败\n{e}"))?;
     std::io::copy(&mut member, &mut out).map_err(|e| format!("解包 {entry} 失败\n{e}"))?;
     Ok(())
@@ -374,7 +374,11 @@ fn finish_extract(
         std::io::copy(&mut entry, &mut out_file).map_err(|e| format!("解出成员失败\n{e}"))?;
         return Ok(out);
     }
-    bail_key!("errors.install.loader", "构件内没有 .{ext} 成员\n{}", dest.display())
+    bail_key!(
+        "errors.install.loader",
+        "构件内没有 .{ext} 成员\n{}",
+        dest.display()
+    )
 }
 
 /// 读处理器 JAR 的主类（MANIFEST 的 `Main-Class`）。
@@ -394,7 +398,11 @@ fn main_class_of(jar: &Path) -> Result<String, String> {
             return Ok(v.trim().to_string());
         }
     }
-    bail_key!("errors.install.loader", "处理器 MANIFEST 未声明 Main-Class\n{}", jar.display())
+    bail_key!(
+        "errors.install.loader",
+        "处理器 MANIFEST 未声明 Main-Class\n{}",
+        jar.display()
+    )
 }
 
 /// 目标版本声明的 Java 主版本（`javaVersion.majorVersion`），供 `resolve_java` 按需选 JDK。调用方已把展开继承后
@@ -416,7 +424,10 @@ pub async fn run_client_processors(
     ctx: &ProcessorCtx<'_>,
 ) -> Result<(), String> {
     if profile.processors.is_empty() {
-        bail_key!("errors.install.loader", "install_profile 未声明 processors（该版本可能只支持官方 installer 图形安装）");
+        bail_key!(
+            "errors.install.loader",
+            "install_profile 未声明 processors（该版本可能只支持官方 installer 图形安装）"
+        );
     }
     std::fs::create_dir_all(ctx.work_dir).map_err(|e| format!("创建临时目录失败\n{e}"))?;
     let sep = if cfg!(windows) { ";" } else { ":" };
@@ -469,7 +480,8 @@ pub async fn run_client_processors(
             let stderr = String::from_utf8_lossy(&output.stderr);
             let tail: Vec<&str> = stderr.lines().rev().take(15).collect();
             let tail = tail.iter().rev().cloned().collect::<Vec<_>>().join("\n");
-            bail_key!("errors.install.loader", 
+            bail_key!(
+                "errors.install.loader",
                 "ModLoader 安装失败\n步骤 {}/{}（{}）退出码 {:?}\n{}",
                 i + 1,
                 profile.processors.len(),
@@ -566,15 +578,37 @@ mod tests {
     }
 
     #[test]
+    fn failed_installer_extract_leaves_no_cache_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let installer = tmp.path().join("missing-installer.jar");
+        let cache = tmp
+            .path()
+            .join("mc/.elytra/tmp/installer.jar/data_client.lzma");
+        assert!(extract_installer_entry(&installer, "data/client.lzma", &cache).is_err());
+        assert!(
+            !cache.parent().unwrap().exists(),
+            "解包失败不应创建缓存目录"
+        );
+    }
+
+    #[test]
     fn resolve_data_handles_literal_installer_entry_and_coord() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mc_dir = tmp.path().join("mc");
+        let installer = tmp.path().join("x/installer.jar");
+        let vanilla_jar = mc_dir.join("versions/v/v.jar");
+        let lib_dir = mc_dir.join("libraries");
+        let work_dir = mc_dir.join(".elytra/tmp");
+        let config = DownloaderConfig::default();
+        let cancel = Arc::new(AtomicBool::new(false));
         let ctx = ProcessorCtx {
-            installer: Path::new("x/installer.jar"),
-            mc_dir: Path::new("mc"),
-            vanilla_jar: Path::new("mc/versions/v/v.jar"),
-            lib_dir: Path::new("mc/libraries"),
-            work_dir: Path::new("mc/.elytra/tmp"),
-            config: &DownloaderConfig::default(),
-            cancel: &Arc::new(AtomicBool::new(false)),
+            installer: &installer,
+            mc_dir: &mc_dir,
+            vanilla_jar: &vanilla_jar,
+            lib_dir: &lib_dir,
+            work_dir: &work_dir,
+            config: &config,
+            cancel: &cancel,
         };
         // 字面量（去引号）
         assert_eq!(
@@ -589,9 +623,9 @@ mod tests {
         // 构件坐标 → maven 本地布局（产物路径，不下载）
         assert_eq!(
             resolve_data("[net.neoforged:neoforge:21.1.248:client]", &ctx),
-            Resolved::Path(PathBuf::from(
-                "mc/libraries/net/neoforged/neoforge/21.1.248/neoforge-21.1.248-client.jar"
-            ))
+            Resolved::Path(
+                lib_dir.join("net/neoforged/neoforge/21.1.248/neoforge-21.1.248-client.jar")
+            )
         );
     }
 
@@ -602,14 +636,22 @@ mod tests {
             r#"{"data":{"MCP_VERSION":"'1.21.1-x'"},"libraries":[],"processors":[]}"#,
         )
         .unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let mc_dir = tmp.path().join("mc");
+        let installer = tmp.path().join("x/installer.jar");
+        let vanilla_jar = mc_dir.join("versions/v/v.jar");
+        let lib_dir = mc_dir.join("libraries");
+        let work_dir = mc_dir.join(".elytra/tmp");
+        let config = DownloaderConfig::default();
+        let cancel = Arc::new(AtomicBool::new(false));
         let ctx = ProcessorCtx {
-            installer: Path::new("x/installer.jar"),
-            mc_dir: Path::new("mc"),
-            vanilla_jar: Path::new("mc/versions/v/v.jar"),
-            lib_dir: Path::new("mc/libraries"),
-            work_dir: Path::new("mc/.elytra/tmp"),
-            config: &DownloaderConfig::default(),
-            cancel: &Arc::new(AtomicBool::new(false)),
+            installer: &installer,
+            mc_dir: &mc_dir,
+            vanilla_jar: &vanilla_jar,
+            lib_dir: &lib_dir,
+            work_dir: &work_dir,
+            config: &config,
+            cancel: &cancel,
         };
         assert_eq!(
             resolve_arg("{SIDE}", &profile, &ctx).await.unwrap(),
