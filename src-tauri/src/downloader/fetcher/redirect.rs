@@ -1,4 +1,4 @@
-//! 重定向黑洞黑名单与安全跟随，以及全局共享 HTTP client 构建。
+//! 重定向跟随与全局共享 HTTP client 构建。
 
 use std::sync::LazyLock;
 
@@ -22,14 +22,14 @@ fn build_client() -> Client {
         // 读黑洞防挂死：连接后 30s 无数据即掐断（此 client 服务清单/元数据等小请求，降级源黑洞会挂满 300s×源数）
         .read_timeout(std::time::Duration::from_secs(30))
         .timeout(std::time::Duration::from_secs(300))
-        // 302 到黑洞节点直接拒绝（重定向无 per-hop 超时控制，黑名单是唯一在超时前拦住的）
+        // 限制重定向跳数，防止循环；不可达节点由 connect/read timeout 兜底
         .redirect(mirror_safe_redirect())
         .pool_max_idle_per_host(16);
     builder = apply_system_proxy(builder);
     builder.build().expect("reqwest::Client")
 }
 
-/// 全局 HTTP client（系统代理/超时/黑洞重定向防护）；返回 Arc 供 network_mode 切换整体重建，进行中下载持旧 Arc 不受影响。
+/// 全局 HTTP client（系统代理、超时与重定向跳数限制）；返回 Arc 供 network_mode 切换整体重建，进行中下载持旧 Arc 不受影响。
 pub fn http() -> std::sync::Arc<Client> {
     let mut guard = HTTP_CLIENT.lock();
     if guard.is_none() {
@@ -55,17 +55,32 @@ mod tests {
     use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    /// 重定向跟随：黑名单已删（BMCLAPI 落地节点就在 `{N}.749333.xyz` 家系，域级拦截
-    /// 曾把整个镜像源拒掉）；用 http() 对 749333 子域发请求应能跟到响应（不可达由超时兜底）。
+    /// 重定向跟随：策略为 limited(5)，本地 302 应被跟随；不依赖外部 DNS。
     #[tokio::test]
     async fn redirect_policy_all_allowed() {
+        let final_url = serve(b"redirected".to_vec()).await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let target = final_url.clone();
+        tokio::spawn(async move {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buf = [0u8; 4096];
+            let _ = sock.read(&mut buf).await;
+            let head = format!(
+                "HTTP/1.1 302 Found\r\nLocation: {target}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            let _ = sock.write_all(head.as_bytes()).await;
+        });
         let client = super::build_client();
         let resp = client
-            .get("https://bmclapi2.bangbang93.com/mc/game/version_manifest.json")
+            .get(format!("http://{addr}/f"))
             .send()
             .await
             .expect("跟随重定向应到达");
         assert!(resp.status().is_success(), "应 200，实际 {}", resp.status());
+        assert_eq!(resp.text().await.unwrap(), "redirected");
     }
 
     #[tokio::test]
@@ -84,41 +99,6 @@ mod tests {
             meta.len() > 1_000_000,
             "OptiFine jar 应大于 1MB（实测 {} bytes）",
             meta.len()
-        );
-        let _ = std::fs::remove_file(&dest);
-    }
-
-    /// 302 到黑洞域（749333.xyz）应被立即拒绝（快速失败，而非跟随到 TCP 黑洞挂满超时）。
-    #[tokio::test]
-    async fn redirect_to_blackhole_domain_rejected() {
-        // 服务器 accept 3 次（fetch_with 有 3 轮重试），每轮都返回 302 → 黑洞域
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            for _ in 0..3 {
-                let Ok((mut sock, _)) = listener.accept().await else {
-                    break;
-                };
-                let mut buf = [0u8; 4096];
-                let _ = sock.read(&mut buf).await;
-                let head = "HTTP/1.1 302 Found\r\nLocation: https://17.749333.xyz:443/download/x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-                let _ = sock.write_all(head.as_bytes()).await;
-            }
-        });
-        let url = format!("http://{addr}/f");
-        let dest = temp_dest("redirect_blackhole");
-        let t0 = std::time::Instant::now();
-        let res = fetch_verified(&[url], &dest, None::<fn(u64, u64)>, "").await;
-        let elapsed = t0.elapsed();
-        eprintln!(
-            "黑洞重定向总耗时: {:.2}s res={res:?}",
-            elapsed.as_secs_f64()
-        );
-        assert!(res.is_err(), "黑洞重定向应失败，实际: {:?}", res);
-        assert!(
-            elapsed.as_secs() < 5,
-            "应在超时前快速失败（{}s）",
-            elapsed.as_secs_f64()
         );
         let _ = std::fs::remove_file(&dest);
     }
