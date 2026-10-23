@@ -44,7 +44,8 @@
 | 自动检测 | Auto | |
 | 系统代理 | System proxy | |
 | 直连 | Direct | |
-| 联机 | Multiplayer | 本项目的 easytier 局域网 |
+| 联机 | Multiplayer | 本项目的 EasyTier 局域网 |
+| Scaffolding | Scaffolding | 跨启动器联机信息协议，不译 |
 | 房间码 | room code | |
 | 创建房间 | Create room | |
 | 加入房间 | Join room | |

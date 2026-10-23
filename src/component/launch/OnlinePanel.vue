@@ -75,6 +75,7 @@ async function copyRoomCode() {
         }}
       </span>
     </div>
+    <div class="online-protocol">{{ t("tools.online.protocol") }}</div>
 
     <div class="online-sec">
       <div class="online-sec-title">{{ t("tools.online.hostSection") }}</div>
@@ -215,6 +216,13 @@ async function copyRoomCode() {
 }
 
 .online-status-text { font-weight: 500; }
+
+.online-protocol {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  text-align: right;
+  margin: -2px 0 6px;
+}
 
 .online-sec {
   padding: 12px 0;

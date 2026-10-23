@@ -81,7 +81,7 @@
 
 ### 🌐 LAN Play & Toolbox
 
-- 🌐 **LAN play**: embedded EasyTier virtual network (room-code pairing, no public server needed), configurable coordination server for cross-network play
+- 🌐 **LAN play**: embedded EasyTier virtual network + the Scaffolding protocol (room-code pairing, no public server needed), configurable coordination server for cross-network play
 - 🚀 **Multi-threaded downloader**: URL queue concurrency + per-file HTTP Range segmentation, resumable
 - 📡 **Server status**: Java SLP and Bedrock RakNet probing (multiple addresses)
 - 🧪 **Generators**: MOTD, item NBT, entity NBT, commands (with target-selector builder), inline firework / potion / villager-trade editors
@@ -172,7 +172,7 @@ cargo test --test tool_download                    # toolbox downloader integrat
 - **`launcher/`** — launch argument building / env prep / process lifecycle / auto tasks
 - **`auth/`** — Microsoft OAuth / official APIs / third-party skin sites
 - **`jdk/`** — local JDK scan & managed runtime download
-- **`online/`** — EasyTier LAN play
+- **`online/`** — EasyTier LAN play + the Scaffolding protocol
 - **`persist/`** — TOML config & secrets
 - **`util/`** — cross-domain pure helpers
 
@@ -229,6 +229,7 @@ See 📖 [AGENTS.md](AGENTS.md) (repository development guide).
 
 - [Tauri](https://tauri.app/) · [Vue 3](https://vuejs.org/) · [Vite](https://vite.dev/) — app framework & toolchain
 - [EasyTier](https://github.com/EasyTier/EasyTier) — virtual network layer behind LAN play
+- [Scaffolding-MC](https://github.com/Scaffolding-MC/Scaffolding-MC) — cross-launcher multiplayer information protocol
 - [Lucide](https://lucide.dev/) — icons
 - [BMCLAPI](https://bmclapi2.bangbang93.com/) — China download mirror
 - [MCIM](https://mod.mcimirror.top/) — Modrinth / CurseForge mirror & translation data

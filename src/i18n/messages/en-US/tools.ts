@@ -302,6 +302,7 @@ export default {
     statusJoining: "Online (joined)",
     statusWaiting: "Waiting for the game to open to LAN…",
     statusIdle: "Not connected",
+    protocol: "EasyTier + Scaffolding protocol",
     hostSection: "Host a room",
     hostDesc1: "Click \"Start multiplayer\" and open the game to LAN — the launcher generates a room code automatically; share it with friends to join.",
     hostDesc2: "Configure your nickname and broadcast name in Settings → Multiplayer Settings (the nickname is shown to other players; the broadcast name is the room name guests see).",

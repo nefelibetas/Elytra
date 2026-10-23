@@ -527,7 +527,7 @@ err_key_ctx!("errors.download.failed", ("name", name); "下载 {} 失败", name)
 | 资源索引 | Asset index | |
 | 原生库 | Natives | |
 | 启动参数 | Launch options | |
-| 联机 | Multiplayer | 本项目的 easytier 局域网 |
+| 联机 | Multiplayer | 本项目的 EasyTier + Scaffolding 局域网 |
 | 下载源 | Download source | |
 | 镜像源 | Mirror | |
 | 智能模式 | Auto | |

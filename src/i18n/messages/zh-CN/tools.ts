@@ -302,6 +302,7 @@ export default {
     statusJoining: "联机中（已加入）",
     statusWaiting: "等待游戏中开启局域网…",
     statusIdle: "未联机",
+    protocol: "EasyTier + Scaffolding 协议",
     hostSection: "作为主机",
     hostDesc1: "点「开启联机」后，游戏里「对局域网开放」即可——启动器自动生成房间码，发给朋友即可加入。",
     hostDesc2: "联机昵称与广播名可在 设置 → 联机设置 中配置（昵称显示给其他玩家，广播名是 guest 端看到的房间名）。",

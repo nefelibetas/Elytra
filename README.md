@@ -81,7 +81,7 @@
 
 ### 🌐 联机与工具
 
-- 🌐 **局域网联机**：EasyTier 虚拟局域网内嵌（房间码互连，无需公网服务器），入口在启动页右栏；跨网可配协调服务器
+- 🌐 **局域网联机**：EasyTier 虚拟局域网 + Scaffolding 协议（房间码互连，无需公网服务器），入口在启动页右栏；跨网可配协调服务器
 - 🚀 **多线程下载器**：URL 队列并发 + 单文件 HTTP Range 分段，支持断点续传
 - 📡 **服务器状态**：Java 版 SLP 与基岩版 RakNet 探测（多地址）
 - 🧪 **生成器**：MOTD、物品 NBT、生物 NBT、指令（含目标选择器组合），内联烟花 / 药水 / 村民交易编辑器
@@ -172,7 +172,7 @@ cargo test --test tool_download                    # 工具箱下载器集成测
 - **`launcher/`** — 启动参数构建 / 环境准备 / 进程生命周期 / 自动任务
 - **`auth/`** — 微软 OAuth / 官方 API / 第三方皮肤站
 - **`jdk/`** — 本机 JDK 扫描与 managed runtime 下载
-- **`online/`** — EasyTier 局域网联机
+- **`online/`** — EasyTier 局域网联机 + Scaffolding 协议
 - **`persist/`** — TOML 配置与密钥存储
 - **`util/`** — 跨域纯函数
 
@@ -229,6 +229,7 @@ cargo test --test tool_download                    # 工具箱下载器集成测
 
 - [Tauri](https://tauri.app/) · [Vue 3](https://vuejs.org/) · [Vite](https://vite.dev/) — 应用框架与工具链
 - [EasyTier](https://github.com/EasyTier/EasyTier) — 局域网联机的虚拟网络层
+- [Scaffolding-MC](https://github.com/Scaffolding-MC/Scaffolding-MC) — 跨启动器联机信息协议
 - [Lucide](https://lucide.dev/) — 图标
 - [BMCLAPI](https://bmclapi2.bangbang93.com/) — 国内下载镜像
 - [MCIM](https://mod.mcimirror.top/) — Modrinth / CurseForge 镜像与翻译数据
