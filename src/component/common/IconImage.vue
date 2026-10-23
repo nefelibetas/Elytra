@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 图标/图片占位组件：加载前显示原版草方块图标，加载完成淡入真实图片，失败保持占位；由独立 Image() 探针驱动（先绑监听再赋 src）。
-// Modrinth CDN 图标失败率高（307 目标节点概率性黑洞）；探针 6s 超时 + 重试 2 次（共 3 次尝试）后仍失败才显示占位。
+// Modrinth CDN 图标失败率高（307 目标节点概率性黑洞）；探针 5s 超时 + 重试 1 次（共 2 次尝试）后仍失败则保留占位。
+// 远程 src 域名须在 tauri.conf.json 的 img-src 放行，否则 WebView 直接拦截。
 import { onBeforeUnmount, ref, watch } from "vue";
 import { Box } from "@lucide/vue";
 
@@ -9,8 +10,8 @@ const props = defineProps<{ src?: string | null; size?: number }>();
 const loaded = ref(false);
 const failed = ref(false);
 
-const PROBE_TIMEOUT_MS = 6000;
-const PROBE_RETRIES = 2;
+const PROBE_TIMEOUT_MS = 5000;
+const PROBE_RETRIES = 1;
 
 // 探针取消：src 变化或卸载时 token 自增，旧回调仅 token 匹配才写状态（否则旧图超时结果覆盖新图，致翻页图标错乱）。
 let probeToken = 0;
@@ -83,7 +84,7 @@ onBeforeUnmount(cancelProbe);
     <!-- 占位：outline 草方块（与左侧"原版游戏"tab 同款描边风格），无背景；
          加载成功后必须移除（v-if）——透明背景 PNG 会透出下层占位 -->
     <Box
-      v-if="!loaded && !failed"
+      v-if="!loaded"
       class="icon-ph"
       :stroke-width="1.2"
     />

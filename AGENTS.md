@@ -156,7 +156,7 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 | `src-tauri/src/online/session.rs` | easytier 会话封装：no_tun+smoltcp+KCP 数据面、bind_device=false、enable_kcp_proxy=true（KCP 数据面首选，缺则 smoltcp 传大数中断） |
 | `src-tauri/src/online/mc_advertise.rs` | guest 端 MC 局域网广播模拟（224.0.2.60:4445，绕过 MC 26.2 离线会话校验） |
 | `src-tauri/src/util/` | 跨域纯函数（按职责拆分子模块，`mod.rs` 重导出、`crate::util::xxx` 路径不变）：`dirs.rs`（`config_dir()`/平台目录基准）/`path.rs`（`safe_relative_path`/`sha1_sub_dir`/`unique_child_dir`）/`text.rs`（`fnv1a64`/`is_simple_name`）/`version_name.rs`（`infer_loader_from_json`）/`net.rs`/`icon.rs`/`log.rs`/`time.rs`/`rt.rs`/`process.rs`（`NoWindow`：子进程无窗口装配，铁律——所有 spawn 必过） |
-| `src-tauri/tauri.conf.json` | 窗口 **1008×648**（840×540 的 1.2 倍）、无边框透明、`beforeDevCommand: pnpm dev`、devUrl :1420 |
+| `src-tauri/tauri.conf.json` | 窗口 **1008×648**（840×540 的 1.2 倍）、无边框透明、`beforeDevCommand: pnpm dev`、devUrl :1420；CSP 的 `img-src` 需放行社区 CDN（`cdn.modrinth.com` / `*.forgecdn.net` / `mod.mcimirror.top`），否则远程图标被静默拦截 |
 | `src-tauri/capabilities/default.json` | main 窗口权限：core:default + window 控制子集 + opener + dialog |
 | `src/store/task/download.ts` | 下载任务状态机（事件驱动核心） |
 
