@@ -26,7 +26,7 @@
 
 1. 运行时切换 `zh-CN` / `en-US`，界面即时刷新，无需重启。
 2. 切换结果持久化；`auto` 模式跟随系统语言。
-3. 覆盖全部 10 个页面、公共组件、设置项、工具集、错误提示、任务进度。
+3. 覆盖全部 9 个页面、公共组件、设置项、工具集、错误提示、任务进度。
 4. 语言文件成为文案唯一事实源；缺 key、占位符不一致、裸中文可被 CI 拦截。
 5. 不改变现有前后端契约的总体形态：命令仍返回 `Result<T, String>`，事件 payload 仍是序列化快照。
 
@@ -52,7 +52,7 @@
 
 | 项目 | 数量 | 说明 |
 |---|---|---|
-| 前端 Vue/TS 文件 | 184 | 10 个页面 + 按域组件/store |
+| 前端 Vue/TS 文件 | 184 | 9 个页面 + 按域组件/store |
 | 含中文的文件 | 170 | 几乎全量 |
 | 模板文本行 | ~412 | 主要集中 `component/`（357） |
 | 模板属性中文 | ~85 | `title` / `placeholder` / `aria-label` / `alt` |
@@ -541,8 +541,8 @@ err_key_ctx!("errors.download.failed", ("name", name); "下载 {} 失败", name)
 | 0 基础设施 | 引入 vue-i18n；`src/i18n/`；语言切换 UI；`errMsg` 协议解析；格式化改造；`i18n-check` 脚本；`index.html lang` | `main.ts`、`App.vue`、`utils/error.ts`、`utils/format.ts`、`SettingsAppearance.vue` | 骨架 | 切换语言壳层即时变化；脚本通过 |
 | 1 壳层与启动 | TitleBar、SideNav、AlertDialog、toast、空状态、Launch、账号、版本卡片、LaunchProgress、启动错误 | `component/common/*`、`component/launch/*`、`store/app/launch.ts`、`store/auth/*` | ~300 | 启动页双语截图；启动流程步骤英文 |
 | 2 资源中心与任务 | Download、DownloadDetail、社区搜索/结果、VanillaDetail、ResourceDetail、下载任务状态、等待决策弹窗 | `pages/Download*.vue`、`component/download/*`、`store/task/download.ts`、`store/community/*` | ~350 | 搜索/下载/任务中心双语；错误弹窗 |
-| 3 设置与版本装配 | 7 个设置 tab、AutoTasksEditor、VersionSelect、VersionSetup 全部子组件、主题名 | `component/settings/*`、`component/version-setup/*`、`pages/Version*.vue`、`store/config/*`、`store/app/theme.ts` | ~450 | 设置项英文不溢出；自动任务摘要 |
-| 4 工具与数据表 | Tools 页、各生成器/编辑器、DownloadTool、OnlineTool、SkinStudio、SkinPainterTool、give/mcData 数据表 | `component/tools/*`、`pages/Tools.vue`、`pages/SkinStudio.vue`、`utils/give.ts`、`utils/mcData.ts`、`utils/commands.ts` | ~400 + 数据表 | 10 页面双语冒烟；英文物品名/回退 id |
+| 3 设置与版本装配 | 设置左侧 Tab（含工具 Grid）、AutoTasksEditor、VersionSelect、VersionSetup 全部子组件、主题名 | `component/settings/*`、`component/version-setup/*`、`pages/Version*.vue`、`store/config/*`、`store/app/theme.ts` | ~450 | 设置项英文不溢出；自动任务摘要 |
+| 4 工具与数据表 | 工具 Grid（设置 → 工具）、各生成器/编辑器、DownloadTool、OnlinePanel（启动页右栏）、SkinStudio、SkinPainterTool、give/mcData 数据表 | `component/tools/*`、`component/settings/SettingsTools.vue`、`component/launch/OnlinePanel.vue`、`pages/SkinStudio.vue`、`utils/give.ts`、`utils/mcData.ts`、`utils/commands.ts` | ~400 + 数据表 | 9 页面双语冒烟；英文物品名/回退 id |
 | 5 后端文本 | `StepInfo.kind`、任务名/阶段 key、恢复任务类型 key、`@i18n:` 错误宏与批次 1–4 | `task/model.rs`、`task/steps.rs`、`task/progress.rs`、`task/store.rs`、`task/{runner,files,jdk,repair,modpack,spawn}.rs`、`macros.rs`、相关 commands | ~150–200 错误 + 60 任务文本 | 下载/登录/安装/启动真实链路英文；旧快照名称回退 |
 | 6 审校与门禁 | en-US 全文审校、术语统一、布局回归、README/截图、CI 接入 | `docs/`、`.github/workflows/release.yml`、`package.json` | 全量 | 全部门禁 + 手工冒烟清单 |
 
@@ -571,7 +571,7 @@ err_key_ctx!("errors.download.failed", ("name", name); "下载 {} 失败", name)
 
 手工冒烟矩阵（1008×648）：
 
-- 10 个页面 × 2 语言。
+- 9 个页面 × 2 语言。
 - 重点：TitleBar 5 个 tab、设置侧栏 6 项、任务卡片步骤名、资源详情依赖链、工具页长描述、弹窗按钮。
 - 交互：切换语言不重启 → 当前页即时刷新；重启后保持；`auto` 在系统英文下默认英文。
 - 运行时：真实下载一个版本（或复用测试环境），步骤名/错误提示英文；旧快照任务仍可显示。
@@ -606,7 +606,7 @@ err_key_ctx!("errors.download.failed", ("name", name); "下载 {} 失败", name)
 ## 11. 验收清单
 
 - [ ] 设置 → 外观可切换 `auto / 中文 / English`，即时生效并持久化。
-- [ ] 10 个页面在 `en-US` 下无裸中文（白名单除外）。
+- [ ] 9 个页面在 `en-US` 下无裸中文（白名单除外）。
 - [ ] 下载/安装/登录/启动主链路：任务名、步骤名、阶段名、错误首行为英文。
 - [ ] 旧快照恢复的任务名、旧错误字符串可正常显示（回退原文，不崩、不显示 raw key）。
 - [ ] `pnpm i18n:check`、`npx vue-tsc --noEmit`、`pnpm build`、`pnpm lint:css` 通过。

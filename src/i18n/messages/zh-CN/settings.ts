@@ -6,6 +6,11 @@ export default {
     appearance: "外观",
     online: "联机设置",
     log: "启动器日志",
+    tools: "工具",
+  },
+  tools: {
+    subtitle: "选择一个工具",
+    back: "返回工具列表",
   },
   appearance: {
     title: "外观",
@@ -195,7 +200,7 @@ export default {
   },
   online: {
     title: "联机设置",
-    subtitle: "会话操作（开启/加入联机）在 工具 → 联机；此处配置协调服务器与广播名",
+    subtitle: "会话操作（开启/加入联机）在启动页右栏；此处配置协调服务器与广播名",
     coordTitle: "协调服务器（跨网联机）",
     coordDesc:
       "跨网联机需连同一个协调服务器才能互相发现。默认内置社区节点（含陶瓦 Terracotta 同款节点，与其他 Scaffolding 客户端互通），也可填自己的地址（每行一个，如 {example}），留空仅支持同一局域网。",
@@ -349,14 +354,14 @@ export default {
         scriptButton: "导出启动脚本",
         modpackTitle: "导出整合包",
         modpackDesc:
-          "将当前版本的 mods / config / shaderpacks / resourcepacks / datapacks 打包为标准 MRPACK（Modrinth 格式），可用于分享或备份（不含游戏本体与存档）。",
+          "将当前版本的 mods / config / shaderpacks / resourcepacks / datapacks 打包为标准 MRPACK（Modrinth 格式，.mrpack），可用于分享或备份（不含游戏本体与存档）。",
         modpackButton: "导出整合包",
         scriptFilter: "启动脚本",
-        modpackFilter: "整合包 (mrpack/zip)",
+        modpackFilter: "整合包 (MRPACK)",
         scriptFileName: "启动 {version}.{ext}",
         notLoggedIn: "未登录正版账号，请先在启动页登录",
         scriptExported: "启动脚本已导出",
-        modpackExported: "整合包已导出",
+        modpackExported: "整合包已导出（MRPACK）",
       },
       logs: {
         title: "游戏日志",

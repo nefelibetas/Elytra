@@ -116,10 +116,9 @@ function onKeyDown(e: KeyboardEvent) {
     e.preventDefault();
     return;
   }
-  // ESC：非启动页面且无弹窗时回到启动页
+  // ESC：按应用导航栈返回上一级（设置子页 / 工具回设置，其余回启动页）
   if (e.key === "Escape" && !document.querySelector(".dialog-overlay")) {
-    const path = router.currentRoute.value.path;
-    if (path !== "/") router.push("/");
+    goBack();
   }
 }
 

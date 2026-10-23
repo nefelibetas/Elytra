@@ -2,7 +2,6 @@ export default {
   launch: "Launch",
   download: "Resources",
   downloadDetail: "Tasks",
-  tools: "Tools",
   settings: "Settings",
   title: {
     versionSelect: "Select Version",

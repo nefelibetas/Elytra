@@ -6,6 +6,11 @@ export default {
     appearance: "Appearance",
     online: "Multiplayer",
     log: "Launcher Log",
+    tools: "Tools",
+  },
+  tools: {
+    subtitle: "Choose a tool",
+    back: "Back to tools",
   },
   appearance: {
     title: "Appearance",
@@ -195,7 +200,7 @@ export default {
   },
   online: {
     title: "Multiplayer Settings",
-    subtitle: "Start or join sessions under Tools → Multiplayer; configure coordination servers and the broadcast name here",
+    subtitle: "Start or join sessions from the Launch page sidebar; configure coordination servers and the broadcast name here",
     coordTitle: "Coordination server (cross-network play)",
     coordDesc:
       "Cross-network sessions require everyone to use the same coordination server to discover each other. Community nodes are built in (including Terracotta nodes compatible with other Scaffolding clients); you can also add your own addresses (one per line, e.g. {example}). Leave empty to support only the same LAN.",
@@ -350,14 +355,14 @@ export default {
         scriptButton: "Export launch script",
         modpackTitle: "Export modpack",
         modpackDesc:
-          "Package this version's mods / config / shaderpacks / resourcepacks / datapacks as a standard MRPACK (Modrinth format) for sharing or backup (does not include the game itself or saves).",
+          "Package this version's mods / config / shaderpacks / resourcepacks / datapacks as a standard MRPACK (Modrinth format, .mrpack) for sharing or backup (does not include the game itself or saves).",
         modpackButton: "Export modpack",
         scriptFilter: "Launch script",
-        modpackFilter: "Modpack (mrpack/zip)",
+        modpackFilter: "Modpack (MRPACK)",
         scriptFileName: "Launch {version}.{ext}",
         notLoggedIn: "You are not logged in with a Microsoft account; log in on the Launch page first",
         scriptExported: "Launch script exported",
-        modpackExported: "Modpack exported",
+        modpackExported: "Modpack exported (MRPACK)",
       },
       logs: {
         title: "Game Logs",

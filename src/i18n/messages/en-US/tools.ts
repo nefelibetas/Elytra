@@ -6,9 +6,8 @@ export default {
     give: "Item NBT Generator",
     entity: "Entity NBT Generator",
     command: "Command Generator",
-    skinpaint: "Skin Painter",
-    download: "Multi-threaded Download",
-    online: "Multiplayer",
+    skinpaint: "Skin Painting",
+    download: "Multi-thread Download",
   },
   search: {
     placeholder: "Search…",
@@ -299,7 +298,6 @@ export default {
   },
   online: {
     title: "Multiplayer",
-    subtitle: "EasyTier virtual LAN: no public server needed, connect with a room code",
     statusHosting: "Online (host)",
     statusJoining: "Online (joined)",
     statusWaiting: "Waiting for the game to open to LAN…",
@@ -364,6 +362,7 @@ export default {
   },
   skinpainter: {
     title: "Skin Painter",
+    subtitle: "Pixel editing on the unfolded texture plus direct 3D painting",
     hint2d: "Wheel to zoom · Space or hand tool / middle-drag to pan · Ctrl+Z to undo",
     hint3d: "Left-click to paint · hand tool / right-drag to rotate · wheel to zoom · Ctrl+Z to undo",
     import: "Import",

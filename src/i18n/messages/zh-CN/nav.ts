@@ -2,7 +2,6 @@ export default {
   launch: "启动",
   download: "资源中心",
   downloadDetail: "任务中心",
-  tools: "工具",
   settings: "设置",
   title: {
     versionSelect: "版本选择",

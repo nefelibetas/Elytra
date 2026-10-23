@@ -4,7 +4,7 @@ import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 
 import { goBack } from "../../store/app/nav";
-import { ArrowLeft, Play, Download, ListChecks, Settings, Minus, X, Feather, Wrench } from "@lucide/vue";
+import { ArrowLeft, Play, Download, ListChecks, Settings, Minus, X, Feather } from "@lucide/vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { detailTitle } from "../../store/community/resourceDetail";
 import { dlState } from "../../store/task/download";
@@ -44,7 +44,6 @@ const items = [
   { path: "/", labelKey: "nav.launch", icon: "play" },
   { path: "/download", labelKey: "nav.download", icon: "download" },
   { path: "/download-detail", labelKey: "nav.downloadDetail", icon: "list" },
-  { path: "/tools", labelKey: "nav.tools", icon: "tools" },
   { path: "/settings", labelKey: "nav.settings", icon: "settings" },
 ] as const;
 
@@ -92,7 +91,6 @@ function onMouseDown(e: MouseEvent) {
             <Download v-if="item.icon === 'download'" :size="16" />
             <ListChecks v-if="item.icon === 'list'" :size="16" />
             <Settings v-if="item.icon === 'settings'" :size="16" />
-            <Wrench v-if="item.icon === 'tools'" :size="16" />
             <span class="label">{{ t(item.labelKey) }}</span>
             <span
               v-if="item.path === '/download-detail' && activeTasks > 0"

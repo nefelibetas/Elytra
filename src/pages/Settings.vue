@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// 页面容器：SideNav + 各 tab 编排；业务在 store/组件，本文件不做配置逻辑
-import { SlidersHorizontal, Download, Palette, Link2, FileText, KeyRound } from "@lucide/vue";
+// 页面容器：SideNav + 各 tab 编排；工具 tab 的内容是工具 Grid（SettingsTools）。
+import { SlidersHorizontal, Download, Palette, Link2, FileText, KeyRound, Wrench } from "@lucide/vue";
 import SettingsLaunchOptions from "../component/settings/SettingsLaunchOptions.vue";
 import SettingsJdk from "../component/settings/SettingsJdk.vue";
 import SettingsExternal from "../component/settings/SettingsExternal.vue";
@@ -8,6 +8,7 @@ import SettingsDownload from "../component/settings/SettingsDownload.vue";
 import SettingsAppearance from "../component/settings/SettingsAppearance.vue";
 import SettingsOnline from "../component/settings/SettingsOnline.vue";
 import SettingsLog from "../component/settings/SettingsLog.vue";
+import SettingsTools from "../component/settings/SettingsTools.vue";
 import ScrollTopFab from "../component/common/ScrollTopFab.vue";
 import SideNav from "../component/common/SideNav.vue";
 import { settingsTab } from "../store/app/settingsTab";
@@ -28,6 +29,7 @@ const { t } = useI18n();
         { key: 'appearance', label: t('settings.tabs.appearance'), icon: Palette },
         { key: 'online', label: t('settings.tabs.online'), icon: Link2 },
         { key: 'log', label: t('settings.tabs.log'), icon: FileText },
+        { key: 'tools', label: t('settings.tabs.tools'), icon: Wrench },
       ]"
     >
       <div v-if="settingsTab === 'launch'" key="launch" class="stg-page">
@@ -47,9 +49,12 @@ const { t } = useI18n();
         <SettingsAppearance />
       </div>
 
-      <!-- EasyTier 虚拟局域网 -->
       <div v-else-if="settingsTab === 'online'" key="online" class="stg-page">
         <SettingsOnline />
+      </div>
+
+      <div v-else-if="settingsTab === 'tools'" key="tools" class="stg-page">
+        <SettingsTools />
       </div>
 
       <div v-else key="log" class="stg-page">

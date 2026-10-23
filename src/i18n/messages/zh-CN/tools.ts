@@ -8,7 +8,6 @@ export default {
     command: "指令生成器",
     skinpaint: "皮肤绘画",
     download: "多线程下载",
-    online: "联机",
   },
   search: {
     placeholder: "搜索…",
@@ -299,7 +298,6 @@ export default {
   },
   online: {
     title: "联机",
-    subtitle: "EasyTier 虚拟局域网：无需公网服务器，房间码互连",
     statusHosting: "联机中（主机）",
     statusJoining: "联机中（已加入）",
     statusWaiting: "等待游戏中开启局域网…",
@@ -364,6 +362,7 @@ export default {
   },
   skinpainter: {
     title: "皮肤绘画器",
+    subtitle: "展开图逐像素 + 3D 直绘双模式",
     hint2d: "滚轮缩放 · 空格或抓手工具 / 中键平移 · Ctrl+Z 撤销",
     hint3d: "左键落笔 · 抓手工具 / 右键拖动旋转 · 滚轮缩放 · Ctrl+Z 撤销",
     import: "导入",

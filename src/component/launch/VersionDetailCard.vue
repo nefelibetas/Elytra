@@ -1,9 +1,9 @@
 <script setup lang="ts">
 // 主页右侧版本卡片：Tab 切换资源列表 + 底部操作。业务在 store/versionDetail。
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
-import { Pencil, Folder, FolderOpen, CloudDownload, Puzzle, Map, Settings2, Palette, Database, Sun, ImagePlus } from "@lucide/vue";
+import { Pencil, Folder, FolderOpen, CloudDownload, Puzzle, Map, Settings2, Palette, Database, Sun, ImagePlus, Users, ChevronDown, ChevronUp, X } from "@lucide/vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import { fmtUnix } from "../../utils/format";
 import { ensureGameFolder, renameVersionDir } from "../../store/config/gameDirs";
@@ -18,6 +18,8 @@ import {
   versionIcons, loadVersionIcon, setVersionIcon,
 } from "../../store/task/versionIcon";
 import { isLaunching } from "../../store/app/launch";
+import { onlineStatus, onlineRoomCode, ensureOnlineListen, loadOnlineStatus } from "../../store/config/online";
+import OnlinePanel from "./OnlinePanel.vue";
 import VersionItem from "../download/VersionItem.vue";
 import AlertDialog from "../common/AlertDialog.vue";
 import IconImage from "../common/IconImage.vue";
@@ -39,6 +41,32 @@ import {
 
 const { t } = useI18n();
 const versionName = computed(() => selectedVersion.value);
+
+// 右栏联机条：面板向上弹出；ESC / 点击外部关闭，避免误触全局返回。
+const onlineOpen = ref(false);
+const ONLINE_STATUS_KEYS = {
+  idle: "tools.online.statusIdle",
+  waiting: "tools.online.statusWaiting",
+  hosting: "tools.online.statusHosting",
+  joining: "tools.online.statusJoining",
+} as const;
+const onlineStateLabel = computed(() =>
+  onlineStatus.value === "hosting" && onlineRoomCode.value
+    ? onlineRoomCode.value
+    : t(ONLINE_STATUS_KEYS[onlineStatus.value]),
+);
+
+function onOnlineEsc(e: KeyboardEvent) {
+  if (!onlineOpen.value || e.key !== "Escape" || document.querySelector(".dialog-overlay")) return;
+  e.stopPropagation();
+  onlineOpen.value = false;
+}
+
+function onOnlineOutside(e: MouseEvent) {
+  if (!onlineOpen.value) return;
+  const target = e.target as HTMLElement | null;
+  if (target && !target.closest(".vdc-online")) onlineOpen.value = false;
+}
 
 const info = computed(() => classifyVersion(versionName.value));
 /** loader 判定：后端 json 特征推断优先，目录名分类兜底；与 gameDirs.ts 同规则，两处图标须一致。 */
@@ -179,7 +207,18 @@ watch(
   { immediate: true },
 );
 
-onBeforeUnmount(() => stopWorldsLivePolling());
+onMounted(() => {
+  ensureOnlineListen();
+  void loadOnlineStatus();
+  document.addEventListener("keydown", onOnlineEsc, true);
+  document.addEventListener("mousedown", onOnlineOutside);
+});
+
+onBeforeUnmount(() => {
+  stopWorldsLivePolling();
+  document.removeEventListener("keydown", onOnlineEsc, true);
+  document.removeEventListener("mousedown", onOnlineOutside);
+});
 
 // ── 打开文件夹（不存在则先由后端 ensure_game_folder 创建）──
 async function openVersionFolder(kind: "saves" | "version" | "mods" | "resourcepacks" | "datapacks" | "shaderpacks") {
@@ -426,6 +465,40 @@ async function confirmRename() {
         </div>
         </Transition>
       </div>
+    </div>
+
+    <!-- 联机条：右栏版本上下文；面板向上弹出，不占左栏启动区 -->
+    <div class="vdc-online">
+      <button
+        type="button"
+        class="vdc-online-trigger"
+        :class="{ open: onlineOpen, active: onlineStatus !== 'idle' }"
+        @click="onlineOpen = !onlineOpen"
+      >
+        <Users :size="15" />
+        <span class="vdc-online-label">{{ t("tools.online.title") }}</span>
+        <span class="vdc-online-state">{{ onlineStateLabel }}</span>
+        <span class="vdc-online-dot" :class="onlineStatus" />
+        <ChevronDown v-if="onlineOpen" :size="14" />
+        <ChevronUp v-else :size="14" />
+      </button>
+
+      <Transition name="online-pop">
+        <div v-if="onlineOpen" class="vdc-online-pop">
+          <div class="vdc-online-pop-head">
+            <span>{{ t("tools.online.title") }}</span>
+            <button
+              type="button"
+              class="vdc-online-close"
+              :aria-label="t('common.tooltip.close')"
+              @click="onlineOpen = false"
+            >
+              <X :size="14" />
+            </button>
+          </div>
+          <OnlinePanel />
+        </div>
+      </Transition>
     </div>
 
     <!-- 底部操作 -->
@@ -791,7 +864,135 @@ async function confirmRename() {
   color: var(--text-tertiary);
 }
 
-/* ===== 底部 ===== */
+/* ===== 联机条 ===== */
+.vdc-online {
+  position: relative;
+  flex: none;
+  border-top: 1px solid var(--border-default);
+  background: var(--surface-elevated);
+}
+
+.vdc-online-trigger {
+  width: 100%;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.vdc-online-trigger:hover,
+.vdc-online-trigger.open {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.vdc-online-label { flex: none; font-weight: 500; }
+.vdc-online-trigger.active .vdc-online-label { color: var(--color-brand); }
+
+.vdc-online-state {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.vdc-online-trigger.active .vdc-online-state { color: var(--text-secondary); }
+
+.vdc-online-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+}
+
+.vdc-online-dot.waiting {
+  background: var(--color-warning);
+  animation: vdc-online-pulse 1.2s ease-in-out infinite;
+}
+
+.vdc-online-dot.hosting {
+  background: var(--color-brand);
+  box-shadow: 0 0 6px var(--color-brand);
+}
+
+.vdc-online-dot.joining {
+  background: var(--color-success);
+  box-shadow: 0 0 6px var(--color-success);
+}
+
+@keyframes vdc-online-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.vdc-online-pop {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  max-height: min(430px, 72vh);
+  overflow-y: auto;
+  padding: 12px 14px;
+  background: var(--surface-card);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+.vdc-online-pop-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-default);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.vdc-online-close {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.vdc-online-close:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.online-pop-enter-active,
+.online-pop-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.online-pop-enter-from,
+.online-pop-leave-to {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+/* ===== 底部操作 ===== */
 .vdc-foot {
   flex: none;
   display: flex;

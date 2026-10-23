@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 联机设置卡片：仅配置（协调服务器/广播名/昵称）。
-// 会话操作在「工具 → 联机」（OnlineTool.vue）；store 为模块级单例，两处共享状态。
+// 会话操作在启动页右栏联机条（OnlinePanel.vue）；store 为模块级单例，两处共享状态。
 import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { Save, ExternalLink } from "@lucide/vue";
