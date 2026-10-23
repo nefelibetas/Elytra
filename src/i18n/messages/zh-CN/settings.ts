@@ -3,7 +3,7 @@ export default {
     launch: "启动设置",
     external: "第三方登录",
     download: "下载设置",
-    appearance: "外观",
+    appearance: "外观与语言",
     online: "联机设置",
     log: "启动器日志",
     tools: "工具",
@@ -21,7 +21,7 @@ export default {
     releases: "版本发布",
     specialThanks: "特别感谢",
     specialThanksNote:
-      "不是功能完整度的比较，而是不同取向。这里只列出开发过程中实际参考或使用较多的项目，不是完整榜单；还有很多优秀启动器没有出现，不代表它们不好。如果你已经在用顺手的启动器（包括 PCL2 或 HMCL），完全没必要为了 Elytra 迁移，Elytra 只是多一个选择。",
+      "不同取向，不是功能完整度比较。这里只列实际参考或使用较多的项目，不是完整榜单；其他优秀启动器未列出，不代表不好，选顺手的即可。",
     dataMirrors: "数据与镜像",
     networking: "联机与网络",
     loaders: "ModLoader",

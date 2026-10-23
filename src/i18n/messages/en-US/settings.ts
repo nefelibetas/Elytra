@@ -3,7 +3,7 @@ export default {
     launch: "Launch",
     external: "Third-party Login",
     download: "Downloads",
-    appearance: "Appearance",
+    appearance: "Appearance & Language",
     online: "Multiplayer",
     log: "Launcher Log",
     tools: "Tools",
@@ -21,7 +21,7 @@ export default {
     releases: "Releases",
     specialThanks: "Special Thanks",
     specialThanksNote:
-      "This is not a feature-completeness comparison—just different focuses. This list only covers projects we actually referenced or used during development and is not exhaustive; many other excellent launchers are not listed, which does not mean they are inferior. If you already use a launcher that works for you (including PCL2 or HMCL), there is no need to migrate to Elytra; it is simply another option.",
+      "Different focuses, not a feature-completeness ranking. Only projects we actually referenced or used are listed; other excellent launchers are omitted, not judged. Pick what fits you.",
     dataMirrors: "Data & Mirrors",
     networking: "Networking",
     loaders: "Mod Loaders",

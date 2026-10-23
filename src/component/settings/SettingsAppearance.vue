@@ -114,20 +114,6 @@ function removeCustom(id: string) {
 <template>
   <section class="stg-card">
     <div class="stg-card-hdr">
-      <h3>{{ t("common.language.title") }}</h3>
-      <p class="stg-card-sub">{{ t("common.language.desc") }}</p>
-    </div>
-    <div class="lang-select">
-      <DropSelect
-        :model-value="languageSetting"
-        :options="languageOptions"
-        @update:model-value="onLanguage"
-      />
-    </div>
-  </section>
-
-  <section class="stg-card">
-    <div class="stg-card-hdr">
       <h3>{{ t("settings.appearance.title") }}</h3>
       <p class="stg-card-sub">{{ t("settings.appearance.subtitle") }}</p>
     </div>
@@ -159,6 +145,20 @@ function removeCustom(id: string) {
       </button>
     </div>
 
+  </section>
+
+  <section class="stg-card">
+    <div class="stg-card-hdr">
+      <h3>{{ t("common.language.title") }}</h3>
+      <p class="stg-card-sub">{{ t("common.language.desc") }}</p>
+    </div>
+    <div class="lang-select">
+      <DropSelect
+        :model-value="languageSetting"
+        :options="languageOptions"
+        @update:model-value="onLanguage"
+      />
+    </div>
   </section>
 </template>
 
