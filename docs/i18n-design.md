@@ -518,7 +518,7 @@ err_key_ctx!("errors.download.failed", ("name", name); "下载 {} 失败", name)
 | 资源中心 | Resource Center | 页面名 |
 | 任务中心 | Task Center | 页面名 |
 | 启动器日志 | Launcher Log | |
-| 正版登录 | Microsoft login | |
+| 微软账号登录 | Microsoft login | |
 | 离线模式 | Offline mode | |
 | 第三方登录 | Third-party login | |
 | 衣柜 | Wardrobe | 皮肤衣柜 |

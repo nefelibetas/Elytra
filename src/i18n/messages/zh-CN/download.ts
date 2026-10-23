@@ -93,7 +93,7 @@ export default {
     selectFileFirst: "请先选择一个版本文件",
     selectedFileMissing: "所选版本文件不存在，请重新选择",
     unsupportedType: "该资源类型暂不支持下载",
-    noTargetVersion: "请先在版本选择页选择版本（版本下载完成后会自动选中）",
+    noTargetVersion: "请先在实例管理页选择实例（版本下载完成后会自动选中）",
     requestTimeout: "下载请求超时（后端无响应），请查看日志",
     submitted: "已提交下载任务",
     modpackSubmitted: "已提交整合包安装",

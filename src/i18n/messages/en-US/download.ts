@@ -93,7 +93,7 @@ export default {
     selectFileFirst: "Select a version file first",
     selectedFileMissing: "The selected version file no longer exists. Please select another.",
     unsupportedType: "This resource type cannot be downloaded yet",
-    noTargetVersion: "Select a version on the version page first (one is selected automatically after download)",
+    noTargetVersion: "Select an instance on the Instance Management page first (it is selected automatically after the version download completes)",
     requestTimeout: "Download request timed out (no response from backend). Check the logs.",
     submitted: "Download task submitted",
     modpackSubmitted: "Modpack installation submitted",

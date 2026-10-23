@@ -5,7 +5,7 @@ export default {
     decodeFailed: "皮肤解码失败",
   },
   studio: {
-    premiumOnly: "皮肤衣柜仅对正版账号开放",
+    premiumOnly: "皮肤衣柜仅对微软账号开放",
     loadingPreview: "正在加载皮肤与披风…",
     loadingSkins: "正在获取皮肤与披风…",
     loadingCapes: "正在获取披风…",
@@ -30,9 +30,9 @@ export default {
     noCape: "无披风",
     noCapeTooltip: "不装备披风",
     noCapes: "该账号暂无可用披风",
-    capePremiumRequired: "披风需要正版账号",
+    capePremiumRequired: "披风需要微软账号",
     capePremiumHint: "登录微软账号后可在此切换 / 移除披风",
-    footerHint: "本地衣柜可用于预览；应用皮肤 / 管理披风需登录正版账号",
+    footerHint: "本地衣柜可用于预览；应用皮肤 / 管理披风需登录微软账号",
     modelDialogTitle: "选择皮肤模型",
     modelDialogDesc: "皮肤将直接上传为账号当前皮肤；模型不可中途更换（需重新上传），按所选模型应用。",
     model: {

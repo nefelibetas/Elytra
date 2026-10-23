@@ -8,6 +8,8 @@
 | 版本 | version | MC 版本 |
 | 版本目录 | version folder | `versions/{id}` |
 | 实例 | instance | 版本 + 实例配置 |
+| 实例管理 | Instance Management | 页面名 |
+| 实例设置 | Instance Settings | 页面名 |
 | 整合包 | modpack | |
 | 资源中心 | Resource Center | 页面名 |
 | 任务中心 | Task Center | 页面名 |
@@ -15,7 +17,7 @@
 | 下载任务 | download task | |
 | 启动设置 | Launch | 设置 tab |
 | 第三方登录 | Third-party Login | |
-| 正版登录 | Microsoft login | |
+| 微软账号登录 | Microsoft login | |
 | 离线模式 | Offline mode | |
 | 微软账号 | Microsoft account | |
 | 第三方账号 | third-party account | |

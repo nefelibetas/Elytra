@@ -35,8 +35,8 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/03-version-setup.png" width="840" alt="Version Settings" />
-  <br /><sub><b>Version Settings</b> · mod management & update check</sub>
+  <img src="docs/screenshots/03-version-setup.png" width="840" alt="Instance Settings" />
+  <br /><sub><b>Instance Settings</b> · mod management & update check</sub>
 </p>
 
 <p align="center">
@@ -67,7 +67,7 @@
 
 ### 🗂️ Content Management
 
-- ⚙️ **Version Setup**: mods (update check · bulk enable/disable), worlds, resource packs, shader packs, datapacks, server list, icon, game logs
+- ⚙️ **Instance Settings**: mods (update check · bulk enable/disable), worlds, resource packs, shader packs, datapacks, server list, icon, game logs
 - 📤 **Export**: launch script (`.bat` / `.sh`) and modpack (MRPACK)
 - 📁 **Multiple game directories**: manage and switch between separate game folders
 - 🤖 **Auto tasks**: run on launch / after exit — world backup (keep N copies), mod list recording, crash log packing (with redaction); global or per-instance config
@@ -118,10 +118,10 @@ Grab the artifact for your platform from [Releases](https://github.com/nefelibet
 
 ## 🚀 Quick Start
 
-1. **Set up a game directory** — versions, mods and worlds all live in the game directory (`.minecraft`). Windows installs default to a folder next to the launcher; if none exists (MSI installs into the read-only `Program Files`, macOS, Linux), add one from the Version Select page
+1. **Set up a game directory** — versions, mods and worlds all live in the game directory (`.minecraft`). Windows installs default to a folder next to the launcher; if none exists (MSI installs into the read-only `Program Files`, macOS, Linux), add one from the Instance Management page
 2. **Download the game** — open Content Hub → Vanilla and pick a version; the expanded details also let you add ModLoaders (Fabric / Quilt / Forge / NeoForge / OptiFine). Click "Start download" and track it in the Task Center
 3. **Sign in (optional)** — switch between Microsoft / offline / third-party accounts at the top of the launch page; offline mode uses a fixed random Steve/Alex skin and supports single-player
-4. **Launch the game** — select the version on the launch page and click "Launch". If no Java runtime is found, open Settings → Launch settings → Java runtime to scan for local JDKs or install the managed runtime in one click
+4. **Launch the game** — select the version on the launch page and click "Launch". If no Java runtime is found, open Settings → Launch → Java runtime to scan for local JDKs or install the managed runtime in one click
 
 > Mods, modpacks, resource packs, shaders and worlds are all searchable in the Content Hub; the Toolbox offers LAN play, server status, NBT / command generators, the skin painter and a multi-threaded downloader.
 
@@ -156,7 +156,7 @@ cargo test --test tool_download                    # toolbox downloader integrat
 
 ### 🖼️ Frontend `src/`
 
-- **`pages/`** — 9 pages (launch / content hub / tasks / settings / version select / version setup / resource detail / skin wardrobe / theme editor)
+- **`pages/`** — 9 pages (launch / content hub / tasks / settings / instance management / instance settings / resource detail / skin wardrobe / theme editor)
 - **`component/`** — components grouped by domain (`common/` `download/` `launch/` `settings/` `tools/` `version/` `version-setup/`)
 - **`store/`** — module-level `reactive()` state singletons, split by domain (`app/` `config/` `task/` `auth/` `community/` `skin/`)
 - **`utils/`** — pure helpers (formatting / keyboard focus / toasts)
@@ -214,7 +214,7 @@ See 📖 [AGENTS.md](AGENTS.md) (repository development guide).
 | Windows uninstall | MSI does not remove `%APPDATA%\Elytra`; NSIS keeps app data by default; neither removes the game directory. |
 | Windows portable build | Requires the system WebView2 runtime (usually present on Windows 10/11). |
 | Linux | Built on Ubuntu 22.04 (glibc 2.35+); the portable build depends on the system WebKitGTK. |
-| Skin wardrobe | Only available for genuine Microsoft accounts; offline mode uses a fixed default skin. |
+| Skin wardrobe | Only available for Microsoft accounts; offline mode uses a fixed default skin. |
 | CurseForge | Requires a valid CurseForge API key; if the built-in key expires, enter your own key under Settings → Downloads → CurseForge key. The source is unavailable when no key is configured, while Modrinth keeps working. |
 | OptiFine | No public API; some versions/combinations may fail to download or install. |
 

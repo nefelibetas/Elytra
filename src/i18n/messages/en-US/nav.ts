@@ -4,8 +4,8 @@ export default {
   downloadDetail: "Tasks",
   settings: "Settings",
   title: {
-    versionSelect: "Select Version",
-    versionSetup: "Version Settings - {name}",
+    versionSelect: "Instance Management",
+    versionSetup: "Instance Settings - {name}",
     customThemeNew: "New Custom Theme",
     customThemeEdit: "Edit Custom Theme",
     skinStudio: "Wardrobe",

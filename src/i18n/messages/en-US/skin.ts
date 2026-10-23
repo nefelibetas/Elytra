@@ -5,7 +5,7 @@ export default {
     decodeFailed: "Failed to decode skin",
   },
   studio: {
-    premiumOnly: "The skin wardrobe is available to premium accounts only",
+    premiumOnly: "The skin wardrobe is available to Microsoft accounts only",
     loadingPreview: "Loading skins and capes…",
     loadingSkins: "Fetching skins and capes…",
     loadingCapes: "Fetching capes…",
@@ -30,9 +30,9 @@ export default {
     noCape: "No cape",
     noCapeTooltip: "Do not equip a cape",
     noCapes: "No capes available for this account",
-    capePremiumRequired: "Capes require a premium account",
+    capePremiumRequired: "Capes require a Microsoft account",
     capePremiumHint: "Sign in with a Microsoft account to switch or remove capes here",
-    footerHint: "The local wardrobe is for previews; applying skins / managing capes requires a premium account",
+    footerHint: "The local wardrobe is for previews; applying skins / managing capes requires a Microsoft account",
     modelDialogTitle: "Choose skin model",
     modelDialogDesc: "The skin is uploaded directly as the account's current skin; the model cannot be changed later (re-upload required).",
     model: {

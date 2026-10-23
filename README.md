@@ -26,7 +26,7 @@
 
 <p align="center">
   <img src="docs/screenshots/01-launch.png" width="840" alt="启动" />
-  <br /><sub><b>启动</b> · 账户、版本卡片与启动入口</sub>
+  <br /><sub><b>启动</b> · 账户、实例卡片与启动入口</sub>
 </p>
 
 <p align="center">
@@ -35,13 +35,13 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/03-version-setup.png" width="840" alt="版本设置" />
-  <br /><sub><b>版本设置</b> · Mod 管理与更新检查</sub>
+  <img src="docs/screenshots/03-version-setup.png" width="840" alt="实例设置" />
+  <br /><sub><b>实例设置</b> · Mod 管理与更新检查</sub>
 </p>
 
 <p align="center">
   <img src="docs/screenshots/04-skin-wardrobe.png" width="840" alt="衣柜" />
-  <br /><sub><b>衣柜</b> · 3D 全身预览与皮肤 / 披风管理（仅正版账号）</sub>
+  <br /><sub><b>衣柜</b> · 3D 全身预览与皮肤 / 披风管理（仅微软账号）</sub>
 </p>
 
 <p align="center">
@@ -67,7 +67,7 @@
 
 ### 🗂️ 内容管理
 
-- ⚙️ **版本设置**：Mod 管理（更新检查 · 批量启停）、存档、资源包、光影包、数据包、服务器列表、图标、游戏日志
+- ⚙️ **实例设置**：Mod 管理（更新检查 · 批量启停）、存档、资源包、光影包、数据包、服务器列表、图标、游戏日志
 - 📤 **导出**：启动脚本（`.bat` / `.sh`）与整合包（MRPACK）
 - 📁 **多游戏目录**：多份游戏目录独立管理、随时切换
 - 🤖 **自动任务**：启动前 / 退出后自动执行存档备份（保留 N 份）、Mod 清单记录、崩溃日志打包（含脱敏），支持全局与逐实例配置
@@ -75,7 +75,7 @@
 
 ### 🔐 账号与外观
 
-- 🔐 **账号**：微软正版登录（OAuth PKCE，多账号）、离线模式、第三方皮肤站（Yggdrasil 兼容：LittleSkin / 自建站）
+- 🔐 **账号**：微软账号登录（OAuth PKCE，多账号）、离线模式、第三方皮肤站（Yggdrasil 兼容：LittleSkin / 自建站）
 - 🎭 **皮肤衣柜**：3D 全身预览、官方皮肤 / 披风切换与皮肤上传、本地皮肤收藏
 - 🎨 **皮肤绘画器**：64×64 逐像素展开图 + **3D 直绘**双模式，画笔 / 橡皮 / 油漆桶 / 吸管、自由缩放平移、每部位独立配色标注、内层 / 外层图层、撤销重做，实时 3D 预览
 
@@ -118,9 +118,9 @@
 
 ## 🚀 快速开始
 
-1. **准备游戏目录** — 版本、Mod 与存档均存放于游戏目录（`.minecraft`）。Windows 安装版默认位于启动器目录旁；若为空（MSI 安装至只读的 `Program Files`、macOS、Linux），请在「版本选择」页选择「添加已有游戏目录」
+1. **准备游戏目录** — 版本、Mod 与存档均存放于游戏目录（`.minecraft`）。Windows 安装版默认位于启动器目录旁；若为空（MSI 安装至只读的 `Program Files`、macOS、Linux），请在「实例管理」页选择「添加已有游戏目录」
 2. **下载游戏** — 进入「资源中心 → 原版游戏」选择版本；展开详情可同时添加 ModLoader（Fabric / Quilt / Forge / NeoForge / OptiFine），点击「开始下载」，下载进度可在「任务中心」查看
-3. **登录（可选）** — 启动页顶部可切换「正版 / 离线 / 第三方」；离线模式使用固定随机 Steve/Alex 皮肤，支持单机游玩
+3. **登录（可选）** — 启动页顶部可切换「微软 / 离线 / 第三方」；离线模式使用固定随机 Steve/Alex 皮肤，支持单机游玩
 4. **启动游戏** — 在启动页选中版本并点击「启动」。若提示未找到 Java，请前往「设置 → 启动设置 → Java 运行时」扫描本机 JDK，或点击「下载缺失 JDK」自动安装
 
 > Mod、整合包、资源包、光影与地图存档均可在「资源中心」搜索安装；联机在启动页右栏，「设置 → 工具」提供服务器状态、NBT / 指令生成器、皮肤绘画器与多线程下载器。
@@ -156,7 +156,7 @@ cargo test --test tool_download                    # 工具箱下载器集成测
 
 ### 🖼️ 前端 `src/`
 
-- **`pages/`** — 9 个页面（启动 / 资源中心 / 任务中心 / 设置（左侧 Tab + 工具 Grid）/ 版本选择 / 版本设置 / 资源详情 / 皮肤衣柜 / 主题编辑器）
+- **`pages/`** — 9 个页面（启动 / 资源中心 / 任务中心 / 设置（左侧 Tab + 工具 Grid）/ 实例管理 / 实例设置 / 资源详情 / 皮肤衣柜 / 主题编辑器）
 - **`component/`** — 组件按域分组（`common/` `download/` `launch/` `settings/` `tools/` `version/` `version-setup/`）
 - **`store/`** — 模块级 `reactive()` 状态单例，按域分包（`app/` `config/` `task/` `auth/` `community/` `skin/`）
 - **`utils/`** — 纯函数工具（格式化 / 键盘焦点 / toast 等）
@@ -214,7 +214,7 @@ cargo test --test tool_download                    # 工具箱下载器集成测
 | Windows 卸载 | MSI 不清理 `%APPDATA%\Elytra`；NSIS 默认保留应用数据；两者都不会删除游戏目录。 |
 | Windows 便携版 | 依赖系统 WebView2（Windows 10/11 通常已内置）。 |
 | Linux | 构建于 Ubuntu 22.04（glibc 2.35+）；便携版依赖系统 WebKitGTK。 |
-| 皮肤衣柜 | 仅正版微软账号可进入；离线模式使用固定默认皮肤。 |
+| 皮肤衣柜 | 仅微软账号可进入；离线模式使用固定默认皮肤。 |
 | CurseForge | 需要有效的 CurseForge API Key；内置 Key 失效时可在「设置 → 下载 → CurseForge Key」填入自己的 Key，未配置时该来源不可用，Modrinth 不受影响。 |
 | OptiFine | 官方无公开 API，部分版本/组合可能下载或安装失败。 |
 
