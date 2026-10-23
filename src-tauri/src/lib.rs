@@ -32,7 +32,10 @@ use commands::account::{
 use commands::auto_tasks::{
     get_instance_auto_tasks, run_auto_tasks_now, save_global_auto_tasks, save_instance_auto_tasks,
 };
-use commands::community::{get_community_details, get_community_versions, search_community};
+use commands::community::{
+    clear_curseforge_key, get_community_details, get_community_versions, get_curseforge_key_source,
+    search_community, set_curseforge_key,
+};
 use commands::config::take_config_recovery_notice;
 use commands::downloader::{
     get_downloader_config, get_installed_versions, get_version_list, resolve_version_name,
@@ -179,6 +182,9 @@ pub fn run() {
             search_community,
             get_community_versions,
             get_community_details,
+            get_curseforge_key_source,
+            set_curseforge_key,
+            clear_curseforge_key,
             start_download,
             download_files,
             download_single_file,

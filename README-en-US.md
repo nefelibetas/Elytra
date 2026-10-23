@@ -25,33 +25,33 @@
 ## 🖼️ Preview
 
 <p align="center">
-  <img src="docs/screenshots/01-launch.png" width="840" alt="Launch page" />
-  <br /><sub><b>Launch</b> · version card & one-click play</sub>
+  <img src="docs/screenshots/01-launch.png" width="840" alt="Launch" />
+  <br /><sub><b>Launch</b> · account, version card & launch entry</sub>
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/02-download.png" width="840" alt="Content Hub" />
-  <br /><sub><b>Content Hub</b> · search & install mods / modpacks / resource packs / shaders / datapacks / worlds</sub>
+  <img src="docs/screenshots/02-download.png" width="840" alt="Resources" />
+  <br /><sub><b>Resources</b> · vanilla game versions plus community content (Mods / Modpacks / Datapacks / Resource Packs / Shaders / Worlds)</sub>
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/03-version-setup.png" width="840" alt="Version setup" />
-  <br /><sub><b>Version setup</b> · mod management & update check</sub>
+  <img src="docs/screenshots/03-version-setup.png" width="840" alt="Version Settings" />
+  <br /><sub><b>Version Settings</b> · mod management & update check</sub>
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/04-skin-wardrobe.png" width="840" alt="Skin wardrobe" />
-  <br /><sub><b>Skin wardrobe</b> · 3D full-body preview, skin & cape management</sub>
+  <img src="docs/screenshots/04-skin-wardrobe.png" width="840" alt="Wardrobe" />
+  <br /><sub><b>Wardrobe</b> · 3D full-body preview, skin & cape management (genuine accounts only)</sub>
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/05-skin-painter.png" width="840" alt="Skin painter" />
-  <br /><sub><b>Skin painter</b> · pixel-exact unfolded view + 3D direct painting</sub>
+  <img src="docs/screenshots/05-skin-painter.png" width="840" alt="Skin Painter" />
+  <br /><sub><b>Skin Painter</b> · pixel-exact unfolded view + 3D direct painting (Settings → Tools)</sub>
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/06-online.png" width="840" alt="LAN play" />
-  <br /><sub><b>LAN play</b> · room-code pairing</sub>
+  <img src="docs/screenshots/06-online.png" width="840" alt="Multiplayer" />
+  <br /><sub><b>Multiplayer</b> · room-code pairing from the Launch page sidebar</sub>
 </p>
 
 ## ✨ Features
@@ -62,7 +62,7 @@
 - 🧩 **ModLoaders**: one-click install for Fabric / Quilt / Forge / NeoForge / OptiFine; vanilla-only OptiFine is merged into a self-contained version
 - 🧰 **Missing-file repair**: scan a version install and re-download whatever is missing
 - ☕ **JDK management**: local JDK scan + managed runtime auto-download (Mojang → Azul fallback)
-- 📥 **Content Hub**: search & install mods / modpacks / datapacks / resource packs / shaders / worlds (Modrinth · CurseForge); modpacks can also be imported locally (`.mrpack` / `.zip`)
+- 📥 **Content Hub**: search & install mods / modpacks / datapacks / resource packs / shaders / worlds (Modrinth · CurseForge); modpacks can also be imported locally (`.mrpack` / `.zip`); a custom CurseForge key can override the built-in key in Settings
 - 🕸️ **Mod dependency resolution**: dependency chain preview with one-click install per entry
 
 ### 🗂️ Content Management
@@ -128,6 +128,8 @@ Grab the artifact for your platform from [Releases](https://github.com/nefelibet
 ## 🛠️ Development
 
 > Toolchain versions come solely from `mise.toml` (node / pnpm / rust / protoc); building the LAN feature (EasyTier) also needs libclang (LLVM). pnpm is the only supported package manager.
+>
+> Not using mise? Install Node.js 24 and pnpm 12 (`npm install -g pnpm@12` or Corepack); Rust / protoc versions follow `mise.toml`.
 
 ```bash
 mise install          # install toolchain from mise.toml
@@ -144,13 +146,15 @@ cargo test --test online_diag                      # LAN integration test (two i
 cargo test --test tool_download                    # toolbox downloader integration test (local HTTP server)
 ```
 
+> Optional build-time config: copy `.env.example` to `.env` (gitignored) and fill in the CurseForge API key as needed (it can also be overridden under Settings → Downloads → CurseForge key); the Microsoft OAuth client ID is a built-in public constant and needs no configuration. Leaving it empty does not affect compilation; only the CurseForge source is disabled.
+
 > ℹ️ A few network tests (`fetch_asset_index_end_to_end`, `count_assets_all_end_to_end`, `global_client_uses_system_proxy_when_enabled`) hit the real internet with small single requests; they fail or skip offline. `bmclapi_optifine_real_download` is marked `#[ignore]` and does not run by default.
 
 ## 📁 Structure
 
 ### 🖼️ Frontend `src/`
 
-- **`pages/`** — 10 pages (launch / content hub / tasks / settings / tools / version select / version setup / detail / skin wardrobe / theme editor)
+- **`pages/`** — 9 pages (launch / content hub / tasks / settings / version select / version setup / resource detail / skin wardrobe / theme editor)
 - **`component/`** — components grouped by domain (`common/` `download/` `launch/` `settings/` `tools/` `version/` `version-setup/`)
 - **`store/`** — module-level `reactive()` state singletons, split by domain (`app/` `config/` `task/` `auth/` `community/` `skin/`)
 - **`utils/`** — pure helpers (formatting / keyboard focus / toasts)
@@ -158,7 +162,7 @@ cargo test --test tool_download                    # toolbox downloader integrat
 
 ### 🦀 Backend `src-tauri/src/`
 
-- **`commands/`** — command glue layer: 134 `#[tauri::command]`s, argument flattening and domain calls only
+- **`commands/`** — command glue layer: 137 `#[tauri::command]`s, argument flattening and domain calls only
 - **`downloader/`** — pure transport layer: multi-source fetch / concurrent batch / probing / segmented download / path locking
 - **`game/`** — content & assembly: version metadata / resources / ModLoader install / community / modpacks / mod updates
 - **`task/`** — task orchestration & event dispatch, SQLite snapshots & crash recovery
@@ -174,7 +178,7 @@ cargo test --test tool_download                    # toolbox downloader integrat
 
 - **`docs/`** — icon & preview images
 - **`AGENTS.md`** — architecture layering & coding conventions
-- **`LICENSE`** — GPL-3.0
+- **`LICENSE`** — GPL-3.0-only
 
 Dependency direction: `commands` → domain layers (`game/` `task/` `launcher/` …) → `downloader/` (pure transport, depends on nothing above).
 
@@ -190,10 +194,33 @@ See 📖 [AGENTS.md](AGENTS.md) (repository development guide).
 - 📁 Game directory: defaults next to the launcher on Windows (portable, move the whole folder to migrate); specify manually when the install directory is read-only (e.g. MSI into `Program Files`) or on macOS / Linux
 - 🧪 Dev / test processes keep their config next to the executable (`Elytra/`), isolated from a normal install
 
+## 🔒 Privacy & Network
+
+- **No telemetry**: no analytics SDKs; usage data, crash reports, and account information are never uploaded to the author's servers.
+- **Services contacted**: Microsoft / Mojang (login, profile, skins, version metadata, assets), BMCLAPI / MCIM (China mirrors), Modrinth / CurseForge (community resources and dependencies), Azul / Adoptium (JDK runtimes), the EasyTier coordination node (LAN play only), user-configured third-party skin sites (only when enabled), and user-entered server addresses (server status only).
+- **Local data**: `secrets.bin` stores Microsoft refresh tokens, third-party skin-site credentials, and the user-provided CurseForge key — Windows uses DPAPI; macOS / Linux prefer the OS keychain plus ChaCha20-Poly1305, and fall back to plaintext protected only by file permissions when the keychain is unavailable. `Settings.toml` is plaintext config (game directory, download settings, etc.); `tasks.db` stores task snapshots; normal logs may contain local paths and request URLs.
+- **Never uploaded automatically**: game directories, saves, mods, skins, and logs are not uploaded; crash-log bundles are only created locally when the user runs an auto task.
+- **Third-party services**: the services above are governed by their own privacy policies; this project does not control their data handling.
+
+## ⚠️ Known Limitations
+
+| Scenario | Limitation |
+|---|---|
+| Fabric/Quilt + OptiFine | Requires the OptiFabric bridge and has limited compatibility; the combination is hidden with an error on 1.21+. Sodium + Iris, or vanilla/Forge + OptiFine, is recommended. |
+| Cross-network LAN play | Depends on an EasyTier coordination server (configurable); offline accounts on MC 26.2 must use LAN discovery, and a manually entered IP may report an invalid session. |
+| macOS | Not notarized; first launch requires right-click → Open. macOS 13+. |
+| Windows uninstall | MSI does not remove `%APPDATA%\Elytra`; NSIS keeps app data by default; neither removes the game directory. |
+| Windows portable build | Requires the system WebView2 runtime (usually present on Windows 10/11). |
+| Linux | Built on Ubuntu 22.04 (glibc 2.35+); the portable build depends on the system WebKitGTK. |
+| Skin wardrobe | Only available for genuine Microsoft accounts; offline mode uses a fixed default skin. |
+| CurseForge | Requires a valid CurseForge API key; if the built-in key expires, enter your own key under Settings → Downloads → CurseForge key. The source is unavailable when no key is configured, while Modrinth keeps working. |
+| OptiFine | No public API; some versions/combinations may fail to download or install. |
+
 ## 🤝 Contributing & Feedback
 
-- **Bug reports / feature requests**: open an [issue](https://github.com/nefelibetas/Elytra/issues), including your launcher log ("Settings → Launcher log" opens its folder), app version and reproduction steps
-- **Code contributions**: start with [CONTRIBUTING.md](CONTRIBUTING.md) — dev environment, required checks before submitting, branch & commit conventions
+- **Bug reports / feature requests**: open an [issue](https://github.com/nefelibetas/Elytra/issues), including your launcher log ("Settings → Launcher log" opens its folder), app version and reproduction steps; issue templates are available
+- **Code contributions**: start with [CONTRIBUTING-en-US.md](CONTRIBUTING-en-US.md) ([简体中文](CONTRIBUTING.md)) — dev environment, required checks before submitting, branch & commit conventions
+- **Security issues**: do not open a public issue; see [SECURITY.md](SECURITY.md)
 - Architecture layering and coding conventions: see [AGENTS.md](AGENTS.md)
 
 ## 🙏 Thanks
@@ -206,7 +233,7 @@ See 📖 [AGENTS.md](AGENTS.md) (repository development guide).
 - [Modrinth](https://modrinth.com/) · [CurseForge](https://www.curseforge.com/minecraft) · [MCMod.cn](https://www.mcmod.cn/) — community resources & entry data
 - [Mojang](https://www.minecraft.net/) · [Azul](https://www.azul.com/downloads/) — game metadata & JDK runtimes
 - Fabric · Quilt · Forge · NeoForge — ModLoader Maven metadata
-- [HMCL](https://github.com/HMCL-dev/HMCL) — fellow open-source launcher; our GPL-3.0 license aligns with it
+- [HMCL](https://github.com/HMCL-dev/HMCL) — fellow open-source launcher; our GPL-3.0-only license aligns with it
 - [PCL2](https://github.com/Meloong-Git/PCL) — UI layout reference; the Chinese content search embeds its `WikiEntries.txt` snapshot (see [third-party notices](THIRD-PARTY-NOTICES.md))
 
 ## ⚖️ Disclaimer
@@ -217,6 +244,6 @@ This project only provides tooling for downloading and managing game content; it
 
 ## 📄 License
 
-Released under the [GPL-3.0](LICENSE) license.
+Released under the [GPL-3.0-only](LICENSE) license. Copyright (C) 2026 BridgeFishDev.
 
-Bundled third-party content and data (the PCL WikiEntries snapshot, ModLoader icons, Minecraft assets) are covered separately in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+Bundled third-party content and data (the PCL WikiEntries snapshot, ModLoader icons, Minecraft assets and default skins) are covered separately in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

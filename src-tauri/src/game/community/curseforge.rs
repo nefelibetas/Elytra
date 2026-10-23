@@ -1,5 +1,7 @@
 //! CurseForge 平台实现（需要 x-api-key）：搜索 / 版本列表 / 详情 / 批量文件换链。
 
+use serde::Serialize;
+
 use super::shared::{
     api_routes, api_urls, get_json_multi, post_json_multi, version_range, ApiPlatform,
 };
@@ -8,10 +10,81 @@ use super::{
     CommunityDependency, CommunityDependencyItem, CommunitySearchPage, CommunitySearchResult,
     CommunityVersion,
 };
+
 use crate::constants;
 use crate::downloader::fetcher::http;
+use crate::persist::secrets;
 
 const CURSEFORGE_GAME_ID: &str = "432";
+const CURSEFORGE_KEY_SECRET: &str = "curseforge_api_key";
+const CURSEFORGE_KEY_LEN: usize = 60;
+
+/// CurseForge Key 来源（只暴露状态，不返回 key 本身）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ts_rs::TS)]
+#[ts(export_to = "community/")]
+#[serde(rename_all = "camelCase")]
+pub enum CurseForgeKeySource {
+    /// 用户在设置中填写的 key（优先）。
+    User,
+    /// 构建期内置 key。
+    BuiltIn,
+    /// 两者都没有。
+    None,
+}
+
+/// CurseForge API Key 是 60 字符的 bcrypt 串（`$2a$10$` 前缀）。
+fn validate_curseforge_key(key: &str) -> Result<(), String> {
+    if key.len() == CURSEFORGE_KEY_LEN && key.starts_with("$2a$10$") && key.is_ascii() {
+        Ok(())
+    } else {
+        Err("CurseForge API Key 格式无效\n应为 60 字符、以 $2a$10$ 开头的字符串".to_string())
+    }
+}
+
+fn read_user_api_key() -> Result<Option<String>, String> {
+    let Some(bytes) = secrets::read_secret(CURSEFORGE_KEY_SECRET) else {
+        return Ok(None);
+    };
+    if bytes.is_empty() {
+        return Ok(None);
+    }
+    let key = String::from_utf8(bytes)
+        .map_err(|_| "CurseForge API Key 存储损坏\n请在设置中重新填写".to_string())?;
+    let key = key.trim();
+    validate_curseforge_key(key)?;
+    Ok(Some(key.to_string()))
+}
+
+/// 用户 key 优先，其次构建期内置 key。
+fn api_key() -> Result<String, String> {
+    if let Some(key) = read_user_api_key()? {
+        return Ok(key);
+    }
+    if let Some(key) = constants::CURSEFORGE_API_KEY {
+        return Ok(key.to_string());
+    }
+    Err("未配置 CurseForge API Key\n请在「设置 → 下载 → CurseForge Key」填写，或在项目根 .env 配置 ELYTRA_CURSEFORGE_API_KEY".to_string())
+}
+
+pub fn curseforge_key_source() -> CurseForgeKeySource {
+    if secrets::read_secret(CURSEFORGE_KEY_SECRET).is_some_and(|v| !v.is_empty()) {
+        CurseForgeKeySource::User
+    } else if constants::CURSEFORGE_API_KEY.is_some() {
+        CurseForgeKeySource::BuiltIn
+    } else {
+        CurseForgeKeySource::None
+    }
+}
+
+pub fn set_curseforge_key(key: &str) -> Result<(), String> {
+    let key = key.trim();
+    validate_curseforge_key(key)?;
+    secrets::write_secret(CURSEFORGE_KEY_SECRET, key.as_bytes())
+}
+
+pub fn clear_curseforge_key() -> Result<(), String> {
+    secrets::clear_secret(CURSEFORGE_KEY_SECRET)
+}
 
 /// CurseForge modLoaderType 枚举（部分）：forge=1、fabric=4、quilt=5、neoforge=6。
 fn curseforge_loader_id(loader: &str) -> Option<i64> {
@@ -93,13 +166,12 @@ pub(crate) async fn curseforge_get(
     path: &str,
     params: &[(&str, String)],
 ) -> Result<serde_json::Value, String> {
-    let key = constants::CURSEFORGE_API_KEY
-        .ok_or_else(|| "未配置 CurseForge API Key（项目根 .env 的 ELYTRA_CURSEFORGE_API_KEY），无法使用 CurseForge 来源".to_string())?;
+    let key = api_key()?;
     let mut all: Vec<(&str, String)> = vec![("gameId", CURSEFORGE_GAME_ID.to_string())];
     all.extend_from_slice(params);
     let urls: Vec<String> = api_urls(ApiPlatform::CurseForge, path, &all)?;
     get_json_multi(&urls, |u| {
-        http().get(u.to_string()).header("x-api-key", key)
+        http().get(u.to_string()).header("x-api-key", key.as_str())
     })
     .await
 }
@@ -109,14 +181,13 @@ const CF_BATCH_TIMEOUT_SECS: u64 = 30;
 
 /// CurseForge 批量换链 `POST /v1/mods/files` → data 数组（id/fileName/downloadUrl/hashes/fileLength）；整合包清单只有 (projectID, fileID) 数字引用，必须经此换直链与 sha1。
 pub(crate) async fn curseforge_files(file_ids: &[i64]) -> Result<Vec<serde_json::Value>, String> {
-    let key = constants::CURSEFORGE_API_KEY
-        .ok_or_else(|| "未配置 CurseForge API Key（项目根 .env 的 ELYTRA_CURSEFORGE_API_KEY），无法使用 CurseForge 来源".to_string())?;
+    let key = api_key()?;
     let body = serde_json::json!({ "fileIds": file_ids });
     let urls = api_routes(ApiPlatform::CurseForge, "/mods/files");
     let json = post_json_multi(
         &urls,
         &body,
-        |u| http().post(u).header("x-api-key", key),
+        |u| http().post(u).header("x-api-key", key.as_str()),
         CF_BATCH_TIMEOUT_SECS,
         CF_BATCH_TIMEOUT_SECS,
     )
@@ -314,11 +385,33 @@ mod tests {
     /// CurseForge API 对并发请求敏感（并发测试会偶发连接失败），串行化。
     static CF_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-    /// CF 需 key：无 key 的环境跳过，本机（.env 已配置）走真实请求。
+    #[test]
+    fn curseforge_key_format_validation() {
+        let valid = format!("$2a$10${}", "a".repeat(53));
+        assert_eq!(valid.len(), 60);
+        assert!(validate_curseforge_key(&valid).is_ok());
+        assert!(validate_curseforge_key("").is_err());
+        assert!(validate_curseforge_key("$2a$10$short").is_err());
+        assert!(validate_curseforge_key(&format!("$2b$10${}", "a".repeat(53))).is_err());
+    }
+
+    #[test]
+    fn user_key_overrides_builtin_and_clears() {
+        let before = curseforge_key_source();
+        clear_curseforge_key().expect("清理应成功");
+        let valid = format!("$2a$10${}", "b".repeat(53));
+        set_curseforge_key(&valid).expect("写入应成功");
+        assert_eq!(curseforge_key_source(), CurseForgeKeySource::User);
+        assert_eq!(super::api_key().expect("用户 key 应可用"), valid);
+        clear_curseforge_key().expect("清除应成功");
+        assert_eq!(curseforge_key_source(), before);
+    }
+
+    /// CF 需 key：无 key 的环境跳过，有用户或内置 key 时走真实请求。
     #[tokio::test]
     async fn search_curseforge_works() {
         let _g = CF_LOCK.lock().await;
-        if constants::CURSEFORGE_API_KEY.is_none() {
+        if curseforge_key_source() == CurseForgeKeySource::None {
             eprintln!("跳过: 未配置 CurseForge API Key");
             return;
         }
@@ -338,7 +431,7 @@ mod tests {
     #[tokio::test]
     async fn curseforge_full_name_finds_jei() {
         let _g = CF_LOCK.lock().await;
-        if constants::CURSEFORGE_API_KEY.is_none() {
+        if curseforge_key_source() == CurseForgeKeySource::None {
             eprintln!("跳过: 未配置 CurseForge API Key");
             return;
         }

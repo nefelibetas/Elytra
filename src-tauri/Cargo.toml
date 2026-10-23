@@ -4,7 +4,12 @@ version = "1.0.0"
 description = "A modern, lightweight Minecraft launcher built with Tauri and Rust, providing a great option for Linux and cross-platform users."
 authors = ["BridgeFishDev"]
 edition = "2021"
-license = "GPL-3.0"
+license = "GPL-3.0-only"
+repository = "https://github.com/nefelibetas/Elytra"
+homepage = "https://github.com/nefelibetas/Elytra"
+readme = "../README.md"
+keywords = ["minecraft", "launcher", "tauri", "modrinth", "curseforge"]
+categories = ["games", "gui"]
 
 # 显式默认 bin：`src/bin/gen_ts.rs` 让包内出现两个 bin（elytra / gen_ts），
 # 而 tauri-cli 的 dev 只发 `cargo run --no-default-features`（不带 --bin），

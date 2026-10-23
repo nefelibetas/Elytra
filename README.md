@@ -25,13 +25,13 @@
 ## 🖼️ 预览
 
 <p align="center">
-  <img src="docs/screenshots/01-launch.png" width="840" alt="启动页" />
-  <br /><sub><b>启动页</b> · 版本卡片与一键启动</sub>
+  <img src="docs/screenshots/01-launch.png" width="840" alt="启动" />
+  <br /><sub><b>启动</b> · 账户、版本卡片与启动入口</sub>
 </p>
 
 <p align="center">
   <img src="docs/screenshots/02-download.png" width="840" alt="资源中心" />
-  <br /><sub><b>资源中心</b> · Mod / 整合包 / 资源包 / 光影 / 数据包 / 地图 搜索与安装</sub>
+  <br /><sub><b>资源中心</b> · 原版游戏与社区资源（Mod / 整合包 / 数据包 / 资源包 / 光影包 / 地图存档）</sub>
 </p>
 
 <p align="center">
@@ -40,18 +40,18 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/04-skin-wardrobe.png" width="840" alt="皮肤衣柜" />
-  <br /><sub><b>皮肤衣柜</b> · 3D 全身预览与皮肤 / 披风管理</sub>
+  <img src="docs/screenshots/04-skin-wardrobe.png" width="840" alt="衣柜" />
+  <br /><sub><b>衣柜</b> · 3D 全身预览与皮肤 / 披风管理（仅正版账号）</sub>
 </p>
 
 <p align="center">
   <img src="docs/screenshots/05-skin-painter.png" width="840" alt="皮肤绘画器" />
-  <br /><sub><b>皮肤绘画器</b> · 展开图逐像素 + 3D 直绘</sub>
+  <br /><sub><b>皮肤绘画器</b> · 展开图逐像素 + 3D 直绘（设置 → 工具）</sub>
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/06-online.png" width="840" alt="局域网联机" />
-  <br /><sub><b>局域网联机</b> · 房间码互连</sub>
+  <img src="docs/screenshots/06-online.png" width="840" alt="联机" />
+  <br /><sub><b>联机</b> · 启动页右栏房间码互连</sub>
 </p>
 
 ## ✨ 功能
@@ -62,7 +62,7 @@
 - 🧩 **ModLoader**：Fabric / Quilt / Forge / NeoForge / OptiFine 一键安装；纯原版 OptiFine 自动合并为自包含版本
 - 🧰 **缺失文件修复**：扫描版本安装完整性并一键补齐
 - ☕ **JDK 管理**：本机 JDK 扫描 + managed runtime 自动下载（Mojang → Azul 双源回退）
-- 📥 **内容下载**：Mod / 整合包 / 数据包 / 资源包 / 光影包 / 地图存档在线搜索与安装（Modrinth · CurseForge 双源），整合包支持本地导入（`.mrpack` / `.zip`）
+- 📥 **内容下载**：Mod / 整合包 / 数据包 / 资源包 / 光影包 / 地图存档在线搜索与安装（Modrinth · CurseForge 双源），整合包支持本地导入（`.mrpack` / `.zip`）；CurseForge Key 可在设置中覆盖内置 Key
 - 🕸️ **Mod 依赖解析**：安装前展示依赖链，逐项一键装入对应版本
 
 ### 🗂️ 内容管理
@@ -128,6 +128,8 @@
 ## 🛠️ 开发
 
 > 工具链版本以 `mise.toml` 为唯一来源（node / pnpm / rust / protoc）；编译联机功能（EasyTier）另需 libclang（LLVM）。包管理器必须使用 pnpm。
+>
+> 不使用 mise 时：安装 Node.js 24 与 pnpm 12（`npm install -g pnpm@12` 或 Corepack），Rust / protoc 版本以 `mise.toml` 为准。
 
 ```bash
 mise install          # 按 mise.toml 安装工具链
@@ -144,6 +146,8 @@ cargo test --test online_diag                      # 联机集成测试（双实
 cargo test --test tool_download                    # 工具箱下载器集成测试（本地 HTTP 服务驱动）
 ```
 
+> 可选构建期配置：复制 `.env.example` 为 `.env`（已被 gitignore），按需填写 CurseForge API Key（也可在「设置 → 下载 → CurseForge Key」覆盖）；微软 OAuth Client ID 已内置公开常量，无需配置。留空不影响编译，仅 CurseForge 来源不可用。
+
 > ℹ️ 少数网络测试（`fetch_asset_index_end_to_end`、`count_assets_all_end_to_end`、`global_client_uses_system_proxy_when_enabled`）走真实外网单发小请求，离线环境会失败或跳过；`bmclapi_optifine_real_download` 标了 `#[ignore]` 默认不跑。
 
 ## 📁 结构
@@ -158,7 +162,7 @@ cargo test --test tool_download                    # 工具箱下载器集成测
 
 ### 🦀 后端 `src-tauri/src/`
 
-- **`commands/`** — 命令胶水层：134 个 `#[tauri::command]`，只做参数展平与领域调用
+- **`commands/`** — 命令胶水层：137 个 `#[tauri::command]`，只做参数展平与领域调用
 - **`downloader/`** — 纯传输层：多源 fetch / 并发批处理 / 源探测 / 分段下载 / 路径互斥
 - **`game/`** — 内容与装配：版本元数据 / 资源 / ModLoader 安装 / 社区资源 / 整合包 / Mod 更新
 - **`task/`** — 任务编排与事件派发、SQLite 快照与崩溃恢复
@@ -174,7 +178,7 @@ cargo test --test tool_download                    # 工具箱下载器集成测
 
 - **`docs/`** — 图标与预览图
 - **`AGENTS.md`** — 架构分层与编码约定
-- **`LICENSE`** — GPL-3.0
+- **`LICENSE`** — GPL-3.0-only
 
 依赖方向：`commands` → 领域层（`game/` `task/` `launcher/` …）→ `downloader/`（纯传输层，不依赖任何上层）。
 
@@ -190,10 +194,33 @@ cargo test --test tool_download                    # 工具箱下载器集成测
 - 📁 游戏目录：Windows 默认为启动器目录旁（便携，整目录拷走即迁移）；安装目录只读（如 MSI 装到 `Program Files`）或 macOS / Linux 时需手动指定
 - 🧪 开发与测试进程的配置在 exe 旁 `Elytra/`，与正式安装隔离
 
+## 🔒 隐私与网络
+
+- **无遥测**：不包含统计/分析 SDK，不向作者服务器上传使用数据、崩溃报告或账号信息。
+- **会访问的服务**：微软 / Mojang（登录、档案、皮肤、版本元数据与资源）、BMCLAPI / MCIM（国内镜像）、Modrinth / CurseForge（社区资源与依赖）、Azul / Adoptium（JDK runtime）、EasyTier 协调节点（仅联机时）、用户配置的第三方皮肤站（仅启用时）、用户填写的服务器地址（仅服务器状态查询时）。
+- **本地数据**：`secrets.bin` 存微软 refresh token、第三方皮肤站凭据与用户填写的 CurseForge Key 等敏感数据——Windows 用 DPAPI，macOS / Linux 优先用系统钥匙串 + ChaCha20-Poly1305；系统钥匙串不可用时降级为明文，仅靠文件权限保护。`Settings.toml` 是明文配置（游戏目录、下载设置等）；`tasks.db` 存任务快照；普通日志可能含本地路径与请求 URL。
+- **不会自动上传**：游戏目录、存档、Mod、皮肤与日志不会自动上传；崩溃日志打包仅在用户主动执行自动任务时生成到本地。
+- **第三方服务**：上述服务受各自隐私政策约束；本项目不控制其数据处理方式。
+
+## ⚠️ 已知限制
+
+| 场景 | 限制 |
+|---|---|
+| Fabric/Quilt + OptiFine | 依赖 OptiFabric 桥接，兼容性有限；1.21+ 组合隐藏并报错。建议 Sodium + Iris，或原版/Forge + OptiFine。 |
+| 跨网联机 | 依赖 EasyTier 协调服务器（可在设置中更换）；MC 26.2 离线账号需走「局域网发现」，手动填 IP 可能报无效会话。 |
+| macOS | 未公证签名，首次打开需右键 → 打开；需要 macOS 13+。 |
+| Windows 卸载 | MSI 不清理 `%APPDATA%\Elytra`；NSIS 默认保留应用数据；两者都不会删除游戏目录。 |
+| Windows 便携版 | 依赖系统 WebView2（Windows 10/11 通常已内置）。 |
+| Linux | 构建于 Ubuntu 22.04（glibc 2.35+）；便携版依赖系统 WebKitGTK。 |
+| 皮肤衣柜 | 仅正版微软账号可进入；离线模式使用固定默认皮肤。 |
+| CurseForge | 需要有效的 CurseForge API Key；内置 Key 失效时可在「设置 → 下载 → CurseForge Key」填入自己的 Key，未配置时该来源不可用，Modrinth 不受影响。 |
+| OptiFine | 官方无公开 API，部分版本/组合可能下载或安装失败。 |
+
 ## 🤝 贡献与反馈
 
-- **问题反馈**：请在 [Issues](https://github.com/nefelibetas/Elytra/issues) 提交，并附启动器日志（「设置 → 启动器日志」可打开所在目录）、启动器版本号与复现步骤
-- **代码贡献**：请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)——开发环境、提交前必过的检查、分支与提交规范都写在那里
+- **问题反馈**：请在 [Issues](https://github.com/nefelibetas/Elytra/issues) 提交，并附启动器日志（「设置 → 启动器日志」可打开所在目录）、启动器版本号与复现步骤；可使用仓库内的 Issue 模板
+- **代码贡献**：请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)（[English](CONTRIBUTING-en-US.md)）——开发环境、提交前必过的检查、分支与提交规范都写在那里
+- **安全问题**：请勿公开提交，报告方式见 [SECURITY.md](SECURITY.md)
 - 架构分层与编码约定详见 [AGENTS.md](AGENTS.md)
 
 ## 🙏 致谢
@@ -206,7 +233,7 @@ cargo test --test tool_download                    # 工具箱下载器集成测
 - [Modrinth](https://modrinth.com/) · [CurseForge](https://www.curseforge.com/minecraft) · [MC 百科](https://www.mcmod.cn/) — 社区资源与条目数据
 - [Mojang](https://www.minecraft.net/) · [Azul](https://www.azul.com/downloads/) — 游戏元数据与 JDK runtime
 - Fabric · Quilt · Forge · NeoForge — 各 ModLoader 的 Maven 元数据
-- [HMCL](https://github.com/HMCL-dev/HMCL) — 同类开源启动器，本项目 GPL-3.0 许可证与之对齐
+- [HMCL](https://github.com/HMCL-dev/HMCL) — 同类开源启动器，本项目 GPL-3.0-only 许可证与之对齐
 - [PCL2](https://github.com/Meloong-Git/PCL) — 界面布局设计参考；中文内容搜索内嵌其 `WikiEntries.txt` 快照（见[第三方声明](THIRD-PARTY-NOTICES.md)）
 
 ## ⚖️ 免责声明
@@ -217,6 +244,6 @@ Elytra 是第三方开源项目，与 Mojang Studios / Microsoft 无任何关联
 
 ## 📄 许可证
 
-基于 [GPL-3.0](LICENSE) 许可证开源。
+基于 [GPL-3.0-only](LICENSE) 许可证开源。Copyright (C) 2026 BridgeFishDev。
 
-随仓库分发的第三方内容与数据（PCL WikiEntries 快照、ModLoader 图标、Minecraft 素材）另行声明，见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+随仓库分发的第三方内容与数据（PCL WikiEntries 快照、ModLoader 图标、Minecraft 素材与默认皮肤）另行声明，见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。

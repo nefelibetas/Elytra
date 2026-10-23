@@ -4,7 +4,7 @@ name: Release
 # 工具链版本一律取自 mise.toml（node / pnpm / rust / protoc），本文件不写死版本号。
 #
 # 三个 job：
-#   check   验证门（Windows）：vue-tsc + cargo check / clippy -D warnings / test（串行）——与本地门一致
+#   check   验证门（Windows）：vue-tsc + lint:css + i18n + cargo fmt --check + cargo check / clippy -D warnings / test（串行）——与本地门一致
 #   build   三平台并行打包：
 #             Windows  便携 zip + NSIS + MSI
 #             macOS    universal dmg（ad-hoc 签名：Apple Silicon 上未签名二进制无法启动）
@@ -50,6 +50,11 @@ jobs:
         run: npx vue-tsc --noEmit
       - name: CSS 兼容性检查（Chrome 111 / Safari 16.4 基线）
         run: pnpm lint:css
+      - name: 语言包校验
+        run: pnpm i18n:check
+      - name: Rust 格式检查
+        working-directory: src-tauri
+        run: cargo fmt --check
       - name: cargo check
         working-directory: src-tauri
         run: cargo check --lib
@@ -120,17 +125,14 @@ jobs:
         shell: bash
         env:
           ELYTRA_CURSEFORGE_API_KEY: ${{ secrets.ELYTRA_CURSEFORGE_API_KEY }}
-          ELYTRA_MS_CLIENT_ID: ${{ secrets.ELYTRA_MS_CLIENT_ID }}
         run: |
           missing=""
           [ -n "$ELYTRA_CURSEFORGE_API_KEY" ] || missing="$missing ELYTRA_CURSEFORGE_API_KEY"
-          [ -n "$ELYTRA_MS_CLIENT_ID" ] || missing="$missing ELYTRA_MS_CLIENT_ID"
           if [ -n "$missing" ]; then
-            echo "::error::缺少 secrets:$missing —— .env 缺失不会让构建失败，但产物会静默降级（CurseForge 源不可用、微软登录不可用）"
+            echo "::error::缺少 secrets:$missing —— .env 缺失不会让构建失败，但 CurseForge 源会静默降级"
             exit 1
           fi
-          printf 'ELYTRA_CURSEFORGE_API_KEY=%s\nELYTRA_MS_CLIENT_ID=%s\n' \
-            "$ELYTRA_CURSEFORGE_API_KEY" "$ELYTRA_MS_CLIENT_ID" > .env
+          printf 'ELYTRA_CURSEFORGE_API_KEY=%s\n' "$ELYTRA_CURSEFORGE_API_KEY" > .env
 
       - name: 校验版本号（三处一致 + 与 tag 一致）
         id: ver
@@ -214,9 +216,19 @@ jobs:
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v5
+      - name: 应用版本 Release notes（存在则覆盖自动生成）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          NOTES="docs/release-notes/${GITHUB_REF_NAME}.md"
+          if [ -f "$NOTES" ]; then
+            gh release edit "$GITHUB_REF_NAME" --notes-file "$NOTES" -R "$GITHUB_REPOSITORY"
+          else
+            echo "未找到 $NOTES，保留 --generate-notes 自动正文"
+          fi
       - name: 取消草稿（验证门与三平台产物都通过才对外可见）
         env:
           GH_TOKEN: ${{ github.token }}
-        # 本 job 不 checkout，gh 无法从 git 推断仓库 → 必须显式 -R，否则回退执行 git 报
-        # "fatal: not a git repository"（build 里的 gh 调用有 checkout 故不需要）
         run: gh release edit "$GITHUB_REF_NAME" --draft=false -R "$GITHUB_REPOSITORY"

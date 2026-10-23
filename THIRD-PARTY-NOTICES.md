@@ -1,8 +1,8 @@
 # 第三方声明 / Third-Party Notices
 
-本项目的 [GPL-3.0 许可证](LICENSE) 覆盖 Elytra 自身代码；下列第三方内容与数据随本仓库分发，权利归各自所有者。
+本项目的 [GPL-3.0-only 许可证](LICENSE) 覆盖 Elytra 自身代码；下列第三方内容与数据随本仓库分发，权利归各自所有者。
 
-The project's [GPL-3.0 license](LICENSE) covers Elytra's own code. The third-party content and data below are distributed with this repository and remain the property of their respective owners.
+The project's [GPL-3.0-only license](LICENSE) covers Elytra's own code; the third-party content and data below are distributed with this repository and remain the property of their respective owners.
 
 ---
 
@@ -30,6 +30,6 @@ The Fabric / Quilt / Forge / NeoForge / OptiFine icons under `src/assets/` are t
 
 ## Minecraft 素材 / Minecraft assets
 
-`src/assets/` 中的方块与物品图像为 Minecraft 素材衍生，版权归 Mojang Studios 所有，仅用于界面装饰；本项目与 Mojang Studios / Microsoft 无关联。
+`src/assets/` 中的方块与物品图像，以及 `src-tauri/resources/steve.png`、`src-tauri/resources/alex.png`（Mojang 官方默认皮肤）均为 Minecraft 素材，版权归 Mojang Studios 所有，仅用于界面装饰与离线模式默认皮肤；本项目与 Mojang Studios / Microsoft 无关联。
 
-Block and item images under `src/assets/` are derived from Minecraft assets, copyright Mojang Studios, used for decorative purposes only. This project is not affiliated with Mojang Studios or Microsoft.
+Block and item images under `src/assets/`, plus the official default skins `src-tauri/resources/steve.png` and `src-tauri/resources/alex.png`, are Minecraft assets copyright Mojang Studios, used for decorative purposes and as default offline skins only. This project is not affiliated with Mojang Studios or Microsoft.

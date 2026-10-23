@@ -34,3 +34,18 @@ pub async fn get_community_details(
 ) -> Result<Vec<community::CommunityDependencyItem>, String> {
     community::get_community_details(&source, &ids, translate.unwrap_or(true)).await
 }
+
+#[tauri::command]
+pub fn get_curseforge_key_source() -> community::CurseForgeKeySource {
+    community::curseforge_key_source()
+}
+
+#[tauri::command]
+pub fn set_curseforge_key(key: String) -> Result<(), String> {
+    community::set_curseforge_key(&key)
+}
+
+#[tauri::command]
+pub fn clear_curseforge_key() -> Result<(), String> {
+    community::clear_curseforge_key()
+}

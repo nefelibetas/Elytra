@@ -3,13 +3,18 @@
 import { computed, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { ChevronDown } from "@lucide/vue";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import DropSelect, { type SelOption } from "../common/DropSelect.vue";
 import CheckToggle from "../common/CheckToggle.vue";
 import { fmtSpeed } from "../../utils/format";
+import { errMsg } from "../../utils/error";
+import { showToast } from "../../utils/toast";
 import {
   dlGameMode, dlCommunityMode, dlConcurrency, dlMaxSpeed,
   dlJdkMode, dlNetworkMode, dlTranslateMode,
   dlError, dlShowReleaseOnly,
+  dlCurseforgeKeySource, dlCurseforgeKeyInput, dlCurseforgeKeySaving,
+  saveCurseforgeKey, clearCurseforgeKey,
   sourceModeOptions, communitySourceOptions,
   jdkSourceOptions,
   networkModeOptions,
@@ -38,8 +43,41 @@ onMounted(loadDownloadConfig);
 /** 主开关 custom 态文案（custom 值不在选项中，经 placeholder 呈现）。 */
 const masterPlaceholder = computed(() => t("settings.download.masterCustom"));
 
+const curseforgeKeyPlaceholder = computed(() => {
+  switch (dlCurseforgeKeySource.value) {
+    case "user":
+      return t("settings.download.curseforgeKey.placeholderUser");
+    case "builtIn":
+      return t("settings.download.curseforgeKey.placeholderBuiltIn");
+    default:
+      return t("settings.download.curseforgeKey.placeholderNone");
+  }
+});
+
 function onMaster(v: string) {
   setSourceMaster(v as Parameters<typeof setSourceMaster>[0]);
+}
+
+async function saveCurseforgeKeyFromInput() {
+  try {
+    await saveCurseforgeKey(dlCurseforgeKeyInput.value);
+    showToast(t("settings.download.curseforgeKey.saved"));
+  } catch (e) {
+    showToast(errMsg(e));
+  }
+}
+
+async function clearCurseforgeKeyFromUi() {
+  try {
+    await clearCurseforgeKey();
+    showToast(t("settings.download.curseforgeKey.cleared"));
+  } catch (e) {
+    showToast(errMsg(e));
+  }
+}
+
+function openCurseforgeConsole() {
+  void openUrl("https://console.curseforge.com/");
 }
 </script>
 
@@ -111,6 +149,45 @@ function onMaster(v: string) {
       </div>
     </Transition>
 
+    <!-- CurseForge Key：独立行，自定义 key 优先于构建期内置 key -->
+    <div class="dl-row dl-row-key">
+      <span class="dl-label">{{ t("settings.download.curseforgeKey.label") }}</span>
+      <div class="dl-field dl-key-field">
+        <input
+          v-model="dlCurseforgeKeyInput"
+          class="dl-key-input"
+          type="password"
+          autocomplete="off"
+          spellcheck="false"
+          :placeholder="curseforgeKeyPlaceholder"
+          @keydown.enter="saveCurseforgeKeyFromInput"
+        />
+        <button
+          type="button"
+          class="dl-key-btn"
+          :disabled="dlCurseforgeKeySaving || !dlCurseforgeKeyInput.trim()"
+          @click="saveCurseforgeKeyFromInput"
+        >
+          {{ t("settings.download.curseforgeKey.save") }}
+        </button>
+        <button
+          v-if="dlCurseforgeKeySource === 'user'"
+          type="button"
+          class="dl-key-btn ghost"
+          :disabled="dlCurseforgeKeySaving"
+          @click="clearCurseforgeKeyFromUi"
+        >
+          {{ t("settings.download.curseforgeKey.clear") }}
+        </button>
+      </div>
+    </div>
+    <div class="dl-key-hint">
+      <span>{{ t("settings.download.curseforgeKey.hint") }}</span>
+      <button type="button" class="dl-link" @click="openCurseforgeConsole">
+        {{ t("settings.download.curseforgeKey.getKey") }}
+      </button>
+    </div>
+
     <!-- 网络代理：自动 / 强制系统代理 / 直连（TUN 由网络层接管） -->
     <div class="dl-row">
       <span class="dl-label">{{ t("settings.download.network") }}</span>
@@ -136,7 +213,10 @@ function onMaster(v: string) {
     </div>
 
     <div class="dl-row">
-      <CheckToggle v-model="dlShowReleaseOnly" @change="saveDownloadConfig">{{ t("settings.download.releaseOnly") }}</CheckToggle>
+      <span class="dl-label">{{ t("settings.download.releaseOnlyLabel") }}</span>
+      <div class="dl-field">
+        <CheckToggle v-model="dlShowReleaseOnly" @change="saveDownloadConfig">{{ t("settings.download.releaseOnly") }}</CheckToggle>
+      </div>
     </div>
 
     <!-- 最大线程数：官方源并发；镜像模式固定 16，隐藏该行 -->
@@ -239,10 +319,14 @@ function onMaster(v: string) {
 }
 
 .dl-label {
-  flex: 0 0 88px;
+  flex: 0 0 112px;
   font-size: 13.5px;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.dl-row-key .dl-label {
+  white-space: nowrap;
 }
 
 .dl-range {
@@ -259,6 +343,73 @@ function onMaster(v: string) {
   white-space: nowrap;
 }
 
+.dl-key-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dl-key-input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 9px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--surface-input, var(--surface-card));
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  outline: none;
+}
+.dl-key-input:focus {
+  border-color: var(--color-brand);
+}
+
+.dl-key-btn {
+  flex: 0 0 auto;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--surface-hover);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.dl-key-btn:hover:not(:disabled) {
+  border-color: var(--color-brand);
+}
+.dl-key-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.dl-key-btn.ghost {
+  color: var(--text-secondary);
+  background: transparent;
+}
+
+.dl-key-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -2px 0 4px 126px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.dl-link {
+  padding: 0;
+  font-size: inherit;
+  color: var(--color-brand);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.dl-link:hover {
+  text-decoration: underline;
+}
+
 .dl-error {
   margin-top: 8px;
   font-size: 12px;
@@ -266,7 +417,7 @@ function onMaster(v: string) {
 }
 
 .dl-note {
-  margin: -4px 0 4px 102px;
+  margin: -4px 0 4px 126px;
   font-size: 11px;
   color: var(--text-tertiary);
   line-height: 1.5;

@@ -11,7 +11,13 @@ fn main() {
                 continue;
             }
             if let Some((key, value)) = line.split_once('=') {
-                println!("cargo:rustc-env={}={}", key.trim(), value.trim());
+                let key = key.trim();
+                let value = value.trim();
+                // 空值视为未配置，避免复制 .env.example 后把空字符串注入 option_env!
+                if key.is_empty() || value.is_empty() {
+                    continue;
+                }
+                println!("cargo:rustc-env={}={}", key, value);
                 count += 1;
             }
         }

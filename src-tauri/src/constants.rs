@@ -20,14 +20,14 @@ pub const UA_MOJANG_API: &str = "Elytra Launcher/1.0.0 (+https://github.com/nefe
 /// 前端 Settings.vue 的 MIRROR_CONCURRENCY 需与此同步。
 pub const MIRROR_CONCURRENCY: usize = 16;
 
-/// CurseForge API Key（构建时从项目根 `.env` 注入，不提交 git）。
+/// CurseForge API Key（构建期从项目根 `.env` 注入，不提交 git）。
 /// 所有 api.curseforge.com 与 forgecdn.net 请求（含文件下载）必须携带 x-api-key；
-/// 未配置为 None，此时 CurseForge 源不可用。
+/// 运行时优先使用用户在设置中填写的 key，两者都没有时 CurseForge 源不可用。
 pub const CURSEFORGE_API_KEY: Option<&str> = option_env!("ELYTRA_CURSEFORGE_API_KEY");
 
-/// 微软 OAuth 客户端 ID（构建时从项目根 `.env` 注入，不提交 git）。
-/// 未配置为 None，此时微软正版登录返回 NotConfigured。
-pub const MS_CLIENT_ID: Option<&str> = option_env!("ELYTRA_MS_CLIENT_ID");
+/// 微软 OAuth 公共客户端 ID（公开信息，不是密钥；回调固定 `http://localhost:27205`）。
+/// 如需使用自己的 Azure 应用，改这里并同步注册回调地址。
+pub const MS_CLIENT_ID: &str = "eef6b0c0-8cbb-4091-84d0-b59fa0600dba";
 
 /// 配置目录名（exe 旁）
 pub const CONFIG_DIR: &str = "Elytra";

@@ -10,10 +10,9 @@ use url::form_urlencoded::Serializer;
 pub const CALLBACK_PORT: u16 = 27205;
 pub const REDIRECT_URI: &str = "http://localhost:27205";
 
-/// 微软 OAuth 客户端 ID（构建时从 .env 注入，见 constants::MS_CLIENT_ID）；
-/// 未配置 .env / 未重编译时返回 NotConfigured。
-fn ms_client_id() -> Result<&'static str, MsError> {
-    constants::MS_CLIENT_ID.ok_or(MsError::NotConfigured)
+/// 微软 OAuth 公共客户端 ID（见 constants::MS_CLIENT_ID）。
+fn ms_client_id() -> &'static str {
+    constants::MS_CLIENT_ID
 }
 
 // ── 端点 ─────────────────────────────────────────────────────────
@@ -41,7 +40,6 @@ fn xsts_error_message(xerr: i64) -> &'static str {
 
 #[derive(Debug)]
 pub enum MsError {
-    NotConfigured,
     /// OAuth 授权阶段失败（含 error_description）
     OAuth(String),
     /// XSTS 阶段失败（XErr 码）
@@ -62,7 +60,6 @@ impl std::fmt::Display for MsError {
     /// 第一行 = 友好短提示（前端弹窗只显示这行）；换行后 = 详细技术信息（复制按钮复制全文）。
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MsError::NotConfigured => write!(f, "Azure 客户端 ID 未配置"),
             MsError::OAuth(e) => write!(f, "微软登录失败\n{e}"),
             MsError::Xsts(x) => write!(f, "{}", xsts_error_message(*x)),
             MsError::NoPurchase => write!(f, "该账号未购买 Minecraft"),
@@ -141,7 +138,7 @@ fn urlencode(s: &str) -> String {
 
 /// 构建授权 URL；`prompt=select_account` 总是显示微软账号选择器（允许切换账号）。
 pub fn build_auth_url(state: &str, pkce: &Pkce) -> Result<String, MsError> {
-    let client_id = ms_client_id()?;
+    let client_id = ms_client_id();
     Ok(format!(
         "{AUTH_URL}?client_id={}&response_type=code&redirect_uri={}&response_mode=query&scope={}&state={}&code_challenge={}&code_challenge_method=S256&prompt=select_account",
         urlencode(client_id),
@@ -193,7 +190,7 @@ async fn exchange_code(
     code: &str,
     verifier: &str,
 ) -> Result<MsTokens, MsError> {
-    let client_id = ms_client_id()?;
+    let client_id = ms_client_id();
     let resp = client
         .post(TOKEN_URL)
         .header("Content-Type", "application/x-www-form-urlencoded")
@@ -212,7 +209,7 @@ async fn exchange_code(
 }
 
 async fn refresh_ms(client: &reqwest::Client, refresh_token: &str) -> Result<MsTokens, MsError> {
-    let client_id = ms_client_id()?;
+    let client_id = ms_client_id();
     let resp = client
         .post(REFRESH_URL)
         .header("Content-Type", "application/x-www-form-urlencoded")
@@ -502,11 +499,9 @@ mod tests {
     #[test]
     fn test_build_auth_url() {
         let pkce = generate_pkce().unwrap();
-        // 依赖 .env 注入的 MS_CLIENT_ID;无 .env 的 CI 环境跳过
-        let Ok(url) = build_auth_url("st8", &pkce) else {
-            return;
-        };
+        let url = build_auth_url("st8", &pkce).expect("授权 URL 应可构建");
         assert!(url.starts_with(AUTH_URL));
+        assert!(url.contains(constants::MS_CLIENT_ID));
         assert!(url.contains("response_type=code"));
         assert!(url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A27205"));
         assert!(url.contains("scope=XboxLive.signin%20offline_access"));

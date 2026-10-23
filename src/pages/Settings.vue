@@ -53,7 +53,7 @@ const { t } = useI18n();
         <SettingsOnline />
       </div>
 
-      <div v-else-if="settingsTab === 'tools'" key="tools" class="stg-page">
+      <div v-else-if="settingsTab === 'tools'" key="tools" class="stg-page stg-page-fill">
         <SettingsTools />
       </div>
 
@@ -75,5 +75,11 @@ const { t } = useI18n();
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+/* 工具详情需要确定高度：SkinPainter 的 canvas 依赖父级 flex 高度 */
+.stg-page-fill {
+  height: 100%;
+  min-height: 0;
 }
 </style>

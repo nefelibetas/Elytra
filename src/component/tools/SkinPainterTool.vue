@@ -130,6 +130,9 @@ const hoverPick = ref<{ face: PickFace; x: number; y: number } | null>(null);
 let stroking = false;
 /** 视口隐藏期间被请求的「适应窗口」（见 fitToViewport）。 */
 let pendingFit = false;
+/** 最近一次 fitToViewport 时的视口尺寸；模式切换后尺寸变化才重新适配。 */
+let fittedW = 0;
+let fittedH = 0;
 /** 笔画上一个命中的面（同面内连线；跨面则直接落新点）。 */
 let strokeFace: PickFace | null = null;
 let strokeLast: { x: number; y: number } | null = null;
@@ -489,6 +492,8 @@ function fitToViewport() {
   view.scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, Math.floor(side)));
   view.x = (box.clientWidth - SKIN_SIZE * view.scale) / 2;
   view.y = (box.clientHeight - SKIN_SIZE * view.scale) / 2;
+  fittedW = box.clientWidth;
+  fittedH = box.clientHeight;
   drawEditor();
 }
 
@@ -804,7 +809,9 @@ onMounted(() => {
   if (!skinEditor.ready) newEditorCanvas();
 
   ro = new ResizeObserver(() => {
-    if (pendingFit) fitToViewport();
+    const box = viewport.value;
+    const resized = !!box && (box.clientWidth !== fittedW || box.clientHeight !== fittedH);
+    if (pendingFit || (mode.value === "2d" && resized)) fitToViewport();
     drawEditor();
     drawPreview();
   });
@@ -844,8 +851,10 @@ watch(mode, () => {
   lastPointer = null;
   hoverPick.value = null;
   void nextTick(() => {
-    if (pendingFit) fitToViewport();
-    drawEditor();
+    const box = viewport.value;
+    const resized = !!box && (box.clientWidth !== fittedW || box.clientHeight !== fittedH);
+    if (pendingFit || (mode.value === "2d" && resized)) fitToViewport();
+    else drawEditor();
     drawPreview();
   });
 });
@@ -868,17 +877,6 @@ watch(mode, () => {
             @click="mode = m.value"
           >
             {{ t(m.labelKey) }}
-          </button>
-        </div>
-        <!-- 图层：MC 1.8+ 双层结构，指定本次落笔层（否则外层永远画不到） -->
-        <div v-if="mode === '3d'" class="pp-kind">
-          <button
-            v-for="l in LAYER_OPTIONS"
-            :key="l.value"
-            :class="{ on: String(paintLayer) === l.value }"
-            @click="paintLayer = Number(l.value) as 0 | 1"
-          >
-            {{ t(l.labelKey) }}
           </button>
         </div>
         <!-- 模型：slim 手臂贴图仅 3 列宽，按 classic 采样会错位 -->
@@ -959,6 +957,18 @@ watch(mode, () => {
 
         <!-- 右侧控件列（3D 下与预览并排，避免占据高度压缩预览） -->
         <div class="pp-ctl-col">
+          <!-- 图层：MC 1.8+ 双层结构，指定本次落笔层（否则外层永远画不到） -->
+          <div v-if="mode === '3d'" class="pp-kind pp-layer-kind">
+            <button
+              v-for="l in LAYER_OPTIONS"
+              :key="l.value"
+              :class="{ on: String(paintLayer) === l.value }"
+              @click="paintLayer = Number(l.value) as 0 | 1"
+            >
+              {{ t(l.labelKey) }}
+            </button>
+          </div>
+
           <div class="pp-anim">
             <button
               v-for="a in ANIM_OPTIONS"
@@ -1094,6 +1104,8 @@ watch(mode, () => {
 .painter {
   box-sizing: border-box;
   height: 100%;
+  min-height: 0;
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -1155,7 +1167,6 @@ watch(mode, () => {
 .pp-kind button.on {
   color: var(--color-brand);
   background-color: var(--surface-card);
-  font-weight: 600;
 }
 
 .pp-ghost,
@@ -1302,6 +1313,17 @@ watch(mode, () => {
   overflow-y: auto;
 }
 
+.pp-layer-kind {
+  flex: none;
+  width: 100%;
+  box-sizing: border-box;
+}
+.pp-layer-kind button {
+  flex: 1;
+  min-width: 0;
+  padding: 0 4px;
+}
+
 /* 窄栏里动画按钮竖排，避免平分 118px 挤成一团 */
 .mode-3d .pp-anim {
   flex-direction: column;
@@ -1439,7 +1461,6 @@ watch(mode, () => {
 .pp-anim-btn.on {
   color: var(--color-brand);
   background-color: var(--surface-card);
-  font-weight: 600;
 }
 
 /* ===== 底部视图控制条 ===== */

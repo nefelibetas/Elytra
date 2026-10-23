@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 使用文档与常见问题
+    url: https://github.com/nefelibetas/Elytra#readme
+    about: 先阅读 README 的快速开始与运行环境说明
+  - name: 安全问题
+    url: https://github.com/nefelibetas/Elytra/security/advisories/new
+    about: 请勿公开提交漏洞；使用私密报告

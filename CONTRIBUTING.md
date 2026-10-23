@@ -1,12 +1,16 @@
 # 贡献指南
 
+**简体中文** · [English](CONTRIBUTING-en-US.md)
+
 感谢有兴趣参与 Elytra Launcher！提交代码前请先阅读本指南；架构分层与编码约定见 [AGENTS.md](AGENTS.md)。
 
 ## 开发环境
 
 - **工具链**：版本以 [`mise.toml`](mise.toml) 为唯一来源（node / pnpm / rust / protoc），执行 `mise install` 安装
+- **不使用 mise**：安装 Node.js 24 与 pnpm 12（`npm install -g pnpm@12` 或 Corepack），Rust / protoc 版本以 `mise.toml` 为准
 - **包管理器**：只支持 pnpm（`pnpm-lock.yaml` 入库，CI 一律 `pnpm install --frozen-lockfile`）
 - **libclang**：编译联机功能（EasyTier 的 kcp feature）需要 LLVM——安装后设置 `LIBCLANG_PATH`
+- **构建期可选配置**：复制 `.env.example` 为 `.env`（已被 gitignore），按需填写 CurseForge API Key；微软 OAuth Client ID 已内置公开常量，无需配置。留空不影响编译，仅 CurseForge 来源不可用
 - 其他 Tauri v2 系统依赖见 [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
 
 ## 常用命令
@@ -15,14 +19,18 @@
 
 ```bash
 cd src-tauri
-cargo fmt                                # 改 Rust 后必跑，统一全仓格式
+cargo fmt                                # 改 Rust 后必跑，统一全仓格式（CI 用 --check）
 cargo check
 cargo clippy --lib                       # 保持零警告
 cargo test --lib -- --test-threads=1     # 必须串行（并行会因共享配置与网络抖动偶发失败）
 
-pnpm build                               # vue-tsc 类型检查 + CSS 兼容性检查
+cd ..
+npx vue-tsc --noEmit                     # 前端类型检查
+pnpm lint:css                            # CSS 兼容性检查
 pnpm i18n:check                          # 语言包校验（缺 key / 占位符不一致 / 裸中文）
 ```
+
+CI（`.github/workflows/ci.yml`）在 PR 与 `main` / `develop` 推送时跑同一组检查，包含 `cargo fmt --check`。
 
 集成测试：`cargo test --test online_diag`（host/guest 双实例回环，走真实 EasyTier）、`cargo test --test tool_download`（本地 HTTP 服务驱动，无需外网）。
 
@@ -38,6 +46,7 @@ pnpm i18n:check                          # 语言包校验（缺 key / 占位符
 - **配置目录**：dev / 测试进程的配置写在 exe 旁 `Elytra/`（与正式安装隔离），正式安装写在平台用户数据目录
 - **PCL 数据**：`src-tauri/src/data/wiki_entries.txt` 是 PCL `WikiEntries.txt` 的未修改快照（行号 = MC 百科条目 id）；更新它必须同步 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) 的 commit 与版本，并重跑 `cargo test --lib wiki_entry`
 - **单元测试与实现同文件**（各模块内嵌 `#[cfg(test)] mod tests`），跨模块共用的测试辅助放被测模块的 `pub(super)` 区
+- **安全问题**：请勿公开提交，报告方式见 [SECURITY.md](SECURITY.md)
 
 ## 发布新版本
 
@@ -45,8 +54,9 @@ pnpm i18n:check                          # 语言包校验（缺 key / 占位符
 
 1. 同步三处版本号（`src-tauri/tauri.conf.json` / `src-tauri/Cargo.toml` / `package.json`），须与 tag 号一致
 2. 推送 tag：`git tag v1.0.0 && git push origin v1.0.0`
-3. 工作流依次执行：验证门（vue-tsc + cargo check + clippy + test）→ 三平台并行构建 → 全部通过后把草稿 Release 转正；任一步失败则停在草稿、不对外露出
+3. 工作流依次执行：验证门（vue-tsc + lint:css + i18n + fmt + cargo check + clippy + test）→ 三平台并行构建 → 全部通过后把草稿 Release 转正；任一步失败则停在草稿、不对外露出
+4. Release 正文：`docs/release-notes/<tag>.md` 存在时由 publish 阶段覆盖为人工正文；不存在则保留 `--generate-notes` 自动生成
 
 同版本重跑：`git tag -f v1.0.0 <新提交> && git push -f origin v1.0.0`。
 
-构建期密钥（CurseForge API Key / 微软 Client ID）走 GitHub Secrets；本地构建读仓库根 `.env`，细节见 AGENTS.md。
+构建期密钥（CurseForge API Key）走 GitHub Secrets；微软 Client ID 已内置公开常量，无需配置。本地构建读仓库根 `.env`（模板见 `.env.example`），未配置时 CurseForge 来源不可用。

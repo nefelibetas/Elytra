@@ -93,6 +93,8 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onEsc, true));
   display: flex;
   flex-direction: column;
   gap: 16px;
+  height: 100%;
+  min-height: 0;
 }
 
 .stg-tools-head h2 {
@@ -164,6 +166,8 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onEsc, true));
   display: flex;
   flex-direction: column;
   gap: 12px;
+  flex: 1;
+  min-height: 0;
 }
 
 .stg-tool-back {

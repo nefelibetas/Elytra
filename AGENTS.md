@@ -4,12 +4,12 @@
 
 Elytra Launcher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前端）** 的 Minecraft 启动器。功能：游戏版本下载（官方/国内镜像多源）、ModLoader 安装（Fabric/Quilt/Forge/NeoForge/OptiFine）、微软正版登录（OAuth PKCE）、离线模式（固定随机默认皮肤）、**皮肤衣柜**（3D 全身预览 + 正版皮肤/披风管理 + 本地皮肤收藏；第三方站点衣柜不内置，点头像用浏览器打开站点衣柜）、**JDK 扫描 + managed runtime 自动下载**（Mojang 官方 → Azul 双源回退）、Mod 双源搜索与**依赖解析**、下载任务管理、启动参数构建与游戏进程管理、**局域网联机**（easytier 库内嵌虚拟局域网 + 端口转发，房间码互连，无需公网服务器）、**工具箱多线程下载器**（URL 队列并发 + 单文件 HTTP Range 分段，断点续传，独立于启动器下载任务）。
 
-后端 **134 个 `#[tauri::command]`**（分布于 19 个命令模块），前端 **9 个页面**（`src/pages/`），无状态管理库（模块级 `reactive()` 单例）。
+后端 **137 个 `#[tauri::command]`**（分布于 19 个命令模块），前端 **9 个页面**（`src/pages/`），无状态管理库（模块级 `reactive()` 单例）。
 
 ## Architecture & Data Flow
 
 ```
-前端 Vue3 (src/)  ──invoke(snake_case)──▶  commands/（薄胶水层，19 模块 / 134 命令）
+前端 Vue3 (src/)  ──invoke(snake_case)──▶  commands/（薄胶水层，19 模块 / 137 命令）
     ▲                                          │ 读 persist 配置、调领域函数
     │ task-progress / ms-login-complete /     ▼
     │ game-exited 事件（emit 顺序队列线程）  downloader/（传输层）  game/（内容与装配）  auth/
@@ -22,6 +22,7 @@ Elytra Launcher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前�
 - **锁约定**：全后端 `parking_lot`；**统一 inner→progress 锁序**（cancel/list/fail 先 inner 后 progress），调用 `fail()` 前必须 `drop` progress 锁（防重入死锁）；跨任务路径互斥独立为 `downloader::path_lock`（自持全局表，不挂 TaskManager）；`cancel()` 的 DB 持久化移出锁；DB（sqlite）写统一 2s 超时
 - **终态收口唯一入口**：`task/progress.rs` 的 `set_done` / `set_error` / `set_cancelled`——三者内部统一「发终态事件 → 移除任务注册」，且 `set_error`/`set_cancelled` 会取走此前 `set_cleanup_path` 登记的目录做**后台**整删（禁止在任务线程里同步 `remove_dir_all` 大目录）
 - **配置联动**：`gamedirs::set_active_game_dir` 写 downloader section 的 `minecraft_dir`，launch/downloader 都读该字段
+- **CurseForge Key**：运行时优先读 `secrets.bin` 的用户 key，其次 `constants::CURSEFORGE_API_KEY`（构建期 `.env`）；用户 key 只经命令写入，不返回前端
 - **目录变化监听**：`game/version/watch.rs` 进程级单例（`notify`，非递归多目标）——跟随激活目录监听 `versions/`（版本列表）与聚焦版本的一级资源子目录（`saves`/`mods`/`resourcepacks`/`datapacks`/`shaderpacks`）；300ms 静默窗口合并后推 `versions-changed`（payload 带最新全量列表）与 `version-dir-changed`；`set_active_game_dir` / `auto_activate_version` 触发重定向，`set_watched_version` 由前端选中版本驱动聚焦；前端 `gameDirs.ensureVersionsWatch()` 仅在窗口可见时应用（不可见只置脏，`visibilitychange` 时补拉），`versionDetail.watchVersionDir()` 按 kinds 刷新 mods/存档列表
 - **下载源模式三态**：`game_source_mode`（游戏下载源，统管版本列表 / 版本 json / 资源 / 支持库 / ModLoader 构件与安装器 / Mojang JDK runtime：OfficialOnly / MirrorOnly / Auto 默认——按健康度自适应路由，元数据官方优先 4s 降级镜像）、`community_source_mode`（Modrinth 官方 vs MCIM 镜像）；**网络代理三态** `network_mode`（Auto 读系统代理 / System 强制 / Direct 直连）。natives 新旧两代：旧式（≤1.12）`process_natives` 解压到 `.minecraft/natives/<ver>/`（`.elytra-ready` marker）并设 `-Djava.library.path`；新式（1.13+）native JAR 作为普通库进 classpath
 
@@ -39,10 +40,10 @@ Elytra Launcher — 基于 **Tauri v2（Rust 后端）+ Vue 3（TypeScript 前�
 | `src-tauri/src/online/` | **局域网联机**：`service.rs`（单例 + 共享状态 + 快照/终止；持有 `proxy`/`info_server` 停止句柄，`stop()` 先释放端口再做秒级的 `session.stop()`）、`host.rs`（建网 + 信息服务器 6 协议 + 游戏端口发现与实例重建）、`guest.rs`（加入/中心发现/本地代理；`gen` 贯穿到 `activate_guest_join`，回写前校验代际——否则发现/协商窗口内点停止后仍会回写并持续广播）、`session.rs`（easytier 会话：no_tun+smoltcp+KCP 数据面、host 固定虚拟 IP 10.144.144.1、guest DHCP、白名单 ACL）、`model.rs`（状态模型与协议常量）、`scaffold/`（`room.rs` 房间码 base34+模 7、`codec.rs` 帧编解码（帧体长度硬上限 `MAX_BODY_LEN`，分配前校验——长度字段是外部可控的裸 u32）、`profiles.rs` 玩家表、`server.rs` 信息服务器（`InfoServer` 句柄**必须被单例持有**：drop 才停 accept 线程并释放端口）、`identity.rs` machine_id）、`mc_discover.rs`（组播 224.0.2.60:4445 解析游戏端口）、`mc_advertise.rs`（guest 端模拟 MC LAN 广播，绕过 MC 26.2 离线会话校验） |
 | `src-tauri/src/persist/` | `config.rs`（TOML section 读写 + 全局锁）、`store.rs`（低层文件 IO + 路径）、**`instance.rs`（实例配置 `versions/{id}/.elytra-instance.toml`：一期只承载 `[auto_tasks]`，文件存在即该实例完全采用自己的自动任务）**、`secrets.rs`（密钥加密：DPAPI / Keychain / Secret Service + ChaCha20-Poly1305；**原子写**（.tmp + rename，权限落 tmp 上）+ 解析失败备份 `.bak`；列表类数据的「读-改-写」一律走 `update_json_list`（整段持锁），不要用 read/save 两次调用拼） |
 | `src-tauri/src/launcher/` | `args.rs`（命令构建）/ `env.rs`（环境准备）/ `process.rs`（进程生命周期与监听 + **崩溃判定**：非零退出码 + 时间窗内崩溃证据 + **启动取消闸门**：`begin_launch` / `request_cancel` / `note_launched` 由「取消标志 + 已拉起 pid」两个原子量协作，取消先置标志再取 pid，故与 pid 登记竞争不漏杀；进程退出即注销 pid，防后续取消误杀复用同一 pid 的进程）/ **`auto_tasks/`（自动任务：`model.rs` 模型 / `runner.rs` 执行器（内置在前、自定义在后，失败继续 + 汇总事件）/ `backup.rs` 存档备份（时间戳目录、保留 N 份）/ `record.rs` mod 清单 / `crashpack.rs` 崩溃日志打包（含脱敏）/ `redact.rs` 脱敏 / `ctx.rs` 上下文）** / `script.rs`（BAT/SH 渲染）/ `skin.rs`（离线皮肤）/ `platform.rs`（平台调节）/ `memory.rs`（内存与 GC 参数；`GcType::Custom` 不追加预设 GC 参数，由用户「Java 虚拟机参数」框自填）/ `model.rs`（`LaunchOptions` 含 `auto_tasks`，实例文件存在时由实例自动任务覆盖全局；natives 目录按 MC 版本共享 `natives/<mc>/`，`.elytra-ready` 存 native 集合指纹——指纹不一致即清空重建，避免同 MC 换版本时跳过解压导致缺原生库） |
-|`src-tauri/src/commands/`|19 个命令模块（134 命令）：account(27) / community(3) / config(1) / downloader(5) / gamedirs(12) / **auto_tasks(4：实例自动任务读写 + 全局保存 + 立即执行一次)** / jdk(5) / launch(7：含 begin_launch / cancel_launch) / launch_options(3) / launch_script(1) / loader(6) / offline_account(5) / online(6) / server_status(1) / skins(6，本地皮肤衣柜) / task(14) / tooldl(9，工具箱下载器) / version(15) / version_icon(4) —— 薄胶水，逻辑在各领域层|
+|`src-tauri/src/commands/`|19 个命令模块（137 命令）：account(27) / community(6) / config(1) / downloader(5) / gamedirs(12) / **auto_tasks(4：实例自动任务读写 + 全局保存 + 立即执行一次)** / jdk(5) / launch(7：含 begin_launch / cancel_launch) / launch_options(3) / launch_script(1) / loader(6) / offline_account(5) / online(6) / server_status(1) / skins(6，本地皮肤衣柜) / task(14) / tooldl(9，工具箱下载器) / version(15) / version_icon(4) —— 薄胶水，逻辑在各领域层|
 | `src/pages/` | Launch（左栏启动 + 右栏版本卡片/联机条）/ Download（资源中心）/ **DownloadDetail（下载任务中心，顶级路由）** / ResourceDetail（资源详情+依赖链；提交下载/安装成功后自动回退一层——依赖链进入的回到上一层详情，从列表进入的回到资源列表）/ Settings（左侧 Tab + 工具 Grid；工具详情页内返回）/ VersionSelect / VersionSetup（容器化，业务在 store/组件）/ CustomThemeEditor / SkinStudio（皮肤衣柜：3D 预览 + 皮肤/披风/本地衣柜，**仅正版账号可进**） |
 | `src/store/` | 模块级 reactive/ref 单例，**按域分包**：`config/`（`downloaderConfig`/`gameDirs`/`online`/`toolDownload`/`externalConfig`/`jdkOptions`/`launchOptions`/`autoTasks`（自动任务：全局/实例读写 + 进度/失败事件）/`configRecovery`）、`task/`（`download`（dlState 任务状态机 + `ensureListen` 幂等 + terminalTaskIds 防幽灵）/`downloadTab`/`versionDownload`/`versionSetup`/`versionDetail`/`versionIcon`）、`auth/`（`auth`/`accountUi`/`avatar`（FNV-1a 头像））、`skin/`（`skinStudio`（皮肤衣柜：3D 全身预览帧 + 官方皮肤/披风 + 本地衣柜）/`skinEditor`（皮肤绘画器：64×64 像素缓冲**刻意非响应式**，视图只订阅 `revision`）/`skinRender`）、`community/`（`communitySearch`/`categorySearch`（聚合/分页/四分类工厂）/`resourceDetail`）、`app/`（`events`（镜像 Rust `events.rs`）/`alert`/`theme`（四主题）/`nav`/`settingsTab`/`selectedVersion`/`memory`/`appLog`/`launch`（启动阶段/步骤 + 代际号取消守卫 `cancelLaunch`））。**鞘翅预览已移除**（画家算法在薄板共面/部分重叠场景的固有限制，收益低于维护成本；实现保留在 Git 历史 `78cdbe2` 可恢复）。 |
-| `src/types/` | **自动生成的 TS 类型**（`ts-rs`，勿手改）：按域分包 `config/`、`task/`、`tooldl/`、`launcher/`、`jdk/`、`auth/`、`game/`。生成命令 `cd src-tauri && cargo run --bin gen_ts --features gen-ts`（该 bin 在 Cargo.toml 里挂 `required-features = ["gen-ts"]` **默认不构建**——tauri-cli 会把包内所有 bin 当附加二进制打进安装包，macOS universal 构建只产出主二进制，会把整个打包步骤搞挂）。登记清单 `src-tauri/src/ts_export.rs`，导出路径由 `src-tauri/.cargo/config.toml` 的 `TS_RS_EXPORT_DIR` 决定。改 Rust 数据结构后必须重跑生成，否则前端类型落后 |
+| `src/types/` | **自动生成的 TS 类型**（`ts-rs`，勿手改）：按域分包 `config/`、`task/`、`tooldl/`、`launcher/`、`jdk/`、`auth/`、`game/`、`community/`。生成命令 `cd src-tauri && cargo run --bin gen_ts --features gen-ts`（该 bin 在 Cargo.toml 里挂 `required-features = ["gen-ts"]` **默认不构建**——tauri-cli 会把包内所有 bin 当附加二进制打进安装包，macOS universal 构建只产出主二进制，会把整个打包步骤搞挂）。登记清单 `src-tauri/src/ts_export.rs`，导出路径由 `src-tauri/.cargo/config.toml` 的 `TS_RS_EXPORT_DIR` 决定。改 Rust 数据结构后必须重跑生成，否则前端类型落后 |
 | `src/component/` | 按域分目录：`common/`（TitleBar / AlertDialog / ScrollTopFab / IconImage / EmptyState / ErrorState / CheckToggle / DropSelect / LoadingSpinner / StepDot / MenuPopover）、`download/`、`launch/`、`settings/`、`tools/`（Give/Entity/Command/Motd 生成器 + Firework/Potion/VillagerTrade/Mods 编辑器（烟花/药水在 Give 里选中对应物品时内联出现）+ SearchSelect 搜索选择 + ServerStatus 工具 + **DownloadTool（多线程下载器）** + **SkinPainterTool（皮肤绘画器：展开图逐像素 + 3D 直绘双模式，3D 模式下预览撑满中栏、左键落笔 / 抓手或右键拖动旋转、内层外层手动切换；展开图每部位独立配色标注；预览的透明像素垫棋盘底纹，且只垫第一层 —— 第二层空着时要透出内层，垫了就整块盖住）**）、`version/`、`version-setup/`、`settings/`（含 `SettingsTools.vue`：工具 Grid + 原位详情；`AutoTasksEditor.vue`：自动任务编辑器，双模式复用——版本设置页编辑实例、设置页编辑全局）、`version-setup/` —— 页面组件直接 import store，无 props 链 |
 | `src/utils/` | `error.ts`（**`errMsg()` 取错误首行**，toast/内联错误用）、`format.ts`（fmtCount/fmtSize/fmtModDate/fmtDateTime/fmtSpeed/fmtEta…）、`versionClassify.ts`（目录名 `{mc}-{loader}-{ver}` 解析）、`versionMeta.ts`、`give.ts`/`motd.ts`/`nbt.ts`（生成器算法）、`toast.ts`（全局提示队列：`showToast` 默认 4000ms / 同屏最多 5 条排队补位 / hover 暂停 / 手动关闭，App.vue 右上角堆叠渲染 + `role=status` 播报，`data-tabskip` 不入键盘遍历）、`focusNav.ts`（键盘焦点遍历：Tab/Shift+Tab 按文档序移动、弹窗内自动收窄成焦点陷阱、`focusDialog`/`restoreFocus` 供弹窗接管焦点；焦点环由它内联写入——内描边、标题栏内改用前景色，`.kb-focus` 仅作状态标记）、`tooltip.ts`、`useConfigSection.ts`、`useSelectable.ts`、`useConfirmDelete.ts` |
 
@@ -57,7 +58,7 @@ pnpm lint:css       # CSS 兼容性检查（stylelint，基线见 package.json b
 cd src-tauri && cargo fmt                # Rust 格式统一（改 Rust 后必跑）
 cd src-tauri && cargo check              # Rust 编译检查
 cd src-tauri && cargo clippy --lib       # Rust lint（保持零代码警告）
-cd src-tauri && cargo test --lib -- --test-threads=1   # 单元测试（当前 394 passed + 8 ignored（OptiFabric 真实下载 + NeoForge 21.x/26.x 与 Forge 1.20.1/1.12.2/1.7.10 安装链端到端 + 安装矩阵 2 个：loader 9 形态 / OptiFine 5 组合）；串行防 persist/网络竞争）
+cd src-tauri && cargo test --lib -- --test-threads=1   # 单元测试（当前 397 passed + 8 ignored（OptiFabric 真实下载 + NeoForge 21.x/26.x 与 Forge 1.20.1/1.12.2/1.7.10 安装链端到端 + 安装矩阵 2 个：loader 9 形态 / OptiFine 5 组合）；串行防 persist/网络竞争）
 cd src-tauri && cargo run --bin gen_ts --features gen-ts    # 生成前端 TS 类型 → src/types/（改 Rust 数据结构后必跑；不在测试里生成）
 cd src-tauri && cargo test --test online_diag          # 联机集成测试（host/guest 双实例回环，走真实 easytier）
 cd src-tauri && cargo test --test tool_download        # 工具箱下载器集成测试（本地 HTTP 服务驱动完整链路：分段/暂停续传/取消/回退）
@@ -139,9 +140,9 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 
 | 文件 | 说明 |
 | --- | --- |
-| `src-tauri/src/lib.rs` | 入口：`task::init()` / `tooldl::init()`、后台预扫 JDK、**唯一** generate_handler! 注册点（134 个 tauri::command） |
+| `src-tauri/src/lib.rs` | 入口：`task::init()` / `tooldl::init()`、后台预扫 JDK、**唯一** generate_handler! 注册点（137 个 tauri::command） |
 | `src-tauri/src/main.rs` | 仅 `elytra_lib::run()` |
-| `src-tauri/src/constants.rs` | APP_NAME/UA/MIRROR_CONCURRENCY、`option_env!` 注入 CURSEFORGE_API_KEY / MS_CLIENT_ID（.env 经 build.rs）、persist SECT_* 段名 |
+| `src-tauri/src/constants.rs` | APP_NAME/UA/MIRROR_CONCURRENCY、`option_env!` 注入 CURSEFORGE_API_KEY（.env 经 build.rs）、内置公开常量 MS_CLIENT_ID、persist SECT_* 段名 |
 | `src-tauri/src/events.rs` | 事件名常量（与 `src/store/app/events.ts` 手写镜像同步） |
 | `src-tauri/src/task/manager.rs` | TaskManager 单例（create/pause/cancel/fail/remove/list + 挂起决策 + `LazyLock` 单例） |
 | `src-tauri/src/task/emit.rs` | `DISPATCH` 派发线程（进度帧按 `(事件, 任务)` 合并 + 低频事件 FIFO）+ `emit_event` 泛型派发 + `update_and_emit`（锁外 emit） |
@@ -151,7 +152,7 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 | `src-tauri/src/downloader/probe.rs` | 源预探测：HEAD 测 TTFB（选源）+ 流式测吞吐（JDK 大包选源），共用 TTL 缓存 |
 | `src-tauri/src/launcher/args.rs` | `${key}` 占位符替换、rules/features 匹配、classpath、JDK22+ 标志 |
 | `src-tauri/src/jdk/download.rs` | managed runtime 安装（Mojang all.json 逐文件 sha1 → Azul 包 sha256+解压）、`find_java_home` 递归、`InstallProgress` 自动任务 |
-| `src-tauri/src/auth/microsoft.rs` | 微软 OAuth（授权码/refresh/XBL/XSTS/MC login）、回调服务 127.0.0.1:27205 |
+| `src-tauri/src/auth/microsoft.rs` | 微软 OAuth（授权码/refresh/XBL/XSTS/MC login）、回调服务 localhost:27205 |
 | `src-tauri/src/online/session.rs` | easytier 会话封装：no_tun+smoltcp+KCP 数据面、bind_device=false、enable_kcp_proxy=true（KCP 数据面首选，缺则 smoltcp 传大数中断） |
 | `src-tauri/src/online/mc_advertise.rs` | guest 端 MC 局域网广播模拟（224.0.2.60:4445，绕过 MC 26.2 离线会话校验） |
 | `src-tauri/src/util/` | 跨域纯函数（按职责拆分子模块，`mod.rs` 重导出、`crate::util::xxx` 路径不变）：`dirs.rs`（`config_dir()`/平台目录基准）/`path.rs`（`safe_relative_path`/`sha1_sub_dir`/`unique_child_dir`）/`text.rs`（`fnv1a64`/`is_simple_name`）/`version_name.rs`（`infer_loader_from_json`）/`net.rs`/`icon.rs`/`log.rs`/`time.rs`/`rt.rs`/`process.rs`（`NoWindow`：子进程无窗口装配，铁律——所有 spawn 必过） |
@@ -161,19 +162,19 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 
 ## Runtime/Tooling Preferences
 
-- **包管理器必须 pnpm**：`beforeDevCommand` 硬编码 `pnpm dev`；`pnpm-lock.yaml` **入库**（工具链前沿，锁版本保证构建可复现；CI 与本地一律 `pnpm install --frozen-lockfile`）。pnpm 版本见 `mise.toml`（node 22 / pnpm 11）
+- **包管理器必须 pnpm**：`beforeDevCommand` 硬编码 `pnpm dev`；`pnpm-lock.yaml` **入库**（工具链前沿，锁版本保证构建可复现；CI 与本地一律 `pnpm install --frozen-lockfile`）。pnpm 版本见 `mise.toml`（node 24 / pnpm 12）
 - **工具链版本唯一来源是 `mise.toml`**（node / pnpm / rust / protoc）：本地 `mise install`，CI（`.github/workflows/release.yml`，推 `v*` tag 才跑）用 `jdx/mise-action` 读同一份文件、**不写死任何版本号**。改动工具链 = 改 `mise.toml` 一处。各 job 另设 `MISE_RUSTUP_HOME` 指向 mise 数据目录——rust 实体在 rustup home 里，不放进被缓存的 mise 目录会出现「缓存命中但工具链缺失」
 - **工具链很新**：vite 8、typescript 6、vue-tsc 3、vue-router 5——新增依赖前确认兼容（@lucide/vue 图标库已引入）
 - **窗口**：1008×648（840×540 的 1.2 倍）、`decorations:false` + `transparent:true` + `resizable:false`——前端自绘 TitleBar（`startDragging`）
 - **Rust 变更需重启 `pnpm tauri dev`**（vite `watch.ignored` 忽略 src-tauri）；前端改动 HMR 即时生效
 - **前端大量改动后建议重启 dev**：跨多个 store/模块的批量改动、或触发依赖预构建失效时（vite 日志出现 `Re-optimizing dependencies because vite config has changed`），HMR 可能停在**半旧半新**状态——表现为「组件逻辑更新了但 store 还是旧的」这类诡异现象（实测过一次：资源详情页左上角返回键点了完全没反应，重启 dev 即恢复）。**排查前端怪状前，先重启一次 dev 排除这个因素**
 - **reqwest 0.13 无 `.form()`**：表单需手工 urlencode（auth 里 `form_body`）
-- **MS_CLIENT_ID 固定，已注册完成**；回调端口 27205 写死
+- **MS_CLIENT_ID 已内置公开常量**（不再是 `.env`）；回调固定 `http://localhost:27205`，换 Azure 应用时同步改常量与注册地址
 - **lib 名 `elytra_lib`**：Windows 下 bin/lib 同名会 Cargo 8519，保留 `_lib` 后缀
 - **版本号**：tauri.conf.json / Cargo.toml / package.json 三处一致（当前 1.0.0），改动需同步
 - **capabilities 是 v2 权限门**：新增 JS 侧 window/fs/dialog API 必须先在 `default.json` 加权限
 - **打包与卸载**：`bundle.targets` 列全了 `deb` / `rpm` / `appimage` / `app` / `dmg` / `nsis` / `msi`（tauri-bundler 的 `package_types()` 会与目标平台原生集合求交过滤：Windows 只出 nsis+msi、macOS app+dmg、Linux deb+rpm+appimage，配一份即可三平台通用）。Tauri 的 NSIS 卸载器是**逐文件 `Delete` + `RMDir "$INSTDIR"`（非递归，只删空目录）**——游戏目录（`.minecraft`）虽在安装目录内但非空，**卸载不会删游戏数据**；`src-tauri/windows/hooks.nsh` 的 `PREUNINSTALL` 仅做告知（`IfSilent` 跳过，避免静默卸载卡住）。另一处坑：`identifier`（`xyz.bridgefish.elytra`）与配置目录名（`constants::CONFIG_DIR = "Elytra"`）不同，Tauri 原生「删除应用数据」复选框实际删的是 `%APPDATA%\<identifier>` 这个并不存在的目录，故 `POSTUNINSTALL` 按真实路径补删，避免「说删没删」。**MSI 默认装 `Program Files`（只读）**，`default_game_dir_base` 对其做了回退；NSIS 默认装 `%LOCALAPPDATA%\Programs`（可写），游戏目录照旧在 exe 旁。另：卸载后 `HKCU\Software\<manufacturer>\<product>` 会保留（Tauri 用它记住上次安装位置，重装时恢复），仅在勾选「删除应用数据」时才清除——这是有意行为，不是残留 bug
-- **发布产物（`.github/workflows/release.yml`，仓库里唯一的 workflow）**：**只在推 `v*` tag 时跑**（手动 dispatch 只出 Actions artifacts；`workflow_dispatch` 需 workflow 在默认分支 `main` 上才可点）。三个 job：`check` 验证门（Windows：vue-tsc + cargo check + clippy `-D warnings` + test 串行，等同本地门）、`build` 三平台并行打包、`publish`（`needs: [check, build]`）——**任一环节失败 Release 就停在草稿**，不会对外露出半成品。产物：Windows 便携 zip + NSIS + MSI、macOS **universal** dmg（`APPLE_SIGNING_IDENTITY=-` 做 ad-hoc 签名：Apple Silicon 上未签名的二进制根本无法启动）、Linux AppImage + deb + rpm + 便携 tar.gz。构建期密钥走 GitHub Secrets（`ELYTRA_CURSEFORGE_API_KEY` / `ELYTRA_MS_CLIENT_ID`，`src-tauri/build.rs` 读仓库根 `.env` 逐行注入 `rustc-env`），**未配置则 workflow 直接报错退出**——`.env` 被 gitignore，CI 上缺了就静默降级（CurseForge 源与微软登录不可用）。workflow 还会校验三处版本号一致、且与 tag 相符。Linux 固定跑 `ubuntu-22.04`（AppImage/deb 的 glibc 下限跟构建机走，用 latest 会在旧发行版上起不来）。**同版本重跑**：`git tag -f v1.0.0 <新提交> && git push -f origin v1.0.0`（版本校验要求 tag 号与 `tauri.conf.json` 一致，不能换个新号重跑）
+- **发布工作流（`.github/workflows/release.yml`；PR / 主分支推送的验证门在 `.github/workflows/ci.yml`）**：**只在推 `v*` tag 时跑**（手动 dispatch 只出 Actions artifacts；`workflow_dispatch` 需 workflow 在默认分支 `main` 上才可点）。三个 job：`check` 验证门（Windows：vue-tsc + lint:css + i18n + fmt + cargo check + clippy `-D warnings` + test 串行，等同本地门）、`build` 三平台并行打包、`publish`（`needs: [check, build]`）——**任一环节失败 Release 就停在草稿**，不会对外露出半成品。产物：Windows 便携 zip + NSIS + MSI、macOS **universal** dmg（`APPLE_SIGNING_IDENTITY=-` 做 ad-hoc 签名：Apple Silicon 上未签名的二进制根本无法启动）、Linux AppImage + deb + rpm + 便携 tar.gz。构建期密钥走 GitHub Secrets（仅 `ELYTRA_CURSEFORGE_API_KEY`；MS_CLIENT_ID 已内置公开常量，`src-tauri/build.rs` 读仓库根 `.env` 逐行注入 `rustc-env`），**未配置则 workflow 直接报错退出**——`.env` 被 gitignore，本地缺 `.env` 时 CurseForge 源静默降级（模板见 `.env.example`）。workflow 还会校验三处版本号一致、且与 tag 相符。Linux 固定跑 `ubuntu-22.04`（AppImage/deb 的 glibc 下限跟构建机走，用 latest 会在旧发行版上起不来）。**同版本重跑**：`git tag -f v1.0.0 <新提交> && git push -f origin v1.0.0`（版本校验要求 tag 号与 `tauri.conf.json` 一致，不能换个新号重跑）
 - **系统代理**：Windows 读注册表（`winreg`，仅 windows 依赖）→ env；Linux env → GNOME gsettings；reqwest 默认不读系统代理，开启系统代理（Clash 等）时官方源直连会被劫持/黑洞
 - **联机编译**：easytier `kcp` feature 依赖 kcp-sys（bindgen 需 libclang）——构建机须装 LLVM（`winget install LLVM.LLVM`）并设 `LIBCLANG_PATH`；另 `easytier-proto` / `prost-wkt-types` 的 build.rs 会调 `protoc`，PATH 上没有就 panic（`Could not find protoc`）——`mise.toml` 已把 `protoc` 列为工具，本地 `mise install` 即装，CI 同源（勿再往 workflow 里塞单独的 protoc 安装步骤）
 - 敏感信息（token/client secret）不硬编码、不打印日志、不提交 git
@@ -181,7 +182,7 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 
 ## Testing & QA
 
-- **无前端测试**；Rust 侧 394 个单元测试，全部内嵌各模块 `#[cfg(test)] mod tests`（含测试与实现同文件的约定），`cargo test --lib -- --test-threads=1` 运行；集成测试 `tests/online_diag.rs`（联机全链路：host/guest 双实例回环 + easytier 日志落盘）与 `tests/tool_download.rs`（工具箱下载器全链路：本地 HTTP 服务驱动入队 / 分段 / 暂停续传 / 取消 / 回退，5 用例，含 1 个真实网络 `#[ignore]`）
+- **无前端测试**；Rust 侧 405 个单元测试（397 passed + 8 ignored），全部内嵌各模块 `#[cfg(test)] mod tests`（含测试与实现同文件的约定），`cargo test --lib -- --test-threads=1` 运行；集成测试 `tests/online_diag.rs`（联机全链路：host/guest 双实例回环 + easytier 日志落盘）与 `tests/tool_download.rs`（工具箱下载器全链路：本地 HTTP 服务驱动入队 / 分段 / 暂停续传 / 取消 / 回退，5 用例，含 1 个真实网络 `#[ignore]`）
 - **发布前 GTK 冒烟**：CI 只构建不渲染，发版前在 WSLg / Linux VM 跑 `pnpm tauri dev` 过 9 个页面（重点：滚动条宽度、徽章底色、弹窗遮罩、皮肤工具画布），确认无布局错位
 - **单元测试只测纯函数**：PKCE、URL 组装、启动命令构建（`build_launch_command` + `minimal_version_json()` 助手）、离线皮肤 UUID 算法（与 Java `UUID.hashCode() & 1` 一致性）、内存分配公式、util（URL 文件名/版本目录解析/`sha1_sub_dir`/`safe_relative_path`）、maven XML 解析与语义化排序、Mod 双源搜索、修复步骤规划、persist 读写回环、secrets DPAPI、store 快照/恢复、**`store_ops_from_runtime_worker_no_panic`（worker 线程 block_on 回归）**、**`count_assets_all_end_to_end`（真实索引 + 5057 项多线程扫描，网络）**、**`find_java_home_finds_nested_bin`（Azul 布局幂等）**、`downloader/fetcher` 的取消/换源/校验/重定向/并发上限、`downloader/segmented` 的切分覆盖/小文件不分段/分段写一致性/不支持 Range 回退/段级与段内续传/陈旧位图作废、loader 的 profile 合并与继承展开、房间码解析/广播回环（online）、**`task/emit` 的派发器（进度帧按 `(事件, 任务)` 合并 / 低频事件 FIFO / 同任务帧严格保序 / 等待决策帧不被进度帧顶替）**、`task/progress` 的 `StepRef::percent`（文件口径优先 / 无分母或步骤结束返回 `None`）与整合包 `Counters` 的进入/离开步骤、**步骤索引↔名字对齐**（整合包 `step_index_points_at_matching_names`：Online/Local 两种前缀、`replace_steps_keeps_done_steps_at_100`：已完成步骤不得被重置；修复 `test_repair_indices_align_with_steps`：穷举 16 种缺失组合）
 - **断言风格**：`assert_eq!` 精确值为主（argv 位置、公式值、错误码消息）；行为不变量用 `assert!` + 中文 message
@@ -199,3 +200,4 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 - **Fabric/Quilt + OptiFine 明确不推荐**：该组合依赖 OptiFabric 桥接（CurseForge 渠道，slug `optifabric`），上游维护缓慢、兼容性有限；UI 标注“不推荐”并建议 Sodium + Iris 或原版/Forge + OptiFine，1.21+ 组合隐藏并明确报错。
 - **跨网联机依赖协调服务器**：默认社区节点 `tcp://node.invalid:11010`（easytier 官方公共节点已下线）；MC 26.2 离线账号只能走“局域网发现”路径进入，手动 IP 会报无效会话（广播模拟已绕过）。
 - **`src-tauri/src/data/wiki_entries.txt` 维护**：PCL `WikiEntries.txt` 的未修改快照，行号 = MC 百科条目 id；更新文件必须同步 `THIRD-PARTY-NOTICES.md` 的 commit/版本，并重跑 `cargo test --lib wiki_entry`。
+- **地图功能的 Mojang 衍生数据**：`src-tauri/src/map/biomegen/*` 与 `src-tauri/assets/*` 已在当前树下线，但仍存在于 `main` / `develop` 历史；公开仓库前需确认数据来源与分发许可，或清洗历史。

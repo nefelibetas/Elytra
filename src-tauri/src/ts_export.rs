@@ -15,6 +15,7 @@ use crate::config::downloader::{
 use crate::config::game_dirs::{GameDir, GameDirsConfig};
 use crate::config::online::OnlineConfig;
 use crate::config::tooldl::ToolDlConfig;
+use crate::game::community::CurseForgeKeySource;
 use crate::game::version::dir::InstalledVersionInfo;
 use crate::game::version::watch::{VersionDirChanged, VersionsChanged};
 use crate::jdk::model::{JdkInfo, JdkOptions, JdkScanCache, JdkSelection};
@@ -33,6 +34,7 @@ use crate::tooldl::{ToolDlSnapshot, ToolDlStatus};
 /// 导出全部登记类型到 `TS_RS_EXPORT_DIR`（见 `src-tauri/.cargo/config.toml`）。
 pub fn export_all() {
     DownloaderConfig::export().unwrap();
+    CurseForgeKeySource::export().unwrap();
     DownloadSource::export().unwrap();
     NetworkMode::export().unwrap();
     DownloadSourceMode::export().unwrap();

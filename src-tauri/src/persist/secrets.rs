@@ -37,6 +37,18 @@ pub fn read_secret(key: &str) -> Option<Vec<u8>> {
     decrypt_bytes(&encrypted).ok()
 }
 
+/// 写入一条敏感数据（加密；调用方负责校验内容）。
+pub fn write_secret(key: &str, value: &[u8]) -> Result<(), String> {
+    let _guard = SECRETS_LOCK.lock();
+    save_secret_locked(key, value)
+}
+
+/// 删除一条敏感数据（不存在时视为成功）。
+pub fn clear_secret(key: &str) -> Result<(), String> {
+    let _guard = SECRETS_LOCK.lock();
+    remove_secret_locked(key)
+}
+
 /// 锁内版本（调用方已持 `SECRETS_LOCK`）。
 fn remove_secret_locked(key: &str) -> Result<(), String> {
     let mut map = load_map();
@@ -516,6 +528,26 @@ mod tests {
             list.clear();
             Ok(())
         });
+    }
+
+    #[test]
+    fn secret_write_read_clear() {
+        let key = format!("test_secret_raw_{}", std::process::id());
+        clear_secret(&key).expect("清理应成功");
+        write_secret(&key, b"curseforge-key-123").expect("写入应成功");
+        assert_eq!(
+            read_secret(&key),
+            Some(b"curseforge-key-123".to_vec()),
+            "读取应还原原文"
+        );
+        if let Ok(content) = std::fs::read_to_string(secrets_path()) {
+            assert!(
+                !content.contains("curseforge-key-123"),
+                "secrets.bin 不应含明文"
+            );
+        }
+        clear_secret(&key).expect("清除应成功");
+        assert!(read_secret(&key).is_none(), "清除后不应命中");
     }
 
     #[test]

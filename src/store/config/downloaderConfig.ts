@@ -3,6 +3,7 @@ import { ref, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { useConfigSection } from "../../utils/useConfigSection";
 import type { DownloaderConfig } from "../../types/config/DownloaderConfig";
+import type { CurseForgeKeySource } from "../../types/community/CurseForgeKeySource";
 
 /** 下拉选项文案存 key，渲染侧再翻译（避免模块级 t()）。 */
 export interface OptionKeys {
@@ -77,6 +78,10 @@ export const dlMinecraftDir = ref(".minecraft");
 export const dlNetworkMode = ref("auto");
 export const dlTranslateMode = ref<"zh" | "en">("zh");
 export const dlShowReleaseOnly = ref(true);
+// CurseForge 用户 key：优先于构建期内置 key；输入框只在前端短暂持有明文
+export const dlCurseforgeKeySource = ref<CurseForgeKeySource>("none");
+export const dlCurseforgeKeyInput = ref("");
+export const dlCurseforgeKeySaving = ref(false);
 
 export async function loadDownloadConfig() {
   try {
@@ -102,6 +107,36 @@ export async function loadDownloadConfig() {
     dlShowReleaseOnly.value = cfg.show_release_only ?? true;
     dlMaxSpeed.value = cfg.max_speed ?? 0;
   } catch {
+  }
+  await loadCurseforgeKeySource();
+}
+
+export async function loadCurseforgeKeySource() {
+  try {
+    dlCurseforgeKeySource.value = await invoke<CurseForgeKeySource>("get_curseforge_key_source");
+  } catch {
+    dlCurseforgeKeySource.value = "none";
+  }
+}
+
+export async function saveCurseforgeKey(key: string) {
+  dlCurseforgeKeySaving.value = true;
+  try {
+    await invoke("set_curseforge_key", { key });
+    dlCurseforgeKeyInput.value = "";
+    await loadCurseforgeKeySource();
+  } finally {
+    dlCurseforgeKeySaving.value = false;
+  }
+}
+
+export async function clearCurseforgeKey() {
+  dlCurseforgeKeySaving.value = true;
+  try {
+    await invoke("clear_curseforge_key");
+    await loadCurseforgeKeySource();
+  } finally {
+    dlCurseforgeKeySaving.value = false;
   }
 }
 

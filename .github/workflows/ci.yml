@@ -1,0 +1,58 @@
+name: CI
+
+# PR 与主分支推送的统一验证门；与 release.yml 的 check job 保持同一组命令。
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: 验证门
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      # mise 经 rustup 装 rust，工具链实体在 rustup home；与 release.yml 保持一致。
+      MISE_RUSTUP_HOME: C:\Users\runneradmin\AppData\Local\mise\rustup
+      # kcp-sys 走 bindgen 需 libclang：check / clippy / test 都会编译它。
+      LIBCLANG_PATH: C:\Program Files\LLVM\bin
+    steps:
+      - uses: actions/checkout@v5
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: "node npm:pnpm rust protoc"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - uses: actions/cache@v6
+        with:
+          path: ${{ runner.os == 'Windows' && '~/AppData/Local/pnpm/store' || '~/.local/share/pnpm/store' }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-${{ runner.os }}-
+      - run: pnpm install --frozen-lockfile
+      - name: 前端类型检查
+        run: npx vue-tsc --noEmit
+      - name: CSS 兼容性检查（Chrome 111 / Safari 16.4 基线）
+        run: pnpm lint:css
+      - name: 语言包校验
+        run: pnpm i18n:check
+      - name: Rust 格式检查
+        working-directory: src-tauri
+        run: cargo fmt --check
+      - name: cargo check
+        working-directory: src-tauri
+        run: cargo check --lib
+      - name: cargo clippy（零警告）
+        working-directory: src-tauri
+        run: cargo clippy --lib -- -D warnings
+      - name: cargo test（串行：persist 共用 Settings.toml、网络测试抖动）
+        working-directory: src-tauri
+        run: cargo test --lib -- --test-threads=1

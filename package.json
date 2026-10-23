@@ -2,7 +2,17 @@
   "name": "elytra",
   "private": true,
   "version": "1.0.0",
-  "license": "GPL-3.0",
+  "description": "A modern, lightweight Minecraft launcher built with Tauri and Rust.",
+  "author": "BridgeFishDev",
+  "license": "GPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nefelibetas/Elytra.git"
+  },
+  "homepage": "https://github.com/nefelibetas/Elytra#readme",
+  "bugs": {
+    "url": "https://github.com/nefelibetas/Elytra/issues"
+  },
   "type": "module",
   "browserslist": [
     "chrome 111",
