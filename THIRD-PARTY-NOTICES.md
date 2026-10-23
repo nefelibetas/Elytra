@@ -46,6 +46,12 @@ The Fabric / Quilt / Forge / NeoForge / OptiFine icons under `src/assets/` are t
 
 The icons under `src/assets/thanks/` are used solely to identify the corresponding projects. Copyright and trademarks belong to their respective owners, and no endorsement is implied.
 
+## 世界预览调色数据 / World preview palette data
+
+`src-tauri/assets/natural_block_colors.json`、`grass-colourmap.png` 与 `foliage-colourmap.png` 由 Minecraft 客户端素材派生，仅用于存档世界预览的地图着色；版权归 Mojang Studios 所有，不代表官方背书。
+
+The world-preview palette files under `src-tauri/assets/` are derived from Minecraft client assets and are used only for coloring the save-map preview. Copyright belongs to Mojang Studios; no endorsement is implied.
+
 ## Minecraft 素材 / Minecraft assets
 
 `src/assets/` 中的方块与物品图像，以及 `src-tauri/resources/steve.png`、`src-tauri/resources/alex.png`（Mojang 官方默认皮肤）均为 Minecraft 素材，版权归 Mojang Studios 所有，仅用于界面装饰与离线模式默认皮肤；本项目与 Mojang Studios / Microsoft 无关联。

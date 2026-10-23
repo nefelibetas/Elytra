@@ -9,6 +9,7 @@ use ts_rs::TS;
 use crate::auth::external::{ExternalAccount, ExternalConfig, ExternalProfile, ExternalServer};
 use crate::auth::model::MsAccount;
 use crate::commands::auto_tasks::InstanceAutoTasksState;
+use crate::commands::map::MapBlockInfo;
 use crate::config::downloader::{
     DownloadSource, DownloadSourceMode, DownloaderConfig, JdkSourceMode, NetworkMode,
 };
@@ -24,6 +25,8 @@ use crate::launcher::auto_tasks::model::{
     AutoTaskStep, AutoTasks, AutoTasksFinished, BackupScope,
 };
 use crate::launcher::model::{GcType, LaunchOptions, MemoryMode, ProcessPriority, WindowSize};
+use crate::map::region_io::MapRegionInfo;
+use crate::map::world_info::MapWorldInfo;
 use crate::task::files::WaitingUserPayload;
 use crate::task::model::{
     DownloadFileKind, DownloadTask, FabricApi, LoaderChoice, LoaderKind, StepInfo, StepKind,
@@ -83,4 +86,7 @@ pub fn export_all() {
     InstalledVersionInfo::export().unwrap();
     VersionsChanged::export().unwrap();
     VersionDirChanged::export().unwrap();
+    MapWorldInfo::export().unwrap();
+    MapRegionInfo::export().unwrap();
+    MapBlockInfo::export().unwrap();
 }

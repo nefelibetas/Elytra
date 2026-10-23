@@ -104,6 +104,13 @@ function goSetup() {
   router.push({ path: "/version-setup", query: { name: versionName.value } });
 }
 
+function previewWorld(world: string) {
+  void router.push({
+    path: "/world-preview",
+    query: { version: versionName.value, world, from: "launch" },
+  });
+}
+
 /** 当前 tab（组件内状态，路由重建后回存档）。 */
 type TabKind = "worlds" | "mods" | "resourcepacks" | "datapacks" | "shaderpacks";
 const tab = ref<TabKind>("worlds");
@@ -371,6 +378,14 @@ async function confirmRename() {
               <span class="vdc-row-name">{{ w.name }}</span>
               <span class="vdc-row-meta">{{ t("launch.version.lastPlayed", { date: fmtUnix(w.last_modified) }) }}</span>
             </div>
+            <button
+              class="vdc-world-preview"
+              :title="t('worldPreview.open')"
+              :aria-label="t('worldPreview.open')"
+              @click.stop="previewWorld(w.name)"
+            >
+              <Map :size="15" />
+            </button>
           </div>
         </div>
         </div>
@@ -712,6 +727,25 @@ async function confirmRename() {
 /* 世界行：缩略图或 Map 占位 */
 .vdc-world-row {
   padding: 6px 16px;
+}
+
+.vdc-world-preview {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.vdc-world-preview:hover {
+  color: var(--color-brand);
+  border-color: var(--color-brand);
 }
 
 .vdc-world-thumb {

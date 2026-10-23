@@ -82,6 +82,7 @@
 ### 🌐 LAN Play & Toolbox
 
 - 🌐 **LAN play**: embedded EasyTier virtual network + the Scaffolding protocol (room-code pairing, no public server needed), configurable coordination server for cross-network play
+- 🗺️ **World preview**: a real map of loaded chunks only, with dimensions, top-down / fixed-Y slices, mod block colors, and hover block identification
 - 🚀 **Multi-threaded downloader**: URL queue concurrency + per-file HTTP Range segmentation, resumable
 - 📡 **Server status**: Java SLP and Bedrock RakNet probing (multiple addresses)
 - 🧪 **Generators**: MOTD, item NBT, entity NBT, commands (with target-selector builder), inline firework / potion / villager-trade editors
@@ -156,7 +157,7 @@ cargo test --test tool_download                    # toolbox downloader integrat
 
 ### 🖼️ Frontend `src/`
 
-- **`pages/`** — 9 pages (launch / content hub / tasks / settings / instance management / instance settings / resource detail / skin wardrobe / theme editor)
+- **`pages/`** — 10 pages (launch / content hub / tasks / settings / instance management / instance settings / world preview / resource detail / skin wardrobe / theme editor)
 - **`component/`** — components grouped by domain (`common/` `download/` `launch/` `settings/` `tools/` `version/` `version-setup/`)
 - **`store/`** — module-level `reactive()` state singletons, split by domain (`app/` `config/` `task/` `auth/` `community/` `skin/`)
 - **`utils/`** — pure helpers (formatting / keyboard focus / toasts)
@@ -164,7 +165,7 @@ cargo test --test tool_download                    # toolbox downloader integrat
 
 ### 🦀 Backend `src-tauri/src/`
 
-- **`commands/`** — command glue layer: 137 `#[tauri::command]`s, argument flattening and domain calls only
+- **`commands/`** — command glue layer: 141 `#[tauri::command]`s, argument flattening and domain calls only
 - **`downloader/`** — pure transport layer: multi-source fetch / concurrent batch / probing / segmented download / path locking
 - **`game/`** — content & assembly: version metadata / resources / ModLoader install / community / modpacks / mod updates
 - **`task/`** — task orchestration & event dispatch, SQLite snapshots & crash recovery
@@ -172,6 +173,7 @@ cargo test --test tool_download                    # toolbox downloader integrat
 - **`launcher/`** — launch argument building / env prep / process lifecycle / auto tasks
 - **`auth/`** — Microsoft OAuth / official APIs / third-party skin sites
 - **`jdk/`** — local JDK scan & managed runtime download
+- **`map/`** — world map: region parsing, loaded-chunk tiles, Y slices, mod block colors
 - **`online/`** — EasyTier LAN play + the Scaffolding protocol
 - **`persist/`** — TOML config & secrets
 - **`util/`** — cross-domain pure helpers

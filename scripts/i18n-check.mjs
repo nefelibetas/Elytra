@@ -104,6 +104,7 @@ const excludedFiles = new Set([
   "src/utils/commands.ts",
   "src/utils/nbt.ts",
   "src/utils/motd.ts",
+  "src/utils/blockNames.ts",
   "src/store/skin/skinEditor.ts",
 ]);
 const hits = [];

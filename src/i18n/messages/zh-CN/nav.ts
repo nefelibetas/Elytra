@@ -9,6 +9,7 @@ export default {
     customThemeNew: "新建自定义外观",
     customThemeEdit: "编辑自定义外观",
     skinStudio: "衣柜",
+    worldPreview: "世界预览 - {name}",
     resourceDetail: "资源详情",
   },
 };

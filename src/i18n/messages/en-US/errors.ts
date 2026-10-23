@@ -67,4 +67,16 @@ export default {
     read: "Failed to read config",
     write: "Failed to save config",
   },
+  map: {
+    failed: "Map operation failed",
+    invalid_version: "Invalid version name",
+    invalid_world: "Invalid save name",
+    missing_world: "Save not found",
+    missing_dimension: "Dimension not found",
+    invalid_style: "Invalid map style",
+    missing_region: "Map region file not found",
+    tile_failed: "Failed to render map tile",
+    cache_create: "Failed to create map cache directory",
+    cache_write: "Failed to write map cache",
+  },
 };

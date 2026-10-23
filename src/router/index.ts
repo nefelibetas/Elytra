@@ -10,6 +10,7 @@ const VersionSelect = () => import("../pages/VersionSelect.vue");
 const VersionSetup = () => import("../pages/VersionSetup.vue");
 const CustomThemeEditor = () => import("../pages/CustomThemeEditor.vue");
 const SkinStudio = () => import("../pages/SkinStudio.vue");
+const WorldPreview = () => import("../pages/WorldPreview.vue");
 
 declare module "vue-router" {
   interface RouteMeta {
@@ -32,6 +33,7 @@ const routes = [
   { path: "/version-setup", name: "version-setup", component: VersionSetup },
   { path: "/custom-theme", name: "custom-theme", component: CustomThemeEditor },
   { path: "/skin-studio", name: "skin-studio", component: SkinStudio },
+  { path: "/world-preview", name: "world-preview", component: WorldPreview },
 ];
 
 const router = createRouter({
@@ -49,6 +51,7 @@ const routeLevel: Record<string, number> = {
   "custom-theme": 1,
   "skin-studio": 1,
   "version-setup": 2,
+  "world-preview": 3,
   // 独立窗口页面：不与主窗口路由互跳，等级独立（无动画耦合）
 };
 

@@ -9,6 +9,7 @@ pub mod launch;
 pub mod launch_options;
 pub mod launch_script;
 pub mod loader;
+pub mod map;
 pub mod offline_account;
 pub mod online;
 pub mod server_status;

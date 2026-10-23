@@ -86,6 +86,15 @@ flate2 = "1"
 # 安装任务持久化（#6）：SQLite 存任务快照，崩溃/重启后恢复。
 # 运行时 SqlitePoolOptions（无 migrate 宏）；与 TOML 并存期间 Settings.toml 读写路径不动
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+# 世界地图：region 读写 + NBT/chunk 解析 + 瓦片 PNG 编码（loaded-only，不接预测）
+mca = { version = "2.1", default-features = false }
+fastnbt = "2.6"
+fastanvil = "0.32"
+png = "0.18"
+# fastanvil 的调色板加载依赖 image 的 PNG codec；显式打开避免跨 crate feature 遗漏
+image = { version = "0.23", default-features = false, features = ["png"] }
+# 1.21.5+ region 自定义 LZ4（Java LZ4Block）兜底
+lz4-java-wrc = "0.2"
 # 游戏目录变化监听（game/version/watch.rs）：非递归 watch `versions/` 与聚焦版本子目录。
 # 平台后端 ReadDirectoryChangesW / inotify / FSEvents；事件驱动，空闲不轮询不占 CPU
 notify = "8"

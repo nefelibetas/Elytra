@@ -9,6 +9,7 @@ export default {
     customThemeNew: "New Custom Theme",
     customThemeEdit: "Edit Custom Theme",
     skinStudio: "Wardrobe",
+    worldPreview: "World Preview - {name}",
     resourceDetail: "Resource Details",
   },
 };

@@ -7,6 +7,7 @@ import settings from "./settings";
 import skin from "./skin";
 import task from "./task";
 import tools from "./tools";
+import worldPreview from "./worldPreview";
 
 export default {
   common,
@@ -17,5 +18,6 @@ export default {
   settings,
   tools,
   skin,
+  worldPreview,
   errors,
 };

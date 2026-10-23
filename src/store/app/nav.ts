@@ -51,6 +51,18 @@ export function goBack(): boolean {
     return true;
   }
 
+  if (path === "/world-preview") {
+    const query = current.query;
+    const version = String(query.version ?? "");
+    pending += 1;
+    if (query.from === "setup" && version) {
+      void router.push({ path: "/version-setup", query: { name: version } });
+    } else {
+      void router.push("/");
+    }
+    return true;
+  }
+
   if (path === "/version-setup") {
     const back = (history.state as { back?: string } | null)?.back ?? "";
     if (back.includes("/version-select")) {

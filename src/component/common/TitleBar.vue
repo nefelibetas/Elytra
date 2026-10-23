@@ -19,7 +19,8 @@ const isDetail = computed(
     route.path === "/version-select" ||
     route.path === "/version-setup" ||
     route.path === "/custom-theme" ||
-    route.path === "/skin-studio",
+    route.path === "/skin-studio" ||
+    route.path === "/world-preview",
 );
 
 /** 次级页面标题栏文案。 */
@@ -33,6 +34,9 @@ const barTitle = computed(() => {
     return route.query.id ? t("nav.title.customThemeEdit") : t("nav.title.customThemeNew");
   }
   if (route.path === "/skin-studio") return t("nav.title.skinStudio");
+  if (route.path === "/world-preview") {
+    return t("nav.title.worldPreview", { name: String(route.query.world ?? "") });
+  }
   if (route.path === "/resource-detail") {
     // 资源详情：有译名时 "翻译名（原名）"，否则原名
     return detailTitle() || t("nav.title.resourceDetail");

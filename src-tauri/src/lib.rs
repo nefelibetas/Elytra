@@ -10,6 +10,7 @@ mod events;
 pub mod game;
 mod jdk;
 pub mod launcher;
+mod map;
 pub mod online;
 mod persist;
 mod server_status;
@@ -59,6 +60,7 @@ use commands::loader::{
     get_fabric_api_versions, get_fabric_versions, get_forge_versions, get_neoforge_versions,
     get_optifine_versions, get_quilt_versions,
 };
+use commands::map::{get_map_block, get_map_tile, get_map_world_info, list_map_regions};
 use commands::offline_account::{
     get_last_offline_username, get_offline_accounts, remove_offline_account,
     save_last_offline_username, save_offline_account,
@@ -149,6 +151,10 @@ pub fn run() {
             auto_activate_version,
             list_worlds,
             get_world_icon,
+            get_map_world_info,
+            list_map_regions,
+            get_map_tile,
+            get_map_block,
             list_resource_files,
             list_resource_detailed,
             delete_resource_file,

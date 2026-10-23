@@ -82,6 +82,7 @@
 ### 🌐 联机与工具
 
 - 🌐 **局域网联机**：EasyTier 虚拟局域网 + Scaffolding 协议（房间码互连，无需公网服务器），入口在启动页右栏；跨网可配协调服务器
+- 🗺️ **世界预览**：只读已加载区块的真实地图，支持维度切换、俯视 / 固定 Y 切面、Mod 方块取色与坐标方块识别
 - 🚀 **多线程下载器**：URL 队列并发 + 单文件 HTTP Range 分段，支持断点续传
 - 📡 **服务器状态**：Java 版 SLP 与基岩版 RakNet 探测（多地址）
 - 🧪 **生成器**：MOTD、物品 NBT、生物 NBT、指令（含目标选择器组合），内联烟花 / 药水 / 村民交易编辑器
@@ -156,7 +157,7 @@ cargo test --test tool_download                    # 工具箱下载器集成测
 
 ### 🖼️ 前端 `src/`
 
-- **`pages/`** — 9 个页面（启动 / 资源中心 / 任务中心 / 设置（左侧 Tab + 工具 Grid）/ 实例管理 / 实例设置 / 资源详情 / 皮肤衣柜 / 主题编辑器）
+- **`pages/`** — 10 个页面（启动 / 资源中心 / 任务中心 / 设置（左侧 Tab + 工具 Grid）/ 实例管理 / 实例设置 / 世界预览 / 资源详情 / 皮肤衣柜 / 主题编辑器）
 - **`component/`** — 组件按域分组（`common/` `download/` `launch/` `settings/` `tools/` `version/` `version-setup/`）
 - **`store/`** — 模块级 `reactive()` 状态单例，按域分包（`app/` `config/` `task/` `auth/` `community/` `skin/`）
 - **`utils/`** — 纯函数工具（格式化 / 键盘焦点 / toast 等）
@@ -164,7 +165,7 @@ cargo test --test tool_download                    # 工具箱下载器集成测
 
 ### 🦀 后端 `src-tauri/src/`
 
-- **`commands/`** — 命令胶水层：137 个 `#[tauri::command]`，只做参数展平与领域调用
+- **`commands/`** — 命令胶水层：141 个 `#[tauri::command]`，只做参数展平与领域调用
 - **`downloader/`** — 纯传输层：多源 fetch / 并发批处理 / 源探测 / 分段下载 / 路径互斥
 - **`game/`** — 内容与装配：版本元数据 / 资源 / ModLoader 安装 / 社区资源 / 整合包 / Mod 更新
 - **`task/`** — 任务编排与事件派发、SQLite 快照与崩溃恢复
@@ -172,6 +173,7 @@ cargo test --test tool_download                    # 工具箱下载器集成测
 - **`launcher/`** — 启动参数构建 / 环境准备 / 进程生命周期 / 自动任务
 - **`auth/`** — 微软 OAuth / 官方 API / 第三方皮肤站
 - **`jdk/`** — 本机 JDK 扫描与 managed runtime 下载
+- **`map/`** — 存档世界地图：region 解析、真实区块瓦片、Y 切面、Mod 方块取色
 - **`online/`** — EasyTier 局域网联机 + Scaffolding 协议
 - **`persist/`** — TOML 配置与密钥存储
 - **`util/`** — 跨域纯函数

@@ -67,4 +67,16 @@ export default {
     read: "读取配置失败",
     write: "保存配置失败",
   },
+  map: {
+    failed: "地图操作失败",
+    invalid_version: "版本名非法",
+    invalid_world: "存档名非法",
+    missing_world: "存档不存在",
+    missing_dimension: "维度不存在",
+    invalid_style: "地图样式无效",
+    missing_region: "地图区块文件不存在",
+    tile_failed: "地图瓦片渲染失败",
+    cache_create: "地图缓存目录创建失败",
+    cache_write: "地图缓存写入失败",
+  },
 };

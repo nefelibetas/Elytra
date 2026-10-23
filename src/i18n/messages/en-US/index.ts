@@ -8,6 +8,7 @@ import settings from "./settings";
 import skin from "./skin";
 import task from "./task";
 import tools from "./tools";
+import worldPreview from "./worldPreview";
 
 const messages = {
   common,
@@ -18,6 +19,7 @@ const messages = {
   settings,
   tools,
   skin,
+  worldPreview,
   errors,
 } satisfies MessageSchema;
 

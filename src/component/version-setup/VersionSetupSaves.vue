@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 版本设置-存档管理 tab：标题卡（打开存档文件夹）+ 列表卡（缩略图 + 名称 + 最后游玩），支持多选批量删除。
 import { computed, ref, onMounted, onUnmounted } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { Folder, Trash2, Map } from "@lucide/vue";
 import { deleteWorld } from "../../store/task/versionDetail";
@@ -22,9 +22,17 @@ import {
 } from "../../store/task/versionDetail";
 
 const route = useRoute();
+const router = useRouter();
 const { t } = useI18n();
 
 const versionName = computed(() => String(route.query.name ?? ""));
+
+function previewWorld(world: string) {
+  void router.push({
+    path: "/world-preview",
+    query: { version: versionName.value, world, from: "setup" },
+  });
+}
 
 const { selected, selectedSet, selecting, allVisibleSelected, toggle, toggleAll, clear } =
   useSelectable(computed(() => worlds.value.map(w => w.name)));
@@ -124,6 +132,14 @@ async function openSavesFolder() {
                   <span class="vss-local-name">{{ w.name }}</span>
                   <span class="vss-local-meta">{{ t("settings.version.setup.saves.lastPlayed", { date: fmtUnix(w.last_modified) }) }}</span>
                 </span>
+                <button
+                  class="vss-preview"
+                  :title="t('worldPreview.open')"
+                  :aria-label="t('worldPreview.open')"
+                  @click.stop="previewWorld(w.name)"
+                >
+                  <Map :size="15" />
+                </button>
               </div>
             </div>
           </div>
@@ -303,6 +319,25 @@ async function openSavesFolder() {
 .vss-local-meta {
   font-size: 11px;
   color: var(--text-tertiary);
+}
+
+.vss-preview {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.vss-preview:hover {
+  color: var(--color-brand);
+  border-color: var(--color-brand);
 }
 
 .vss-dialog-body {
