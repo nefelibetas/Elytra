@@ -286,7 +286,7 @@ mod tests {
         let j: serde_json::Value = serde_json::from_str(&m).unwrap();
         assert_eq!(j["formatVersion"], 1);
         assert_eq!(j["game"], "minecraft");
-        assert_eq!(j["versionId"], "1.20.1");
+        assert_eq!(j["versionId"], "1.20.1-fabric-1.0");
         assert_eq!(j["dependencies"]["minecraft"], "1.20.1");
         assert_eq!(j["dependencies"]["fabric-loader"], "1.0");
         assert_eq!(j["files"], serde_json::json!([]));

@@ -69,12 +69,12 @@ async function exportScript() {
   }
 }
 
-/** 导出整合包：mods/config/shaderpacks/resourcepacks/datapacks 打包为标准 MRPACK（Modrinth v1，overrides 物理打包 + 空 files，存档不打包）。 */
+/** 导出整合包：mods/config/shaderpacks/resourcepacks/datapacks 打包为标准 MRPACK（Modrinth v1；Modrinth 命中走 files[]，其余进 overrides，存档不打包）。 */
 async function exportModpack() {
   try {
     const path = await save({
-      defaultPath: `${versionName.value}.zip`,
-      filters: [{ name: t("settings.version.setup.export.modpackFilter"), extensions: ["zip"] }],
+      defaultPath: `${versionName.value}.mrpack`,
+      filters: [{ name: t("settings.version.setup.export.modpackFilter"), extensions: ["mrpack"] }],
     });
     if (!path) return; // 用户取消
     await exportModpackCommand(versionName.value, path);

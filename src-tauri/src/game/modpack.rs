@@ -457,6 +457,7 @@ pub(crate) struct HostedPackFile {
     path: String,
     hashes: serde_json::Value,
     downloads: Vec<String>,
+    #[serde(rename = "fileSize")]
     file_size: u64,
 }
 
@@ -621,7 +622,7 @@ pub(crate) fn pack_modpack(
     let manifest = serde_json::json!({
         "formatVersion": 1,
         "game": "minecraft",
-        "versionId": mc_version,
+        "versionId": version_name,
         "name": version_name,
         "summary": "",
         "files": hosted,
@@ -723,6 +724,19 @@ mod tests {
         ],
         "dependencies": {"minecraft": "1.21.1", "fabric-loader": "0.16.9"}
     }"#;
+
+    #[test]
+    fn hosted_pack_file_serializes_spec_file_size() {
+        let f = HostedPackFile {
+            path: "mods/a.jar".into(),
+            hashes: serde_json::json!({"sha1": "a", "sha512": "b"}),
+            downloads: vec!["https://cdn.modrinth.com/a.jar".into()],
+            file_size: 123,
+        };
+        let v = serde_json::to_value(&f).unwrap();
+        assert_eq!(v["fileSize"], 123);
+        assert!(v.get("file_size").is_none(), "MRPACK 字段必须是 fileSize");
+    }
 
     #[test]
     fn parse_modrinth_index_filters_env_and_maps_loader() {
