@@ -41,7 +41,9 @@ pub fn spawn_game_child(
 pub fn spawn_game_child(
     command: &mut std::process::Command,
 ) -> Result<std::process::Child, String> {
-    command.spawn().map_err(common_err_ctx_key!("errors.launch.failed", "启动游戏失败"))
+    command
+        .spawn()
+        .map_err(common_err_ctx_key!("errors.launch.failed", "启动游戏失败"))
 }
 
 pub fn drain_output(reader: &mut impl std::io::Read, path: &Path, is_stderr: bool) {

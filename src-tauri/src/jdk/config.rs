@@ -14,7 +14,8 @@ pub fn read() -> JdkOptions {
 }
 
 pub fn save(options: &JdkOptions) -> Result<(), String> {
-    persist::save(SECT_JDK, options).map_err(common_err_ctx_key!("errors.config.write", "保存配置失败"))
+    persist::save(SECT_JDK, options)
+        .map_err(common_err_ctx_key!("errors.config.write", "保存配置失败"))
 }
 
 pub fn read_cache() -> JdkScanCache {
@@ -22,7 +23,8 @@ pub fn read_cache() -> JdkScanCache {
 }
 
 pub fn save_cache(cache: &JdkScanCache) -> Result<(), String> {
-    persist::save(SECT_JDK_SCANNED, cache).map_err(common_err_ctx_key!("errors.config.write", "保存配置失败"))
+    persist::save(SECT_JDK_SCANNED, cache)
+        .map_err(common_err_ctx_key!("errors.config.write", "保存配置失败"))
 }
 
 /// 将扫描/安装发现的 JDK 去重注册进缓存（启动器自动扫描与下载安装共用）。

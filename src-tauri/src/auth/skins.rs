@@ -132,7 +132,8 @@ pub fn export_png(path: &str, b64: &str) -> Result<(), String> {
 
 /// 读取任意路径的皮肤图片（绘画器「导入」）返回 base64；用 `is_supported_image` 而非 `ensure_png`（编辑器解码像素，png/jpg 均可）。
 pub fn import_png(path: &str) -> Result<String, String> {
-    let bytes = std::fs::read(path.trim()).map_err(common_err_ctx_key!("errors.file.read", "读取文件失败"))?;
+    let bytes = std::fs::read(path.trim())
+        .map_err(common_err_ctx_key!("errors.file.read", "读取文件失败"))?;
     if !util::is_supported_image(&bytes) {
         bail!("不是受支持的图片格式\n{path}");
     }
@@ -161,8 +162,12 @@ fn save_bytes(
         source: normalize_source(source),
     };
     let path = skin_path(&entry.id)?;
-    std::fs::create_dir_all(skins_dir()).map_err(common_err_ctx_key!("errors.file.createDir", "创建皮肤目录失败"))?;
-    std::fs::write(&path, bytes).map_err(common_err_ctx_key!("errors.file.write", "保存皮肤文件失败"))?;
+    std::fs::create_dir_all(skins_dir()).map_err(common_err_ctx_key!(
+        "errors.file.createDir",
+        "创建皮肤目录失败"
+    ))?;
+    std::fs::write(&path, bytes)
+        .map_err(common_err_ctx_key!("errors.file.write", "保存皮肤文件失败"))?;
 
     // 索引 upsert（同 id 覆盖）；写失败回滚 PNG，保持「索引是事实来源、无孤儿文件」。
     upsert(&mut cfg.skins, entry.clone());
@@ -266,7 +271,10 @@ fn decode_b64(b64: &str) -> Result<Vec<u8>, String> {
     let raw = raw.rsplit_once("base64,").map_or(raw, |(_, r)| r);
     base64::engine::general_purpose::STANDARD
         .decode(raw)
-        .map_err(common_err_ctx_key!("errors.skin.load", "皮肤数据不是合法 base64"))
+        .map_err(common_err_ctx_key!(
+            "errors.skin.load",
+            "皮肤数据不是合法 base64"
+        ))
 }
 
 fn now_secs() -> u64 {

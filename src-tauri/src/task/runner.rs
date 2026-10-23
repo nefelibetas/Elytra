@@ -469,7 +469,10 @@ async fn install_optifine_step(
         return Ok(());
     };
     let parent_json: serde_json::Value = serde_json::from_str(parent_text)
-        .map_err(common_err_ctx_key!("errors.version.parse", "解析原版版本 JSON 失败"))
+        .map_err(common_err_ctx_key!(
+            "errors.version.parse",
+            "解析原版版本 JSON 失败"
+        ))
         .map_err(|e| vec![e])?;
     let DownloadCtx {
         app,
@@ -761,8 +764,10 @@ async fn fetch_version_json(
     config: &DownloaderConfig,
 ) -> Result<(VersionJson, String), String> {
     let text = meta::fetch_version_json_text(version_url, config).await?;
-    let vj: VersionJson =
-        serde_json::from_str(&text).map_err(common_err_ctx_key!("errors.version.parse", "解析 version json 失败"))?;
+    let vj: VersionJson = serde_json::from_str(&text).map_err(common_err_ctx_key!(
+        "errors.version.parse",
+        "解析 version json 失败"
+    ))?;
     Ok((vj, text))
 }
 
@@ -792,7 +797,11 @@ fn resolve_target_dir(task: &DownloadTask, mc: &std::path::Path) -> TargetDir {
         };
     }
     // 纯 OptiFine（无 ModLoader）使用独立目录，避免覆盖原版版本 JSON
-    if let Some(patch) = task.optifine_patch.as_deref().filter(|p| !p.trim().is_empty()) {
+    if let Some(patch) = task
+        .optifine_patch
+        .as_deref()
+        .filter(|p| !p.trim().is_empty())
+    {
         let dir_name = format!("{}-optifine-{}", task.mc_version, patch);
         return TargetDir {
             dir_name: dir_name.clone(),

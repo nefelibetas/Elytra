@@ -80,8 +80,9 @@ pub(crate) fn merge_loader_profile(
     dir_name: &str,
     maven_url: &str,
 ) -> Result<serde_json::Value, String> {
-    let mut merged: serde_json::Value =
-        serde_json::from_str(parent_text).map_err(common_err_ctx_key!("errors.version.parse", "解析原版版本 JSON 失败"))?;
+    let mut merged: serde_json::Value = serde_json::from_str(parent_text).map_err(
+        common_err_ctx_key!("errors.version.parse", "解析原版版本 JSON 失败"),
+    )?;
 
     for key in ["jvm", "game"] {
         let loader_args = profile["arguments"][key].as_array();
@@ -221,8 +222,9 @@ pub(crate) fn expand_inheritance(
         return Ok(child);
     }
 
-    let mut merged: serde_json::Value =
-        serde_json::from_str(parent_text).map_err(common_err_ctx_key!("errors.version.parse", "解析原版版本 JSON 失败"))?;
+    let mut merged: serde_json::Value = serde_json::from_str(parent_text).map_err(
+        common_err_ctx_key!("errors.version.parse", "解析原版版本 JSON 失败"),
+    )?;
     let parent_inherits = merged.get("inheritsFrom").cloned();
 
     // libraries：子 + 父 拼接（子在前，官方启动器/HMCL 惯例）。OptiFabric/纯净版 OptiFine 依赖此顺序：预补丁客户端 jar 须先于 vanilla 库进 classpath，JVM 同名类先命中 OptiFine 实现才能覆盖

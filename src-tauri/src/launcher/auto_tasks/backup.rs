@@ -76,8 +76,12 @@ fn copy_tree(
     total: usize,
     on_step: &mut dyn FnMut(usize, usize),
 ) -> Result<(), String> {
-    std::fs::create_dir_all(dst).map_err(common_err_ctx_key!("errors.file.createDir", "创建备份子目录失败"))?;
-    let entries = std::fs::read_dir(src).map_err(common_err_ctx_key!("errors.file.read", "读取存档目录失败"))?;
+    std::fs::create_dir_all(dst).map_err(common_err_ctx_key!(
+        "errors.file.createDir",
+        "创建备份子目录失败"
+    ))?;
+    let entries = std::fs::read_dir(src)
+        .map_err(common_err_ctx_key!("errors.file.read", "读取存档目录失败"))?;
     for e in entries.flatten() {
         let name = e.file_name().to_string_lossy().to_string();
         if is_excluded(&name) {
@@ -88,7 +92,8 @@ fn copy_tree(
         if from.is_dir() {
             copy_tree(&from, &to, copied, total, on_step)?;
         } else {
-            std::fs::copy(&from, &to).map_err(common_err_ctx_key!("errors.file.copy", "复制存档文件失败"))?;
+            std::fs::copy(&from, &to)
+                .map_err(common_err_ctx_key!("errors.file.copy", "复制存档文件失败"))?;
             *copied += 1;
             on_step(*copied, total);
         }
@@ -135,7 +140,10 @@ pub fn backup_saves(
     }
     let total: usize = worlds.iter().map(|w| count_files(&saves.join(w))).sum();
     let root = backup_root(game_dir);
-    std::fs::create_dir_all(&root).map_err(common_err_ctx_key!("errors.file.createDir", "创建备份目录失败"))?;
+    std::fs::create_dir_all(&root).map_err(common_err_ctx_key!(
+        "errors.file.createDir",
+        "创建备份目录失败"
+    ))?;
 
     let stamp = crate::util::utc_stamp();
     let tmp = root.join(format!("{stamp}.tmp"));

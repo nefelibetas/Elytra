@@ -41,7 +41,10 @@ fn read_version_json(vdir: &Path) -> Result<VersionJson, String> {
             vdir.display()
         )
     })?;
-    let text = std::fs::read_to_string(&vj_path).map_err(common_err_ctx_key!("errors.version.read", "读取版本文件失败"))?;
+    let text = std::fs::read_to_string(&vj_path).map_err(common_err_ctx_key!(
+        "errors.version.read",
+        "读取版本文件失败"
+    ))?;
     serde_json::from_str(&text).map_err(|e| {
         format!(
             "版本 JSON 损坏\n{} 解析失败: {e}，请删除该版本后重新下载安装",
@@ -593,8 +596,8 @@ pub async fn count_assets_all(
     let text =
         assets::fetch_asset_index(config, mc_dir, asset_index_url, index_id, index_sha1).await?;
     eprintln!("[assets] 索引文本: {}B", text.len());
-    let idx: serde_json::Value =
-        serde_json::from_str(&text).map_err(common_err_ctx_key!("errors.parse", "解析资源索引失败"))?;
+    let idx: serde_json::Value = serde_json::from_str(&text)
+        .map_err(common_err_ctx_key!("errors.parse", "解析资源索引失败"))?;
     eprintln!("[assets] JSON 解析完成");
     let objects_dir = mc_dir.join("assets").join("objects");
 

@@ -20,13 +20,17 @@ const MAX_MEMBER_BYTES: u64 = 32 * 1024 * 1024;
 /// 打包一次崩溃现场，返回 zip 路径。
 pub fn pack_crash_logs(ctx: &AutoTaskCtx<'_>) -> Result<PathBuf, String> {
     let dir = packs_dir(ctx.config_dir);
-    std::fs::create_dir_all(&dir).map_err(common_err_ctx_key!("errors.file.createDir", "创建崩溃包目录失败"))?;
+    std::fs::create_dir_all(&dir).map_err(common_err_ctx_key!(
+        "errors.file.createDir",
+        "创建崩溃包目录失败"
+    ))?;
     let out = dir.join(format!(
         "crash-{}-{}.zip",
         ctx.version_id,
         crate::util::utc_stamp()
     ));
-    let file = std::fs::File::create(&out).map_err(common_err_ctx_key!("errors.file.write", "创建崩溃包失败"))?;
+    let file = std::fs::File::create(&out)
+        .map_err(common_err_ctx_key!("errors.file.write", "创建崩溃包失败"))?;
     let mut zip = ZipWriter::new(file);
     let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
 
@@ -75,7 +79,8 @@ pub fn pack_crash_logs(ctx: &AutoTaskCtx<'_>) -> Result<PathBuf, String> {
         "version.json",
     )?;
 
-    zip.finish().map_err(common_err_ctx_key!("errors.file.write", "写入崩溃包失败"))?;
+    zip.finish()
+        .map_err(common_err_ctx_key!("errors.file.write", "写入崩溃包失败"))?;
     Ok(out)
 }
 

@@ -15,6 +15,7 @@
 
 ```bash
 cd src-tauri
+cargo fmt                                # 改 Rust 后必跑，统一全仓格式
 cargo check
 cargo clippy --lib                       # 保持零警告
 cargo test --lib -- --test-threads=1     # 必须串行（并行会因共享配置与网络抖动偶发失败）

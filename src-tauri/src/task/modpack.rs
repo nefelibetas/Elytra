@@ -591,8 +591,10 @@ impl<'a> PackInstall<'a> {
             Ok(t) => t,
             Err(e) => bail_key!("errors.download.fetch", "拉取版本清单失败\n{e}"),
         };
-        let vj: VersionJson =
-            serde_json::from_str(&parent_text).map_err(common_err_ctx_key!("errors.version.parse", "解析版本清单失败"))?;
+        let vj: VersionJson = serde_json::from_str(&parent_text).map_err(common_err_ctx_key!(
+            "errors.version.parse",
+            "解析版本清单失败"
+        ))?;
         let lib_est: u64 = vj
             .libraries
             .iter()
@@ -612,7 +614,10 @@ impl<'a> PackInstall<'a> {
             let jp = self
                 .vdir
                 .join(format!("{}.json", self.plan.version_dir_name));
-            std::fs::write(&jp, &json).map_err(common_err_ctx_key!("errors.file.write", "写入版本 JSON 失败"))?;
+            std::fs::write(&jp, &json).map_err(common_err_ctx_key!(
+                "errors.file.write",
+                "写入版本 JSON 失败"
+            ))?;
         }
         finish_step(self.app, self.progress, self.idx.i_json, &self.c);
         if cancelled(self.cancel) {
@@ -718,7 +723,11 @@ impl<'a> PackInstall<'a> {
         )
         .await
         {
-            bail_key!("errors.download.failed", "下载资源文件失败\n{}", e.join("; "));
+            bail_key!(
+                "errors.download.failed",
+                "下载资源文件失败\n{}",
+                e.join("; ")
+            );
         }
         finish_step(self.app, self.progress, self.idx.i_asst, &self.c);
 
@@ -872,7 +881,10 @@ impl<'a> PackInstall<'a> {
                         Some(ar) => extract_member(ar, &member, &dest),
                         None => Ok(()),
                     };
-                    res.map_err(common_err_ctx_key!("errors.file.extract", "释放包内资源失败"))?;
+                    res.map_err(common_err_ctx_key!(
+                        "errors.file.extract",
+                        "释放包内资源失败"
+                    ))?;
                     self.c.est_bytes.fetch_sub(f.size, Ordering::Relaxed);
                     finish_step(self.app, self.progress, step_idx, &self.c);
                 }
@@ -918,7 +930,11 @@ impl<'a> PackInstall<'a> {
                 ));
                 if let Some(parent) = dest.parent() {
                     if let Err(e) = std::fs::create_dir_all(parent) {
-                        bail_key!("errors.file.createDir", "创建目录失败\n{e}\n{}", parent.display());
+                        bail_key!(
+                            "errors.file.createDir",
+                            "创建目录失败\n{e}\n{}",
+                            parent.display()
+                        );
                     }
                 }
                 set_phase(
@@ -1006,7 +1022,10 @@ impl<'a> PackInstall<'a> {
         race_cancel(self.cancel, async move {
             tokio::task::spawn_blocking(move || extract_overrides(&ov, &vd))
                 .await
-                .map_err(common_err_ctx_key!("errors.file.extract", "解压工作线程异常"))?
+                .map_err(common_err_ctx_key!(
+                    "errors.file.extract",
+                    "解压工作线程异常"
+                ))?
         })
         .await?;
         finish_step(self.app, self.progress, idx, &self.c);
@@ -1170,11 +1189,13 @@ fn extract_overrides(ov: &OverridesRef, vdir: &Path) -> Result<(), String> {
         };
         let out = vdir.join(safe_relative_path(rel)?);
         if entry.is_dir() {
-            std::fs::create_dir_all(&out).map_err(common_err_ctx_key!("errors.file.createDir", "创建目录失败"))?;
+            std::fs::create_dir_all(&out)
+                .map_err(common_err_ctx_key!("errors.file.createDir", "创建目录失败"))?;
             continue;
         }
         if let Some(parent) = out.parent() {
-            std::fs::create_dir_all(parent).map_err(common_err_ctx_key!("errors.file.createDir", "创建目录失败"))?;
+            std::fs::create_dir_all(parent)
+                .map_err(common_err_ctx_key!("errors.file.createDir", "创建目录失败"))?;
         }
         extract::extract_entry_to(&mut entry, &out)?;
     }
@@ -1470,7 +1491,11 @@ mod tests {
 
             let (steps, idx, est) = build_step_plan(&request, &plan);
 
-            assert_eq!(steps[0].name, initial_step_specs(&request)[0].name, "{label}");
+            assert_eq!(
+                steps[0].name,
+                initial_step_specs(&request)[0].name,
+                "{label}"
+            );
             assert_eq!(
                 steps.len(),
                 prefix + 5 + 2 + 2,

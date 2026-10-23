@@ -557,7 +557,8 @@ pub(crate) fn spawn_files_task(app: AppHandle, task: DownloadFilesTask) -> Resul
         .join("versions")
         .join(&task.version_dir_name);
     if !dir.is_dir() {
-        bail_key!("errors.version.missing", 
+        bail_key!(
+            "errors.version.missing",
             "目标版本目录不存在（请先在版本选择页选择已安装的版本）\n版本目录: {}",
             dir.display()
         );

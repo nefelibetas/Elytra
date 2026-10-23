@@ -135,11 +135,16 @@ impl DownloaderConfig {
             let req = http().get(&url).timeout(limit);
             eprintln!("[meta] 请求开始: {url}（limit={limit:?}）");
             let fut = async {
-                let resp = req.send().await.map_err(common_err_ctx_key!("errors.network", "请求失败"))?;
+                let resp = req
+                    .send()
+                    .await
+                    .map_err(common_err_ctx_key!("errors.network", "请求失败"))?;
                 if !resp.status().is_success() {
                     bail_key!("errors.network", "请求失败\nHTTP {}", resp.status());
                 }
-                resp.text().await.map_err(common_err_ctx_key!("errors.network", "读取响应失败"))
+                resp.text()
+                    .await
+                    .map_err(common_err_ctx_key!("errors.network", "读取响应失败"))
             };
             match tokio::time::timeout(limit, fut).await {
                 Ok(Ok(text)) => return Ok(text),

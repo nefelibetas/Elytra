@@ -43,6 +43,7 @@ pub async fn export_launch_script(
     );
 
     let script = script::render_launch_script(&cmd.args, &mc_dir, &version_dir_name);
-    std::fs::write(&save_path, script).map_err(common_err_ctx_key!("errors.file.write", "写入脚本失败"))?;
+    std::fs::write(&save_path, script)
+        .map_err(common_err_ctx_key!("errors.file.write", "写入脚本失败"))?;
     Ok(save_path)
 }

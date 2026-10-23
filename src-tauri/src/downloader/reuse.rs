@@ -70,10 +70,15 @@ pub async fn copy_verified_local<F: Fn(u64, u64)>(
     progress: Option<F>,
 ) -> Result<u64, String> {
     if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).map_err(common_err_ctx_key!("errors.file.createDir", "创建目录失败"))?;
+        std::fs::create_dir_all(parent)
+            .map_err(common_err_ctx_key!("errors.file.createDir", "创建目录失败"))?;
     }
-    let mut src_f = std::fs::File::open(src).map_err(common_err_ctx_key!("errors.file.read", "打开本地复用源失败"))?;
-    let mut dst_f = std::fs::File::create(dest).map_err(common_err_ctx_key!("errors.file.write", "创建目标文件失败"))?;
+    let mut src_f = std::fs::File::open(src).map_err(common_err_ctx_key!(
+        "errors.file.read",
+        "打开本地复用源失败"
+    ))?;
+    let mut dst_f = std::fs::File::create(dest)
+        .map_err(common_err_ctx_key!("errors.file.write", "创建目标文件失败"))?;
     let mut copied: u64 = 0;
     let mut buf = vec![0u8; 1024 * 1024];
     loop {

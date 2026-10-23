@@ -68,13 +68,19 @@ fn probe_home(dir: &Path, found: &mut Vec<JdkInfo>, seen: &mut HashSet<String>, 
 pub(crate) fn inspect(java_home: &Path) -> Result<JdkInfo, String> {
     let java_bin = java_bin_path(java_home);
     if !java_bin.exists() {
-        bail_key!("errors.jdk.failed", "未找到 Java 可执行文件\n{}", java_bin.display());
+        bail_key!(
+            "errors.jdk.failed",
+            "未找到 Java 可执行文件\n{}",
+            java_bin.display()
+        );
     }
     let mut cmd = std::process::Command::new(java_bin);
     cmd.arg("-version");
     // java 是控制台程序：应用运行期探版本不得弹出命令行窗口
     cmd.no_window();
-    let output = cmd.output().map_err(common_err_ctx_key!("errors.jdk.scan", "Java 检测失败"))?;
+    let output = cmd
+        .output()
+        .map_err(common_err_ctx_key!("errors.jdk.scan", "Java 检测失败"))?;
     let stderr = String::from_utf8_lossy(&output.stderr);
     let version = parse_version(&stderr).ok_or_else(|| format!("Java 版本解析失败\n{}", stderr))?;
     Ok(JdkInfo {

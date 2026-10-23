@@ -132,7 +132,11 @@ impl TaskText {
             .collect();
         Self {
             key: Some(key.to_string()),
-            params: if params.is_empty() { None } else { Some(params) },
+            params: if params.is_empty() {
+                None
+            } else {
+                Some(params)
+            },
         }
     }
 }

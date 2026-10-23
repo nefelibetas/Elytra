@@ -88,15 +88,15 @@ pub fn spawn_download(app: AppHandle, task: DownloadTask) -> Result<String, Stri
 /// JDK 安装任务：支持列表校验 → 单步注册 → spawn（执行体在 task/jdk.rs）。
 pub fn spawn_install_jdk(app: AppHandle, major: u32) -> Result<String, String> {
     if !SUPPORTED_JAVA_MAJORS.contains(&major) {
-        bail_key!("errors.jdk.install", "暂不支持安装 Java {major}（仅支持 8/17/21/25）");
+        bail_key!(
+            "errors.jdk.install",
+            "暂不支持安装 Java {major}（仅支持 8/17/21/25）"
+        );
     }
     spawn_task(
         app,
         format!("下载 Java {major}"),
-        TaskText::new(
-            "task.backend.name.jdk",
-            &[("major", major.to_string())],
-        ),
+        TaskText::new("task.backend.name.jdk", &[("major", major.to_string())]),
         vec![StepSpec {
             name: "下载 Java 运行时".into(),
             kind: StepKind::JavaRuntime,

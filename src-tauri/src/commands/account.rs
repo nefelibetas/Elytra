@@ -32,7 +32,8 @@ pub async fn start_ms_login(app: AppHandle) -> Result<String, String> {
 
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", microsoft::CALLBACK_PORT))
         .await
-        .map_err(common_err_ctx_key!("errors.login.failed", 
+        .map_err(common_err_ctx_key!(
+            "errors.login.failed",
             "回调端口 {} 被占用",
             microsoft::CALLBACK_PORT
         ))?;
@@ -282,5 +283,6 @@ pub fn get_external_config() -> external::ExternalConfig {
 
 #[tauri::command]
 pub fn save_external_config(config: external::ExternalConfig) -> Result<(), String> {
-    persist::save(constants::SECT_EXTERNAL, &config).map_err(common_err_ctx_key!("errors.config.write", "保存失败"))
+    persist::save(constants::SECT_EXTERNAL, &config)
+        .map_err(common_err_ctx_key!("errors.config.write", "保存失败"))
 }

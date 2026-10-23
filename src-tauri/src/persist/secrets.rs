@@ -103,20 +103,27 @@ fn load_map() -> std::collections::HashMap<String, String> {
 fn write_map(map: &std::collections::HashMap<String, String>) -> Result<(), String> {
     let path = secrets_path();
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(common_err_ctx_key!("errors.file.createDir", "创建配置目录失败"))?;
+        std::fs::create_dir_all(parent).map_err(common_err_ctx_key!(
+            "errors.file.createDir",
+            "创建配置目录失败"
+        ))?;
     }
     let content = serde_json::to_string(map).map_err(common_err_ctx!("序列化 secrets 失败"))?;
     // 原子写：先写 .tmp 再 rename（同 store::write_raw）；直接 fs::write 中途崩溃会留半截 JSON，
     // 而解析失败等于凭据全丢。
     let tmp = path.with_extension("bin.tmp");
-    std::fs::write(&tmp, content).map_err(common_err_ctx_key!("errors.file.write", "写入 secrets 失败"))?;
+    std::fs::write(&tmp, content).map_err(common_err_ctx_key!(
+        "errors.file.write",
+        "写入 secrets 失败"
+    ))?;
     // 权限必须落在**已存在**的 tmp 上：先 chmod 后 write 时首次写入目标还不存在（ENOENT 被吞），
     // 文件按 umask 落成 0644——在「钥匙串不可用 → 明文降级」路径下同机其他用户可直接读 token。
     // chmod 失败按写入失败上抛。
     #[cfg(not(target_os = "windows"))]
     {
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
-            .map_err(common_err_ctx_key!("errors.file.write", "设置密钥文件权限失败"))?;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600)).map_err(
+            common_err_ctx_key!("errors.file.write", "设置密钥文件权限失败"),
+        )?;
     }
     std::fs::rename(&tmp, &path).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);

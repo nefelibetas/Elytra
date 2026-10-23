@@ -155,10 +155,16 @@ async fn negotiate_guest_session(
     // c:server_port（游戏端口；proxy NAT 直连 host 本机 MC 监听）
     write_request_async(&mut stream, "c", "server_port", b"")
         .await
-        .map_err(common_err_ctx_key!("errors.online.failed", "获取服务器端口失败"))?;
+        .map_err(common_err_ctx_key!(
+            "errors.online.failed",
+            "获取服务器端口失败"
+        ))?;
     let port_resp = read_response_async(&mut stream)
         .await
-        .map_err(common_err_ctx_key!("errors.online.failed", "获取服务器端口失败"))?;
+        .map_err(common_err_ctx_key!(
+            "errors.online.failed",
+            "获取服务器端口失败"
+        ))?;
     if port_resp.status != 0 || port_resp.body.len() != 2 {
         rollback_join_and_emit(sink, gen).await;
         return Err("服务器未启动\n请让主机先在游戏里开启局域网世界".to_string());

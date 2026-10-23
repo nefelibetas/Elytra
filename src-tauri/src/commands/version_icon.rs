@@ -59,14 +59,16 @@ pub fn get_version_icon_source(version_dir_name: String) -> VersionIconInfo {
 pub async fn set_version_icon(version_dir_name: String, source_path: String) -> Result<(), String> {
     ensure_simple_dir_name(&version_dir_name)?;
     let src = PathBuf::from(&source_path);
-    let meta = std::fs::metadata(&src).map_err(common_err_ctx_key!("errors.file.read", "读取图片失败"))?;
+    let meta =
+        std::fs::metadata(&src).map_err(common_err_ctx_key!("errors.file.read", "读取图片失败"))?;
     if !meta.is_file() {
         return Err("所选路径不是文件".into());
     }
     if meta.len() == 0 || meta.len() > MAX_PACK_ICON_BYTES {
         bail!("图片大小需在 1MB 以内\n当前 {} 字节", meta.len());
     }
-    let bytes = std::fs::read(&src).map_err(common_err_ctx_key!("errors.file.read", "读取图片失败"))?;
+    let bytes =
+        std::fs::read(&src).map_err(common_err_ctx_key!("errors.file.read", "读取图片失败"))?;
     if !util::is_supported_image(&bytes) {
         return Err("不支持的图片格式（仅支持 png / jpg / webp / gif）".into());
     }
@@ -89,7 +91,8 @@ pub async fn reset_version_icon(version_dir_name: String) -> Result<(), String> 
         return Ok(()); // 幂等：本就无自定义图
     }
     tokio::task::spawn_blocking(move || {
-        std::fs::remove_file(target).map_err(common_err_ctx_key!("errors.file.delete", "删除图标失败"))
+        std::fs::remove_file(target)
+            .map_err(common_err_ctx_key!("errors.file.delete", "删除图标失败"))
     })
     .await
     .map_err(common_err_ctx_key!("errors.unknown", "删除任务失败"))?

@@ -198,13 +198,18 @@ pub async fn update_mod_file(
         file_sha1,
     )
     .await
-    .map_err(common_err_ctx_key!("errors.download.failed", "下载更新失败"))?;
+    .map_err(common_err_ctx_key!(
+        "errors.download.failed",
+        "下载更新失败"
+    ))?;
 
     // 先删旧再改名（Windows 上 rename 覆盖已存在目标会失败）
     if target.exists() {
-        std::fs::remove_file(&target).map_err(common_err_ctx_key!("errors.file.delete", "删除旧文件失败"))?;
+        std::fs::remove_file(&target)
+            .map_err(common_err_ctx_key!("errors.file.delete", "删除旧文件失败"))?;
     }
-    std::fs::rename(&tmp, &target).map_err(common_err_ctx_key!("errors.file.write", "替换文件失败"))?;
+    std::fs::rename(&tmp, &target)
+        .map_err(common_err_ctx_key!("errors.file.write", "替换文件失败"))?;
     Ok(())
 }
 

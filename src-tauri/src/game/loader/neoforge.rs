@@ -37,7 +37,10 @@ pub(super) async fn download_neoforge_universal(
     let name = uni["name"].as_str().ok_or("NeoForge universal 坐标缺失")?;
     let parts: Vec<&str> = name.split(':').collect();
     if parts.len() < 4 {
-        bail_key!("errors.install.loader", "NeoForge universal 坐标格式异常\n{name}");
+        bail_key!(
+            "errors.install.loader",
+            "NeoForge universal 坐标格式异常\n{name}"
+        );
     }
     let (group, artifact, version, classifier) = (parts[0], parts[1], parts[2], parts[3]);
     let file = format!("{artifact}-{version}-{classifier}.jar");
@@ -70,16 +73,23 @@ pub(super) async fn download_neoforge_universal(
         .map(|s| s.mirror_url(&format!("{}/releases/{}", endpoints::NEOFORGE_MAVEN, rel)))
         .collect();
     if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).map_err(common_err_ctx_key!("errors.file.createDir", "创建目录失败"))?;
+        std::fs::create_dir_all(parent)
+            .map_err(common_err_ctx_key!("errors.file.createDir", "创建目录失败"))?;
     }
     if sha1.is_empty() {
         fetcher::fetch_fallback_c(&urls, &dest, None::<fn(u64, u64)>, Some(cancel))
             .await
-            .map_err(common_err_ctx_key!("errors.install.loader", "下载 NeoForge universal 失败"))?;
+            .map_err(common_err_ctx_key!(
+                "errors.install.loader",
+                "下载 NeoForge universal 失败"
+            ))?;
     } else {
         fetcher::fetch_verified_c(&urls, &dest, None::<fn(u64, u64)>, sha1, Some(cancel))
             .await
-            .map_err(common_err_ctx_key!("errors.install.loader", "下载 NeoForge universal 失败"))?;
+            .map_err(common_err_ctx_key!(
+                "errors.install.loader",
+                "下载 NeoForge universal 失败"
+            ))?;
     }
     Ok(())
 }
@@ -102,8 +112,10 @@ pub(super) async fn extract_neoforge_client(
             .by_name("install_profile.json")
             .map_err(common_err_ctx!("安装程序缺少 install_profile.json"))?;
         let mut text = String::new();
-        std::io::Read::read_to_string(&mut f, &mut text)
-            .map_err(common_err_ctx_key!("errors.install.loader", "读取 install_profile.json 失败"))?;
+        std::io::Read::read_to_string(&mut f, &mut text).map_err(common_err_ctx_key!(
+            "errors.install.loader",
+            "读取 install_profile.json 失败"
+        ))?;
         text
     };
     let profile = processors::parse_profile(&profile_text)?;
@@ -135,7 +147,8 @@ pub(super) async fn extract_neoforge_client(
     processors::run_client_processors(&profile, &pctx).await?;
 
     if !processors::intact_archive(&patched) {
-        bail_key!("errors.install.loader", 
+        bail_key!(
+            "errors.install.loader",
             "NeoForge 安装链执行完毕但未生成客户端\n{}",
             patched.display()
         );

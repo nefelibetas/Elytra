@@ -64,7 +64,8 @@ mod tests {
 
     #[test]
     fn keyed_bail_keeps_detail_lines() {
-        let err: Result<(), String> = (|| bail_key!("errors.download.failed", "下载失败\nHTTP 404"))();
+        let err: Result<(), String> =
+            (|| bail_key!("errors.download.failed", "下载失败\nHTTP 404"))();
         assert_eq!(
             err.unwrap_err(),
             "@i18n:errors.download.failed\n下载失败\nHTTP 404"

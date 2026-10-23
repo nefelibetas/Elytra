@@ -17,7 +17,10 @@ pub(crate) fn read_raw() -> Result<Option<String>, String> {
 
 pub(crate) fn write_raw(content: &str) -> Result<(), String> {
     let dir = config_dir();
-    fs::create_dir_all(&dir).map_err(common_err_ctx_key!("errors.file.createDir", "创建配置目录失败"))?;
+    fs::create_dir_all(&dir).map_err(common_err_ctx_key!(
+        "errors.file.createDir",
+        "创建配置目录失败"
+    ))?;
     let target = config_file();
     let tmp = dir.join(format!("{SETTINGS_FILE}.tmp"));
     fs::write(&tmp, content).map_err(common_err_ctx_key!("errors.config.write", "保存配置失败"))?;

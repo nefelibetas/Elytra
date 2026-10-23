@@ -54,9 +54,10 @@ pnpm tauri build    # 发布构建（vue-tsc + vite + cargo release + bundle）
 pnpm dev            # 仅 vite dev server（:1420 strictPort）
 pnpm build          # vue-tsc --noEmit + lint:css + vite build → dist/
 pnpm lint:css       # CSS 兼容性检查（stylelint，基线见 package.json browserslist）
+cd src-tauri && cargo fmt                # Rust 格式统一（改 Rust 后必跑）
 cd src-tauri && cargo check              # Rust 编译检查
 cd src-tauri && cargo clippy --lib       # Rust lint（保持零代码警告）
-cd src-tauri && cargo test --lib -- --test-threads=1   # 单元测试（当前 393 passed + 8 ignored（OptiFabric 真实下载 + NeoForge 21.x/26.x 与 Forge 1.20.1/1.12.2/1.7.10 安装链端到端 + 安装矩阵 2 个：loader 9 形态 / OptiFine 5 组合）；串行防 persist/网络竞争）
+cd src-tauri && cargo test --lib -- --test-threads=1   # 单元测试（当前 394 passed + 8 ignored（OptiFabric 真实下载 + NeoForge 21.x/26.x 与 Forge 1.20.1/1.12.2/1.7.10 安装链端到端 + 安装矩阵 2 个：loader 9 形态 / OptiFine 5 组合）；串行防 persist/网络竞争）
 cd src-tauri && cargo run --bin gen_ts --features gen-ts    # 生成前端 TS 类型 → src/types/（改 Rust 数据结构后必跑；不在测试里生成）
 cd src-tauri && cargo test --test online_diag          # 联机集成测试（host/guest 双实例回环，走真实 easytier）
 cd src-tauri && cargo test --test tool_download        # 工具箱下载器集成测试（本地 HTTP 服务驱动完整链路：分段/暂停续传/取消/回退）
@@ -71,6 +72,7 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 
 ### Rust 后端
 
+- **格式化**：改 Rust 文件后必须跑 `cargo fmt`；提交前 `cargo fmt --check` 应零差异（全仓统一，不手调换行）
 - **命令命名**：snake_case、动词开头（`get_/save_/set_/fetch_/scan_/launch_/spawn_/start_/cancel_/remove_`…）
 - **返回**：可失败 → `Result<T, String>`；纯读取 → 裸 `T`/`Option<T>`；错误在模块边界 `.map_err(|e| e.to_string())`
 - **错误消息规范**：**中文短文案首行 + `\n` + 技术细节**（如 `下载资源索引失败\n{e}`、`请求失败\nHTTP {status}`）；前端 toast/内联错误经 `errMsg()` 取首行，AlertDialog（带复制）显示全文
@@ -179,7 +181,7 @@ npx vue-tsc --noEmit    # 前端全量类型检查（可在项目根直接跑）
 
 ## Testing & QA
 
-- **无前端测试**；Rust 侧 393 个单元测试，全部内嵌各模块 `#[cfg(test)] mod tests`（含测试与实现同文件的约定），`cargo test --lib -- --test-threads=1` 运行；集成测试 `tests/online_diag.rs`（联机全链路：host/guest 双实例回环 + easytier 日志落盘）与 `tests/tool_download.rs`（工具箱下载器全链路：本地 HTTP 服务驱动入队 / 分段 / 暂停续传 / 取消 / 回退，5 用例，含 1 个真实网络 `#[ignore]`）
+- **无前端测试**；Rust 侧 394 个单元测试，全部内嵌各模块 `#[cfg(test)] mod tests`（含测试与实现同文件的约定），`cargo test --lib -- --test-threads=1` 运行；集成测试 `tests/online_diag.rs`（联机全链路：host/guest 双实例回环 + easytier 日志落盘）与 `tests/tool_download.rs`（工具箱下载器全链路：本地 HTTP 服务驱动入队 / 分段 / 暂停续传 / 取消 / 回退，5 用例，含 1 个真实网络 `#[ignore]`）
 - **发布前 GTK 冒烟**：CI 只构建不渲染，发版前在 WSLg / Linux VM 跑 `pnpm tauri dev` 过 9 个页面（重点：滚动条宽度、徽章底色、弹窗遮罩、皮肤工具画布），确认无布局错位
 - **单元测试只测纯函数**：PKCE、URL 组装、启动命令构建（`build_launch_command` + `minimal_version_json()` 助手）、离线皮肤 UUID 算法（与 Java `UUID.hashCode() & 1` 一致性）、内存分配公式、util（URL 文件名/版本目录解析/`sha1_sub_dir`/`safe_relative_path`）、maven XML 解析与语义化排序、Mod 双源搜索、修复步骤规划、persist 读写回环、secrets DPAPI、store 快照/恢复、**`store_ops_from_runtime_worker_no_panic`（worker 线程 block_on 回归）**、**`count_assets_all_end_to_end`（真实索引 + 5057 项多线程扫描，网络）**、**`find_java_home_finds_nested_bin`（Azul 布局幂等）**、`downloader/fetcher` 的取消/换源/校验/重定向/并发上限、`downloader/segmented` 的切分覆盖/小文件不分段/分段写一致性/不支持 Range 回退/段级与段内续传/陈旧位图作废、loader 的 profile 合并与继承展开、房间码解析/广播回环（online）、**`task/emit` 的派发器（进度帧按 `(事件, 任务)` 合并 / 低频事件 FIFO / 同任务帧严格保序 / 等待决策帧不被进度帧顶替）**、`task/progress` 的 `StepRef::percent`（文件口径优先 / 无分母或步骤结束返回 `None`）与整合包 `Counters` 的进入/离开步骤、**步骤索引↔名字对齐**（整合包 `step_index_points_at_matching_names`：Online/Local 两种前缀、`replace_steps_keeps_done_steps_at_100`：已完成步骤不得被重置；修复 `test_repair_indices_align_with_steps`：穷举 16 种缺失组合）
 - **断言风格**：`assert_eq!` 精确值为主（argv 位置、公式值、错误码消息）；行为不变量用 `assert!` + 中文 message

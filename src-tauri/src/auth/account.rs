@@ -20,7 +20,10 @@ fn http_client(timeout_secs: u64) -> Result<reqwest::Client, String> {
         .user_agent(constants::UA_MOJANG_API)
         .timeout(Duration::from_secs(timeout_secs))
         .build()
-        .map_err(common_err_ctx_key!("errors.login.failed", "初始化客户端失败"))
+        .map_err(common_err_ctx_key!(
+            "errors.login.failed",
+            "初始化客户端失败"
+        ))
 }
 
 /// token 刷新余量（秒）：距过期不足此值就提前刷新，避开「刚好过期」竞态。
@@ -44,7 +47,8 @@ pub async fn ensure_valid_account() -> Result<auth::model::MsAccount, String> {
     }
     let refreshed = auth::microsoft::refresh_login(&account)
         .await
-        .map_err(common_err_ctx_key!("errors.login.expired", 
+        .map_err(common_err_ctx_key!(
+            "errors.login.expired",
             "登录凭证已过期，自动刷新失败（请重新登录）"
         ))?;
     auth::model::save(&refreshed)?;
@@ -65,10 +69,10 @@ pub async fn fetch_b64(url: &str, err_prefix: &str) -> Result<String, String> {
     if !resp.status().is_success() {
         bail!("{err_prefix}失败\nHTTP {}", resp.status());
     }
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(common_err_ctx_key!("errors.download.failed", "下载数据失败"))?;
+    let bytes = resp.bytes().await.map_err(common_err_ctx_key!(
+        "errors.download.failed",
+        "下载数据失败"
+    ))?;
     Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
 
@@ -207,11 +211,21 @@ pub async fn fetch_capes(access_token: &str) -> Result<Vec<CapeInfo>, String> {
         .bearer_auth(access_token)
         .send()
         .await
-        .map_err(common_err_ctx_key!("errors.skin.failed", "获取披风列表失败"))?;
+        .map_err(common_err_ctx_key!(
+            "errors.skin.failed",
+            "获取披风列表失败"
+        ))?;
     if !resp.status().is_success() {
-        bail_key!("errors.skin.failed", "获取披风列表失败\nHTTP {}", resp.status());
+        bail_key!(
+            "errors.skin.failed",
+            "获取披风列表失败\nHTTP {}",
+            resp.status()
+        );
     }
-    let json: serde_json::Value = resp.json().await.map_err(common_err_ctx_key!("errors.parse", "解析响应失败"))?;
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(common_err_ctx_key!("errors.parse", "解析响应失败"))?;
     let capes = json["capes"].as_array().cloned().unwrap_or_default();
     let mut list: Vec<CapeInfo> = capes
         .iter()
@@ -306,7 +320,8 @@ pub async fn upload_skin_bytes(
     if !resp.status().is_success() {
         let status = resp.status();
         let body: serde_json::Value = resp.json().await.unwrap_or_default();
-        bail_key!("errors.skin.upload", 
+        bail_key!(
+            "errors.skin.upload",
             "上传皮肤失败\n{}",
             auth::microsoft::extract_api_error(&body, status)
         );
