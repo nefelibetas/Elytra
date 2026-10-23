@@ -6,6 +6,7 @@ node = "24"
 rust = "1.99"
 # easytier-proto / prost-wkt-types 的 build.rs 需调 protoc，缺了直接 panic（Could not find protoc）
 protoc = "36"
+# EasyTier 是常规依赖，正常构建即会编译；还需系统 7z（mise 不管理）：Windows 7-Zip / Linux p7zip-full / macOS p7zip
 
 [env]
 # 确保使用 pnpm 作为唯一包管理器

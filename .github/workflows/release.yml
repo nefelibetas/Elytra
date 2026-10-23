@@ -4,7 +4,7 @@ name: Release
 # 工具链版本一律取自 mise.toml（node / pnpm / rust / protoc），本文件不写死版本号。
 #
 # 三个 job：
-#   check   验证门（Windows）：vue-tsc + lint:css + i18n + cargo fmt --check + cargo check / clippy -D warnings / test（串行）——与本地门一致
+#   check   验证门（Windows）：vue-tsc + lint:css + i18n + cargo fmt --check + clippy -D warnings / test（串行）——clippy 已含编译检查
 #   build   三平台并行打包：
 #             Windows  便携 zip + NSIS + MSI
 #             macOS    universal dmg（ad-hoc 签名：Apple Silicon 上未签名二进制无法启动）
@@ -37,6 +37,15 @@ jobs:
       - uses: jdx/mise-action@v5
         with:
           install_args: "node npm:pnpm rust protoc"
+      - name: 确保 7-Zip 可用（easytier 构建依赖）
+        shell: bash
+        run: |
+          if [ -f "/c/Program Files/7-Zip/7z.exe" ]; then
+            echo "C:/Program Files/7-Zip" >> "$GITHUB_PATH"
+          else
+            choco install 7zip -y
+            echo "C:/Program Files/7-Zip" >> "$GITHUB_PATH"
+          fi
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
@@ -55,9 +64,7 @@ jobs:
       - name: Rust 格式检查
         working-directory: src-tauri
         run: cargo fmt --check
-      - name: cargo check
-        working-directory: src-tauri
-        run: cargo check --lib
+      # clippy 已包含编译检查，不再单独跑 cargo check（避免重复编译）
       - name: cargo clippy（零警告）
         working-directory: src-tauri
         run: cargo clippy --lib -- -D warnings
@@ -96,6 +103,21 @@ jobs:
         with:
           install_args: "node npm:pnpm rust protoc"
 
+      - name: 确保 7-Zip 可用（easytier 构建依赖，Windows）
+        if: startsWith(matrix.os, 'windows')
+        shell: bash
+        run: |
+          if [ -f "/c/Program Files/7-Zip/7z.exe" ]; then
+            echo "C:/Program Files/7-Zip" >> "$GITHUB_PATH"
+          else
+            choco install 7zip -y
+            echo "C:/Program Files/7-Zip" >> "$GITHUB_PATH"
+          fi
+
+      - name: 安装 7-Zip（easytier 构建依赖，macOS）
+        if: startsWith(matrix.os, 'macos')
+        run: brew list p7zip >/dev/null 2>&1 || brew install p7zip
+
       - name: Linux 系统依赖（Tauri v2 前置 + kcp-sys 的 bindgen）
         if: startsWith(matrix.os, 'ubuntu')
         run: |
@@ -104,7 +126,7 @@ jobs:
           # libappindicator-sys 只在运行时 dlopen .so、不读 .pc，这里只是满足打包/运行时依赖
           sudo apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
-            patchelf xdg-utils file libclang-dev
+            patchelf xdg-utils file libclang-dev p7zip-full
 
       - name: macOS 双架构 target（universal 需要）
         if: matrix.target == 'universal-apple-darwin'

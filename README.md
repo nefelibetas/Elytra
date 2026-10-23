@@ -127,9 +127,11 @@
 
 ## 🛠️ 开发
 
-> 工具链版本以 `mise.toml` 为唯一来源（node / pnpm / rust / protoc）；编译联机功能（EasyTier）另需 libclang（LLVM）。包管理器必须使用 pnpm。
+> 推荐使用 [mise](https://mise.jdx.dev/) 按 `mise.toml` 安装工具链（node / rust / protoc）：CI 也读同一份文件，本地与 CI 的版本更容易保持一致。不使用 mise 也可以，按下面的版本说明手动安装即可。项目依赖 EasyTier，正常构建就会编译它，因此还需要 libclang（LLVM）与 7-Zip（`7z`）；protoc 已包含在工具链中。
 >
-> 不使用 mise 时：安装 Node.js 24 与 pnpm 12（`npm install -g pnpm@12` 或 Corepack），Rust / protoc 版本以 `mise.toml` 为准。
+> **本项目必须使用 pnpm**：开发脚本、`pnpm-lock.yaml` 和 CI 都按 pnpm 固定；用 npm / yarn 可能得到不同的依赖树。pnpm 的内容寻址存储也能减少重复占用。
+>
+> 不使用 mise 时：推荐安装 Node.js 24 与 pnpm 12（`npm install -g pnpm@12` 或 Corepack）；Rust / protoc 按 `mise.toml` 的版本准备，并确保 libclang 与 7-Zip 可用。这些版本与 CI 基准一致，能减少环境差异。
 
 ```bash
 mise install          # 按 mise.toml 安装工具链
@@ -235,6 +237,8 @@ cargo test --test tool_download                    # 工具箱下载器集成测
 - Fabric · Quilt · Forge · NeoForge — 各 ModLoader 的 Maven 元数据
 - [HMCL](https://github.com/HMCL-dev/HMCL) — 同类开源启动器，本项目 GPL-3.0-only 许可证与之对齐
 - [PCL2](https://github.com/Meloong-Git/PCL) — 界面布局设计参考；中文内容搜索内嵌其 `WikiEntries.txt` 快照（见[第三方声明](THIRD-PARTY-NOTICES.md)）
+
+> 以上仅列出开发过程中实际参考或使用较多的项目，不是完整榜单；还有很多优秀启动器与开源项目没有出现，不代表它们不好。
 
 ## ⚖️ 免责声明
 

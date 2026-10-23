@@ -6,10 +6,14 @@
 
 ## 开发环境
 
-- **工具链**：版本以 [`mise.toml`](mise.toml) 为唯一来源（node / pnpm / rust / protoc），执行 `mise install` 安装
-- **不使用 mise**：安装 Node.js 24 与 pnpm 12（`npm install -g pnpm@12` 或 Corepack），Rust / protoc 版本以 `mise.toml` 为准
-- **包管理器**：只支持 pnpm（`pnpm-lock.yaml` 入库，CI 一律 `pnpm install --frozen-lockfile`）
-- **libclang**：编译联机功能（EasyTier 的 kcp feature）需要 LLVM——安装后设置 `LIBCLANG_PATH`
+- **工具链（推荐）**：推荐用 [mise](https://mise.jdx.dev/) 按 [`mise.toml`](mise.toml) 安装（node / rust / protoc）；CI 读同一份文件，能减少本地与 CI 的版本差异。mise 不是强制项，也可手动安装对应版本
+- **不使用 mise**：推荐安装 Node.js 24 与 pnpm 12（`npm install -g pnpm@12` 或 Corepack）；这些版本与 `mise.toml` 的基准一致，可减少本地与 CI 的差异
+- **包管理器（必须 pnpm）**：仓库脚本、`pnpm-lock.yaml` 与 CI 都按 pnpm 固定；主要有三个原因：
+  - 内容寻址存储 + 硬链接/全局 store，减少重复磁盘占用
+  - 严格的 `node_modules` 结构能更早暴露未声明依赖
+  - 换用 npm / yarn 可能生成不同依赖树，与 CI 的 `--frozen-lockfile` 不一致
+- **libclang**：项目依赖 EasyTier，正常构建就会编译它；kcp-sys 的 bindgen 需要 LLVM——安装后设置 `LIBCLANG_PATH`
+- **7-Zip**：EasyTier 构建需要 `7z` 在 PATH——Windows 安装 7-Zip，Linux 安装 `p7zip-full`，macOS 安装 `p7zip`
 - **构建期可选配置**：复制 `.env.example` 为 `.env`（已被 gitignore），按需填写 CurseForge API Key；微软 OAuth Client ID 已内置公开常量，无需配置。留空不影响编译，仅 CurseForge 来源不可用
 - 其他 Tauri v2 系统依赖见 [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
 
@@ -54,7 +58,7 @@ CI（`.github/workflows/ci.yml`）在 PR 与 `main` / `develop` 推送时跑同�
 
 1. 同步三处版本号（`src-tauri/tauri.conf.json` / `src-tauri/Cargo.toml` / `package.json`），须与 tag 号一致
 2. 推送 tag：`git tag v1.0.0 && git push origin v1.0.0`
-3. 工作流依次执行：验证门（vue-tsc + lint:css + i18n + fmt + cargo check + clippy + test）→ 三平台并行构建 → 全部通过后把草稿 Release 转正；任一步失败则停在草稿、不对外露出
+3. 工作流依次执行：验证门（vue-tsc + lint:css + i18n + fmt + clippy + test；clippy 已含编译检查）→ 三平台并行构建 → 全部通过后把草稿 Release 转正；任一步失败则停在草稿、不对外露出
 4. Release 正文：`docs/release-notes/<tag>.md` 存在时由 publish 阶段覆盖为人工正文；不存在则保留 `--generate-notes` 自动生成
 
 同版本重跑：`git tag -f v1.0.0 <新提交> && git push -f origin v1.0.0`。

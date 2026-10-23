@@ -28,6 +28,24 @@ This use is independent of the project as a whole, does not represent PCL or Che
 
 The Fabric / Quilt / Forge / NeoForge / OptiFine icons under `src/assets/` are the property of their respective projects and are used solely to identify the corresponding loader.
 
+## 关于页图标 / About page icons
+
+`src/assets/thanks/` 下的图标仅用于标识对应项目；版权与商标归各自所有者，不代表官方背书。
+
+| 文件 | 来源 | 说明 |
+|---|---|---|
+| `pcl2.png` | [PCL](https://github.com/Meloong-Git/PCL) 的 `Plain Craft Launcher 2/Images/icon.ico` | PCL Limited Distribution License |
+| `hmcl.png` | [HMCL](https://github.com/HMCL-dev/HMCL) 的 `HMCL/src/main/resources/assets/img/icon@8x.png` | GPL-3.0 |
+| `mcim.png` | [MCIM](https://www.mcimirror.top/) 的 `/brand/logo-mark-192.png` | MCIM Project |
+| `mcmod.png` | [MC 百科](https://www.mcmod.cn/) 的 `images/logo.gif`（裁切图标部分） | MC 百科 |
+| `bmclapi.png` | [BMCLAPI 文档](https://bmclapidoc.bangbang93.com/) 的 `favicon.ico` | bangbang93 / BMCLAPI |
+| `modrinth.png` | [Modrinth](https://modrinth.com/) 的 `cdn.modrinth.com/modrinth-new.png` | Modrinth |
+| `curseforge.svg` | [Simple Icons](https://simpleicons.org/) 的 CurseForge 图标（CC0） | CurseForge 商标归 CurseForge 所有 |
+| `minecraft.png` | [Minecraft](https://www.minecraft.net/) 的 `android-icon-192x192.png` | Mojang Studios |
+| `azul.png` | [Azul](https://www.azul.com/) 的 `azul-favicon-block.png` | Azul Systems |
+
+The icons under `src/assets/thanks/` are used solely to identify the corresponding projects. Copyright and trademarks belong to their respective owners, and no endorsement is implied.
+
 ## Minecraft 素材 / Minecraft assets
 
 `src/assets/` 中的方块与物品图像，以及 `src-tauri/resources/steve.png`、`src-tauri/resources/alex.png`（Mojang 官方默认皮肤）均为 Minecraft 素材，版权归 Mojang Studios 所有，仅用于界面装饰与离线模式默认皮肤；本项目与 Mojang Studios / Microsoft 无关联。

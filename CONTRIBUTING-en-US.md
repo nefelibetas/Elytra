@@ -6,10 +6,14 @@ Thanks for your interest in Elytra Launcher! Read this guide before submitting c
 
 ## Development environment
 
-- **Toolchain**: versions are defined solely in [`mise.toml`](mise.toml) (node / pnpm / rust / protoc). Run `mise install` to install them.
-- **Not using mise**: install Node.js 24 and pnpm 12 (`npm install -g pnpm@12` or Corepack); Rust / protoc versions follow `mise.toml`.
-- **Package manager**: pnpm only (`pnpm-lock.yaml` is committed; CI always runs `pnpm install --frozen-lockfile`).
-- **libclang**: building the LAN feature (EasyTier's kcp feature) requires LLVM — set `LIBCLANG_PATH` after installing it.
+- **Toolchain (recommended)**: we recommend [mise](https://mise.jdx.dev/) with [`mise.toml`](mise.toml) (node / rust / protoc); CI reads the same file, which reduces local/CI version drift. mise is not mandatory, and you can install the versions manually.
+- **Not using mise**: we recommend Node.js 24 and pnpm 12 (`npm install -g pnpm@12` or Corepack); these match the `mise.toml` baseline and reduce local/CI drift.
+- **Package manager (pnpm required)**: the repo scripts, `pnpm-lock.yaml`, and CI are all pinned to pnpm, for three main reasons:
+  - the content-addressable store plus hard links/global store reduces duplicate disk usage
+  - the strict `node_modules` layout surfaces undeclared dependencies earlier
+  - npm / yarn may produce a different dependency tree from CI's `--frozen-lockfile` install
+- **libclang**: the project depends on EasyTier, which is compiled in normal builds; kcp-sys bindgen requires LLVM — set `LIBCLANG_PATH` after installing it.
+- **7-Zip**: EasyTier's build needs `7z` on PATH — install 7-Zip on Windows, `p7zip-full` on Linux, or `p7zip` on macOS.
 - **Tauri system dependencies**: see [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
 - **Optional build-time config**: copy `.env.example` to `.env` (gitignored) and fill in the CurseForge API key as needed; the Microsoft OAuth client ID is a built-in public constant and needs no configuration. Leaving it empty does not affect compilation; only the CurseForge source is disabled.
 
@@ -54,7 +58,7 @@ Releases are automated by [`.github/workflows/release.yml`](.github/workflows/re
 
 1. Sync the version in three places (`src-tauri/tauri.conf.json` / `src-tauri/Cargo.toml` / `package.json`); it must match the tag.
 2. Push the tag: `git tag v1.0.0 && git push origin v1.0.0`
-3. The workflow runs the verification gate (vue-tsc + lint:css + i18n + fmt + cargo check + clippy + test), builds all three platforms in parallel, and publishes the draft release only if everything passes; any failure leaves the release in draft.
+3. The workflow runs the verification gate (vue-tsc + lint:css + i18n + fmt + clippy + test; clippy already covers compilation), builds all three platforms in parallel, and publishes the draft release only if everything passes; any failure leaves the release in draft.
 4. Release notes: if `docs/release-notes/<tag>.md` exists, the publish job uses it; otherwise the generated notes are kept.
 
 To rerun the same version: `git tag -f v1.0.0 <new-commit> && git push -f origin v1.0.0`.

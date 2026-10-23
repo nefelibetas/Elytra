@@ -127,9 +127,11 @@ Grab the artifact for your platform from [Releases](https://github.com/nefelibet
 
 ## 🛠️ Development
 
-> Toolchain versions come solely from `mise.toml` (node / pnpm / rust / protoc); building the LAN feature (EasyTier) also needs libclang (LLVM). pnpm is the only supported package manager.
+> We recommend [mise](https://mise.jdx.dev/) for installing the toolchain from `mise.toml` (node / rust / protoc): CI reads the same file, which keeps local and CI versions aligned. Using mise is optional, and you can install the versions manually. The project depends on EasyTier, which is compiled in normal builds, so libclang (LLVM) and 7-Zip (`7z`) are also required; protoc is already part of the toolchain.
 >
-> Not using mise? Install Node.js 24 and pnpm 12 (`npm install -g pnpm@12` or Corepack); Rust / protoc versions follow `mise.toml`.
+> **This project requires pnpm**: the dev scripts, `pnpm-lock.yaml`, and CI are all pinned to pnpm; npm / yarn may produce a different dependency tree. pnpm's content-addressable store also reduces duplicate disk usage.
+>
+> Not using mise? We recommend Node.js 24 and pnpm 12 (`npm install -g pnpm@12` or Corepack); use the `mise.toml` versions for Rust / protoc and make sure libclang and 7-Zip are available. These match the CI baseline and reduce environment drift.
 
 ```bash
 mise install          # install toolchain from mise.toml
@@ -235,6 +237,8 @@ See 📖 [AGENTS.md](AGENTS.md) (repository development guide).
 - Fabric · Quilt · Forge · NeoForge — ModLoader Maven metadata
 - [HMCL](https://github.com/HMCL-dev/HMCL) — fellow open-source launcher; our GPL-3.0-only license aligns with it
 - [PCL2](https://github.com/Meloong-Git/PCL) — UI layout reference; the Chinese content search embeds its `WikiEntries.txt` snapshot (see [third-party notices](THIRD-PARTY-NOTICES.md))
+
+> This list only covers projects we actually referenced or used during development and is not exhaustive. Many other excellent launchers and open-source projects are not listed, which does not mean they are inferior.
 
 ## ⚖️ Disclaimer
 
