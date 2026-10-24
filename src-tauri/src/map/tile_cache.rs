@@ -30,7 +30,8 @@ fn short_hash(s: &str) -> String {
 /// 缓存格式版本：渲染管线/调色板升级时 +1（旧格式瓦片自动失效重渲染，
 /// 淘汰由容量治理兜底）。
 /// v4：loaded-only 地图，移除预测图层。
-const TILE_CACHE_FORMAT: &str = "v4-loaded-only";
+/// v5：26.x 混合 palette 解析（旧版对 26.x 区块整块解析失败，缓存为全透明图）。
+const TILE_CACHE_FORMAT: &str = "v5-loaded-only";
 
 /// 瓦片缓存键：格式版本 + 世界路径 + 维度 + region 坐标 + 样式 + region mtime。
 /// region 文件经 domain 维度解析定位（26.x 与旧布局一致）——与列表/渲染同源，

@@ -1,25 +1,26 @@
 //! 世界预览命令：版本/存档路径由后端解析，只读已加载 region。
-//! 瓦片返回 PNG 二进制；固定 Y 切面用 `slice@Y`，top-down 用 `topdown`。
+//! 瓦片为俯视 PNG，`max_y` 指定向下扫描的最高 Y（降低可看洞穴/地下）。
 
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
 use crate::game::version::dir::version_dir_path;
+use crate::map::folder::{discover_worlds, MapFolderEntry};
 use crate::map::region_io::{
-    dimension_dir, list_region_files, probe_at, region_file_for, surface_info, MapRegionInfo,
+    dimension_dir, list_region_files, region_file_for, surface_info, MapRegionInfo,
 };
 use crate::map::render::{render_region_tile, RenderStyle};
+use crate::map::search::{find_biome, list_biomes, MapBiomeHit, MapBiomeSummary};
 use crate::map::tile_cache::{read_cached_tile, tile_cache_key, write_tile};
 use crate::map::world_info::{world_info, MapWorldInfo};
+use crate::seedmap;
 use crate::util::is_simple_name;
 
 #[derive(Debug, Clone, Serialize, ts_rs::TS)]
 #[ts(export_to = "map/")]
 pub struct MapBlockInfo {
-    pub block: Option<String>,
     pub biome: Option<String>,
-    pub y: Option<i32>,
 }
 
 fn world_root(version_name: &str, world_name: &str) -> Result<PathBuf, String> {
@@ -51,58 +52,46 @@ fn validate_dimension(world: &Path, dimension: &str) -> Result<(), String> {
     }
 }
 
-/// 样式参数解析：`topdown` 或 `slice@Y`；同时返回缓存键片段。
-fn parse_style(style: &str) -> Result<(RenderStyle, String), String> {
-    if style == "topdown" {
-        return Ok((RenderStyle::TopDown, "topdown".into()));
+fn folder_root(path: &str) -> Result<PathBuf, String> {
+    let root = PathBuf::from(path);
+    if !root.is_dir() {
+        bail_key!("errors.map.missing_world", "文件夹不存在\n{}", path);
     }
-    let Some(y) = style.strip_prefix("slice@") else {
-        bail_key!(
-            "errors.map.invalid_style",
-            "样式参数无效\n仅支持 topdown 或 slice@Y"
-        );
-    };
-    let y: isize = y.parse().map_err(|_| {
-        "@i18n:errors.map.invalid_style\n样式参数无效\nslice@Y 的 Y 必须是整数".to_string()
-    })?;
-    Ok((RenderStyle::Slice { y }, format!("slice{y}")))
+    Ok(root)
 }
 
-#[tauri::command]
-pub fn get_map_world_info(
-    version_name: String,
-    world_name: String,
-) -> Result<MapWorldInfo, String> {
-    let world = world_root(&version_name, &world_name)?;
-    Ok(world_info(&world))
+fn map_regions(world: &Path, dimension: &str) -> Result<Vec<MapRegionInfo>, String> {
+    validate_dimension(world, dimension)?;
+    Ok(list_region_files(&dimension_dir(world, dimension)))
 }
 
-#[tauri::command]
-pub fn list_map_regions(
-    version_name: String,
-    world_name: String,
-    dimension: String,
-) -> Result<Vec<MapRegionInfo>, String> {
-    let world = world_root(&version_name, &world_name)?;
-    validate_dimension(&world, &dimension)?;
-    Ok(list_region_files(&dimension_dir(&world, &dimension)))
+fn map_block(
+    world: &Path,
+    dimension: &str,
+    x: i32,
+    z: i32,
+    max_y: i32,
+) -> Result<MapBlockInfo, String> {
+    validate_dimension(world, dimension)?;
+    let region_file = region_file_for(world, dimension, x, z);
+    let max_y = max_y.clamp(-512, 512) as isize;
+    let biome = surface_info(&region_file, x, z, max_y).and_then(|(_, biome, _)| biome);
+    Ok(MapBlockInfo { biome })
 }
 
-/// 渲染/读取单块 region 的 512×512 PNG。
-#[tauri::command]
-pub async fn get_map_tile(
-    version_name: String,
-    world_name: String,
+/// 渲染/读取单块 region 的 512×512 俯视 PNG（自 max_y 向下）。
+async fn map_tile(
+    world: PathBuf,
     dimension: String,
     rx: i32,
     rz: i32,
-    style: String,
+    max_y: i32,
     mod_colors: bool,
 ) -> Result<tauri::ipc::Response, String> {
-    let world = world_root(&version_name, &world_name)?;
     validate_dimension(&world, &dimension)?;
-    let (render_style, style_key) = parse_style(&style)?;
-    let cache_style = format!("{style_key}|mod{}", if mod_colors { 1 } else { 0 });
+    let max_y = max_y.clamp(-512, 512) as isize;
+    let render_style = RenderStyle::TopDown { max_y };
+    let cache_style = format!("topdown{max_y}|mod{}", if mod_colors { 1 } else { 0 });
     let Some(cache_path) = tile_cache_key(&world, &dimension, rx, rz, &cache_style) else {
         bail_key!(
             "errors.map.missing_region",
@@ -131,7 +120,40 @@ pub async fn get_map_tile(
     Ok(tauri::ipc::Response::new(png))
 }
 
-/// 悬停识别：top-down 取地表首个非空气方块；传 y 时取该层实际方块。
+#[tauri::command]
+pub fn get_map_world_info(
+    version_name: String,
+    world_name: String,
+) -> Result<MapWorldInfo, String> {
+    let world = world_root(&version_name, &world_name)?;
+    Ok(world_info(&world))
+}
+
+#[tauri::command]
+pub fn list_map_regions(
+    version_name: String,
+    world_name: String,
+    dimension: String,
+) -> Result<Vec<MapRegionInfo>, String> {
+    let world = world_root(&version_name, &world_name)?;
+    map_regions(&world, &dimension)
+}
+
+#[tauri::command]
+pub async fn get_map_tile(
+    version_name: String,
+    world_name: String,
+    dimension: String,
+    rx: i32,
+    rz: i32,
+    max_y: i32,
+    mod_colors: bool,
+) -> Result<tauri::ipc::Response, String> {
+    let world = world_root(&version_name, &world_name)?;
+    map_tile(world, dimension, rx, rz, max_y, mod_colors).await
+}
+
+/// 悬停识别：自 max_y 向下取首个非空气方块与所在群系。
 #[tauri::command]
 pub fn get_map_block(
     version_name: String,
@@ -139,26 +161,147 @@ pub fn get_map_block(
     dimension: String,
     x: i32,
     z: i32,
-    y: Option<i32>,
+    max_y: i32,
 ) -> Result<MapBlockInfo, String> {
     let world = world_root(&version_name, &world_name)?;
-    validate_dimension(&world, &dimension)?;
-    let region_file = region_file_for(&world, &dimension, x, z);
-    let found = match y {
-        Some(y) => probe_at(&region_file, x, z, y as isize)
-            .map(|(block, biome, y)| (block, biome, Some(y as i32))),
-        None => surface_info(&region_file, x, z).map(|(block, biome, y)| (block, biome, Some(y))),
-    };
-    let Some((block, biome, y)) = found else {
-        return Ok(MapBlockInfo {
-            block: None,
-            biome: None,
-            y: None,
-        });
-    };
-    Ok(MapBlockInfo {
-        block: Some(block),
-        biome,
-        y,
+    map_block(&world, &dimension, x, z, max_y)
+}
+
+/// 递归查找用户所选文件夹内的世界根目录（目录本身是世界时只返回它）。
+#[tauri::command]
+pub fn resolve_map_folders(path: String) -> Result<Vec<MapFolderEntry>, String> {
+    discover_worlds(Path::new(&path))
+}
+
+#[tauri::command]
+pub fn get_map_folder_info(root: String) -> Result<MapWorldInfo, String> {
+    let world = folder_root(&root)?;
+    Ok(world_info(&world))
+}
+
+#[tauri::command]
+pub fn list_map_folder_regions(
+    root: String,
+    dimension: String,
+) -> Result<Vec<MapRegionInfo>, String> {
+    let world = folder_root(&root)?;
+    map_regions(&world, &dimension)
+}
+
+#[tauri::command]
+pub async fn get_map_folder_tile(
+    root: String,
+    dimension: String,
+    rx: i32,
+    rz: i32,
+    max_y: i32,
+    mod_colors: bool,
+) -> Result<tauri::ipc::Response, String> {
+    let world = folder_root(&root)?;
+    map_tile(world, dimension, rx, rz, max_y, mod_colors).await
+}
+
+#[tauri::command]
+pub fn get_map_folder_block(
+    root: String,
+    dimension: String,
+    x: i32,
+    z: i32,
+    max_y: i32,
+) -> Result<MapBlockInfo, String> {
+    let world = folder_root(&root)?;
+    map_block(&world, &dimension, x, z, max_y)
+}
+
+/// 世界预览史莱姆覆盖层：单个 region 的史莱姆区块（与版本无关）。
+#[tauri::command]
+pub fn get_map_slime_chunks(
+    seed: String,
+    rx: i32,
+    rz: i32,
+) -> Result<Vec<seedmap::SeedMapSlimeChunk>, String> {
+    let seed = seedmap::parse_seed(&seed)?;
+    Ok(seedmap::slime_chunks_seed(seed, rx, rz))
+}
+
+/// 世界预览史莱姆搜索：返回中心附近最近的 32 个史莱姆区块。
+#[tauri::command]
+pub async fn find_map_slime_chunks(
+    seed: String,
+    center_x: i32,
+    center_z: i32,
+    radius: i32,
+) -> Result<Vec<seedmap::SeedMapSlimeChunk>, String> {
+    let seed = seedmap::parse_seed(&seed)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        seedmap::find_slime_chunks_seed(seed, center_x, center_z, radius)
     })
+    .await
+    .map_err(|e| format!("史莱姆区块搜索任务异常\n{e}"))
+}
+
+/// 已加载地图的群系列表（按区块数降序）。
+#[tauri::command]
+pub async fn list_map_biomes(
+    version_name: String,
+    world_name: String,
+    dimension: String,
+    max_y: i32,
+) -> Result<Vec<MapBiomeSummary>, String> {
+    let world = world_root(&version_name, &world_name)?;
+    validate_dimension(&world, &dimension)?;
+    tauri::async_runtime::spawn_blocking(move || list_biomes(&world, &dimension, max_y))
+        .await
+        .map_err(|e| format!("群系列表任务异常\n{e}"))
+}
+
+#[tauri::command]
+pub async fn list_map_folder_biomes(
+    root: String,
+    dimension: String,
+    max_y: i32,
+) -> Result<Vec<MapBiomeSummary>, String> {
+    let world = folder_root(&root)?;
+    validate_dimension(&world, &dimension)?;
+    tauri::async_runtime::spawn_blocking(move || list_biomes(&world, &dimension, max_y))
+        .await
+        .map_err(|e| format!("群系列表任务异常\n{e}"))
+}
+
+/// 已加载地图内离中心最近的指定群系。
+#[tauri::command]
+pub async fn find_map_biome(
+    version_name: String,
+    world_name: String,
+    dimension: String,
+    max_y: i32,
+    biome: String,
+    center_x: i32,
+    center_z: i32,
+) -> Result<Option<MapBiomeHit>, String> {
+    let world = world_root(&version_name, &world_name)?;
+    validate_dimension(&world, &dimension)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        find_biome(&world, &dimension, max_y, &biome, center_x, center_z)
+    })
+    .await
+    .map_err(|e| format!("群系搜索任务异常\n{e}"))
+}
+
+#[tauri::command]
+pub async fn find_map_folder_biome(
+    root: String,
+    dimension: String,
+    max_y: i32,
+    biome: String,
+    center_x: i32,
+    center_z: i32,
+) -> Result<Option<MapBiomeHit>, String> {
+    let world = folder_root(&root)?;
+    validate_dimension(&world, &dimension)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        find_biome(&world, &dimension, max_y, &biome, center_x, center_z)
+    })
+    .await
+    .map_err(|e| format!("群系搜索任务异常\n{e}"))
 }

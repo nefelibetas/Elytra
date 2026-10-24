@@ -2,8 +2,10 @@
 //! 领域层不依赖 tauri；命令层负责版本/存档路径解析与 IPC。
 
 pub mod chunk_pos;
+pub mod folder;
 pub mod mod_color;
 pub mod region_io;
 pub mod render;
+pub mod search;
 pub mod tile_cache;
 pub mod world_info;

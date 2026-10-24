@@ -2,13 +2,40 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type { MapBlockInfo } from "../types/map/MapBlockInfo";
+import type { MapBiomeHit } from "../types/map/MapBiomeHit";
+import type { MapBiomeSummary } from "../types/map/MapBiomeSummary";
+import type { MapFolderEntry } from "../types/map/MapFolderEntry";
 import type { MapRegionInfo } from "../types/map/MapRegionInfo";
 import type { MapWorldInfo } from "../types/map/MapWorldInfo";
+import type { SeedMapSlimeChunk } from "../types/seedmap/SeedMapSlimeChunk";
 
-export type { MapBlockInfo, MapRegionInfo, MapWorldInfo };
+export type {
+  MapBiomeHit,
+  MapBiomeSummary,
+  MapBlockInfo,
+  MapFolderEntry,
+  MapRegionInfo,
+  MapWorldInfo,
+  SeedMapSlimeChunk,
+};
 
 export function getMapWorldInfo(versionName: string, worldName: string): Promise<MapWorldInfo> {
   return invoke<MapWorldInfo>("get_map_world_info", { versionName, worldName });
+}
+
+export function resolveMapFolders(path: string): Promise<MapFolderEntry[]> {
+  return invoke<MapFolderEntry[]>("resolve_map_folders", { path });
+}
+
+export function getMapFolderInfo(root: string): Promise<MapWorldInfo> {
+  return invoke<MapWorldInfo>("get_map_folder_info", { root });
+}
+
+export function listMapFolderRegions(
+  root: string,
+  dimension: string,
+): Promise<MapRegionInfo[]> {
+  return invoke<MapRegionInfo[]>("list_map_folder_regions", { root, dimension });
 }
 
 export function listMapRegions(
@@ -37,7 +64,7 @@ export async function getMapTile(
   dimension: string,
   rx: number,
   rz: number,
-  style: string,
+  maxY: number,
   modColors: boolean,
 ): Promise<Blob> {
   const payload = await invoke<ArrayBuffer>("get_map_tile", {
@@ -46,7 +73,7 @@ export async function getMapTile(
     dimension,
     rx,
     rz,
-    style,
+    maxY,
     modColors,
   });
   const bytes = bytesOf(payload);
@@ -61,7 +88,7 @@ export function getMapBlock(
   dimension: string,
   x: number,
   z: number,
-  y?: number,
+  maxY: number,
 ): Promise<MapBlockInfo> {
   return invoke<MapBlockInfo>("get_map_block", {
     versionName,
@@ -69,6 +96,128 @@ export function getMapBlock(
     dimension,
     x,
     z,
-    y,
+    maxY,
+  });
+}
+
+export async function getMapFolderTile(
+  root: string,
+  dimension: string,
+  rx: number,
+  rz: number,
+  maxY: number,
+  modColors: boolean,
+): Promise<Blob> {
+  const payload = await invoke<ArrayBuffer>("get_map_folder_tile", {
+    root,
+    dimension,
+    rx,
+    rz,
+    maxY,
+    modColors,
+  });
+  const bytes = bytesOf(payload);
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return new Blob([copy.buffer], { type: "image/png" });
+}
+
+export function getMapFolderBlock(
+  root: string,
+  dimension: string,
+  x: number,
+  z: number,
+  maxY: number,
+): Promise<MapBlockInfo> {
+  return invoke<MapBlockInfo>("get_map_folder_block", {
+    root,
+    dimension,
+    x,
+    z,
+    maxY,
+  });
+}
+
+/** 世界预览史莱姆覆盖层：单个 region 的区块坐标。 */
+export function getMapSlimeChunks(
+  seed: string,
+  rx: number,
+  rz: number,
+): Promise<SeedMapSlimeChunk[]> {
+  return invoke<SeedMapSlimeChunk[]>("get_map_slime_chunks", { seed, rx, rz });
+}
+
+/** 世界预览史莱姆搜索：中心附近最近的 32 个史莱姆区块。 */
+export function findMapSlimeChunks(
+  seed: string,
+  centerX: number,
+  centerZ: number,
+  radius: number,
+): Promise<SeedMapSlimeChunk[]> {
+  return invoke<SeedMapSlimeChunk[]>("find_map_slime_chunks", {
+    seed,
+    centerX,
+    centerZ,
+    radius,
+  });
+}
+
+export function listMapBiomes(
+  versionName: string,
+  worldName: string,
+  dimension: string,
+  maxY: number,
+): Promise<MapBiomeSummary[]> {
+  return invoke<MapBiomeSummary[]>("list_map_biomes", {
+    versionName,
+    worldName,
+    dimension,
+    maxY,
+  });
+}
+
+export function listMapFolderBiomes(
+  root: string,
+  dimension: string,
+  maxY: number,
+): Promise<MapBiomeSummary[]> {
+  return invoke<MapBiomeSummary[]>("list_map_folder_biomes", { root, dimension, maxY });
+}
+
+export function findMapBiome(
+  versionName: string,
+  worldName: string,
+  dimension: string,
+  maxY: number,
+  biome: string,
+  centerX: number,
+  centerZ: number,
+): Promise<MapBiomeHit | null> {
+  return invoke<MapBiomeHit | null>("find_map_biome", {
+    versionName,
+    worldName,
+    dimension,
+    maxY,
+    biome,
+    centerX,
+    centerZ,
+  });
+}
+
+export function findMapFolderBiome(
+  root: string,
+  dimension: string,
+  maxY: number,
+  biome: string,
+  centerX: number,
+  centerZ: number,
+): Promise<MapBiomeHit | null> {
+  return invoke<MapBiomeHit | null>("find_map_folder_biome", {
+    root,
+    dimension,
+    maxY,
+    biome,
+    centerX,
+    centerZ,
   });
 }

@@ -9,10 +9,10 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::Path;
 
-use fastanvil::{Chunk, JavaChunk, Rgba};
+use fastanvil::Rgba;
 
 use super::chunk_pos::ChunkPos;
-use super::region_io::ParsedChunk;
+use super::region_io::{BlockRef, ChunkData, ParsedChunk};
 
 /// 自然色表（tools/gen_palette.mjs 生成）：
 /// `blocks`：minecraft:xxx → RGBA（贴图顶面平均色）；
@@ -194,7 +194,7 @@ impl NaturalPalette {
     /// Mod 方块优先覆盖层采样色，缺省走语义兜底；统一过 grade()。
     pub fn pick_with(
         &self,
-        block: &fastanvil::Block,
+        block: &BlockRef,
         biome: Option<fastanvil::biome::Biome>,
         overlay: Option<&crate::map::mod_color::ModOverlay>,
     ) -> Rgba {
@@ -253,7 +253,7 @@ impl NaturalPalette {
         UNKNOWN_COLOR
     }
 
-    fn pick_raw(&self, block: &fastanvil::Block, biome: Option<fastanvil::biome::Biome>) -> Rgba {
+    fn pick_raw(&self, block: &BlockRef, biome: Option<fastanvil::biome::Biome>) -> Rgba {
         let Some(id) = block.name().strip_prefix("minecraft:") else {
             return self
                 .table
@@ -326,13 +326,10 @@ pub fn palette() -> &'static NaturalPalette {
     &PALETTE
 }
 
-/// 渲染样式。
+/// 渲染样式：仅俯视，`max_y` 为向下扫描的最高 Y（降低可看洞穴/地下）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum RenderStyle {
-    /// top-down：每列取最高不透明方块（自写，比 TopShadeRenderer 少依赖北方 chunk）
-    TopDown,
-    /// y 切片：固定 Y 层的方块分布（不透明度 < 255 的方块照常着色，空气透明）
-    Slice { y: isize },
+    TopDown { max_y: isize },
 }
 
 /// 渲染单个 chunk → 256 列 RGBA（行主序：i = z*16 + x）。
@@ -341,6 +338,14 @@ pub enum RenderStyle {
 /// 留空、露出预测垫底造成错位。无任何 block section 的 chunk 天然全透明。
 /// `heights` 为 region 高度场（512×512，可选）：TopDown 时用于坡面光影，
 /// 由 compose_region 预计算并传入（含本 chunk 邻域）。
+#[derive(Clone, Copy)]
+struct TopDownView<'a> {
+    heights: Option<&'a [i16]>,
+    hx0: usize,
+    hz0: usize,
+    max_y: isize,
+}
+
 pub fn render_chunk(
     parsed: &ParsedChunk,
     style: RenderStyle,
@@ -351,12 +356,19 @@ pub fn render_chunk(
 ) -> [Rgba; 256] {
     let mut out = [[0u8, 0, 0, 0]; 256];
     let pal = palette();
-    match style {
-        RenderStyle::TopDown => {
-            render_top_down(&parsed.chunk, pal, overlay, heights, hx0, hz0, &mut out);
-        }
-        RenderStyle::Slice { y } => render_slice(&parsed.chunk, y, pal, overlay, &mut out),
-    }
+    let RenderStyle::TopDown { max_y } = style;
+    render_top_down(
+        &parsed.chunk,
+        pal,
+        overlay,
+        TopDownView {
+            heights,
+            hx0,
+            hz0,
+            max_y,
+        },
+        &mut out,
+    );
     out
 }
 
@@ -372,12 +384,10 @@ fn compose_region(
 ) -> (Vec<Rgba>, bool) {
     let mut out = vec![[0u8, 0, 0, 0]; 512 * 512];
     let mut any_opaque = false;
-    // TopDown 坡面光影：先整 region 扫一遍地表高度（含空列补 0），供各 chunk
-    // 跨 chunk 取邻差（1 方块分辨率，悬崖/坡面明暗由此而来）
-    let heights: Option<Vec<i16>> = match style {
-        RenderStyle::TopDown => Some(surface_height_field(parsed)),
-        RenderStyle::Slice { .. } => None,
-    };
+    // 俯视坡面光影：按 max_y 向下扫一遍高度场（含空列补 0），供各 chunk
+    // 跨 chunk 取邻差（悬崖/坡面明暗由此而来）。降低 max_y 时同步切换洞穴层。
+    let RenderStyle::TopDown { max_y } = style;
+    let heights = Some(surface_height_field(parsed, max_y));
     let heights_ref = heights.as_deref();
     for (i, slot) in parsed.iter().enumerate() {
         let Some(p) = slot else { continue };
@@ -398,8 +408,8 @@ fn compose_region(
     (out, any_opaque)
 }
 
-/// 地表高度场：region 局部 [0,512)²，每列自顶向下首个非空气方块高度。
-fn surface_height_field(parsed: &[Option<ParsedChunk>]) -> Vec<i16> {
+/// 地表高度场：region 局部 [0,512)²，每列自 `max_y` 向下首个非空气方块高度。
+fn surface_height_field(parsed: &[Option<ParsedChunk>], max_y: isize) -> Vec<i16> {
     let mut heights = vec![0i16; 512 * 512];
     for (i, slot) in parsed.iter().enumerate() {
         let Some(p) = slot else { continue };
@@ -411,10 +421,14 @@ fn surface_height_field(parsed: &[Option<ParsedChunk>]) -> Vec<i16> {
         if y_range.is_empty() {
             continue;
         }
+        let top_y = (y_range.end - 1).min(max_y);
+        if top_y < y_range.start {
+            continue;
+        }
         for z in 0..16usize {
             for x in 0..16usize {
                 let mut top = 0i16;
-                for y in y_range.clone().rev() {
+                for y in (y_range.start..=top_y).rev() {
                     let Some(block) = chunk.block(x, y, z) else {
                         continue;
                     };
@@ -431,7 +445,7 @@ fn surface_height_field(parsed: &[Option<ParsedChunk>]) -> Vec<i16> {
     heights
 }
 
-/// 渲染单个 region 的 512×512 地图瓦片 PNG（top-down 或 y 切片）。
+/// 渲染单个 region 的 512×512 地图瓦片 PNG（俯视，自 max_y 向下）。
 /// 全 region 32×32 chunk 逐个解析后合成；region 存在但无有效 chunk（如仅含
 /// 边缘模拟区块）→ 全透明 PNG（合法 PNG，前端 <img> 可渲染）。
 pub fn render_region_tile(
@@ -450,24 +464,26 @@ pub fn render_region_tile(
     }
 }
 
-/// top-down：逐列自最高点向下找首个非 Airy 方块着色。
+/// top-down：逐列自 `max_y` 向下找首个非 Airy 方块着色。
 /// 收尾应用坡面光影（region 高度场邻差）与水面浅深分层。
 fn render_top_down(
-    chunk: &JavaChunk,
+    chunk: &ChunkData,
     pal: &NaturalPalette,
     overlay: Option<&crate::map::mod_color::ModOverlay>,
-    heights: Option<&[i16]>,
-    hx0: usize,
-    hz0: usize,
+    view: TopDownView<'_>,
     out: &mut [Rgba; 256],
 ) {
     let y_range = chunk.y_range();
     if y_range.is_empty() {
         return;
     }
+    let top_y = (y_range.end - 1).min(view.max_y);
+    if top_y < y_range.start {
+        return;
+    }
     for z in 0..16usize {
         for x in 0..16usize {
-            let mut y = y_range.end - 1;
+            let mut y = top_y;
             let mut colour: Rgba = [0, 0, 0, 0];
             // 表面方块名与深度（水面分层用）
             let mut surface_name: Option<String> = None;
@@ -484,7 +500,7 @@ fn render_top_down(
                     continue;
                 }
                 let biome = chunk.biome(x, y, z);
-                let c = pal.pick_with(block, biome, overlay);
+                let c = pal.pick_with(&block, biome, overlay);
                 colour = if c[3] == 255 { c } else { blend(c, colour) };
                 if surface_name.is_none() {
                     surface_name = Some(name.to_string());
@@ -515,52 +531,22 @@ fn render_top_down(
                         }
                     }
                     colour = grade(water_depth_color(pal.water(surface_biome), depth));
-                } else if heights.is_some() && colour[3] != 0 {
-                    // 坡面光影（水面已走分层，陆地/植被乘亮度因子）
-                    let f = shade_factor(heights.unwrap(), 512, hx0 + x, hz0 + z);
-                    if (f - 1.0).abs() > 0.004 {
-                        colour = [
-                            ((colour[0] as f32) * f).round().clamp(0.0, 255.0) as u8,
-                            ((colour[1] as f32) * f).round().clamp(0.0, 255.0) as u8,
-                            ((colour[2] as f32) * f).round().clamp(0.0, 255.0) as u8,
-                            colour[3],
-                        ];
+                } else if let Some(heights) = view.heights {
+                    if colour[3] != 0 {
+                        // 坡面光影（水面已走分层，陆地/植被乘亮度因子）
+                        let f = shade_factor(heights, 512, view.hx0 + x, view.hz0 + z);
+                        if (f - 1.0).abs() > 0.004 {
+                            colour = [
+                                ((colour[0] as f32) * f).round().clamp(0.0, 255.0) as u8,
+                                ((colour[1] as f32) * f).round().clamp(0.0, 255.0) as u8,
+                                ((colour[2] as f32) * f).round().clamp(0.0, 255.0) as u8,
+                                colour[3],
+                            ];
+                        }
                     }
                 }
             }
             out[z * 16 + x] = colour;
-        }
-    }
-}
-
-/// y 切片：固定 Y 层。该层方块直接着色（透明方块如玻璃半透叠加下方一层的色）。
-fn render_slice(
-    chunk: &JavaChunk,
-    y: isize,
-    pal: &NaturalPalette,
-    overlay: Option<&crate::map::mod_color::ModOverlay>,
-    out: &mut [Rgba; 256],
-) {
-    for z in 0..16usize {
-        for x in 0..16usize {
-            let Some(block) = chunk.block(x, y, z) else {
-                continue;
-            };
-            if block.name() == "minecraft:air" || block.name() == "minecraft:cave_air" {
-                continue;
-            }
-            let biome = chunk.biome(x, y, z);
-            let c = pal.pick_with(block, biome, overlay);
-            out[z * 16 + x] = if c[3] == 255 {
-                c
-            } else {
-                // 半透明方块叠一层下方方块色（简单两层的近似混合）
-                let below = chunk.block(x, y - 1, z);
-                let under = below
-                    .map(|b| pal.pick_with(b, chunk.biome(x, y - 1, z), overlay))
-                    .unwrap_or([0, 0, 0, 0]);
-                blend(c, under)
-            };
         }
     }
 }
@@ -697,28 +683,113 @@ mod tests {
         // 组合层读回
         let parsed = super::super::region_io::parse_region(&path);
         let first = parsed[0].as_ref().expect("chunk (0,0) 应可解析");
-        assert_eq!(first.chunk.status(), "minecraft:full");
+        assert_eq!(
+            first.chunk.y_range(),
+            -64..320,
+            "section 跨度应换算为世界 Y"
+        );
         assert!(!first.raw_nbt.is_empty());
 
         // top-down 渲染：最高不透明方块是 section y=4（世界 y 64..79）的 oak_planks，
         // 16×16 全为 plank 色
-        let px = render_chunk(first, RenderStyle::TopDown, None, None, 0, 0);
+        let px = render_chunk(first, RenderStyle::TopDown { max_y: 319 }, None, None, 0, 0);
         let plank = [180u8, 143, 81, 255];
         assert_eq!(px[0], plank, "top-down 表面应为 oak_planks 颜色");
         assert_eq!(px[255], plank);
 
-        // y 切片断言（section y*16 = 世界 y 起点）：
-        // section y=0 → 世界 y 0..15 全 stone；section y=4 → 世界 y 64..79 全 oak_planks
+        // 降低 max_y：64 应看到顶层 oak_planks，0 应看到 stone，-64 为空气。
         let stone = [137u8, 137, 137, 255];
-        let px64 = render_chunk(first, RenderStyle::Slice { y: 64 }, None, None, 0, 0);
-        assert_eq!(px64[0], plank, "切片 Y=64 应为 oak_planks");
-        let px0 = render_chunk(first, RenderStyle::Slice { y: 0 }, None, None, 0, 0);
-        assert_eq!(px0[0], stone, "切片 Y=0 应为 stone");
-        let pxm64 = render_chunk(first, RenderStyle::Slice { y: -64 }, None, None, 0, 0);
-        assert_eq!(pxm64[0], [0, 0, 0, 0], "切片 Y=-64 应为空气（透明）");
+        let px64 = render_chunk(first, RenderStyle::TopDown { max_y: 64 }, None, None, 0, 0);
+        assert_eq!(px64[0], plank, "max_y=64 应显示 oak_planks");
+        let px0 = render_chunk(first, RenderStyle::TopDown { max_y: 0 }, None, None, 0, 0);
+        assert_eq!(px0[0], stone, "max_y=0 应显示 stone");
+        let pxm64 = render_chunk(first, RenderStyle::TopDown { max_y: -64 }, None, None, 0, 0);
+        assert_eq!(pxm64[0], [0, 0, 0, 0], "max_y=-64 应为空气（透明）");
 
         let png = encode_png(&px, 16, 16).unwrap();
         assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 26.x 起 palette 三种形态并存：纯字符串、`{id, properties}`、无名子键
+    /// `{"": id}`（同 section 出现带属性方块后，无属性条目退化为后者）。
+    #[test]
+    fn modern_palette_forms_parse_and_render() {
+        let mixed = vec![
+            nbt!({ "": "minecraft:air" }),
+            nbt!({ "id": "minecraft:stone", "properties": {} }),
+            nbt!({ "id": "minecraft:grass_block", "properties": { "snowy": "true" } }),
+        ];
+        let strings = vec![
+            Value::String("minecraft:air".into()),
+            Value::String("minecraft:oak_planks".into()),
+        ];
+        let mut sections = Vec::new();
+        for sy in -4i8..=19i8 {
+            let (palette, longs): (Vec<Value>, Option<Vec<i64>>) = match sy {
+                0 => (mixed.clone(), Some(pack_states(&[1; 4096], 3))),
+                4 => (strings.clone(), Some(pack_states(&[1; 4096], 2))),
+                -3 => (
+                    vec![
+                        nbt!({"": "minecraft:air"}),
+                        nbt!({"id": "minecraft:grass_block", "properties": { "snowy": "true" }}),
+                    ],
+                    Some(pack_states(&[1; 4096], 2)),
+                ),
+                _ => (vec![Value::String("minecraft:air".into())], None),
+            };
+            let mut bs = HashMap::from([("palette".to_string(), Value::List(palette))]);
+            if let Some(l) = longs {
+                bs.insert("data".to_string(), Value::LongArray(LongArray::new(l)));
+            }
+            sections.push(Value::Compound(HashMap::from([
+                ("Y".to_string(), Value::Byte(sy)),
+                ("block_states".to_string(), Value::Compound(bs)),
+                (
+                    "biomes".to_string(),
+                    Value::Compound(HashMap::from([(
+                        "palette".to_string(),
+                        Value::List(vec![Value::String("minecraft:plains".into())]),
+                    )])),
+                ),
+            ])));
+        }
+        let root = Value::Compound(HashMap::from([
+            ("DataVersion".to_string(), Value::Int(5023)),
+            ("Status".to_string(), Value::String("minecraft:full".into())),
+            ("sections".to_string(), Value::List(sections)),
+        ]));
+        let nbt_bytes = fastnbt::to_bytes(&root).unwrap();
+        let mut writer = RegionWriter::new();
+        writer
+            .set_chunk(0, 0, nbt_bytes, Compression::default())
+            .unwrap();
+        let mut buf = Vec::new();
+        writer.write(&mut buf).unwrap();
+        let dir = std::env::temp_dir().join(format!("elytra_map_modern_{}", std::process::id()));
+        fs::create_dir_all(dir.join("region")).unwrap();
+        let path = dir.join("region").join("r.0.0.mca");
+        fs::write(&path, &buf).unwrap();
+
+        let parsed = super::super::region_io::parse_region(&path);
+        let first = parsed[0].as_ref().expect("26.x 区块应可解析");
+        assert_eq!(
+            first.chunk.block(0, 0, 0).unwrap().name(),
+            "minecraft:stone"
+        );
+        assert_eq!(
+            first.chunk.block(0, 64, 0).unwrap().name(),
+            "minecraft:oak_planks"
+        );
+        assert!(
+            first.chunk.block(0, -48, 0).unwrap().snowy(),
+            "properties.snowy 应解析"
+        );
+        let plank = [180u8, 143, 81, 255];
+        let px = render_chunk(first, RenderStyle::TopDown { max_y: 319 }, None, None, 0, 0);
+        assert_eq!(px[0], plank, "top-down 应取最高层 oak_planks");
+        let px0 = render_chunk(first, RenderStyle::TopDown { max_y: 0 }, None, None, 0, 0);
+        assert_eq!(px0[0], [137u8, 137, 137, 255], "max_y=0 应为 stone");
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -741,7 +812,8 @@ mod tests {
         fs::write(&path, &buf).unwrap();
 
         let parsed = super::super::region_io::parse_region(&path);
-        let (pixels, any_opaque) = compose_region(&parsed, RenderStyle::TopDown, None);
+        let (pixels, any_opaque) =
+            compose_region(&parsed, RenderStyle::TopDown { max_y: 319 }, None);
         assert!(any_opaque, "含两个满区块的 region 不应为空");
         let plank = [180u8, 143, 81, 255];
         // 采样 chunk 内部像素（坡面光影在缺 chunk 边界产生暗边属预期，内部平地=1）

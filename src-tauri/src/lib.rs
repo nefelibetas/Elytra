@@ -13,6 +13,7 @@ pub mod launcher;
 mod map;
 pub mod online;
 mod persist;
+mod seedmap;
 mod server_status;
 pub mod task;
 pub mod tooldl;
@@ -60,7 +61,12 @@ use commands::loader::{
     get_fabric_api_versions, get_fabric_versions, get_forge_versions, get_neoforge_versions,
     get_optifine_versions, get_quilt_versions,
 };
-use commands::map::{get_map_block, get_map_tile, get_map_world_info, list_map_regions};
+use commands::map::{
+    find_map_biome, find_map_folder_biome, find_map_slime_chunks, get_map_block,
+    get_map_folder_block, get_map_folder_info, get_map_folder_tile, get_map_slime_chunks,
+    get_map_tile, get_map_world_info, list_map_biomes, list_map_folder_biomes,
+    list_map_folder_regions, list_map_regions, resolve_map_folders,
+};
 use commands::offline_account::{
     get_last_offline_username, get_offline_accounts, remove_offline_account,
     save_last_offline_username, save_offline_account,
@@ -68,6 +74,11 @@ use commands::offline_account::{
 use commands::online::{
     get_online_config, online_join, online_start_host, online_status, online_stop,
     save_online_config,
+};
+use commands::seedmap::{
+    find_seed_map_slime_chunks, find_seed_map_structures, get_seed_map_block,
+    get_seed_map_slime_chunks, get_seed_map_structures, get_seed_map_tile, get_seed_map_versions,
+    resolve_seed_map_version,
 };
 use commands::server_status::ping_server;
 use commands::skins::{
@@ -155,6 +166,25 @@ pub fn run() {
             list_map_regions,
             get_map_tile,
             get_map_block,
+            resolve_map_folders,
+            get_map_folder_info,
+            list_map_folder_regions,
+            get_map_folder_tile,
+            get_map_folder_block,
+            get_map_slime_chunks,
+            find_map_slime_chunks,
+            list_map_biomes,
+            list_map_folder_biomes,
+            find_map_biome,
+            find_map_folder_biome,
+            get_seed_map_versions,
+            resolve_seed_map_version,
+            get_seed_map_tile,
+            get_seed_map_block,
+            get_seed_map_structures,
+            find_seed_map_structures,
+            find_seed_map_slime_chunks,
+            get_seed_map_slime_chunks,
             list_resource_files,
             list_resource_detailed,
             delete_resource_file,

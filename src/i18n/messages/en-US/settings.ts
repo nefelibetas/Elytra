@@ -72,7 +72,6 @@ export default {
     },
   },
   tools: {
-    subtitle: "Choose a tool",
     back: "Back to tools",
   },
   appearance: {

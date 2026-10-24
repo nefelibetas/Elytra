@@ -7,6 +7,7 @@ name = "Elytra"
 version = "1.0.0"
 dependencies = [
  "base64 0.22.1",
+ "cc",
  "chacha20poly1305 0.11.0",
  "core-foundation 0.10.1",
  "easytier",

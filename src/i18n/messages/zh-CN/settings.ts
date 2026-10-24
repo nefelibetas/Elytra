@@ -69,7 +69,6 @@ export default {
     },
   },
   tools: {
-    subtitle: "选择一个工具",
     back: "返回工具列表",
   },
   appearance: {

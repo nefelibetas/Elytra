@@ -25,8 +25,13 @@ use crate::launcher::auto_tasks::model::{
     AutoTaskStep, AutoTasks, AutoTasksFinished, BackupScope,
 };
 use crate::launcher::model::{GcType, LaunchOptions, MemoryMode, ProcessPriority, WindowSize};
+use crate::map::folder::MapFolderEntry;
 use crate::map::region_io::MapRegionInfo;
+use crate::map::search::{MapBiomeHit, MapBiomeSummary};
 use crate::map::world_info::MapWorldInfo;
+use crate::seedmap::{
+    ResolvedVersion, SeedMapBlock, SeedMapSlimeChunk, SeedMapStructure, SeedMapVersion,
+};
 use crate::task::files::WaitingUserPayload;
 use crate::task::model::{
     DownloadFileKind, DownloadTask, FabricApi, LoaderChoice, LoaderKind, StepInfo, StepKind,
@@ -88,5 +93,13 @@ pub fn export_all() {
     VersionDirChanged::export().unwrap();
     MapWorldInfo::export().unwrap();
     MapRegionInfo::export().unwrap();
+    MapFolderEntry::export().unwrap();
     MapBlockInfo::export().unwrap();
+    MapBiomeHit::export().unwrap();
+    MapBiomeSummary::export().unwrap();
+    SeedMapBlock::export().unwrap();
+    SeedMapSlimeChunk::export().unwrap();
+    SeedMapStructure::export().unwrap();
+    SeedMapVersion::export().unwrap();
+    ResolvedVersion::export().unwrap();
 }

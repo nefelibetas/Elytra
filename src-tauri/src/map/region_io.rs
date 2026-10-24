@@ -8,22 +8,249 @@
 //! - mca 对 byte≥127 走 `CustomDecompression` trait——为兜底三方服务器 region，
 //!   本模块提供 `JavaWrcDecompression`（id 含 "lz4" 时走 lz4_java_wrc）。
 //!
-//! 组合方案：mca 读 region（全版本统一 region 层）→ fastnbt → fastanvil JavaChunk
-//! （Post18/Pre18/Pre13 三级回退，`JavaChunk::from_bytes` 内置）。
+//! 组合方案：mca 读 region（全版本统一 region 层）→ fastnbt 按本模块 `ModernChunk`
+//! 解析 1.18+ 区块（含 26.x 混合 palette），失败回退 fastanvil `JavaChunk`
+//! （Post18/Pre18/Pre13 三级回退）以保留旧存档预览。
 
+use std::collections::HashMap;
+use std::fmt;
 use std::fs;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
-use fastanvil::{Chunk, JavaChunk};
+use fastanvil::biome::Biome;
+use fastanvil::{BiomeData, BlockData, Chunk, JavaChunk, SectionLike, SectionTower};
 use mca::{CompressionError, CustomDecompression, RegionReader};
+use serde::de::{MapAccess, Visitor};
+use serde::{Deserialize, Deserializer};
 
 use super::chunk_pos::ChunkPos;
 
+/// 区块 palette 中的方块状态。1.18–1.21 为 `{Name, Properties}`；26.x 起无属性
+/// 方块用纯字符串，同 section 一旦出现带属性方块，无属性条目退化为无名子键复合
+/// `{"": "minecraft:xxx"}`，带属性条目为 `{id, properties}`。
+#[derive(Debug, Clone)]
+pub(crate) struct MapBlock {
+    name: String,
+    snowy: bool,
+}
+
+impl MapBlock {
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub(crate) fn snowy(&self) -> bool {
+        self.snowy
+    }
+}
+
+impl<'de> Deserialize<'de> for MapBlock {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct BlockVisitor;
+
+        impl<'de> Visitor<'de> for BlockVisitor {
+            type Value = MapBlock;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("block state string or compound")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<MapBlock, E> {
+                Ok(MapBlock {
+                    name: v.to_string(),
+                    snowy: false,
+                })
+            }
+
+            fn visit_string<E: serde::de::Error>(self, v: String) -> Result<MapBlock, E> {
+                Ok(MapBlock {
+                    name: v,
+                    snowy: false,
+                })
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<MapBlock, A::Error> {
+                let mut name = String::new();
+                let mut snowy = false;
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "" | "id" | "Name" => name = map.next_value::<String>()?,
+                        "properties" | "Properties" => {
+                            let props: HashMap<String, String> = map.next_value()?;
+                            snowy = props.get("snowy").is_some_and(|v| v == "true");
+                        }
+                        _ => {
+                            let _: fastnbt::Value = map.next_value()?;
+                        }
+                    }
+                }
+                Ok(MapBlock { name, snowy })
+            }
+        }
+
+        deserializer.deserialize_any(BlockVisitor)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ModernSection {
+    #[serde(rename = "Y")]
+    y: i8,
+    #[serde(default)]
+    block_states: BlockData<MapBlock>,
+    #[serde(default)]
+    biomes: BiomeData<Biome>,
+}
+
+impl SectionLike for ModernSection {
+    fn is_terminator(&self) -> bool {
+        false
+    }
+
+    fn y(&self) -> i8 {
+        self.y
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ModernChunk {
+    /// 仅用于区分 1.18+ 与旧格式（旧存档无顶层 Status），不参与渲染。
+    #[serde(rename = "Status")]
+    _status: String,
+    sections: Option<SectionTower<ModernSection>>,
+}
+
+impl ModernChunk {
+    fn y_range(&self) -> Range<isize> {
+        self.sections
+            .as_ref()
+            .map(|s| s.y_min()..s.y_max())
+            .unwrap_or(0..0)
+    }
+}
+
+/// 已解析区块：1.18+ / 26.x 走自解析，旧格式回退 fastanvil。
+pub(crate) enum ChunkData {
+    Modern(ModernChunk),
+    /// JavaChunk 约 680 字节，装箱避免 1024 槽位的 region 数组整体膨胀。
+    Legacy(Box<JavaChunk>),
+}
+
+/// 跨两代解析器的方块视图（渲染只需名称与 snowy）。
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct BlockRef<'a> {
+    name: &'a str,
+    snowy: bool,
+}
+
+impl<'a> BlockRef<'a> {
+    pub(crate) fn name(self) -> &'a str {
+        self.name
+    }
+
+    pub(crate) fn snowy(self) -> bool {
+        self.snowy
+    }
+}
+
+impl ChunkData {
+    pub(crate) fn y_range(&self) -> Range<isize> {
+        match self {
+            Self::Modern(c) => c.y_range(),
+            Self::Legacy(c) => c.y_range(),
+        }
+    }
+
+    pub(crate) fn block(&self, x: usize, y: isize, z: usize) -> Option<BlockRef<'_>> {
+        match self {
+            Self::Modern(c) => {
+                let sec = c.sections.as_ref()?.get_section_for_y(y)?;
+                // 空 palette 会让 fastanvil 的位宽计算下溢（debug 下 panic）。
+                if sec.block_states.palette().is_empty() {
+                    return None;
+                }
+                let in_sec = (y - sec.y as isize * 16) as usize;
+                sec.block_states.at(x, in_sec, z).map(|b| BlockRef {
+                    name: b.name(),
+                    snowy: b.snowy(),
+                })
+            }
+            Self::Legacy(c) => c.block(x, y, z).map(|b| BlockRef {
+                name: b.name(),
+                snowy: b.snowy(),
+            }),
+        }
+    }
+
+    pub(crate) fn biome(&self, x: usize, y: isize, z: usize) -> Option<Biome> {
+        match self {
+            Self::Modern(c) => {
+                let sec = c.sections.as_ref()?.get_section_for_y(y)?;
+                if sec.biomes.palette().is_empty() {
+                    return None;
+                }
+                let in_sec = (y - sec.y as isize * 16) as usize;
+                sec.biomes.at(x, in_sec, z).copied()
+            }
+            Self::Legacy(c) => c.biome(x, y, z),
+        }
+    }
+}
+
 /// region 文件内单 chunk 解析结果。
-pub struct ParsedChunk {
-    pub chunk: JavaChunk,
+pub(crate) struct ParsedChunk {
+    pub(crate) chunk: ChunkData,
     /// 原始 NBT 字节（未解析快照；区块复制通道直接用，避免二次解压）
-    pub raw_nbt: Vec<u8>,
+    pub(crate) raw_nbt: Vec<u8>,
+}
+
+impl ParsedChunk {
+    /// 区块中心在 `max_y` 以下的表面群系原始 id（1.18+ biome palette 直读）。
+    pub(crate) fn surface_biome(&self, max_y: isize) -> Option<String> {
+        let range = self.chunk.y_range();
+        if range.is_empty() {
+            return None;
+        }
+        let top = (range.end - 1).min(max_y);
+        for y in [top, top.min(63), range.start] {
+            if y < range.start {
+                continue;
+            }
+            if let Some(id) = biome_id_at(&self.raw_nbt, 8, 8, y) {
+                return Some(id);
+            }
+        }
+        for y in [top, top.min(63), range.start] {
+            if y < range.start {
+                continue;
+            }
+            if let Some(id) = self.chunk.biome(8, y, 8).and_then(legacy_biome_id) {
+                return Some(id);
+            }
+        }
+        None
+    }
+}
+
+/// fastanvil 旧版群系枚举 → `minecraft:<snake_case>`（仅用于表面检索）。
+fn legacy_biome_id(biome: Biome) -> Option<String> {
+    let debug = format!("{biome:?}");
+    if debug == "Unknown" {
+        return None;
+    }
+    let mut out = String::new();
+    for (i, ch) in debug.chars().enumerate() {
+        if ch.is_ascii_uppercase() {
+            if i > 0 {
+                out.push('_');
+            }
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push(ch);
+        }
+    }
+    Some(format!("minecraft:{out}"))
 }
 
 /// 三方服务器自定义压缩兜底：id 含 "lz4" 走 Java LZ4Block 格式解压。
@@ -305,11 +532,12 @@ fn parse_one(
     z: u8,
 ) -> Option<ParsedChunk> {
     let raw = reader.chunk(x, z).ok()??;
-    // fastanvil::JavaChunk::from_bytes 对合法 NBT 做三代回退解析；
-    // 解析失败（未生成/损坏 chunk）返回 None 跳过，不影响 region 内其余 chunk
-    let chunk = match JavaChunk::from_bytes(raw) {
-        Ok(c) => c,
-        Err(_) => return None,
+    // fastanvil 0.32 的 Block 反序列化只认 `{Name, ...}`，26.x 的字符串 palette
+    // 一定解析失败，故先按本模块模型解析；失败再回退旧格式三级回退。
+    // 两者皆失败（未生成/损坏 chunk）返回 None，不影响 region 内其余 chunk。
+    let chunk = match fastnbt::from_bytes::<ModernChunk>(raw) {
+        Ok(c) => ChunkData::Modern(c),
+        Err(_) => ChunkData::Legacy(Box::new(JavaChunk::from_bytes(raw).ok()?)),
     };
     Some(ParsedChunk {
         chunk,
@@ -326,11 +554,16 @@ pub fn region_file_for(world_path: &Path, dimension: &str, bx: i32, bz: i32) -> 
         .join(format!("r.{rx}.{rz}.mca"))
 }
 
-/// 指定方块坐标的表面方块（列首非空气名）+ 所在群系原始 id。
+/// 指定方块坐标的表面方块（自 `max_y` 向下首个非空气名）+ 所在群系原始 id。
 /// 群系经 chunk NBT biome palette 直读（fastanvil 会把 26.x/Mod 群系折叠为
 /// Unknown，这里绕开）：返回完整 id 形如 "minecraft:plains"。region 缺失/
 /// 区块未生成/损坏 → None。
-pub fn surface_info(region_file: &Path, bx: i32, bz: i32) -> Option<(String, Option<String>, i32)> {
+pub fn surface_info(
+    region_file: &Path,
+    bx: i32,
+    bz: i32,
+    max_y: isize,
+) -> Option<(String, Option<String>, i32)> {
     let data = fs::read(region_file).ok()?;
     let mut reader = RegionReader::new_with_decompression(&data, JavaWrcDecompression).ok()?;
     let cx = bx.rem_euclid(512) / 16;
@@ -340,9 +573,13 @@ pub fn surface_info(region_file: &Path, bx: i32, bz: i32) -> Option<(String, Opt
     if y_range.is_empty() {
         return None;
     }
+    let top = (y_range.end - 1).min(max_y);
+    if top < y_range.start {
+        return None;
+    }
     let x = bx.rem_euclid(16) as usize;
     let z = bz.rem_euclid(16) as usize;
-    for y in y_range.rev() {
+    for y in (y_range.start..=top).rev() {
         let Some(block) = parsed.chunk.block(x, y, z) else {
             continue;
         };
@@ -353,36 +590,6 @@ pub fn surface_info(region_file: &Path, bx: i32, bz: i32) -> Option<(String, Opt
         }
     }
     None
-}
-
-/// 指定 (bx, bz, y) 处的精确探测：切片模式悬停用——返回该层的方块（含空气）
-/// 与该层覆盖的群系单元（4×4×4 网格按 y 定位，地下显示的是地下群系而非地表）。
-pub fn probe_at(
-    region_file: &Path,
-    bx: i32,
-    bz: i32,
-    y: isize,
-) -> Option<(String, Option<String>, isize)> {
-    let data = fs::read(region_file).ok()?;
-    let mut reader = RegionReader::new_with_decompression(&data, JavaWrcDecompression).ok()?;
-    let cx = bx.rem_euclid(512) / 16;
-    let cz = bz.rem_euclid(512) / 16;
-    let parsed = parse_one(&mut reader, cx as u8, cz as u8)?;
-    let y_range = parsed.chunk.y_range();
-    if y_range.is_empty() {
-        return None;
-    }
-    // y 越界钳到可用范围（生物群系单元仍取最近一层）
-    let yb = y.clamp(y_range.start, y_range.end - 1);
-    let x = bx.rem_euclid(16) as usize;
-    let z = bz.rem_euclid(16) as usize;
-    let name = parsed
-        .chunk
-        .block(x, yb, z)
-        .map(|b| b.name().to_string())
-        .unwrap_or_else(|| "minecraft:air".to_string());
-    let biome = biome_id_at(&parsed.raw_nbt, x, z, yb);
-    Some((name, biome, yb))
 }
 
 /// 从 chunk 原始 NBT 读 (x,z) 在高度 y 处的群系 id（biome 4×4×4 网格）。

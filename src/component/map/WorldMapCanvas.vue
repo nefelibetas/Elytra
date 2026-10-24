@@ -1,14 +1,23 @@
 <script setup lang="ts">
 // 世界预览画布：只读已加载 region，不生成预测地形。
 // 相机采用「当前 + 目标」双状态：平移即时跟手，滚轮缩放走 rAF 指数平滑。
-import { onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
-import { getMapBlock, getMapTile, listMapRegions, type MapBlockInfo, type MapRegionInfo } from "../../api/map";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import {
+  getMapBlock,
+  getMapFolderBlock,
+  getMapFolderTile,
+  getMapSlimeChunks,
+  getMapTile,
+  listMapFolderRegions,
+  listMapRegions,
+  type MapBlockInfo,
+  type MapRegionInfo,
+  type SeedMapSlimeChunk,
+} from "../../api/map";
 
 interface MapHover {
   x: number;
   z: number;
-  y: number | null;
-  block: string | null;
   biome: string | null;
   pending?: boolean;
 }
@@ -16,23 +25,31 @@ interface MapHover {
 const props = defineProps<{
   versionName: string;
   worldName: string;
+  /** 非空时按任意地图根目录读取（工具箱文件夹入口），忽略 version/world */
+  rootPath: string;
   dimension: string;
-  /** topdown 或 slice@Y */
-  renderStyle: string;
+  /** 俯视向下扫描的最高 Y（降低可看洞穴/地下） */
+  maxY: number;
   showGrid: boolean;
   chunkBorders: boolean;
   modColors: boolean;
+  /** 十进制种子；空串时不请求史莱姆区块 */
+  seed?: string;
+  /** 仅主世界显示史莱姆区块覆盖层 */
+  showSlime?: boolean;
 }>();
+
+const folderMode = computed(() => props.rootPath.length > 0);
+const overworld = computed(() => props.dimension === "");
+const hasSeed = computed(() => (props.seed ?? "").length > 0);
 
 const emit = defineEmits<{
   hover: [value: MapHover | null];
-  pin: [value: MapHover | null];
   state: [value: "loading" | "ready" | "empty" | "error", detail?: string];
 }>();
 
 const wrapRef = ref<HTMLDivElement | null>(null);
 const canvasRef = ref<HTMLCanvasElement | null>(null);
-const pinned = ref<MapHover | null>(null);
 
 const REGION_BLOCKS = 512;
 const MIN_SCALE = 0.05;
@@ -41,6 +58,11 @@ const MAX_INFLIGHT = 4;
 const MAX_TILES = 96;
 const PROBE_DELAY = 120;
 const SMOOTH_TAU = 80;
+/** region 范围兜底适配留白（瓦片未就绪时） */
+const FIT_MARGIN = 0.88;
+/** 内容自适应：地形外留白（方块）与视口留白 */
+const CONTENT_PADDING = 24;
+const CONTENT_MARGIN = 0.94;
 const reduceMotion =
   typeof window !== "undefined" &&
   window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
@@ -55,9 +77,19 @@ interface TileEntry {
   mtime: number;
 }
 
+interface MapBounds {
+  minX: number;
+  minZ: number;
+  maxX: number;
+  maxZ: number;
+}
+
 let tiles = new Map<string, TileEntry>();
 let loading = new Set<string>();
 let failed = new Map<string, number>();
+let slimeChunks = new Map<string, SeedMapSlimeChunk[]>();
+let slimeLoading = new Set<string>();
+let slimeFailed = new Map<string, number>();
 let inFlight = 0;
 let generation = 0;
 let refreshBusy = false;
@@ -66,13 +98,14 @@ let raf = 0;
 let lastFrame = 0;
 let dirty = true;
 let firstFit = true;
+/** 瓦片加载完成后按实际不透明像素范围放大一次，避免空 region 撑大视野 */
+let autoFitPending = false;
+let contentBounds: MapBounds | null = null;
 let drawH = 0;
 let ro: ResizeObserver | null = null;
 
 const dragging = ref(false);
 let pointerId: number | null = null;
-let pointerButton = -1;
-let dragMoved = false;
 let lastClientX = 0;
 let lastClientY = 0;
 
@@ -98,6 +131,9 @@ function clearTiles() {
   tiles = new Map();
   loading.clear();
   failed.clear();
+  slimeChunks = new Map();
+  slimeLoading.clear();
+  slimeFailed.clear();
   inFlight = 0;
 }
 
@@ -123,22 +159,18 @@ function blockAt(clientX: number, clientY: number): { x: number; z: number } {
   return { x: Math.floor(p.x), z: Math.floor(p.z) };
 }
 
-function sliceY(): number | null {
-  const m = /^slice@(-?\d+)$/.exec(props.renderStyle);
-  return m ? Number(m[1]) : null;
-}
-
 async function probeBlock(x: number, z: number): Promise<MapBlockInfo | null> {
-  const y = sliceY();
   try {
-    return await getMapBlock(
-      props.versionName,
-      props.worldName,
-      props.dimension,
-      x,
-      z,
-      y ?? undefined,
-    );
+    return await (folderMode.value
+      ? getMapFolderBlock(props.rootPath, props.dimension, x, z, props.maxY)
+      : getMapBlock(
+          props.versionName,
+          props.worldName,
+          props.dimension,
+          x,
+          z,
+          props.maxY,
+        ));
   } catch {
     return null;
   }
@@ -151,8 +183,7 @@ function emitHover(value: MapHover | null) {
 function scheduleHoverProbe(x: number, z: number) {
   if (probeTimer !== null) clearTimeout(probeTimer);
   const seq = ++probeSeq;
-  const y = sliceY();
-  emitHover({ x, z, y, block: null, biome: null, pending: true });
+  emitHover({ x, z, biome: null, pending: true });
   probeTimer = window.setTimeout(async () => {
     probeTimer = null;
     const info = await probeBlock(x, z);
@@ -160,8 +191,6 @@ function scheduleHoverProbe(x: number, z: number) {
     emitHover({
       x,
       z,
-      y: info?.y ?? y,
-      block: info?.block ?? null,
       biome: info?.biome ?? null,
       pending: false,
     });
@@ -170,32 +199,10 @@ function scheduleHoverProbe(x: number, z: number) {
 
 function updateHover(clientX: number, clientY: number) {
   const b = blockAt(clientX, clientY);
-  const key = `${props.dimension}|${b.x}|${b.z}|${props.renderStyle}`;
+  const key = `${props.dimension}|${b.x}|${b.z}|${props.maxY}`;
   if (key === lastHoverKey) return;
   lastHoverKey = key;
   scheduleHoverProbe(b.x, b.z);
-}
-
-async function togglePin(clientX: number, clientY: number) {
-  const b = blockAt(clientX, clientY);
-  if (pinned.value && pinned.value.x === b.x && pinned.value.z === b.z) {
-    pinned.value = null;
-    emit("pin", null);
-    invalidate();
-    return;
-  }
-  const info = await probeBlock(b.x, b.z);
-  const next: MapHover = {
-    x: b.x,
-    z: b.z,
-    y: info?.y ?? sliceY(),
-    block: info?.block ?? null,
-    biome: info?.biome ?? null,
-    pending: false,
-  };
-  pinned.value = next;
-  emit("pin", next);
-  invalidate();
 }
 
 function normalizeWheel(event: WheelEvent): number {
@@ -251,16 +258,87 @@ function fitRegions() {
   }
   const spanX = Math.max(1, maxX - minX);
   const spanZ = Math.max(1, maxZ - minZ);
-  const scale = clampScale(Math.min(rect.width / spanX, rect.height / spanZ) * 0.88);
+  const scale = clampScale(Math.min(rect.width / spanX, rect.height / spanZ) * FIT_MARGIN);
   cam.x = target.x = (minX + maxX) / 2;
   cam.z = target.z = (minZ + maxZ) / 2;
   cam.scale = target.scale = scale;
   invalidate();
 }
 
+/** 已加载瓦片的不透明像素并集（世界方块坐标）；全空/未加载返回 null。 */
+function measureContentBounds(): MapBounds | null {
+  const probe = document.createElement("canvas");
+  probe.width = REGION_BLOCKS;
+  probe.height = REGION_BLOCKS;
+  const ctx = probe.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return null;
+  let minX = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxZ = -Infinity;
+  for (const region of regions.value) {
+    const entry = tiles.get(regionKey(region));
+    if (!entry) continue;
+    ctx.clearRect(0, 0, REGION_BLOCKS, REGION_BLOCKS);
+    ctx.drawImage(entry.img, 0, 0, REGION_BLOCKS, REGION_BLOCKS);
+    const data = ctx.getImageData(0, 0, REGION_BLOCKS, REGION_BLOCKS).data;
+    for (let z = 0; z < REGION_BLOCKS; z++) {
+      for (let x = 0; x < REGION_BLOCKS; x++) {
+        if (data[(z * REGION_BLOCKS + x) * 4 + 3] === 0) continue;
+        const bx = region.x * REGION_BLOCKS + x;
+        const bz = region.z * REGION_BLOCKS + z;
+        if (bx < minX) minX = bx;
+        if (bx > maxX) maxX = bx;
+        if (bz < minZ) minZ = bz;
+        if (bz > maxZ) maxZ = bz;
+      }
+    }
+  }
+  if (minX > maxX || minZ > maxZ) return null;
+  return { minX, minZ, maxX: maxX + 1, maxZ: maxZ + 1 };
+}
+
+/** 按地形内容适配；无内容范围返回 false。immediate=true 时不做缩放动画。 */
+function fitContent(immediate = false): boolean {
+  const rect = wrapRef.value?.getBoundingClientRect();
+  const bounds = contentBounds;
+  if (!rect || !bounds) return false;
+  const minX = bounds.minX - CONTENT_PADDING;
+  const minZ = bounds.minZ - CONTENT_PADDING;
+  const maxX = bounds.maxX + CONTENT_PADDING;
+  const maxZ = bounds.maxZ + CONTENT_PADDING;
+  const spanX = Math.max(1, maxX - minX);
+  const spanZ = Math.max(1, maxZ - minZ);
+  const scale = clampScale(Math.min(rect.width / spanX, rect.height / spanZ) * CONTENT_MARGIN);
+  const cx = (minX + maxX) / 2;
+  const cz = (minZ + maxZ) / 2;
+  if (immediate) {
+    cam.x = target.x = cx;
+    cam.z = target.z = cz;
+    cam.scale = target.scale = scale;
+  } else {
+    target.x = cx;
+    target.z = cz;
+    target.scale = scale;
+  }
+  invalidate();
+  return true;
+}
+
 function resetView() {
-  firstFit = true;
-  fitRegions();
+  firstFit = false;
+  autoFitPending = false;
+  if (!fitContent(true)) fitRegions();
+}
+
+/** 首个批次全部解码后按内容适配一次；部分 region 加载失败时保留 region 概览。 */
+function maybeAutoFit() {
+  if (!autoFitPending || inFlight > 0) return;
+  const expected = Math.min(regions.value.length, MAX_TILES);
+  if (tiles.size < expected || tiles.size === 0) return;
+  autoFitPending = false;
+  contentBounds = measureContentBounds();
+  fitContent();
 }
 
 function requestTile(region: MapRegionInfo) {
@@ -273,16 +351,25 @@ function requestTile(region: MapRegionInfo) {
   const gen = generation;
   loading.add(key);
   inFlight++;
-  const style = props.renderStyle;
-  getMapTile(
-    props.versionName,
-    props.worldName,
-    props.dimension,
-    region.x,
-    region.z,
-    style,
-    props.modColors,
-  )
+  const tile = folderMode.value
+    ? getMapFolderTile(
+        props.rootPath,
+        props.dimension,
+        region.x,
+        region.z,
+        props.maxY,
+        props.modColors,
+      )
+    : getMapTile(
+        props.versionName,
+        props.worldName,
+        props.dimension,
+        region.x,
+        region.z,
+        props.maxY,
+        props.modColors,
+      );
+  tile
     .then((blob) => {
       if (gen !== generation) return;
       const url = URL.createObjectURL(blob);
@@ -304,6 +391,7 @@ function requestTile(region: MapRegionInfo) {
           tiles.delete(oldest);
         }
         invalidate();
+        maybeAutoFit();
       };
       img.onerror = () => {
         URL.revokeObjectURL(url);
@@ -321,6 +409,29 @@ function requestTile(region: MapRegionInfo) {
         inFlight = Math.max(0, inFlight - 1);
         invalidate();
       }
+    });
+}
+
+function requestSlime(region: MapRegionInfo) {
+  const key = regionKey(region);
+  if (!props.showSlime || !overworld.value || !hasSeed.value) return;
+  if (slimeChunks.has(key) || slimeLoading.has(key)) return;
+  const failedAt = slimeFailed.get(key);
+  if (failedAt !== undefined && Date.now() - failedAt < 10_000) return;
+  slimeLoading.add(key);
+  const gen = generation;
+  getMapSlimeChunks(props.seed ?? "", region.x, region.z)
+    .then((list) => {
+      if (gen !== generation) return;
+      slimeChunks.set(key, list);
+      slimeFailed.delete(key);
+      invalidate();
+    })
+    .catch(() => {
+      if (gen === generation) slimeFailed.set(key, Date.now());
+    })
+    .finally(() => {
+      if (gen === generation) slimeLoading.delete(key);
     });
 }
 
@@ -393,6 +504,29 @@ function draw() {
     }
   }
 
+  if (props.showSlime && overworld.value && hasSeed.value) {
+    for (const region of regions.value) {
+      if (region.x < rx0 || region.x > rx1 || region.z < rz0 || region.z > rz1) continue;
+      requestSlime(region);
+    }
+    const slimeSize = 16 * scale;
+    ctx.fillStyle = "rgba(74, 222, 128, 0.28)";
+    ctx.strokeStyle = "rgba(34, 197, 94, 0.55)";
+    ctx.lineWidth = 1;
+    for (const region of regions.value) {
+      if (region.x < rx0 || region.x > rx1 || region.z < rz0 || region.z > rz1) continue;
+      const list = slimeChunks.get(regionKey(region));
+      if (!list) continue;
+      for (const c of list) {
+        const sx = toScreenX(c.x * 16);
+        const sy = toScreenY(c.z * 16);
+        if (sx + slimeSize < -2 || sy + slimeSize < -2 || sx > w + 2 || sy > h + 2) continue;
+        ctx.fillRect(sx, sy, slimeSize, slimeSize);
+        if (slimeSize > 6) ctx.strokeRect(sx + 0.5, sy + 0.5, slimeSize - 1, slimeSize - 1);
+      }
+    }
+  }
+
   if (props.chunkBorders) {
     ctx.strokeStyle = "rgba(255,255,255,0.12)";
     ctx.lineWidth = 1;
@@ -435,15 +569,6 @@ function draw() {
       ctx.stroke();
     }
   }
-
-  const marker = pinned.value;
-  if (marker) {
-    const sx = toScreenX(marker.x);
-    const sy = toScreenY(marker.z);
-    ctx.strokeStyle = getComputedStyle(canvas).getPropertyValue("--color-brand") || "#39d98a";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(sx, sy, scale, scale);
-  }
 }
 
 function tick(ts: number) {
@@ -474,7 +599,9 @@ async function refreshRegions() {
   refreshBusy = true;
   const gen = generation;
   try {
-    const list = await listMapRegions(props.versionName, props.worldName, props.dimension);
+    const list = folderMode.value
+      ? await listMapFolderRegions(props.rootPath, props.dimension)
+      : await listMapRegions(props.versionName, props.worldName, props.dimension);
     if (gen !== generation) return;
     regions.value = list;
     if (list.length === 0) {
@@ -484,6 +611,7 @@ async function refreshRegions() {
       if (firstFit) {
         firstFit = false;
         fitRegions();
+        autoFitPending = true;
       }
       for (const r of list) requestTile(r);
     }
@@ -507,8 +635,6 @@ function resetForStyle() {
   clearTiles();
   clearProbe();
   lastHoverKey = "";
-  pinned.value = null;
-  emit("pin", null);
   emitHover(null);
   for (const r of regions.value) requestTile(r);
   invalidate();
@@ -523,11 +649,11 @@ function resetForView() {
   clearTiles();
   clearProbe();
   lastHoverKey = "";
-  pinned.value = null;
-  emit("pin", null);
   emitHover(null);
   regions.value = [];
   firstFit = true;
+  autoFitPending = false;
+  contentBounds = null;
   setState("loading");
   void refreshRegions();
 }
@@ -535,9 +661,8 @@ function resetForView() {
 function onPointerDown(e: PointerEvent) {
   if (e.button !== 0 && e.button !== 2) return;
   e.preventDefault();
+  autoFitPending = false;
   pointerId = e.pointerId;
-  pointerButton = e.button;
-  dragMoved = false;
   dragging.value = true;
   lastClientX = e.clientX;
   lastClientY = e.clientY;
@@ -554,7 +679,6 @@ function onPointerMove(e: PointerEvent) {
   const dy = e.clientY - lastClientY;
   lastClientX = e.clientX;
   lastClientY = e.clientY;
-  if (Math.abs(dx) + Math.abs(dy) > 1) dragMoved = true;
   cam.x -= dx / cam.scale;
   cam.z -= dy / cam.scale;
   target.x = cam.x;
@@ -565,21 +689,14 @@ function onPointerMove(e: PointerEvent) {
 
 function endPointer(e: PointerEvent) {
   if (pointerId !== e.pointerId) return;
-  const button = pointerButton;
-  const moved = dragMoved;
   pointerId = null;
-  pointerButton = -1;
   dragging.value = false;
   try {
     (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
   } catch {
     // 指针已丢失
   }
-  if (button === 0 && !moved) {
-    void togglePin(e.clientX, e.clientY);
-  } else {
-    updateHover(e.clientX, e.clientY);
-  }
+  updateHover(e.clientX, e.clientY);
 }
 
 function onPointerLeave() {
@@ -591,6 +708,7 @@ function onPointerLeave() {
 
 function onWheel(e: WheelEvent) {
   e.preventDefault();
+  autoFitPending = false;
   const delta = normalizeWheel(e);
   if (delta === 0) return;
   const factor = Math.exp(-delta * 0.0018);
@@ -606,11 +724,19 @@ function resize() {
 }
 
 watch(
+  () => [props.rootPath, props.versionName, props.worldName, props.seed],
+  () => resetForView(),
+);
+watch(
+  () => props.showSlime,
+  () => invalidate(),
+);
+watch(
   () => props.dimension,
   () => resetForView(),
 );
 watch(
-  () => [props.renderStyle, props.modColors],
+  () => [props.maxY, props.modColors],
   () => {
     if (styleTimer !== null) clearTimeout(styleTimer);
     styleTimer = window.setTimeout(() => {
@@ -646,7 +772,20 @@ onBeforeUnmount(() => {
   raf = 0;
 });
 
-defineExpose({ zoomIn, zoomOut, resetView, refresh: refreshRegions });
+function focusOn(x: number, z: number) {
+  target.x = x;
+  target.z = z;
+  invalidate();
+}
+
+defineExpose({
+  zoomIn,
+  zoomOut,
+  resetView,
+  refresh: refreshRegions,
+  center: () => ({ x: cam.x, z: cam.z }),
+  focusOn,
+});
 </script>
 
 <template>

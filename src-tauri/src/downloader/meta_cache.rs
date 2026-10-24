@@ -117,7 +117,7 @@ fn evict() {
     let mut items: Vec<(PathBuf, u64, u64)> = Vec::new();
     for entry in read_dir.flatten() {
         let path = entry.path();
-        if !path.extension().is_some_and(|e| e == "json") {
+        if path.extension().is_none_or(|e| e != "json") {
             continue;
         }
         let size = entry.metadata().map(|m| m.len()).unwrap_or(0);

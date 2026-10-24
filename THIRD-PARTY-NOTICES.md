@@ -52,6 +52,12 @@ The icons under `src/assets/thanks/` are used solely to identify the correspondi
 
 The world-preview palette files under `src-tauri/assets/` are derived from Minecraft client assets and are used only for coloring the save-map preview. Copyright belongs to Mojang Studios; no endorsement is implied.
 
+## cubiomes（种子预览）/ cubiomes (seed preview)
+
+`src-tauri/vendor/cubiomes/` 是 [xpple/cubiomes](https://github.com/xpple/cubiomes) 在 commit [`d934de1d4e5e71db0b789296241f929a50306504`](https://github.com/xpple/cubiomes/commit/d934de1d4e5e71db0b789296241f929a50306504) 的裁剪快照（仅核心生成器、feature helper 与参数表，不含 loot），按 MIT License 分发，版权归 Cubitect 与 xpple 贡献者所有（见 `src-tauri/vendor/cubiomes/LICENSE`）。其中的群系/结构参数表由 Minecraft Java Edition 数据逆向得到；Minecraft 数据版权归 Mojang Studios 所有，本项目仅用于本地种子预览，与 Mojang/Microsoft 无关联。
+
+`src-tauri/vendor/cubiomes/` is a trimmed snapshot of [xpple/cubiomes](https://github.com/xpple/cubiomes) at commit [`d934de1d4e5e71db0b789296241f929a50306504`](https://github.com/xpple/cubiomes/commit/d934de1d4e5e71db0b789296241f929a50306504) (core generator, feature helpers and parameter tables only; no loot), distributed under the MIT License, copyright Cubitect and xpple contributors (see `src-tauri/vendor/cubiomes/LICENSE`). Its biome/structure tables are reverse-engineered from Minecraft: Java Edition data; Minecraft data is copyright Mojang Studios and is used here only for local seed preview. This project is not affiliated with Mojang Studios or Microsoft.
+
 ## Minecraft 素材 / Minecraft assets
 
 `src/assets/` 中的方块与物品图像，以及 `src-tauri/resources/steve.png`、`src-tauri/resources/alex.png`（Mojang 官方默认皮肤）均为 Minecraft 素材，版权归 Mojang Studios 所有，仅用于界面装饰与离线模式默认皮肤；本项目与 Mojang Studios / Microsoft 无关联。

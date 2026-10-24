@@ -12,6 +12,7 @@ pub mod loader;
 pub mod map;
 pub mod offline_account;
 pub mod online;
+pub mod seedmap;
 pub mod server_status;
 pub mod skins;
 pub mod task;

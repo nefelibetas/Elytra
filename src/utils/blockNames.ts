@@ -454,6 +454,8 @@ const BIOME_ZH: Record<string, string> = {
 	jagged_peaks: "尖峭山峰",
 	ice_spikes: "冰刺之地",
 	cherry_grove: "樱花树林",
+	dappled_forest: "斑驳森林",
+	sulfur_caves: "硫磺洞窟",
 	dripstone_caves: "溶洞",
 	lush_caves: "繁茂洞穴",
 	deep_dark: "深暗之域",
