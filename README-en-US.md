@@ -22,38 +22,6 @@
 
 ---
 
-## 🖼️ Preview
-
-<p align="center">
-  <img src="docs/screenshots/01-launch.png" width="840" alt="Launch" />
-  <br /><sub><b>Launch</b> · account, version card & launch entry</sub>
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/02-download.png" width="840" alt="Resources" />
-  <br /><sub><b>Resources</b> · vanilla game versions plus community content (Mods / Modpacks / Datapacks / Resource Packs / Shaders / Worlds)</sub>
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/03-version-setup.png" width="840" alt="Instance Settings" />
-  <br /><sub><b>Instance Settings</b> · mod management & update check</sub>
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/04-skin-wardrobe.png" width="840" alt="Wardrobe" />
-  <br /><sub><b>Wardrobe</b> · 3D full-body preview, skin & cape management (genuine accounts only)</sub>
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/05-skin-painter.png" width="840" alt="Skin Painter" />
-  <br /><sub><b>Skin Painter</b> · pixel-exact unfolded view + 3D direct painting (Settings → Tools)</sub>
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/06-online.png" width="840" alt="Multiplayer" />
-  <br /><sub><b>Multiplayer</b> · room-code pairing from the Launch page sidebar</sub>
-</p>
-
 ## ✨ Features
 
 ### 📦 Download & Install
@@ -180,7 +148,7 @@ cargo test --test tool_download                    # toolbox downloader integrat
 
 ### 📚 Others
 
-- **`docs/`** — icon & preview images
+- **`docs/`** — icon & docs
 - **`AGENTS.md`** — architecture layering & coding conventions
 - **`LICENSE`** — GPL-3.0-only
 

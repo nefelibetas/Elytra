@@ -22,38 +22,6 @@
 
 ---
 
-## 🖼️ 预览
-
-<p align="center">
-  <img src="docs/screenshots/01-launch.png" width="840" alt="启动" />
-  <br /><sub><b>启动</b> · 账户、实例卡片与启动入口</sub>
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/02-download.png" width="840" alt="资源中心" />
-  <br /><sub><b>资源中心</b> · 原版游戏与社区资源（Mod / 整合包 / 数据包 / 资源包 / 光影包 / 地图存档）</sub>
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/03-version-setup.png" width="840" alt="实例设置" />
-  <br /><sub><b>实例设置</b> · Mod 管理与更新检查</sub>
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/04-skin-wardrobe.png" width="840" alt="衣柜" />
-  <br /><sub><b>衣柜</b> · 3D 全身预览与皮肤 / 披风管理（仅微软账号）</sub>
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/05-skin-painter.png" width="840" alt="皮肤绘画器" />
-  <br /><sub><b>皮肤绘画器</b> · 展开图逐像素 + 3D 直绘（设置 → 工具）</sub>
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/06-online.png" width="840" alt="联机" />
-  <br /><sub><b>联机</b> · 启动页右栏房间码互连</sub>
-</p>
-
 ## ✨ 功能
 
 ### 📦 下载与安装
@@ -180,7 +148,7 @@ cargo test --test tool_download                    # 工具箱下载器集成测
 
 ### 📚 其它
 
-- **`docs/`** — 图标与预览图
+- **`docs/`** — 图标与文档
 - **`AGENTS.md`** — 架构分层与编码约定
 - **`LICENSE`** — GPL-3.0-only
 
