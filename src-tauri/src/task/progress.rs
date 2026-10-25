@@ -367,12 +367,20 @@ pub fn step_done(sink: &dyn EventSink, progress: &Arc<Mutex<TaskProgress>>, idx:
 }
 
 /// 总进度统一公式：优先字节占比（大文件不卡 99%），bytes 为 0 时回退 [`steps_percent`]；封顶 99.9（100% 只由收尾显式设置）。
+/// 单步任务（整包安装/单文件下载）顺带把唯一步骤对齐到同一口径——两套分母会让「总 99% / 步骤 0%」同时出现。
 pub fn update_progress(p: &mut TaskProgress) {
     p.progress = if p.total_bytes > 0 {
         (p.completed_bytes as f64 / p.total_bytes as f64 * 100.0).min(99.9)
     } else {
         steps_percent(p)
     };
+    if p.steps.len() == 1 {
+        if let Some(st) = p.steps.first_mut() {
+            if st.status == StepStatus::Running {
+                st.progress = p.progress;
+            }
+        }
+    }
 }
 
 pub fn set_total(
@@ -780,5 +788,72 @@ mod tests {
         let p = progress.lock();
         assert_eq!(p.progress, 37.5, "步骤口径：3/8 步");
         assert_eq!(p.total_bytes, 800, "字节总量仍照常写入（速度/聚合 ETA 用）");
+    }
+
+    /// 单步任务（JDK 安装这类）：步骤进度必须与总进度同口径，否则「总 99% / 步骤 0%」同时出现。
+    #[test]
+    fn single_step_mirrors_overall_percent() {
+        let build = |steps: Vec<StepInfo>| TaskProgress {
+            task_id: "jdk".into(),
+            name: "下载 Java 8".into(),
+            name_key: None,
+            name_params: None,
+            status: TaskStatus::Running,
+            progress: 0.0,
+            speed_bps: 0.0,
+            eta_seconds: None,
+            completed_files: 0,
+            total_files: 0,
+            completed_bytes: 0,
+            total_bytes: 0,
+            current_phase: String::new(),
+            current_phase_key: None,
+            current_phase_params: None,
+            steps,
+            error: None,
+        };
+        let single = || {
+            vec![StepInfo {
+                name: "下载 Java 运行时".into(),
+                kind: None,
+                status: StepStatus::Running,
+                progress: 0.0,
+            }]
+        };
+
+        // 整包安装：总量来自包体 → 字节占比
+        let mut p = build(single());
+        p.total_bytes = 100;
+        p.completed_bytes = 99;
+        update_progress(&mut p);
+        assert_eq!(p.progress, 99.0);
+        assert_eq!(p.steps[0].progress, 99.0, "步骤应跟随总进度");
+
+        // 无字节分母：回退文件口径
+        let mut p = build(single());
+        p.total_files = 4;
+        p.completed_files = 1;
+        update_progress(&mut p);
+        assert_eq!(p.steps[0].progress, 25.0);
+
+        // 多步任务不受影响（各步由 StepRef 独立维护）
+        let mut p = build(vec![
+            StepInfo {
+                name: "a".into(),
+                kind: None,
+                status: StepStatus::Running,
+                progress: 0.0,
+            },
+            StepInfo {
+                name: "b".into(),
+                kind: None,
+                status: StepStatus::Pending,
+                progress: 0.0,
+            },
+        ]);
+        p.total_bytes = 100;
+        p.completed_bytes = 50;
+        update_progress(&mut p);
+        assert_eq!(p.steps[0].progress, 0.0, "多步任务的步骤进度不由总进度改写");
     }
 }

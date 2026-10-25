@@ -54,7 +54,8 @@ pub async fn run_auto_tasks_now(
     version_id: String,
     phase: String,
 ) -> Result<(), String> {
-    let phase = AutoTaskPhase::parse(&phase).ok_or_else(|| format!("未知自动任务阶段\n{phase}"))?;
+    let phase = AutoTaskPhase::parse(&phase)
+        .ok_or_else(|| keyed_msg!("errors.autoTasks.unknownPhase", "未知自动任务阶段\n{phase}"))?;
     let root = mc_dir();
     let game_dir = root.join("versions").join(&version_id);
     if !game_dir.is_dir() {
@@ -86,8 +87,11 @@ pub async fn run_auto_tasks_now(
             .map(|f| format!("[{}] {}", f.action, f.message))
             .collect::<Vec<_>>()
             .join("\n");
-        Err(format!("自动任务执行失败\n{detail}"))
+        Err(keyed_msg!(
+            "errors.autoTasks.runFailed",
+            "自动任务执行失败\n{detail}"
+        ))
     })
     .await
-    .map_err(|e| format!("自动任务执行线程失败\n{e}"))?
+    .map_err(|e| keyed_msg!("errors.autoTasks.threadFailed", "自动任务执行线程失败\n{e}"))?
 }

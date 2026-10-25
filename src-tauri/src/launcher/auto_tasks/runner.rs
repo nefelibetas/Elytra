@@ -138,14 +138,26 @@ fn run_command(command: &str, timeout_secs: u32) -> Result<String, String> {
         match child.try_wait() {
             Ok(Some(status)) if status.success() => return Ok("命令执行成功".to_string()),
             Ok(Some(status)) => {
-                return Err(format!("命令退出码 {}", status.code().unwrap_or(-1)));
+                let code = status.code().unwrap_or(-1);
+                return Err(keyed_msg!(
+                    "errors.launch.commandExitCode?code={code}",
+                    "命令退出码 {code}"
+                ));
             }
             Ok(None) => {}
-            Err(e) => return Err(format!("等待命令失败\n{e}")),
+            Err(e) => {
+                return Err(keyed_msg!(
+                    "errors.launch.commandWaitFailed",
+                    "等待命令失败\n{e}"
+                ));
+            }
         }
         if Instant::now() >= deadline {
             kill_tree(&mut child);
-            return Err(format!("命令超时（{} 秒）", timeout_secs));
+            return Err(keyed_msg!(
+                "errors.launch.commandTimeout?seconds={timeout_secs}",
+                "命令超时（{timeout_secs} 秒）"
+            ));
         }
         std::thread::sleep(Duration::from_millis(POLL_MS));
     }

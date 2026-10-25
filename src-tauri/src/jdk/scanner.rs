@@ -10,14 +10,20 @@ use crate::util::NoWindow as _;
 pub fn scan_custom_dir(path: &str) -> Result<Vec<JdkInfo>, String> {
     let dir = Path::new(path);
     if !dir.exists() {
-        return Err("目标目录不存在".into());
+        return Err(keyed_msg!(
+            "errors.jdk.dirMissing",
+            "目标目录不存在\n{path}"
+        ));
     }
     let mut found = Vec::new();
     let mut seen = HashSet::new();
     // 指定目录以及往下一层目录内扫描
     scan_dir_and_children(dir, &mut found, &mut seen, false);
     if found.is_empty() {
-        Err(format!("未在目录中找到 Java 环境\n{}", path))
+        Err(keyed_msg!(
+            "errors.jdk.noJavaFound",
+            "未在目录中找到 Java 环境\n{path}"
+        ))
     } else {
         Ok(found)
     }
@@ -27,7 +33,13 @@ pub fn scan_custom_dir(path: &str) -> Result<Vec<JdkInfo>, String> {
 pub fn auto_scan() -> Vec<JdkInfo> {
     let mut found = Vec::new();
     let mut seen = HashSet::new();
-    for dir_str in candidate_dirs() {
+    let mut dirs = candidate_dirs();
+    // Elytra 自下载的 runtime 跟随激活游戏目录（<minecraft_dir>/runtime），exe 旁只是历史假定
+    let mc_runtime = crate::persist::downloader_config()
+        .minecraft_dir_abs()
+        .join("runtime");
+    dirs.push(mc_runtime.to_string_lossy().to_string());
+    for dir_str in dirs {
         let dir = Path::new(&dir_str);
         if dir.is_dir() {
             scan_dir_and_children(dir, &mut found, &mut seen, true);
@@ -82,7 +94,8 @@ pub(crate) fn inspect(java_home: &Path) -> Result<JdkInfo, String> {
         .output()
         .map_err(common_err_ctx_key!("errors.jdk.scan", "Java 检测失败"))?;
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let version = parse_version(&stderr).ok_or_else(|| format!("Java 版本解析失败\n{}", stderr))?;
+    let version = parse_version(&stderr)
+        .ok_or_else(|| keyed_msg!("errors.jdk.versionParse", "无法解析 Java 版本\n{stderr}"))?;
     Ok(JdkInfo {
         path: java_home.to_string_lossy().to_string(),
         version,

@@ -13,14 +13,20 @@ pub fn get_game_dirs() -> Vec<GameDir> {
 pub fn add_game_dir(name: String, path: String) -> Result<Vec<GameDir>, String> {
     let name = name.trim().to_string();
     if name.is_empty() {
-        return Err("名称不能为空".to_string());
+        return Err(keyed_msg!("errors.input.nameEmpty", "名称不能为空"));
     }
     let mut dirs = game_dirs::ensure_initialized();
     if dirs.iter().any(|d| d.name == name) {
-        bail!("名称「{name}」已存在");
+        bail_key!(
+            "errors.gamedirs.nameExists?name={name}",
+            "名称「{name}」已存在"
+        );
     }
     if dirs.iter().any(|d| d.path == path) {
-        return Err("该路径已在列表中".to_string());
+        return Err(keyed_msg!(
+            "errors.gamedirs.pathDuplicated",
+            "该路径已在列表中"
+        ));
     }
     dirs.push(GameDir { name, path });
     game_dirs::save_dirs(dirs)
@@ -30,19 +36,22 @@ pub fn add_game_dir(name: String, path: String) -> Result<Vec<GameDir>, String> 
 pub fn rename_game_dir(path: String, new_name: String) -> Result<Vec<GameDir>, String> {
     let new_name = new_name.trim().to_string();
     if new_name.is_empty() {
-        return Err("名称不能为空".to_string());
+        return Err(keyed_msg!("errors.input.nameEmpty", "名称不能为空"));
     }
     let mut dirs = game_dirs::ensure_initialized();
     let idx = dirs
         .iter()
         .position(|d| d.path == path)
-        .ok_or_else(|| "文件夹不存在".to_string())?;
+        .ok_or_else(|| keyed_msg!("errors.gamedirs.dirMissing", "文件夹不存在"))?;
     if dirs
         .iter()
         .enumerate()
         .any(|(i, d)| d.name == new_name && i != idx)
     {
-        bail!("名称「{new_name}」已存在");
+        bail_key!(
+            "errors.gamedirs.nameExists?name={new_name}",
+            "名称「{new_name}」已存在"
+        );
     }
     dirs[idx].name = new_name;
     game_dirs::save_dirs(dirs)
@@ -81,10 +90,13 @@ pub fn get_active_game_dir() -> GameDir {
 pub fn rename_version_dir(version_name: String, new_name: String) -> Result<(), String> {
     let new_name = new_name.trim().to_string();
     if new_name.is_empty() {
-        return Err("名称不能为空".to_string());
+        return Err(keyed_msg!("errors.input.nameEmpty", "名称不能为空"));
     }
     if new_name == version_name {
-        return Err("新名称与当前名称相同".to_string());
+        return Err(keyed_msg!(
+            "errors.gamedirs.nameUnchanged",
+            "新名称与当前名称相同"
+        ));
     }
     dir::rename_version_dir(&version_name, &new_name)
 }
@@ -93,7 +105,7 @@ pub fn rename_version_dir(version_name: String, new_name: String) -> Result<(), 
 #[tauri::command]
 pub fn open_folder(app: tauri::AppHandle, path: String) -> Result<(), String> {
     if !std::path::Path::new(&path).exists() {
-        bail!("目录不存在\n{path}");
+        bail_key!("errors.dir.missing", "目录不存在\n{path}");
     }
     app.opener()
         .open_path(path, None::<&str>)

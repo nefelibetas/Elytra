@@ -18,7 +18,7 @@ use super::routes::{
 use super::{DownloadResult, FetchError};
 use crate::config::downloader::{infer_resource_class, DownloadSourceMode, ResourceClass};
 use crate::constants;
-use crate::downloader::hash::file_sha1_matches;
+use crate::downloader::hash::{file_sha1_matches, SHA1_EMPTY};
 use crate::downloader::probe::{probe_domain, ProbeResult};
 use crate::downloader::segmented::{requested_segment_count, transfer_with_ranges, RangeTransfer};
 
@@ -287,6 +287,11 @@ async fn fetch_from_sources<F: Fn(u64, u64) + Send + Sync>(
     Err(FetchError::Network(msg))
 }
 
+/// 期望校验值是否声明的就是零字节对象（`SHA1_EMPTY`）：此时 200 空响应是合法内容而非黑洞。
+fn expects_empty_object(expected_sha1: Option<&str>) -> bool {
+    expected_sha1.is_some_and(|s| s.eq_ignore_ascii_case(SHA1_EMPTY))
+}
+
 async fn fetch_once<F: Fn(u64, u64) + Send + Sync>(
     client: &Client,
     url: &str,
@@ -425,11 +430,15 @@ async fn fetch_once<F: Fn(u64, u64) + Send + Sync>(
         0
     };
 
-    // 空响应防护：0 字节视为失败（下载物无合法空文件）
-    if downloaded == 0 {
+    // 空响应防护：0 字节一律视为失败——除非清单声明的就是零字节对象（sha1 = 空串 sha1），
+    // 后者随后同样过 sha1 校验，能挡住「接受零字节但内容不该为空」的清单错误
+    if downloaded == 0 && !expects_empty_object(expected_sha1) {
         drop(file);
         let _ = std::fs::remove_file(dest);
-        return Err(FetchError::Network("响应内容为空".into()));
+        return Err(FetchError::Network(keyed_msg!(
+            "errors.network.emptyBody",
+            "响应内容为空"
+        )));
     }
 
     // 内容校验：不匹配视同此源失败，调用方换源重试（全部失败才报错）

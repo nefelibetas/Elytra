@@ -48,7 +48,7 @@ const PREFIX_XMS: &str = "-Xms";
 const PREFIX_JAVA_AGENT: &str = "-javaagent:";
 const SUBSTR_LWJGL_UNSAFE_AGENT: &str = "lwjgl-unsafe-agent";
 
-const CLASS_LAUNCHWRAPPER: &str = "net.minecraft.launchwrapper.Launch";
+pub(crate) const CLASS_LAUNCHWRAPPER: &str = "net.minecraft.launchwrapper.Launch";
 const CLASS_CLIENT_MAIN: &str = "net.minecraft.client.main.Main";
 const CLASS_PREFIX_FABRIC: &str = "net.fabricmc";
 const SUBSTR_FABRIC_LOADER: &str = "fabric-loader";
@@ -682,7 +682,11 @@ fn clear_dir_contents(dir: &Path) -> Result<(), String> {
         };
         if let Err(e) = res {
             // 目录里可能残留游戏运行中占用的 .dll：明确指出是哪一项删不掉
-            return Err(format!("清理旧 natives 失败\n{}\n{e}", path.display()));
+            return Err(keyed_msg!(
+                "errors.launch.nativesCleanFailed",
+                "清理旧 natives 失败\n{}\n{e}",
+                path.display()
+            ));
         }
     }
     Ok(())
@@ -765,7 +769,11 @@ pub fn ensure_old_style_natives(
         Ok(())
     } else {
         // 第一行为大类短句（dialog 正文显示），细节进复制区
-        Err(format!("natives 准备失败\n{}", errors.join("\n")))
+        Err(keyed_msg!(
+            "errors.launch.nativesPrepareFailed",
+            "natives 准备失败\n{}",
+            errors.join("\n")
+        ))
     }
 }
 

@@ -47,9 +47,15 @@ pub fn enqueue(
 ) -> Result<Vec<String>, String> {
     let dir = PathBuf::from(save_dir.trim());
     if dir.as_os_str().is_empty() {
-        return Err("请先选择保存目录".into());
+        return Err(keyed_msg!(
+            "errors.tooldl.saveDirMissing",
+            "请先选择保存目录"
+        ));
     }
-    std::fs::create_dir_all(&dir).map_err(common_err_ctx!("创建保存目录失败"))?;
+    std::fs::create_dir_all(&dir).map_err(common_err_ctx_key!(
+        "errors.tooldl.createDirFailed",
+        "创建保存目录失败"
+    ))?;
 
     let segments = segments.clamp(1, 64);
     let mut created = Vec::new();
@@ -59,7 +65,7 @@ pub fn enqueue(
             continue;
         }
         if !(url.starts_with("http://") || url.starts_with("https://")) {
-            bail!("仅支持 http/https 链接\n{url}");
+            bail_key!("errors.tooldl.badUrl", "仅支持 http/https 链接\n{url}");
         }
         let task = Arc::new(build_task(url, &dir, segments));
         created.push(task.id.clone());
@@ -67,16 +73,19 @@ pub fn enqueue(
         spawn_waiter(Arc::clone(&sink), task);
     }
     if created.is_empty() {
-        return Err("请至少填入一个下载链接".into());
+        return Err(keyed_msg!(
+            "errors.tooldl.urlsEmpty",
+            "请至少填入一个下载链接"
+        ));
     }
     Ok(created)
 }
 
 /// 暂停一个正在下载的任务（排队中 / 已终态返回错误）。
 pub fn pause(task_id: &str) -> Result<(), String> {
-    let task = find(task_id).ok_or("任务不存在")?;
+    let task = find(task_id).ok_or_else(|| keyed_msg!("errors.task.notFound", "任务不存在"))?;
     if task.status() != ToolDlStatus::Downloading {
-        return Err("任务未在下载".into());
+        return Err(keyed_msg!("errors.tooldl.notDownloading", "任务未在下载"));
     }
     task.request_stop(StopReason::Pause);
     Ok(())
@@ -84,10 +93,13 @@ pub fn pause(task_id: &str) -> Result<(), String> {
 
 /// 继续（暂停）或重试（失败）：重置停止标志与错误后重新排队（分段路径断点续传）。
 pub fn resume(sink: Arc<dyn EventSink>, task_id: &str) -> Result<(), String> {
-    let task = find(task_id).ok_or("任务不存在")?;
+    let task = find(task_id).ok_or_else(|| keyed_msg!("errors.task.notFound", "任务不存在"))?;
     let status = task.status();
     if status != ToolDlStatus::Paused && status != ToolDlStatus::Error {
-        return Err("任务当前状态无法继续".into());
+        return Err(keyed_msg!(
+            "errors.tooldl.cannotResume",
+            "任务当前状态无法继续"
+        ));
     }
     task.clear_stop();
     task.speed.store(0, Ordering::Relaxed);
@@ -99,10 +111,10 @@ pub fn resume(sink: Arc<dyn EventSink>, task_id: &str) -> Result<(), String> {
 
 /// 取消任务并清理中间产物（正在下载时由执行体完成清理）。
 pub fn cancel(task_id: &str) -> Result<(), String> {
-    let task = find(task_id).ok_or("任务不存在")?;
+    let task = find(task_id).ok_or_else(|| keyed_msg!("errors.task.notFound", "任务不存在"))?;
     let status = task.status();
     if matches!(status, ToolDlStatus::Done | ToolDlStatus::Cancelled) {
-        return Err("任务已结束".into());
+        return Err(keyed_msg!("errors.tooldl.finished", "任务已结束"));
     }
     task.request_stop(StopReason::Cancel);
     if status == ToolDlStatus::Queued {
@@ -119,7 +131,7 @@ pub fn remove(task_id: &str) -> Result<(), String> {
         let mut tasks = TASKS.lock();
         match tasks.iter().position(|t| t.id == task_id) {
             Some(index) => tasks.remove(index),
-            None => return Err("任务不存在".into()),
+            None => return Err(keyed_msg!("errors.task.notFound", "任务不存在")),
         }
     };
     if !matches!(

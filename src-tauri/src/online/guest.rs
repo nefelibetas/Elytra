@@ -51,10 +51,17 @@ async fn start_join_session(room_code: &str) -> Result<(EasyTierSession, u64), S
     let (gen, room, cfg) = {
         let mut svc = SERVICE.lock().await;
         if svc.session.is_some() {
-            return Err("联机已在运行中\n请先停止当前联机会话".to_string());
+            return Err(keyed_msg!(
+                "errors.online.alreadyRunning",
+                "联机已在运行中\n请先停止当前联机会话"
+            ));
         }
-        let room = parse_room_code(room_code)
-            .ok_or_else(|| "房间码无效\n请检查格式（U/XXXX-XXXX-XXXX-XXXX）".to_string())?;
+        let room = parse_room_code(room_code).ok_or_else(|| {
+            keyed_msg!(
+                "errors.online.roomCodeInvalid",
+                "房间码无效\n请检查格式（U/XXXX-XXXX-XXXX-XXXX）"
+            )
+        })?;
         svc.generation += 1;
         let gen = svc.generation;
         let public_nodes = online_config().public_nodes;
@@ -76,7 +83,7 @@ async fn start_join_session(room_code: &str) -> Result<(EasyTierSession, u64), S
     if svc.generation != gen {
         drop(svc);
         s.stop().await;
-        bail!("加入联机已取消");
+        bail_key!("errors.task.cancelled", "加入联机已取消");
     }
     svc.session = Some(s.clone());
     svc.status = OnlineStatus::Joining;
@@ -95,7 +102,10 @@ async fn connect_center(
         Some(v) => v,
         None => {
             rollback_join_and_emit(sink, gen).await;
-            return Err("联机中心发现失败\n请确认主机已开启联机".to_string());
+            return Err(keyed_msg!(
+                "errors.online.centerNotFound",
+                "联机中心发现失败\n请确认主机已开启联机"
+            ));
         }
     };
 
@@ -167,7 +177,10 @@ async fn negotiate_guest_session(
         ))?;
     if port_resp.status != 0 || port_resp.body.len() != 2 {
         rollback_join_and_emit(sink, gen).await;
-        return Err("服务器未启动\n请让主机先在游戏里开启局域网世界".to_string());
+        return Err(keyed_msg!(
+            "errors.online.serverNotStarted",
+            "服务器未启动\n请让主机先在游戏里开启局域网世界"
+        ));
     }
     let game_port = u16::from_be_bytes([port_resp.body[0], port_resp.body[1]]);
     drop(stream);
@@ -186,7 +199,7 @@ async fn activate_guest_join(
 ) -> Result<u16, String> {
     let mut svc = SERVICE.lock().await;
     if svc.generation != gen {
-        bail!("加入联机已取消");
+        bail_key!("errors.task.cancelled", "加入联机已取消");
     }
 
     // 本地 OS 监听 local_port → 数据面连 centerIP:game_port；

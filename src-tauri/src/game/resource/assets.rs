@@ -106,8 +106,18 @@ pub async fn download_assets(
         id: index_id,
         sha1: index_sha1,
     } = index;
-    let index_id = index_id.ok_or_else(|| vec!["资源索引缺少版本 id".to_string()])?;
-    let index_sha1 = index_sha1.ok_or_else(|| vec!["资源索引缺少 sha1".to_string()])?;
+    let index_id = index_id.ok_or_else(|| {
+        vec![keyed_msg!(
+            "errors.assets.indexIdMissing",
+            "资源索引缺少版本 id"
+        )]
+    })?;
+    let index_sha1 = index_sha1.ok_or_else(|| {
+        vec![keyed_msg!(
+            "errors.assets.indexSha1Missing",
+            "资源索引缺少 sha1"
+        )]
+    })?;
     let sources: Vec<&DownloadSource> = config.file_sources_list();
     let mc_dir = config.minecraft_dir_abs();
 

@@ -2,6 +2,7 @@
 
 pub mod args;
 pub mod auto_tasks;
+pub mod compat;
 pub mod env;
 pub mod memory;
 pub mod model;

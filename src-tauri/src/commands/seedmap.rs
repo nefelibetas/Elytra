@@ -32,7 +32,10 @@ pub async fn get_seed_map_tile(
         Ok::<Vec<u8>, String>(png)
     })
     .await
-    .map_err(|e| format!("种子地图任务异常\n{e}"))??;
+    .map_err(common_err_ctx_key!(
+        "errors.seedmap.tileFailed",
+        "种子地图任务异常"
+    ))??;
     Ok(Response::new(png))
 }
 
@@ -61,7 +64,10 @@ pub async fn get_seed_map_structures(
         seedmap::collect_structures(&resolved.family, seed, rx, rz)
     })
     .await
-    .map_err(|e| format!("结构查询任务异常\n{e}"))?
+    .map_err(common_err_ctx_key!(
+        "errors.seedmap.structureQueryFailed",
+        "结构查询任务异常"
+    ))?
 }
 
 #[tauri::command]
@@ -79,7 +85,10 @@ pub async fn find_seed_map_structures(
         seedmap::find_structures(&resolved.family, seed, &kind, center_x, center_z, radius)
     })
     .await
-    .map_err(|e| format!("结构搜索任务异常\n{e}"))?
+    .map_err(common_err_ctx_key!(
+        "errors.seedmap.structureSearchFailed",
+        "结构搜索任务异常"
+    ))?
 }
 
 #[tauri::command]
@@ -96,7 +105,10 @@ pub async fn find_seed_map_slime_chunks(
         seedmap::find_slime_chunks(&resolved.family, seed, center_x, center_z, radius)
     })
     .await
-    .map_err(|e| format!("史莱姆区块搜索任务异常\n{e}"))?
+    .map_err(common_err_ctx_key!(
+        "errors.seedmap.slimeSearchFailed",
+        "史莱姆区块搜索任务异常"
+    ))?
 }
 
 #[tauri::command]

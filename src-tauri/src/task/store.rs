@@ -107,7 +107,10 @@ static POOL: LazyLock<Result<SqlitePool, String>> = LazyLock::new(|| {
         )
         .execute(&pool)
         .await
-        .map_err(common_err_ctx!("初始化任务表失败"))?;
+        .map_err(common_err_ctx_key!(
+            "errors.task.storeInit",
+            "初始化任务表失败"
+        ))?;
         Ok::<SqlitePool, String>(pool)
     })
 });

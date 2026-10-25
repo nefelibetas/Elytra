@@ -250,20 +250,35 @@ impl DownloadTask {
     /// 信任边界校验：组合约束（Fabric API 必须配 Fabric）、空字段拦截。
     pub fn validate(&self) -> Result<(), String> {
         if self.version_id.trim().is_empty() || self.version_url.trim().is_empty() {
-            return Err("版本信息不完整".into());
+            return Err(keyed_msg!(
+                "errors.task.versionInfoIncomplete",
+                "版本信息不完整"
+            ));
         }
         if let Some(loader) = &self.loader {
             if loader.version.trim().is_empty() {
-                bail!("{} 版本不能为空", loader.kind.display_name());
+                let name = loader.kind.display_name();
+                return Err(keyed_msg!(
+                    "errors.task.versionEmpty?name={name}",
+                    "{name} 版本不能为空"
+                ));
             }
         }
         if let Some(api) = &self.fabric_api {
             match &self.loader {
                 Some(l) if l.kind == LoaderKind::Fabric => {}
-                _ => return Err("Fabric API 仅支持与 Fabric 加载器组合".into()),
+                _ => {
+                    return Err(keyed_msg!(
+                        "errors.task.fabricApiNeedsFabric",
+                        "Fabric API 仅支持与 Fabric 加载器组合"
+                    ))
+                }
             }
             if api.url.trim().is_empty() || api.version.trim().is_empty() {
-                return Err("Fabric API 信息不完整".into());
+                return Err(keyed_msg!(
+                    "errors.task.fabricApiIncomplete",
+                    "Fabric API 信息不完整"
+                ));
             }
         }
         Ok(())
@@ -311,7 +326,10 @@ pub struct DownloadFileTask {
 impl DownloadFileTask {
     pub fn validate(&self) -> Result<(), String> {
         if self.version_dir_name.trim().is_empty() {
-            return Err("版本目录不能为空".into());
+            return Err(keyed_msg!(
+                "errors.task.versionDirEmpty",
+                "版本目录不能为空"
+            ));
         }
         validate_file_item(&self.url, &self.filename)
     }
@@ -336,10 +354,13 @@ pub struct DownloadFilesTask {
 impl DownloadFilesTask {
     pub fn validate(&self) -> Result<(), String> {
         if self.version_dir_name.trim().is_empty() {
-            return Err("版本目录不能为空".into());
+            return Err(keyed_msg!(
+                "errors.task.versionDirEmpty",
+                "版本目录不能为空"
+            ));
         }
         if self.files.is_empty() {
-            return Err("文件列表不能为空".into());
+            return Err(keyed_msg!("errors.task.fileListEmpty", "文件列表不能为空"));
         }
         for f in &self.files {
             validate_file_item(&f.url, &f.filename)?;
@@ -350,11 +371,11 @@ impl DownloadFilesTask {
 
 fn validate_file_item(url: &str, filename: &str) -> Result<(), String> {
     if url.trim().is_empty() {
-        return Err("下载地址不能为空".into());
+        return Err(keyed_msg!("errors.task.urlEmpty", "下载地址不能为空"));
     }
     // 挡路径穿越：文件名不得含路径分隔符
     if filename.trim().is_empty() || filename.contains(['/', '\\']) {
-        return Err("文件名不合法".into());
+        return Err(keyed_msg!("errors.task.fileNameInvalid", "文件名不合法"));
     }
     Ok(())
 }

@@ -242,7 +242,7 @@ pub(crate) fn extract_zip_safe(
             continue;
         }
         if cancel.load(Ordering::Relaxed) {
-            return Err("任务已取消\n".into());
+            return Err(keyed_msg!("errors.task.cancelled", "任务已取消\n"));
         }
         if let Some(parent) = out.parent() {
             std::fs::create_dir_all(parent)
@@ -294,17 +294,25 @@ pub fn extract_jar(
 
         let target = out_dir.join(&name);
         if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("创建目录失败\n{}: {}", parent.display(), e))?;
+            std::fs::create_dir_all(parent).map_err(common_err_ctx_key!(
+                "errors.file.createDir",
+                "创建目录失败\n{}",
+                parent.display()
+            ))?;
         }
 
         let mut buf = Vec::with_capacity(entry.size() as usize);
-        entry
-            .read_to_end(&mut buf)
-            .map_err(|e| format!("读取失败\n{}: {}", name, e))?;
+        entry.read_to_end(&mut buf).map_err(common_err_ctx_key!(
+            "errors.file.read",
+            "读取失败\n{}",
+            name
+        ))?;
 
-        std::fs::write(&target, &buf)
-            .map_err(|e| format!("写入失败\n{}: {}", target.display(), e))?;
+        std::fs::write(&target, &buf).map_err(common_err_ctx_key!(
+            "errors.file.write",
+            "写入失败\n{}",
+            target.display()
+        ))?;
     }
 
     Ok(())

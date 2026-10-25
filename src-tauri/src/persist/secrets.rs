@@ -85,7 +85,10 @@ where
     if list.is_empty() {
         remove_secret_locked(key)?;
     } else {
-        let bytes = serde_json::to_vec(&list).map_err(common_err_ctx!("序列化数据失败"))?;
+        let bytes = serde_json::to_vec(&list).map_err(common_err_ctx_key!(
+            "errors.config.serializeFailed",
+            "序列化配置失败"
+        ))?;
         save_secret_locked(key, &bytes)?;
     }
     Ok(out)
@@ -120,7 +123,10 @@ fn write_map(map: &std::collections::HashMap<String, String>) -> Result<(), Stri
             "创建配置目录失败"
         ))?;
     }
-    let content = serde_json::to_string(map).map_err(common_err_ctx!("序列化 secrets 失败"))?;
+    let content = serde_json::to_string(map).map_err(common_err_ctx_key!(
+        "errors.config.serializeFailed",
+        "序列化配置失败"
+    ))?;
     // 原子写：先写 .tmp 再 rename（同 store::write_raw）；直接 fs::write 中途崩溃会留半截 JSON，
     // 而解析失败等于凭据全丢。
     let tmp = path.with_extension("bin.tmp");
@@ -139,7 +145,7 @@ fn write_map(map: &std::collections::HashMap<String, String>) -> Result<(), Stri
     }
     std::fs::rename(&tmp, &path).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
-        format!("写入 secrets 失败\n{e}")
+        keyed_msg!("errors.file.write", "写入 secrets 失败\n{e}")
     })
 }
 
@@ -182,16 +188,22 @@ const MAGIC: &[u8] = b"ELY1";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn key_encrypt(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, String> {
     let mut nonce_bytes = [0u8; 12];
-    getrandom::getrandom(&mut nonce_bytes).map_err(common_err_ctx!("生成随机数失败"))?;
+    getrandom::getrandom(&mut nonce_bytes).map_err(common_err_ctx_key!(
+        "errors.secrets.randomFailed",
+        "生成随机数失败"
+    ))?;
     // 定长来源走 fallible 转换（长度由类型保证，错误分支仅为消除 panic 路径）
-    let key_ref =
-        Key::try_from(key.as_slice()).map_err(|_| "内部错误：主密钥长度异常".to_string())?;
+    let key_ref = Key::try_from(key.as_slice())
+        .map_err(|_| keyed_msg!("errors.secrets.masterKeyInvalid", "主密钥长度异常"))?;
     let nonce_ref = Nonce::try_from(nonce_bytes.as_slice())
-        .map_err(|_| "内部错误：nonce 长度异常".to_string())?;
+        .map_err(|_| keyed_msg!("errors.secrets.nonceInvalid", "nonce 长度异常"))?;
     let cipher = ChaCha20Poly1305::new(&key_ref);
     let ct = cipher
         .encrypt(&nonce_ref, data)
-        .map_err(common_err_ctx!("加密失败"))?;
+        .map_err(common_err_ctx_key!(
+            "errors.secrets.encryptFailed",
+            "加密失败"
+        ))?;
     let mut out = Vec::with_capacity(MAGIC.len() + nonce_bytes.len() + ct.len());
     out.extend_from_slice(MAGIC);
     out.extend_from_slice(&nonce_bytes);
@@ -205,16 +217,18 @@ fn key_decrypt(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, String> {
         return Ok(data.to_vec());
     };
     if rest.len() < 12 {
-        return Err("密文格式异常".into());
+        return Err(keyed_msg!("errors.secrets.cipherFormat", "密文格式异常"));
     }
     let (nonce, ct) = rest.split_at(12);
-    let key_ref =
-        Key::try_from(key.as_slice()).map_err(|_| "内部错误：主密钥长度异常".to_string())?;
-    let nonce_ref = Nonce::try_from(nonce).map_err(|_| "内部错误：nonce 长度异常".to_string())?;
+    let key_ref = Key::try_from(key.as_slice())
+        .map_err(|_| keyed_msg!("errors.secrets.masterKeyInvalid", "主密钥长度异常"))?;
+    let nonce_ref = Nonce::try_from(nonce)
+        .map_err(|_| keyed_msg!("errors.secrets.nonceInvalid", "nonce 长度异常"))?;
     let cipher = ChaCha20Poly1305::new(&key_ref);
-    cipher
-        .decrypt(&nonce_ref, ct)
-        .map_err(common_err_ctx!("解密失败"))
+    cipher.decrypt(&nonce_ref, ct).map_err(common_err_ctx_key!(
+        "errors.secrets.decryptFailed",
+        "解密失败"
+    ))
 }
 
 /// Linux Secret Service（GNOME Keyring / KWallet kwalletd5）：主密钥存 default collection，
@@ -260,37 +274,52 @@ mod key_utils {
     async fn fetch_key() -> Result<Option<[u8; 32]>, String> {
         let ss = SecretService::connect(EncryptionType::Dh)
             .await
-            .map_err(common_err_ctx!("连接 Secret Service 失败"))?;
+            .map_err(common_err_ctx_key!(
+                "errors.secrets.keychainConnect",
+                "连接 Secret Service 失败"
+            ))?;
         let collection = ss
             .get_default_collection()
             .await
-            .map_err(common_err_ctx!("获取默认钥匙串失败"))?;
+            .map_err(common_err_ctx_key!(
+                "errors.secrets.keychainDefault",
+                "获取默认钥匙串失败"
+            ))?;
         let items = collection
             .search_items(attrs())
             .await
-            .map_err(common_err_ctx!("查询钥匙串失败"))?;
+            .map_err(common_err_ctx_key!(
+                "errors.secrets.keychainQuery",
+                "查询钥匙串失败"
+            ))?;
         let Some(item) = items.first() else {
             return Ok(None);
         };
-        let secret = item
-            .get_secret()
-            .await
-            .map_err(common_err_ctx!("读取钥匙串失败"))?;
+        let secret = item.get_secret().await.map_err(common_err_ctx_key!(
+            "errors.secrets.keychainRead",
+            "读取钥匙串失败"
+        ))?;
         let key: [u8; 32] = secret
             .as_slice()
             .try_into()
-            .map_err(|_| "主密钥长度异常".to_string())?;
+            .map_err(|_| keyed_msg!("errors.secrets.masterKeyInvalid", "主密钥长度异常"))?;
         Ok(Some(key))
     }
 
     async fn store_key(key: &[u8; 32]) -> Result<(), String> {
         let ss = SecretService::connect(EncryptionType::Dh)
             .await
-            .map_err(common_err_ctx!("连接 Secret Service 失败"))?;
+            .map_err(common_err_ctx_key!(
+                "errors.secrets.keychainConnect",
+                "连接 Secret Service 失败"
+            ))?;
         let collection = ss
             .get_default_collection()
             .await
-            .map_err(common_err_ctx!("获取默认钥匙串失败"))?;
+            .map_err(common_err_ctx_key!(
+                "errors.secrets.keychainDefault",
+                "获取默认钥匙串失败"
+            ))?;
         collection
             .create_item(
                 KEYCHAIN_MASTER_KEY_LABEL,
@@ -300,7 +329,10 @@ mod key_utils {
                 "application/octet-stream",
             )
             .await
-            .map_err(common_err_ctx!("写入钥匙串失败"))?;
+            .map_err(common_err_ctx_key!(
+                "errors.secrets.keychainWrite",
+                "写入钥匙串失败"
+            ))?;
         Ok(())
     }
 
@@ -360,14 +392,17 @@ mod keychain {
             .account(KEYCHAIN_MASTER_KEY_ACCOUNT)
             .load_data(true)
             .search()
-            .map_err(common_err_ctx!("读取钥匙串失败"))?;
+            .map_err(common_err_ctx_key!(
+                "errors.secrets.keychainRead",
+                "读取钥匙串失败"
+            ))?;
         let Some(SearchResult::Data(data)) = results.into_iter().next() else {
             return Ok(None);
         };
-        let key: [u8; 32] = data
-            .as_slice()
-            .try_into()
-            .map_err(common_err_ctx!("主密钥长度异常"))?;
+        let key: [u8; 32] = data.as_slice().try_into().map_err(common_err_ctx_key!(
+            "errors.secrets.masterKeyInvalid",
+            "主密钥长度异常"
+        ))?;
         Ok(Some(key))
     }
 
@@ -385,7 +420,10 @@ mod keychain {
         .set_service(KEYCHAIN_SERVICE)
         .set_account_name(KEYCHAIN_MASTER_KEY_ACCOUNT)
         .add()
-        .map_err(common_err_ctx!("写入钥匙串失败"))
+        .map_err(common_err_ctx_key!(
+            "errors.secrets.keychainWrite",
+            "写入钥匙串失败"
+        ))
     }
 
     fn master_key() -> Option<&'static [u8; 32]> {
@@ -468,7 +506,10 @@ mod dpapi {
             )
         };
         if ok == 0 {
-            return Err("CryptProtectData 失败".into());
+            return Err(keyed_msg!(
+                "errors.secrets.dpapiProtect",
+                "CryptProtectData 失败"
+            ));
         }
         // SAFETY: ok != 0 表示成功，out_blob.pb_data 指向 LocalAlloc 分配、长度恰为 cb_data 的缓冲。
         let out = unsafe {
@@ -504,7 +545,10 @@ mod dpapi {
             )
         };
         if ok == 0 {
-            return Err("CryptUnprotectData 失败（凭据不可解密，可能已换 Windows 用户）".into());
+            return Err(keyed_msg!(
+                "errors.secrets.dpapiUnprotect",
+                "CryptUnprotectData 失败（凭据不可解密，可能已换 Windows 用户）"
+            ));
         }
         // SAFETY: ok != 0 表示成功，out_blob.pb_data 指向 LocalAlloc 分配、长度恰为 cb_data 的缓冲。
         let out = unsafe {

@@ -45,7 +45,10 @@ pub fn auto_activate_first_version() -> Result<AutoActivate, String> {
             version,
         });
     }
-    Err("所有游戏目录中都没有已安装的版本".to_string())
+    Err(keyed_msg!(
+        "errors.version.noneInstalled",
+        "所有游戏目录中都没有已安装的版本"
+    ))
 }
 
 /// 版本目录绝对路径（versions/{name}）。目录不存在时返回错误（读操作不该静默创建）。
@@ -65,7 +68,10 @@ pub fn version_dir_path(version_name: &str) -> Result<PathBuf, String> {
 /// 版本名会直接成为 TOML 顶层 key，故做简单名校验（全仓唯一动态 section）。
 pub fn version_server_section(version_name: &str) -> Result<String, String> {
     if !is_simple_name(version_name) {
-        return Err("版本名非法\n仅允许不含路径分隔符与 `..` 的名称".into());
+        return Err(keyed_msg!(
+            "errors.version.badName",
+            "版本名非法\n仅允许不含路径分隔符与 `..` 的名称"
+        ));
     }
     Ok(format!("version_server_{version_name}"))
 }
@@ -118,7 +124,12 @@ pub fn ensure_kind_folder(kind: &str, version_name: &str) -> Result<String, Stri
         "resourcepacks" => format!("versions/{version_name}/resourcepacks"),
         "datapacks" => format!("versions/{version_name}/datapacks"),
         "shaderpacks" => format!("versions/{version_name}/shaderpacks"),
-        _ => return Err("未知文件夹类型".to_string()),
+        _ => {
+            return Err(keyed_msg!(
+                "errors.version.unknownFolderKind",
+                "未知文件夹类型"
+            ))
+        }
     };
     let dir = base.join(sub);
     std::fs::create_dir_all(&dir)
@@ -129,29 +140,41 @@ pub fn ensure_kind_folder(kind: &str, version_name: &str) -> Result<String, Stri
 /// 重命名版本文件夹（versions/{old} → versions/{new}）。
 pub fn rename_version_dir(version_name: &str, new_name: &str) -> Result<(), String> {
     if !is_simple_name(version_name) || !is_simple_name(new_name) {
-        bail!("非法的版本目录名");
+        bail_key!("errors.version.badDirName", "非法的版本目录名");
     }
     let versions_dir = active_minecraft_dir().join("versions");
     let from = versions_dir.join(version_name);
     let to = versions_dir.join(new_name);
     if !from.exists() {
-        bail!("版本「{version_name}」不存在");
+        return Err(keyed_msg!(
+            "errors.version.notFound?name={version_name}",
+            "版本「{version_name}」不存在"
+        ));
     }
     if to.exists() {
-        bail!("版本「{new_name}」已存在");
+        return Err(keyed_msg!(
+            "errors.version.alreadyExists?name={new_name}",
+            "版本「{new_name}」已存在"
+        ));
     }
-    std::fs::rename(&from, &to).map_err(common_err_ctx!("重命名失败"))
+    std::fs::rename(&from, &to).map_err(common_err_ctx_key!(
+        "errors.version.renameFailed",
+        "重命名失败"
+    ))
 }
 
 /// 递归删除 versions/{name}；大目录耗时，故用 tokio::fs 避免阻塞主线程。
 pub async fn delete_version_dir(version_name: &str) -> Result<(), String> {
     // 必须先校验目录名：`..`/分隔符经 `join` 会带出 versions/（`..` 即整删游戏数据），UI 输入不可信。
     if !is_simple_name(version_name) {
-        bail!("非法的版本目录名");
+        bail_key!("errors.version.badDirName", "非法的版本目录名");
     }
     let dir = active_minecraft_dir().join("versions").join(version_name);
     if !dir.exists() {
-        bail!("版本「{version_name}」不存在");
+        return Err(keyed_msg!(
+            "errors.version.notFound?name={version_name}",
+            "版本「{version_name}」不存在"
+        ));
     }
     tokio::fs::remove_dir_all(&dir)
         .await

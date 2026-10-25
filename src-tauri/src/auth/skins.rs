@@ -109,8 +109,10 @@ pub fn remove(id: &str) -> Result<Vec<LocalSkinView>, String> {
 pub fn read(id: &str) -> Result<String, String> {
     let path = skin_path(id)?;
     let bytes = std::fs::read(&path).map_err(|e| match e.kind() {
-        std::io::ErrorKind::NotFound => format!("皮肤文件不存在\n{id}"),
-        _ => format!("读取皮肤文件失败\n{e}"),
+        std::io::ErrorKind::NotFound => {
+            keyed_msg!("errors.skins.fileNotFound", "皮肤文件不存在\n{id}")
+        }
+        _ => keyed_msg!("errors.file.read", "读取皮肤文件失败\n{e}"),
     })?;
     Ok(util::to_base64(&bytes))
 }
@@ -123,7 +125,7 @@ pub fn export_png(path: &str, b64: &str) -> Result<(), String> {
         .and_then(|e| e.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case("png"));
     if !is_png {
-        bail!("请用 .png 作为文件名\n{path}");
+        bail_key!("errors.skins.needPngName", "请用 .png 作为文件名\n{path}");
     }
     let bytes = decode_b64(b64)?;
     ensure_png(&bytes)?;
@@ -135,7 +137,10 @@ pub fn import_png(path: &str) -> Result<String, String> {
     let bytes = std::fs::read(path.trim())
         .map_err(common_err_ctx_key!("errors.file.read", "读取文件失败"))?;
     if !util::is_supported_image(&bytes) {
-        bail!("不是受支持的图片格式\n{path}");
+        bail_key!(
+            "errors.skins.unsupportedImage",
+            "不是受支持的图片格式\n{path}"
+        );
     }
     Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
@@ -148,7 +153,10 @@ fn save_bytes(
 ) -> Result<LocalSkinView, String> {
     let name = name.trim();
     if name.is_empty() {
-        return Err("皮肤名称不能为空\nname is empty".to_string());
+        return Err(keyed_msg!(
+            "errors.input.nameEmpty",
+            "皮肤名称不能为空\nname is empty"
+        ));
     }
     let variant = normalize_variant(variant)?;
     ensure_png(bytes)?;
@@ -252,7 +260,8 @@ fn normalize_variant(variant: &str) -> Result<String, String> {
     if v == VARIANT_CLASSIC || v == VARIANT_SLIM {
         return Ok(v);
     }
-    Err(format!(
+    Err(keyed_msg!(
+        "errors.skins.unsupportedVariant",
         "不支持的皮肤模型\nvariant 仅支持 {VARIANT_CLASSIC}/{VARIANT_SLIM}，收到 {variant:?}"
     ))
 }
@@ -262,7 +271,10 @@ fn ensure_png(bytes: &[u8]) -> Result<(), String> {
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         return Ok(());
     }
-    Err("皮肤文件不是 PNG 格式\n期望 PNG 魔数 \\x89PNG\\r\\n\\x1a\\n".to_string())
+    Err(keyed_msg!(
+        "errors.skins.notPng",
+        "皮肤文件不是 PNG 格式\n期望 PNG 魔数 \\x89PNG\\r\\n\\x1a\\n"
+    ))
 }
 
 /// base64 → 字节（容忍 `data:image/png;base64,` 前缀：前端 canvas 导出常见）。

@@ -196,9 +196,30 @@ pub async fn fetch_bounded_c(
 mod tests {
     use super::super::core::test_support::{serve, temp_dest};
     use super::{fetch, fetch_verified, fetch_verified_c, FetchError};
-    use crate::downloader::hash::{file_sha1_matches, sha1_hex};
+    use crate::downloader::hash::{file_sha1_matches, sha1_hex, SHA1_EMPTY};
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
+
+    /// 清单声明的就是零字节对象（jre-legacy 的 `lib/security/trusted.libraries`）：空响应合法。
+    #[tokio::test]
+    async fn fetch_verified_writes_declared_empty_object() {
+        let url = serve(Vec::new()).await;
+        let dest = temp_dest("fetch_verified_empty");
+        let res = fetch_verified(&[url], &dest, None::<fn(u64, u64)>, SHA1_EMPTY).await;
+        assert!(res.is_ok(), "声明为零字节对象时应成功: {res:?}");
+        assert_eq!(std::fs::metadata(&dest).unwrap().len(), 0, "应为 0 字节");
+        let _ = std::fs::remove_file(&dest);
+    }
+
+    /// 未声明零字节时，空响应仍是失败（黑洞防护不放松）。
+    #[tokio::test]
+    async fn empty_response_without_declaration_still_fails() {
+        let url = serve(Vec::new()).await;
+        let dest = temp_dest("fetch_verified_empty_undeclared");
+        let res = fetch_verified(&[url], &dest, None::<fn(u64, u64)>, "").await;
+        assert!(res.is_err(), "未声明的空响应应失败: {res:?}");
+        assert!(!dest.exists(), "失败时不留空文件");
+    }
 
     #[tokio::test]
     async fn fetch_cancelled_returns_immediately() {

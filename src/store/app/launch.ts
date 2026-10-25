@@ -9,7 +9,8 @@ import { authMode, msAccount, username, externalAccount, refreshExternalAccount,
 import { selectedVersion, setSelected, getSavedDir } from "../app/selectedVersion";
 import { showError } from "../app/alert";
 import { t } from "../../i18n";
-import { errMsg } from "../../utils/error";
+import { errMsg, formatError } from "../../utils/error";
+import { showToast } from "../../utils/toast";
 
 export const launchState = reactive({
   /** 启动流程："" 空闲 | "running" 启动中 | "done" 完成 */
@@ -155,9 +156,12 @@ export async function doLaunch(navigateToDownload: () => void) {
     }
     if (seq !== launchSeq) return;
 
-    // ① 环境 + 完整性校验
-    await invoke("check_launch_env", { versionDirName: selectedVersion.value });
+    // ① 环境 + 完整性校验（后端在 Java 兼容性有风险时返回 @i18n 提示，作为 toast 提醒）
+    const envNote = await invoke<string>("check_launch_env", { versionDirName: selectedVersion.value });
     if (seq !== launchSeq) return;
+    if (envNote.startsWith("@i18n:")) {
+      showToast(formatError(envNote).summary);
+    }
     step("launch.steps.java", "done");
     step("launch.steps.files", "running");
     await new Promise(r => setTimeout(r, 100)); // 让用户看到完整性检查过程
@@ -194,12 +198,23 @@ export async function doLaunch(navigateToDownload: () => void) {
 
     // ③ 等待游戏窗口（后端轮询可见窗口推送事件；90s 兜底防卡死）
     step("launch.steps.window", "running");
-    const windowShown = await waitGameWindow(selectedVersion.value);
+    const outcome = await waitGameWindow(selectedVersion.value);
     if (seq !== launchSeq) return;
     step("launch.steps.window", "done");
     launchState.phase = "done";
-    if (!windowShown) {
-      showError(t("launch.error.windowNotFound", { version: selectedVersion.value }), true);
+    if (!outcome.shown) {
+      const label = selectedVersion.value;
+      // 进程退出与启动超时是两回事：前者带退出码与推断出的原因，后者只是还没出窗口
+      if (outcome.exited) {
+        showError(
+          outcome.exited.code === 0
+            ? t("launch.error.exitedNoWindow", { code: 0, version: label })
+            : crashMessage(label, outcome.exited.code, outcome.exited.report, outcome.exited.cause),
+          true,
+        );
+      } else {
+        showError(t("launch.error.windowTimeout", { version: label }), true);
+      }
     }
 
     setTimeout(() => {
@@ -209,35 +224,71 @@ export async function doLaunch(navigateToDownload: () => void) {
     // 已取消：本次流程的落点全部作废（取消路径不放错误弹窗，后端「启动已取消」亦不提示）
     if (seq !== launchSeq) return;
     resetLaunch();
-    showError(errMsg(e), true);
+    // 传完整错误：弹窗正文取短摘要，细节（当前 JDK、路径等）随复制按钮带走
+    showError(formatError(e).full, true);
   }
 }
 
-type GameExitedPayload = [number, string, number | null, string | null];
+type GameExitedPayload = [number, string, number | null, string | null, string | null];
+
+/** 启动流程正在等待窗口的标签：该标签的退出事件由 doLaunch 统一提示，全局监听跳过（避免两条弹窗）。 */
+let waitingLabel: string | null = null;
+
+/** 等待结果：窗口是否出现；未出现时是否因进程退出（带退出码、证据与推断出的原因）。 */
+interface WindowWait {
+  shown: boolean;
+  exited: { code: number | null; report: string | null; cause: string | null } | null;
+}
+
+/** 启动失败弹窗正文：首行给结论，其余为可复制的排查详情（弹窗正文只显示首行）。 */
+function crashMessage(
+  version: string,
+  code: number | null,
+  report: string | null,
+  cause: string | null,
+): string {
+  const c = cause ? formatError(cause) : null;
+  const lines = [
+    t("launch.error.crashed", {
+      code: code === null ? "?" : code,
+      cause: c?.summary ?? t("launch.error.causeUnknown"),
+    }),
+    t("launch.error.detailVersion", { version }),
+  ];
+  if (c?.detail) lines.push(c.detail);
+  lines.push(t("launch.error.detailLog"));
+  if (report) lines.push(t("launch.error.detailReport", { report }));
+  return lines.join("\n");
+}
 
 let gameExitListenerReady = false;
 
-function waitGameWindow(label: string): Promise<boolean> {
+function waitGameWindow(label: string): Promise<WindowWait> {
   return new Promise((resolve) => {
     let settled = false;
     let windowSeen = false;
+    let exited: WindowWait["exited"] = null;
     const unlisteners: Array<() => void> = [];
-    const finish = (ok: boolean) => {
+    const finish = () => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      waitingLabel = null;
       for (const u of unlisteners) u();
-      resolve(ok);
+      resolve({ shown: windowSeen, exited });
     };
-    const timer = setTimeout(() => finish(false), 90_000);
+    const timer = setTimeout(finish, 90_000);
+    waitingLabel = label;
     listen<[number, string]>(GAME_WINDOW_VISIBLE, (ev) => {
       if (ev.payload[1] !== label) return;
       windowSeen = true;
-      finish(true);
+      finish();
     }).then(u => unlisteners.push(u));
     listen<GameExitedPayload>(GAME_EXITED, (ev) => {
       if (ev.payload[1] !== label) return;
-      finish(windowSeen);
+      const [, , code, report, cause] = ev.payload;
+      exited = { code, report, cause };
+      finish();
     }).then(u => unlisteners.push(u));
   });
 }
@@ -252,11 +303,12 @@ export async function ensureGameExitListener() {
   gameExitListenerReady = true;
   await listen<GameExitedPayload>(GAME_EXITED, (ev) => {
     console.log("Game exited:", ev.payload);
-    const [, label, exitCode, crashReport] = ev.payload;
+    const [, label, exitCode, crashReport, cause] = ev.payload;
+    // 启动流程还在等窗口时由它统一提示（同一次退出只弹一条）
+    if (waitingLabel === label) return;
     // 取消启动会终止已拉起的进程（非零退出码）：不算崩溃
     if (exitCode !== null && exitCode !== 0 && !cancelledLabels.has(label)) {
-      const key = crashReport ? "launch.error.crashedWithReport" : "launch.error.crashed";
-      showError(t(key, { code: exitCode, version: label, report: crashReport ?? "" }), true);
+      showError(crashMessage(label, exitCode, crashReport, cause), true);
     }
   });
 }

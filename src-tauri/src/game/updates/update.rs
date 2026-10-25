@@ -63,7 +63,7 @@ async fn latest_version(
 /// 删除 mods 目录下单个文件；仅接受纯文件名（防路径穿越），不存在报错。
 pub fn delete_mod_file(mods_dir: &Path, file_name: &str) -> Result<(), String> {
     if !crate::util::is_simple_name(file_name) {
-        return Err("非法文件名".to_string());
+        return Err(keyed_msg!("errors.updates.badFileName", "非法文件名"));
     }
     let path = mods_dir.join(file_name);
     // 禁用项在磁盘上是 `{file_name}.disabled`（启用态与它由 toggle_mod_file 互相重命名）
@@ -72,7 +72,7 @@ pub fn delete_mod_file(mods_dir: &Path, file_name: &str) -> Result<(), String> {
     } else {
         let disabled = mods_dir.join(format!("{file_name}.disabled"));
         if !disabled.exists() {
-            bail!("文件不存在\n{file_name}");
+            bail_key!("errors.updates.fileMissing", "文件不存在\n{file_name}");
         }
         disabled
     };
@@ -87,14 +87,17 @@ pub async fn delete_resource_file(
     file_name: &str,
 ) -> Result<(), String> {
     if !matches!(kind, "resourcepacks" | "datapacks" | "shaderpacks") {
-        return Err("未知资源类型".to_string());
+        return Err(keyed_msg!(
+            "errors.updates.unknownResourceKind",
+            "未知资源类型"
+        ));
     }
     if !crate::util::is_simple_name(file_name) {
-        return Err("非法文件名".to_string());
+        return Err(keyed_msg!("errors.updates.badFileName", "非法文件名"));
     }
     let path = version_dir.join(kind).join(file_name);
     if !path.is_file() {
-        bail!("文件不存在\n{file_name}");
+        bail_key!("errors.updates.fileMissing", "文件不存在\n{file_name}");
     }
     tokio::fs::remove_file(&path)
         .await
@@ -105,20 +108,29 @@ pub async fn delete_resource_file(
 /// 仅接受纯文件名（防穿越），不存在报错；返回 true=已禁用，false=已启用。
 pub fn toggle_mod_file(mods_dir: &Path, file_name: &str) -> Result<bool, String> {
     if !crate::util::is_simple_name(file_name) {
-        return Err("非法文件名".to_string());
+        return Err(keyed_msg!("errors.updates.badFileName", "非法文件名"));
     }
     let path = mods_dir.join(file_name);
     if path.exists() && file_name.ends_with(".jar") {
         let disabled = mods_dir.join(format!("{file_name}.disabled"));
-        std::fs::rename(&path, &disabled).map_err(common_err_ctx!("禁用失败"))?;
+        std::fs::rename(&path, &disabled).map_err(common_err_ctx_key!(
+            "errors.updates.disableFailed",
+            "禁用失败"
+        ))?;
         return Ok(true);
     }
     let disabled = mods_dir.join(format!("{file_name}.disabled"));
     if disabled.exists() {
-        std::fs::rename(&disabled, &path).map_err(common_err_ctx!("启用失败"))?;
+        std::fs::rename(&disabled, &path).map_err(common_err_ctx_key!(
+            "errors.updates.enableFailed",
+            "启用失败"
+        ))?;
         return Ok(false);
     }
-    Err(format!("Mod 文件不存在\n{file_name}"))
+    Err(keyed_msg!(
+        "errors.updates.modFileMissing",
+        "Mod 文件不存在\n{file_name}"
+    ))
 }
 
 /// 检查一批本地 mod 更新（Modrinth）；命中但无新版本/不在 Modrinth 的不进结果。
@@ -184,7 +196,7 @@ pub async fn update_mod_file(
 ) -> Result<(), String> {
     // 同 delete/toggle：文件名不得含分隔符或 `..`，否则 join 会越界写删。
     if !crate::util::is_simple_name(file_name) {
-        bail!("非法的文件名");
+        bail_key!("errors.updates.badFileName", "非法的文件名");
     }
     let target = mods_dir.join(file_name);
     let tmp = mods_dir.join(format!(".elytra-update-{file_name}"));

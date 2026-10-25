@@ -19,7 +19,10 @@ const NETWORK_PREFIX: &str = "scaffolding-mc-";
 pub fn create_room() -> Result<RoomCredential, String> {
     // 随机 16 字符 base34 值，减到能被 7 整除（保证校验通过）。
     let mut bytes = [0u8; 16];
-    getrandom(&mut bytes).map_err(common_err_ctx!("系统随机源不可用"))?;
+    getrandom(&mut bytes).map_err(common_err_ctx_key!(
+        "errors.online.randomUnavailable",
+        "系统随机源不可用"
+    ))?;
     let value = u128::from_be_bytes(bytes) % 34u128.pow(CODE_CHARS as u32);
     let value = value - value % 7;
     let (code, network_name, network_secret) = from_value(value);

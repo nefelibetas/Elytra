@@ -37,7 +37,10 @@ fn validate_curseforge_key(key: &str) -> Result<(), String> {
     if key.len() == CURSEFORGE_KEY_LEN && key.starts_with("$2a$10$") && key.is_ascii() {
         Ok(())
     } else {
-        Err("CurseForge API Key 格式无效\n应为 60 字符、以 $2a$10$ 开头的字符串".to_string())
+        Err(keyed_msg!(
+            "errors.community.curseforgeKeyInvalid",
+            "CurseForge API Key 格式无效\n应为 60 字符、以 $2a$10$ 开头的字符串"
+        ))
     }
 }
 
@@ -48,8 +51,12 @@ fn read_user_api_key() -> Result<Option<String>, String> {
     if bytes.is_empty() {
         return Ok(None);
     }
-    let key = String::from_utf8(bytes)
-        .map_err(|_| "CurseForge API Key 存储损坏\n请在设置中重新填写".to_string())?;
+    let key = String::from_utf8(bytes).map_err(|_| {
+        keyed_msg!(
+            "errors.community.curseforgeKeyCorrupt",
+            "CurseForge API Key 存储损坏\n请在设置中重新填写"
+        )
+    })?;
     let key = key.trim();
     validate_curseforge_key(key)?;
     Ok(Some(key.to_string()))
@@ -63,7 +70,10 @@ fn api_key() -> Result<String, String> {
     if let Some(key) = constants::CURSEFORGE_API_KEY {
         return Ok(key.to_string());
     }
-    Err("未配置 CurseForge API Key\n请在「设置 → 下载 → CurseForge Key」填写，或在项目根 .env 配置 ELYTRA_CURSEFORGE_API_KEY".to_string())
+    Err(keyed_msg!(
+        "errors.community.curseforgeKeyMissing",
+        "未配置 CurseForge API Key\n请在「设置 → 下载 → CurseForge Key」填写，或在项目根 .env 配置 ELYTRA_CURSEFORGE_API_KEY"
+    ))
 }
 
 pub fn curseforge_key_source() -> CurseForgeKeySource {
@@ -227,9 +237,12 @@ pub(super) async fn search_curseforge(
     params.push(("classId", class_id.to_string()));
     let data = curseforge_get("/mods/search", &params).await?;
 
-    let arr = data["data"]
-        .as_array()
-        .ok_or_else(|| "搜索响应缺少 data".to_string())?;
+    let arr = data["data"].as_array().ok_or_else(|| {
+        keyed_msg!(
+            "errors.community.curseforgeSearchDataMissing",
+            "搜索响应缺少 data"
+        )
+    })?;
     let items: Vec<CommunitySearchResult> = arr
         .iter()
         .filter_map(|m| {
@@ -293,9 +306,12 @@ pub(super) async fn curseforge_versions(
     }
     let data = curseforge_get(&format!("/mods/{}/files", project_id), &params).await?;
 
-    let arr = data["data"]
-        .as_array()
-        .ok_or_else(|| "文件响应缺少 data".to_string())?;
+    let arr = data["data"].as_array().ok_or_else(|| {
+        keyed_msg!(
+            "errors.community.curseforgeFilesDataMissing",
+            "文件响应缺少 data"
+        )
+    })?;
     Ok(arr
         .iter()
         .filter_map(|f| {
@@ -361,9 +377,12 @@ pub(super) async fn curseforge_details(
 ) -> Result<Vec<CommunityDependencyItem>, String> {
     let joined = ids.join(",");
     let data = curseforge_get("/mods", &[("modIds", joined)]).await?;
-    let arr = data["data"]
-        .as_array()
-        .ok_or_else(|| "项目详情响应缺少 data".to_string())?;
+    let arr = data["data"].as_array().ok_or_else(|| {
+        keyed_msg!(
+            "errors.community.curseforgeDetailsDataMissing",
+            "项目详情响应缺少 data"
+        )
+    })?;
     Ok(arr
         .iter()
         .filter_map(|m| {

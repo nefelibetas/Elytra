@@ -15,7 +15,7 @@ const MAX_PACK_ICON_BYTES: u64 = 1024 * 1024;
 /// 校验版本目录名：仅接受简单目录名，防路径穿越。
 fn ensure_simple_dir_name(name: &str) -> Result<(), String> {
     if !util::is_simple_name(name) {
-        bail!("版本目录名不合法\n{name}");
+        bail_key!("errors.version.dirNameInvalid", "版本目录名不合法\n{name}");
     }
     Ok(())
 }
@@ -62,15 +62,22 @@ pub async fn set_version_icon(version_dir_name: String, source_path: String) -> 
     let meta =
         std::fs::metadata(&src).map_err(common_err_ctx_key!("errors.file.read", "读取图片失败"))?;
     if !meta.is_file() {
-        return Err("所选路径不是文件".into());
+        return Err(keyed_msg!("errors.version.notAFile", "所选路径不是文件"));
     }
     if meta.len() == 0 || meta.len() > MAX_PACK_ICON_BYTES {
-        bail!("图片大小需在 1MB 以内\n当前 {} 字节", meta.len());
+        bail_key!(
+            "errors.version.iconTooLarge",
+            "图片大小需在 1MB 以内\n当前 {} 字节",
+            meta.len()
+        );
     }
     let bytes =
         std::fs::read(&src).map_err(common_err_ctx_key!("errors.file.read", "读取图片失败"))?;
     if !util::is_supported_image(&bytes) {
-        return Err("不支持的图片格式（仅支持 png / jpg / webp / gif）".into());
+        return Err(keyed_msg!(
+            "errors.version.iconFormat",
+            "不支持的图片格式（仅支持 png / jpg / webp / gif）"
+        ));
     }
     let vdir = version_dir_path(&version_dir_name)?;
     tokio::task::spawn_blocking(move || {

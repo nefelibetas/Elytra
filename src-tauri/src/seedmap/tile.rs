@@ -116,14 +116,19 @@ fn biome_color(raw: &str) -> [u8; 4] {
 }
 
 pub fn render_tile(version: &str, seed: i64, rx: i32, rz: i32) -> Result<Vec<u8>, String> {
-    let mc = ffi::mc_from_name(version).ok_or_else(|| format!("版本不受支持\n{version}"))?;
+    let mc = ffi::mc_from_name(version).ok_or_else(|| {
+        keyed_msg!(
+            "errors.seedmap.versionUnsupported",
+            "版本不受支持\n{version}"
+        )
+    })?;
     let y = ffi::max_y_quart(mc);
     let cell_x = rx
         .checked_mul(CELLS as i32)
-        .ok_or_else(|| "瓦片坐标越界".to_string())?;
+        .ok_or_else(|| keyed_msg!("errors.seedmap.tileOutOfRange", "瓦片坐标越界"))?;
     let cell_z = rz
         .checked_mul(CELLS as i32)
-        .ok_or_else(|| "瓦片坐标越界".to_string())?;
+        .ok_or_else(|| keyed_msg!("errors.seedmap.tileOutOfRange", "瓦片坐标越界"))?;
     let gen = ffi::Generator::new(version, seed)?;
     let mut ids = vec![0i32; CELLS * CELLS];
     gen.gen_biomes(
@@ -159,12 +164,20 @@ pub fn render_tile(version: &str, seed: i64, rx: i32, rz: i32) -> Result<Vec<u8>
 }
 
 pub fn biome_at(version: &str, seed: i64, x: i32, z: i32) -> Result<SeedMapBlock, String> {
-    let mc = ffi::mc_from_name(version).ok_or_else(|| format!("版本不受支持\n{version}"))?;
+    let mc = ffi::mc_from_name(version).ok_or_else(|| {
+        keyed_msg!(
+            "errors.seedmap.versionUnsupported",
+            "版本不受支持\n{version}"
+        )
+    })?;
     let gen = ffi::Generator::new(version, seed)?;
     let y = ffi::max_y_quart(mc);
     let id = gen.biome_at(4, x.div_euclid(4), y, z.div_euclid(4));
     if id < 0 {
-        return Err("群系查询失败\n坐标超出可生成范围".to_string());
+        return Err(keyed_msg!(
+            "errors.seedmap.biomeQueryFailed",
+            "群系查询失败\n坐标超出可生成范围"
+        ));
     }
     Ok(SeedMapBlock {
         biome: ffi::biome_name(mc, id),
@@ -179,11 +192,19 @@ pub fn biome_at_block(
     y: i32,
     z: i32,
 ) -> Result<SeedMapBlock, String> {
-    let mc = ffi::mc_from_name(version).ok_or_else(|| format!("版本不受支持\n{version}"))?;
+    let mc = ffi::mc_from_name(version).ok_or_else(|| {
+        keyed_msg!(
+            "errors.seedmap.versionUnsupported",
+            "版本不受支持\n{version}"
+        )
+    })?;
     let gen = ffi::Generator::new(version, seed)?;
     let id = gen.biome_at(1, x, y, z);
     if id < 0 {
-        return Err("群系查询失败\n坐标超出可生成范围".to_string());
+        return Err(keyed_msg!(
+            "errors.seedmap.biomeQueryFailed",
+            "群系查询失败\n坐标超出可生成范围"
+        ));
     }
     Ok(SeedMapBlock {
         biome: ffi::biome_name(mc, id),
@@ -196,7 +217,12 @@ pub fn collect_structures(
     rx: i32,
     rz: i32,
 ) -> Result<Vec<SeedMapStructure>, String> {
-    let mc = ffi::mc_from_name(version).ok_or_else(|| format!("版本不受支持\n{version}"))?;
+    let mc = ffi::mc_from_name(version).ok_or_else(|| {
+        keyed_msg!(
+            "errors.seedmap.versionUnsupported",
+            "版本不受支持\n{version}"
+        )
+    })?;
     let gen = ffi::Generator::new(version, seed)?;
     let mut out: Vec<SeedMapStructure> = gen
         .structures(mc, seed, rx, rz)
@@ -254,8 +280,14 @@ pub fn find_structures(
     center_z: i32,
     radius: i32,
 ) -> Result<Vec<SeedMapStructure>, String> {
-    let mc = ffi::mc_from_name(version).ok_or_else(|| format!("版本不受支持\n{version}"))?;
-    let kind_id = structure_type(kind).ok_or_else(|| format!("未知结构\n{kind}"))?;
+    let mc = ffi::mc_from_name(version).ok_or_else(|| {
+        keyed_msg!(
+            "errors.seedmap.versionUnsupported",
+            "版本不受支持\n{version}"
+        )
+    })?;
+    let kind_id = structure_type(kind)
+        .ok_or_else(|| keyed_msg!("errors.seedmap.unknownStructure", "未知结构\n{kind}"))?;
     let gen = ffi::Generator::new(version, seed)?;
     let raw = gen.find_structures(ffi::StructureSearch {
         mc,
@@ -286,7 +318,10 @@ pub fn find_slime_chunks(
     radius: i32,
 ) -> Result<Vec<SeedMapSlimeChunk>, String> {
     if ffi::mc_from_name(version).is_none() {
-        return Err(format!("版本不受支持\n{version}"));
+        return Err(keyed_msg!(
+            "errors.seedmap.versionUnsupported",
+            "版本不受支持\n{version}"
+        ));
     }
     Ok(find_slime_chunks_seed(seed, center_x, center_z, radius))
 }
@@ -311,7 +346,10 @@ pub fn slime_chunks(
     rz: i32,
 ) -> Result<Vec<SeedMapSlimeChunk>, String> {
     if ffi::mc_from_name(version).is_none() {
-        return Err(format!("版本不受支持\n{version}"));
+        return Err(keyed_msg!(
+            "errors.seedmap.versionUnsupported",
+            "版本不受支持\n{version}"
+        ));
     }
     Ok(slime_chunks_seed(seed, rx, rz))
 }
@@ -330,12 +368,14 @@ fn encode_png(buf: &[u8]) -> Result<Vec<u8>, String> {
         let mut encoder = png::Encoder::new(&mut out, TILE_PX as u32, TILE_PX as u32);
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
-        let mut writer = encoder
-            .write_header()
-            .map_err(|e| format!("瓦片编码失败\n{e}"))?;
-        writer
-            .write_image_data(buf)
-            .map_err(|e| format!("瓦片写入失败\n{e}"))?;
+        let mut writer = encoder.write_header().map_err(common_err_ctx_key!(
+            "errors.seedmap.pngEncodeFailed",
+            "瓦片编码失败"
+        ))?;
+        writer.write_image_data(buf).map_err(common_err_ctx_key!(
+            "errors.seedmap.pngWriteFailed",
+            "瓦片写入失败"
+        ))?;
     }
     Ok(out)
 }

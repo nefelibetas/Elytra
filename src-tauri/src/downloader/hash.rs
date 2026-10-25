@@ -13,6 +13,9 @@ pub fn sha1_hex(data: &[u8]) -> String {
     hash.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
+/// 空内容的 sha1：清单里零字节对象就用它声明（Mojang runtime 的 `lib/security/trusted.libraries` 即此）。
+pub const SHA1_EMPTY: &str = "da39a3ee5e6b4b0d3255bfef95601890afd80709";
+
 pub fn file_sha1_matches(path: &Path, expected: &str) -> bool {
     if expected.is_empty() {
         return path.exists();

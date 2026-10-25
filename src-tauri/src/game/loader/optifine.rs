@@ -62,7 +62,12 @@ async fn download_optifabric(
         .as_array()
         .and_then(|a| a.first())
         .and_then(|m| m["id"].as_u64())
-        .ok_or("查询 OptiFabric 项目失败\nCurseForge 未找到 OptiFabric 项目")?;
+        .ok_or_else(|| {
+            keyed_msg!(
+                "errors.install.loader",
+                "查询 OptiFabric 项目失败\nCurseForge 未找到 OptiFabric 项目"
+            )
+        })?;
 
     // 2. 该 MC 版本 + Fabric 的最新文件
     let files = community::curseforge_get(
@@ -79,7 +84,8 @@ async fn download_optifabric(
         "查询 OptiFabric 版本失败"
     ))?;
     let Some((filename, download_url, sha1)) = pick_curseforge_file(&files) else {
-        bail!(
+        bail_key!(
+            "errors.loader.optifabricUnavailable",
             "下载 OptiFabric 失败\nMC {mc_version} 暂无兼容的 OptiFabric 版本（OptiFabric 仅支持至 1.20.x）"
         );
     };
@@ -226,7 +232,10 @@ pub async fn install_optifine(
             let json_path = vdir.join(format!("{dir_name}.json"));
             std::fs::write(
                 &json_path,
-                serde_json::to_string_pretty(&json).map_err(common_err_ctx!("序列化失败"))?,
+                serde_json::to_string_pretty(&json).map_err(common_err_ctx_key!(
+                    "errors.loader.serializeVersionJson",
+                    "序列化失败"
+                ))?,
             )
             .map_err(common_err_ctx_key!(
                 "errors.file.write",

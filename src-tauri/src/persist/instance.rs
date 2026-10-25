@@ -48,14 +48,16 @@ pub fn write_auto_tasks(
         }
         return Ok(());
     };
-    let text = toml::to_string(&InstanceFileRef { auto_tasks })
-        .map_err(common_err_ctx!("序列化实例配置失败"))?;
+    let text = toml::to_string(&InstanceFileRef { auto_tasks }).map_err(common_err_ctx_key!(
+        "errors.config.serializeFailed",
+        "序列化实例配置失败"
+    ))?;
     let tmp = path.with_file_name(format!("{INSTANCE_FILE}.tmp"));
     std::fs::write(&tmp, text)
         .map_err(common_err_ctx_key!("errors.file.write", "写入实例配置失败"))?;
     std::fs::rename(&tmp, &path).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
-        format!("保存实例配置失败\n{e}")
+        keyed_msg!("errors.config.write", "保存实例配置失败\n{e}")
     })
 }
 

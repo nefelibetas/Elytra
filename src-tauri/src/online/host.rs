@@ -30,7 +30,7 @@ pub async fn start_host(sink: Arc<dyn EventSink>) -> Result<OnlineSnapshot, Stri
     if svc.generation != gen {
         drop(svc);
         session.stop().await;
-        bail!("联机启动已取消");
+        bail_key!("errors.task.cancelled", "联机启动已取消");
     }
     let (profiles, shared, info_server) = start_info_server(scaffold_port);
     let snap = publish_host_ready(
@@ -53,7 +53,10 @@ pub async fn start_host(sink: Arc<dyn EventSink>) -> Result<OnlineSnapshot, Stri
 async fn prepare_host_session() -> Result<(u64, u16, RoomCredential, SessionConfig), String> {
     let mut svc = SERVICE.lock().await;
     if svc.session.is_some() {
-        return Err("联机已在运行中\n请先停止当前联机会话".to_string());
+        return Err(keyed_msg!(
+            "errors.online.alreadyRunning",
+            "联机已在运行中\n请先停止当前联机会话"
+        ));
     }
     svc.generation += 1;
     let gen = svc.generation;
@@ -319,13 +322,21 @@ fn build_host_handlers(shared: Arc<HostShared>) -> Handlers {
                 let name = value
                     .get("name")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "缺 name"))?
+                    .ok_or_else(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            keyed_msg!("errors.online.profileNameMissing", "缺 name"),
+                        )
+                    })?
                     .to_string();
                 let machine_id = value
                     .get("machine_id")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| {
-                        std::io::Error::new(std::io::ErrorKind::InvalidData, "缺 machine_id")
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            keyed_msg!("errors.online.profileMachineIdMissing", "缺 machine_id"),
+                        )
                     })?
                     .to_string();
                 let vendor = value

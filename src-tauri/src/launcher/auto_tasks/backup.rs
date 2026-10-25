@@ -129,11 +129,16 @@ pub fn backup_saves(
 ) -> Result<BackupOutcome, String> {
     let saves = saves_dir(game_dir);
     if !saves.is_dir() {
-        bail!("未发现存档目录\n{}", saves.display());
+        bail_key!(
+            "errors.launch.savesDirMissing",
+            "未发现存档目录\n{}",
+            saves.display()
+        );
     }
     let worlds = selected_worlds(game_dir, scope);
     if worlds.is_empty() {
-        bail!(
+        bail_key!(
+            "errors.launch.noWorldsToBackup",
             "没有可备份的世界\n{}（若存档在全局 saves/，说明该实例未启用版本隔离）",
             saves.display()
         );
@@ -175,7 +180,7 @@ pub fn backup_saves(
     }
     std::fs::rename(&tmp, &final_dir).map_err(|e| {
         let _ = std::fs::remove_dir_all(&tmp);
-        format!("完成备份失败\n{e}")
+        keyed_msg!("errors.launch.backupFinishFailed", "完成备份失败\n{e}")
     })?;
 
     let removed = cleanup_old(&root, keep);
@@ -252,8 +257,8 @@ mod tests {
         let game = tmp_dir("missing");
         let err = backup_saves(&game, &BackupScope::All, 5, &mut |_, _| {}).unwrap_err();
         assert!(
-            err.starts_with("未发现存档目录"),
-            "错误首行应为中文短文案: {err}"
+            err.starts_with("@i18n:errors.launch.savesDirMissing"),
+            "错误首行应为 i18n key: {err}"
         );
     }
 

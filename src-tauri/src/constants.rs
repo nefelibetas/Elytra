@@ -2,17 +2,21 @@
 pub const LAST_OFFLINE_USERNAME: &str = "last_offline_username";
 /// 启动器公开名称
 pub const APP_NAME: &str = "Elytra Launcher";
-/// 公开版本（与 tauri.conf.json 保持一致）
-pub const APP_VERSION: &str = "1.0.0";
+/// 公开版本（单一事实源 `Cargo.toml`；发布时 tauri.conf.json / package.json 需与 Cargo.toml 一致）
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Minecraft 启动器品牌名（-Dminecraft.launcher.brand）
 pub const LAUNCHER_BRAND: &str = "Elytra";
 /// Minecraft 客户端 ID（--clientId）
 pub const CLIENT_ID: &str = "elytra";
 
 /// 下载 HTTP 客户端 User-Agent
-pub const UA_DOWNLOAD: &str = "Elytra Launcher/1.0.0";
+pub const UA_DOWNLOAD: &str = concat!("Elytra Launcher/", env!("CARGO_PKG_VERSION"));
 /// Mojang API 调用 User-Agent
-pub const UA_MOJANG_API: &str = "Elytra Launcher/1.0.0 (+https://github.com/nefelibetas/Elytra)";
+pub const UA_MOJANG_API: &str = concat!(
+    "Elytra Launcher/",
+    env!("CARGO_PKG_VERSION"),
+    " (+https://github.com/nefelibetas/Elytra)"
+);
 
 /// 镜像源（BMCLAPI 等）并发上限：16。实测（2026-10）跨文件 32 并发全部 302 无 429、
 /// 总耗时随并发线性下降；429 风险集中在**同文件**重复 Range 并发（节点侧按 hash 签名限流），

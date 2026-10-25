@@ -16,12 +16,18 @@ const MAX_WORLDS: usize = 64;
 /// 从用户选择的文件夹递归查找世界根目录；选中目录本身是世界时只返回它。
 pub fn discover_worlds(path: &Path) -> Result<Vec<MapFolderEntry>, String> {
     if !path.is_dir() {
-        return Err("文件夹不存在\n请重新选择".to_string());
+        return Err(keyed_msg!(
+            "errors.map.folderMissing",
+            "文件夹不存在\n请重新选择"
+        ));
     }
     let mut roots = Vec::new();
     walk(path, path, MAX_DEPTH, &mut roots);
     if roots.is_empty() {
-        return Err("未找到地图\n请选择含 level.dat 的存档文件夹".to_string());
+        return Err(keyed_msg!(
+            "errors.map.worldNotFound",
+            "未找到地图\n请选择含 level.dat 的存档文件夹"
+        ));
     }
     Ok(roots)
 }

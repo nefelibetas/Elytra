@@ -102,36 +102,49 @@ pub fn parse_modrinth_index(text: &str) -> Result<ModrinthParsed, String> {
         "解析 modrinth.index.json 失败"
     ))?;
     if idx["formatVersion"].as_i64() != Some(1) {
-        bail!(
+        bail_key!(
+            "errors.modpack.unsupportedFormatVersion",
             "不支持的整合包格式版本\nformatVersion: {}",
             idx["formatVersion"]
         );
     }
     if idx["game"].as_str() != Some("minecraft") {
-        bail!(
+        bail_key!(
+            "errors.modpack.notMinecraft",
             "不是 Minecraft 整合包\ngame: {}",
             idx["game"].as_str().unwrap_or("(缺失)")
         );
     }
     let mc_version = idx["dependencies"]["minecraft"]
         .as_str()
-        .ok_or("清单缺少 Minecraft 版本（dependencies.minecraft）")?
+        .ok_or_else(|| {
+            keyed_msg!(
+                "errors.modpack.missingMinecraft",
+                "清单缺少 Minecraft 版本（dependencies.minecraft）"
+            )
+        })?
         .to_string();
     let loader = modrinth_loader(&idx["dependencies"])?;
 
     let mut files = Vec::new();
-    for f in idx["files"].as_array().ok_or("清单缺少 files 数组")? {
+    for f in idx["files"]
+        .as_array()
+        .ok_or_else(|| keyed_msg!("errors.modpack.missingFiles", "清单缺少 files 数组"))?
+    {
         // 服务端专属 mod 不进客户端实例；env 缺失视为需要
         if f["env"]["client"].as_str() == Some("unsupported") {
             continue;
         }
-        let path = f["path"].as_str().ok_or("文件条目缺少 path")?.to_string();
+        let path = f["path"]
+            .as_str()
+            .ok_or_else(|| keyed_msg!("errors.modpack.fileMissingPath", "文件条目缺少 path"))?
+            .to_string();
         safe_relative_path(&path)?;
         let url = f["downloads"]
             .as_array()
             .and_then(|d| d.first())
             .and_then(|u| u.as_str())
-            .ok_or(format!("文件缺少下载地址\n{path}"))?
+            .ok_or_else(|| keyed_msg!("errors.modpack.fileMissingUrl", "文件缺少下载地址\n{path}"))?
             .to_string();
         files.push(PackFile {
             path,
@@ -149,7 +162,12 @@ pub fn parse_modrinth_index(text: &str) -> Result<ModrinthParsed, String> {
 
 /// dependencies 对象 → LoaderChoice：fabric-loader / quilt-loader(旧写法 quilt_loader) / forge / neoforge；未知键报错。
 fn modrinth_loader(deps: &serde_json::Value) -> Result<Option<LoaderChoice>, String> {
-    let obj = deps.as_object().ok_or("清单缺少 dependencies 对象")?;
+    let obj = deps.as_object().ok_or_else(|| {
+        keyed_msg!(
+            "errors.modpack.missingDependencies",
+            "清单缺少 dependencies 对象"
+        )
+    })?;
     for (key, val) in obj {
         let ver = match val.as_str() {
             Some(v) if !v.trim().is_empty() => v.to_string(),
@@ -161,7 +179,10 @@ fn modrinth_loader(deps: &serde_json::Value) -> Result<Option<LoaderChoice>, Str
             "forge" => LoaderKind::Forge,
             "neoforge" => LoaderKind::NeoForge,
             "minecraft" => continue,
-            other => bail!("暂不支持该整合包的加载器\nloader: {other}"),
+            other => bail_key!(
+                "errors.modpack.unsupportedLoader",
+                "暂不支持该整合包的加载器\nloader: {other}"
+            ),
         };
         return Ok(Some(LoaderChoice { kind, version: ver }));
     }
@@ -185,14 +206,20 @@ pub fn parse_curseforge_manifest(text: &str) -> Result<CfManifestParsed, String>
         "解析 manifest.json 失败"
     ))?;
     if m["manifestType"].as_str() != Some("minecraftModpack") {
-        bail!(
+        bail_key!(
+            "errors.modpack.notCurseforge",
             "不是 CurseForge 整合包清单\nmanifestType: {}",
             m["manifestType"].as_str().unwrap_or("(缺失)")
         );
     }
     let mc_version = m["minecraft"]["version"]
         .as_str()
-        .ok_or("清单缺少 Minecraft 版本（minecraft.version）")?
+        .ok_or_else(|| {
+            keyed_msg!(
+                "errors.modpack.missingMinecraftVersion",
+                "清单缺少 Minecraft 版本（minecraft.version）"
+            )
+        })?
         .to_string();
 
     let loader = m["minecraft"]["modLoaders"]
@@ -200,15 +227,21 @@ pub fn parse_curseforge_manifest(text: &str) -> Result<CfManifestParsed, String>
         .and_then(|ls| ls.first())
         .and_then(|l| l["id"].as_str())
         .map(|id| {
-            let (kind_str, ver) = id
-                .split_once('-')
-                .ok_or_else(|| format!("modLoader id 格式异常\n{id}"))?;
+            let (kind_str, ver) = id.split_once('-').ok_or_else(|| {
+                keyed_msg!(
+                    "errors.modpack.badModLoaderId",
+                    "modLoader id 格式异常\n{id}"
+                )
+            })?;
             let kind = match kind_str {
                 "forge" => LoaderKind::Forge,
                 "fabric" => LoaderKind::Fabric,
                 "quilt" => LoaderKind::Quilt,
                 "neoforge" => LoaderKind::NeoForge,
-                other => bail!("暂不支持该整合包的加载器\nloader: {other}"),
+                other => bail_key!(
+                    "errors.modpack.unsupportedLoader",
+                    "暂不支持该整合包的加载器\nloader: {other}"
+                ),
             };
             Ok(LoaderChoice {
                 kind,
@@ -218,9 +251,19 @@ pub fn parse_curseforge_manifest(text: &str) -> Result<CfManifestParsed, String>
         .transpose()?;
 
     let mut files = Vec::new();
-    for f in m["files"].as_array().ok_or("清单缺少 files 数组")? {
-        let pid = f["projectID"].as_i64().ok_or("文件条目缺少 projectID")?;
-        let fid = f["fileID"].as_i64().ok_or("文件条目缺少 fileID")?;
+    for f in m["files"]
+        .as_array()
+        .ok_or_else(|| keyed_msg!("errors.modpack.missingFiles", "清单缺少 files 数组"))?
+    {
+        let pid = f["projectID"].as_i64().ok_or_else(|| {
+            keyed_msg!(
+                "errors.modpack.fileMissingProjectId",
+                "文件条目缺少 projectID"
+            )
+        })?;
+        let fid = f["fileID"]
+            .as_i64()
+            .ok_or_else(|| keyed_msg!("errors.modpack.fileMissingFileId", "文件条目缺少 fileID"))?;
         files.push((pid, fid));
     }
     Ok(CfManifestParsed {
@@ -297,7 +340,10 @@ pub fn read_manifest(
             return Ok((text, kind));
         }
     }
-    Err("不是有效的整合包文件\n缺少 modrinth.index.json 或 manifest.json".into())
+    Err(keyed_msg!(
+        "errors.modpack.notModpack",
+        "不是有效的整合包文件\n缺少 modrinth.index.json 或 manifest.json"
+    ))
 }
 
 /// 扫描 versions/ 下各版本目录的 elytra-pack.json 身份标记，返回与 `cache_key` 匹配的目录名。
@@ -371,7 +417,10 @@ pub fn assemble_plan(zip_path: &Path, meta: PackMeta<'_>) -> Result<PackPlan, St
     };
 
     if files.is_empty() && !has_overrides && restricted.is_empty() {
-        return Err("整合包没有可安装的内容（无文件且无覆盖）".into());
+        return Err(keyed_msg!(
+            "errors.modpack.emptyContent",
+            "整合包没有可安装的内容（无文件且无覆盖）"
+        ));
     }
     // 路径穿越防护提前到计划期：坏条目解析期即报错，不带病安装
     for f in &files {
@@ -437,7 +486,12 @@ pub async fn build_plan(
         .iter()
         .find(|v| v.id == trimmed)
         .map(|v| v.url.clone())
-        .ok_or_else(|| format!("官方源未收录该 Minecraft 版本\n{trimmed}"))?;
+        .ok_or_else(|| {
+            keyed_msg!(
+                "errors.modpack.mcVersionNotFound",
+                "官方源未收录该 Minecraft 版本\n{trimmed}"
+            )
+        })?;
 
     assemble_plan(
         zip_path,
@@ -633,7 +687,10 @@ pub(crate) fn pack_modpack(
         "files": hosted,
         "dependencies": dependencies,
     });
-    let content = serde_json::to_vec_pretty(&manifest).map_err(common_err_ctx!("序列化失败"))?;
+    let content = serde_json::to_vec_pretty(&manifest).map_err(common_err_ctx_key!(
+        "errors.modpack.serializeFailed",
+        "序列化失败"
+    ))?;
     writer
         .start_file("modrinth.index.json", opts)
         .map_err(common_err_ctx_key!("errors.file.write", "写入清单失败"))?;
@@ -672,7 +729,7 @@ fn add_dir_to_zip(
 ) -> Result<(), String> {
     writer
         .add_directory(format!("{prefix}/"), opts)
-        .map_err(|err| format!("写入目录失败\n{err}"))?;
+        .map_err(common_err_ctx_key!("errors.file.write", "写入目录失败"))?;
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Ok(());
     };
@@ -689,11 +746,13 @@ fn add_dir_to_zip(
         if path.is_dir() {
             add_dir_to_zip(writer, &path, &name, opts, None)?;
         } else if path.is_file() {
-            let mut f = std::fs::File::open(&path).map_err(|err| format!("打开文件失败\n{err}"))?;
+            let mut f = std::fs::File::open(&path)
+                .map_err(common_err_ctx_key!("errors.file.read", "打开文件失败"))?;
             writer
                 .start_file(name, opts)
-                .map_err(|err| format!("写入文件失败\n{err}"))?;
-            std::io::copy(&mut f, writer).map_err(|err| format!("写入文件失败\n{err}"))?;
+                .map_err(common_err_ctx_key!("errors.file.write", "写入文件失败"))?;
+            std::io::copy(&mut f, writer)
+                .map_err(common_err_ctx_key!("errors.file.write", "写入文件失败"))?;
         }
     }
     Ok(())

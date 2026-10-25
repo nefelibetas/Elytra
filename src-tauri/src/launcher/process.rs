@@ -2,7 +2,7 @@
 
 #[cfg(target_os = "windows")]
 use std::ffi::c_void;
-use std::io::Write as _;
+use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::SystemTime;
@@ -167,8 +167,206 @@ fn has_crash_signature(log: &Path, since: SystemTime) -> bool {
         || tail.contains("A fatal error has been detected")
 }
 
-/// 崩溃判定：非零退出码 + 窗口内出现崩溃证据 → 返回证据路径（崩溃报告或 latest.log）。
-fn detect_crash(game_dir: &Path, exit_code: Option<i32>, since: SystemTime) -> Option<String> {
+/// 启动器捕获的 stdout/stderr 定位：`path` + `start`（本次 spawn 前的文件长度）。捕获文件跨多次启动
+/// 追加写，故只认该偏移之后的字节，避免把历史启动的输出算成本次证据。
+#[derive(Clone)]
+pub struct CaptureLog {
+    pub path: PathBuf,
+    pub start: u64,
+}
+
+/// 启动期失败特征 → 结论（顺序即优先级：越具体的工具链证据越靠前；末尾 `Exception in thread "main"`
+/// 兜底为「主线程崩了但原因未归类」）。表里同时给出中文兜底结论与可操作建议。
+const FAILURE_SIGNATURES: &[(&str, &str, &str, &str)] = &[
+    (
+        "cannot be cast to class java.net.URLClassLoader",
+        "errors.launch.jdk_too_new",
+        "Java 版本过高：该版本需要 Java 8（launchwrapper 在 Java 9+ 上无法启动）",
+        "请在「设置 → Java 运行时」下载并选择 Java 8",
+    ),
+    (
+        "UnsupportedClassVersionError",
+        "errors.launch.jdk_too_old",
+        "Java 版本过低：游戏字节码版本高于当前 Java",
+        "请在「设置 → Java 运行时」切换或下载更高版本（自动选择会按版本要求匹配）",
+    ),
+    (
+        "Error occurred during initialization of VM",
+        "errors.launch.memory_too_large",
+        "JVM 无法启动：内存参数超出可用内存",
+        "请调小「内存管理」中的最大内存或关闭其他占内存的程序",
+    ),
+    (
+        "Could not reserve enough space",
+        "errors.launch.memory_too_large",
+        "JVM 无法启动：内存参数超出可用内存",
+        "请调小「内存管理」中的最大内存或关闭其他占内存的程序",
+    ),
+    (
+        "Unrecognized VM option",
+        "errors.launch.jvm_args",
+        "JVM 参数不被当前 Java 支持",
+        "请检查「设置 → Java 虚拟机参数」（部分参数仅老版本 Java 支持）",
+    ),
+    (
+        "Unrecognized option",
+        "errors.launch.jvm_args",
+        "JVM 参数不被当前 Java 支持",
+        "请检查「设置 → Java 虚拟机参数」（部分参数仅老版本 Java 支持）",
+    ),
+    (
+        "Could not find or load main class",
+        "errors.launch.missing_files",
+        "启动文件不完整：缺少主类或支持库",
+        "请在「版本设置」里用修复补全缺失文件",
+    ),
+    (
+        "NoClassDefFoundError",
+        "errors.launch.missing_files",
+        "启动文件不完整：缺少支持库",
+        "请在「版本设置」里用修复补全缺失文件",
+    ),
+    (
+        "ClassNotFoundException",
+        "errors.launch.missing_files",
+        "启动文件不完整：缺少支持库",
+        "请在「版本设置」里用修复补全缺失文件",
+    ),
+    (
+        "OutOfMemoryError",
+        "errors.launch.oom",
+        "内存不足：游戏堆内存耗尽",
+        "请在「设置 → 内存管理」调大最大内存",
+    ),
+    (
+        "A fatal error has been detected",
+        "errors.launch.native_crash",
+        "JVM 崩溃（native 层，常见于显卡驱动/内存问题）",
+        "请查看游戏目录下的 hs_err_pid*.log，并更新显卡驱动",
+    ),
+    (
+        "Exception in thread \"main\"",
+        "errors.launch.unknown",
+        "原因未归类：主线程异常退出",
+        "请把弹窗里的详情（含末尾输出）反馈给开发者",
+    ),
+];
+
+/// 捕获文件本次启动段的可读文本：首窗 + 尾窗（段短于窗口时即整段；输出源编码不统一，按有损 UTF-8 解码）。
+fn capture_text(capture: &CaptureLog) -> Option<String> {
+    const WINDOW: u64 = 64 * 1024;
+    let mut file = std::fs::File::open(&capture.path).ok()?;
+    let len = file.metadata().ok()?.len();
+    if len <= capture.start {
+        return None;
+    }
+    let head = read_window(&mut file, capture.start, (len - capture.start).min(WINDOW));
+    let tail_start = len.saturating_sub(WINDOW);
+    if tail_start <= capture.start {
+        return Some(head);
+    }
+    Some(format!(
+        "{head}\n{}",
+        read_window(&mut file, tail_start, len - tail_start)
+    ))
+}
+
+/// 捕获段是否含失败特征（证据判定：启动即死写在段首，运行中崩溃写在段尾）。
+fn capture_has_failure(capture: &CaptureLog) -> bool {
+    capture_text(capture).is_some_and(|text| {
+        FAILURE_SIGNATURES
+            .iter()
+            .any(|(sig, ..)| text.contains(sig))
+    })
+}
+
+/// 把捕获输出推断成可操作结论（`@i18n` 协议串，key 见 `FAILURE_SIGNATURES`）：短结论 + 原始行 + 建议；
+/// 未归类时附末尾输出。返回 None 表示没有可供推断的失败输出。
+fn diagnose_capture(capture: &CaptureLog) -> Option<String> {
+    diagnose_text(&capture_text(capture)?)
+}
+
+/// 结论推断的纯函数部分（便于单测）：见 `FAILURE_SIGNATURES` 的优先级。
+fn diagnose_text(text: &str) -> Option<String> {
+    let (sig, key, summary, advice) = FAILURE_SIGNATURES
+        .iter()
+        .find(|(sig, ..)| text.contains(sig))?;
+    let detail = if *key == "errors.launch.unknown" {
+        format!("{advice}\n{}", tail_lines(text, 5))
+    } else {
+        let mut d = line_with(text, sig);
+        if *key == "errors.launch.jdk_too_old" {
+            if let Some(java) = class_file_java_major(text) {
+                d.push_str(&format!("\n报错行声明的字节码对应 Java {java}"));
+            }
+        }
+        d.push_str(&format!("\n{advice}"));
+        d
+    };
+    Some(keyed_msg!(key, "{summary}\n{detail}"))
+}
+
+/// 原始输出行去 `[stderr] ` 前缀与空白，超长截断（弹窗详情要能贴进对话）。
+fn clean_line(line: &str) -> String {
+    let line = line.trim().trim_start_matches("[stderr]").trim();
+    if line.chars().count() > 200 {
+        format!("{}…", line.chars().take(200).collect::<String>())
+    } else {
+        line.to_string()
+    }
+}
+
+/// 含指定特征的原始行（去前缀）；找不到返回空串。
+fn line_with(text: &str, sig: &str) -> String {
+    text.lines()
+        .find(|l| l.contains(sig))
+        .map(clean_line)
+        .unwrap_or_default()
+}
+
+/// 末尾 `n` 行非空输出（去前缀）：未归类失败时给排查线索。
+fn tail_lines(text: &str, n: usize) -> String {
+    let mut lines: Vec<String> = text
+        .lines()
+        .map(clean_line)
+        .filter(|l| !l.is_empty())
+        .collect();
+    lines.drain(..lines.len().saturating_sub(n));
+    lines.join("\n")
+}
+
+/// `UnsupportedClassVersionError` 报错行里的 `class file version 61.0` → 需要的 Java 主版本（61 → 17）。
+fn class_file_java_major(text: &str) -> Option<u32> {
+    let line = text.lines().find(|l| l.contains("class file version"))?;
+    let rest = line.split("class file version").nth(1)?;
+    let major: u32 = rest.trim().split('.').next()?.trim().parse().ok()?;
+    major.checked_sub(44)
+}
+
+/// 读取区间字节并把字节数组交给有损 UTF-8 解码。
+fn read_window(file: &mut std::fs::File, from: u64, len: u64) -> String {
+    if file.seek(SeekFrom::Start(from)).is_err() {
+        return String::new();
+    }
+    let mut buf = vec![0u8; len as usize];
+    let mut filled = 0;
+    while filled < buf.len() {
+        match file.read(&mut buf[filled..]) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => filled += n,
+        }
+    }
+    buf.truncate(filled);
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+/// 崩溃判定：非零退出码 + 窗口内出现崩溃证据 → 返回证据路径（崩溃报告、游戏 latest.log、启动器捕获日志）。
+fn detect_crash(
+    game_dir: &Path,
+    exit_code: Option<i32>,
+    since: SystemTime,
+    capture: Option<&CaptureLog>,
+) -> Option<String> {
     if matches!(exit_code, Some(0)) {
         return None;
     }
@@ -176,7 +374,13 @@ fn detect_crash(game_dir: &Path, exit_code: Option<i32>, since: SystemTime) -> O
         return Some(report);
     }
     let log = game_dir.join("logs").join("latest.log");
-    has_crash_signature(&log, since).then(|| log.display().to_string())
+    if has_crash_signature(&log, since) {
+        return Some(log.display().to_string());
+    }
+    // JVM 在游戏日志成型前退出（JDK 不兼容、主类缺失、参数被拒）：证据只在捕获的 stdout/stderr 里
+    capture
+        .filter(|c| capture_has_failure(c))
+        .map(|c| c.path.display().to_string())
 }
 
 /// 游戏窗口首次可见的轮询间隔（毫秒）。
@@ -200,7 +404,7 @@ pub fn spawn_and_watch<W, E>(
 ) -> Result<u32, String>
 where
     W: FnMut(u32) + Send + 'static,
-    E: FnOnce(u32, Option<i32>, Option<String>) + Send + 'static,
+    E: FnOnce(u32, Option<i32>, Option<String>, Option<String>) + Send + 'static,
 {
     let SpawnRequest {
         args,
@@ -209,7 +413,15 @@ where
         process_priority,
     } = req;
     let Some((program, rest)) = args.split_first() else {
-        return Err("启动命令为空\n无法启动游戏".into());
+        return Err(keyed_msg!(
+            "errors.launch.commandEmpty",
+            "启动命令为空\n无法启动游戏"
+        ));
+    };
+    // 捕获文件是追加写的：先记长度，退出判定只认本次 spawn 之后新增的字节
+    let capture = CaptureLog {
+        path: log_path.to_path_buf(),
+        start: std::fs::metadata(log_path).map(|m| m.len()).unwrap_or(0),
     };
     let mut command = std::process::Command::new(program);
     command
@@ -236,9 +448,10 @@ where
         child,
         pid,
         game_dir_owned,
+        capture,
         WINDOW_POLL_MS,
         move || on_window_visible(pid),
-        move |exit_code, crash_report| on_exit(pid, exit_code, crash_report),
+        move |exit_code, crash_report, diagnosis| on_exit(pid, exit_code, crash_report, diagnosis),
     );
     Ok(pid)
 }
@@ -313,12 +526,13 @@ pub fn watch_game_process<W, E>(
     mut child: std::process::Child,
     pid: u32,
     game_dir: PathBuf,
+    capture: CaptureLog,
     window_poll_ms: u64,
     mut on_window_visible: W,
     on_exit: E,
 ) where
     W: FnMut() + Send + 'static,
-    E: FnOnce(Option<i32>, Option<String>) + Send + 'static,
+    E: FnOnce(Option<i32>, Option<String>, Option<String>) + Send + 'static,
 {
     std::thread::spawn(move || {
         let mut window_notified = false;
@@ -329,15 +543,21 @@ pub fn watch_game_process<W, E>(
                 Ok(Some(status)) => {
                     // 退出码随回调送出：调用方据此区分正常退出与崩溃（非 0 → 错误级提示）
                     let exit_code = status.code();
-                    // 崩溃时定位**本次**启动后的崩溃证据（报告或 latest.log 特征）
-                    let crash_report = detect_crash(&game_dir, exit_code, watch_started);
-                    on_exit(exit_code, crash_report);
+                    // 崩溃时定位**本次**启动后的崩溃证据（报告、游戏日志或捕获输出）
+                    let crash_report =
+                        detect_crash(&game_dir, exit_code, watch_started, Some(&capture));
+                    // 失败原因推断（非零退出才有意义）：给前端一句可操作的结论
+                    let diagnosis = match exit_code {
+                        Some(0) | None => None,
+                        Some(_) => diagnose_capture(&capture),
+                    };
+                    on_exit(exit_code, crash_report, diagnosis);
                     return;
                 }
                 Ok(None) => {}
                 Err(_) => {
                     // try_wait 失败（状态查询异常）：按未知退出处理，避免线程永久挂起
-                    on_exit(None, None);
+                    on_exit(None, None, None);
                     return;
                 }
             }
@@ -423,9 +643,12 @@ pub async fn prepare_launch(
         load_launch_config(version_dir_name)?;
     // 第三方登录：启动前确保 authlib-injector.jar 就绪（缺失会启动失败）；先自动补齐（官方 → BMCLAPI），仍失败才报错。
     if matches!(auth, AuthMode::External { .. }) {
-        ensure_jar()
-            .await
-            .map_err(|e| format!("第三方登录组件缺失且自动下载失败\n请检查网络后重试\n{e}"))?;
+        ensure_jar().await.map_err(|e| {
+            keyed_msg!(
+                "errors.launch.authlibMissing",
+                "第三方登录组件缺失且自动下载失败\n请检查网络后重试\n{e}"
+            )
+        })?;
     }
     Ok((
         auth,
@@ -466,7 +689,7 @@ mod crash_tests {
         );
         let since = SystemTime::now() - Duration::from_secs(60);
         assert_eq!(
-            detect_crash(&game, Some(0), since),
+            detect_crash(&game, Some(0), since, None),
             None,
             "退出码 0 即使存在报告文件也不算崩溃"
         );
@@ -478,7 +701,8 @@ mod crash_tests {
         let report = game.join("crash-reports/crash-2026-10-12_08.00.00-client.txt");
         write(&report, "---- Minecraft Crash Report ----");
         let since = SystemTime::now() - Duration::from_secs(60);
-        let detected = detect_crash(&game, Some(1), since).expect("本次窗口内的报告应被判定为崩溃");
+        let detected =
+            detect_crash(&game, Some(1), since, None).expect("本次窗口内的报告应被判定为崩溃");
         assert!(
             detected.contains("crash-2026-10-12"),
             "应返回报告路径: {detected}"
@@ -495,7 +719,7 @@ mod crash_tests {
         // 窗口起点取未来：模拟"本窗口之前的旧报告"
         let since = SystemTime::now() + Duration::from_secs(60);
         assert_eq!(
-            detect_crash(&game, Some(1), since),
+            detect_crash(&game, Some(1), since, None),
             None,
             "旧报告不得误判成本次崩溃"
         );
@@ -506,7 +730,7 @@ mod crash_tests {
         let game = tmp_dir("other");
         write(&game.join("crash-reports/notes.txt"), "just a note");
         let since = SystemTime::now() - Duration::from_secs(60);
-        assert_eq!(detect_crash(&game, Some(1), since), None);
+        assert_eq!(detect_crash(&game, Some(1), since, None), None);
     }
 
     #[test]
@@ -517,7 +741,8 @@ mod crash_tests {
             "[12:00:00] [main/INFO]: Starting\njava.lang.OutOfMemoryError: Java heap space\n",
         );
         let since = SystemTime::now() - Duration::from_secs(60);
-        let detected = detect_crash(&game, Some(1), since).expect("OOM 应被日志特征判定为崩溃");
+        let detected =
+            detect_crash(&game, Some(1), since, None).expect("OOM 应被日志特征判定为崩溃");
         assert!(
             detected.ends_with("latest.log"),
             "应回退到 latest.log: {detected}"
@@ -532,7 +757,187 @@ mod crash_tests {
             "[12:00:00] [main/INFO]: Stopping!\n",
         );
         let since = SystemTime::now() - Duration::from_secs(60);
-        assert_eq!(detect_crash(&game, Some(1), since), None);
+        assert_eq!(detect_crash(&game, Some(1), since, None), None);
+    }
+
+    /// 写一份捕获日志：`old` 为历史启动的输出（不计入本次），返回其本次段起点。
+    fn capture_log(log: &Path, old: &str, new: &str) -> CaptureLog {
+        write(log, &format!("{old}{new}"));
+        CaptureLog {
+            path: log.to_path_buf(),
+            start: old.len() as u64,
+        }
+    }
+
+    #[test]
+    fn capture_failure_in_this_run_detected() {
+        let game = tmp_dir("capture_new");
+        let log = game.join("logs/elytra-launch.log");
+        let capture = capture_log(
+            &log,
+            "[stderr] Session finished\n",
+            "[stderr] Exception in thread \"main\" \n[stderr] java.lang.ClassCastException: AppClassLoader\n",
+        );
+        let detected = detect_crash(&game, Some(1), SystemTime::now(), Some(&capture))
+            .expect("本次捕获段的启动期失败应判为崩溃");
+        assert!(
+            detected.ends_with("elytra-launch.log"),
+            "证据路径应指向捕获日志: {detected}"
+        );
+    }
+
+    #[test]
+    fn capture_failure_before_start_offset_ignored() {
+        let game = tmp_dir("capture_old");
+        let log = game.join("logs/elytra-launch.log");
+        let capture = capture_log(
+            &log,
+            "[stderr] Exception in thread \"main\"\n",
+            "[stderr] Session finished\n",
+        );
+        assert_eq!(
+            detect_crash(&game, Some(1), SystemTime::now(), Some(&capture)),
+            None,
+            "偏移之前的历史输出不得算成本次证据"
+        );
+    }
+
+    #[test]
+    fn capture_other_thread_exception_ignored() {
+        let game = tmp_dir("capture_thread");
+        let log = game.join("logs/elytra-launch.log");
+        let capture = capture_log(
+            &log,
+            "",
+            "[stderr] Exception in thread \"Thread-0\" \n[stderr] java.io.FileNotFoundException\n",
+        );
+        assert_eq!(
+            detect_crash(&game, Some(1), SystemTime::now(), Some(&capture)),
+            None,
+            "mod 自定义线程的异常不影响主流程，不是崩溃证据"
+        );
+    }
+
+    #[test]
+    fn capture_tail_window_scanned() {
+        let game = tmp_dir("capture_tail");
+        let log = game.join("logs/elytra-launch.log");
+        // 失败特征落在首窗之外：本次段首部是正常输出，退出前才报错
+        let filler = "x".repeat(70 * 1024);
+        let capture = capture_log(
+            &log,
+            "",
+            &format!("{filler}\n[stderr] Error: Could not find or load main class X\n"),
+        );
+        assert!(
+            detect_crash(&game, Some(1), SystemTime::now(), Some(&capture)).is_some(),
+            "尾部窗口内的启动期失败应被识别"
+        );
+    }
+
+    /// 全链烟测：真实子进程非零退出 → stderr 落盘 → 证据路径为捕获日志（含偏移语义：历史段不计）。
+    #[test]
+    fn spawn_and_watch_reports_capture_evidence() {
+        let tmp = tmp_dir("spawn_capture");
+        let game = tmp.join("game");
+        fs::create_dir_all(&game).unwrap();
+        let log = tmp.join("logs/elytra-launch.log");
+        fs::create_dir_all(log.parent().unwrap()).unwrap();
+        // 历史启动的同类输出：不得被算成本次证据（偏移在 spawn 前测定）
+        fs::write(&log, "[stderr] Exception in thread \"main\"\n").unwrap();
+
+        #[cfg(target_os = "windows")]
+        let args = vec![
+            "cmd".to_string(),
+            "/C".to_string(),
+            "echo Error: Could not find or load main class Foo 1>&2 & exit 3".to_string(),
+        ];
+        #[cfg(not(target_os = "windows"))]
+        let args = vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "echo 'Error: Could not find or load main class Foo' >&2; exit 3".to_string(),
+        ];
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let pid = spawn_and_watch(
+            SpawnRequest {
+                args: &args,
+                game_dir: &game,
+                log_path: &log,
+                process_priority: ProcessPriority::Normal,
+            },
+            |_| {},
+            move |_pid, code, report, cause| {
+                let _ = tx.send((code, report, cause));
+            },
+        )
+        .unwrap();
+        assert!(pid > 0);
+
+        let (code, report, cause) = rx
+            .recv_timeout(Duration::from_secs(60))
+            .expect("子进程应退出并回调");
+        assert_eq!(code, Some(3));
+        let report = report.expect("本次 stderr 的启动期失败应作为崩溃证据");
+        assert!(
+            report.ends_with("elytra-launch.log"),
+            "证据路径应指向捕获日志: {report}"
+        );
+        let cause = cause.expect("同样应从捕获输出推断出结论");
+        assert!(
+            cause.starts_with("@i18n:errors.launch.missing_files\n"),
+            "主类缺失应归到启动文件不完整: {cause}"
+        );
+    }
+
+    /// 结论推断：每个特征映射到对应 key；未归类时附末尾输出，且 Java 版本能从字节码版本推出来。
+    #[test]
+    fn diagnose_maps_failures_to_actionable_causes() {
+        let cases = [
+            (
+                "java.lang.ClassCastException: class jdk.internal.loader.ClassLoaders$AppClassLoader cannot be cast to class java.net.URLClassLoader",
+                "errors.launch.jdk_too_new",
+            ),
+            (
+                "java.lang.UnsupportedClassVersionError: net/minecraft/client/main/Main has been compiled by a more recent version of the Java Runtime (class file version 61.0)",
+                "errors.launch.jdk_too_old",
+            ),
+            ("java.lang.OutOfMemoryError: Java heap space", "errors.launch.oom"),
+            (
+                "Error occurred during initialization of VM\nCould not reserve enough space for 8388608KB object heap",
+                "errors.launch.memory_too_large",
+            ),
+            ("Unrecognized VM option 'CMSIncrementalMode'", "errors.launch.jvm_args"),
+            (
+                "Error: Could not find or load main class net.minecraft.launchwrapper.Launch",
+                "errors.launch.missing_files",
+            ),
+            (
+                "# A fatal error has been detected by the Java Runtime Environment",
+                "errors.launch.native_crash",
+            ),
+            (
+                "[stderr] Exception in thread \"main\" java.lang.IllegalStateException: boom",
+                "errors.launch.unknown",
+            ),
+        ];
+        for (text, key) in cases {
+            let msg = diagnose_text(text).unwrap_or_else(|| panic!("应推断出结论: {text}"));
+            assert!(msg.starts_with(&format!("@i18n:{key}\n")), "{text} → {msg}");
+        }
+        // 字节码版本 → 需要的 Java 主版本（61 → 17）写进详情
+        let too_old = diagnose_text(
+            "java.lang.UnsupportedClassVersionError: X (class file version 61.0)\n\tat java.base/x",
+        )
+        .unwrap();
+        assert!(too_old.contains("对应 Java 17"), "{too_old}");
+        // 只有 mod 线程的异常不算证据
+        assert!(
+            diagnose_text("Exception in thread \"Thread-0\" java.io.FileNotFoundException")
+                .is_none(),
+            "非主线程异常不是启动期失败"
+        );
     }
 }
 

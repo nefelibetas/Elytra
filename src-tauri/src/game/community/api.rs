@@ -123,7 +123,7 @@ pub async fn search_community(
             )
             .await?
         }
-        other => bail!("未知 Mod 来源\n{other}"),
+        other => bail_key!("errors.community.unknownSource", "未知 Mod 来源\n{other}"),
     };
     if translate {
         // 标题译名/mcmod_id 已由内置百科表填充（无网络开销），此处仅补 MCIM 简介翻译
@@ -147,7 +147,10 @@ pub async fn get_community_versions(
     match source {
         "modrinth" => modrinth::modrinth_versions(project_id, game_version, loader).await,
         "curseforge" => curseforge::curseforge_versions(project_id, game_version, loader).await,
-        other => Err(format!("未知 Mod 来源\n{other}")),
+        other => Err(keyed_msg!(
+            "errors.community.unknownSource",
+            "未知 Mod 来源\n{other}"
+        )),
     }
 }
 
@@ -163,7 +166,7 @@ pub async fn get_community_details(
     let mut items = match source {
         "modrinth" => modrinth::modrinth_details(ids).await?,
         "curseforge" => curseforge::curseforge_details(ids).await?,
-        other => bail!("未知 Mod 来源\n{other}"),
+        other => bail_key!("errors.community.unknownSource", "未知 Mod 来源\n{other}"),
     };
     if translate {
         let tr = fetch_translations(source, ids).await;

@@ -1,7 +1,10 @@
 pub fn parse_seed(text: &str) -> Result<i64, String> {
     let t = text.trim();
     if t.is_empty() {
-        return Err("种子不能为空\n请输入数字或任意字符串".to_string());
+        return Err(keyed_msg!(
+            "errors.seedmap.seedEmpty",
+            "种子不能为空\n请输入数字或任意字符串"
+        ));
     }
     if let Ok(v) = t.parse::<i64>() {
         return Ok(v);

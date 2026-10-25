@@ -8,6 +8,7 @@ use crate::events;
 use crate::jdk;
 use crate::launcher::args::{build_launch_command, LaunchRequest};
 use crate::launcher::auto_tasks;
+use crate::launcher::compat::{self, JavaCompat};
 use crate::launcher::env;
 use crate::launcher::platform;
 use crate::launcher::process;
@@ -21,17 +22,29 @@ use crate::util;
 
 // ── Tauri Commands ──────────────────────────────────
 
-/// 启动前环境 + 完整性校验；通过时返回所用 JDK 信息，失败返回具体原因。
+/// 启动前环境 + 完整性校验；通过时返回所用 JDK 信息，**存在 Java 兼容风险时返回 `@i18n:` 提示**（前端弹提示）。
 #[tauri::command]
 pub async fn check_launch_env(version_dir_name: String) -> Result<String, String> {
-    let (_java_path, version_json, mc_dir, _launcher_config, _java_major) =
+    let (java_path, version_json, mc_dir, launcher_config, java_major) =
         env::load_launch_config(&version_dir_name)?;
 
     process::ensure_game_ready(&version_json, &mc_dir, &version_dir_name)?;
 
     let java_env = env::selected_jdk_version(&jdk::read(), &jdk::read_cache())
         .unwrap_or_else(|| "自动选择".into());
-    Ok(format!("环境校验通过（JDK: {}）", java_env))
+    let jdk_label = java_path.display().to_string();
+    match compat::check(
+        &version_json,
+        java_major,
+        &jdk_label,
+        launcher_config.disable_launch_wrapper,
+    ) {
+        JavaCompat::Warn(warning) => Ok(warning),
+        _ => Ok(keyed_msg!(
+            "errors.launch.envOk?java_env={java_env}",
+            "环境校验通过（JDK: {java_env}）"
+        )),
+    }
 }
 
 /// 开始一次启动：清空上一次的取消标志与进程登记（前端在启动流程最前调用，此后到达的取消才作用于本次启动）。
@@ -59,7 +72,7 @@ pub async fn spawn_game(
 ) -> Result<u32, String> {
     // 启动流程开始即已收到取消请求（如重启前一次启动）：不再拉起进程
     if process::cancel_requested() {
-        bail!("启动已取消");
+        bail_key!("errors.task.cancelled", "启动已取消");
     }
     // online 模式改用后端有效 token（临近过期自动刷新；前端缓存 token 约 24h 失效）；离线/第三方沿用传入值。
     let access_token = if auth_mode == "online" {
@@ -138,7 +151,7 @@ pub async fn spawn_game(
 
     // 取消请求可能在安装 JDK / 检查文件 / 启动前自动任务期间到达：此时不再拉起游戏进程
     if process::cancel_requested() {
-        bail!("启动已取消");
+        bail_key!("errors.task.cancelled", "启动已取消");
     }
 
     // cwd = 版本隔离的 gameDir（与官方启动器一致）；装配在 launcher/process.rs，此处仅注入事件派发（队列线程，监听线程不等 webview 消费）。
@@ -165,14 +178,14 @@ pub async fn spawn_game(
                 (pid, label_window.clone()),
             );
         },
-        move |pid, exit_code, crash_report| {
+        move |pid, exit_code, crash_report, diagnosis| {
             // 注销启动 pid：退出后到达的取消不得按此 pid 误杀其他进程
             process::clear_launched(pid);
-            // 退出码随事件送出：前端据非 0 判崩溃
+            // 退出码随事件送出：前端据非 0 判崩溃；diagnosis 为推断出的失败结论（可空）
             task::emit_event(
                 &app_exit,
                 events::GAME_EXITED,
-                (pid, label_exit, exit_code, crash_report.clone()),
+                (pid, label_exit, exit_code, crash_report.clone(), diagnosis),
             );
             // 崩溃先跑 on_crash，再总是跑 post_exit；spawn_blocking 避免阻塞监听线程（备份可能数十秒）。
             tauri::async_runtime::spawn_blocking(move || {
@@ -205,7 +218,7 @@ pub async fn spawn_game(
 
     // 登记 pid 供取消终止；若取消在 spawn 与登记之间到达，登记时即终止并如实报错
     if process::note_launched(pid) {
-        bail!("启动已取消");
+        bail_key!("errors.task.cancelled", "启动已取消");
     }
 
     Ok(pid)
@@ -222,7 +235,7 @@ pub fn open_launcher_log_dir(app: AppHandle) -> Result<(), String> {
     let dir = util::config_dir();
     let path = dir.to_string_lossy().to_string();
     if !dir.exists() {
-        bail!("目录不存在\n{path}");
+        bail_key!("errors.dir.missing", "目录不存在\n{path}");
     }
     app.opener()
         .open_path(path, None::<&str>)

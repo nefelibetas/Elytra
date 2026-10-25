@@ -41,7 +41,8 @@ fn unix_now() -> u64 {
 /// 时用 refresh_token 静默刷新并回写列表。
 /// 区别于 `refresh_ms_account`（后者无条件走完整微软登录链，四次网络往返，较重）。
 pub async fn ensure_valid_account() -> Result<auth::model::MsAccount, String> {
-    let account = auth::model::read().ok_or_else(|| "尚未登录正版账号".to_string())?;
+    let account = auth::model::read()
+        .ok_or_else(|| keyed_msg!("errors.auth.notSignedIn", "尚未登录正版账号"))?;
     if account.expires_at > unix_now() + TOKEN_REFRESH_SKEW_SECS {
         return Ok(account);
     }
@@ -65,9 +66,17 @@ pub async fn fetch_b64(url: &str, err_prefix: &str) -> Result<String, String> {
         .get(url)
         .send()
         .await
-        .map_err(common_err_ctx!("{}失败", err_prefix))?;
+        .map_err(common_err_ctx_key!(
+            "errors.download.failed",
+            "{}失败",
+            err_prefix
+        ))?;
     if !resp.status().is_success() {
-        bail!("{err_prefix}失败\nHTTP {}", resp.status());
+        bail_key!(
+            "errors.download.failed",
+            "{err_prefix}失败\nHTTP {}",
+            resp.status()
+        );
     }
     let bytes = resp.bytes().await.map_err(common_err_ctx_key!(
         "errors.download.failed",
@@ -89,10 +98,23 @@ pub async fn wait_callback(
             handle_callback(stream, state, pkce, app).await;
         }
         Ok(Err(e)) => {
-            let _ = emit_result(app, false, None, Some(format!("回调服务错误\n{e}")));
+            let _ = emit_result(
+                app,
+                false,
+                None,
+                Some(keyed_msg!(
+                    "errors.login.callbackFailed",
+                    "回调服务错误\n{e}"
+                )),
+            );
         }
         Err(_) => {
-            let _ = emit_result(app, false, None, Some("登录超时，请重新尝试".into()));
+            let _ = emit_result(
+                app,
+                false,
+                None,
+                Some(keyed_msg!("errors.login.timeout", "登录超时，请重新尝试")),
+            );
         }
     }
 }
@@ -108,7 +130,12 @@ async fn handle_callback(
     let read = match stream.read(&mut buf).await {
         Ok(n) => n,
         Err(e) => {
-            let _ = emit_result(app, false, None, Some(format!("读取回调失败\n{e}")));
+            let _ = emit_result(
+                app,
+                false,
+                None,
+                Some(keyed_msg!("errors.login.callbackRead", "读取回调失败\n{e}")),
+            );
             return;
         }
     };
@@ -132,12 +159,25 @@ async fn handle_callback(
         })
         .collect();
     let (ok, account, error, http_status) = if let Some(err) = params.get("error") {
-        (false, None, Some(format!("授权被拒绝\n{err}")), 400)
+        (
+            false,
+            None,
+            Some(keyed_msg!("errors.login.denied", "授权被拒绝\n{err}")),
+            400,
+        )
     } else {
         let code = params.get("code").cloned();
         let cb_state = params.get("state").cloned().unwrap_or_default();
         if cb_state != state {
-            (false, None, Some("state 校验失败，请重新登录".into()), 403)
+            (
+                false,
+                None,
+                Some(keyed_msg!(
+                    "errors.login.stateMismatch",
+                    "state 校验失败，请重新登录"
+                )),
+                403,
+            )
         } else if let Some(code) = code {
             match auth::microsoft::login_with_code(&code, &pkce.verifier).await {
                 Ok(account) => {
@@ -147,7 +187,12 @@ async fn handle_callback(
                 Err(e) => (false, None, Some(e.to_string()), 500),
             }
         } else {
-            (false, None, Some("回调缺少授权码".into()), 400)
+            (
+                false,
+                None,
+                Some(keyed_msg!("errors.login.missingCode", "回调缺少授权码")),
+                400,
+            )
         }
     };
 

@@ -52,10 +52,16 @@ pub fn supported_versions() -> Vec<SeedMapVersion> {
 pub fn resolve_version(input: &str) -> Result<ResolvedVersion, String> {
     let raw = input.trim();
     if raw.is_empty() {
-        return Err("版本不能为空\n请输入正式版 ID，如 26.3 或 1.20.1".to_string());
+        return Err(keyed_msg!(
+            "errors.seedmap.versionEmpty",
+            "版本不能为空\n请输入正式版 ID，如 26.3 或 1.20.1"
+        ));
     }
     if is_snapshot(raw) {
-        return Err("暂不支持快照\n请选择正式版；快照/预览版参数族尚无稳定数据".to_string());
+        return Err(keyed_msg!(
+            "errors.seedmap.snapshotUnsupported",
+            "暂不支持快照\n请选择正式版；快照/预览版参数族尚无稳定数据"
+        ));
     }
     if let Some((id, family)) = EXACT.iter().find(|(id, _)| *id == raw) {
         return build(raw, family, true).map(|_| ResolvedVersion {
@@ -65,7 +71,10 @@ pub fn resolve_version(input: &str) -> Result<ResolvedVersion, String> {
         });
     }
     let Some(family) = map_patch(raw) else {
-        return Err(format!("版本不受支持\n{raw} 不在已校准的正式版参数族内"));
+        return Err(keyed_msg!(
+            "errors.seedmap.versionUnsupported",
+            "版本不受支持\n{raw} 不在已校准的正式版参数族内"
+        ));
     };
     build(raw, &family, false)?;
     Ok(ResolvedVersion {
@@ -77,7 +86,8 @@ pub fn resolve_version(input: &str) -> Result<ResolvedVersion, String> {
 
 fn build(version: &str, family: &str, _exact: bool) -> Result<(), String> {
     if ffi::mc_from_name(family).is_none() {
-        return Err(format!(
+        return Err(keyed_msg!(
+            "errors.seedmap.versionUnsupported",
             "版本不受支持\n{version} 映射到的参数族 {family} 未编译进 cubiomes"
         ));
     }

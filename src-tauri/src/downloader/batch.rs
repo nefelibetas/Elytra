@@ -104,7 +104,10 @@ pub async fn run(
                     .await
                     {
                         Ok(_) => Ok(()),
-                        Err(e2) => Err(format!("{}: {}（本地复用失败: {}）", label, e2, e)),
+                        Err(e2) => Err(keyed_msg!(
+                            "errors.download.failed",
+                            "下载失败\n{label}: {e2}（本地复用失败: {e}）"
+                        )),
                     },
                 }
             } else {

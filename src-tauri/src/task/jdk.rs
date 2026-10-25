@@ -40,6 +40,16 @@ pub async fn run_install_jdk(
     // 下载 + 安装（按 jdk_source_mode 回退链；取消/失败由 auto_install 返回）
     let hook = InstallProgress {
         cancel: Some(cancel),
+        on_attempt: Some(&{
+            let app = sink.clone();
+            let progress = progress.clone();
+            let counts = counts.clone();
+            move || {
+                // 换源重试：总量口径变了，先把上一轮的计数与分母清掉
+                counts.reset();
+                set_total(app.as_ref(), &progress, 0, 0);
+            }
+        }),
         on_total: Some(&{
             let app = sink.clone();
             let progress = progress.clone();
@@ -51,8 +61,12 @@ pub async fn run_install_jdk(
         }),
         on_bytes: Some(&{
             let acc = counts.acc_bytes.clone();
-            move |delta: u64| {
+            let pkg_total = counts.pkg_total.clone();
+            move |delta: u64, total: u64| {
                 acc.fetch_add(delta, Ordering::Relaxed);
+                if total > 0 {
+                    pkg_total.store(total, Ordering::Relaxed);
+                }
             }
         }),
         on_file_done: Some(&{
@@ -117,13 +131,15 @@ fn begin_jdk_install(
     Some(lock)
 }
 
-/// 原子计数器束（下载回调写入，心跳读取）。
+/// 原子计数器束（下载回调写入，心跳读取）；`Clone` 供回调闭包共用同一份计数。
+#[derive(Clone)]
 struct JdkCounters {
     files_done: Arc<AtomicU32>,
     files_total: Arc<AtomicU32>,
+    /// 本次源尝试已下载字节（进度分子与速度）
     acc_bytes: Arc<AtomicU64>,
-    cur_bytes: Arc<AtomicU64>,
-    cur_total: Arc<AtomicU64>,
+    /// 整包安装的传输总长（响应 Content-Length；清单没给总量时的进度分母兜底）
+    pkg_total: Arc<AtomicU64>,
 }
 
 impl JdkCounters {
@@ -132,13 +148,20 @@ impl JdkCounters {
             files_done: Arc::new(AtomicU32::new(0)),
             files_total: Arc::new(AtomicU32::new(0)),
             acc_bytes: Arc::new(AtomicU64::new(0)),
-            cur_bytes: Arc::new(AtomicU64::new(0)),
-            cur_total: Arc::new(AtomicU64::new(0)),
+            pkg_total: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    fn reset(&self) {
+        self.files_done.store(0, Ordering::Relaxed);
+        self.files_total.store(0, Ordering::Relaxed);
+        self.acc_bytes.store(0, Ordering::Relaxed);
+        self.pkg_total.store(0, Ordering::Relaxed);
     }
 }
 
-/// 进度心跳（150ms，相邻采样差分 + EMA 平滑；status 离开 Running 即退出）。与 progress::spawn_heartbeat 语义不同故未复用：字节口径为 acc_bytes+cur_bytes 双计数器，额外维护 steps[0] 占比，不覆写 total_bytes/status。
+/// 进度心跳（150ms，相邻采样差分 + EMA 平滑；status 离开 Running 即退出）。与 progress::spawn_heartbeat 语义不同故未复用：
+/// 计数来自本模块的双计数器（清单文件数/字节 + 整包传输总长），百分比与步骤进度统一交给 `update_progress`（同口径）。
 fn spawn_jdk_heartbeat(
     sink: Arc<dyn EventSink>,
     progress: Arc<Mutex<TaskProgress>>,
@@ -147,8 +170,7 @@ fn spawn_jdk_heartbeat(
     let files_done = counts.files_done.clone();
     let files_total = counts.files_total.clone();
     let acc_bytes = counts.acc_bytes.clone();
-    let cur_bytes = counts.cur_bytes.clone();
-    let cur_total = counts.cur_total.clone();
+    let pkg_total = counts.pkg_total.clone();
     tauri::async_runtime::spawn(async move {
         let mut tick = tokio::time::interval(std::time::Duration::from_millis(150));
         let mut sampler = task::progress::SpeedSampler::new();
@@ -160,28 +182,24 @@ fn spawn_jdk_heartbeat(
             }
             let fd = files_done.load(Ordering::Relaxed);
             let ft = files_total.load(Ordering::Relaxed);
-            let cb = cur_bytes.load(Ordering::Relaxed);
-            let ct = cur_total.load(Ordering::Relaxed);
-            let cur = acc_bytes.load(Ordering::Relaxed) + cb;
-            let total_bytes = progress.lock().total_bytes;
-            let (speed_bps, eta) = sampler.sample(cur, total_bytes);
+            let cur = acc_bytes.load(Ordering::Relaxed);
+            let pkg = pkg_total.load(Ordering::Relaxed);
+            let manifest_total = progress.lock().total_bytes;
+            let eta_total = if manifest_total > 0 {
+                manifest_total
+            } else {
+                pkg
+            };
+            let (speed_bps, eta) = sampler.sample(cur, eta_total);
             task::update_and_emit(sink.as_ref(), &progress, |p| {
                 p.speed_bps = speed_bps;
                 p.eta_seconds = eta;
                 p.completed_files = fd;
                 p.total_files = ft;
                 p.completed_bytes = cur;
-                // 当前文件字节占比（单步任务的步骤进度）
-                if let Some(st) = p.steps.get_mut(0) {
-                    if st.status == StepStatus::Running {
-                        st.progress = if ct > 0 {
-                            (cb as f64 / ct as f64).min(1.0) * 100.0
-                        } else if ft > 0 {
-                            (fd as f64 / ft as f64).min(1.0) * 100.0
-                        } else {
-                            0.0
-                        };
-                    }
+                // 整包安装（Adoptium/Azul）没有清单总量：用传输总长兜底，否则总/步骤进度都会停在 0
+                if p.total_bytes == 0 && ft == 0 && pkg > 0 {
+                    p.total_bytes = pkg;
                 }
                 update_progress(p);
             });
@@ -212,6 +230,10 @@ fn settle_jdk_install(
                 p.status = TaskStatus::Done;
                 p.progress = 100.0;
                 p.completed_files = p.total_files;
+                if let Some(st) = p.steps.first_mut() {
+                    st.status = StepStatus::Done;
+                    st.progress = 100.0;
+                }
                 p.current_phase = "完成".into();
                 p.current_phase_key = Some("task.backend.phase.done".into());
                 p.current_phase_params = None;

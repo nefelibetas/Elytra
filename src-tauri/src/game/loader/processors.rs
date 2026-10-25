@@ -108,25 +108,38 @@ pub struct ProcessorCtx<'a> {
 }
 
 pub fn parse_profile(json: &str) -> Result<InstallProfile, String> {
-    serde_json::from_str(json).map_err(|e| format!("解析 install_profile.json 失败\n{e}"))
+    serde_json::from_str(json).map_err(common_err_ctx_key!(
+        "errors.parse",
+        "解析 install_profile.json 失败"
+    ))
 }
 
 /// 从 installer jar 读 `install_profile.json` 文本（生产走已打开的 archive，测试直接给路径）。
 pub fn read_profile_from_installer(installer: &Path) -> Result<String, String> {
-    let file = std::fs::File::open(installer).map_err(|e| format!("打开安装程序失败\n{e}"))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("安装程序不是 zip\n{e}"))?;
-    let mut entry = archive
-        .by_name("install_profile.json")
-        .map_err(|_| "安装程序缺少 install_profile.json".to_string())?;
+    let file = std::fs::File::open(installer)
+        .map_err(common_err_ctx_key!("errors.file.read", "打开安装程序失败"))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(common_err_ctx_key!("errors.file.read", "安装程序不是 zip"))?;
+    let mut entry = archive.by_name("install_profile.json").map_err(|_| {
+        keyed_msg!(
+            "errors.loader.profileMissing",
+            "安装程序缺少 install_profile.json"
+        )
+    })?;
     let mut text = String::new();
-    std::io::Read::read_to_string(&mut entry, &mut text)
-        .map_err(|e| format!("读取 install_profile.json 失败\n{e}"))?;
+    std::io::Read::read_to_string(&mut entry, &mut text).map_err(common_err_ctx_key!(
+        "errors.file.read",
+        "读取 install_profile.json 失败"
+    ))?;
     Ok(text)
 }
 
 /// 由已解析的 JSON 值构造 profile（Forge 分支拿到的就是 `serde_json::Value`）。
 pub fn parse_profile_value(value: &serde_json::Value) -> Result<InstallProfile, String> {
-    serde_json::from_value(value.clone()).map_err(|e| format!("解析 install_profile 失败\n{e}"))
+    serde_json::from_value(value.clone()).map_err(common_err_ctx_key!(
+        "errors.parse",
+        "解析 install_profile 失败"
+    ))
 }
 
 /// 产物是否可信：存在、≥1MB 且能当 zip 打开（半成品/截断不算，否则中途失败产物会被永久跳过）。
@@ -189,16 +202,26 @@ fn installer_entry_cache_path(work_dir: &Path, installer: &Path, entry: &str) ->
 
 /// 从 installer jar 解出内部条目到 `dest`（zip 内名不含前导 `/`）。
 fn extract_installer_entry(installer: &Path, entry: &str, dest: &Path) -> Result<(), String> {
-    let file = std::fs::File::open(installer).map_err(|e| format!("打开安装程序失败\n{e}"))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("安装程序不是 zip\n{e}"))?;
-    let mut member = archive
-        .by_name(entry)
-        .map_err(|e| format!("安装程序内没有 {entry}\n{e}"))?;
+    let file = std::fs::File::open(installer)
+        .map_err(common_err_ctx_key!("errors.file.read", "打开安装程序失败"))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(common_err_ctx_key!("errors.file.read", "安装程序不是 zip"))?;
+    let mut member = archive.by_name(entry).map_err(common_err_ctx_key!(
+        "errors.loader.installerEntryMissing",
+        "安装程序内没有 {entry}"
+    ))?;
     if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("创建临时目录失败\n{e}"))?;
+        std::fs::create_dir_all(parent).map_err(common_err_ctx_key!(
+            "errors.file.createDir",
+            "创建临时目录失败"
+        ))?;
     }
-    let mut out = std::fs::File::create(dest).map_err(|e| format!("创建文件失败\n{e}"))?;
-    std::io::copy(&mut member, &mut out).map_err(|e| format!("解包 {entry} 失败\n{e}"))?;
+    let mut out = std::fs::File::create(dest)
+        .map_err(common_err_ctx_key!("errors.file.write", "创建文件失败"))?;
+    std::io::copy(&mut member, &mut out).map_err(common_err_ctx_key!(
+        "errors.file.extract",
+        "解包 {entry} 失败"
+    ))?;
     Ok(())
 }
 
@@ -253,8 +276,12 @@ async fn resolve_arg(
             "MINECRAFT_JAR" => ctx.vanilla_jar.display().to_string(),
             "SIDE" => "client".to_string(),
             _ => {
-                let raw = data_value(profile, key, "client")
-                    .ok_or_else(|| format!("install_profile 缺少 data 项 {key}"))?;
+                let raw = data_value(profile, key, "client").ok_or_else(|| {
+                    keyed_msg!(
+                        "errors.loader.profileDataMissing?key={key}",
+                        "install_profile 缺少 data 项 {key}"
+                    )
+                })?;
                 resolve_data(raw, ctx).into_arg()
             }
         });
@@ -277,7 +304,12 @@ async fn ensure_artifact(
         Some((c, e)) => (c, Some(e)),
         None => (coord, None),
     };
-    let rel = coord_rel_path(coord, None).ok_or_else(|| format!("构件坐标格式异常\n{coord}"))?;
+    let rel = coord_rel_path(coord, None).ok_or_else(|| {
+        keyed_msg!(
+            "errors.loader.coordFormatInvalid?coord={coord}",
+            "构件坐标格式异常\n{coord}"
+        )
+    })?;
     let dest = ctx.lib_dir.join(&rel);
 
     // 优先用官方声明的 path/url/sha1（名字里的 @ext 后缀要忽略后再比）
@@ -318,19 +350,29 @@ async fn ensure_artifact(
         }
     }
     if urls.is_empty() {
-        return Err(format!("无法确定构件下载地址\n{coord}"));
+        return Err(keyed_msg!(
+            "errors.loader.artifactUrlUnknown?coord={coord}",
+            "无法确定构件下载地址\n{coord}"
+        ));
     }
     if let Some(dir) = dest.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("创建目录失败\n{}", e))?;
+        std::fs::create_dir_all(dir)
+            .map_err(common_err_ctx_key!("errors.file.createDir", "创建目录失败"))?;
     }
     if sha1.is_empty() {
         fetcher::fetch_fallback(&urls, &dest, None::<fn(u64, u64)>)
             .await
-            .map_err(|e| format!("下载构件失败（{coord}）\n{e}"))?;
+            .map_err(common_err_ctx_key!(
+                "errors.download.failed",
+                "下载构件失败（{coord}）"
+            ))?;
     } else {
         fetcher::fetch_verified(&urls, &dest, None::<fn(u64, u64)>, &sha1)
             .await
-            .map_err(|e| format!("下载构件失败（{coord}）\n{e}"))?;
+            .map_err(common_err_ctx_key!(
+                "errors.download.failed",
+                "下载构件失败（{coord}）"
+            ))?;
     }
     finish_extract(dest, ext, ctx)
 }
@@ -359,19 +401,24 @@ fn finish_extract(
     if out.is_file() {
         return Ok(out);
     }
-    let file = std::fs::File::open(&dest).map_err(|e| format!("打开构件失败\n{}", e))?;
-    let mut archive =
-        zip::ZipArchive::new(file).map_err(|e| format!("构件不是 zip（无法解出 .{ext}）\n{e}"))?;
+    let file = std::fs::File::open(&dest)
+        .map_err(common_err_ctx_key!("errors.file.read", "打开构件失败"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(common_err_ctx_key!(
+        "errors.file.read",
+        "构件不是 zip（无法解出 .{ext}）"
+    ))?;
     let suffix = format!(".{ext}");
     for i in 0..archive.len() {
         let mut entry = archive
             .by_index(i)
-            .map_err(|e| format!("读取构件条目失败\n{e}"))?;
+            .map_err(common_err_ctx_key!("errors.file.read", "读取构件条目失败"))?;
         if entry.is_dir() || !entry.name().to_ascii_lowercase().ends_with(&suffix) {
             continue;
         }
-        let mut out_file = std::fs::File::create(&out).map_err(|e| format!("创建文件失败\n{e}"))?;
-        std::io::copy(&mut entry, &mut out_file).map_err(|e| format!("解出成员失败\n{e}"))?;
+        let mut out_file = std::fs::File::create(&out)
+            .map_err(common_err_ctx_key!("errors.file.write", "创建文件失败"))?;
+        std::io::copy(&mut entry, &mut out_file)
+            .map_err(common_err_ctx_key!("errors.file.extract", "解出成员失败"))?;
         return Ok(out);
     }
     bail_key!(
@@ -383,14 +430,21 @@ fn finish_extract(
 
 /// 读处理器 JAR 的主类（MANIFEST 的 `Main-Class`）。
 fn main_class_of(jar: &Path) -> Result<String, String> {
-    let file = std::fs::File::open(jar).map_err(|e| format!("打开处理器失败\n{}", e))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("处理器不是 zip\n{e}"))?;
+    let file = std::fs::File::open(jar)
+        .map_err(common_err_ctx_key!("errors.file.read", "打开处理器失败"))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(common_err_ctx_key!("errors.file.read", "处理器不是 zip"))?;
     let mut manifest = archive
         .by_name("META-INF/MANIFEST.MF")
-        .map_err(|e| format!("处理器缺少 MANIFEST\n{e}"))?;
+        .map_err(common_err_ctx_key!(
+            "errors.install.loader",
+            "处理器缺少 MANIFEST"
+        ))?;
     let mut text = String::new();
-    std::io::Read::read_to_string(&mut manifest, &mut text)
-        .map_err(|e| format!("读取 MANIFEST 失败\n{e}"))?;
+    std::io::Read::read_to_string(&mut manifest, &mut text).map_err(common_err_ctx_key!(
+        "errors.file.read",
+        "读取 MANIFEST 失败"
+    ))?;
     // MANIFEST 每行可能折行（续行以空格开头），这里只取主类所在行
     for line in text.lines() {
         let line = line.trim_end();
@@ -429,7 +483,10 @@ pub async fn run_client_processors(
             "install_profile 未声明 processors（该版本可能只支持官方 installer 图形安装）"
         );
     }
-    std::fs::create_dir_all(ctx.work_dir).map_err(|e| format!("创建临时目录失败\n{e}"))?;
+    std::fs::create_dir_all(ctx.work_dir).map_err(common_err_ctx_key!(
+        "errors.file.createDir",
+        "创建临时目录失败"
+    ))?;
     let sep = if cfg!(windows) { ";" } else { ":" };
     let java = resolve_java(required_java_major(ctx))?;
 
@@ -471,9 +528,11 @@ pub async fn run_client_processors(
             .args(&args)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
-        let child = cmd
-            .spawn()
-            .map_err(|e| format!("启动安装器处理器失败（{}）\n{e}", proc.jar))?;
+        let child = cmd.spawn().map_err(common_err_ctx_key!(
+            "errors.install.loader",
+            "启动安装器处理器失败（{}）",
+            proc.jar
+        ))?;
         let label = format!("安装器处理器 {}", main.rsplit('.').next().unwrap_or(&main));
         let output = run_installer_command(child, ctx.cancel, &label).await?;
         if !output.status.success() {
@@ -501,8 +560,12 @@ pub fn output_path(
     lib_dir: &Path,
     mc_dir: &Path,
 ) -> Result<PathBuf, String> {
-    let raw = data_value(profile, key, "client")
-        .ok_or_else(|| format!("install_profile 缺少 data 项 {key}"))?;
+    let raw = data_value(profile, key, "client").ok_or_else(|| {
+        keyed_msg!(
+            "errors.loader.profileDataMissing?key={key}",
+            "install_profile 缺少 data 项 {key}"
+        )
+    })?;
     let raw = raw.trim();
     if let Some(inner) = raw.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
         if let Some(rel) = coord_rel_path(inner, None) {

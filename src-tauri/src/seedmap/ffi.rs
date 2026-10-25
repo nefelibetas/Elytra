@@ -94,10 +94,18 @@ pub struct BiomeRange {
 
 impl Generator {
     pub fn new(version: &str, seed: i64) -> Result<Self, String> {
-        let name = CString::new(version).map_err(|_| "版本名无效\n包含 NUL 字符".to_string())?;
+        let name = CString::new(version).map_err(|_| {
+            keyed_msg!(
+                "errors.seedmap.invalidVersionName",
+                "版本名无效\n包含 NUL 字符"
+            )
+        })?;
         let ptr = unsafe { elytra_gen_new(name.as_ptr(), seed as u64) };
         if ptr.is_null() {
-            return Err(format!("版本不受支持\n{version}"));
+            return Err(keyed_msg!(
+                "errors.seedmap.versionUnsupported",
+                "版本不受支持\n{version}"
+            ));
         }
         Ok(Self(ptr))
     }
@@ -108,7 +116,10 @@ impl Generator {
 
     pub fn gen_biomes(&self, range: BiomeRange, out: &mut [i32]) -> Result<(), String> {
         if out.len() < (range.sx as usize) * (range.sz as usize) {
-            return Err("瓦片缓冲尺寸不足\n内部参数错误".to_string());
+            return Err(keyed_msg!(
+                "errors.seedmap.bufferTooSmall",
+                "瓦片缓冲尺寸不足\n内部参数错误"
+            ));
         }
         let rc = unsafe {
             elytra_gen_biomes(
@@ -125,7 +136,10 @@ impl Generator {
         if rc == 0 {
             Ok(())
         } else {
-            Err(format!("群系生成失败\n错误码 {rc}"))
+            Err(keyed_msg!(
+                "errors.seedmap.generateFailed",
+                "群系生成失败\n错误码 {rc}"
+            ))
         }
     }
 

@@ -26,16 +26,16 @@ pub async fn texture_value(uuid: &str) -> Result<String, String> {
     let props = profile
         .get("properties")
         .and_then(|v| v.as_array())
-        .ok_or("档案属性缺失")?;
+        .ok_or_else(|| keyed_msg!("errors.account.propsMissing", "档案属性缺失"))?;
     let textures_prop = props
         .iter()
         .find(|p| p.get("name").and_then(|n| n.as_str()) == Some("textures"))
-        .ok_or("该玩家未设置皮肤")?;
+        .ok_or_else(|| keyed_msg!("errors.account.noSkin", "该玩家未设置皮肤"))?;
     textures_prop
         .get("value")
         .and_then(|v| v.as_str())
         .map(str::to_string)
-        .ok_or_else(|| "纹理数据缺失".to_string())
+        .ok_or_else(|| keyed_msg!("errors.account.textureMissing", "纹理数据缺失"))
 }
 
 /// 拉取角色纹理并解码（base64 NBT → JSON），含 textures/SKIN、textures/CAPE 等字段。
@@ -55,7 +55,9 @@ pub async fn skin_profile_with_fallback(uuid: &str) -> Result<(String, String), 
     match profile_textures(uuid).await {
         Ok(t) => {
             let skin = &t["textures"]["SKIN"];
-            let url = skin["url"].as_str().ok_or("该账号未设置皮肤")?;
+            let url = skin["url"]
+                .as_str()
+                .ok_or_else(|| keyed_msg!("errors.account.noSkin", "该账号未设置皮肤"))?;
             let model = skin["metadata"]["model"].as_str().unwrap_or("classic");
             Ok((url.to_string(), model.to_string()))
         }

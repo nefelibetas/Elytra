@@ -11,7 +11,7 @@ pub(crate) fn read_raw() -> Result<Option<String>, String> {
     match fs::read_to_string(config_file()) {
         Ok(content) => Ok(Some(content)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!("读取配置失败\n{e}")),
+        Err(e) => Err(keyed_msg!("errors.config.read", "读取配置失败\n{e}")),
     }
 }
 
@@ -26,7 +26,7 @@ pub(crate) fn write_raw(content: &str) -> Result<(), String> {
     fs::write(&tmp, content).map_err(common_err_ctx_key!("errors.config.write", "保存配置失败"))?;
     fs::rename(&tmp, &target).map_err(|e| {
         let _ = fs::remove_file(&tmp);
-        format!("保存配置失败\n{e}")
+        keyed_msg!("errors.config.write", "保存配置失败\n{e}")
     })
 }
 

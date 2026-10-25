@@ -102,15 +102,21 @@ impl ServerStatus {
 pub fn parse_address(input: &str, default_port: u16) -> Result<(String, u16), String> {
     let input = input.trim();
     if input.is_empty() {
-        return Err("地址不能为空".to_string());
+        return Err(keyed_msg!(
+            "errors.serverStatus.emptyAddress",
+            "地址不能为空"
+        ));
     }
     // IPv6 字面量：[::1]:25565
     if let Some(rest) = input.strip_prefix('[') {
         let (host, port) = rest
             .split_once(']')
-            .ok_or_else(|| format!("地址格式错误\n{input}"))?;
+            .ok_or_else(|| keyed_msg!("errors.serverStatus.badAddress", "地址格式错误\n{input}"))?;
         if host.is_empty() {
-            return Err("地址格式错误\nIPv6 主机段为空".to_string());
+            return Err(keyed_msg!(
+                "errors.serverStatus.badAddress",
+                "地址格式错误\nIPv6 主机段为空"
+            ));
         }
         let port = match port.strip_prefix(':') {
             Some(p) => parse_port(p)?,
@@ -127,15 +133,23 @@ pub fn parse_address(input: &str, default_port: u16) -> Result<(String, u16), St
             let port = parse_port(p)?;
             Ok((host.to_string(), port))
         }
-        Some((_, p)) => Err(format!("端口无效\n{p}")),
+        Some((_, p)) => Err(keyed_msg!(
+            "errors.serverStatus.badPort?port={p}",
+            "端口无效\n{p}"
+        )),
         None => Ok((input.to_string(), default_port)),
     }
 }
 
 fn parse_port(p: &str) -> Result<u16, String> {
-    let port = p.parse::<u16>().map_err(|_| format!("端口无效\n{p}"))?;
+    let port = p
+        .parse::<u16>()
+        .map_err(|_| keyed_msg!("errors.serverStatus.badPort?port={p}", "端口无效\n{p}"))?;
     if port == 0 {
-        return Err("端口无效\n0 不可用".to_string());
+        return Err(keyed_msg!(
+            "errors.serverStatus.badPort?port=0",
+            "端口无效\n0 不可用"
+        ));
     }
     Ok(port)
 }
@@ -166,27 +180,42 @@ async fn ping_java_with_timeout(
         stream
             .write_all(&handshake)
             .await
-            .map_err(common_err_ctx!("发送握手失败"))?;
+            .map_err(common_err_ctx_key!(
+                "errors.serverStatus.handshakeSend",
+                "发送握手失败"
+            ))?;
         // status 请求：长度 1 + packet id 0
         stream
             .write_all(&[0x01, 0x00])
             .await
-            .map_err(common_err_ctx!("发送状态请求失败"))?;
+            .map_err(common_err_ctx_key!(
+                "errors.serverStatus.statusSend",
+                "发送状态请求失败"
+            ))?;
         // 响应：外层包长度 + packet id + JSON 字符串
         let packet_len = read_varint(&mut stream).await?;
         if packet_len <= 0 || packet_len as usize > MAX_RESPONSE_BYTES + 16 {
-            bail!("服务器响应异常\n包长度 {packet_len}");
+            bail_key!(
+                "errors.serverStatus.badResponse",
+                "服务器响应异常\n包长度 {packet_len}"
+            );
         }
         let packet_id = read_varint(&mut stream).await?;
         if packet_id != 0 {
-            bail!("服务器响应异常\n未知包 id {packet_id}");
+            bail_key!(
+                "errors.serverStatus.badResponse",
+                "服务器响应异常\n未知包 id {packet_id}"
+            );
         }
         let json = read_string(&mut stream, MAX_RESPONSE_BYTES).await?;
         parse_java_status(&json)
     })
     .await
     .map_err(|_| {
-        "连接超时\n服务器无响应（检查地址与端口，服务器可能未开启或拒绝探测）".to_string()
+        keyed_msg!(
+            "errors.serverStatus.connectTimeout",
+            "连接超时\n服务器无响应（检查地址与端口，服务器可能未开启或拒绝探测）"
+        )
     })?
 }
 
@@ -202,16 +231,22 @@ async fn resolve_all(host: &str, port: u16) -> Result<Vec<SocketAddr>, String> {
     tokio::time::timeout(CONNECT_TIMEOUT, async {
         let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host, port))
             .await
-            .map_err(common_err_ctx!("域名解析失败"))?
+            .map_err(common_err_ctx_key!(
+                "errors.serverStatus.dnsFailed",
+                "域名解析失败"
+            ))?
             .collect();
         if addrs.is_empty() {
-            Err("域名解析失败\n无可用地址".to_string())
+            Err(keyed_msg!(
+                "errors.serverStatus.dnsFailed",
+                "域名解析失败\n无可用地址"
+            ))
         } else {
             Ok(addrs)
         }
     })
     .await
-    .map_err(|_| "域名解析超时".to_string())?
+    .map_err(|_| keyed_msg!("errors.serverStatus.dnsTimeout", "域名解析超时"))?
 }
 
 /// 并发尝试全部地址，取首个成功连接（首个地址不可达时不拖死整个探测）。
@@ -223,13 +258,18 @@ async fn connect_any(addrs: &[SocketAddr]) -> Result<TcpStream, String> {
     select_ok(attempts)
         .await
         .map(|(stream, _)| stream)
-        .map_err(common_err_ctx!("连接失败"))
+        .map_err(common_err_ctx_key!(
+            "errors.serverStatus.connectFailed",
+            "连接失败"
+        ))
 }
 
 /// 解析 SLP status JSON（宽松：description 兼容字符串/组件对象）。
 fn parse_java_status(json: &str) -> Result<ServerStatus, String> {
-    let value: serde_json::Value =
-        serde_json::from_str(json).map_err(common_err_ctx!("响应解析失败"))?;
+    let value: serde_json::Value = serde_json::from_str(json).map_err(common_err_ctx_key!(
+        "errors.serverStatus.parseFailed",
+        "响应解析失败"
+    ))?;
     let version = value.get("version").and_then(|v| v.as_object());
     let version_name = version
         .and_then(|v| v.get("name"))
@@ -315,18 +355,22 @@ async fn ping_bedrock_with_timeout(
 ) -> Result<ServerStatus, String> {
     tokio::time::timeout(timeout, async {
         let addrs = resolve_all(host, port).await?;
-        let mut last_err = "连接超时\n服务器无响应（检查地址与端口，服务器可能未开启）".to_string();
+        let mut last_err = keyed_msg!(
+            "errors.serverStatus.connectTimeout",
+            "连接超时\n服务器无响应（检查地址与端口，服务器可能未开启）"
+        );
         for addr in addrs {
             let bind = if addr.is_ipv4() {
                 SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0)
             } else {
                 SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0)
             };
-            let socket = UdpSocket::bind(bind)
-                .await
-                .map_err(common_err_ctx!("UDP 套接字创建失败"))?;
+            let socket = UdpSocket::bind(bind).await.map_err(common_err_ctx_key!(
+                "errors.serverStatus.udpCreate",
+                "UDP 套接字创建失败"
+            ))?;
             if let Err(e) = socket.connect(addr).await {
-                last_err = format!("连接失败\n{e}");
+                last_err = keyed_msg!("errors.serverStatus.connectFailed", "连接失败\n{e}");
                 continue;
             }
             // UNCONNECTED_PING：id + 时间戳 + magic + client GUID(0)
@@ -335,24 +379,33 @@ async fn ping_bedrock_with_timeout(
             payload.extend_from_slice(&now_millis().to_be_bytes());
             payload.extend_from_slice(&RAKNET_MAGIC);
             payload.extend_from_slice(&0u64.to_be_bytes());
-            socket
-                .send(&payload)
-                .await
-                .map_err(common_err_ctx!("发送探测包失败"))?;
+            socket.send(&payload).await.map_err(common_err_ctx_key!(
+                "errors.serverStatus.probeSend",
+                "发送探测包失败"
+            ))?;
             let mut buf = [0u8; 2048];
             match tokio::time::timeout(BEDROCK_ATTEMPT_TIMEOUT, socket.recv(&mut buf)).await {
                 Ok(Ok(n)) => return parse_raknet_pong(&buf[..n]),
-                Ok(Err(e)) => last_err = format!("接收响应失败\n{e}"),
+                Ok(Err(e)) => {
+                    last_err = keyed_msg!("errors.serverStatus.recvFailed", "接收响应失败\n{e}")
+                }
                 Err(_) => {
-                    last_err =
-                        "连接超时\n服务器无响应（检查地址与端口，服务器可能未开启）".to_string()
+                    last_err = keyed_msg!(
+                        "errors.serverStatus.connectTimeout",
+                        "连接超时\n服务器无响应（检查地址与端口，服务器可能未开启）"
+                    )
                 }
             }
         }
         Err(last_err)
     })
     .await
-    .map_err(|_| "连接超时\n服务器无响应（检查地址与端口，服务器可能未开启）".to_string())?
+    .map_err(|_| {
+        keyed_msg!(
+            "errors.serverStatus.connectTimeout",
+            "连接超时\n服务器无响应（检查地址与端口，服务器可能未开启）"
+        )
+    })?
 }
 
 fn now_millis() -> u64 {
@@ -366,20 +419,33 @@ fn now_millis() -> u64 {
 /// 字符串字段分号分隔：MOTD;protocol;version;online;max;server_id;level;...
 fn parse_raknet_pong(data: &[u8]) -> Result<ServerStatus, String> {
     if data.len() < 1 + 8 + 8 + 16 + 2 {
-        return Err("响应格式错误\n数据过短".to_string());
+        return Err(keyed_msg!(
+            "errors.serverStatus.badPacket",
+            "响应格式错误\n数据过短"
+        ));
     }
     if data[0] != RAKNET_PONG_ID {
-        bail!("响应格式错误\n未知包 id {}", data[0]);
+        bail_key!(
+            "errors.serverStatus.badPacket",
+            "响应格式错误\n未知包 id {}",
+            data[0]
+        );
     }
     let magic_start = 1 + 8 + 8;
     if data[magic_start..magic_start + 16] != RAKNET_MAGIC {
-        return Err("响应格式错误\nmagic 不匹配（非 RakNet 服务器）".to_string());
+        return Err(keyed_msg!(
+            "errors.serverStatus.badPacket",
+            "响应格式错误\nmagic 不匹配（非 RakNet 服务器）"
+        ));
     }
     let len_start = magic_start + 16;
     let len = u16::from_be_bytes([data[len_start], data[len_start + 1]]) as usize;
     let text_start = len_start + 2;
     if data.len() < text_start + len {
-        return Err("响应格式错误\n字符串长度越界".to_string());
+        return Err(keyed_msg!(
+            "errors.serverStatus.badPacket",
+            "响应格式错误\n字符串长度越界"
+        ));
     }
     let text = String::from_utf8_lossy(&data[text_start..text_start + len]);
     let fields: Vec<&str> = text.split(';').collect();
@@ -418,21 +484,29 @@ async fn read_varint<R: AsyncRead + Unpin>(r: &mut R) -> Result<i32, String> {
     let mut result: i32 = 0;
     for i in 0..5 {
         let mut byte = [0u8; 1];
-        r.read_exact(&mut byte)
-            .await
-            .map_err(common_err_ctx!("读取数据失败"))?;
+        r.read_exact(&mut byte).await.map_err(common_err_ctx_key!(
+            "errors.serverStatus.readFailed",
+            "读取数据失败"
+        ))?;
         let b = byte[0];
         result |= ((b & 0x7F) as i32) << (i * 7);
         if b & 0x80 == 0 {
             return Ok(result);
         }
     }
-    Err("读取数据失败\nVarInt 超过 5 字节".to_string())
+    Err(keyed_msg!(
+        "errors.serverStatus.readFailed",
+        "读取数据失败\nVarInt 超过 5 字节"
+    ))
 }
 
 fn write_string(s: &str, out: &mut Vec<u8>) -> Result<(), String> {
     if s.len() > MAX_STRING {
-        bail!("文本过长\n{} 字节", s.len());
+        bail_key!(
+            "errors.serverStatus.textTooLong",
+            "文本过长\n{} 字节",
+            s.len()
+        );
     }
     write_varint(s.len() as i32, out);
     out.extend_from_slice(s.as_bytes());
@@ -442,13 +516,22 @@ fn write_string(s: &str, out: &mut Vec<u8>) -> Result<(), String> {
 async fn read_string<R: AsyncRead + Unpin>(r: &mut R, max: usize) -> Result<String, String> {
     let len = read_varint(r).await?;
     if len < 0 || len as usize > max {
-        bail!("响应格式错误\n字符串长度异常 {len}");
+        bail_key!(
+            "errors.serverStatus.badPacket",
+            "响应格式错误\n字符串长度异常 {len}"
+        );
     }
     let mut buf = vec![0u8; len as usize];
-    r.read_exact(&mut buf)
-        .await
-        .map_err(common_err_ctx!("读取数据失败"))?;
-    String::from_utf8(buf).map_err(|e| format!("响应格式错误\n非 UTF-8 文本：{e}"))
+    r.read_exact(&mut buf).await.map_err(common_err_ctx_key!(
+        "errors.serverStatus.readFailed",
+        "读取数据失败"
+    ))?;
+    String::from_utf8(buf).map_err(|e| {
+        keyed_msg!(
+            "errors.serverStatus.badPacket",
+            "响应格式错误\n非 UTF-8 文本：{e}"
+        )
+    })
 }
 
 #[cfg(test)]

@@ -84,7 +84,8 @@ pub fn list_interrupted_tasks() -> Vec<store::InterruptedJob> {
 /// 恢复中断任务：读快照 → 以恢复凭证重新提交（幂等重跑，已下载文件 sha1 命中自动跳过），返回新任务 id。
 #[tauri::command]
 pub async fn resume_task(app: AppHandle, task_id: String) -> Result<String, String> {
-    let (_name, spec) = store::load_spec(&task_id).ok_or("任务快照不存在或已过期")?;
+    let (_name, spec) = store::load_spec(&task_id)
+        .ok_or_else(|| keyed_msg!("errors.task.snapshotMissing", "任务快照不存在或已过期"))?;
     // 恢复即重跑：旧快照删除，spawn 时写入新快照（新 task_id）
     task::store::remove_snapshot(&task_id);
     match spec {
@@ -112,7 +113,7 @@ pub fn dismiss_interrupted_task(task_id: String) {
 #[tauri::command]
 pub fn pause_task(task_id: String) -> Result<(), String> {
     if !task::global().pause(&task_id) {
-        bail!("任务不存在或已结束{task_id}");
+        bail_key!("errors.task.notFound", "任务不存在或已结束{task_id}");
     }
     Ok(())
 }
@@ -138,12 +139,12 @@ pub fn decide_waiting_task(task_id: String, action: String) -> Result<(), String
         "skip" => task::WaitingDecision::Skip,
         "retry" => task::WaitingDecision::Retry,
         "cancel" => task::WaitingDecision::Cancel,
-        _ => bail!("未知决策\n{action}"),
+        _ => bail_key!("errors.task.unknownDecision", "未知决策\n{action}"),
     };
     if task::global().decide(&task_id, decision) {
         Ok(())
     } else {
-        Err("任务未处于等待状态".into())
+        Err(keyed_msg!("errors.task.notWaiting", "任务未处于等待状态"))
     }
 }
 
@@ -159,20 +160,29 @@ pub fn task_exists(task_id: String) -> bool {
 #[tauri::command]
 pub async fn install_modpack(app: AppHandle, request: ModpackRequest) -> Result<String, String> {
     if request.name.trim().is_empty() {
-        return Err("整合包名称不能为空".into());
+        return Err(keyed_msg!(
+            "errors.task.modpackNameEmpty",
+            "整合包名称不能为空"
+        ));
     }
     match &request.source {
         PackSource::Local { path } if path.trim().is_empty() => {
-            return Err("整合包文件路径不能为空".into());
+            return Err(keyed_msg!(
+                "errors.task.modpackPathEmpty",
+                "整合包文件路径不能为空"
+            ));
         }
         PackSource::Online { url, .. } if url.trim().is_empty() => {
-            return Err("整合包下载地址不能为空".into());
+            return Err(keyed_msg!(
+                "errors.task.modpackUrlEmpty",
+                "整合包下载地址不能为空"
+            ));
         }
         _ => {}
     }
     if let PackSource::Local { path } = &request.source {
         if !Path::new(path).is_file() {
-            bail!("整合包文件不存在\n{path}");
+            bail_key!("errors.task.modpackFileMissing", "整合包文件不存在\n{path}");
         }
     }
 

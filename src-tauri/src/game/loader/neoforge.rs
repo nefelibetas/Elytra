@@ -34,7 +34,12 @@ pub(super) async fn download_neoforge_universal(
     config: &DownloaderConfig,
     cancel: &std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
-    let name = uni["name"].as_str().ok_or("NeoForge universal 坐标缺失")?;
+    let name = uni["name"].as_str().ok_or_else(|| {
+        keyed_msg!(
+            "errors.loader.universalCoordMissing",
+            "NeoForge universal 坐标缺失"
+        )
+    })?;
     let parts: Vec<&str> = name.split(':').collect();
     if parts.len() < 4 {
         bail_key!(
@@ -110,7 +115,10 @@ pub(super) async fn extract_neoforge_client(
     let profile_text = {
         let mut f = archive
             .by_name("install_profile.json")
-            .map_err(common_err_ctx!("安装程序缺少 install_profile.json"))?;
+            .map_err(common_err_ctx_key!(
+                "errors.loader.profileMissing",
+                "安装程序缺少 install_profile.json"
+            ))?;
         let mut text = String::new();
         std::io::Read::read_to_string(&mut f, &mut text).map_err(common_err_ctx_key!(
             "errors.install.loader",

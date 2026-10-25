@@ -79,8 +79,10 @@ pub(super) async fn search_modrinth(
         ("offset", offset.to_string()),
     ];
     if !facets.is_empty() {
-        let facets_json =
-            serde_json::to_string(&facets).map_err(common_err_ctx!("序列化数据失败"))?;
+        let facets_json = serde_json::to_string(&facets).map_err(common_err_ctx_key!(
+            "errors.community.serializeFailed",
+            "序列化数据失败"
+        ))?;
         params.push(("facets", facets_json));
     }
     // 空关键字时按下载量排（对齐 PCL2：不输入名称直接显示热门 Mod）
@@ -90,9 +92,12 @@ pub(super) async fn search_modrinth(
     let urls: Vec<String> = api_urls(ApiPlatform::Modrinth, "/v2/search", &params)?;
     let data = get_json_multi(&urls, |u| http().get(u.to_string())).await?;
 
-    let hits = data["hits"]
-        .as_array()
-        .ok_or_else(|| "搜索响应缺少 hits".to_string())?;
+    let hits = data["hits"].as_array().ok_or_else(|| {
+        keyed_msg!(
+            "errors.community.modrinthSearchHitsMissing",
+            "搜索响应缺少 hits"
+        )
+    })?;
     let items: Vec<CommunitySearchResult> = hits
         .iter()
         .filter_map(|h| {
@@ -134,11 +139,17 @@ pub(super) async fn modrinth_versions(
 ) -> Result<Vec<CommunityVersion>, String> {
     let mut params: Vec<(&str, String)> = Vec::new();
     if let Some(gv) = game_version {
-        let arr = serde_json::to_string(&vec![gv]).map_err(common_err_ctx!("序列化数据失败"))?;
+        let arr = serde_json::to_string(&vec![gv]).map_err(common_err_ctx_key!(
+            "errors.community.serializeFailed",
+            "序列化数据失败"
+        ))?;
         params.push(("game_versions", arr));
     }
     if let Some(ld) = loader {
-        let arr = serde_json::to_string(&vec![ld]).map_err(common_err_ctx!("序列化数据失败"))?;
+        let arr = serde_json::to_string(&vec![ld]).map_err(common_err_ctx_key!(
+            "errors.community.serializeFailed",
+            "序列化数据失败"
+        ))?;
         params.push(("loaders", arr));
     }
     let urls: Vec<String> = api_urls(
@@ -148,9 +159,12 @@ pub(super) async fn modrinth_versions(
     )?;
     let data = get_json_multi(&urls, |u| http().get(u.to_string())).await?;
 
-    let arr = data
-        .as_array()
-        .ok_or_else(|| "版本响应格式错误".to_string())?;
+    let arr = data.as_array().ok_or_else(|| {
+        keyed_msg!(
+            "errors.community.modrinthVersionFormatInvalid",
+            "版本响应格式错误"
+        )
+    })?;
     Ok(arr
         .iter()
         .filter_map(|v| {
@@ -210,12 +224,18 @@ pub(super) async fn modrinth_versions(
 pub(crate) async fn modrinth_projects_raw(
     ids: &[String],
 ) -> Result<Vec<serde_json::Value>, String> {
-    let ids_json = serde_json::to_string(ids).map_err(common_err_ctx!("序列化数据失败"))?;
+    let ids_json = serde_json::to_string(ids).map_err(common_err_ctx_key!(
+        "errors.community.serializeFailed",
+        "序列化数据失败"
+    ))?;
     let urls: Vec<String> = api_urls(ApiPlatform::Modrinth, "/v2/projects", &[("ids", ids_json)])?;
     let data = get_json_multi(&urls, |u| http().get(u.to_string())).await?;
-    let arr = data
-        .as_array()
-        .ok_or_else(|| "项目详情响应格式错误".to_string())?;
+    let arr = data.as_array().ok_or_else(|| {
+        keyed_msg!(
+            "errors.community.modrinthDetailsFormatInvalid",
+            "项目详情响应格式错误"
+        )
+    })?;
     Ok(arr.to_vec())
 }
 

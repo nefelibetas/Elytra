@@ -24,10 +24,12 @@ use crate::util::{java_bin_path, parse_java_major, safe_relative_path};
 pub struct InstallProgress<'a> {
     /// 任务取消标志（下载循环每块检查，取消立即停止当前文件）
     pub cancel: Option<&'a AtomicBool>,
-    /// 报告总文件数/总字节（manifest 解析后；Azul 路径不报，进度回退文件数）
+    /// 开始一次源尝试（计数应在此清零：各源总量口径不同，跨源累加会出现「总 99% / 步骤 0%」）
+    pub on_attempt: Option<&'a (dyn Fn() + Send + Sync)>,
+    /// 报告总文件数/总字节（manifest 解析后；整包路径不报，改用 `on_bytes` 的总长）
     pub on_total: Option<&'a (dyn Fn(u32, u64) + Send + Sync)>,
-    /// 字节增量（当前文件下载中；调用方自行持有 prev 做差分）
-    pub on_bytes: Option<&'a (dyn Fn(u64) + Send + Sync)>,
+    /// 字节增量 + 该次传输声明的总字节（响应 Content-Length；整包安装的进度分母兜底）
+    pub on_bytes: Option<&'a (dyn Fn(u64, u64) + Send + Sync)>,
     /// 单文件下载完成
     pub on_file_done: Option<&'a (dyn Fn() + Send + Sync)>,
 }
@@ -75,7 +77,10 @@ pub async fn auto_install(
     hook: &InstallProgress<'_>,
 ) -> Result<JdkInfo, String> {
     if !is_supported_runtime_target() {
-        return Err("当前架构不受支持（仅支持 64 位 x64/arm64）".into());
+        return Err(keyed_msg!(
+            "errors.jdk.arch",
+            "当前架构不受支持（JDK 仅支持 64 位 x64/arm64）"
+        ));
     }
     let dest_dir = runtime_dir(config, major);
     // 已装同 major 则校验返回；Adoptium/Azul 顶层为 jdk-*/zulu*/ 子目录，
@@ -102,12 +107,19 @@ pub async fn auto_install(
     };
     let mut errors = Vec::new();
     for (installer, source_name) in chain {
+        if let Some(f) = hook.on_attempt {
+            f();
+        }
         match run_installer(&installer, major, config, hook).await {
             Ok(info) => return Ok(info),
             Err(e) => errors.push(format!("{source_name}: {e}")),
         }
     }
-    Err(format!("下载 Java {} 失败\n{}", major, errors.join("\n")))
+    Err(keyed_msg!(
+        "errors.jdk.downloadFailed?major={major}",
+        "下载 Java {major} 失败\n所有下载源均失败（已重试 3 轮），请检查网络或稍后重试\n{}",
+        errors.join("\n")
+    ))
 }
 
 /// 回退链上的安装器（顺序由 jdk_source_mode 决定）。
@@ -352,8 +364,12 @@ async fn install_mojang_runtime(
     config: &DownloaderConfig,
     hook: &InstallProgress<'_>,
 ) -> Result<JdkInfo, String> {
-    let component = component_for_major(major)
-        .ok_or_else(|| format!("Java {major} 无对应 Mojang runtime 组件（仅支持 8/17/21/25）"))?;
+    let component = component_for_major(major).ok_or_else(|| {
+        keyed_msg!(
+            "errors.jdk.component?major={major}",
+            "Java {major} 没有官方运行时（Mojang 仅提供 8/17/21/25）"
+        )
+    })?;
     let platform = platform_key();
 
     // 1. 拉取 all.json（多源回退 + TTL 缓存：BMCLAPI 镜像 piston-meta）
@@ -375,15 +391,20 @@ async fn install_mojang_runtime(
     let entry = all[&platform][component]
         .as_array()
         .and_then(|arr| arr.first())
-        .ok_or_else(|| format!("runtime 索引缺少 {platform}/{component} 条目"))?;
+        .ok_or_else(|| {
+            keyed_msg!(
+                "errors.jdk.manifest",
+                "运行时清单缺少条目\n{platform}/{component}"
+            )
+        })?;
     let manifest_info = entry["manifest"]
         .as_object()
         .cloned()
-        .ok_or("runtime manifest 信息缺失")?;
+        .ok_or_else(|| keyed_msg!("errors.jdk.manifest", "运行时清单缺少 manifest 信息"))?;
     let manifest_url = manifest_info
         .get("url")
         .and_then(|u| u.as_str())
-        .ok_or("runtime manifest 缺 url")?
+        .ok_or_else(|| keyed_msg!("errors.jdk.manifest", "运行时清单缺少 manifest 地址"))?
         .to_string();
     let manifest_sha1 = manifest_info
         .get("sha1")
@@ -422,7 +443,7 @@ async fn install_mojang_runtime(
     let dest_root = runtime_dir(config, major);
     let files = manifest["files"]
         .as_object()
-        .ok_or("runtime manifest 缺 files")?;
+        .ok_or_else(|| keyed_msg!("errors.jdk.manifest", "运行时清单缺少 files"))?;
     let mut total_files = 0u32;
     let mut total_bytes = 0u64;
     for (_, meta) in files {
@@ -447,13 +468,15 @@ async fn install_mojang_runtime(
                     .map_err(common_err_ctx_key!("errors.file.createDir", "创建目录失败"))?;
             }
             "file" => {
-                let raw = meta["downloads"]["raw"]
-                    .as_object()
-                    .ok_or_else(|| format!("{path} 缺 downloads.raw"))?;
-                let url = raw
-                    .get("url")
-                    .and_then(|u| u.as_str())
-                    .ok_or_else(|| format!("{path} 缺 url"))?;
+                let raw = meta["downloads"]["raw"].as_object().ok_or_else(|| {
+                    keyed_msg!(
+                        "errors.jdk.manifest",
+                        "运行时清单条目缺 downloads.raw\n{path}"
+                    )
+                })?;
+                let url = raw.get("url").and_then(|u| u.as_str()).ok_or_else(|| {
+                    keyed_msg!("errors.jdk.manifest", "运行时清单条目缺 url\n{path}")
+                })?;
                 let sha1 = raw.get("sha1").and_then(|s| s.as_str()).unwrap_or("");
                 let urls: Vec<String> = config
                     .file_sources_list()
@@ -536,14 +559,14 @@ async fn install_adoptium_runtime(
                     && x["binary"]["architecture"].as_str() == Some(arch)
             })
         })
-        .ok_or("Adoptium 无匹配包")?;
+        .ok_or_else(|| keyed_msg!("errors.jdk.noPackage", "Adoptium 没有匹配的 JDK 包"))?;
     let package = asset["binary"]["package"]
         .as_object()
-        .ok_or("Adoptium 包缺 binary.package")?;
+        .ok_or_else(|| keyed_msg!("errors.jdk.noPackage", "Adoptium 响应缺 binary.package"))?;
     let name = package
         .get("name")
         .and_then(|v| v.as_str())
-        .ok_or("Adoptium 包缺文件名")?
+        .ok_or_else(|| keyed_msg!("errors.jdk.noPackage", "Adoptium 响应缺包文件名"))?
         .to_string();
     let sha256 = package
         .get("checksum")
@@ -591,7 +614,10 @@ async fn install_adoptium_runtime(
         let actual = file_sha256(&pkg_path);
         if actual != sha256 {
             let _ = std::fs::remove_file(&pkg_path);
-            return Err("Adoptium 包 sha256 校验失败".into());
+            return Err(keyed_msg!(
+                "errors.jdk.checksum",
+                "Adoptium 包 sha256 校验失败"
+            ));
         }
     }
 
@@ -601,7 +627,8 @@ async fn install_adoptium_runtime(
     extract_archive(&pkg_path, &dest_root)?;
     let _ = std::fs::remove_file(&pkg_path);
 
-    let home = find_java_home(&dest_root).ok_or("解压后未找到 JDK 根目录")?;
+    let home = find_java_home(&dest_root)
+        .ok_or_else(|| keyed_msg!("errors.jdk.noHome", "解压后未找到 JDK 根目录"))?;
     let info = scanner::inspect(&home).map_err(common_err_ctx_key!(
         "errors.jdk.install",
         "校验 Adoptium JDK 失败"
@@ -655,7 +682,10 @@ fn extract_archive(package: &Path, dest_root: &Path) -> Result<(), String> {
     } else if name.ends_with(".tar.gz") || name.ends_with(".tgz") {
         extract_tar_gz(package, dest_root)
     } else {
-        Err(format!("不支持的 JDK 包格式\n{name}"))
+        Err(keyed_msg!(
+            "errors.jdk.package",
+            "不支持的 JDK 包格式\n{name}"
+        ))
     }
 }
 
@@ -669,12 +699,12 @@ fn extract_zip(package: &Path, dest_root: &Path) -> Result<(), String> {
         let mut entry = archive
             .by_index(i)
             .map_err(common_err_ctx_key!("errors.file.read", "读取条目失败"))?;
-        let name = entry.name().to_string();
-        let out = dest_root.join(safe_relative_path(&name)?);
+        // 目录条目名带尾 `/`（过不了相对路径校验）：目录由文件写入时隐式创建
         if entry.is_dir() {
-            std::fs::create_dir_all(&out).ok();
             continue;
         }
+        let name = entry.name().to_string();
+        let out = dest_root.join(safe_relative_path(&name)?);
         if let Some(parent) = out.parent() {
             std::fs::create_dir_all(parent).ok();
         }
@@ -703,6 +733,11 @@ fn extract_tar_gz(package: &Path, dest_root: &Path) -> Result<(), String> {
         .map_err(common_err_ctx_key!("errors.file.read", "读取 JDK 包失败"))?;
     for entry in entries {
         let mut entry = entry.map_err(common_err_ctx_key!("errors.file.read", "读取条目失败"))?;
+        let kind = entry.header().entry_type();
+        // 目录/特殊条目名带尾 `/` 或链接语义（过不了相对路径校验）：目录由文件写入时隐式创建
+        if !kind.is_file() {
+            continue;
+        }
         let mut name = entry
             .path()
             .map_err(common_err_ctx_key!("errors.file.read", "读取条目路径失败"))?
@@ -712,13 +747,6 @@ fn extract_tar_gz(package: &Path, dest_root: &Path) -> Result<(), String> {
             name = stripped.to_string();
         }
         let out = dest_root.join(safe_relative_path(&name)?);
-        if entry.header().entry_type().is_dir() {
-            std::fs::create_dir_all(&out).ok();
-            continue;
-        }
-        if !entry.header().entry_type().is_file() {
-            continue;
-        }
         if let Some(parent) = out.parent() {
             std::fs::create_dir_all(parent).ok();
         }
@@ -776,11 +804,11 @@ async fn install_azul_runtime(
     let pkg = packages
         .as_array()
         .and_then(|a| a.first())
-        .ok_or("Azul 无匹配包")?;
+        .ok_or_else(|| keyed_msg!("errors.jdk.noPackage", "Azul 没有匹配的 JDK 包"))?;
     let download_url = pkg
         .get("download_url")
         .and_then(|u| u.as_str())
-        .ok_or("Azul 包缺 download_url")?
+        .ok_or_else(|| keyed_msg!("errors.jdk.noPackage", "Azul 响应缺 download_url"))?
         .to_string();
     let sha256 = pkg
         .get("sha256_hash")
@@ -806,7 +834,7 @@ async fn install_azul_runtime(
         let actual = file_sha256(&zip_path);
         if actual != sha256 {
             let _ = std::fs::remove_file(&zip_path);
-            return Err("Azul 包 sha256 校验失败".into());
+            return Err(keyed_msg!("errors.jdk.checksum", "Azul 包 sha256 校验失败"));
         }
     }
 
@@ -817,7 +845,8 @@ async fn install_azul_runtime(
     extract_archive(&zip_path, &dest_root)?;
     let _ = std::fs::remove_file(&zip_path);
 
-    let home = find_java_home(&dest_root).ok_or("解压后未找到 JDK 根目录")?;
+    let home = find_java_home(&dest_root)
+        .ok_or_else(|| keyed_msg!("errors.jdk.noHome", "解压后未找到 JDK 根目录"))?;
     let info = scanner::inspect(&home).map_err(common_err_ctx_key!(
         "errors.jdk.install",
         "校验 Azul JDK 失败"
@@ -857,14 +886,16 @@ fn temp_file(name: &str) -> PathBuf {
     dir.join(name)
 }
 
-/// 字节增量回调工厂：闭包自持水位原子，swap-prev 差分增量转给 `on_bytes`；
+/// 字节回调工厂：闭包自持水位原子，swap-prev 差分增量连同该次传输声明的总字节转给 `on_bytes`；
 /// 不复用 byte_callback（JDK 链路无步骤计数，消费端不同构）。
-fn delta_callback<'a>(on_bytes: Option<&'a (dyn Fn(u64) + Send + Sync)>) -> impl Fn(u64, u64) + 'a {
+fn delta_callback<'a>(
+    on_bytes: Option<&'a (dyn Fn(u64, u64) + Send + Sync)>,
+) -> impl Fn(u64, u64) + 'a {
     let prev = AtomicU64::new(0);
-    move |downloaded: u64, _total: u64| {
+    move |downloaded: u64, total: u64| {
         let p = prev.swap(downloaded, Ordering::Relaxed);
         if let Some(f) = on_bytes {
-            f(downloaded.saturating_sub(p));
+            f(downloaded.saturating_sub(p), total);
         }
     }
 }
@@ -953,6 +984,115 @@ mod tests {
             "应递归定位 zulu 子目录内的 java 根"
         );
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// zip 里的目录条目名带尾 `/`（Azul/Adoptium 包首条即 `jdk8u…/`）：跳过而非判非法路径。
+    #[test]
+    fn extract_zip_skips_directory_entries() {
+        let tmp = std::env::temp_dir().join(format!("elytra_zip_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let pkg = tmp.join("jdk.zip");
+        let bin_rel = java_bin_path(Path::new("jdk8u504-b01"))
+            .to_string_lossy()
+            .replace('\\', "/");
+        {
+            let mut z = zip::ZipWriter::new(std::fs::File::create(&pkg).unwrap());
+            let opts = zip::write::SimpleFileOptions::default();
+            z.add_directory("jdk8u504-b01/", opts).unwrap();
+            z.add_directory("jdk8u504-b01/bin/", opts).unwrap();
+            z.start_file(&bin_rel, opts).unwrap();
+            std::io::Write::write_all(&mut z, b"fake java").unwrap();
+            z.finish().unwrap();
+        }
+        let dest = tmp.join("out");
+        std::fs::create_dir_all(&dest).unwrap();
+        extract_archive(&pkg, &dest).expect("目录条目不得判为非法路径");
+        assert!(dest.join(&bin_rel).is_file(), "文件应解出");
+        assert_eq!(
+            find_java_home(&dest).as_deref(),
+            Some(dest.join("jdk8u504-b01").as_path()),
+            "应递归定位 JDK 根"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// 真实网络端到端：三条源各自装 Java 8——官方 jre-legacy 含零字节文件，Azul/Adoptium 包首条是目录条目，
+    /// 两者都曾在真实数据上失败；逐源单跑，避免上游成功时下游不执行。
+    #[test]
+    #[ignore = "真实网络：逐源安装 ~100MB Java 8 运行时"]
+    fn real_install_java8_per_source() {
+        use std::sync::atomic::{AtomicU32, AtomicU64};
+        // 进度证据：清单总量（官方）与传输总长（整包）都必须报上来，否则总/步骤进度没有分母
+        let total_files = AtomicU32::new(0);
+        let total_bytes = AtomicU64::new(0);
+        let wire_total = AtomicU64::new(0);
+        let hook = InstallProgress {
+            cancel: None,
+            on_attempt: None,
+            on_total: Some(&|files, bytes| {
+                total_files.store(files, Ordering::Relaxed);
+                total_bytes.store(bytes, Ordering::Relaxed);
+            }),
+            on_bytes: Some(&|_delta, total| {
+                if total > 0 {
+                    wire_total.store(total, Ordering::Relaxed);
+                }
+            }),
+            on_file_done: None,
+        };
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let temp_mc = |name: &str| -> (PathBuf, DownloaderConfig) {
+            let tmp = std::env::temp_dir().join(format!("elytra_j8_{name}_{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&tmp);
+            std::fs::create_dir_all(&tmp).unwrap();
+            let cfg = DownloaderConfig {
+                minecraft_dir: tmp.display().to_string(),
+                ..Default::default()
+            };
+            (tmp, cfg)
+        };
+
+        let (tmp, cfg) = temp_mc("mojang");
+        let info = rt
+            .block_on(install_mojang_runtime(8, &cfg, &hook))
+            .expect("官方源装 Java 8");
+        assert_eq!(parse_java_major(&info.version), Some(8), "{info:?}");
+        assert!(java_bin_path(Path::new(&info.path)).is_file(), "{info:?}");
+        assert!(
+            total_files.load(Ordering::Relaxed) > 0 && total_bytes.load(Ordering::Relaxed) > 0,
+            "官方源应报清单总量（进度分母）"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        let (tmp, cfg) = temp_mc("azul");
+        wire_total.store(0, Ordering::Relaxed);
+        let info = rt
+            .block_on(install_azul_runtime(8, &cfg, &hook))
+            .expect("Azul 源装 Java 8");
+        assert_eq!(parse_java_major(&info.version), Some(8), "{info:?}");
+        assert!(java_bin_path(Path::new(&info.path)).is_file(), "{info:?}");
+        assert!(
+            wire_total.load(Ordering::Relaxed) > 0,
+            "Azul 包应报传输总长（整包进度分母）"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        let (tmp, cfg) = temp_mc("adoptium");
+        wire_total.store(0, Ordering::Relaxed);
+        let info = rt
+            .block_on(install_adoptium_runtime(8, &cfg, &hook, true))
+            .expect("Adoptium 源装 Java 8");
+        assert_eq!(parse_java_major(&info.version), Some(8), "{info:?}");
+        assert!(java_bin_path(Path::new(&info.path)).is_file(), "{info:?}");
+        assert!(
+            wire_total.load(Ordering::Relaxed) > 0,
+            "Adoptium 包应报传输总长（整包进度分母）"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]

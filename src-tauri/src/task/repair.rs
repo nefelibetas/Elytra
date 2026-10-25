@@ -699,7 +699,7 @@ pub async fn count_assets_all(
         }
     });
     if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
-        return Err("任务已取消".into());
+        return Err(keyed_msg!("errors.task.cancelled", "任务已取消"));
     }
     Ok((
         pending.load(Ordering::Relaxed),

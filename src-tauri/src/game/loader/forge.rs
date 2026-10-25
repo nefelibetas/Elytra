@@ -86,13 +86,19 @@ pub(super) async fn download_and_extract(
 
     // installer 须保留到安装结束：processors 引擎需要 {INSTALLER}
     if !found_json {
-        return Err("未找到 version.json".into());
+        return Err(keyed_msg!(
+            "errors.loader.versionJsonMissing",
+            "未找到 version.json"
+        ));
     }
     if let Some(h) = hook {
         h(LoaderEvent::ConfigDone);
     }
     if let Some(reason) = jar_missing {
-        bail!("未找到 client.jar\n{reason}");
+        bail_key!(
+            "errors.loader.clientJarMissing",
+            "未找到 client.jar\n{reason}"
+        );
     }
 
     // ── 下载展开后 JSON 的全部库（vanilla 库已存在自动跳过，实际拉取 ModLoader 增量）──
@@ -295,9 +301,10 @@ fn verify_profile_artifacts(profile: &serde_json::Value, lib_dir: &Path) -> Resu
     if missing.is_empty() {
         return Ok(());
     }
-    let mut msg = format!(
-        "ModLoader 支持库缺失 {} 个（安装器 install_profile 已声明，缺文件会导致游戏启动失败）",
-        missing.len()
+    let missing_count = missing.len();
+    let mut msg = keyed_msg!(
+        "errors.loader.librariesMissing?count={missing_count}",
+        "ModLoader 支持库缺失 {missing_count} 个（安装器 install_profile 已声明，缺文件会导致游戏启动失败）"
     );
     for p in missing.iter().take(20) {
         msg.push_str(&format!("\n  {p}"));
@@ -337,7 +344,14 @@ async fn download_loader_libraries(
         Some(cancel),
     )
     .await
-    .map_err(|e| format!("下载 {} 支持库失败:\n{}", dir_name, e.join("\n")))?;
+    .map_err(|e| {
+        keyed_msg!(
+            "errors.download.failed",
+            "下载 {} 支持库失败:\n{}",
+            dir_name,
+            e.join("\n")
+        )
+    })?;
     Ok(())
 }
 
@@ -364,7 +378,10 @@ async fn install_neoforge_universal(
         .unwrap_or("")
         .to_string();
     if neo_version.is_empty() {
-        return Err("NeoForge universal 坐标缺少版本号".into());
+        return Err(keyed_msg!(
+            "errors.loader.universalCoordNoVersion",
+            "NeoForge universal 坐标缺少版本号"
+        ));
     }
     download_neoforge_universal(uni, lib_dir, config, cancel).await?;
     // 运行 installertools 生成 patched（前置：等待 vanilla 下载完成）
@@ -479,9 +496,11 @@ fn install_profile_file(
         std::fs::create_dir_all(parent)
             .map_err(common_err_ctx_key!("errors.file.createDir", "创建目录失败"))?;
     }
-    let mut member = archive
-        .by_name(file)
-        .map_err(common_err_ctx!("安装程序内缺少 {} ", file))?;
+    let mut member = archive.by_name(file).map_err(common_err_ctx_key!(
+        "errors.loader.installerEntryMissing",
+        "安装程序内缺少 {} ",
+        file
+    ))?;
     let mut out = std::fs::File::create(&dest)
         .map_err(common_err_ctx_key!("errors.file.write", "创建文件失败"))?;
     std::io::copy(&mut member, &mut out).map_err(common_err_ctx_key!(
@@ -571,7 +590,7 @@ pub(super) async fn wait_for_vanilla_client(
     let mut stable = 0u32;
     for _ in 0..240 {
         if cancel.load(Ordering::SeqCst) {
-            return Err("任务已取消".into());
+            return Err(keyed_msg!("errors.task.cancelled", "任务已取消"));
         }
         let size = std::fs::metadata(&vanilla_jar)
             .map(|m| m.len())
@@ -589,7 +608,10 @@ pub(super) async fn wait_for_vanilla_client(
         }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
-    Err("等待原版客户端下载超时（120s），无法生成 ModLoader client".into())
+    Err(keyed_msg!(
+        "errors.loader.vanillaClientTimeout",
+        "等待原版客户端下载超时\n120s 内未检测到完整的原版客户端，无法生成 ModLoader client"
+    ))
 }
 
 /// Auto 模式选 JDK 的纯决策：`required > 0` 走启动侧按需选择（精确/最低满足/最高），否则回退缓存首项。
@@ -620,9 +642,10 @@ pub(super) fn resolve_java(required: u32) -> Result<PathBuf, String> {
                     return Ok(java);
                 }
             }
-            Err(
-                "未检测到 Java 环境，无法运行 ModLoader 安装工具（需要 JDK，请在设置中配置 Java 或设置 JAVA_HOME）".into(),
-            )
+            Err(keyed_msg!(
+                "errors.loader.javaMissing",
+                "未检测到 Java 环境\n无法运行 ModLoader 安装工具（需要 JDK，请在设置中配置 Java 或设置 JAVA_HOME）"
+            ))
         }
     }
 }
@@ -638,7 +661,10 @@ async fn resolve_version_json(
     // 提取 → 展开继承 → 序列化 → 写盘；三个策略共用
     let write_extracted = |v: serde_json::Value| -> Result<(), String> {
         let merged = expand_inheritance(parent_text, v, dir_name)?;
-        let out = serde_json::to_string_pretty(&merged).map_err(common_err_ctx!("序列化失败"))?;
+        let out = serde_json::to_string_pretty(&merged).map_err(common_err_ctx_key!(
+            "errors.loader.serializeVersionJson",
+            "序列化失败"
+        ))?;
         std::fs::write(json_path, &out).map_err(common_err_ctx_key!(
             "errors.file.write",
             "写入 version.json 失败"
@@ -764,7 +790,10 @@ async fn resolve_jar(
             // maven 直下失败原因随 Ok(Some(..)) 上交（命中本策略后不再尝试后续策略）
             return match fetcher::fetch(&jar_url, jar_path, None::<fn(u64, u64)>).await {
                 Ok(_) => Ok(None),
-                Err(e) => Ok(Some(format!("maven 下载 client.jar 失败\n{e}"))),
+                Err(e) => Ok(Some(keyed_msg!(
+                    "errors.download.failed",
+                    "maven 下载 client.jar 失败\n{e}"
+                ))),
             };
         }
     }
@@ -818,16 +847,26 @@ async fn resolve_jar_from_manifest(
         "errors.version.parse",
         "解析版本清单失败"
     ))?;
-    let versions = manifest["versions"]
-        .as_array()
-        .ok_or("版本清单缺 versions 数组")?;
+    let versions = manifest["versions"].as_array().ok_or_else(|| {
+        keyed_msg!(
+            "errors.loader.manifestNoVersions",
+            "版本清单缺 versions 数组"
+        )
+    })?;
     // ponytail: mc_ver 由目录名连字符首段猜测，版本号含连字符时会错；应传 mc_version
     let mc_ver = dir_name.split('-').next().unwrap_or(dir_name);
     let entry = versions
         .iter()
         .find(|v| v["id"].as_str() == Some(mc_ver))
-        .ok_or_else(|| format!("版本清单未收录 {mc_ver}"))?;
-    let url = entry["url"].as_str().ok_or("版本条目缺 url")?;
+        .ok_or_else(|| {
+            keyed_msg!(
+                "errors.loader.manifestVersionMissing?mc_ver={mc_ver}",
+                "版本清单未收录 {mc_ver}"
+            )
+        })?;
+    let url = entry["url"]
+        .as_str()
+        .ok_or_else(|| keyed_msg!("errors.loader.manifestEntryNoUrl", "版本条目缺 url"))?;
     let url = source.mirror_url(url);
     let vj = http()
         .get(&url)
@@ -851,7 +890,12 @@ async fn resolve_jar_from_manifest(
         .pointer("/downloads/client/url")
         .and_then(|u| u.as_str())
         .map(|u| source.mirror_url(u))
-        .ok_or("版本 JSON 缺 downloads.client.url")?;
+        .ok_or_else(|| {
+            keyed_msg!(
+                "errors.loader.versionJsonNoClientUrl",
+                "版本 JSON 缺 downloads.client.url"
+            )
+        })?;
     fetcher::fetch(&dl_url, jar_path, None::<fn(u64, u64)>)
         .await
         .map_err(common_err_ctx_key!(

@@ -84,7 +84,7 @@ pub async fn switch_ms_account(uuid: String) -> Result<model::MsAccount, String>
     let account = model::read_all()
         .into_iter()
         .find(|a| a.uuid == uuid)
-        .ok_or("该账号不在列表中，请重新登录")?;
+        .ok_or_else(|| keyed_msg!("errors.account.notInList", "该账号不在列表中，请重新登录"))?;
     let refreshed = microsoft::refresh_login(&account)
         .await
         .map_err(|e| e.to_string())?;
@@ -98,7 +98,7 @@ pub fn fetch_default_skin(skin: String) -> Result<String, String> {
     let data: &[u8] = match skin.as_str() {
         "steve" => include_bytes!("../../resources/steve.png"),
         "alex" => include_bytes!("../../resources/alex.png"),
-        _ => return Err("未知皮肤类型".into()),
+        _ => return Err(keyed_msg!("errors.account.unknownSkinType", "未知皮肤类型")),
     };
     Ok(base64::engine::general_purpose::STANDARD.encode(data))
 }
@@ -114,7 +114,7 @@ async fn fetch_skin_official(uuid: String) -> Result<String, String> {
     let textures = mojang::profile_textures(&uuid).await?;
     let skin_url = textures["textures"]["SKIN"]["url"]
         .as_str()
-        .ok_or("该账号未设置皮肤")?;
+        .ok_or_else(|| keyed_msg!("errors.account.noSkin", "该账号未设置皮肤"))?;
     account::fetch_b64(skin_url, "下载皮肤").await
 }
 
@@ -179,10 +179,7 @@ pub async fn save_skin(uuid: String, path: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn upload_skin_file(file_path: String, variant: String) -> Result<(), String> {
     if !matches!(variant.as_str(), "CLASSIC" | "SLIM") {
-        bail!(
-            "未知皮肤模型
-{variant}"
-        );
+        bail_key!("errors.account.unknownSkinModel", "未知皮肤模型\n{variant}");
     }
     let token = account::valid_access_token().await?;
     account::upload_skin(&token, &file_path, &variant).await
@@ -214,7 +211,8 @@ pub async fn ensure_ms_account() -> Result<model::MsAccount, String> {
 
 #[tauri::command]
 pub async fn refresh_ms_account() -> Result<model::MsAccount, String> {
-    let account = model::read().ok_or("未登录 Microsoft 账号")?;
+    let account = model::read()
+        .ok_or_else(|| keyed_msg!("errors.account.notSignedIn", "未登录 Microsoft 账号"))?;
     let refreshed = microsoft::refresh_login(&account)
         .await
         .map_err(|e| e.to_string())?;

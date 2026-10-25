@@ -57,8 +57,13 @@ fn prepare_runtime(task: &DownloadTask) -> Result<TaskRuntime, String> {
     let reuse_root = reuse::LocalRuntimeSource::discover(&vdir);
     // 任务开始前目录是否已存在：全新下载失败整删残缺目录；补全（目录已存在）失败不删。
     let vdir_existed_before = vdir.exists();
-    let lock = PathLock::try_acquire(&vdir)
-        .ok_or_else(|| format!("该版本正在被其他任务下载:\n{}", vdir.display()))?;
+    let lock = PathLock::try_acquire(&vdir).ok_or_else(|| {
+        keyed_msg!(
+            "errors.task.busy",
+            "该版本正在被其他任务下载\n{}",
+            vdir.display()
+        )
+    })?;
 
     Ok(TaskRuntime {
         started: std::time::Instant::now(),

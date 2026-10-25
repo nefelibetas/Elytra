@@ -238,7 +238,7 @@ where
                 }
                 tokio::time::sleep(Duration::from_millis(120)).await;
             }
-        } => Err("任务已取消".into()),
+        } => Err(keyed_msg!("errors.task.cancelled", "任务已取消")),
     }
 }
 
@@ -567,9 +567,12 @@ impl<'a> PackInstall<'a> {
     }
 
     fn vj(&self) -> Result<&VersionJson, String> {
-        self.version_json
-            .as_ref()
-            .ok_or_else(|| "内部错误：版本清单未加载（B1 未先于 B2–B5 执行）".to_string())
+        self.version_json.as_ref().ok_or_else(|| {
+            keyed_msg!(
+                "errors.modpack.internalState",
+                "内部错误：版本清单未加载（B1 未先于 B2–B5 执行）"
+            )
+        })
     }
 
     /// B1：版本清单（唯一硬前置）。补齐 B 段总量估算；无 loader 时写原版 JSON。
@@ -609,8 +612,10 @@ impl<'a> PackInstall<'a> {
         );
         // 无 loader 时写原版 JSON（loader 模式由 installer 写）；写盘失败必须报错：假成功会让版本缺 json、启动时报"未找到版本 JSON"。
         if self.plan.loader.is_none() {
-            let json = serde_json::to_string_pretty(&vj)
-                .map_err(common_err_ctx!("序列化版本 JSON 失败"))?;
+            let json = serde_json::to_string_pretty(&vj).map_err(common_err_ctx_key!(
+                "errors.modpack.serializeVersionJson",
+                "序列化版本 JSON 失败"
+            ))?;
             let jp = self
                 .vdir
                 .join(format!("{}.json", self.plan.version_dir_name));
@@ -1072,7 +1077,7 @@ async fn phase_fetch_pack(
     if let PackSource::Local { path } = &request.source {
         // 恢复场景文件可能已被移动/删除：给中文首行提示，而非下游 open_zip 的「系统找不到指定的路径。(os error 3)」
         if !zip_path.is_file() {
-            bail!("整合包文件不存在\n{path}");
+            bail_key!("errors.modpack.fileMissing", "整合包文件不存在\n{path}");
         }
     } else if let PackSource::Online { url, sha1, size } = &request.source {
         set_phase(

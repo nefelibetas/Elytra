@@ -86,7 +86,7 @@ pub fn switch(api_url: &str, uuid: &str) -> Result<(), String> {
         constants::SECT_EXTERNAL_ACCOUNTS,
         move |list: &mut Vec<ExternalAccount>| {
             let Some(idx) = list.iter().position(|a| a.api_url == api && a.uuid == id) else {
-                bail!("账号不存在\n{api} {id}");
+                bail_key!("errors.auth.accountNotFound", "账号不存在\n{api} {id}");
             };
             let acc = list.remove(idx);
             list.push(acc);
@@ -116,10 +116,16 @@ pub async fn login(
 ) -> Result<ExternalAccount, String> {
     let api = api_url.trim().trim_end_matches('/').to_string();
     if api.is_empty() {
-        return Err("请输入验证服务器地址".into());
+        return Err(keyed_msg!(
+            "errors.auth.serverUrlRequired",
+            "请输入验证服务器地址"
+        ));
     }
     if username.trim().is_empty() || password.is_empty() {
-        return Err("请输入账号与密码".into());
+        return Err(keyed_msg!(
+            "errors.auth.credentialsRequired",
+            "请输入账号与密码"
+        ));
     }
     // Ely.by 非标准路径：/auth/authenticate；其余标准 /authserver/authenticate
     let url = if is_ely_by(&api) {
@@ -154,7 +160,7 @@ pub async fn login(
         .map_err(common_err_ctx_key!("errors.parse", "响应解析失败"))?;
     let token = json["accessToken"]
         .as_str()
-        .ok_or("登录响应缺少 accessToken")?
+        .ok_or_else(|| keyed_msg!("errors.auth.loginNoToken", "登录响应缺少 accessToken"))?
         .to_string();
     // 客户端 token（refresh 换角色/续期必需；服务器通常回显，无则用请求生成的）
     let client_token = json["clientToken"]
@@ -166,9 +172,25 @@ pub async fn login(
         .get("selectedProfile")
         .filter(|p| !p.is_null())
         .or_else(|| json["availableProfiles"].as_array().and_then(|a| a.first()))
-        .ok_or("账号没有可用角色（请先在皮肤站创建角色）")?;
-    let uuid = profile["id"].as_str().ok_or("角色缺少 id")?.to_string();
-    let name = profile["name"].as_str().ok_or("角色缺少 name")?.to_string();
+        .ok_or_else(|| {
+            keyed_msg!(
+                "errors.auth.noProfiles",
+                "账号没有可用角色（请先在皮肤站创建角色）"
+            )
+        })?;
+    let uuid = profile["id"]
+        .as_str()
+        .ok_or_else(|| keyed_msg!("errors.auth.profileMissingField?field=id", "角色缺少 id"))?
+        .to_string();
+    let name = profile["name"]
+        .as_str()
+        .ok_or_else(|| {
+            keyed_msg!(
+                "errors.auth.profileMissingField?field=name",
+                "角色缺少 name"
+            )
+        })?
+        .to_string();
     // 皮肤站名称（元数据探测；失败不阻塞）
     let server_name = server_name(&api).await;
 
@@ -217,13 +239,16 @@ pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccoun
         .iter()
         .position(|a| a.api_url == api_url && a.uuid == uuid)
     else {
-        bail!("账号不存在\n{api_url} {uuid}");
+        bail_key!(
+            "errors.auth.accountNotFound",
+            "账号不存在\n{api_url} {uuid}"
+        );
     };
     let acc = list[idx].clone();
     let client_token = acc
         .client_token
         .as_deref()
-        .ok_or("该账号缺少凭据，请重新登录")?
+        .ok_or_else(|| keyed_msg!("errors.auth.noCredentials", "该账号缺少凭据，请重新登录"))?
         .to_string();
     let api = api_url.trim().trim_end_matches('/');
     let url = if is_ely_by(api) {
@@ -267,7 +292,7 @@ pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccoun
         .map_err(common_err_ctx_key!("errors.parse", "响应解析失败"))?;
     let new_token = json["accessToken"]
         .as_str()
-        .ok_or("刷新响应缺少 accessToken")?
+        .ok_or_else(|| keyed_msg!("errors.auth.refreshNoToken", "刷新响应缺少 accessToken"))?
         .to_string();
     // 部分服务器（Ely.by 等）refresh 响应无 availableProfiles，缺失/为空时保留原列表
     let profiles = json["availableProfiles"]
@@ -309,7 +334,10 @@ pub async fn refresh_account(api_url: &str, uuid: &str) -> Result<ExternalAccoun
         constants::SECT_EXTERNAL_ACCOUNTS,
         move |list: &mut Vec<ExternalAccount>| {
             let Some(idx) = list.iter().position(|a| a.api_url == api && a.uuid == id) else {
-                return Err("账号已不存在（可能已被移除）".to_string());
+                return Err(keyed_msg!(
+                    "errors.auth.accountRemoved",
+                    "账号已不存在（可能已被移除）"
+                ));
             };
             if let Some((new_id, new_name)) = &selected {
                 list[idx].uuid = new_id.clone();
@@ -337,13 +365,16 @@ pub async fn switch_role(
         .iter()
         .position(|a| a.api_url == api_url && a.uuid == uuid)
     else {
-        bail!("账号不存在\n{api_url} {uuid}");
+        bail_key!(
+            "errors.auth.accountNotFound",
+            "账号不存在\n{api_url} {uuid}"
+        );
     };
     let acc = list[idx].clone();
     let client_token = acc
         .client_token
         .as_deref()
-        .ok_or("该账号缺少凭据，请重新登录")?
+        .ok_or_else(|| keyed_msg!("errors.auth.noCredentials", "该账号缺少凭据，请重新登录"))?
         .to_string();
     let api = api_url.trim().trim_end_matches('/');
     // Ely.by 非标准 refresh 路径（/auth/refresh）；标准 /authserver/refresh
@@ -380,7 +411,7 @@ pub async fn switch_role(
         .map_err(common_err_ctx_key!("errors.parse", "响应解析失败"))?;
     let new_token = json["accessToken"]
         .as_str()
-        .ok_or("切换响应缺少 accessToken")?
+        .ok_or_else(|| keyed_msg!("errors.auth.switchNoToken", "切换响应缺少 accessToken"))?
         .to_string();
     // 更新账号并置末尾启用；同样原子读-改-写，避免并发改动被陈旧快照覆盖。
     let (api, id) = (api_url.to_string(), uuid.to_string());
@@ -389,7 +420,10 @@ pub async fn switch_role(
         constants::SECT_EXTERNAL_ACCOUNTS,
         move |list: &mut Vec<ExternalAccount>| {
             let Some(idx) = list.iter().position(|a| a.api_url == api && a.uuid == id) else {
-                return Err("账号已不存在（可能已被移除）".to_string());
+                return Err(keyed_msg!(
+                    "errors.auth.accountRemoved",
+                    "账号已不存在（可能已被移除）"
+                ));
             };
             list[idx].uuid = new_uuid;
             list[idx].name = new_name;
@@ -408,7 +442,10 @@ pub async fn switch_role(
 pub async fn external_skin_info(api_url: &str, uuid: &str) -> Result<(String, String), String> {
     let api = api_url.trim().trim_end_matches('/');
     if api.is_empty() {
-        return Err("验证服务器地址为空".into());
+        return Err(keyed_msg!(
+            "errors.auth.serverUrlEmpty",
+            "验证服务器地址为空"
+        ));
     }
     let url = if is_ely_by(api) {
         format!("{api}/session/profile/{uuid}")
@@ -422,7 +459,11 @@ pub async fn external_skin_info(api_url: &str, uuid: &str) -> Result<(String, St
         .await
         .map_err(common_err_ctx_key!("errors.skin.load", "请求皮肤失败"))?;
     if !resp.status().is_success() {
-        bail!("该账号未设置皮肤\nHTTP {}", resp.status());
+        bail_key!(
+            "errors.account.noSkin",
+            "该账号未设置皮肤\nHTTP {}",
+            resp.status()
+        );
     }
     let json: serde_json::Value = resp
         .json()
@@ -433,14 +474,17 @@ pub async fn external_skin_info(api_url: &str, uuid: &str) -> Result<(String, St
         .as_array()
         .and_then(|a| a.first())
         .and_then(|p| p["value"].as_str())
-        .ok_or("该账号未设置皮肤")?;
+        .ok_or_else(|| keyed_msg!("errors.account.noSkin", "该账号未设置皮肤"))?;
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(prop)
         .map_err(common_err_ctx_key!("errors.skin.load", "皮肤数据解码失败"))?;
     let textures: serde_json::Value = serde_json::from_slice(&decoded)
         .map_err(common_err_ctx_key!("errors.skin.load", "皮肤信息解析失败"))?;
     let skin = textures["textures"]["SKIN"].clone();
-    let skin_url = skin["url"].as_str().ok_or("该账号未设置皮肤")?.to_string();
+    let skin_url = skin["url"]
+        .as_str()
+        .ok_or_else(|| keyed_msg!("errors.account.noSkin", "该账号未设置皮肤"))?
+        .to_string();
     let model = skin["metadata"]["model"]
         .as_str()
         .unwrap_or("classic")
@@ -457,7 +501,10 @@ pub async fn server_name(api_url: &str) -> Option<String> {
         .timeout(std::time::Duration::from_secs(5))
         .send()
         .await
-        .map_err(common_err_ctx!("请求服务器名称失败"))
+        .map_err(common_err_ctx_key!(
+            "errors.auth.serverNameFailed",
+            "请求服务器名称失败"
+        ))
         .ok()?;
     if !resp.status().is_success() {
         return None;
@@ -541,7 +588,10 @@ pub async fn ensure_jar() -> Result<std::path::PathBuf, String> {
             Err(e) => last_err = format!("请求失败\n{e}"),
         }
     }
-    Err(format!("下载 authlib-injector 失败\n{last_err}"))
+    Err(keyed_msg!(
+        "errors.auth.injectorDownloadFailed",
+        "下载 authlib-injector 失败\n{last_err}"
+    ))
 }
 
 /// 预设验证服务器（label 展示名 + value API 地址，第三方登录 UI 预设列表）。

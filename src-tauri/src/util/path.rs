@@ -20,18 +20,18 @@ pub fn sha1_sub_dir(hash: &str) -> &str {
 pub fn safe_relative_path(rel: &str) -> Result<PathBuf, String> {
     let rel = rel.trim();
     if rel.is_empty() || rel.starts_with('/') || rel.starts_with('\\') {
-        bail!("非法文件路径\n{rel:?}");
+        bail_key!("errors.path.invalid", "文件路径不合法\n{rel:?}");
     }
     // Windows 盘符（`C:\evil` / `C:/evil` / `C:evil`）带前缀：`PathBuf::join` 遇带前缀路径会清空已有根，
     // 外部输入（zip 成员 / 整合包清单 / JDK 包条目）可借此越过目标目录。
     if rel.as_bytes().get(1) == Some(&b':') {
-        bail!("文件路径含盘符\n{rel:?}");
+        bail_key!("errors.path.absolute", "文件路径含盘符\n{rel:?}");
     }
     if rel
         .split(['/', '\\'])
         .any(|seg| seg == ".." || seg.is_empty())
     {
-        bail!("文件路径含非法段\n{rel:?}");
+        bail_key!("errors.path.invalid", "文件路径含非法段\n{rel:?}");
     }
     Ok(PathBuf::from(rel))
 }

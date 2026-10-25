@@ -13,6 +13,7 @@ use crate::game::version::dir::version_server_section;
 use crate::game::version::model::VersionJson;
 use crate::jdk::model::{JdkInfo, JdkOptions, JdkScanCache, JdkSelection};
 use crate::launcher::args::find_version_json;
+use crate::launcher::compat::{self, JavaCompat};
 use crate::launcher::model::LaunchOptions;
 use crate::persist::{self, downloader_config, launch_options};
 use crate::util::{java_bin_path, parse_java_major, sha1_sub_dir};
@@ -97,12 +98,18 @@ pub fn load_launch_config(
             .iter()
             .find(|e| e.path == path)
             .cloned()
-            .ok_or_else(|| "未找到指定的 JDK".to_string())?,
+            .ok_or_else(|| keyed_msg!("errors.launch.jdkNotFound", "未找到指定的 JDK"))?,
         JdkSelection::Auto => auto_pick_jdk(&jdk_cache.jdks, required).ok_or_else(|| {
             if required > 0 {
-                format!("需要 Java {}+，请在设置中选择或刷新 JDK", required)
+                keyed_msg!(
+                    "errors.launch.jdkRequired?required={required}",
+                    "需要 Java {required}+，请在设置中选择或刷新 JDK"
+                )
             } else {
-                "未配置 JDK，请先在设置中选择 Java 路径".to_string()
+                keyed_msg!(
+                    "errors.launch.jdkNotConfigured",
+                    "未配置 JDK，请先在设置中选择 Java 路径"
+                )
             }
         })?,
     };
@@ -124,8 +131,23 @@ pub fn load_launch_config(
         );
     }
 
-    let java_major = parse_java_major(&java_env.version)
-        .ok_or_else(|| format!("无法解析 JDK 版本号\n{}", java_env.version))?;
+    let java_major = parse_java_major(&java_env.version).ok_or_else(|| {
+        keyed_msg!(
+            "errors.launch.jdkVersionInvalid",
+            "无法解析 JDK 版本号\n{}",
+            java_env.version
+        )
+    })?;
+
+    // 版本 ↔ Java 兼容判定（下界对所有主版本通用；上界只拦跨 8→9 的老工具链）
+    if let JavaCompat::Block(msg) = compat::check(
+        &version_json,
+        java_major,
+        &java_env.path,
+        launch_option.disable_launch_wrapper,
+    ) {
+        return Err(msg);
+    }
 
     Ok((java_path, version_json, mc_dir, launch_option, java_major))
 }
@@ -136,8 +158,13 @@ fn load_version_json_with_inheritance(
     version_dir_name: &str,
 ) -> Result<VersionJson, String> {
     let vdir = mc_dir.join("versions").join(version_dir_name);
-    let vj_path = find_version_json(&vdir, version_dir_name)
-        .ok_or_else(|| format!("版本目录下未找到版本 JSON\n{}", vdir.display()))?;
+    let vj_path = find_version_json(&vdir, version_dir_name).ok_or_else(|| {
+        keyed_msg!(
+            "errors.launch.versionJsonMissing",
+            "版本目录下未找到版本 JSON\n{}",
+            vdir.display()
+        )
+    })?;
     let vj_text = std::fs::read_to_string(&vj_path).map_err(common_err_ctx_key!(
         "errors.version.read",
         "读取版本 JSON 失败"
@@ -152,9 +179,9 @@ fn load_version_json_with_inheritance(
             .join(parent_id)
             .join(format!("{parent_id}.json"));
         let parent_text = std::fs::read_to_string(&parent_path).map_err(|e| {
-            format!(
-                "读取父版本 JSON（{parent_id}）失败——该版本为继承式安装，请先用 Elytra 补装原版 {parent_id}\n{}",
-                e
+            keyed_msg!(
+                "errors.launch.parentVersionMissing?parent={parent_id}",
+                "读取父版本 JSON（{parent_id}）失败——该版本为继承式安装，请先用 Elytra 补装原版 {parent_id}\n{e}"
             )
         })?;
         vj_value = expand_inheritance(&parent_text, vj_value, version_dir_name)?;
@@ -259,7 +286,8 @@ pub fn pre_launch_check(
         Ok(())
     } else {
         // 第一行为大类短句（dialog 正文显示），文件列表进复制区
-        Err(format!(
+        Err(keyed_msg!(
+            "errors.launch.filesIncomplete",
             "游戏文件不完整\n缺少以下文件：\n{}",
             missing.join("\n")
         ))
@@ -331,6 +359,11 @@ pub(crate) fn auto_pick_jdk(discovered: &[JdkInfo], required: u32) -> Option<Jdk
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::jdk::config::save_cache as save_jdk_cache;
+    use crate::jdk::{read as jdk_options, read_cache as jdk_cache, save as save_jdk};
+
+    /// 假 JDK 目录下要放的 java 可执行文件名（`load_launch_config` 会校验其存在）。
+    const JDK_BIN: &str = if cfg!(windows) { "java.exe" } else { "java" };
 
     #[test]
     fn test_auto_pick_jdk() {
@@ -359,6 +392,77 @@ mod tests {
         assert_eq!(auto_pick_jdk(&list, 11).unwrap().path, "/jdk17");
         assert_eq!(auto_pick_jdk(&list, 22).unwrap().path, "/jdk21");
         assert!(auto_pick_jdk(&[], 8).is_none());
+    }
+
+    /// 造临时 mc 目录（含指定版本 JSON）+ 只列一个 JDK 的缓存与 mc_dir，跑真实 `load_launch_config` 后
+    /// 还原共享 Settings.toml（断言前还原：失败也不给后续用例留污染）。
+    fn try_launch_config(name: &str, version_json: &str, jdk_version: &str) -> Result<(), String> {
+        let tmp = std::env::temp_dir().join(format!("elytra_lc_{}_{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let vdir = tmp.join("versions").join(name);
+        std::fs::create_dir_all(&vdir).unwrap();
+        std::fs::write(vdir.join(format!("{name}.json")), version_json).unwrap();
+        let jdk = tmp.join("jdk");
+        std::fs::create_dir_all(jdk.join("bin")).unwrap();
+        std::fs::write(jdk.join("bin").join(JDK_BIN), b"").unwrap();
+
+        let old_dl = persist::downloader_config();
+        let old_options = jdk_options();
+        let old_cache = jdk_cache();
+        let mut dl = old_dl.clone();
+        dl.minecraft_dir = tmp.display().to_string();
+        persist::save_downloader_config(&dl).unwrap();
+        save_jdk(&JdkOptions::default()).unwrap();
+        save_jdk_cache(&JdkScanCache {
+            jdks: vec![JdkInfo {
+                path: jdk.display().to_string(),
+                version: jdk_version.into(),
+                vendor: "Temurin".into(),
+                bits: 64,
+            }],
+        })
+        .unwrap();
+
+        let result = load_launch_config(name).map(|_| ());
+        persist::save_downloader_config(&old_dl).unwrap();
+        save_jdk(&old_options).unwrap();
+        save_jdk_cache(&old_cache).unwrap();
+        let _ = std::fs::remove_dir_all(&tmp);
+        result
+    }
+
+    /// 最小版本 JSON（字段形态与真实 json 一致）。
+    fn version_json(name: &str, main_class: &str, java_major: u32) -> String {
+        format!(
+            r#"{{"id":"{name}","mainClass":"{main_class}","assets":"x","assetIndex":{{"id":"x","url":"x","sha1":"y","size":1,"totalSize":1}},"downloads":{{"client":{{"url":"x","sha1":"y","size":1}}}},"arguments":{{"game":[],"jvm":[]}},"complianceLevel":0,"minimumLauncherVersion":21,"javaVersion":{{"majorVersion":{java_major}}},"releaseTime":"2021-11-30T00:00:00Z","time":"2021-11-30T00:00:00Z","type":"release","libraries":[]}}"#
+        )
+    }
+
+    /// 扫描缓存里只有新 JDK 时：launchwrapper 实例在启动前被拦下并提示下载 Java 8。
+    #[test]
+    fn launchwrapper_instance_blocked_with_modern_jdk_only() {
+        let name = "1.12.2-forge-14.23.5.2864";
+        let json = version_json(name, "net.minecraft.launchwrapper.Launch", 8);
+        let err = try_launch_config(name, &json, "21.0.10")
+            .expect_err("Java 21 拉 launchwrapper 必然失败，应在启动前拦下");
+        assert!(
+            err.starts_with("@i18n:errors.jdk.legacy_java"),
+            "应给出可操作错误: {err}"
+        );
+        assert!(err.contains("Java 21"), "应带上当前 JDK 主版本: {err}");
+    }
+
+    /// 选中的 Java 低于版本要求时拦下（否则必然 UnsupportedClassVersionError）。
+    #[test]
+    fn too_old_java_blocked_before_launch() {
+        let name = "26.3";
+        let json = version_json(name, "net.minecraft.client.main.Main", 25);
+        let err = try_launch_config(name, &json, "1.8.0_202")
+            .expect_err("Java 8 跑要求 Java 25 的版本必然失败，应在启动前拦下");
+        assert!(
+            err.starts_with("@i18n:errors.jdk.too_old?need=25&cur=8"),
+            "错误应带上需求与当前版本（供前端插值）: {err}"
+        );
     }
 
     /// 继承式版本（HMCL/官方安装器风格）：展开后合并父库、子关键字段覆盖、父缺失时报错。

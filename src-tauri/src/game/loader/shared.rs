@@ -330,14 +330,18 @@ pub(crate) async fn run_installer_command(
     cancel: &Arc<AtomicBool>,
     label: &str,
 ) -> Result<Output, String> {
-    let mut stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| format!("{label} stdout 不可用"))?;
-    let mut stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| format!("{label} stderr 不可用"))?;
+    let mut stdout = child.stdout.take().ok_or_else(|| {
+        keyed_msg!(
+            "errors.loader.stdoutUnavailable?label={label}",
+            "{label} stdout 不可用"
+        )
+    })?;
+    let mut stderr = child.stderr.take().ok_or_else(|| {
+        keyed_msg!(
+            "errors.loader.stderrUnavailable?label={label}",
+            "{label} stderr 不可用"
+        )
+    })?;
     let mut out_buf: Vec<u8> = Vec::new();
     let mut err_buf: Vec<u8> = Vec::new();
 

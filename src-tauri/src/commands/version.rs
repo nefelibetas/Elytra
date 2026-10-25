@@ -111,12 +111,12 @@ pub async fn delete_resource_file(
 #[tauri::command]
 pub async fn delete_world(version_name: String, world_name: String) -> Result<(), String> {
     if !util::is_simple_name(&world_name) {
-        return Err("非法目录名".to_string());
+        bail_key!("errors.version.invalidDirName", "非法目录名");
     }
     let vdir = version_dir_path(&version_name)?;
     let path = vdir.join("saves").join(&world_name);
     if !path.is_dir() {
-        bail!("存档不存在\n{}", world_name);
+        bail_key!("errors.version.worldMissing", "存档不存在\n{}", world_name);
     }
     tokio::fs::remove_dir_all(&path)
         .await
@@ -136,7 +136,7 @@ pub async fn identify_mod_file(
     file_name: String,
 ) -> Result<Option<ModFileDetail>, String> {
     if !crate::util::is_simple_name(&file_name) {
-        return Err("非法文件名".into());
+        bail_key!("errors.version.invalidFileName", "非法文件名");
     }
     let vdir = version_dir_path(&version_name)?;
     let f = updates::identify_one_file(&vdir.join("mods"), &file_name).await;
@@ -192,12 +192,8 @@ pub fn save_version_server(
         server: server.filter(|s| !s.trim().is_empty()),
         port,
     };
-    crate::persist::save(&section, &cfg).map_err(|e| {
-        format!(
-            "保存失败
-{e}"
-        )
-    })
+    crate::persist::save(&section, &cfg)
+        .map_err(common_err_ctx_key!("errors.config.write", "保存失败"))
 }
 
 #[tauri::command]

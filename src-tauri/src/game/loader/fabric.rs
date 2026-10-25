@@ -81,20 +81,27 @@ async fn install_loader_via_profile(
                     fetched = Some((v, src));
                     break;
                 }
-                Err(e) => last_err = format!("解析 profile 失败\n{e}"),
+                Err(e) => last_err = keyed_msg!("errors.parse", "解析 profile 失败\n{e}"),
             },
-            Err(e) => last_err = format!("获取 profile 失败\n{e}"),
+            Err(e) => last_err = keyed_msg!("errors.network", "获取 profile 失败\n{e}"),
         }
     }
-    let (profile, source) =
-        fetched.ok_or_else(|| format!("获取 profile 失败（所有下载源均不可用）\n{last_err}"))?;
+    let (profile, source) = fetched.ok_or_else(|| {
+        keyed_msg!(
+            "errors.loader.profileFetchFailed",
+            "获取 profile 失败（所有下载源均不可用）\n{last_err}"
+        )
+    })?;
 
     let merged = merge_loader_profile(parent_text, &profile, dir_name, &source.maven_url)?;
 
     std::fs::create_dir_all(vdir)
         .map_err(common_err_ctx_key!("errors.file.createDir", "创建目录失败"))?;
     let json_path = vdir.join(format!("{}.json", dir_name));
-    let json_str = serde_json::to_string_pretty(&merged).map_err(common_err_ctx!("序列化失败"))?;
+    let json_str = serde_json::to_string_pretty(&merged).map_err(common_err_ctx_key!(
+        "errors.loader.serializeVersionJson",
+        "序列化失败"
+    ))?;
     std::fs::write(&json_path, &json_str)
         .map_err(common_err_ctx_key!("errors.file.write", "写入 JSON 失败"))?;
     if let Some(h) = hook {
@@ -124,7 +131,7 @@ async fn install_loader_via_profile(
         Some(cancel),
     )
     .await
-    .map_err(|e| format!("下载库失败:\n{}", e.join("\n")))?;
+    .map_err(|e| keyed_msg!("errors.download.failed", "下载库失败:\n{}", e.join("\n")))?;
     if let Some(h) = hook {
         h(LoaderEvent::LibsDone);
     }

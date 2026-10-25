@@ -82,8 +82,10 @@ pub fn record_mods(
             "创建记录目录失败"
         ))?;
     }
-    let text =
-        serde_json::to_string_pretty(&snapshot).map_err(common_err_ctx!("序列化 mod 清单失败"))?;
+    let text = serde_json::to_string_pretty(&snapshot).map_err(common_err_ctx_key!(
+        "errors.launch.modListSerializeFailed",
+        "序列化 mod 清单失败"
+    ))?;
     std::fs::write(&out, text).map_err(common_err_ctx_key!(
         "errors.file.write",
         "写入 mod 清单失败"

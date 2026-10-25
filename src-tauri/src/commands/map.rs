@@ -237,7 +237,10 @@ pub async fn find_map_slime_chunks(
         seedmap::find_slime_chunks_seed(seed, center_x, center_z, radius)
     })
     .await
-    .map_err(|e| format!("史莱姆区块搜索任务异常\n{e}"))
+    .map_err(common_err_ctx_key!(
+        "errors.map.slimeSearchFailed",
+        "史莱姆区块搜索任务异常"
+    ))
 }
 
 /// 已加载地图的群系列表（按区块数降序）。
@@ -252,7 +255,10 @@ pub async fn list_map_biomes(
     validate_dimension(&world, &dimension)?;
     tauri::async_runtime::spawn_blocking(move || list_biomes(&world, &dimension, max_y))
         .await
-        .map_err(|e| format!("群系列表任务异常\n{e}"))
+        .map_err(common_err_ctx_key!(
+            "errors.map.biomeListFailed",
+            "群系列表任务异常"
+        ))
 }
 
 #[tauri::command]
@@ -265,7 +271,10 @@ pub async fn list_map_folder_biomes(
     validate_dimension(&world, &dimension)?;
     tauri::async_runtime::spawn_blocking(move || list_biomes(&world, &dimension, max_y))
         .await
-        .map_err(|e| format!("群系列表任务异常\n{e}"))
+        .map_err(common_err_ctx_key!(
+            "errors.map.biomeListFailed",
+            "群系列表任务异常"
+        ))
 }
 
 /// 已加载地图内离中心最近的指定群系。
@@ -285,7 +294,10 @@ pub async fn find_map_biome(
         find_biome(&world, &dimension, max_y, &biome, center_x, center_z)
     })
     .await
-    .map_err(|e| format!("群系搜索任务异常\n{e}"))
+    .map_err(common_err_ctx_key!(
+        "errors.map.biomeSearchFailed",
+        "群系搜索任务异常"
+    ))
 }
 
 #[tauri::command]
@@ -303,5 +315,8 @@ pub async fn find_map_folder_biome(
         find_biome(&world, &dimension, max_y, &biome, center_x, center_z)
     })
     .await
-    .map_err(|e| format!("群系搜索任务异常\n{e}"))
+    .map_err(common_err_ctx_key!(
+        "errors.map.biomeSearchFailed",
+        "群系搜索任务异常"
+    ))
 }
