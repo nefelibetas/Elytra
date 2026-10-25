@@ -85,8 +85,10 @@ const previewBox = ref<HTMLElement | null>(null);
 const previewCanvas = ref<HTMLCanvasElement | null>(null);
 /** 光标覆盖层：与预览同尺寸叠加，只画即将落笔的像素。 */
 const cursorCanvas = ref<HTMLCanvasElement | null>(null);
-/** 指针是否在画布区域内（空格临时抓手仅在此范围内生效）。 */
+/** 指针是否在画布区域内（空格临时抓手仅在此范围内切换工具）。 */
 const inCanvas = ref(false);
+/** 空格是否按住：即使先在画布外按下、再移入画布，也能按抓手处理。 */
+const spaceHeld = ref(false);
 /** 编辑模式：2d = 展开图逐像素；3d = 在模型上直接画。 */
 const mode = ref<"2d" | "3d">("2d");
 /** 3D 直绘目标图层：0 = 内层（本体），1 = 第二层（帽子/外套/袖腿）。 */
@@ -525,8 +527,8 @@ function onPointerDown(e: PointerEvent) {
   const el = paintCanvas.value;
   const p = viewportPoint(e);
   if (!el || !p) return;
-  // 抓手工具、中键、右键都用于平移；其余按键才绘制
-  if (skinEditor.tool === "hand" || e.button === 1 || e.button === 2) {
+  // 抓手工具、空格、中键、右键都用于平移；其余按键才绘制
+  if (skinEditor.tool === "hand" || spaceHeld.value || e.button === 1 || e.button === 2) {
     panning = true;
     panFrom = { x: p.x, y: p.y, vx: view.x, vy: view.y };
     el.setPointerCapture(e.pointerId);
@@ -583,12 +585,22 @@ function onWheel(e: WheelEvent) {
   zoomAt(p.x, p.y, e.deltaY < 0 ? 1.15 : 1 / 1.15);
 }
 
-/** 预览拖动旋转。 */
+/** 3D 预览拖动旋转。 */
 let previewDrag = false;
 let previewFrom = { x: 0, y: 0, yaw: 0, pitch: 0 };
 /** 3D 预览拖动视角（pan）会话：起点设备像素 + 起始平移量。 */
 let previewPan = false;
 let previewPanFrom = { x: 0, y: 0, ox: 0, oy: 0 };
+
+function startPreviewPan(dev: { x: number; y: number }) {
+  previewPan = true;
+  previewPanFrom = { x: dev.x, y: dev.y, ox: preview.offsetX, oy: preview.offsetY };
+}
+
+function startPreviewRotate(e: PointerEvent) {
+  previewDrag = true;
+  previewFrom = { x: e.clientX, y: e.clientY, yaw: preview.yaw, pitch: preview.pitch };
+}
 /** 动作动画循环句柄（0 = 未运行，静止时不空转）。 */
 let animRaf = 0;
 /** 动画相位基准时刻。 */
@@ -618,9 +630,12 @@ function animTick() {
 function onPreviewDown(e: PointerEvent) {
   const dev = devicePoint(e);
   if (!dev) return;
+  if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
+  e.preventDefault();
   lastPointer = dev;
+  const hand = skinEditor.tool === "hand" || spaceHeld.value;
   // 3D 直绘：左键落在皮肤上即落笔（取色 / 填充 / 绘制）
-  if (mode.value === "3d" && e.button === 0 && skinEditor.tool !== "hand") {
+  if (mode.value === "3d" && e.button === 0 && !hand) {
     const hit = pickAtDevice(dev.x, dev.y);
     if (hit) {
       if (skinEditor.tool === "picker") {
@@ -640,16 +655,17 @@ function onPreviewDown(e: PointerEvent) {
       paintAt(hit.x, hit.y);
       return;
     }
-    // 未命中皮肤：不落笔，交给下面的拖动视角
-  }
-  // 3D：左键（含模型外空白与抓手工具）= 拖动视角，右键 = 旋转视角；
-  // 2D 预览：左键 = 旋转（与衣柜页手势一致）。
-  if (mode.value === "3d" && e.button === 0) {
-    previewPan = true;
-    previewPanFrom = { x: dev.x, y: dev.y, ox: preview.offsetX, oy: preview.offsetY };
+    // 左键从模型外空白开始：旋转视角；落笔只在命中皮肤时发生
+    startPreviewRotate(e);
+  } else if (e.button === 1 || e.button === 2) {
+    // 右键 / 中键：平移。右键不再与左键空白旋转重复
+    startPreviewPan(dev);
+  } else if (hand) {
+    // 抓手工具或按住空格：左键平移，命中皮肤也不落笔
+    startPreviewPan(dev);
   } else {
-    previewDrag = true;
-    previewFrom = { x: e.clientX, y: e.clientY, yaw: preview.yaw, pitch: preview.pitch };
+    // 2D 预览左键旋转（3D 左键空白已在上方处理）
+    startPreviewRotate(e);
   }
   (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
 }
@@ -659,7 +675,7 @@ function onPreviewMove(e: PointerEvent) {
   if (dev) lastPointer = dev;
 
   // 3D 直绘且为绘图工具时，标出即将落笔的像素
-  if (dev && mode.value === "3d" && skinEditor.tool !== "hand") {
+  if (dev && mode.value === "3d" && skinEditor.tool !== "hand" && !spaceHeld.value) {
     hoverPick.value = pickAtDevice(dev.x, dev.y);
     drawCursor();
   } else if (hoverPick.value) {
@@ -709,6 +725,7 @@ function onPreviewUp() {
 }
 
 function onPreviewLeave() {
+  inCanvas.value = false;
   lastPointer = null;
   if (!hoverPick.value) return;
   hoverPick.value = null;
@@ -770,6 +787,13 @@ function isEditable(target: EventTarget | null): boolean {
 /** 空格按住期间的临时工具（松开还原）。 */
 let toolBeforeSpace: string | null = null;
 
+function releaseSpace() {
+  spaceHeld.value = false;
+  if (!toolBeforeSpace) return;
+  skinEditor.tool = toolBeforeSpace as typeof skinEditor.tool;
+  toolBeforeSpace = null;
+}
+
 function onKeyDown(e: KeyboardEvent) {
   if (isEditable(e.target)) return;
   if (e.ctrlKey || e.metaKey) {
@@ -783,18 +807,19 @@ function onKeyDown(e: KeyboardEvent) {
     }
     return;
   }
-  // 空格：指针在画布区域内时临时切抓手
-  if (e.code === "Space" && !e.repeat && inCanvas.value && !toolBeforeSpace) {
-    e.preventDefault();
-    toolBeforeSpace = skinEditor.tool;
-    skinEditor.tool = "hand";
+  // 空格：全局记录按住状态；指针在画布区域内时同时临时切抓手
+  if (e.code === "Space" && !e.repeat) {
+    spaceHeld.value = true;
+    if (inCanvas.value && !toolBeforeSpace) {
+      e.preventDefault();
+      toolBeforeSpace = skinEditor.tool;
+      skinEditor.tool = "hand";
+    }
   }
 }
 
 function onKeyUp(e: KeyboardEvent) {
-  if (e.code !== "Space" || !toolBeforeSpace) return;
-  skinEditor.tool = toolBeforeSpace as typeof skinEditor.tool;
-  toolBeforeSpace = null;
+  if (e.code === "Space") releaseSpace();
 }
 
 /** 缩放读数：2D 模式是「每皮肤像素多少 CSS px」，3D 模式是预览缩放的百分比。 */
@@ -822,6 +847,7 @@ onMounted(() => {
   drawPreview();
   window.addEventListener("keydown", onKeyDown);
   window.addEventListener("keyup", onKeyUp);
+  window.addEventListener("blur", releaseSpace);
 });
 
 onUnmounted(() => {
@@ -834,8 +860,10 @@ onUnmounted(() => {
   previewFrame = 0;
   animRaf = 0;
   toolBeforeSpace = null;
+  spaceHeld.value = false;
   window.removeEventListener("keydown", onKeyDown);
   window.removeEventListener("keyup", onKeyUp);
+  window.removeEventListener("blur", releaseSpace);
 });
 
 watch(() => skinEditor.revision, scheduleDraw);
@@ -844,6 +872,11 @@ watch(
   () => drawEditor(),
 );
 watch(() => skinEditor.variant, () => drawPreview());
+watch(spaceHeld, (held) => {
+  if (!held) return;
+  hoverPick.value = null;
+  drawCursor();
+});
 watch(() => preview.animation, () => syncAnimation());
 watch(locale, () => drawEditor());
 // 模式切换改变布局（画布 ↔ 预览互换），须待 DOM 重排后按新尺寸重绘
@@ -941,8 +974,9 @@ watch(mode, () => {
         <div
           ref="previewBox"
           class="pp-preview-box"
-          :class="{ 'on-skin': mode === '3d' && skinEditor.tool !== 'hand' && !!hoverPick }"
+          :class="{ 'on-skin': mode === '3d' && skinEditor.tool !== 'hand' && !spaceHeld && !!hoverPick }"
           @pointerdown="onPreviewDown"
+          @pointerenter="inCanvas = true"
           @pointermove="onPreviewMove"
           @pointerup="onPreviewUp"
           @pointercancel="onPreviewUp"

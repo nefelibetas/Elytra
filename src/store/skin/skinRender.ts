@@ -352,11 +352,13 @@ function subdivideFace(f: FaceDef, step: number): FacePart[] {
 }
 
 /** 纹理 alpha 二值化缓存：MC / skinview3d 用 cutout（alphaTest）——透明像素直接丢弃；
- *  Canvas drawImage 是 alpha 混合，重叠面会互相透出导致图案错乱，故先按阈值硬化 alpha。 */
+ * Canvas drawImage 是 alpha 混合，重叠面会互相透出导致图案错乱，故先按阈值硬化 alpha。
+ * 只缓存不可变图片；画布会被原地重绘，按对象缓存会一直拿到旧贴图。 */
 const alphaHardened = new WeakMap<object, CanvasImageSource>();
 
 function hardenAlpha(src: CanvasImageSource): CanvasImageSource {
-  const cached = alphaHardened.get(src as unknown as object);
+  const cacheable = src instanceof HTMLImageElement;
+  const cached = cacheable ? alphaHardened.get(src as unknown as object) : undefined;
   if (cached) return cached;
   const w = (src as HTMLImageElement).naturalWidth || (src as HTMLCanvasElement).width;
   const h = (src as HTMLImageElement).naturalHeight || (src as HTMLCanvasElement).height;
@@ -369,7 +371,7 @@ function hardenAlpha(src: CanvasImageSource): CanvasImageSource {
   const d = img.data;
   for (let i = 3; i < d.length; i += 4) d[i] = d[i]! > 25 ? 255 : 0;
   x.putImageData(img, 0, 0);
-  alphaHardened.set(src as unknown as object, c);
+  if (cacheable) alphaHardened.set(src as unknown as object, c);
   return c;
 }
 
@@ -497,6 +499,17 @@ function paint(
 
   faces.sort((a, b) => a.depth - b.depth); // 画家算法：depth 小 = 远，先画
 
+  // 同一帧内同源贴图只硬化一次；画布源不跨帧缓存（会被原地重绘）。
+  const hardened = new Map<CanvasImageSource, CanvasImageSource>();
+  const harden = (src: CanvasImageSource): CanvasImageSource => {
+    const hit = hardened.get(src);
+    if (hit) return hit;
+    const out = hardenAlpha(src);
+    hardened.set(src, out);
+    return out;
+  };
+  const hardenedSkin = harden(skin);
+
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.imageSmoothingEnabled = false;
 
@@ -534,7 +547,7 @@ function paint(
     ctx.transform(m11, m12, m21, m22, tx, ty);
     // 明暗绑在**这一次 drawImage** 上（brightness 只作用本面像素）；不可「画完再 source-atop 涂一层」——会连别面已画像素一起压暗。
     ctx.filter = f.shade < 0.999 ? `brightness(${f.shade})` : "none";
-    ctx.drawImage(f.tex ? hardenAlpha(f.tex) : hardenAlpha(skin), 0, 0);
+    ctx.drawImage(f.tex ? harden(f.tex) : hardenedSkin, 0, 0);
     ctx.restore();
   }
   return true;

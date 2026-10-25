@@ -420,8 +420,8 @@ export default {
   skinpainter: {
     title: "皮肤绘画器",
     subtitle: "展开图逐像素 + 3D 直绘双模式",
-    hint2d: "滚轮缩放 · 空格或抓手工具 / 中键平移 · Ctrl+Z 撤销",
-    hint3d: "左键落笔 · 抓手工具 / 右键拖动旋转 · 滚轮缩放 · Ctrl+Z 撤销",
+    hint2d: "滚轮缩放 · 空格或抓手工具 / 中键 / 右键平移 · Ctrl+Z 撤销",
+    hint3d: "左键落笔 · 空白处左键拖动旋转 · 空格+左键 / 右键拖动平移 · 滚轮缩放 · Ctrl+Z 撤销",
     import: "导入",
     export: "导出",
     importFilter: "皮肤图片",
@@ -435,7 +435,7 @@ export default {
       eraser: "橡皮",
       fill: "油漆桶",
       picker: "吸管",
-      hand: "抓手（平移画布）",
+      hand: "抓手（平移）",
     },
     model: {
       classic: "经典",

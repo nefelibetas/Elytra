@@ -420,8 +420,8 @@ export default {
   skinpainter: {
     title: "Skin Painter",
     subtitle: "Pixel editing on the unfolded texture plus direct 3D painting",
-    hint2d: "Wheel to zoom · Space or hand tool / middle-drag to pan · Ctrl+Z to undo",
-    hint3d: "Left-click to paint · hand tool / right-drag to rotate · wheel to zoom · Ctrl+Z to undo",
+    hint2d: "Wheel to zoom · Space or hand tool / middle-drag / right-drag to pan · Ctrl+Z to undo",
+    hint3d: "Left-click to paint · left-drag empty space to rotate · Space+left / right-drag to pan · wheel to zoom · Ctrl+Z to undo",
     import: "Import",
     export: "Export",
     importFilter: "Skin Image",
@@ -435,7 +435,7 @@ export default {
       eraser: "Eraser",
       fill: "Paint bucket",
       picker: "Color picker",
-      hand: "Hand (pan canvas)",
+      hand: "Hand (pan)",
     },
     model: {
       classic: "Classic",
