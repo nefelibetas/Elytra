@@ -7,11 +7,11 @@
   "license": "GPL-3.0-only",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nefelibetas/Elytra.git"
+    "url": "git+https://github.com/nefelibetas/ElytraLauncher.git"
   },
-  "homepage": "https://github.com/nefelibetas/Elytra#readme",
+  "homepage": "https://github.com/nefelibetas/ElytraLauncher#readme",
   "bugs": {
-    "url": "https://github.com/nefelibetas/Elytra/issues"
+    "url": "https://github.com/nefelibetas/ElytraLauncher/issues"
   },
   "type": "module",
   "browserslist": [

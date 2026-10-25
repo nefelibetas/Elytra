@@ -12,7 +12,7 @@
 
 **Do not disclose vulnerabilities in a public issue.** Use GitHub private vulnerability reporting:
 
-https://github.com/nefelibetas/Elytra/security/advisories/new
+https://github.com/nefelibetas/ElytraLauncher/security/advisories/new
 
 请在报告中附上：受影响版本、操作系统、复现步骤、影响范围，以及必要的日志。日志请先移除 token、账号名、服务器地址与本地路径。
 

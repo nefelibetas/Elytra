@@ -12,9 +12,9 @@
 
 <sub>**Free** · **Open source** · **Cross-platform**</sub>
 
-[![release](https://img.shields.io/github/v/release/nefelibetas/Elytra?style=flat-square)](https://github.com/nefelibetas/Elytra/releases)
+[![release](https://img.shields.io/github/v/release/nefelibetas/ElytraLauncher?style=flat-square)](https://github.com/nefelibetas/ElytraLauncher/releases)
 [![license](https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square)](LICENSE)
-[![stars](https://img.shields.io/github/stars/nefelibetas/Elytra?style=flat-square)](https://github.com/nefelibetas/Elytra)
+[![stars](https://img.shields.io/github/stars/nefelibetas/ElytraLauncher?style=flat-square)](https://github.com/nefelibetas/ElytraLauncher)
 
 [简体中文](README.md) · **English**
 
@@ -63,7 +63,7 @@
 
 ## 📥 Download & Install
 
-Grab the artifact for your platform from [Releases](https://github.com/nefelibetas/Elytra/releases):
+Grab the artifact for your platform from [Releases](https://github.com/nefelibetas/ElytraLauncher/releases):
 
 | Platform | Artifact | Notes |
 |---|---|---|
@@ -190,7 +190,7 @@ See 📖 [AGENTS.md](AGENTS.md) (repository development guide).
 
 ## 🤝 Contributing & Feedback
 
-- **Bug reports / feature requests**: open an [issue](https://github.com/nefelibetas/Elytra/issues), including your launcher log ("Settings → Launcher log" opens its folder), app version and reproduction steps; issue templates are available
+- **Bug reports / feature requests**: open an [issue](https://github.com/nefelibetas/ElytraLauncher/issues), including your launcher log ("Settings → Launcher log" opens its folder), app version and reproduction steps; issue templates are available
 - **Code contributions**: start with [CONTRIBUTING-en-US.md](CONTRIBUTING-en-US.md) ([简体中文](CONTRIBUTING.md)) — dev environment, required checks before submitting, branch & commit conventions
 - **Security issues**: do not open a public issue; see [SECURITY.md](SECURITY.md)
 - Architecture layering and coding conventions: see [AGENTS.md](AGENTS.md)

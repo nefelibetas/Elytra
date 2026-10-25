@@ -12,9 +12,9 @@
 
 <sub>**免费** · **开源** · **跨平台**</sub>
 
-[![release](https://img.shields.io/github/v/release/nefelibetas/Elytra?style=flat-square)](https://github.com/nefelibetas/Elytra/releases)
+[![release](https://img.shields.io/github/v/release/nefelibetas/ElytraLauncher?style=flat-square)](https://github.com/nefelibetas/ElytraLauncher/releases)
 [![license](https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square)](LICENSE)
-[![stars](https://img.shields.io/github/stars/nefelibetas/Elytra?style=flat-square)](https://github.com/nefelibetas/Elytra)
+[![stars](https://img.shields.io/github/stars/nefelibetas/ElytraLauncher?style=flat-square)](https://github.com/nefelibetas/ElytraLauncher)
 
 **简体中文** · [English](README-en-US.md)
 
@@ -63,7 +63,7 @@
 
 ## 📥 下载与安装
 
-从 [Releases](https://github.com/nefelibetas/Elytra/releases) 下载对应平台的产物：
+从 [Releases](https://github.com/nefelibetas/ElytraLauncher/releases) 下载对应平台的产物：
 
 | 平台 | 产物 | 说明 |
 |---|---|---|
@@ -190,7 +190,7 @@ cargo test --test tool_download                    # 工具箱下载器集成测
 
 ## 🤝 贡献与反馈
 
-- **问题反馈**：请在 [Issues](https://github.com/nefelibetas/Elytra/issues) 提交，并附启动器日志（「设置 → 启动器日志」可打开所在目录）、启动器版本号与复现步骤；可使用仓库内的 Issue 模板
+- **问题反馈**：请在 [Issues](https://github.com/nefelibetas/ElytraLauncher/issues) 提交，并附启动器日志（「设置 → 启动器日志」可打开所在目录）、启动器版本号与复现步骤；可使用仓库内的 Issue 模板
 - **代码贡献**：请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)（[English](CONTRIBUTING-en-US.md)）——开发环境、提交前必过的检查、分支与提交规范都写在那里
 - **安全问题**：请勿公开提交，报告方式见 [SECURITY.md](SECURITY.md)
 - 架构分层与编码约定详见 [AGENTS.md](AGENTS.md)

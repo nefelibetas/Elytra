@@ -15,7 +15,7 @@ pub const UA_DOWNLOAD: &str = concat!("Elytra Launcher/", env!("CARGO_PKG_VERSIO
 pub const UA_MOJANG_API: &str = concat!(
     "Elytra Launcher/",
     env!("CARGO_PKG_VERSION"),
-    " (+https://github.com/nefelibetas/Elytra)"
+    " (+https://github.com/nefelibetas/ElytraLauncher)"
 );
 
 /// 镜像源（BMCLAPI 等）并发上限：16。实测（2026-10）跨文件 32 并发全部 302 无 429、
