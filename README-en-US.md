@@ -49,7 +49,7 @@
 
 ### 🌐 LAN Play & Toolbox
 
-- 🌐 **LAN play**: embedded EasyTier virtual network + the Scaffolding protocol (room-code pairing, no public server needed), configurable coordination server for cross-network play
+- 🌐 **LAN play**: embedded EasyTier virtual network + the Scaffolding protocol (room-code pairing, no public server needed), configurable coordination node for cross-network play; direct-only by default (P2P hole punching), with the node used only for discovery and punching
 - 🗺️ **World preview**: a real map of loaded chunks only, with dimensions, top-down / fixed-Y slices, mod block colors, and hover block identification
 - 🚀 **Multi-threaded downloader**: URL queue concurrency + per-file HTTP Range segmentation, resumable
 - 📡 **Server status**: Java SLP and Bedrock RakNet probing (multiple addresses)
@@ -169,7 +169,7 @@ See 📖 [AGENTS.md](AGENTS.md) (repository development guide).
 ## 🔒 Privacy & Network
 
 - **No telemetry**: no analytics SDKs; usage data, crash reports, and account information are never uploaded to the author's servers.
-- **Services contacted**: Microsoft / Mojang (login, profile, skins, version metadata, assets), BMCLAPI / MCIM (China mirrors), Modrinth / CurseForge (community resources and dependencies), Azul / Adoptium (JDK runtimes), the EasyTier coordination node (LAN play only), user-configured third-party skin sites (only when enabled), and user-entered server addresses (server status only).
+- **Services contacted**: Microsoft / Mojang (login, profile, skins, version metadata, assets), BMCLAPI / MCIM (China mirrors), Modrinth / CurseForge (community resources and dependencies), Azul / Adoptium (JDK runtimes), the EasyTier coordination node (LAN play only; by default it is used only for discovery and hole punching and does not carry game traffic), user-configured third-party skin sites (only when enabled), and user-entered server addresses (server status only).
 - **Local data**: `secrets.bin` stores Microsoft refresh tokens, third-party skin-site credentials, and the user-provided CurseForge key — Windows uses DPAPI; macOS / Linux prefer the OS keychain plus ChaCha20-Poly1305, and fall back to plaintext protected only by file permissions when the keychain is unavailable. `Settings.toml` is plaintext config (game directory, download settings, etc.); `tasks.db` stores task snapshots; normal logs may contain local paths and request URLs.
 - **Never uploaded automatically**: game directories, saves, mods, skins, and logs are not uploaded; crash-log bundles are only created locally when the user runs an auto task.
 - **Third-party services**: the services above are governed by their own privacy policies; this project does not control their data handling.
@@ -179,7 +179,7 @@ See 📖 [AGENTS.md](AGENTS.md) (repository development guide).
 | Scenario | Limitation |
 |---|---|
 | Fabric/Quilt + OptiFine | Requires the OptiFabric bridge and has limited compatibility; the combination is hidden with an error on 1.21+. Sodium + Iris, or vanilla/Forge + OptiFine, is recommended. |
-| Cross-network LAN play | Depends on an EasyTier coordination server (configurable); offline accounts on MC 26.2 must use LAN discovery, and a manually entered IP may report an invalid session. |
+| Cross-network LAN play | Depends on an EasyTier coordination node (configurable); direct-only by default, so relay must be temporarily enabled in settings when the two networks cannot punch through; offline accounts on MC 26.2 must use LAN discovery, and a manually entered IP may report an invalid session. |
 | macOS | Not notarized; first launch requires right-click → Open. macOS 13+. |
 | Windows uninstall | MSI does not remove `%APPDATA%\Elytra`; NSIS keeps app data by default; neither removes the game directory. |
 | Windows portable build | Requires the system WebView2 runtime (usually present on Windows 10/11). |
@@ -187,6 +187,11 @@ See 📖 [AGENTS.md](AGENTS.md) (repository development guide).
 | Skin wardrobe | Only available for Microsoft accounts; offline mode uses a fixed default skin. |
 | CurseForge | Requires a valid CurseForge API key; if the built-in key expires, enter your own key under Settings → Downloads → CurseForge key. The source is unavailable when no key is configured, while Modrinth keeps working. |
 | OptiFine | No public API; some versions/combinations may fail to download or install. |
+
+## 📦 Version Support
+
+- **1.0.2 and later**: multiplayer is direct-only by default (P2P hole punching); the coordination node is used only for discovery and punching. If punching fails, public-node relay can be temporarily enabled under Settings → Multiplayer Settings (with a bandwidth warning).
+- **1.0.0 / 1.0.1 are no longer supported**: those versions allowed relay by default and contained coordination nodes that are no longer in use; their installers have been removed from Releases. Please upgrade to 1.0.2 or later.
 
 ## 🤝 Contributing & Feedback
 
