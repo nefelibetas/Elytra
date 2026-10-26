@@ -1,7 +1,7 @@
 {
   "name": "elytra",
   "private": true,
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "A modern, lightweight Minecraft launcher built with Tauri and Rust.",
   "author": "BridgeFishDev",
   "license": "GPL-3.0-only",
@@ -21,10 +21,12 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && pnpm lint:css && vite build",
+    "build:frontend": "vite build",
     "lint:css": "stylelint \"src/**/*.{css,vue}\"",
     "i18n:check": "node scripts/i18n-check.mjs",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "tauri:build": "vue-tsc --noEmit && pnpm lint:css && tauri build"
   },
   "dependencies": {
     "@lucide/vue": "^1.55.0",

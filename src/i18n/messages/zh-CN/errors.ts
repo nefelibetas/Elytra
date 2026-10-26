@@ -96,6 +96,10 @@ export default {
     profileMachineIdMissing: "缺 machine_id",
     randomUnavailable: "系统随机源不可用"
   },
+  update: {
+    failed: "检查更新失败",
+    rateLimited: "检查更新失败（GitHub API 限流，请稍后重试）"
+  },
   jdk: {
     failed: "JDK 操作失败",
     install: "JDK 安装失败",

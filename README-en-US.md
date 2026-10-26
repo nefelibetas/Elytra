@@ -169,7 +169,7 @@ See 📖 [AGENTS.md](AGENTS.md) (repository development guide).
 ## 🔒 Privacy & Network
 
 - **No telemetry**: no analytics SDKs; usage data, crash reports, and account information are never uploaded to the author's servers.
-- **Services contacted**: Microsoft / Mojang (login, profile, skins, version metadata, assets), BMCLAPI / MCIM (China mirrors), Modrinth / CurseForge (community resources and dependencies), Azul / Adoptium (JDK runtimes), the EasyTier coordination node (LAN play only; by default it is used only for discovery and hole punching and does not carry game traffic), user-configured third-party skin sites (only when enabled), and user-entered server addresses (server status only).
+- **Services contacted**: Microsoft / Mojang (login, profile, skins, version metadata, assets), BMCLAPI / MCIM (China mirrors), Modrinth / CurseForge (community resources and dependencies), Azul / Adoptium (JDK runtimes), GitHub Releases (update check only), the EasyTier coordination node (LAN play only; by default it is used only for discovery and hole punching and does not carry game traffic), user-configured third-party skin sites (only when enabled), and user-entered server addresses (server status only).
 - **Local data**: `secrets.bin` stores Microsoft refresh tokens, third-party skin-site credentials, and the user-provided CurseForge key — Windows uses DPAPI; macOS / Linux prefer the OS keychain plus ChaCha20-Poly1305, and fall back to plaintext protected only by file permissions when the keychain is unavailable. `Settings.toml` is plaintext config (game directory, download settings, etc.); `tasks.db` stores task snapshots; normal logs may contain local paths and request URLs.
 - **Never uploaded automatically**: game directories, saves, mods, skins, and logs are not uploaded; crash-log bundles are only created locally when the user runs an auto task.
 - **Third-party services**: the services above are governed by their own privacy policies; this project does not control their data handling.
@@ -190,6 +190,7 @@ See 📖 [AGENTS.md](AGENTS.md) (repository development guide).
 
 ## 📦 Version Support
 
+- **1.0.3 and later**: Settings → About provides an update check (queries GitHub Releases only, then shows the new version and opens the download page; no automatic download or install).
 - **1.0.2 and later**: multiplayer is direct-only by default (P2P hole punching); the coordination node is used only for discovery and punching. If punching fails, public-node relay can be temporarily enabled under Settings → Multiplayer Settings (with a bandwidth warning).
 - **1.0.0 / 1.0.1 are no longer supported**: those versions allowed relay by default and contained coordination nodes that are no longer in use; their installers have been removed from Releases. Please upgrade to 1.0.2 or later.
 

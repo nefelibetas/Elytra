@@ -96,6 +96,10 @@ export default {
     profileMachineIdMissing: "Missing machine_id",
     randomUnavailable: "System random source unavailable"
   },
+  update: {
+    failed: "Update check failed",
+    rateLimited: "Update check failed (GitHub API rate limit; try again later)"
+  },
   jdk: {
     failed: "JDK operation failed",
     install: "JDK installation failed",

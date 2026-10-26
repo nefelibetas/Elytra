@@ -1,6 +1,6 @@
 [package]
 name = "Elytra"
-version = "1.0.2"
+version = "1.0.3"
 description = "A modern, lightweight Minecraft launcher built with Tauri and Rust, providing a great option for Linux and cross-platform users."
 authors = ["BridgeFishDev"]
 edition = "2021"

@@ -3,13 +3,15 @@ name: Release
 # 唯一触发方式：推 v* tag（手动 dispatch 仅供维护者按需重跑，产物只落 Actions artifacts）。
 # 工具链版本一律取自 mise.toml（node / pnpm / rust / protoc），本文件不写死版本号。
 #
-# 三个 job：
-#   check   验证门（Windows）：vue-tsc + lint:css + i18n + cargo fmt --check + clippy -D warnings / test（串行）——clippy 已含编译检查
-#   build   三平台并行打包：
+# 四个 job：
+#   check   验证门（复用 check.yml）：frontend 平台无关检查（只跑一次）+ Windows 全量 clippy/test
+#           + Linux/macOS clippy（覆盖平台 cfg 分支；test 仍只在 Windows）
+#   prepare needs check：tag 上创建草稿 Release（唯一创建点，避免三平台并发 create 竞争）
+#   build   needs prepare；三平台并行打包：
 #             Windows  便携 zip + NSIS + MSI
 #             macOS    universal dmg（ad-hoc 签名：Apple Silicon 上未签名二进制无法启动）
 #             Linux    AppImage + deb + rpm + 便携 tar.gz（固定 ubuntu-22.04，取该发行版的 glibc 下限）
-#   publish needs [check, build]：三平台产物齐了且验证门通过，才把草稿 Release 转正
+#   publish needs [prepare, build]：三平台产物齐了且验证门通过，才把草稿 Release 转正
 #             —— 门禁失败或任一平台构建失败时 Release 停在草稿，不会对外可见
 #
 # 想重跑同版本：`git tag -f v1.0.0 <新提交> && git push -f origin v1.0.0`
@@ -25,55 +27,27 @@ permissions:
 jobs:
   check:
     name: 验证门
-    runs-on: windows-latest
-    env:
-      # mise 经 rustup 装 rust，工具链实体在 rustup home；放进 mise 数据目录（mise-action 缓存的就是它）
-      # 才能跟缓存一起恢复 —— 否则缓存命中时 mise 认为已装、rustup home 却是空的
-      MISE_RUSTUP_HOME: C:\Users\runneradmin\AppData\Local\mise\rustup
-      # kcp-sys 走 bindgen 需 libclang：check / clippy / test 三步都会编译它，故放在 job 级
-      LIBCLANG_PATH: C:\Program Files\LLVM\bin
+    uses: ./.github/workflows/check.yml
+
+  prepare:
+    name: 创建草稿 Release
+    needs: check
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: jdx/mise-action@v5
-        with:
-          install_args: "node npm:pnpm rust protoc"
-      - name: 确保 7-Zip 可用（easytier 构建依赖）
+      # 唯一创建点：三平台 build 并行时各自 `gh release create` 会互相竞争（先 view 再 create 仍有竞态）
+      - name: 创建草稿 Release（tag）
+        if: github.ref_type == 'tag'
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ -f "/c/Program Files/7-Zip/7z.exe" ]; then
-            echo "C:/Program Files/7-Zip" >> "$GITHUB_PATH"
-          else
-            choco install 7zip -y
-            echo "C:/Program Files/7-Zip" >> "$GITHUB_PATH"
-          fi
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-      - uses: actions/cache@v6
-        with:
-          path: ${{ runner.os == 'Windows' && '~/AppData/Local/pnpm/store' || '~/.local/share/pnpm/store' }}
-          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: pnpm-store-${{ runner.os }}-
-      - run: pnpm install --frozen-lockfile
-      - name: 前端类型检查
-        run: npx vue-tsc --noEmit
-      - name: CSS 兼容性检查（Chrome 111 / Safari 16.4 基线）
-        run: pnpm lint:css
-      - name: 语言包校验
-        run: pnpm i18n:check
-      - name: Rust 格式检查
-        working-directory: src-tauri
-        run: cargo fmt --check
-      # clippy 已包含编译检查，不再单独跑 cargo check（避免重复编译）
-      - name: cargo clippy（零警告）
-        working-directory: src-tauri
-        run: cargo clippy --lib -- -D warnings
-      - name: cargo test（串行：persist 共用 Settings.toml、网络测试抖动）
-        working-directory: src-tauri
-        run: cargo test --lib -- --test-threads=1
+          gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --draft -R "$GITHUB_REPOSITORY" \
+                 --title "Elytra Launcher $GITHUB_REF_NAME" --generate-notes
 
   build:
     name: 打包 ${{ matrix.name }}
+    needs: prepare
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -221,20 +195,16 @@ jobs:
           path: artifacts/*
           if-no-files-found: error
 
-      - name: 附到 GitHub Release（草稿）
+      - name: 上传产物到草稿 Release（tag）
         if: github.ref_type == 'tag'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
-            || gh release create "$GITHUB_REF_NAME" --draft \
-                 --title "Elytra Launcher $GITHUB_REF_NAME" --generate-notes
-          gh release upload "$GITHUB_REF_NAME" artifacts/* --clobber
+        run: gh release upload "$GITHUB_REF_NAME" artifacts/* --clobber -R "$GITHUB_REPOSITORY"
 
   publish:
     name: 发布 Release
-    needs: [check, build]
+    needs: [prepare, build]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     steps:

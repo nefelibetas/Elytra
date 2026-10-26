@@ -19,6 +19,12 @@ export default {
     repo: "GitHub",
     issues: "Issues",
     releases: "Releases",
+    checkUpdate: "Check for updates",
+    checkingUpdate: "Checking...",
+    newVersion: "New version {version}",
+    downloadUpdate: "Download",
+    upToDate: "You're up to date",
+    noRelease: "No published release yet",
     specialThanks: "Special Thanks",
     specialThanksNote:
       "Different focuses, not a feature-completeness ranking. Only projects we actually referenced or used are listed; other excellent launchers are omitted, not judged. Pick what fits you.",

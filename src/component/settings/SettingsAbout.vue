@@ -4,9 +4,10 @@ import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Copy, ExternalLink } from "@lucide/vue";
+import { Copy, ExternalLink, RefreshCw } from "@lucide/vue";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
+import { checkLauncherUpdate, updateState, updateInfo } from "../../store/app/update";
 import pcl2Icon from "../../assets/thanks/pcl2.png";
 import hmclIcon from "../../assets/thanks/hmcl.png";
 import mcimIcon from "../../assets/thanks/mcim.png";
@@ -25,7 +26,7 @@ import azulIcon from "../../assets/thanks/azul.png";
 
 const { t } = useI18n();
 
-const REPO = "https://github.com/nefelibetas/Elytra";
+const REPO = "https://github.com/nefelibetas/ElytraLauncher";
 const ISSUES = `${REPO}/issues`;
 const RELEASES = `${REPO}/releases`;
 const LICENSE = `${REPO}/blob/main/LICENSE`;
@@ -122,6 +123,18 @@ function open(url: string) {
   void openUrl(url).catch(e => showToast(errMsg(e)));
 }
 
+async function handleCheckUpdate() {
+  try {
+    await checkLauncherUpdate();
+  } catch (e) {
+    showToast(errMsg(e));
+  }
+}
+
+function openUpdatePage() {
+  if (updateInfo.value) open(updateInfo.value.url);
+}
+
 function copyFallback(text: string) {
   const ta = document.createElement("textarea");
   ta.value = text;
@@ -174,7 +187,21 @@ async function copyVersionInfo() {
             <Copy :size="13" />
             {{ t("settings.about.copyVersion") }}
           </button>
+          <button type="button" :disabled="updateState === 'checking'" @click="handleCheckUpdate">
+            <RefreshCw :size="13" />
+            {{ updateState === "checking" ? t("settings.about.checkingUpdate") : t("settings.about.checkUpdate") }}
+          </button>
         </div>
+        <div v-if="updateState === 'available' && updateInfo" class="ab-update">
+          <span class="ab-update-new">
+            {{ t("settings.about.newVersion", { version: updateInfo.latest_version }) }}
+          </span>
+          <button type="button" class="ab-update-download" @click="openUpdatePage">
+            {{ t("settings.about.downloadUpdate") }}
+          </button>
+        </div>
+        <p v-else-if="updateState === 'latest'" class="ab-update-muted">{{ t("settings.about.upToDate") }}</p>
+        <p v-else-if="updateState === 'none'" class="ab-update-muted">{{ t("settings.about.noRelease") }}</p>
       </div>
     </header>
 
@@ -377,6 +404,41 @@ async function copyVersionInfo() {
 .ab-quick button:hover {
   color: var(--color-brand);
   border-color: var(--color-brand);
+}
+
+.ab-quick button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ab-update {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.ab-update-new {
+  font-weight: 600;
+  color: var(--color-brand);
+}
+
+.ab-update-download {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+  color: var(--color-brand);
+  background: var(--surface-elevated);
+  border: 1px solid var(--color-brand);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.ab-update-muted {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--text-tertiary);
 }
 
 .ab-section {

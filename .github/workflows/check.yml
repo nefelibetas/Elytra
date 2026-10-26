@@ -1,0 +1,110 @@
+name: Check
+
+# 平台拆分（被 ci.yml / release.yml 复用）：
+#   frontend     平台无关检查（前端类型 / CSS / i18n + cargo fmt），只跑一次
+#   rust-windows Windows 全量 clippy + test
+#   rust-cross   Linux / macOS clippy（覆盖平台 cfg 分支的编译与 lint；test 仍只在 Windows 跑）
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: 前端与格式
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      MISE_RUSTUP_HOME: C:\Users\runneradmin\AppData\Local\mise\rustup
+    steps:
+      - uses: actions/checkout@v5
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: "node npm:pnpm rust"
+      - uses: actions/cache@v6
+        with:
+          path: ~/AppData/Local/pnpm/store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-store-${{ runner.os }}-
+      - run: pnpm install --frozen-lockfile
+      - name: 前端类型检查
+        run: npx vue-tsc --noEmit
+      - name: CSS 兼容性检查（Chrome 111 / Safari 16.4 基线）
+        run: pnpm lint:css
+      - name: 语言包校验
+        run: pnpm i18n:check
+      - name: Rust 格式检查
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+  rust-windows:
+    name: Rust（Windows clippy + test）
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      # kcp-sys 走 bindgen 需 libclang：clippy / test 都会编译它
+      LIBCLANG_PATH: C:\Program Files\LLVM\bin
+      # mise 经 rustup 装 rust，工具链实体在 rustup home；与 release 的缓存目录保持一致
+      MISE_RUSTUP_HOME: C:\Users\runneradmin\AppData\Local\mise\rustup
+    steps:
+      - uses: actions/checkout@v5
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: "rust protoc"
+      - name: 确保 7-Zip 可用（easytier 构建依赖）
+        shell: bash
+        run: |
+          if [ -f "/c/Program Files/7-Zip/7z.exe" ]; then
+            echo "C:/Program Files/7-Zip" >> "$GITHUB_PATH"
+          else
+            choco install 7zip -y
+            echo "C:/Program Files/7-Zip" >> "$GITHUB_PATH"
+          fi
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: cargo clippy（零警告）
+        working-directory: src-tauri
+        run: cargo clippy --lib -- -D warnings
+      - name: cargo test（串行：persist 共用 Settings.toml、网络测试抖动）
+        working-directory: src-tauri
+        run: cargo test --lib -- --test-threads=1
+
+  rust-cross:
+    name: Rust（${{ matrix.name }} clippy）
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            os: ubuntu-22.04
+            mise_rustup_home: /home/runner/.local/share/mise/rustup
+          - name: macos-universal
+            os: macos-latest
+            mise_rustup_home: /Users/runner/.local/share/mise/rustup
+    env:
+      MISE_RUSTUP_HOME: ${{ matrix.mise_rustup_home }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: "rust protoc"
+      - name: 安装 7-Zip（easytier 构建依赖，macOS）
+        if: startsWith(matrix.os, 'macos')
+        run: brew list p7zip >/dev/null 2>&1 || brew install p7zip
+      - name: Linux 系统依赖（Tauri v2 前置 + kcp-sys 的 bindgen）
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
+            patchelf xdg-utils file libclang-dev p7zip-full
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: cargo clippy（零警告）
+        working-directory: src-tauri
+        run: cargo clippy --lib -- -D warnings
