@@ -13,8 +13,20 @@ export async function exportLaunchScript(payload: {
   await invoke("export_launch_script", payload);
 }
 
-export async function exportModpack(versionName: string, savePath: string): Promise<void> {
-  await invoke("export_modpack", { versionName, savePath });
+export type ModpackExportFormat = "mrpack" | "curseforge";
+
+export interface ModpackExportResult {
+  format: ModpackExportFormat;
+  matched: number;
+  bundled: number;
+}
+
+export async function exportModpack(
+  versionName: string,
+  savePath: string,
+  format: ModpackExportFormat,
+): Promise<ModpackExportResult> {
+  return await invoke<ModpackExportResult>("export_modpack", { versionName, savePath, format });
 }
 
 /** 版本级服务器直连配置（快速进服 --server/--port，per-version 存储）。 */

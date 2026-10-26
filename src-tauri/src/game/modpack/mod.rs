@@ -4,6 +4,7 @@
 //! PCL 带启动器包递归解析内嵌包；导出侧固定为标准 MRPACK。
 
 mod curseforge;
+mod curseforge_export;
 mod detect;
 mod directory;
 mod export;
@@ -16,6 +17,7 @@ mod plan;
 mod version_meta;
 
 pub use curseforge::{parse_curseforge_manifest, resolve_cf_files};
+pub(crate) use curseforge_export::pack_curseforge;
 pub(crate) use export::{pack_modpack, resolve_hosted_mods, resolve_version_meta};
 pub use model::{
     ModpackRequest, OverridesRef, PackFile, PackKind, PackMetaInfo, PackPlan, PackSource,

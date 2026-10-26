@@ -230,6 +230,7 @@ export default {
     emptyContent: "The modpack has nothing to install",
     mcVersionNotFound: "The official source does not list this Minecraft version",
     serializeFailed: "Serialization failed",
+    exportFormat: "Unsupported export format",
     serverPackUnsupported: "Detected a server auto-update pack, which is not supported yet",
     multiplePacks: "The archive contains more than one modpack",
     manifestTooLarge: "The modpack manifest is too large",

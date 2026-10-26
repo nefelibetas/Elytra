@@ -220,7 +220,7 @@ pub(crate) fn pack_modpack(
 }
 
 /// 递归写目录到 zip（保留相对路径；目录条目本身也记录，空目录才可保留）。
-fn add_dir_to_zip(
+pub(super) fn add_dir_to_zip(
     writer: &mut zip::ZipWriter<std::fs::File>,
     dir: &Path,
     prefix: &str,

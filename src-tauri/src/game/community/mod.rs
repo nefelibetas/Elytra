@@ -21,14 +21,16 @@ pub use api::{
 /// JSON 查询通道（updates/identify.rs 复用）。
 pub(crate) use shared::{api_routes, api_urls, get_json_multi, ApiPlatform};
 
-/// CurseForge 批量文件换链（modpack.rs 整合包安装复用）。
-pub(crate) use curseforge::curseforge_files;
 /// CurseForge 带 key GET（loader/optifine.rs 复用）。
 pub(crate) use curseforge::curseforge_get;
+#[cfg(test)]
+pub(crate) use curseforge::parse_fingerprint_matches;
 /// CurseForge 用户 key 状态与设置（commands/community.rs 调用）。
 pub use curseforge::{
     clear_curseforge_key, curseforge_key_source, set_curseforge_key, CurseForgeKeySource,
 };
+/// CurseForge 批量文件换链（modpack.rs 整合包安装复用）。
+pub(crate) use curseforge::{curseforge_files, curseforge_fingerprint_matches};
 /// Modrinth 项目原始 JSON 批量拉取（updates/identify.rs 复用）。
 pub(crate) use modrinth::modrinth_projects_raw;
 /// MCIM 批量翻译通道（updates/identify.rs 复用）。

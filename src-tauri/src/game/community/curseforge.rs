@@ -63,7 +63,7 @@ fn read_user_api_key() -> Result<Option<String>, String> {
 }
 
 /// 用户 key 优先，其次构建期内置 key。
-fn api_key() -> Result<String, String> {
+pub(crate) fn api_key() -> Result<String, String> {
     if let Some(key) = read_user_api_key()? {
         return Ok(key);
     }
@@ -203,6 +203,58 @@ pub(crate) async fn curseforge_files(file_ids: &[i64]) -> Result<Vec<serde_json:
     )
     .await?;
     Ok(json["data"].as_array().cloned().unwrap_or_default())
+}
+
+/// 指纹精确匹配结果：本地文件指纹 → CF 项目/文件。
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CurseForgeFingerprintMatch {
+    pub fingerprint: u32,
+    pub project_id: i64,
+    pub file_id: i64,
+}
+
+/// 批量指纹匹配 `POST /v1/fingerprints`；分块请求，返回精确匹配（部分匹配不用于导出引用）。
+pub(crate) async fn curseforge_fingerprint_matches(
+    fingerprints: &[u32],
+) -> Result<Vec<CurseForgeFingerprintMatch>, String> {
+    if fingerprints.is_empty() {
+        return Ok(Vec::new());
+    }
+    let key = api_key()?;
+    let urls = api_routes(ApiPlatform::CurseForge, "/fingerprints");
+    let mut matches = Vec::new();
+    for chunk in fingerprints.chunks(500) {
+        let body = serde_json::json!({ "fingerprints": chunk });
+        let json = post_json_multi(
+            &urls,
+            &body,
+            |u| http().post(u).header("x-api-key", key.as_str()),
+            CF_BATCH_TIMEOUT_SECS,
+            CF_BATCH_TIMEOUT_SECS,
+        )
+        .await?;
+        matches.extend(parse_fingerprint_matches(&json));
+    }
+    Ok(matches)
+}
+
+/// 从指纹响应解析 `exactMatches`（`file.modId` = projectID，`file.id` = fileID）。
+pub(crate) fn parse_fingerprint_matches(
+    json: &serde_json::Value,
+) -> Vec<CurseForgeFingerprintMatch> {
+    json["data"]["exactMatches"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            let file = &item["file"];
+            Some(CurseForgeFingerprintMatch {
+                fingerprint: file["fileFingerprint"].as_u64()? as u32,
+                project_id: file["modId"].as_i64()?,
+                file_id: file["id"].as_i64()?,
+            })
+        })
+        .collect()
 }
 
 pub(super) async fn search_curseforge(

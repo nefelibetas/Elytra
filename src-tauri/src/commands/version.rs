@@ -209,18 +209,50 @@ pub fn toggle_mod_file(version_name: String, file_name: String) -> Result<bool, 
     updates::toggle_mod_file(&vdir.join("mods"), &file_name)
 }
 
-/// 导出整合包：mods/config/shaderpacks/resourcepacks/datapacks 打包为标准 MRPACK（modrinth.index.json + overrides/）；目录缺失自动跳过，打包走 spawn_blocking。
+/// 导出结果（前端展示匹配/打包数量；MRPACK 的 bundled 暂为 0）。
+#[derive(serde::Serialize)]
+pub struct ModpackExportResult {
+    pub format: String,
+    pub matched: usize,
+    pub bundled: usize,
+}
+
+/// 导出整合包：支持标准 MRPACK 与 CurseForge zip。
+/// MRPACK：Modrinth 命中的 mod 写 `files[]`，其余进 `overrides/`；CurseForge：指纹命中的写 `files[]`，未命中进 `overrides/`。
 #[tauri::command]
-pub async fn export_modpack(version_name: String, save_path: String) -> Result<(), String> {
+pub async fn export_modpack(
+    version_name: String,
+    save_path: String,
+    format: Option<String>,
+) -> Result<ModpackExportResult, String> {
     let vdir = version_dir_path(&version_name)?;
-    let name = version_name.clone();
-    // 能匹配 Modrinth hash 的 mod 走 files[]（在线分发，包内不物理携带），其余打进 overrides。
-    let (hosted, hosted_names) = resolve_hosted_mods(&vdir).await;
-    tokio::task::spawn_blocking(move || {
-        pack_modpack(&vdir, &name, &save_path, &hosted, &hosted_names)
-    })
-    .await
-    .map_err(common_err_ctx_key!("errors.file.write", "打包任务失败"))?
+    match format.as_deref().unwrap_or("mrpack") {
+        "mrpack" => {
+            let name = version_name.clone();
+            let (hosted, hosted_names) = resolve_hosted_mods(&vdir).await;
+            let matched = hosted.len();
+            tokio::task::spawn_blocking(move || {
+                pack_modpack(&vdir, &name, &save_path, &hosted, &hosted_names)
+            })
+            .await
+            .map_err(common_err_ctx_key!("errors.file.write", "打包任务失败"))??;
+            Ok(ModpackExportResult {
+                format: "mrpack".into(),
+                matched,
+                bundled: 0,
+            })
+        }
+        "curseforge" => {
+            let stats =
+                crate::game::modpack::pack_curseforge(&vdir, &version_name, &save_path).await?;
+            Ok(ModpackExportResult {
+                format: "curseforge".into(),
+                matched: stats.matched,
+                bundled: stats.bundled,
+            })
+        }
+        other => bail_key!("errors.modpack.exportFormat", "不支持的导出格式\n{other}"),
+    }
 }
 
 #[cfg(test)]

@@ -454,14 +454,20 @@ export default {
         scriptButton: "导出启动脚本",
         modpackTitle: "导出整合包",
         modpackDesc:
-          "将当前实例的 mods / config / shaderpacks / resourcepacks / datapacks 打包为标准 MRPACK（Modrinth 格式，.mrpack），可用于分享或备份（不含游戏本体与存档）。",
-        modpackButton: "导出整合包",
+          "将当前实例的 mods / config / shaderpacks / resourcepacks / datapacks 打包为整合包（不含游戏本体与存档）。MRPACK 为 Modrinth 标准格式；CurseForge 需要联网匹配指纹。",
+        curseforgeHint:
+          "CurseForge 导出会联网匹配 mod 指纹：匹配到的写引用，未匹配的打包进 overrides；需要配置 CurseForge Key。",
+        modpackButton: "导出 MRPACK",
+        modpackCurseforgeButton: "导出 CurseForge",
         scriptFilter: "启动脚本",
         modpackFilter: "整合包 (MRPACK)",
+        curseforgeFilter: "CurseForge 整合包 (zip)",
         scriptFileName: "启动 {version}.{ext}",
         notLoggedIn: "未登录微软账号，请先在启动页登录",
         scriptExported: "启动脚本已导出",
         modpackExported: "整合包已导出（MRPACK）",
+        modpackCurseforgeExported:
+          "CurseForge 整合包已导出（匹配 {matched}，打包 {bundled}）",
       },
       logs: {
         title: "游戏日志",

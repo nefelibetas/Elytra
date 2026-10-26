@@ -5,7 +5,11 @@ import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { CodeXml, Package } from "@lucide/vue";
 import { loadLastUsername } from "../../store/auth/auth";
-import { exportLaunchScript, exportModpack as exportModpackCommand } from "../../store/task/versionSetup";
+import {
+  exportLaunchScript,
+  exportModpack as exportModpackCommand,
+  type ModpackExportFormat,
+} from "../../store/task/versionSetup";
 import { save } from "@tauri-apps/plugin-dialog";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
@@ -69,16 +73,28 @@ async function exportScript() {
   }
 }
 
-/** 导出整合包：mods/config/shaderpacks/resourcepacks/datapacks 打包为标准 MRPACK（Modrinth v1；Modrinth 命中走 files[]，其余进 overrides，存档不打包）。 */
-async function exportModpack() {
+/** 导出整合包：MRPACK（Modrinth 命中走 files[]）或 CurseForge（指纹命中走 files[]）；未命中均进 overrides，存档不打包。 */
+async function exportModpack(format: ModpackExportFormat) {
   try {
+    const mrpack = format === "mrpack";
     const path = await save({
-      defaultPath: `${versionName.value}.mrpack`,
-      filters: [{ name: t("settings.version.setup.export.modpackFilter"), extensions: ["mrpack"] }],
+      defaultPath: `${versionName.value}.${mrpack ? "mrpack" : "zip"}`,
+      filters: mrpack
+        ? [{ name: t("settings.version.setup.export.modpackFilter"), extensions: ["mrpack"] }]
+        : [{ name: t("settings.version.setup.export.curseforgeFilter"), extensions: ["zip"] }],
     });
     if (!path) return; // 用户取消
-    await exportModpackCommand(versionName.value, path);
-    showToast(t("settings.version.setup.export.modpackExported"));
+    const result = await exportModpackCommand(versionName.value, path, format);
+    if (format === "curseforge") {
+      showToast(
+        t("settings.version.setup.export.modpackCurseforgeExported", {
+          matched: result.matched,
+          bundled: result.bundled,
+        }),
+      );
+    } else {
+      showToast(t("settings.version.setup.export.modpackExported"));
+    }
   } catch (e) {
     showToast(errMsg(e));
   }
@@ -105,10 +121,17 @@ async function exportModpack() {
       <div class="setup-desc">
         {{ t("settings.version.setup.export.modpackDesc") }}
       </div>
+      <div class="setup-desc">
+        {{ t("settings.version.setup.export.curseforgeHint") }}
+      </div>
       <div class="setup-btn-row">
-        <button class="setup-btn" @click="exportModpack">
+        <button class="setup-btn" @click="exportModpack('mrpack')">
           <Package :size="15" />
           <span>{{ t("settings.version.setup.export.modpackButton") }}</span>
+        </button>
+        <button class="setup-btn" @click="exportModpack('curseforge')">
+          <Package :size="15" />
+          <span>{{ t("settings.version.setup.export.modpackCurseforgeButton") }}</span>
         </button>
       </div>
     </div>

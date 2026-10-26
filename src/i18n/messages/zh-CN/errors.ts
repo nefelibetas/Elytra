@@ -230,6 +230,7 @@ export default {
     emptyContent: "整合包没有可安装的内容",
     mcVersionNotFound: "官方源未收录该 Minecraft 版本",
     serializeFailed: "序列化失败",
+    exportFormat: "不支持的导出格式",
     serverPackUnsupported: "识别为服务器自动更新包，暂不支持导入",
     multiplePacks: "包内存在多个整合包",
     manifestTooLarge: "整合包清单过大",
