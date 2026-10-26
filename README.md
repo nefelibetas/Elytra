@@ -205,6 +205,7 @@ cargo test --test tool_download                    # 工具箱下载器集成测
 - [Tauri](https://tauri.app/) · [Vue 3](https://vuejs.org/) · [Vite](https://vite.dev/) — 应用框架与工具链
 - [EasyTier](https://github.com/EasyTier/EasyTier) — 局域网联机的虚拟网络层
 - [Scaffolding-MC](https://github.com/Scaffolding-MC/Scaffolding-MC) — 跨启动器联机信息协议
+- [Terracotta](https://github.com/burningtnt/Terracotta) — 联机体验与客户端实现参考
 - [Lucide](https://lucide.dev/) — 图标
 - [BMCLAPI](https://bmclapi2.bangbang93.com/) — 国内下载镜像
 - [MCIM](https://mod.mcimirror.top/) — Modrinth / CurseForge 镜像与翻译数据

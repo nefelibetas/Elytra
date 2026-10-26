@@ -205,6 +205,7 @@ See 📖 [AGENTS.md](AGENTS.md) (repository development guide).
 - [Tauri](https://tauri.app/) · [Vue 3](https://vuejs.org/) · [Vite](https://vite.dev/) — app framework & toolchain
 - [EasyTier](https://github.com/EasyTier/EasyTier) — virtual network layer behind LAN play
 - [Scaffolding-MC](https://github.com/Scaffolding-MC/Scaffolding-MC) — cross-launcher multiplayer information protocol
+- [Terracotta](https://github.com/burningtnt/Terracotta) — reference for the multiplayer experience and client implementation
 - [Lucide](https://lucide.dev/) — icons
 - [BMCLAPI](https://bmclapi2.bangbang93.com/) — China download mirror
 - [MCIM](https://mod.mcimirror.top/) — Modrinth / CurseForge mirror & translation data
