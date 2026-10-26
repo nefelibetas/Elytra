@@ -5,6 +5,7 @@
 
 mod api;
 mod curseforge;
+mod dependencies;
 mod modrinth;
 mod shared;
 mod translation;
@@ -15,6 +16,8 @@ pub use api::{
     CommunityDependency, CommunityDependencyItem, CommunitySearchPage, CommunitySearchResult,
     CommunityVersion, SearchQuery,
 };
+pub(crate) use dependencies::resolve_mod_dependencies;
+pub use dependencies::{ModDependencyItem, ModDependencyPlan};
 
 // ── 跨模块复用（平台实现与 updates / modpack / loader 依赖这些名字）──
 

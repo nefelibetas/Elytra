@@ -61,12 +61,29 @@ import type { FabricApi } from "../../types/task/FabricApi";
 import type { LoaderChoice } from "../../types/task/LoaderChoice";
 export type { DownloadTask, FabricApi, LoaderChoice };
 export type { DownloadFileKind } from "../../types/task/DownloadFileKind";
+import type { DownloadFileKind } from "../../types/task/DownloadFileKind";
 
 /** taskId → 资源名（社区单文件下载注册；done 消费后删）。 */
 export const taskNames = new Map<string, string>();
 
 export function registerTaskName(taskId: string, name: string) {
   taskNames.set(taskId, name);
+}
+
+export interface DownloadFileInput {
+  kind: DownloadFileKind;
+  url: string;
+  filename: string;
+}
+
+/** 批量文件下载（同一任务、每文件一步；前置 Mod 与主 Mod 共用）。 */
+export function downloadFiles(
+  versionDirName: string,
+  files: DownloadFileInput[],
+): Promise<string> {
+  return invoke<string>("download_files", {
+    task: { version_dir_name: versionDirName, files },
+  });
 }
 
 /** taskId → 安装目录名（下载完成后自动选中为 Mod 下载目标；done 消费后删）。 */

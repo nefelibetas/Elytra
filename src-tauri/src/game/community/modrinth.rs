@@ -209,6 +209,7 @@ pub(super) async fn modrinth_versions(
                                         .as_str()
                                         .unwrap_or("unknown")
                                         .to_string(),
+                                    version_id: d["version_id"].as_str().map(str::to_string),
                                 })
                             })
                             .collect()

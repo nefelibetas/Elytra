@@ -54,6 +54,8 @@ export interface CommunityVersion {
 export interface CommunityDependency {
   project_id: string;
   relation: string;
+  /** Modrinth 精确版本提示；CurseForge 为 null */
+  version_id: string | null;
 }
 
 /** 依赖项目详情（镜像 Rust downloader::community::CommunityDependencyItem；命令 get_community_details）。 */

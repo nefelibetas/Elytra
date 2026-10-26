@@ -2,7 +2,6 @@
 // 资源详情页（Mod/光影/资源包/数据包/整合包共用）：信息卡片 + 版本文件列表（本地过滤）；仅 Mod 显示 ModLoader 筛选。
 import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue";
 import { useI18n } from "vue-i18n";
-import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { showToast } from "../utils/toast";
 import { errMsg } from "../utils/error";
@@ -14,8 +13,15 @@ import {
   fetchVersions, fetchCommunityDetails,
   type CommunityVersion, type CommunityDependencyItem, type CommunityDisplayItem,
 } from "../store/community/communitySearch";
-import { registerTaskName, type DownloadFileKind } from "../store/task/download";
+import {
+  downloadFiles,
+  registerTaskName,
+  type DownloadFileInput,
+  type DownloadFileKind,
+} from "../store/task/download";
+import { resolveModDependencies, type ModDependencyPlan } from "../store/community/modDependencies";
 import { installModpack } from "../store/task/modpack";
+import ModDownloadDialog from "../component/download/ModDownloadDialog.vue";
 import { fmtCount, fmtSize, fmtModDate } from "../utils/format";
 import IconImage from "../component/common/IconImage.vue";
 
@@ -347,7 +353,94 @@ function backAfterSubmit() {
   goBack();
 }
 
-/** 提交选中版本下载任务（download_single_file → 任务中心自动注册）；落盘 versions/{版本目录}/{kind_dir}/{filename}（后端兜底 _{n} 冲突）。 */
+// ── 前置 Mod 确认 ──
+
+const depDialogOpen = ref(false);
+const depDialogLoading = ref(false);
+const depDialogError = ref("");
+const depPlan = ref<ModDependencyPlan | null>(null);
+const depModName = ref("");
+const depModVersion = ref("");
+const depModLoader = ref("");
+let depDialogSeq = 0;
+let pendingMain: { version: CommunityVersion; target: string } | null = null;
+
+function mainDownloadFile(version: CommunityVersion): DownloadFileInput {
+  return { kind: "mod", url: version.download_url, filename: version.filename };
+}
+
+function dependencyDownloadFiles(selectedOptional: string[]): DownloadFileInput[] {
+  if (!pendingMain) return [];
+  const files = [mainDownloadFile(pendingMain.version)];
+  const seen = new Set(files.map(file => file.filename));
+  for (const dep of depPlan.value?.items ?? []) {
+    if (!dep.url || !dep.filename || dep.error || dep.installed) continue;
+    const included =
+      dep.root_optional === null
+      || (dep.root_optional !== null && selectedOptional.includes(dep.root_optional));
+    if (!included || seen.has(dep.filename)) continue;
+    seen.add(dep.filename);
+    files.push({ kind: "mod", url: dep.url, filename: dep.filename });
+  }
+  return files;
+}
+
+async function submitModFiles(files: DownloadFileInput[], name: string) {
+  const target = pendingMain?.target;
+  if (!target || files.length === 0) return;
+  try {
+    const taskId = await downloadFiles(target, files);
+    if (taskId) registerTaskName(taskId, name);
+    showToast(t("download.detail.submitted"));
+    depDialogOpen.value = false;
+    pendingMain = null;
+    backAfterSubmit();
+  } catch (e) {
+    showToast(errMsg(e));
+  }
+}
+
+/** 解析前置并打开确认框；无前置则直接提交主 Mod。 */
+async function openModDownload(version: CommunityVersion, target: string) {
+  pendingMain = { version, target };
+  depModName.value = item.value?.title ?? version.filename;
+  depModVersion.value = version.version_number;
+  depModLoader.value = version.loaders.join(" / ");
+  depPlan.value = null;
+  depDialogError.value = "";
+  depDialogLoading.value = true;
+  depDialogOpen.value = true;
+  const seq = ++depDialogSeq;
+  try {
+    const plan = await resolveModDependencies({
+      source: item.value?.source ?? "modrinth",
+      projectId: item.value?.id ?? "",
+      versionId: version.version_id,
+      versionDirName: target,
+    });
+    if (seq !== depDialogSeq || !depDialogOpen.value) return;
+    depPlan.value = plan;
+    if (plan.items.length === 0 && plan.errors.length === 0) {
+      await submitModFiles([mainDownloadFile(version)], depModName.value);
+    }
+  } catch (e) {
+    if (seq !== depDialogSeq || !depDialogOpen.value) return;
+    depDialogError.value = errMsg(e);
+  } finally {
+    if (seq === depDialogSeq) depDialogLoading.value = false;
+  }
+}
+
+function onDependencyConfirm(selectedOptional: string[]) {
+  void submitModFiles(dependencyDownloadFiles(selectedOptional), depModName.value);
+}
+
+function onDependencyMainOnly() {
+  if (!pendingMain) return;
+  void submitModFiles([mainDownloadFile(pendingMain.version)], depModName.value);
+}
+
+/** 提交选中版本下载任务（任务中心自动注册）；落盘 versions/{版本目录}/{kind_dir}/{filename}（后端兜底 _{n} 冲突）。 */
 async function submitDownload() {
   // modpack 分流：不要求已选启动版本（安装器自建版本目录）
   if (isModpack.value) {
@@ -375,17 +468,16 @@ async function submitDownload() {
     showToast(t("download.detail.noTargetVersion"));
     return;
   }
+  if (kind === "mod") {
+    await openModDownload(v, targetVersion);
+    return;
+  }
   try {
     // 诊断：invoke 超时兜底（5s）——后端命令卡住时给出反馈而非静默"无反应"
     const taskId = await Promise.race([
-      invoke<string>("download_single_file", {
-        task: {
-          version_dir_name: targetVersion,
-          kind,
-          url: v.download_url,
-          filename: v.filename,
-        },
-      }),
+      downloadFiles(targetVersion, [
+        { kind, url: v.download_url, filename: v.filename },
+      ]),
       new Promise<never>((_, rej) =>
         setTimeout(() => rej(new Error(t("download.detail.requestTimeout"))), 5000),
       ),
@@ -573,6 +665,18 @@ async function copyName() {
     </Transition>
   </div>
   <div v-else class="md-empty">{{ t("download.detail.notFound") }}</div>
+
+  <ModDownloadDialog
+    v-model="depDialogOpen"
+    :loading="depDialogLoading"
+    :error="depDialogError"
+    :mod-name="depModName"
+    :mod-version="depModVersion"
+    :mod-loader="depModLoader"
+    :plan="depPlan"
+    @confirm="onDependencyConfirm"
+    @main-only="onDependencyMainOnly"
+  />
 </template>
 
 <style scoped>

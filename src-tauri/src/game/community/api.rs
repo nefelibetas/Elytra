@@ -44,6 +44,9 @@ pub struct CommunityDependency {
     pub project_id: String,
     /// 关系类型（两源归一）：required | optional | incompatible | embedded
     pub relation: String,
+    /// 精确版本提示（Modrinth `version_id`；CurseForge 依赖无此字段）
+    #[serde(default)]
+    pub version_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

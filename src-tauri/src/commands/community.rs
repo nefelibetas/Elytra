@@ -35,6 +35,34 @@ pub async fn get_community_details(
     community::get_community_details(&source, &ids, translate.unwrap_or(true)).await
 }
 
+/// 解析主 Mod 的前置依赖（required + optional），按目标实例的 MC/loader 选兼容版本。
+#[tauri::command]
+pub async fn resolve_mod_dependencies(
+    source: String,
+    project_id: String,
+    version_id: String,
+    version_dir_name: String,
+) -> Result<community::ModDependencyPlan, String> {
+    let vdir = crate::game::version::dir::version_dir_path(&version_dir_name)?;
+    let (mc_version, kind, _) =
+        crate::game::modpack::resolve_version_meta(&vdir, &version_dir_name);
+    if kind == "vanilla" || kind == "optifine" {
+        bail_key!(
+            "errors.community.instanceNoLoader",
+            "目标实例没有可用的 ModLoader\n请先在版本设置中安装 Fabric / Forge / NeoForge / Quilt"
+        );
+    }
+    community::resolve_mod_dependencies(
+        &source,
+        &project_id,
+        &version_id,
+        &mc_version,
+        &kind,
+        &vdir.join("mods"),
+    )
+    .await
+}
+
 #[tauri::command]
 pub fn get_curseforge_key_source() -> community::CurseForgeKeySource {
     community::curseforge_key_source()

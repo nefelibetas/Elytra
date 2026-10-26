@@ -37,7 +37,7 @@ use commands::auto_tasks::{
 };
 use commands::community::{
     clear_curseforge_key, get_community_details, get_community_versions, get_curseforge_key_source,
-    search_community, set_curseforge_key,
+    resolve_mod_dependencies, search_community, set_curseforge_key,
 };
 use commands::config::take_config_recovery_notice;
 use commands::downloader::{
@@ -220,6 +220,7 @@ pub fn run() {
             search_community,
             get_community_versions,
             get_community_details,
+            resolve_mod_dependencies,
             get_curseforge_key_source,
             set_curseforge_key,
             clear_curseforge_key,

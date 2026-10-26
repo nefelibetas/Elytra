@@ -414,6 +414,7 @@ pub(super) async fn curseforge_versions(
                                 Some(CommunityDependency {
                                     project_id: d["modId"].as_u64()?.to_string(),
                                     relation: relation.to_string(),
+                                    version_id: None,
                                 })
                             })
                             .collect()

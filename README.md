@@ -31,7 +31,7 @@
 - 🧰 **缺失文件修复**：扫描版本安装完整性并一键补齐
 - ☕ **JDK 管理**：本机 JDK 扫描 + managed runtime 自动下载（Mojang → Azul 双源回退）
 - 📥 **内容下载**：Mod / 整合包 / 数据包 / 资源包 / 光影包 / 地图存档在线搜索与安装（Modrinth · CurseForge 双源），整合包支持本地导入（`.mrpack` / `.zip`，自动识别 Modrinth / CurseForge / MultiMC-Prism / HMCL / MCBBS / PCL 包与完整游戏目录），导出支持 MRPACK 与 CurseForge（后者联网匹配指纹）；CurseForge Key 可在设置中覆盖内置 Key
-- 🕸️ **Mod 依赖解析**：安装前展示依赖链，逐项一键装入对应版本
+- 🕸️ **Mod 依赖解析**：下载 Mod 时自动解析必装/可选前置（递归、去重去环），弹窗确认后与主 Mod 在同一任务中一并下载；支持仅下载主 Mod
 
 ### 🗂️ 内容管理
 
