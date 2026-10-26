@@ -1,5 +1,5 @@
 // ── 整合包安装任务（单卡片：A 包体+清单 → B 本体 → C 内容；同一 TaskManager / cancel token，步骤列表动态增长）──
-// B/C 复用 library/assets/extract（内部按 sha1 跳过已有文件）；内容文件并发下载（sha1 校验）→ overrides/ 解压。步骤表两段式：创建时仅 A 段占位，A 完成后重写为全量；进度 = 完成步骤数/总步骤数（每内容文件一步），字节仅供速度/ETA。
+// B/C 复用 library/assets/extract（内部按 sha1 跳过已有文件）；内容文件并发下载（sha1 校验）→ 覆盖目录解压。步骤表两段式：创建时仅 A 段占位，A 完成后重写为全量；进度 = 完成步骤数/总步骤数（每内容文件一步），字节仅供速度/ETA。
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
@@ -15,7 +15,8 @@ use crate::downloader::progress::ProgressCounters;
 use crate::downloader::reuse::LocalRuntimeSource;
 use crate::game::loader::{self, LoaderEvent};
 use crate::game::modpack::{
-    build_plan, cache_key, ModpackRequest, OverridesRef, PackFile, PackPlan, PackSource,
+    build_plan, cache_key, parse_optifine_version, ModpackRequest, OverridesRef, PackFile,
+    PackPlan, PackSource,
 };
 use crate::game::resource::assets::AssetIndexRef;
 use crate::game::resource::{assets, extract, library};
@@ -27,13 +28,13 @@ use crate::task::progress::{
     step_done, HeartbeatStats, StepRef,
 };
 use crate::task::{
-    global, update_and_emit, EventSink, StepInfo, StepKind, StepSpec, StepStatus, TaskProgress,
-    TaskStatus,
+    global, update_and_emit, EventSink, LoaderKind, StepInfo, StepKind, StepSpec, StepStatus,
+    TaskProgress, TaskStatus,
 };
 use crate::util::safe_relative_path;
 
 fn cache_dir() -> PathBuf {
-    crate::util::config_dir().join("modpacks")
+    crate::game::modpack::cache_dir()
 }
 
 /// 包体缓存路径（config_dir()/modpacks）：**仅在线源**落 `{key}.{ext}`；本地源直接用用户文件（缓存目录从不持有其副本）。
@@ -79,6 +80,14 @@ pub fn initial_step_specs(request: &ModpackRequest) -> Vec<StepSpec> {
 fn override_rel<'a>(member: &'a str, prefix: &str) -> Option<&'a str> {
     let rest = member.strip_prefix(prefix)?;
     (!rest.is_empty() && !rest.ends_with('/')).then_some(rest)
+}
+
+/// 相对路径是否命中排除前缀（`skip` 存 `libraries/` 形态）。
+fn is_skipped(rel: &str, skip: &[String]) -> bool {
+    skip.iter().any(|prefix| {
+        let prefix = prefix.trim_end_matches('/');
+        rel == prefix || rel.starts_with(&format!("{prefix}/"))
+    })
 }
 
 fn persist_config() -> DownloaderConfig {
@@ -445,12 +454,12 @@ fn build_step_plan(request: &ModpackRequest, plan: &PackPlan) -> (Vec<StepSpec>,
         },
     ];
     let (i_json, i_jar, i_libs, i_asst, i_nat) = (0, 1, 2, 3, 4);
-    let (i_cfg, i_lbs) = if plan.loader.is_some() {
+    let (i_cfg, i_lbs) = if plan.loader.is_some() || plan.optifine.is_some() {
         let label = plan
             .loader
             .as_ref()
             .map(|l| l.kind.display_name())
-            .unwrap_or("");
+            .unwrap_or("OptiFine");
         let cfg = steps.len();
         steps.push(StepSpec {
             name: format!("{label} 配置"),
@@ -472,7 +481,7 @@ fn build_step_plan(request: &ModpackRequest, plan: &PackPlan) -> (Vec<StepSpec>,
             kind: StepKind::File,
         });
     }
-    let i_overrides = plan.overrides.as_ref().map(|_| {
+    let i_overrides = (!plan.overrides.is_empty()).then(|| {
         let idx = steps.len();
         steps.push(StepSpec {
             name: "解压覆盖文件".into(),
@@ -486,7 +495,7 @@ fn build_step_plan(request: &ModpackRequest, plan: &PackPlan) -> (Vec<StepSpec>,
     let prefix = full_steps.len();
     full_steps.extend(steps);
     let content_bytes: u64 = plan.files.iter().map(|f| f.size).sum();
-    let override_bytes = plan.overrides.as_ref().map(sum_override_bytes).unwrap_or(0);
+    let override_bytes = sum_overrides_bytes(&plan.overrides);
     (
         full_steps,
         StepIndex {
@@ -760,13 +769,20 @@ impl<'a> PackInstall<'a> {
         Ok(())
     }
 
-    /// B6：ModLoader 安装。钩子只置内存标志，步骤推进由轮询循环完成（钩子非 async，不能触碰 progress 锁）。
+    /// B6：ModLoader / OptiFine 安装。钩子只置内存标志，步骤推进由轮询循环完成（钩子非 async，不能触碰 progress 锁）。
     async fn b_loader(&self) -> Result<(), String> {
-        let Some(loader) = &self.plan.loader else {
+        if self.plan.loader.is_none() && self.plan.optifine.is_none() {
             return Ok(());
-        };
+        }
         // install_loader 是外部安装器，无可信百分比：两步置 Running 0% → 完成 100%（与其它无百分比步骤一致）。
-        let label = loader.kind.display_name();
+        let label = self
+            .plan
+            .loader
+            .as_ref()
+            .map(|loader| loader.kind.display_name())
+            .unwrap_or("OptiFine");
+        let mut cfg_done = false;
+        let mut lbs_done = false;
         if let Some(idx) = self.idx.i_cfg {
             set_phase(
                 self.app,
@@ -787,74 +803,133 @@ impl<'a> PackInstall<'a> {
                 StepStatus::Running,
             );
         }
-        let cfg_flag = AtomicBool::new(false);
-        let lbs_flag = AtomicBool::new(false);
-        let hook = |ev: LoaderEvent| match ev {
-            LoaderEvent::ConfigDone => cfg_flag.store(true, Ordering::Relaxed),
-            LoaderEvent::LibsDone => lbs_flag.store(true, Ordering::Relaxed),
-        };
-        let counters = self.c.counter();
-        let install_fut = loader::install_loader(
-            loader.kind,
-            &self.plan.mc_version,
-            &loader.version,
-            loader::VersionTarget {
-                dir_name: &self.plan.version_dir_name,
-                vdir: &self.vdir,
-            },
-            &self.parent_text,
-            loader::InstallCtx {
-                config: self.config,
-                pc: &counters,
-                cancel: self.cancel,
-                hook: Some(&hook),
-            },
-        );
-        let mut install_fut = Box::pin(install_fut);
-        let mut cfg_marked = false;
-        let mut lbs_marked = false;
-        loop {
-            tokio::select! {
-                biased;
-                _ = tokio::time::sleep(Duration::from_millis(200)) => {
-                    if !cfg_marked && cfg_flag.load(Ordering::Relaxed) {
-                        if let Some(idx) = self.idx.i_cfg { finish_step(self.app, self.progress, idx, &self.c); cfg_marked = true; }
+        if let Some(loader) = &self.plan.loader {
+            let cfg_flag = AtomicBool::new(false);
+            let lbs_flag = AtomicBool::new(false);
+            let hook = |ev: LoaderEvent| match ev {
+                LoaderEvent::ConfigDone => cfg_flag.store(true, Ordering::Relaxed),
+                LoaderEvent::LibsDone => lbs_flag.store(true, Ordering::Relaxed),
+            };
+            let counters = self.c.counter();
+            let install_fut = loader::install_loader(
+                loader.kind,
+                &self.plan.mc_version,
+                &loader.version,
+                loader::VersionTarget {
+                    dir_name: &self.plan.version_dir_name,
+                    vdir: &self.vdir,
+                },
+                &self.parent_text,
+                loader::InstallCtx {
+                    config: self.config,
+                    pc: &counters,
+                    cancel: self.cancel,
+                    hook: Some(&hook),
+                },
+            );
+            let mut install_fut = Box::pin(install_fut);
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = tokio::time::sleep(Duration::from_millis(200)) => {
+                        if !cfg_done && cfg_flag.load(Ordering::Relaxed) {
+                            if let Some(idx) = self.idx.i_cfg { finish_step(self.app, self.progress, idx, &self.c); cfg_done = true; }
+                        }
+                        if !lbs_done && lbs_flag.load(Ordering::Relaxed) {
+                            if let Some(idx) = self.idx.i_lbs { finish_step(self.app, self.progress, idx, &self.c); lbs_done = true; }
+                        }
                     }
-                    if !lbs_marked && lbs_flag.load(Ordering::Relaxed) {
-                        if let Some(idx) = self.idx.i_lbs { finish_step(self.app, self.progress, idx, &self.c); lbs_marked = true; }
+                    res = &mut install_fut => {
+                        // 收尾：确保两步都标记（安装器可能不发 LibsDone 之外的事件序）
+                        if !cfg_done { if let Some(idx) = self.idx.i_cfg { finish_step(self.app, self.progress, idx, &self.c); } }
+                        if !lbs_done { if let Some(idx) = self.idx.i_lbs { finish_step(self.app, self.progress, idx, &self.c); } }
+                        if let Err(e) = res {
+                            bail_key!("errors.install.loader", "ModLoader 安装失败\n{e}");
+                        }
+                        break;
                     }
                 }
-                res = &mut install_fut => {
-                    // 收尾：确保两步都标记（安装器可能不发 LibsDone 之外的事件序）
-                    if !cfg_marked { if let Some(idx) = self.idx.i_cfg { finish_step(self.app, self.progress, idx, &self.c); } }
-                    if !lbs_marked { if let Some(idx) = self.idx.i_lbs { finish_step(self.app, self.progress, idx, &self.c); } }
-                    if let Err(e) = res {
-                        bail_key!("errors.install.loader", "ModLoader 安装失败\n{e}");
-                    }
-                    break;
-                }
+                // 取消不在此提前 return：install_fut 内部轮询同一 cancel 并返回 Err 经 fail 收口；中途 drop future 会遗留孤儿 JVM 进程
             }
-            // 取消不在此提前 return：install_fut 内部轮询同一 cancel 并返回 Err 经 fail 收口；中途 drop future 会遗留孤儿 JVM 进程
+        }
+
+        if let Some(optifine) = &self.plan.optifine {
+            let (of_type, patch) = parse_optifine_version(&self.plan.mc_version, optifine);
+            let parent_json: serde_json::Value = serde_json::from_str(&self.parent_text).map_err(
+                common_err_ctx_key!("errors.version.parse", "解析原版版本 JSON 失败"),
+            )?;
+            let mode = match self.plan.loader.as_ref().map(|loader| loader.kind) {
+                Some(LoaderKind::Fabric | LoaderKind::Quilt) => loader::OptifineMode::FabricLike,
+                Some(LoaderKind::Forge | LoaderKind::NeoForge) => loader::OptifineMode::ForgeLike,
+                None => loader::OptifineMode::Vanilla,
+            };
+            let counters = self.c.counter();
+            loader::install_optifine(
+                &self.plan.mc_version,
+                &patch,
+                &of_type,
+                Some(&parent_json),
+                loader::VersionTarget {
+                    dir_name: &self.plan.version_dir_name,
+                    vdir: &self.vdir,
+                },
+                mode,
+                loader::InstallCtx {
+                    config: self.config,
+                    pc: &counters,
+                    cancel: self.cancel,
+                    hook: None,
+                },
+            )
+            .await
+            .map_err(common_err_ctx_key!(
+                "errors.install.optifine",
+                "OptiFine 安装失败"
+            ))?;
+        }
+
+        if !cfg_done {
+            if let Some(idx) = self.idx.i_cfg {
+                finish_step(self.app, self.progress, idx, &self.c);
+            }
+        }
+        if !lbs_done {
+            if let Some(idx) = self.idx.i_lbs {
+                finish_step(self.app, self.progress, idx, &self.c);
+            }
         }
         Ok(())
     }
 
-    /// C0：包内资源复用：部分整合包把 mod 物理捆绑在 overrides/ 内（作者关闭 CurseForge 三方分发）。
+    /// C0：包内资源复用：部分整合包把 mod 物理捆绑在覆盖目录内（作者关闭 CurseForge 三方分发）。
     /// 清单文件先与包内同名条目比对 sha1：一致则直接解包免下载；受限文件已捆绑则就地落盘并从提示清单移除。
     fn c0_bundled_reuse(&mut self) -> Result<(), String> {
-        let mut pack_zip = self.plan.overrides.as_ref().and_then(|ov| {
-            std::fs::File::open(&ov.zip_path)
+        let pack_path = self.plan.overrides.first().map(|ov| ov.zip_path.clone());
+        let mut pack_zip = pack_path.as_deref().and_then(|path| {
+            std::fs::File::open(path)
                 .ok()
-                .and_then(|f| zip::ZipArchive::new(f).ok())
+                .and_then(|file| zip::ZipArchive::new(file).ok())
         });
         let index: std::collections::HashMap<String, String> = match pack_zip.as_mut() {
-            Some(ar) => (0..ar.len())
-                .filter_map(|i| ar.by_index(i).ok().map(|e| e.name().to_string()))
-                .filter_map(|n| {
-                    override_rel(&n, "overrides/")?;
-                    Some((n["overrides/".len()..].to_string(), n))
-                })
-                .collect(),
+            Some(archive) => {
+                let mut map = std::collections::HashMap::new();
+                for i in 0..archive.len() {
+                    let Ok(entry) = archive.by_index(i) else {
+                        continue;
+                    };
+                    let name = entry.name().to_string();
+                    // 前缀按数组顺序覆盖：后者同名条目胜出，与解压顺序一致
+                    for ov in &self.plan.overrides {
+                        if let Some(rel) = override_rel(&name, &ov.prefix) {
+                            if !is_skipped(rel, &ov.skip) {
+                                map.insert(rel.to_string(), name.clone());
+                            }
+                            break;
+                        }
+                    }
+                }
+                map
+            }
             None => std::collections::HashMap::new(),
         };
 
@@ -1011,7 +1086,10 @@ impl<'a> PackInstall<'a> {
 
     /// C2：overrides 解压到版本目录（spawn_blocking 跑同步 zip IO）。
     async fn c2_overrides(&self) -> Result<(), String> {
-        let (Some(ov), Some(idx)) = (&self.plan.overrides, self.idx.i_overrides) else {
+        if self.plan.overrides.is_empty() {
+            return Ok(());
+        }
+        let Some(idx) = self.idx.i_overrides else {
             return Ok(());
         };
         set_phase(
@@ -1022,15 +1100,20 @@ impl<'a> PackInstall<'a> {
             idx,
             StepStatus::Running,
         );
-        let ov = ov.clone();
+        let overrides = self.plan.overrides.clone();
         let vd = self.vdir.clone();
         race_cancel(self.cancel, async move {
-            tokio::task::spawn_blocking(move || extract_overrides(&ov, &vd))
-                .await
-                .map_err(common_err_ctx_key!(
-                    "errors.file.extract",
-                    "解压工作线程异常"
-                ))?
+            tokio::task::spawn_blocking(move || {
+                for ov in &overrides {
+                    extract_overrides(ov, &vd)?;
+                }
+                Ok::<(), String>(())
+            })
+            .await
+            .map_err(common_err_ctx_key!(
+                "errors.file.extract",
+                "解压工作线程异常"
+            ))?
         })
         .await?;
         finish_step(self.app, self.progress, idx, &self.c);
@@ -1181,7 +1264,7 @@ fn extract_member(
     extract::extract_entry_to(&mut entry, out)
 }
 
-/// 解压 overrides/ 到版本目录根（词法穿越防护对齐 jdk safe_runtime_path）。
+/// 解压单个覆盖目录到版本目录根（词法穿越防护对齐 jdk safe_runtime_path）。
 fn extract_overrides(ov: &OverridesRef, vdir: &Path) -> Result<(), String> {
     // 文案与解析期一致：本地包的 zip_path 就是用户原文件，非"缓存"
     let mut archive = extract::open_zip(Path::new(&ov.zip_path), "整合包")?;
@@ -1192,6 +1275,9 @@ fn extract_overrides(ov: &OverridesRef, vdir: &Path) -> Result<(), String> {
         let Some(rel) = override_rel(entry.name(), &ov.prefix) else {
             continue;
         };
+        if is_skipped(rel, &ov.skip) {
+            continue;
+        }
         let out = vdir.join(safe_relative_path(rel)?);
         if entry.is_dir() {
             std::fs::create_dir_all(&out)
@@ -1207,7 +1293,12 @@ fn extract_overrides(ov: &OverridesRef, vdir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// overrides 解压总量（未压缩字节，进度基线用；读不到按 0）。
+/// 全部覆盖目录的解压总量（未压缩字节，进度基线用；读不到按 0）。
+fn sum_overrides_bytes(overrides: &[OverridesRef]) -> u64 {
+    overrides.iter().map(sum_override_bytes).sum()
+}
+
+/// 单个覆盖目录的解压总量（未压缩字节，进度基线用；读不到按 0）。
 fn sum_override_bytes(ov: &OverridesRef) -> u64 {
     let Ok(mut archive) = extract::open_zip(Path::new(&ov.zip_path), "整合包缓存") else {
         return 0;
@@ -1217,8 +1308,10 @@ fn sum_override_bytes(ov: &OverridesRef) -> u64 {
         let Ok(entry) = archive.by_index(i) else {
             continue;
         };
-        if override_rel(entry.name(), &ov.prefix).is_some() {
-            total += entry.size();
+        if let Some(rel) = override_rel(entry.name(), &ov.prefix) {
+            if !is_skipped(rel, &ov.skip) {
+                total += entry.size();
+            }
         }
     }
     total
@@ -1272,12 +1365,105 @@ mod tests {
         let ov = OverridesRef {
             zip_path: zip_path.display().to_string(),
             prefix: "overrides/".into(),
+            skip: Vec::new(),
         };
         let err = extract_overrides(&ov, vdir.path()).unwrap_err();
         assert!(err.contains(".."), "穿越条目应报错: {err}");
         // 前序合法条目已落盘；恶意条目未逃逸出版本目录
         assert!(vdir.path().join("mods").join("ok.jar").is_file());
         assert!(!vdir.path().join("escape.txt").exists());
+    }
+
+    /// 覆盖目录按数组顺序解压：client-overrides 与 overrides 同名文件时后者胜。
+    #[test]
+    fn overrides_apply_in_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let zip_path = dir.path().join("pack.zip");
+        let file = std::fs::File::create(&zip_path).unwrap();
+        let mut w = zip::ZipWriter::new(file);
+        w.start_file("overrides/config/a.cfg", opts()).unwrap();
+        w.write_all(b"base").unwrap();
+        w.start_file("client-overrides/config/a.cfg", opts())
+            .unwrap();
+        w.write_all(b"client").unwrap();
+        w.start_file("client-overrides/config/b.cfg", opts())
+            .unwrap();
+        w.write_all(b"b").unwrap();
+        w.finish().unwrap();
+
+        let vdir = tempfile::tempdir().unwrap();
+        for prefix in ["overrides/", "client-overrides/"] {
+            let ov = OverridesRef {
+                zip_path: zip_path.display().to_string(),
+                prefix: prefix.into(),
+                skip: Vec::new(),
+            };
+            extract_overrides(&ov, vdir.path()).unwrap();
+        }
+        assert_eq!(
+            std::fs::read_to_string(vdir.path().join("config/a.cfg")).unwrap(),
+            "client",
+            "client-overrides 应覆盖 overrides"
+        );
+        assert_eq!(
+            std::fs::read_to_string(vdir.path().join("config/b.cfg")).unwrap(),
+            "b"
+        );
+    }
+
+    /// 目录包排除共享目录：`skip` 命中的成员不落盘。
+    #[test]
+    fn extract_overrides_respects_skip() {
+        let dir = tempfile::tempdir().unwrap();
+        let zip_path = dir.path().join("pack.zip");
+        let file = std::fs::File::create(&zip_path).unwrap();
+        let mut w = zip::ZipWriter::new(file);
+        w.start_file("overrides/mods/a.jar", opts()).unwrap();
+        w.write_all(b"jar").unwrap();
+        w.start_file("overrides/libraries/x.jar", opts()).unwrap();
+        w.write_all(b"lib").unwrap();
+        w.finish().unwrap();
+
+        let vdir = tempfile::tempdir().unwrap();
+        let ov = OverridesRef {
+            zip_path: zip_path.display().to_string(),
+            prefix: "overrides/".into(),
+            skip: vec!["libraries/".into()],
+        };
+        extract_overrides(&ov, vdir.path()).unwrap();
+        assert!(vdir.path().join("mods").join("a.jar").is_file());
+        assert!(
+            !vdir.path().join("libraries").join("x.jar").exists(),
+            "skip 命中目录不应落盘"
+        );
+    }
+
+    /// OptiFine-only（无 ModLoader）也要生成 loader 两步，label 为 OptiFine。
+    #[test]
+    fn optifine_only_adds_loader_steps() {
+        let request = ModpackRequest {
+            name: "D".into(),
+            icon_url: None,
+            source: PackSource::Local { path: "p".into() },
+        };
+        let plan = PackPlan {
+            name: "D".into(),
+            mc_version: "1.20.1".into(),
+            loader: None,
+            optifine: Some("HD_U_I6".into()),
+            version_url: "v".into(),
+            version_dir_name: "D-1.20.1".into(),
+            cache_key: "c".into(),
+            files: Vec::new(),
+            restricted: Vec::new(),
+            overrides: Vec::new(),
+            kind: None,
+            meta: None,
+        };
+        let (steps, idx, _) = build_step_plan(&request, &plan);
+        assert!(idx.i_cfg.is_some());
+        assert!(idx.i_lbs.is_some());
+        assert_eq!(steps[idx.i_cfg.unwrap()].name, "OptiFine 配置");
     }
 
     #[test]
@@ -1473,6 +1659,7 @@ mod tests {
                     kind: LoaderKind::Fabric,
                     version: "0.15.0".into(),
                 }),
+                optifine: None,
                 version_url: "v".into(),
                 version_dir_name: "D-1.20.1".into(),
                 cache_key: "c".into(),
@@ -1491,7 +1678,9 @@ mod tests {
                     },
                 ],
                 restricted: Vec::new(),
-                overrides: None,
+                overrides: Vec::new(),
+                kind: None,
+                meta: None,
             };
 
             let (steps, idx, est) = build_step_plan(&request, &plan);

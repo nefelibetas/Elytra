@@ -28,6 +28,7 @@ export default {
   install: {
     failed: "安装失败",
     loader: "ModLoader 安装失败",
+    optifine: "OptiFine 安装失败",
     modpack: "整合包安装失败"
   },
   login: {
@@ -228,7 +229,24 @@ export default {
     notModpack: "不是有效的整合包文件",
     emptyContent: "整合包没有可安装的内容",
     mcVersionNotFound: "官方源未收录该 Minecraft 版本",
-    serializeFailed: "序列化失败"
+    serializeFailed: "序列化失败",
+    serverPackUnsupported: "识别为服务器自动更新包，暂不支持导入",
+    multiplePacks: "包内存在多个整合包",
+    manifestTooLarge: "整合包清单过大",
+    badOverridesDir: "整合包覆盖目录名无效",
+    unsupportedManifestVersion: "不支持的 CurseForge 清单版本",
+    mmcUnsupportedLoader: "暂不支持该 MultiMC 整合包的加载器",
+    mmcMissingGame: "MultiMC 整合包缺少 Minecraft 版本",
+    mmcMissingContent: "MultiMC 整合包缺少实例目录",
+    multipleVersions: "包内存在多个游戏版本",
+    directoryMissingContent: "完整游戏目录缺少版本目录",
+    directoryMissingId: "版本 JSON 缺少 id",
+    embeddedTooDeep: "整合包嵌套层数过多",
+    embeddedTooLarge: "内嵌整合包过大",
+    embeddedMissing: "带启动器整合包缺少内嵌整合包",
+    hmclMissingMinecraft: "HMCL 整合包缺少 minecraft 目录",
+    mcbbsUnsupportedLoader: "暂不支持该 MCBBS 整合包的加载器",
+    mcbbsMissingGame: "MCBBS 清单缺少 game 组件"
   },
   input: {
     nameEmpty: "名称不能为空"

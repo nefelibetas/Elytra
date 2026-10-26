@@ -156,7 +156,7 @@ pub fn task_exists(task_id: String) -> bool {
 
 // ── 整合包安装（单任务卡片，步骤表动态增长）──
 
-/// 安装整合包（Modrinth .mrpack / CurseForge zip）：单任务承载 包体下载/解析 → 本体+ModLoader → 内容+覆盖解压；恢复 = 重跑整卡（各环节幂等），返回任务 id。
+/// 安装整合包（自动嗅探 Modrinth / CurseForge / MultiMC·Prism / HMCL / MCBBS / PCL / 完整目录，不按扩展名判断）：单任务承载 包体下载/解析 → 本体+ModLoader → 内容+覆盖解压；恢复 = 重跑整卡（各环节幂等），返回任务 id。
 #[tauri::command]
 pub async fn install_modpack(app: AppHandle, request: ModpackRequest) -> Result<String, String> {
     if request.name.trim().is_empty() {

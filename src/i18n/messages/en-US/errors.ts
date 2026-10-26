@@ -28,6 +28,7 @@ export default {
   install: {
     failed: "Installation failed",
     loader: "Mod loader installation failed",
+    optifine: "OptiFine installation failed",
     modpack: "Modpack installation failed"
   },
   login: {
@@ -228,7 +229,24 @@ export default {
     notModpack: "Not a valid modpack file",
     emptyContent: "The modpack has nothing to install",
     mcVersionNotFound: "The official source does not list this Minecraft version",
-    serializeFailed: "Serialization failed"
+    serializeFailed: "Serialization failed",
+    serverPackUnsupported: "Detected a server auto-update pack, which is not supported yet",
+    multiplePacks: "The archive contains more than one modpack",
+    manifestTooLarge: "The modpack manifest is too large",
+    badOverridesDir: "Invalid overrides directory in the modpack",
+    unsupportedManifestVersion: "Unsupported CurseForge manifest version",
+    mmcUnsupportedLoader: "This MultiMC modpack's loader is not supported yet",
+    mmcMissingGame: "The MultiMC modpack is missing the Minecraft version",
+    mmcMissingContent: "The MultiMC modpack is missing its instance directory",
+    multipleVersions: "The archive contains more than one game version",
+    directoryMissingContent: "The game directory pack is missing its version folder",
+    directoryMissingId: "The version JSON is missing its id",
+    embeddedTooDeep: "The modpack is nested too deeply",
+    embeddedTooLarge: "The embedded modpack is too large",
+    embeddedMissing: "The launcher pack has no embedded modpack",
+    hmclMissingMinecraft: "The HMCL modpack is missing its minecraft folder",
+    mcbbsUnsupportedLoader: "This MCBBS modpack's loader is not supported yet",
+    mcbbsMissingGame: "The MCBBS manifest is missing the game component"
   },
   input: {
     nameEmpty: "Name cannot be empty"

@@ -1,4 +1,4 @@
-// 整合包安装入口（薄封装 install_modpack）：后端按来源分流——local 直读用户选定文件，online 走多源下载并缓存到 config_dir()/modpacks。
+// 整合包安装入口（薄封装 install_modpack）：后端按来源分流——local 直读用户选定文件，online 走多源下载并缓存到 config_dir()/modpacks；格式由后端嗅探（Modrinth / CurseForge / MultiMC / HMCL / MCBBS / PCL / 完整目录），前端不询问。
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { errMsg } from "../../utils/error";

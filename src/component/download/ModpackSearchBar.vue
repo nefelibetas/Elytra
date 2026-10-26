@@ -7,7 +7,7 @@ import CommunitySearchBar from "./CommunitySearchBar.vue";
 
 const { t } = useI18n();
 
-/** 本地导入：选 .mrpack/.zip → install_modpack（后端自动嗅探 Modrinth/CurseForge 清单）。 */
+/** 本地导入：选 .mrpack/.zip → install_modpack（后端自动嗅探 Modrinth / CurseForge / MultiMC / HMCL / MCBBS / PCL / 完整目录）。 */
 const importing = ref(false);
 async function importLocal() {
   importing.value = true;

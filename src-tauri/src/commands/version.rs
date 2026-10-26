@@ -209,7 +209,7 @@ pub fn toggle_mod_file(version_name: String, file_name: String) -> Result<bool, 
     updates::toggle_mod_file(&vdir.join("mods"), &file_name)
 }
 
-/// 导出整合包：mods/config/shaderpacks/resourcepacks 打进 zip（顶层同名目录 + manifest.json）；目录缺失自动跳过，打包走 spawn_blocking。
+/// 导出整合包：mods/config/shaderpacks/resourcepacks/datapacks 打包为标准 MRPACK（modrinth.index.json + overrides/）；目录缺失自动跳过，打包走 spawn_blocking。
 #[tauri::command]
 pub async fn export_modpack(version_name: String, save_path: String) -> Result<(), String> {
     let vdir = version_dir_path(&version_name)?;
