@@ -6,6 +6,7 @@ import { useI18n } from "vue-i18n";
 import { Copy, Link2, Unplug } from "@lucide/vue";
 import {
   onlineStatus, onlineRoomCode, onlineLocalPort, onlinePlayers,
+  onlinePath, onlineLatency, onlineAllowRelay,
   onlineErrorHost, onlineErrorGuest,
   startHost, joinRoom, stopOnline, loadOnlineStatus, ensureOnlineListen,
 } from "../../store/config/online";
@@ -76,6 +77,19 @@ async function copyRoomCode() {
       </span>
     </div>
     <div class="online-protocol">{{ t("tools.online.protocol") }}</div>
+
+    <div v-if="onlineStatus === 'joining'" class="online-path">
+      <span v-if="onlinePath" class="online-path-badge" :class="onlinePath === 'direct' ? 'is-direct' : 'is-relay'">
+        {{ onlinePath === "direct" ? t("tools.online.pathDirect") : t("tools.online.pathRelay") }}
+        <span v-if="onlineLatency != null">{{ t("tools.online.pathLatency", { ms: onlineLatency }) }}</span>
+      </span>
+      <span v-else-if="!onlineAllowRelay" class="online-path-hint">
+        {{ t("tools.online.directOnlyHint") }}
+      </span>
+    </div>
+    <div v-if="onlineStatus === 'joining' && onlinePath === 'relay'" class="online-relay-warning">
+      {{ t("tools.online.relayWarning") }}
+    </div>
 
     <div class="online-sec">
       <div class="online-sec-title">{{ t("tools.online.hostSection") }}</div>
@@ -413,5 +427,44 @@ async function copyRoomCode() {
   flex: 0 0 auto;
   font-size: 11px;
   color: var(--text-tertiary);
+}
+
+.online-path {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.online-path-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  background-color: var(--surface-default);
+}
+
+.online-path-badge.is-direct {
+  color: var(--color-brand);
+}
+
+.online-path-badge.is-relay {
+  color: var(--color-danger);
+}
+
+.online-path-hint {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.online-relay-warning {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-danger);
 }
 </style>

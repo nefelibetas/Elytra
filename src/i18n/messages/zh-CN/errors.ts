@@ -87,6 +87,7 @@ export default {
     failed: "联机操作失败",
     host: "创建房间失败",
     join: "加入房间失败",
+    directOnlyFailed: "无法建立直连",
     alreadyRunning: "联机已在运行中",
     roomCodeInvalid: "房间码无效",
     centerNotFound: "联机中心发现失败",

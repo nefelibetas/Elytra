@@ -65,6 +65,7 @@ async fn host_guest_scaffolding_roundtrip() {
         mc_port: Some(mc_port),
         public_nodes: Vec::new(),
         scaffold_port: Some(scaffold_port),
+        allow_relay: false,
     };
     let host = EasyTierSession::start(host_cfg).await.expect("host 启动");
     // host 侧起信息服务器（OS 监听 scaffold_port，proxy NAT 直连）——模拟 start_host
@@ -124,6 +125,7 @@ async fn host_guest_scaffolding_roundtrip() {
         mc_port: None,
         public_nodes: vec!["tcp://127.0.0.1:11010".to_string()],
         scaffold_port: None,
+        allow_relay: false,
     };
     let guest = EasyTierSession::start(guest_cfg).await.expect("guest 启动");
     eprintln!("== guest 实例已启动（生产路径）");

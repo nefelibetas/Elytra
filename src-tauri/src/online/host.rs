@@ -81,6 +81,7 @@ async fn prepare_host_session() -> Result<(u64, u16, RoomCredential, SessionConf
         mc_port: None,
         public_nodes,
         scaffold_port: Some(scaffold_port),
+        allow_relay: online_config().allow_relay,
     };
     Ok((gen, scaffold_port, room, cfg))
 }
@@ -208,6 +209,7 @@ async fn sync_host_session(
             mc_port,
             public_nodes: online_config().public_nodes,
             scaffold_port: Some(svc.scaffold_port.unwrap_or(0)),
+            allow_relay: online_config().allow_relay,
         };
         (old, cfg)
     };

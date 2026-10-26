@@ -1,12 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-/// 多节点并行连接（easytier 任一可用即可组网，天然主备；不可达自动跳过）：`tcp://node.invalid:11010`
-/// 社区公共服务器（阿里云）、`tcp://node.invalid:11010` / `node.invalid:54321`
-/// easytier 官方/公共节点、`https://etnode.zkitefly.eu.org/node{1,2}` 社区节点（HTTP discovery）；节点随时变动，用户可在设置改/清空。
+/// 默认协调节点：`https://etnode.zkitefly.eu.org/node{1,2}`（社区节点，明确禁中转，与默认仅直连契合）。
+/// 官方 `node.invalid` / `node.invalid` 已下线；节点随时变动，用户可在设置中删除/添加。
 pub const DEFAULT_PUBLIC_NODES: &[&str] = &[
-    "tcp://node.invalid:11010",
-    "tcp://node.invalid:11010",
-    "tcp://node.invalid:54321",
     "https://etnode.zkitefly.eu.org/node1",
     "https://etnode.zkitefly.eu.org/node2",
 ];
@@ -26,6 +22,9 @@ pub struct OnlineConfig {
     /// 联机昵称（协议 c:player_ping 的 name 字段；空 = 系统用户名）。
     #[serde(default)]
     pub nickname: Option<String>,
+    /// 是否允许打洞失败时经公共节点中继（默认 false = 仅直连，不占用公共节点带宽）。
+    #[serde(default)]
+    pub allow_relay: bool,
 }
 
 impl OnlineConfig {
@@ -34,6 +33,25 @@ impl OnlineConfig {
             public_nodes: DEFAULT_PUBLIC_NODES.iter().map(|s| s.to_string()).collect(),
             advertise_motd: None,
             nickname: None,
+            allow_relay: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_use_direct_only_and_live_nodes() {
+        let cfg = OnlineConfig::with_defaults();
+        assert!(!cfg.allow_relay, "默认仅直连");
+        assert_eq!(cfg.public_nodes.len(), 2, "默认只内置两个社区节点");
+        assert!(
+            cfg.public_nodes
+                .iter()
+                .all(|n| n.contains("etnode.zkitefly.eu.org")),
+            "默认节点应只含 zkitefly 两个"
+        );
     }
 }

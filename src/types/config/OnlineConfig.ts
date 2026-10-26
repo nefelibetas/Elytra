@@ -17,4 +17,8 @@ advertise_motd: string | null,
 /**
  * 联机昵称（协议 c:player_ping 的 name 字段；空 = 系统用户名）。
  */
-nickname: string | null, };
+nickname: string | null, 
+/**
+ * 是否允许打洞失败时经公共节点中继（默认 false = 仅直连，不占用公共节点带宽）。
+ */
+allow_relay: boolean, };

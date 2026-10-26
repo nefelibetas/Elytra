@@ -35,13 +35,14 @@ pub async fn join(sink: Arc<dyn EventSink>, room_code: &str) -> Result<u16, Stri
     )
     .await?;
     spawn_guest_sync(
-        sink,
-        session,
+        Arc::clone(&sink),
+        session.clone(),
         center_addr,
         gen,
         local_profile,
         supports_easytier_id,
     );
+    spawn_guest_route_watch(sink, session, center_ip, gen);
     Ok(local_port)
 }
 
@@ -72,6 +73,7 @@ async fn start_join_session(room_code: &str) -> Result<(EasyTierSession, u64), S
             mc_port: None,
             public_nodes,
             scaffold_port: None,
+            allow_relay: online_config().allow_relay,
         };
         (gen, room, cfg)
     };
@@ -110,14 +112,22 @@ async fn connect_center(
     };
 
     let center_addr = SocketAddr::from((center_ip, center_port));
+    // 仅直连时打洞需要时间，给足等待窗口；允许中继时 15s 足够建立连接。
+    let timeout = if online_config().allow_relay { 15 } else { 60 };
     let stream = match session
-        .data_plane_tcp_connect(center_addr, Duration::from_secs(10))
+        .data_plane_tcp_connect(center_addr, Duration::from_secs(timeout))
         .await
     {
         Ok(st) => st,
         Err(e) => {
             rollback_join_and_emit(sink, gen).await;
-            bail_key!("errors.online.join", "连接联机中心失败\n{e}");
+            if online_config().allow_relay {
+                bail_key!("errors.online.join", "连接联机中心失败\n{e}");
+            }
+            bail_key!(
+                "errors.online.directOnlyFailed",
+                "无法建立直连\n双方网络可能不支持打洞；可在 设置 → 联机设置 中临时允许中继\n{e}"
+            );
         }
     };
     Ok((stream, center_addr, center_ip))
@@ -221,6 +231,8 @@ async fn activate_guest_join(
 
     svc.proxy = Some(proxy);
     svc.advertiser = Some(advertiser);
+    svc.route_path = None;
+    svc.route_latency = None;
     if let Some(s) = svc.session.as_mut() {
         s.local_port = local_port;
     }
@@ -228,6 +240,45 @@ async fn activate_guest_join(
     let snap = snapshot_inner(&svc);
     emit_snapshot(sink, &snap);
     Ok(local_port)
+}
+
+/// 路径监控：guest 加入后每 3s 读取 host 路由，把直连/中继与延迟刷新进快照（仅在变化时发事件）。
+fn spawn_guest_route_watch(
+    sink: Arc<dyn EventSink>,
+    session: EasyTierSession,
+    center_ip: Ipv4Addr,
+    gen: u64,
+) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            {
+                let svc = SERVICE.lock().await;
+                if svc.generation != gen {
+                    return;
+                }
+            }
+            let routes = session.route_snapshots().await;
+            let Some(route) = routes.iter().find(|r| r.ipv4_addr() == Some(center_ip)) else {
+                continue;
+            };
+            let path = if route.is_direct() { "direct" } else { "relay" };
+            let latency = route.latency_ms();
+            let snap = {
+                let mut svc = SERVICE.lock().await;
+                if svc.generation != gen {
+                    return;
+                }
+                if svc.route_path == Some(path) && svc.route_latency == latency {
+                    continue;
+                }
+                svc.route_path = Some(path);
+                svc.route_latency = latency;
+                snapshot_inner(&svc)
+            };
+            emit_snapshot(sink.as_ref(), &snap);
+        }
+    });
 }
 
 /// 阶段五：起后台心跳 + 玩家列表同步任务（每 5s）。
@@ -240,8 +291,9 @@ fn spawn_guest_sync(
     supports_easytier_id: bool,
 ) {
     tauri::async_runtime::spawn(async move {
+        let timeout = if online_config().allow_relay { 15 } else { 60 };
         let mut stream = match session
-            .data_plane_tcp_connect(center_addr, Duration::from_secs(10))
+            .data_plane_tcp_connect(center_addr, Duration::from_secs(timeout))
             .await
         {
             Ok(st) => st,

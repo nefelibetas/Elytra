@@ -72,8 +72,8 @@ use commands::offline_account::{
     save_last_offline_username, save_offline_account,
 };
 use commands::online::{
-    get_online_config, online_join, online_start_host, online_status, online_stop,
-    save_online_config,
+    check_online_nodes, get_online_config, online_join, online_start_host, online_status,
+    online_stop, save_online_config,
 };
 use commands::seedmap::{
     find_seed_map_slime_chunks, find_seed_map_structures, get_seed_map_block,
@@ -290,6 +290,7 @@ pub fn run() {
             online_status,
             get_online_config,
             save_online_config,
+            check_online_nodes,
             ping_server,
             tooldl_enqueue,
             tooldl_pause,

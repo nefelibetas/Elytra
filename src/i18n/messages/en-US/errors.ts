@@ -87,6 +87,7 @@ export default {
     failed: "Multiplayer operation failed",
     host: "Failed to create room",
     join: "Failed to join room",
+    directOnlyFailed: "Unable to establish a direct connection",
     alreadyRunning: "A multiplayer session is already running",
     roomCodeInvalid: "Invalid room code",
     centerNotFound: "Failed to find the multiplayer center",

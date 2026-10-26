@@ -72,6 +72,10 @@ pub(super) struct OnlineServiceInner {
     pub(super) scaffold_port: Option<u16>,
     /// host 玩家表（guest 侧为空）。
     pub(super) profiles: Option<ProfileTable>,
+    /// guest 与 host 的当前连接路径（direct / relay）；None = 未探测。
+    pub(super) route_path: Option<&'static str>,
+    /// 上述路径的延迟（毫秒）。
+    pub(super) route_latency: Option<i32>,
 }
 
 impl Default for OnlineServiceInner {
@@ -87,6 +91,8 @@ impl Default for OnlineServiceInner {
             generation: 0,
             scaffold_port: None,
             profiles: None,
+            route_path: None,
+            route_latency: None,
         }
     }
 }
@@ -118,6 +124,13 @@ pub(super) fn snapshot_inner(svc: &OnlineServiceInner) -> OnlineSnapshot {
             .as_ref()
             .map(|t| t.profiles())
             .unwrap_or_default(),
+        path: svc.route_path,
+        latency_ms: svc.route_latency,
+        allow_relay: svc
+            .session
+            .as_ref()
+            .map(|s| s.allow_relay)
+            .unwrap_or_else(|| online_config().allow_relay),
     }
 }
 
@@ -141,6 +154,8 @@ pub async fn stop(sink: &dyn EventSink) -> Result<(), String> {
         svc.room = None;
         svc.scaffold_port = None;
         svc.profiles = None;
+        svc.route_path = None;
+        svc.route_latency = None;
         (session, proxy, info_server, snapshot_inner(&svc))
     };
     if let Some(p) = proxy {

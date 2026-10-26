@@ -45,6 +45,12 @@ pub struct OnlineSnapshot {
     pub local_port: Option<u16>,
     /// 玩家列表（HOST + GUEST；协议 c:player_profiles_list）。
     pub players: Vec<Profile>,
+    /// guest 与 host 的连接路径：direct / relay；None = 未加入或尚未探测。
+    pub path: Option<&'static str>,
+    /// 路径延迟（毫秒；未知为 None）。
+    pub latency_ms: Option<i32>,
+    /// 当前会话是否允许公共节点中继（前端据此显示等待/提示文案）。
+    pub allow_relay: bool,
 }
 
 #[cfg(test)]

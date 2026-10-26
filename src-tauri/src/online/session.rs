@@ -63,11 +63,27 @@ pub struct RouteSnapshot {
     pub hostname: String,
     /// 虚拟 IPv4（大端 4 字节；None = 未分配）。
     pub ipv4: Option<[u8; 4]>,
+    /// 路由跳数：1 = 直连，>1 = 经中继。
+    pub cost: i32,
+    pub next_hop_peer_id: u32,
+    /// 路径延迟（毫秒；<=0 = 未知）。
+    pub path_latency: i32,
+    /// STUN UDP NAT 类型（proto 枚举值；0 = Unknown）。
+    pub udp_nat_type: i32,
 }
 
 impl RouteSnapshot {
     pub fn ipv4_addr(&self) -> Option<Ipv4Addr> {
         self.ipv4.map(Ipv4Addr::from)
+    }
+
+    /// 直连（打洞或 listener 直连）为 cost 1；经公共节点中继时 cost 更大。
+    pub fn is_direct(&self) -> bool {
+        self.cost == 1
+    }
+
+    pub fn latency_ms(&self) -> Option<i32> {
+        (self.path_latency > 0).then_some(self.path_latency)
     }
 }
 
@@ -82,6 +98,8 @@ pub struct SessionConfig {
     pub public_nodes: Vec<String>,
     /// host 信息服务器端口（设置 hostname `scaffolding-mc-server-{port}`）。
     pub scaffold_port: Option<u16>,
+    /// 是否允许经公共节点中继（false = p2p_only，数据面只走已建立的直连）。
+    pub allow_relay: bool,
 }
 
 /// EasyTier 会话：持有运行中的实例。
@@ -91,6 +109,8 @@ pub struct EasyTierSession {
     pub role: SessionRole,
     /// guest 本地转发端口（连接成功后暴露给用户）。
     pub local_port: u16,
+    /// 本会话创建时的中继策略；配置在会话中修改时以会话值为准（下次建网生效）。
+    pub allow_relay: bool,
 }
 
 impl EasyTierSession {
@@ -110,6 +130,7 @@ impl EasyTierSession {
             instance,
             role: config.role,
             local_port,
+            allow_relay: config.allow_relay,
         })
     }
 
@@ -146,6 +167,10 @@ impl EasyTierSession {
                     .ipv4_addr
                     .and_then(|a| a.address)
                     .map(|a| a.addr.to_be_bytes()),
+                cost: r.cost,
+                next_hop_peer_id: r.next_hop_peer_id,
+                path_latency: r.path_latency,
+                udp_nat_type: r.stun_info.map(|s| s.udp_nat_type).unwrap_or(0),
             })
             .collect()
     }
@@ -157,7 +182,7 @@ fn build_config(config: &SessionConfig) -> Result<TomlConfigLoader, String> {
         config.room.network_name.clone(),
         config.room.network_secret.clone(),
     ));
-    set_no_tun(&cfg);
+    set_no_tun(&cfg, config.role, config.allow_relay);
 
     // 协调节点：空列表 = 不连外部节点（host 自建网 / guest 直连 host）
     let nodes: Vec<String> = config.public_nodes.clone();
@@ -174,14 +199,23 @@ fn build_config(config: &SessionConfig) -> Result<TomlConfigLoader, String> {
     }
     cfg.set_peers(peers);
 
-    // 监听：host 固定端口（供 peer 连入），guest 随机端口（避免冲突）
-    let listen = match config.role {
-        SessionRole::Host => format!("tcp://0.0.0.0:{HOST_LISTEN_PORT}"),
-        SessionRole::Guest => "tcp://0.0.0.0:0".to_string(),
+    // 监听：host 固定端口（供 peer 连入），guest 随机端口（避免冲突）。
+    // TCP + UDP 双监听：UDP 打洞成功率远高于 TCP，开放 NAT 主机也能被直接 UDP 连接。
+    let listeners: Vec<String> = match config.role {
+        SessionRole::Host => vec![
+            format!("tcp://0.0.0.0:{HOST_LISTEN_PORT}"),
+            format!("udp://0.0.0.0:{HOST_LISTEN_PORT}"),
+        ],
+        SessionRole::Guest => vec!["tcp://0.0.0.0:0".to_string(), "udp://0.0.0.0:0".to_string()],
     };
-    cfg.set_listeners(vec![listen
-        .parse()
-        .map_err(common_err_ctx_key!("errors.online.failed", "监听地址非法"))?]);
+    let listeners = listeners
+        .iter()
+        .map(|s| {
+            s.parse()
+                .map_err(common_err_ctx_key!("errors.online.failed", "监听地址非法"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    cfg.set_listeners(listeners);
 
     match config.role {
         SessionRole::Host => {
@@ -213,7 +247,9 @@ fn build_config(config: &SessionConfig) -> Result<TomlConfigLoader, String> {
 }
 
 /// no_tun：纯用户态端口转发（无虚拟网卡），数据面靠 smoltcp 用户态协议栈，须同时开 use_smoltcp。
-fn set_no_tun(cfg: &TomlConfigLoader) {
+/// P2P 策略：host 声明 need_p2p（所有人优先连它），guest 设 disable_p2p（不与其他 guest 互相打洞）；
+/// p2p_only = !allow_relay——数据面只走已建立的直连，打洞失败时宁可失败也不占用公共节点带宽。
+fn set_no_tun(cfg: &TomlConfigLoader, role: SessionRole, allow_relay: bool) {
     let mut flags = cfg.get_flags();
     flags.no_tun = true;
     flags.use_smoltcp = true;
@@ -223,6 +259,9 @@ fn set_no_tun(cfg: &TomlConfigLoader) {
     // port_forward 数据面首选 KCP（PreferKcp，由 enable_kcp_proxy 控制，默认 false）；
     // 不开启则回退 smoltcp 用户态 TCP，MC 配置同步（数百 KB~数 MB）会中断。
     flags.enable_kcp_proxy = true;
+    flags.need_p2p = role == SessionRole::Host;
+    flags.disable_p2p = role == SessionRole::Guest;
+    flags.p2p_only = !allow_relay;
     cfg.set_flags(flags);
 }
 
@@ -239,7 +278,68 @@ mod tests {
             mc_port,
             public_nodes: Vec::new(),
             scaffold_port,
+            allow_relay: false,
         }
+    }
+
+    fn listener_schemes(toml: &TomlConfigLoader) -> Vec<String> {
+        toml.get_listener_uris()
+            .iter()
+            .map(|u| u.scheme().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn host_uses_udp_and_tcp_listeners_and_need_p2p() {
+        let toml = build_config(&cfg(SessionRole::Host, Some(13448), None)).expect("建网应成功");
+        let schemes = listener_schemes(&toml);
+        assert!(schemes.contains(&"tcp".to_string()), "host 应有 TCP 监听");
+        assert!(schemes.contains(&"udp".to_string()), "host 应有 UDP 监听");
+        let flags = toml.get_flags();
+        assert!(flags.need_p2p, "host 应声明 need_p2p");
+        assert!(!flags.disable_p2p, "host 不应 disable_p2p");
+        assert!(flags.p2p_only, "默认仅直连应为 p2p_only");
+    }
+
+    #[test]
+    fn guest_disables_p2p_and_uses_udp() {
+        let toml = build_config(&cfg(SessionRole::Guest, None, None)).expect("建网应成功");
+        let schemes = listener_schemes(&toml);
+        assert!(schemes.contains(&"udp".to_string()), "guest 应有 UDP 监听");
+        let flags = toml.get_flags();
+        assert!(
+            flags.disable_p2p,
+            "guest 应 disable_p2p（不与其他 guest 打洞）"
+        );
+        assert!(!flags.need_p2p, "guest 不应声明 need_p2p");
+        assert!(flags.p2p_only, "默认仅直连应为 p2p_only");
+    }
+
+    #[test]
+    fn allow_relay_disables_p2p_only() {
+        let mut c = cfg(SessionRole::Guest, None, None);
+        c.allow_relay = true;
+        let toml = build_config(&c).expect("建网应成功");
+        assert!(!toml.get_flags().p2p_only, "允许中继时不得开 p2p_only");
+    }
+
+    #[test]
+    fn route_directness_and_latency() {
+        let mut r = RouteSnapshot {
+            peer_id: 1,
+            hostname: "h".into(),
+            ipv4: Some([10, 0, 0, 1]),
+            cost: 1,
+            next_hop_peer_id: 2,
+            path_latency: 23,
+            udp_nat_type: 0,
+        };
+        assert!(r.is_direct());
+        assert_eq!(r.latency_ms(), Some(23));
+        r.cost = 3;
+        r.path_latency = -1;
+        assert!(!r.is_direct());
+        assert_eq!(r.latency_ms(), None);
     }
 
     #[test]
