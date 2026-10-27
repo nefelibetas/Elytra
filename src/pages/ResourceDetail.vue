@@ -21,6 +21,8 @@ import {
 } from "../store/task/download";
 import { resolveModDependencies, type ModDependencyPlan } from "../store/community/modDependencies";
 import { installModpack } from "../store/task/modpack";
+import { getInstanceModTarget } from "../store/task/versionSetup";
+import { LOADER_TITLES } from "../utils/versionMeta";
 import ModDownloadDialog from "../component/download/ModDownloadDialog.vue";
 import { fmtCount, fmtSize, fmtModDate } from "../utils/format";
 import IconImage from "../component/common/IconImage.vue";
@@ -31,6 +33,14 @@ const { t } = useI18n();
 const sourceLabel = computed(() =>
   item.value?.source === "modrinth" ? "Modrinth" : "CurseForge",
 );
+
+const MOD_LOADERS = new Set(["fabric", "forge", "neoforge", "quilt"]);
+
+function loaderName(loader: string): string {
+  return loader === "vanilla"
+    ? t("download.tabs.vanilla")
+    : LOADER_TITLES[loader] ?? loader;
+}
 
 // ── 版本列表 ──────────────────────────────
 
@@ -539,6 +549,33 @@ async function submitDownload() {
     return;
   }
   if (kind === "mod") {
+    let target;
+    try {
+      target = await getInstanceModTarget(targetVersion);
+    } catch (e) {
+      showToast(errMsg(e));
+      return;
+    }
+    if (!MOD_LOADERS.has(target.loader)) {
+      showToast(t("download.detail.modLoaderRequired", { loader: loaderName(target.loader) }));
+      return;
+    }
+    if (!v.loaders.some(loader => loader.toLowerCase() === target.loader.toLowerCase())) {
+      showToast(t("download.detail.modLoaderMismatch", {
+        loader: loaderName(target.loader),
+        loaders: v.loaders.map(loaderName).join(" / ") || "—",
+      }));
+      return;
+    }
+    if (!v.game_versions.includes(target.mc_version)) {
+      const versions = v.game_versions.slice(0, 5).join(" / ")
+        + (v.game_versions.length > 5 ? " …" : "");
+      showToast(t("download.detail.modGameVersionMismatch", {
+        mc: target.mc_version,
+        versions: versions || "—",
+      }));
+      return;
+    }
     await openModDownload(v, targetVersion);
     return;
   }

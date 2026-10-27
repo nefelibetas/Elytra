@@ -101,9 +101,9 @@ use commands::tooldl::{
 use commands::update::check_launcher_update;
 use commands::version::{
     check_mod_updates, delete_mod_file, delete_resource_file, delete_world, export_modpack,
-    get_version_server, get_world_icon, identify_mod_file, list_mods_detailed,
-    list_resource_detailed, list_resource_files, list_worlds, save_version_server, toggle_mod_file,
-    update_mod_file,
+    get_instance_mod_target, get_version_server, get_world_icon, identify_mod_file,
+    list_mods_detailed, list_resource_detailed, list_resource_files, list_worlds,
+    save_version_server, toggle_mod_file, update_mod_file,
 };
 use commands::version_icon::{
     get_version_icon, get_version_icon_source, reset_version_icon, set_version_icon,
@@ -199,6 +199,7 @@ pub fn run() {
             check_mod_updates,
             update_mod_file,
             delete_mod_file,
+            get_instance_mod_target,
             get_version_server,
             save_version_server,
             toggle_mod_file,

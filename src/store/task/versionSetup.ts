@@ -2,6 +2,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { InstanceLaunchOptions } from "../../types/launcher/InstanceLaunchOptions";
 import type { InstanceLaunchState } from "../../types/launcher/InstanceLaunchState";
+import type { InstanceModTarget } from "../../types/game/InstanceModTarget";
 
 export async function exportLaunchScript(payload: {
   savePath: string;
@@ -47,6 +48,11 @@ export async function saveVersionServer(
   port: number | null,
 ): Promise<void> {
   await invoke("save_version_server", { versionName, server, port });
+}
+
+/** 目标实例的 MC 版本与 ModLoader（后端按版本 json 权威解析）。 */
+export function getInstanceModTarget(versionId: string): Promise<InstanceModTarget> {
+  return invoke<InstanceModTarget>("get_instance_mod_target", { versionDirName: versionId });
 }
 
 /** 实例级启动参数（全局快照 + 实例快照 + 实际生效值）。 */

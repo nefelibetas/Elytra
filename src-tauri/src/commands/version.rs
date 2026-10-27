@@ -14,6 +14,14 @@ pub struct WorldInfo {
     pub last_modified: u64,
 }
 
+/// 目标实例的 MC 版本与 ModLoader（Mod 下载前校验）。
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[ts(export_to = "game/")]
+pub struct InstanceModTarget {
+    pub mc_version: String,
+    pub loader: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ResourceFile {
     pub name: String,
@@ -21,6 +29,13 @@ pub struct ResourceFile {
     pub size: u64,
     /// 最后修改时间（unix 秒）
     pub last_modified: u64,
+}
+
+#[tauri::command]
+pub fn get_instance_mod_target(version_dir_name: String) -> Result<InstanceModTarget, String> {
+    let vdir = version_dir_path(&version_dir_name)?;
+    let (mc_version, loader, _) = resolve_version_meta(&vdir, &version_dir_name);
+    Ok(InstanceModTarget { mc_version, loader })
 }
 
 #[tauri::command]

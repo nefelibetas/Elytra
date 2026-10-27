@@ -11,6 +11,7 @@ use crate::auth::model::MsAccount;
 use crate::commands::auto_tasks::InstanceAutoTasksState;
 use crate::commands::launch_options::InstanceLaunchState;
 use crate::commands::map::MapBlockInfo;
+use crate::commands::version::InstanceModTarget;
 use crate::config::downloader::{
     DownloadSource, DownloadSourceMode, DownloaderConfig, JdkSourceMode, NetworkMode,
 };
@@ -94,6 +95,7 @@ pub fn export_all() {
     ExternalConfig::export().unwrap();
     WaitingUserPayload::export().unwrap();
     InstalledVersionInfo::export().unwrap();
+    InstanceModTarget::export().unwrap();
     VersionsChanged::export().unwrap();
     VersionDirChanged::export().unwrap();
     MapWorldInfo::export().unwrap();
