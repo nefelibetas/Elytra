@@ -13,7 +13,7 @@ const props = defineProps<{
   error: string;
   modName: string;
   modVersion: string;
-  modLoader: string;
+  modLoaders: string[];
   plan: ModDependencyPlan | null;
 }>();
 
@@ -145,13 +145,28 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
 
         <div class="dialog-body">
           <div class="dep-main">
-            <div class="dep-main-name" :title="modName">{{ modName }}</div>
-            <div class="dep-main-meta">
-              <span v-if="modLoader" class="dep-tag">{{ modLoader }}</span>
-              <span v-if="modVersion" class="dep-version">{{ modVersion }}</span>
+            <div class="dep-main-head">
+              <span class="dep-main-name" :title="modName">{{ modName }}</span>
+              <span v-if="modLoaders.length" class="dep-main-tags">
+                <span
+                  v-for="loader in modLoaders"
+                  :key="loader"
+                  class="dep-tag"
+                  :class="`dep-tag--${loader}`"
+                >{{ loader }}</span>
+              </span>
             </div>
-            <div v-if="plan" class="dep-instance">
-              {{ t("download.detail.modDepsInstance", { mc: plan.instance_mc, loader: plan.instance_loader }) }}
+            <div class="dep-meta">
+              <div class="dep-meta-row">
+                <span class="dep-meta-label">{{ t("download.detail.modDepsInstanceLabel") }}：</span>
+                <span class="dep-meta-value">
+                  {{ plan ? `${plan.instance_mc} / ${plan.instance_loader}` : "—" }}
+                </span>
+              </div>
+              <div class="dep-meta-row">
+                <span class="dep-meta-label">{{ t("download.detail.modDepsVersionLabel") }}：</span>
+                <span class="dep-meta-value">{{ modVersion || "—" }}</span>
+              </div>
             </div>
           </div>
 
@@ -182,7 +197,11 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
                   >
                     <div class="dep-row-main">
                       <span class="dep-name" :title="row.name">{{ row.name }}</span>
-                      <span v-if="row.loader" class="dep-tag">{{ row.loader }}</span>
+                      <span
+                        v-if="row.loader"
+                        class="dep-tag"
+                        :class="`dep-tag--${row.loader}`"
+                      >{{ row.loader }}</span>
                     </div>
                     <span class="dep-row-side">
                       <span v-if="row.installed" class="dep-note">{{ t("download.detail.modDepsInstalled") }}</span>
@@ -236,7 +255,11 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
                     <span v-else class="dep-indent">↳</span>
                     <div class="dep-row-main">
                       <span class="dep-name" :title="row.name">{{ row.name }}</span>
-                      <span v-if="row.loader" class="dep-tag">{{ row.loader }}</span>
+                      <span
+                        v-if="row.loader"
+                        class="dep-tag"
+                        :class="`dep-tag--${row.loader}`"
+                      >{{ row.loader }}</span>
                     </div>
                     <span class="dep-row-side">
                       <span v-if="row.installed" class="dep-note">{{ t("download.detail.modDepsInstalled") }}</span>
@@ -270,14 +293,18 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
 </template>
 
 <style scoped>
+/* 遮罩从标题栏下方开始：模态确认不阻塞标题栏导航与窗口控制。 */
 .dialog-overlay {
   position: fixed;
-  inset: 0;
+  top: var(--titlebar-h, 48px);
+  right: 0;
+  bottom: 0;
+  left: 0;
   z-index: var(--z-modal, 1100);
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--overlay);
+  background: var(--overlay, rgba(15, 23, 42, 0.5));
   backdrop-filter: blur(2px);
 }
 
@@ -299,7 +326,7 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
 
 .mod-dep-card {
   width: min(560px, 92vw);
-  max-height: calc(100vh - 48px);
+  max-height: calc(100vh - var(--titlebar-h, 48px) - 32px);
 }
 
 .dialog-header {
@@ -352,10 +379,24 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
 }
 
 .dep-main {
-  padding: 2px 0 10px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  background: var(--surface-page);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+}
+
+.dep-main-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
 }
 
 .dep-main-name {
+  flex: 1;
+  min-width: 0;
   font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
@@ -364,17 +405,42 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
   white-space: nowrap;
 }
 
-.dep-main-meta {
+.dep-main-tags {
+  flex: none;
   display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
 }
 
-.dep-instance {
-  margin-top: 6px;
+.dep-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.dep-meta-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
   font-size: 12px;
+  line-height: 1.5;
+}
+
+.dep-meta-label {
+  flex: none;
   color: var(--text-tertiary);
+}
+
+.dep-meta-value {
+  min-width: 0;
+  color: var(--text-primary);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dep-state {
@@ -385,7 +451,11 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
 }
 
 .dep-errors {
-  margin-bottom: 8px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-md);
+  background: var(--surface-page);
 }
 
 .dep-error-text {
@@ -396,7 +466,7 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
 }
 
 .dep-section + .dep-section {
-  margin-top: 6px;
+  margin-top: 12px;
 }
 
 .dep-section-head {
@@ -404,7 +474,7 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
   align-items: center;
   gap: 6px;
   width: 100%;
-  padding: 7px 0;
+  padding: 0 2px 7px;
   border: 0;
   background: transparent;
   color: var(--text-secondary);
@@ -440,8 +510,13 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
 }
 
 .dep-count {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--surface-hover);
   color: var(--text-tertiary);
+  font-size: 11px;
   font-weight: 500;
+  line-height: 16px;
 }
 
 .dep-actions {
@@ -464,20 +539,30 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
 
 .dep-list {
   overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-page);
 }
 
 .dep-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 32px;
-  padding: 4px 0;
-  border-top: 1px solid var(--border-default);
+  min-height: 34px;
+  padding: 8px 10px;
   font-size: 12.5px;
 }
 
+.dep-row + .dep-row {
+  border-top: 1px solid var(--border-default);
+}
+
 .dep-row--child {
-  padding-left: 20px;
+  padding-left: 34px;
+}
+
+.dep-row--child .dep-name {
+  color: var(--text-secondary);
 }
 
 .dep-row--muted {
@@ -518,17 +603,33 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
 
 .dep-tag {
   flex: none;
-  padding: 1px 5px;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  color: var(--text-tertiary);
-  font-size: 10.5px;
-  line-height: 1.4;
+  padding: 0 5px;
+  border-radius: 6px;
+  background: var(--color-brand-bg);
+  color: var(--color-brand);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+.dep-tag--fabric { color: var(--ld-fabric); }
+.dep-tag--forge { color: var(--ld-forge); }
+.dep-tag--neoforge { color: var(--ld-neoforge); }
+.dep-tag--quilt { color: var(--ld-quilt); }
+.dep-tag--optifine { color: var(--ld-optifine); }
+
+/* 与外部列表/详情页同款：低版本 WebKitGTK 无 color-mix 时保留纯文字色徽章 */
+@supports (color-mix(in srgb, red 12%, transparent)) {
+  .dep-tag--fabric { background: color-mix(in srgb, var(--ld-fabric) 12%, transparent); }
+  .dep-tag--forge { background: color-mix(in srgb, var(--ld-forge) 12%, transparent); }
+  .dep-tag--neoforge { background: color-mix(in srgb, var(--ld-neoforge) 12%, transparent); }
+  .dep-tag--quilt { background: color-mix(in srgb, var(--ld-quilt) 12%, transparent); }
+  .dep-tag--optifine { background: color-mix(in srgb, var(--ld-optifine) 12%, transparent); }
 }
 
 .dep-row-side {
   flex: none;
-  max-width: 42%;
+  max-width: 46%;
   text-align: right;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -546,7 +647,8 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
 }
 
 .dep-more {
-  padding: 8px 0 2px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border-default);
   color: var(--text-tertiary);
   font-size: 11.5px;
 }

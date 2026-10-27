@@ -361,7 +361,7 @@ const depDialogError = ref("");
 const depPlan = ref<ModDependencyPlan | null>(null);
 const depModName = ref("");
 const depModVersion = ref("");
-const depModLoader = ref("");
+const depModLoaders = ref<string[]>([]);
 let depDialogSeq = 0;
 let pendingMain: { version: CommunityVersion; target: string } | null = null;
 
@@ -405,7 +405,7 @@ async function openModDownload(version: CommunityVersion, target: string) {
   pendingMain = { version, target };
   depModName.value = item.value?.title ?? version.filename;
   depModVersion.value = version.version_number;
-  depModLoader.value = version.loaders.join(" / ");
+  depModLoaders.value = version.loaders;
   depPlan.value = null;
   depDialogError.value = "";
   depDialogLoading.value = true;
@@ -524,6 +524,7 @@ async function copyName() {
 </script>
 
 <template>
+  <div class="md-page">
   <div v-if="item" class="md">
     <!-- 项目切换动画：内容整体淡入淡出（同路由 push 不触发路由级过渡） -->
     <Transition name="md-switch" mode="out-in">
@@ -666,20 +667,30 @@ async function copyName() {
   </div>
   <div v-else class="md-empty">{{ t("download.detail.notFound") }}</div>
 
-  <ModDownloadDialog
-    v-model="depDialogOpen"
-    :loading="depDialogLoading"
-    :error="depDialogError"
-    :mod-name="depModName"
-    :mod-version="depModVersion"
-    :mod-loader="depModLoader"
-    :plan="depPlan"
-    @confirm="onDependencyConfirm"
-    @main-only="onDependencyMainOnly"
-  />
+  <Teleport to="body">
+    <ModDownloadDialog
+      v-model="depDialogOpen"
+      :loading="depDialogLoading"
+      :error="depDialogError"
+      :mod-name="depModName"
+      :mod-version="depModVersion"
+      :mod-loaders="depModLoaders"
+      :plan="depPlan"
+      @confirm="onDependencyConfirm"
+      @main-only="onDependencyMainOnly"
+    />
+  </Teleport>
+  </div>
 </template>
 
 <style scoped>
+.md-page {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .md {
   height: 100%;
   display: flex;
