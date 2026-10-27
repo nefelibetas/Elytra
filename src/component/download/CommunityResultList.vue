@@ -17,6 +17,7 @@ export interface CommunityResultState {
   gameVersion: string;
   searching: boolean;
   error: string;
+  partialError?: string;
   searched: boolean;
   results: CommunityDisplayItem[];
   total: number;
@@ -54,6 +55,7 @@ const { t } = useI18n();
       <p>{{ t("download.search.emptyHint", { category: label }) }}</p>
     </EmptyState>
     <template v-else-if="search.searched">
+      <div v-if="search.partialError" class="cs-partial">{{ search.partialError }}</div>
       <div class="cs-list">
         <div v-for="m in search.results" :key="m.key" class="cs-card">
           <div
@@ -95,6 +97,14 @@ const { t } = useI18n();
 </template>
 
 <style scoped>
+.cs-partial {
+  margin: 0 0 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-sm);
+  color: var(--color-warning);
+  font-size: 12px;
+}
 .cs-result-card {
   flex: 1; min-height: 0; display: flex; flex-direction: column;
   background: var(--surface-card);

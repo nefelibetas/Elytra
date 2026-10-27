@@ -77,8 +77,13 @@ const fabricLikeMain = computed(
         </Transition>
       </div>
       <div v-else class="det-card det-ld">
-        <button class="det-ld-hdr" :class="{ clickable: vdState.getFabricApiVersions(sv().id).length }"
-          @click="vdState.getFabricApiVersions(sv().id).length && vdState.toggleFabricApi()">
+        <button
+          class="det-ld-hdr"
+          :class="{ clickable: vdState.getFabricApiVersions(sv().id).length || vdState.fabricApiErrors[sv().id] }"
+          @click="vdState.getFabricApiVersions(sv().id).length
+            ? vdState.toggleFabricApi()
+            : vdState.fetchFabricApi(sv().id)"
+        >
           <img :src="loaderIcon.fabric" width="32" height="32" class="det-ld-icon" alt="" />
           <span class="det-ld-info">
             <span class="det-ld-title">Fabric API</span>

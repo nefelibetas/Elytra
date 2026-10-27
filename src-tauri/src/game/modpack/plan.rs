@@ -226,16 +226,7 @@ async fn build_plan_depth(
                         files.extend(resolved);
                         restricted.extend(locked);
                     }
-                    Err(_) => {
-                        for entry in api_entries {
-                            restricted.push(
-                                entry
-                                    .file_name
-                                    .clone()
-                                    .unwrap_or_else(|| format!("fileID {}", entry.file_id)),
-                            );
-                        }
-                    }
+                    Err(e) => return Err(e),
                 }
             }
             let overrides = existing_overrides(
@@ -378,7 +369,11 @@ pub(super) fn extract_embedded(
     let dir = cache_dir();
     std::fs::create_dir_all(&dir)
         .map_err(common_err_ctx_key!("errors.file.createDir", "创建目录失败"))?;
-    let dest = dir.join(format!("{}-embedded.zip", cache_key(request)));
+    // 外层文件被同名覆盖时尺寸/mtime 会变化，不能用旧内嵌包。
+    let stamp = std::fs::metadata(outer)
+        .map(|m| format!("{}-{}", m.len(), crate::util::modified_secs(&m)))
+        .unwrap_or_else(|_| "unknown".into());
+    let dest = dir.join(format!("{}-embedded-{stamp}.zip", cache_key(request)));
     if dest.is_file() {
         return Ok(dest);
     }

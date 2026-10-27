@@ -1,10 +1,12 @@
 //! 游戏进程生命周期：子进程 spawn（Windows Job Object 脱钩重试）、stdout/stderr 落盘、可见窗口轮询、退出监听与崩溃报告定位；不依赖 tauri（回调由调用方注入）。
 
+use std::collections::HashSet;
 #[cfg(target_os = "windows")]
 use std::ffi::c_void;
 use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::{LazyLock, Mutex};
 use std::time::SystemTime;
 
 use crate::auth::external::{ensure_jar, read};
@@ -458,45 +460,74 @@ where
 
 // ── 启动取消闸门 ──
 
-/// 取消请求标志：spawn_game 在拉起进程前查一次，命中即不启动。
-static LAUNCH_CANCELLED: AtomicBool = AtomicBool::new(false);
-/// 本次启动已拉起的游戏进程 pid（0 = 尚未拉起）：取消时按 pid 终止。
+/// 启动代际：每次 begin_launch 递增；取消只作用于对应代际。
+static LAUNCH_SEQ: AtomicU64 = AtomicU64::new(0);
+static CANCELLED_GENS: LazyLock<Mutex<HashSet<u64>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+/// 本次启动已拉起的游戏进程 pid 与代际（0 = 尚未拉起）：取消时按 pid 终止。
 static LAUNCH_PID: AtomicU32 = AtomicU32::new(0);
+static LAUNCH_PID_GEN: AtomicU64 = AtomicU64::new(0);
 
-/// 新一次启动开始：清掉上一次的取消标志与 pid 登记（前端在启动流程最前调用，此后到达的取消一律生效）。
-pub fn begin_launch() {
+/// 新一次启动开始：分配新代际，并取消/终止上一代（旧 pre-launch 可能仍在运行）。
+pub fn begin_launch() -> u64 {
+    let generation = LAUNCH_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+    if generation > 1 {
+        let previous = generation - 1;
+        CANCELLED_GENS.lock().unwrap().insert(previous);
+        let pid_gen = LAUNCH_PID_GEN.load(Ordering::SeqCst);
+        let pid = LAUNCH_PID.load(Ordering::SeqCst);
+        if pid_gen == previous && pid != 0 {
+            LAUNCH_PID.store(0, Ordering::SeqCst);
+            LAUNCH_PID_GEN.store(0, Ordering::SeqCst);
+            kill_process(pid);
+        }
+    }
     LAUNCH_PID.store(0, Ordering::SeqCst);
-    LAUNCH_CANCELLED.store(false, Ordering::SeqCst);
+    LAUNCH_PID_GEN.store(0, Ordering::SeqCst);
+    generation
 }
 
-/// 本次启动是否已被请求取消。
-pub fn cancel_requested() -> bool {
-    LAUNCH_CANCELLED.load(Ordering::SeqCst)
+/// 指定代际是否已被请求取消。
+pub fn cancel_requested(generation: u64) -> bool {
+    CANCELLED_GENS.lock().unwrap().contains(&generation)
 }
 
-/// 请求取消：置标志并终止已拉起的游戏进程。标志先于取 pid 写入，故与 `note_launched` 竞争时不会漏杀。
-pub fn request_cancel() {
-    LAUNCH_CANCELLED.store(true, Ordering::SeqCst);
-    let pid = LAUNCH_PID.swap(0, Ordering::SeqCst);
-    if pid != 0 {
-        kill_process(pid);
+/// 请求取消：先登记代际再取 pid，故与 `note_launched` 竞争时不会漏杀。
+pub fn request_cancel(generation: u64) {
+    CANCELLED_GENS.lock().unwrap().insert(generation);
+    if LAUNCH_PID_GEN.load(Ordering::SeqCst) == generation {
+        let pid = LAUNCH_PID.swap(0, Ordering::SeqCst);
+        if pid != 0 {
+            kill_process(pid);
+        }
     }
 }
 
-/// 登记已拉起的游戏进程；登记时若取消已到达则立即终止（返回 true 表示已终止）。
-pub fn note_launched(pid: u32) -> bool {
+/// 登记已拉起的游戏进程；非当前代际或已取消则立即终止。
+pub fn note_launched(generation: u64, pid: u32) -> bool {
+    if LAUNCH_SEQ.load(Ordering::SeqCst) != generation {
+        kill_process(pid);
+        return true;
+    }
     LAUNCH_PID.store(pid, Ordering::SeqCst);
-    if !cancel_requested() {
+    LAUNCH_PID_GEN.store(generation, Ordering::SeqCst);
+    if !cancel_requested(generation) {
         return false;
     }
-    LAUNCH_PID.store(0, Ordering::SeqCst);
+    if LAUNCH_PID_GEN.load(Ordering::SeqCst) == generation {
+        LAUNCH_PID.store(0, Ordering::SeqCst);
+    }
     kill_process(pid);
     true
 }
 
 /// 进程退出后注销 pid：否则后续取消可能误杀复用同一 pid 的其他进程。
-pub fn clear_launched(pid: u32) {
-    let _ = LAUNCH_PID.compare_exchange(pid, 0, Ordering::SeqCst, Ordering::SeqCst);
+pub fn clear_launched(generation: u64, pid: u32) {
+    if LAUNCH_PID_GEN.load(Ordering::SeqCst) == generation
+        && LAUNCH_PID.load(Ordering::SeqCst) == pid
+    {
+        LAUNCH_PID.store(0, Ordering::SeqCst);
+        LAUNCH_PID_GEN.store(0, Ordering::SeqCst);
+    }
 }
 
 /// 强制终止进程（Windows 递归进程树；其他平台 SIGKILL）。
@@ -983,46 +1014,57 @@ mod cancel_tests {
 
     #[test]
     fn cancel_flag_survives_until_next_begin() {
-        begin_launch();
-        assert!(!cancel_requested(), "begin_launch 后不应处于已取消状态");
-        request_cancel();
-        assert!(cancel_requested(), "request_cancel 后应处于已取消状态");
+        let gen = begin_launch();
+        assert!(!cancel_requested(gen), "begin_launch 后不应处于已取消状态");
+        request_cancel(gen);
+        assert!(cancel_requested(gen), "request_cancel 后应处于已取消状态");
         // 重复请求与未登记 pid 时再取消都不得清除标志
-        request_cancel();
-        assert!(cancel_requested(), "重复取消不应清除标志");
-        begin_launch();
+        request_cancel(gen);
+        assert!(cancel_requested(gen), "重复取消不应清除标志");
+        let next = begin_launch();
         assert!(
-            !cancel_requested(),
+            !cancel_requested(next),
             "下一次启动开始必须清掉上一次的取消标志"
         );
+        assert!(cancel_requested(gen), "旧代际仍应保持取消");
     }
 
     #[test]
     fn note_launched_without_cancel_only_registers() {
-        begin_launch();
+        let gen = begin_launch();
         let mut child = spawn_idle_child();
-        assert!(!note_launched(child.id()), "未请求取消时不应终止进程");
+        assert!(!note_launched(gen, child.id()), "未请求取消时不应终止进程");
         let _ = child.kill();
         let _ = child.wait();
-        clear_launched(child.id());
+        clear_launched(gen, child.id());
     }
 
     #[test]
     fn note_launched_after_cancel_kills_process() {
-        begin_launch();
-        request_cancel(); // 尚未登记 pid：先置标志，模拟「进进程后注册前」到达的取消
+        let gen = begin_launch();
+        request_cancel(gen); // 尚未登记 pid：先置标志，模拟「进进程后注册前」到达的取消
         let mut child = spawn_idle_child();
-        assert!(note_launched(child.id()), "取消已到达时应立即终止进程");
+        assert!(note_launched(gen, child.id()), "取消已到达时应立即终止进程");
         assert!(wait_exit(&mut child), "被取消的启动进程应已退出");
-        clear_launched(child.id());
+        clear_launched(gen, child.id());
     }
 
     #[test]
     fn request_cancel_kills_registered_process() {
-        begin_launch();
+        let gen = begin_launch();
         let mut child = spawn_idle_child();
-        assert!(!note_launched(child.id()));
-        request_cancel();
+        assert!(!note_launched(gen, child.id()));
+        request_cancel(gen);
         assert!(wait_exit(&mut child), "取消应终止已登记的游戏进程");
+    }
+
+    #[test]
+    fn next_generation_kills_previous_registered_process() {
+        let gen = begin_launch();
+        let mut child = spawn_idle_child();
+        assert!(!note_launched(gen, child.id()));
+        let _next = begin_launch();
+        assert!(wait_exit(&mut child), "新启动开始应终止上一代进程");
+        clear_launched(gen, child.id());
     }
 }

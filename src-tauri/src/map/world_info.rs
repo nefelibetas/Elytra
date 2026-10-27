@@ -64,10 +64,22 @@ fn read_seed(world_root: &Path) -> Option<String> {
             let Some(Value::Compound(data)) = map.get(container) else {
                 continue;
             };
-            match data.get("seed") {
-                Some(Value::Long(v)) => return Some(v.to_string()),
-                Some(Value::Int(v)) => return Some(v.to_string()),
-                _ => {}
+            if let Some(v) = data.get("seed").or_else(|| data.get("RandomSeed")) {
+                match v {
+                    Value::Long(v) => return Some(v.to_string()),
+                    Value::Int(v) => return Some(v.to_string()),
+                    _ => {}
+                }
+            }
+            // 1.16+ 原版把种子放进 WorldGenSettings（部分工具写 snake_case）
+            for key in ["WorldGenSettings", "world_gen_settings"] {
+                if let Some(Value::Compound(settings)) = data.get(key) {
+                    match settings.get("seed") {
+                        Some(Value::Long(v)) => return Some(v.to_string()),
+                        Some(Value::Int(v)) => return Some(v.to_string()),
+                        _ => {}
+                    }
+                }
             }
         }
     }

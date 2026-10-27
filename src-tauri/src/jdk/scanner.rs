@@ -42,10 +42,33 @@ pub fn auto_scan() -> Vec<JdkInfo> {
     for dir_str in dirs {
         let dir = Path::new(&dir_str);
         if dir.is_dir() {
-            scan_dir_and_children(dir, &mut found, &mut seen, true);
+            // managed runtime 至少是 runtime/{platform}/java-{major}，官方启动器还会再深一层。
+            scan_dir_recursive(dir, &mut found, &mut seen, true, 4);
         }
     }
     found
+}
+
+fn scan_dir_recursive(
+    dir: &Path,
+    found: &mut Vec<JdkInfo>,
+    seen: &mut HashSet<String>,
+    only_64bit: bool,
+    depth: u8,
+) {
+    probe_home(dir, found, seen, only_64bit);
+    if depth == 0 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            scan_dir_recursive(&path, found, seen, only_64bit, depth - 1);
+        }
+    }
 }
 
 // 扫描指定目录以及此目录下的二级目录

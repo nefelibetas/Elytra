@@ -148,8 +148,28 @@ function pickGame(gv: string) {
 function onDocPointerDown() {
   openFilter.value = "";
 }
-onMounted(() => document.addEventListener("pointerdown", onDocPointerDown));
-onBeforeUnmount(() => document.removeEventListener("pointerdown", onDocPointerDown));
+
+function onDocKeydown(event: KeyboardEvent) {
+  if (event.key !== "Escape" || !openFilter.value) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  openFilter.value = "";
+}
+
+onMounted(() => {
+  document.addEventListener("pointerdown", onDocPointerDown);
+  window.addEventListener("keydown", onDocKeydown, true);
+});
+onBeforeUnmount(() => {
+  document.removeEventListener("pointerdown", onDocPointerDown);
+  window.removeEventListener("keydown", onDocKeydown, true);
+  // 离开详情页后，未完成的依赖解析不得再自动提交/导航。
+  depDisposed = true;
+  depDialogSeq++;
+  depDialogOpen.value = false;
+  depSubmitting.value = false;
+  pendingMain = null;
+});
 
 /** 快照/预发布/候选等非正式版本标记（26w14a、26.3-snapshot-8、-pre1、-rc1、candidate） */
 const SNAPSHOT_RE = /\d{2}w\d{2}|snapshot|pre\d*|rc\d*|candidate/i;
@@ -368,6 +388,7 @@ function backAfterSubmit() {
 const depDialogOpen = ref(false);
 const depDialogLoading = ref(false);
 const depDialogUpdating = ref(false);
+const depSubmitting = ref(false);
 const depDialogError = ref("");
 const depPlan = ref<ModDependencyPlan | null>(null);
 const depModName = ref("");
@@ -376,6 +397,7 @@ const depModFilename = ref("");
 const depModLoaders = ref<string[]>([]);
 const depVersionOverrides = ref<Record<string, string>>({});
 let depDialogSeq = 0;
+let depDisposed = false;
 let pendingMain: { version: CommunityVersion; target: string } | null = null;
 
 function mainDownloadFile(
@@ -426,16 +448,20 @@ function dependencyDownloadFiles(selectedOptional: string[]): DownloadFileInput[
 
 async function submitModFiles(files: DownloadFileInput[], name: string) {
   const target = pendingMain?.target;
-  if (!target || files.length === 0) return;
+  if (!target || files.length === 0 || depSubmitting.value || depDisposed) return;
+  depSubmitting.value = true;
   try {
     const taskId = await downloadFiles(target, normalizeReplacement(files));
     if (taskId) registerTaskName(taskId, name);
+    if (depDisposed) return;
     showToast(t("download.detail.submitted"));
     depDialogOpen.value = false;
     pendingMain = null;
     backAfterSubmit();
   } catch (e) {
-    showToast(errMsg(e));
+    if (!depDisposed) showToast(errMsg(e));
+  } finally {
+    depSubmitting.value = false;
   }
 }
 
@@ -459,20 +485,21 @@ async function resolveDependencyPlan(initial: boolean) {
       versionDirName: request.target,
       versionOverrides: depVersionOverrides.value,
     });
-    if (seq !== depDialogSeq || !depDialogOpen.value) return;
+    if (depDisposed || seq !== depDialogSeq || !depDialogOpen.value) return;
     depPlan.value = plan;
     const projectIds = new Set(plan.items.map(dep => dep.project_id));
     depVersionOverrides.value = Object.fromEntries(
       Object.entries(depVersionOverrides.value).filter(([projectId]) => projectIds.has(projectId)),
     );
     if (initial && plan.items.length === 0 && plan.errors.length === 0) {
+      if (depDisposed) return;
       await submitModFiles(
         [mainDownloadFile(version, mainReplacements(version))],
         depModName.value,
       );
     }
   } catch (e) {
-    if (seq !== depDialogSeq || !depDialogOpen.value) return;
+    if (depDisposed || seq !== depDialogSeq || !depDialogOpen.value) return;
     if (initial) depDialogError.value = errMsg(e);
     else showToast(errMsg(e));
   } finally {
@@ -485,6 +512,7 @@ async function resolveDependencyPlan(initial: boolean) {
 
 /** 解析前置并打开确认框；无前置则直接提交主 Mod。 */
 async function openModDownload(version: CommunityVersion, target: string) {
+  if (depDisposed) return;
   pendingMain = { version, target };
   depModName.value = item.value?.title ?? version.filename;
   depModVersion.value = version.version_number;
@@ -494,6 +522,7 @@ async function openModDownload(version: CommunityVersion, target: string) {
   depDialogError.value = "";
   depVersionOverrides.value = {};
   depDialogUpdating.value = false;
+  depSubmitting.value = false;
   depDialogLoading.value = true;
   depDialogOpen.value = true;
   await resolveDependencyPlan(true);
@@ -508,20 +537,33 @@ function onDependencyVersionChange(projectId: string, versionId: string) {
 }
 
 function onDependencyConfirm(selectedOptional: string[]) {
-  if (depDialogUpdating.value) return;
+  if (depDialogUpdating.value || depSubmitting.value || !depPlan.value) return;
   void submitModFiles(dependencyDownloadFiles(selectedOptional), depModName.value);
 }
 
 function onDependencyMainOnly() {
-  if (depDialogUpdating.value || !pendingMain) return;
+  if (depDialogUpdating.value || depSubmitting.value || !pendingMain || !depPlan.value) return;
   void submitModFiles(
     [mainDownloadFile(pendingMain.version, mainReplacements(pendingMain.version))],
     depModName.value,
   );
 }
 
+const downloadSubmitting = ref(false);
+
 /** 提交选中版本下载任务（任务中心自动注册）；落盘 versions/{版本目录}/{kind_dir}/{filename}（后端兜底 _{n} 冲突）。 */
 async function submitDownload() {
+  if (downloadSubmitting.value) return;
+  downloadSubmitting.value = true;
+  try {
+    await submitDownloadInner();
+  } finally {
+    downloadSubmitting.value = false;
+  }
+}
+
+async function submitDownloadInner() {
+  if (depDisposed) return;
   // modpack 分流：不要求已选启动版本（安装器自建版本目录）
   if (isModpack.value) {
     await submitModpackInstall();
@@ -567,6 +609,7 @@ async function submitDownload() {
       }));
       return;
     }
+    if (depDisposed) return;
     if (!v.game_versions.includes(target.mc_version)) {
       const versions = v.game_versions.slice(0, 5).join(" / ")
         + (v.game_versions.length > 5 ? " …" : "");
@@ -779,6 +822,7 @@ async function copyName() {
       v-model="depDialogOpen"
       :loading="depDialogLoading"
       :updating="depDialogUpdating"
+      :submitting="depSubmitting"
       :error="depDialogError"
       :mod-name="depModName"
       :mod-version="depModVersion"

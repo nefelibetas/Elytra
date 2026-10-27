@@ -142,6 +142,7 @@ function scopedWorlds(step: AutoTaskStep): string[] {
 }
 
 function toggleWorld(name: string, step: AutoTaskStep) {
+  if (!name) return;
   const backup = backupAction(step);
   const list = [...scopedWorlds(step)];
   const idx = list.indexOf(name);
@@ -257,6 +258,7 @@ function toggleWorld(name: string, step: AutoTaskStep) {
                   <input
                     type="radio"
                     :checked="backupAction(step).scope !== 'All'"
+                    :disabled="worlds.length === 0"
                     @change="toggleWorld(worlds[0]?.name ?? '', step)"
                   />
                   {{ t("settings.autoTasks.scopeSelected") }}

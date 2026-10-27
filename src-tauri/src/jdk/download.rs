@@ -508,6 +508,7 @@ async fn install_mojang_runtime(
         }
     }
 
+    mark_bin_executable(&dest_root);
     // 5. 校验：inspect 版本 + major 匹配
     let info = scanner::inspect(&dest_root)
         .map_err(common_err_ctx_key!("errors.jdk.install", "安装后校验失败"))?;
@@ -677,17 +678,70 @@ fn prefer_official_over_tuna(official_ok: bool, official_ttfb_ms: u64, tuna_ttfb
 /// （Adoptium 的 mac/linux 只提供 tar.gz）。所有条目过 safe_runtime_path 防路径穿越。
 fn extract_archive(package: &Path, dest_root: &Path) -> Result<(), String> {
     let name = package.to_string_lossy().to_lowercase();
-    if name.ends_with(".zip") {
+    let result = if name.ends_with(".zip") {
         extract_zip(package, dest_root)
     } else if name.ends_with(".tar.gz") || name.ends_with(".tgz") {
         extract_tar_gz(package, dest_root)
     } else {
-        Err(keyed_msg!(
+        return Err(keyed_msg!(
             "errors.jdk.package",
             "不支持的 JDK 包格式\n{name}"
-        ))
-    }
+        ));
+    };
+    result?;
+    mark_bin_executable(dest_root);
+    Ok(())
 }
+
+/// zip/tar 解压不保留 Unix 执行位；bin 下的 java 等必须补 0755 的可执行位。
+#[cfg(unix)]
+fn mark_bin_executable(root: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    fn mark_dir(dir: &Path) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            let mut perms = meta.permissions();
+            perms.set_mode(perms.mode() | 0o111);
+            let _ = std::fs::set_permissions(&path, perms);
+        }
+    }
+
+    fn walk(dir: &Path, depth: u8) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            if entry.file_name() == "bin" {
+                mark_dir(&path);
+            } else if depth > 0 {
+                walk(&path, depth - 1);
+            }
+        }
+    }
+
+    let bin = root.join("bin");
+    if bin.is_dir() {
+        mark_dir(&bin);
+    }
+    walk(root, 2);
+}
+
+#[cfg(not(unix))]
+fn mark_bin_executable(_root: &Path) {}
 
 /// zip 解压（Mojang/Azul/Adoptium 共用的包级解压；zip 内顶层目录保留）。
 fn extract_zip(package: &Path, dest_root: &Path) -> Result<(), String> {

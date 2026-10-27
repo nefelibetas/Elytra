@@ -18,6 +18,8 @@ export default {
     worlds: "Worlds",
   },
   search: {
+    partialSource: "Some search sources are unavailable; results may be incomplete.",
+    allSourcesFailed: "Search sources are unavailable. Check the network and try again.",
     title: "Search {category}",
     name: "Name",
     source: "Source",

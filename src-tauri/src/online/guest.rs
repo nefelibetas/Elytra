@@ -22,18 +22,37 @@ use std::sync::Arc;
 /// 加入联机（guest）：解析房间码 → 建网 → 发现中心 → 心跳协商 → 建本地游戏代理 + MC 广播。返回本地端口。
 pub async fn join(sink: Arc<dyn EventSink>, room_code: &str) -> Result<u16, String> {
     let (session, gen) = start_join_session(room_code).await?;
-    let (stream, center_addr, center_ip) = connect_center(sink.as_ref(), &session, gen).await?;
-    let (local_profile, supports_easytier_id, game_port) =
-        negotiate_guest_session(sink.as_ref(), stream, gen).await?;
-    let local_port = activate_guest_join(
-        sink.as_ref(),
-        &session,
-        center_ip,
-        game_port,
-        &local_profile,
-        gen,
-    )
-    .await?;
+    let result = async {
+        let (stream, center_addr, center_ip) = connect_center(sink.as_ref(), &session, gen).await?;
+        let (local_profile, supports_easytier_id, game_port) =
+            negotiate_guest_session(sink.as_ref(), stream, gen).await?;
+        let local_port = activate_guest_join(
+            sink.as_ref(),
+            &session,
+            center_addr,
+            center_ip,
+            game_port,
+            &local_profile,
+            gen,
+        )
+        .await?;
+        Ok::<_, String>((
+            center_addr,
+            center_ip,
+            local_profile,
+            supports_easytier_id,
+            local_port,
+        ))
+    }
+    .await;
+    let (center_addr, center_ip, local_profile, supports_easytier_id, local_port) = match result {
+        Ok(v) => v,
+        Err(e) => {
+            // 握手/代理启动的任意 I/O 失败都必须回滚；否则后端停在 Joining，前端没有停止入口。
+            rollback_join_and_emit(sink.as_ref(), gen).await;
+            return Err(e);
+        }
+    };
     spawn_guest_sync(
         Arc::clone(&sink),
         session.clone(),
@@ -202,6 +221,7 @@ async fn negotiate_guest_session(
 async fn activate_guest_join(
     sink: &dyn EventSink,
     session: &EasyTierSession,
+    center_addr: SocketAddr,
     center_ip: Ipv4Addr,
     game_port: u16,
     local_profile: &Profile,
@@ -218,7 +238,7 @@ async fn activate_guest_join(
     let proxy = GuestProxy::spawn({
         let proxy_session = session.clone();
         async move {
-            run_guest_proxy(proxy_session, local_port, center_ip, game_port).await;
+            run_guest_proxy(proxy_session, local_port, center_addr, center_ip, game_port).await;
         }
     });
 
@@ -297,7 +317,10 @@ fn spawn_guest_sync(
             .await
         {
             Ok(st) => st,
-            Err(_) => return,
+            Err(_) => {
+                rollback_join_and_emit(sink.as_ref(), gen).await;
+                return;
+            }
         };
         guest_sync_loop(
             sink.as_ref(),
@@ -307,6 +330,8 @@ fn spawn_guest_sync(
             gen,
         )
         .await;
+        // 数据面断开（例如 host 重建）后不能静默保留“已加入”状态。
+        rollback_join_and_emit(sink.as_ref(), gen).await;
     });
 }
 
@@ -388,11 +413,25 @@ fn build_guest_profiles(server_players: Vec<Profile>, local_profile: &Profile) -
     profiles
 }
 
+async fn query_game_port(session: &EasyTierSession, center_addr: SocketAddr) -> Option<u16> {
+    let mut stream = session
+        .data_plane_tcp_connect(center_addr, Duration::from_secs(10))
+        .await
+        .ok()?;
+    write_request_async(&mut stream, "c", "server_port", b"")
+        .await
+        .ok()?;
+    let resp = read_response_async(&mut stream).await.ok()?;
+    (resp.status == 0 && resp.body.len() == 2)
+        .then(|| u16::from_be_bytes([resp.body[0], resp.body[1]]))
+}
+
 async fn run_guest_proxy(
     session: EasyTierSession,
     local_port: u16,
+    center_addr: SocketAddr,
     center_ip: Ipv4Addr,
-    game_port: u16,
+    initial_game_port: u16,
 ) {
     let listener = match tokio::net::TcpListener::bind(("0.0.0.0", local_port)).await {
         Ok(l) => l,
@@ -401,12 +440,16 @@ async fn run_guest_proxy(
             return;
         }
     };
-    let dst = SocketAddr::from((center_ip, game_port));
     loop {
         match listener.accept().await {
             Ok((client, _)) => {
                 let session = session.clone();
                 tauri::async_runtime::spawn(async move {
+                    // host 重开 LAN 后端口会变化：每个新游戏连接重新协商一次，失败时退回初始端口。
+                    let game_port = query_game_port(&session, center_addr)
+                        .await
+                        .unwrap_or(initial_game_port);
+                    let dst = SocketAddr::from((center_ip, game_port));
                     let Ok(remote) = session
                         .data_plane_tcp_connect(dst, Duration::from_secs(10))
                         .await

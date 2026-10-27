@@ -24,8 +24,8 @@ pub fn safe_relative_path(rel: &str) -> Result<PathBuf, String> {
     }
     // Windows 盘符（`C:\evil` / `C:/evil` / `C:evil`）带前缀：`PathBuf::join` 遇带前缀路径会清空已有根，
     // 外部输入（zip 成员 / 整合包清单 / JDK 包条目）可借此越过目标目录。
-    if rel.as_bytes().get(1) == Some(&b':') {
-        bail_key!("errors.path.absolute", "文件路径含盘符\n{rel:?}");
+    if rel.contains(':') {
+        bail_key!("errors.path.absolute", "文件路径含盘符或数据流\n{rel:?}");
     }
     if rel
         .split(['/', '\\'])
@@ -44,7 +44,7 @@ pub fn java_bin_path(home: &Path) -> PathBuf {
 
 /// 简单文件名/目录名判定（防路径穿越）：仅接受无路径分隔符、无 `..` 段的非空名。
 pub fn is_simple_name(name: &str) -> bool {
-    !name.is_empty() && !name.contains(['/', '\\']) && !name.contains("..")
+    !name.is_empty() && !name.contains(['/', '\\', ':']) && !name.contains("..")
 }
 
 /// 目录条目枚举（want_dir 选文件或子目录）：返回 (名称, 字节大小, 修改时间秒)。
@@ -153,5 +153,14 @@ mod tests {
         assert!(safe_relative_path("c:/Users/Public/x.bat").is_err());
         // 单个字母文件名（无冒号）仍合法，别误伤
         assert!(safe_relative_path("c/evil.txt").is_ok());
+        assert!(safe_relative_path("mods/file:stream").is_err());
+    }
+
+    #[test]
+    fn simple_name_rejects_drive_and_data_stream_prefixes() {
+        assert!(is_simple_name("1.20.1-fabric-0.15.0"));
+        assert!(!is_simple_name("C:"));
+        assert!(!is_simple_name("C:foo"));
+        assert!(!is_simple_name("file:stream"));
     }
 }

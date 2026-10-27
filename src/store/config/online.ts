@@ -165,7 +165,8 @@ export async function stopOnline() {
       allow_relay: onlineAllowRelay.value,
     });
   } catch (e) {
-    // 停止失败对 host 区展示（会话归属不确定时归 host）
+    // 停止失败对 host 区展示（会话归属不确定时归 host）；必须 throw，调用方不能 toast 成功。
     onlineErrorHost.value = errMsg(e);
+    throw e;
   }
 }

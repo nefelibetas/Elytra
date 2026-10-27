@@ -23,6 +23,8 @@ export const isLaunching = computed(() => launchState.phase === "running");
 
 /** 启动代际号：取消启动时自增，作废在飞流程的落点（doLaunch 每个 await 后校验）。 */
 let launchSeq = 0;
+/** 后端启动代际：取消/拉起进程必须携带，避免旧启动误取消/误登记新进程。 */
+let launchGeneration = 0;
 
 /** 已请求取消的启动标签（版本目录名）：被终止进程的 GAME_EXITED（非零退出码）不再按崩溃提示。 */
 const cancelledLabels = new Set<string>();
@@ -44,7 +46,7 @@ export async function cancelLaunch() {
   if (selectedVersion.value) cancelledLabels.add(selectedVersion.value);
   resetLaunch();
   try {
-    await invoke("cancel_launch");
+    await invoke("cancel_launch", { generation: launchGeneration });
   } catch {
     // 取消失败（后端不可达）不阻断 UI：面板已收回，进程状态由后端事件兜底
   }
@@ -126,8 +128,13 @@ export async function doLaunch(navigateToDownload: () => void) {
 
   try {
     cancelledLabels.clear(); // 上次取消的抑制标记只对那一次启动有效
-    await invoke("begin_launch");
-    if (seq !== launchSeq) return;
+    const generation = await invoke<number>("begin_launch");
+    launchGeneration = generation;
+    if (seq !== launchSeq) {
+      // 取消发生在 begin_launch 在飞期间：补发新代际取消，避免后端留下“可启动”代际。
+      await invoke("cancel_launch", { generation }).catch(() => {});
+      return;
+    }
 
     // 启动前确保凭据可用：正版后端按需续签（未过期零网络开销）；第三方每次静默续签（Yggdrasil 无过期时间）；离线跳过
     if (isExternal) {
@@ -171,20 +178,23 @@ export async function doLaunch(navigateToDownload: () => void) {
     // ② 启动游戏进程
     step("launch.steps.start", "running");
     const pid = await invoke("spawn_game", {
-      versionDirName: selectedVersion.value,
-      authMode: isOffline ? "offline" : isExternal ? "external" : "online",
-      username: name,
-      accessToken: isOffline
-        ? ""
-        : isExternal
-          ? (externalAccount.value?.access_token ?? "")
-          : (msAccount.value?.access_token ?? ""),
-      uuid: isOffline
-        ? ""
-        : isExternal
-          ? (externalAccount.value?.uuid ?? "")
-          : (msAccount.value?.uuid ?? ""),
-      xuid: isOffline || isExternal ? "" : (msAccount.value?.xuid ?? ""),
+      request: {
+        versionDirName: selectedVersion.value,
+        authMode: isOffline ? "offline" : isExternal ? "external" : "online",
+        username: name,
+        accessToken: isOffline
+          ? ""
+          : isExternal
+            ? (externalAccount.value?.access_token ?? "")
+            : (msAccount.value?.access_token ?? ""),
+        uuid: isOffline
+          ? ""
+          : isExternal
+            ? (externalAccount.value?.uuid ?? "")
+            : (msAccount.value?.uuid ?? ""),
+        xuid: isOffline || isExternal ? "" : (msAccount.value?.xuid ?? ""),
+        launchGeneration,
+      },
     });
     if (seq !== launchSeq) return; // 已取消：后端已按取消终止该进程
     step("launch.steps.start", "done");

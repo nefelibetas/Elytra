@@ -1,5 +1,6 @@
 use tauri_plugin_opener::OpenerExt;
 
+use crate::commands::version::VersionServer;
 use crate::config::game_dirs::{self, GameDir};
 use crate::game::version::{dir, watch};
 
@@ -98,7 +99,19 @@ pub fn rename_version_dir(version_name: String, new_name: String) -> Result<(), 
             "新名称与当前名称相同"
         ));
     }
-    dir::rename_version_dir(&version_name, &new_name)
+    dir::rename_version_dir(&version_name, &new_name)?;
+    // 版本改名后迁移快速进服配置；失败不反转已完成的目录改名，但保留旧 section 便于排查。
+    if let (Ok(old_section), Ok(new_section)) = (
+        dir::version_server_section(&version_name),
+        dir::version_server_section(&new_name),
+    ) {
+        if let Ok(cfg) = crate::persist::read::<VersionServer>(&old_section) {
+            if crate::persist::save(&new_section, &cfg).is_ok() {
+                let _ = crate::persist::remove(&old_section);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// 用系统文件管理器打开指定目录（不受 JS scope 限制）；打开前校验存在，避免 explorer 回退打开"文档"。

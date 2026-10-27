@@ -139,7 +139,7 @@ fn current_network_mode() -> NetworkMode {
 /// 按网络模式给 ClientBuilder 应用代理：Direct 强制直连（TUN 由网络层接管）；Auto/System 检测并应用系统代理（无代理时直连）。
 pub(crate) fn apply_system_proxy(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
     match current_network_mode() {
-        NetworkMode::Direct => builder,
+        NetworkMode::Direct => builder.no_proxy(),
         NetworkMode::Auto | NetworkMode::System => {
             let (http_proxy, https_proxy) = system_proxy_urls();
             let mut b = builder;

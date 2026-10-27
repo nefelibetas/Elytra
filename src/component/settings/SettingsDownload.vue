@@ -43,6 +43,14 @@ onMounted(loadDownloadConfig);
 /** 主开关 custom 态文案（custom 值不在选项中，经 placeholder 呈现）。 */
 const masterPlaceholder = computed(() => t("settings.download.masterCustom"));
 
+// 界面单位 KB/s，配置存储 bytes/s；上限 10 MB/s。
+const maxSpeedKb = computed({
+  get: () => Math.round(dlMaxSpeed.value / 1024),
+  set: (value: number) => {
+    dlMaxSpeed.value = Math.max(0, value) * 1024;
+  },
+});
+
 const curseforgeKeyPlaceholder = computed(() => {
   switch (dlCurseforgeKeySource.value) {
     case "user":
@@ -244,8 +252,8 @@ function openCurseforgeConsole() {
         min="0"
         max="10240"
         step="256"
-        v-model.number="dlMaxSpeed"
-        :style="{ '--range-pct': (dlMaxSpeed / 10240 * 100) + '%' }"
+        v-model.number="maxSpeedKb"
+        :style="{ '--range-pct': (maxSpeedKb / 10240 * 100) + '%' }"
         @input="saveDownloadConfig"
         autocomplete="off"
       />

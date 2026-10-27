@@ -18,6 +18,8 @@ export default {
     worlds: "地图存档",
   },
   search: {
+    partialSource: "部分搜索源不可用，结果可能不完整",
+    allSourcesFailed: "搜索源暂不可用，请检查网络或稍后重试",
     title: "搜索{category}",
     name: "名称",
     source: "来源",

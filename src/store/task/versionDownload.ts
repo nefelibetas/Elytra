@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { dlState, registerVersionTarget } from "../task/download";
 import { CATEGORIES, LOADER_MIN_VERSION } from "../../utils/versionMeta";
 import { errMsg } from "../../utils/error";
+import { showToast } from "../../utils/toast";
 import { createBoundedCache } from "../../utils/boundedCache";
 
 export interface VersionMeta {
@@ -51,6 +52,8 @@ const loaderInflight = new Set<string>();
 
 // Fabric API 版本缓存（key mcVersion）：换版本且选了 Fabric 时整体清空，上限 8 仅为兜底。
 const fabricApiDataCache = createBoundedCache<FabricApiVer[]>(8);
+// Fabric API 拉取错误（key mcVersion）：失败不清空按钮，允许无 Fabric API 安装并重试。
+const fabricApiErrors = reactive<Record<string, string>>({});
 
 // Fabric API 在途键集合（按 MC 版本去重）：布尔去重会吞切换后的请求，A 迟到响应会回填 B 的选择。
 const fabricApiInflight = new Set<string>();
@@ -104,6 +107,7 @@ export const vdState = reactive({
 
   fabricApiLoading: false,
   fabricApiExpanded: false,
+  fabricApiErrors,
 
   dlSubmitting: false,
 
@@ -245,6 +249,7 @@ export const vdState = reactive({
     try {
       const versions = await invoke<FabricApiVer[]>("get_fabric_api_versions", { mcVersion: mcVer });
       fabricApiDataCache.put(mcVer, versions);
+      delete fabricApiErrors[mcVer];
       // 回填前校验当前选中版本仍为请求的 MC 版本：迟到响应不得把 A 的 api 写进 B 的选择。
       if (
         versions.length > 0 &&
@@ -253,8 +258,10 @@ export const vdState = reactive({
       ) {
         this.selectedLoaderVersions["fabric-api"] = versions[0].version;
       }
-    } catch {
-      fabricApiDataCache.put(mcVer, []);
+    } catch (e) {
+      fabricApiDataCache.drop(mcVer);
+      fabricApiErrors[mcVer] = errMsg(e);
+      showToast(errMsg(e));
     } finally {
       fabricApiInflight.delete(mcVer);
       this.fabricApiLoading = false;
@@ -291,6 +298,7 @@ export const vdState = reactive({
     if (!sv) return false;
     if (this.selectedLoaderVersions["fabric-api"]) return false;
     const data = fabricApiDataCache.record[sv.id];
+    if (fabricApiErrors[sv.id]) return false;
     return this.fabricApiLoading || !data || data.length === 0;
   },
 
@@ -331,19 +339,24 @@ export const vdState = reactive({
     }
 
     this.dlSubmitting = true;
-    // 提交前重新解析目标目录：watcher 异步更新有竞态，重名场景须拿到最新 _n，否则覆盖旧目录。
-    await this.updateResolvedDirName();
-    const taskId = await dlState.startTask(
-      sv.id, sv.url, sv.id,
-      mainLd ?? undefined, mainVer, ofVer, this.resolvedDirName || undefined,
-      faUrl || undefined, faVerStr || undefined,
-    );
-    // 注册安装目录名：下载完成后 App.vue 自动选中该版本（Mod 下载目标）
-    if (taskId) {
-      registerVersionTarget(taskId, this.resolvedDirName || sv.id);
+    try {
+      // 提交前重新解析目标目录：watcher 异步更新有竞态，重名场景须拿到最新 _n，否则覆盖旧目录。
+      await this.updateResolvedDirName();
+      const taskId = await dlState.startTask(
+        sv.id, sv.url, sv.id,
+        mainLd ?? undefined, mainVer, ofVer, this.resolvedDirName || undefined,
+        faUrl || undefined, faVerStr || undefined,
+      );
+      // 注册安装目录名：下载完成后 App.vue 自动选中该版本（Mod 下载目标）
+      if (taskId) {
+        registerVersionTarget(taskId, this.resolvedDirName || sv.id);
+      }
+      this.selectedVersion = null;
+    } catch (e) {
+      showToast(errMsg(e));
+    } finally {
+      this.dlSubmitting = false;
     }
-    this.dlSubmitting = false;
-    this.selectedVersion = null;
   },
 });
 
@@ -418,6 +431,7 @@ watch(() => vdState.selectedVersion?.id, (mc) => {
   if (vdState.selectedMainLoader === "fabric" && mc) {
     delete vdState.selectedLoaderVersions["fabric-api"];
     fabricApiDataCache.clear();
+    for (const key of Object.keys(fabricApiErrors)) delete fabricApiErrors[key];
     vdState.fetchFabricApi(mc);
   }
 });

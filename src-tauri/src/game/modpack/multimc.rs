@@ -70,6 +70,16 @@ pub fn parse_mmc_pack(detected: &Detected, zip_path: &str) -> Result<MmcParsed, 
         )
     })?;
 
+    if let Some(loader) = loader.as_mut() {
+        if loader.kind == LoaderKind::Forge
+            && matches!(mc_version.as_str(), "1.7.10" | "1.8.8" | "1.8.9")
+            && !loader.version.ends_with(&format!("-{mc_version}"))
+        {
+            // Prism 的 mmc-pack 存裸 Forge 版本；老版本 maven 构件名需要 `-{mc}` 后缀。
+            loader.version.push_str(&format!("-{mc_version}"));
+        }
+    }
+
     let content_dir = detected.content_dir.as_deref().ok_or_else(|| {
         keyed_msg!(
             "errors.modpack.mmcMissingContent",

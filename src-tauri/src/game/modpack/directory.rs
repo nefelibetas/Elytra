@@ -68,14 +68,34 @@ pub fn parse_directory_pack(
     .map(str::to_string)
     .collect();
 
+    let mut overrides = vec![OverridesRef {
+        zip_path: zip_path.to_string(),
+        prefix,
+        skip,
+    }];
+    // 完整游戏目录包也可能把 mods/config 放在 .minecraft 根层；版本目录前缀之外再覆盖根层。
+    if !detected.base.is_empty() {
+        overrides.push(OverridesRef {
+            zip_path: zip_path.to_string(),
+            prefix: detected.base.clone(),
+            skip: [
+                "libraries/",
+                "assets/",
+                "logs/",
+                "crash-reports/",
+                "backups/",
+                "versions/",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+        });
+    }
+
     Ok(DirectoryParsed {
         mc_version,
         loader,
-        overrides: vec![OverridesRef {
-            zip_path: zip_path.to_string(),
-            prefix,
-            skip,
-        }],
+        overrides,
         meta: PackMetaInfo {
             name: id,
             version: String::new(),

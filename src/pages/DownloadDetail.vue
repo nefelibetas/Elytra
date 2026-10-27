@@ -2,7 +2,7 @@
 import { ref } from "vue"
 import { useI18n } from "vue-i18n"
 import { X, Check, LoaderCircle, RotateCcw, HardDriveDownload, Pause } from "@lucide/vue"
-import { dlState, TaskItem, interruptedJobs, resumeAllInterrupted, dismissAllInterrupted, taskLabel, stepLabel } from "../store/task/download"
+import { dlState, TaskItem, interruptedJobs, resumingAll, resumeAllInterrupted, dismissAllInterrupted, taskLabel, stepLabel } from "../store/task/download"
 import { errMsg } from "../utils/error"
 import { fmtSpeed, fmtEta } from "../utils/format"
 import { showToast } from "../utils/toast"
@@ -101,7 +101,7 @@ async function handleDismissPaused(task: TaskItem) {
           {{ t("task.interrupted", { count: interruptedJobs.length }, interruptedJobs.length) }}
           <span class="rb-sub">{{ interruptedJobs.map(j => j.name).join(t("task.listSeparator")) }}</span>
         </span>
-        <button class="rb-btn rb-primary" @click="resumeAllInterrupted">
+        <button class="rb-btn rb-primary" :disabled="resumingAll" @click="resumeAllInterrupted">
           <RotateCcw :size="12" />
           {{ t("task.resume") }}
         </button>

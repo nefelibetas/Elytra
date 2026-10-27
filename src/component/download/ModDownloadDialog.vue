@@ -16,6 +16,7 @@ const props = defineProps<{
   modelValue: boolean;
   loading: boolean;
   updating: boolean;
+  submitting: boolean;
   error: string;
   modName: string;
   modVersion: string;
@@ -53,7 +54,13 @@ const hasRequiredError = computed(
   () => planErrors.value.length > 0 || requiredRows.value.some(item => !!item.error),
 );
 const canDownload = computed(
-  () => !props.loading && !props.updating && !hasRequiredError.value,
+  () =>
+    !!props.plan
+    && !props.loading
+    && !props.updating
+    && !props.submitting
+    && !props.error
+    && !hasRequiredError.value,
 );
 const requiredShown = computed(() => requiredRows.value.slice(0, RENDER_CAP));
 const optionalShown = computed(() => optionalRows.value.slice(0, RENDER_CAP));
@@ -132,10 +139,12 @@ function changeVersion(item: ModDependencyItem, versionId: string) {
 }
 
 function close() {
+  if (props.submitting) return;
   emit("update:modelValue", false);
 }
 
 function confirm() {
+  if (!canDownload.value) return;
   emit("confirm", Array.from(selected.value));
 }
 
@@ -405,8 +414,12 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
         </div>
 
         <div class="dialog-footer">
-          <button class="dialog-btn" @click="close">{{ t("download.detail.modDepsCancel") }}</button>
-          <button class="dialog-btn" :disabled="updating" @click="emit('mainOnly')">{{ t("download.detail.modDepsMainOnly") }}</button>
+          <button class="dialog-btn" :disabled="submitting" @click="close">{{ t("download.detail.modDepsCancel") }}</button>
+          <button
+            class="dialog-btn"
+            :disabled="updating || loading || !plan || submitting"
+            @click="emit('mainOnly')"
+          >{{ t("download.detail.modDepsMainOnly") }}</button>
           <button class="dialog-btn primary" :disabled="!canDownload" @click="confirm">
             {{ t("download.detail.modDepsDownload") }}
           </button>

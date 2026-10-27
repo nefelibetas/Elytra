@@ -638,9 +638,13 @@ fn biome_id_at(raw: &[u8], x: usize, z: usize, y: isize) -> Option<String> {
         };
         let data = la.clone().into_inner();
         let bits = (names.len() as f64).log2().ceil().max(1.0) as usize;
-        let pos = idx * bits;
-        let word = pos / 64;
-        let shift = pos % 64;
+        if bits == 0 || bits > 64 {
+            return None;
+        }
+        // 调色板按 64 位字打包，值不跨字：word = idx / (64/bits), shift = (idx % per) * bits。
+        let per = 64 / bits;
+        let word = idx / per;
+        let shift = (idx % per) * bits;
         if word >= data.len() {
             return None;
         }

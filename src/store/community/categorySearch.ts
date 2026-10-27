@@ -3,6 +3,7 @@ import { reactive, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { searchAllSources, toDisplayItem, needsTranslation, type CommunityDisplayItem } from "../community/communitySearch";
 import { errMsg } from "../../utils/error";
+import { t } from "../../i18n";
 
 const PAGE_SIZE = 30;
 /** 聚合模式每源条数（页大小一半）：两源合并去重后展示 ≤15 条，每页图片请求量减半 */
@@ -21,6 +22,7 @@ export function createCategorySearch(
     gameVersion: "",
     searching: false,
     error: "",
+    partialError: "",
     searched: false,
     results: [] as CommunityDisplayItem[],
     /** 结果总数：单源为平台精确命中数；聚合（source="all"）为两源较大值＝已知总量下限（非精确），UI 文案须标「至少」。 */
@@ -41,6 +43,7 @@ export function createCategorySearch(
           if (seq !== this.searchSeq) return;
           this.results = res.items;
           this.total = res.maxKnownTotal;
+          this.partialError = res.partial ? t("download.search.partialSource") : "";
         } else {
           const res = await invoke<{ items: CommunityDisplayItem[]; total: number }>("search_community", {
             source: this.source,
@@ -57,6 +60,7 @@ export function createCategorySearch(
           if (seq !== this.searchSeq) return;
           this.results = res.items.map(h => toDisplayItem(h, this.source as "modrinth" | "curseforge"));
           this.total = res.total;
+          this.partialError = "";
         }
         this.page = page;
         this.searched = true;

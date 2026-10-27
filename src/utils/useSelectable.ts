@@ -1,5 +1,5 @@
 // 列表多选共享 composable：全选仅作用于当前可见列表；切 tab/搜索后仅保留仍可见的选中。
-import { ref, computed } from "vue";
+import { ref, computed, watch } from "vue";
 import type { Ref } from "vue";
 
 /** visibleKeys 为当前可见 item 的 key 列表。 */
@@ -7,6 +7,12 @@ export function useSelectable(visibleKeys: Ref<string[]>) {
   /** 选中 key 集合（需整体替换才能触发响应）。 */
   const selected = ref<string[]>([]);
   const selectedSet = computed(() => new Set(selected.value));
+
+  // 只保留当前可见项：切 tab/搜索后批量删除不得命中屏幕外文件。
+  watch(visibleKeys, keys => {
+    const visible = new Set(keys);
+    selected.value = selected.value.filter(key => visible.has(key));
+  });
 
   const selecting = computed(() => selected.value.length > 0);
 

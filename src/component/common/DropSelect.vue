@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 通用自定义下拉（原生 <select> 替代品）：自定义面板统一风格（对齐 jdk-dropdown 视觉）。
 // 纯展示控件：v-model 双向绑定 + 点击外部关闭。
-import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from "vue";
+import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, useAttrs } from "vue";
 import { useI18n } from "vue-i18n";
 import { Check, ChevronDown } from "@lucide/vue";
 
@@ -10,6 +10,8 @@ export interface SelOption {
   label: string;
   desc?: string;
 }
+
+defineOptions({ inheritAttrs: false });
 
 const props = withDefaults(
   defineProps<{
@@ -30,6 +32,11 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{ (e: "update:modelValue", v: string): void }>();
+const attrs = useAttrs();
+const rootClass = computed(() => attrs.class);
+const buttonAttrs = computed(() => Object.fromEntries(
+  Object.entries(attrs).filter(([key]) => key !== "class" && key !== "style"),
+));
 const { t } = useI18n();
 const placeholderText = computed(() => props.placeholder || t("common.action.select"));
 
@@ -75,14 +82,25 @@ function onDocClick(e: MouseEvent) {
     open.value = false;
   }
 }
+
+/** 捕获阶段先于全局 Esc 导航处理：下拉打开时只关闭下拉。 */
+function onKeydown(e: KeyboardEvent) {
+  if (!open.value || e.key !== "Escape") return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  open.value = false;
+  rootEl.value?.querySelector<HTMLButtonElement>(".ds-btn")?.focus();
+}
 onMounted(() => {
   window.addEventListener("click", onDocClick);
+  window.addEventListener("keydown", onKeydown, true);
   // capture：内部滚动容器的 scroll 也会触发（scroll 不冒泡）
   window.addEventListener("scroll", positionPanel, true);
   window.addEventListener("resize", positionPanel);
 });
 onUnmounted(() => {
   window.removeEventListener("click", onDocClick);
+  window.removeEventListener("keydown", onKeydown, true);
   window.removeEventListener("scroll", positionPanel, true);
   window.removeEventListener("resize", positionPanel);
 });
@@ -94,12 +112,15 @@ function select(o: SelOption) {
 </script>
 
 <template>
-  <div ref="rootEl" class="ds" :style="{ width }">
+  <div ref="rootEl" class="ds" :class="rootClass" :style="{ width }">
     <button
+      v-bind="buttonAttrs"
       class="ds-btn"
       :class="{ open }"
       :disabled="disabled"
       type="button"
+      aria-haspopup="listbox"
+      :aria-expanded="open"
       @click="open = !open"
     >
       <span class="ds-label">{{ current?.label ?? placeholderText }}</span>

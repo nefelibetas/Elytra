@@ -88,15 +88,31 @@ pub(crate) async fn resolve_hosted_mods(
     (hosted, names)
 }
 
+/// 读取整合包安装标记里的真实 MC；旧标记无该字段时回查计划缓存。
+fn pack_mc_version(vdir: &Path) -> Option<String> {
+    let marker: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(vdir.join("elytra-pack.json")).ok()?).ok()?;
+    if let Some(mc) = marker["mc_version"].as_str() {
+        return Some(mc.to_string());
+    }
+    let key = marker["cache_key"].as_str()?;
+    let plan: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(super::cache_dir().join(format!("{key}.plan.json"))).ok()?,
+    )
+    .ok()?;
+    plan["mc_version"].as_str().map(str::to_string)
+}
+
 /// 权威版本元数据：真实 MC / loader kind / loader 版本号（None = 无 loader 或未知）。
-/// version json 优先、目录名兜底：MC = json `inheritsFrom` → `id`（剥 loader 标记）→ 目录名；
-/// loader kind = json 推断 `infer_loader_from_json` → 目录名标记；版本号仅在两者同 kind 时取（防伪标记注入错误版本号）。
+/// 整合包标记优先（loader 合并后 json id 会变成目录名），其次 json `inheritsFrom`/`id`，最后目录名。
+/// loader kind = json 推断 `infer_loader_from_json` → 目录名标记；版本号仅在两者同 kind 时取。
 pub(crate) fn resolve_version_meta(
     vdir: &Path,
     version_name: &str,
 ) -> (String, String, Option<String>) {
     let dir_mc = mc_version_from_dir(version_name);
     let dir_loader = loader_from_dir(version_name);
+    let pack_mc = pack_mc_version(vdir);
     let Some(text) =
         find_version_json(vdir, version_name).and_then(|p| std::fs::read_to_string(p).ok())
     else {
@@ -105,13 +121,16 @@ pub(crate) fn resolve_version_meta(
             Some((k, v)) => (k.to_string(), Some(v.to_string())),
             None => ("vanilla".to_string(), None),
         };
-        return (dir_mc.to_string(), kind, ver);
+        return (pack_mc.unwrap_or_else(|| dir_mc.to_string()), kind, ver);
     };
     let value: Option<serde_json::Value> = serde_json::from_str(&text).ok();
-    let mc = value
-        .as_ref()
-        .and_then(|v| v["inheritsFrom"].as_str())
-        .map(str::to_string)
+    let mc = pack_mc
+        .or_else(|| {
+            value
+                .as_ref()
+                .and_then(|v| v["inheritsFrom"].as_str())
+                .map(str::to_string)
+        })
         .or_else(|| {
             value
                 .as_ref()
@@ -260,7 +279,7 @@ pub(super) fn add_dir_to_zip(
 
 #[cfg(test)]
 mod tests {
-    use super::HostedPackFile;
+    use super::{resolve_version_meta, HostedPackFile};
 
     #[test]
     fn hosted_pack_file_serializes_spec_file_size() {
@@ -273,5 +292,24 @@ mod tests {
         let v = serde_json::to_value(&f).unwrap();
         assert_eq!(v["fileSize"], 123);
         assert!(v.get("file_size").is_none(), "MRPACK 字段必须是 fileSize");
+    }
+
+    #[test]
+    fn pack_marker_mc_wins_over_loader_merged_id() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("elytra-pack.json"),
+            r#"{"cache_key":"k","mc_version":"1.20.1"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("Pack-1.21.1.json"),
+            r#"{"id":"Pack-1.21.1","mainClass":"net.fabricmc.loader.impl.launch.knot.KnotClient"}"#,
+        )
+        .unwrap();
+
+        let (mc, loader, _) = resolve_version_meta(dir.path(), "Pack-1.21.1");
+        assert_eq!(mc, "1.20.1");
+        assert_eq!(loader, "fabric");
     }
 }

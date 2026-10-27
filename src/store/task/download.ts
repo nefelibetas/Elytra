@@ -259,8 +259,14 @@ export function ensureListen() {
   if (listening) return
   listening = true
   listen<WaitingUserPayload>(TASK_WAITING_USER, (ev) => {
-    // 批量下载失败挂起：弹窗询问 跳过/重试/取消
-    waitingUser.value = ev.payload
+    // 批量下载失败挂起：多个任务可能同时等待，队列逐个展示，不能互相覆盖。
+    const id = ev.payload.task_id;
+    if (waitingUser.value?.task_id === id || waitingQueue.value.some(item => item.task_id === id)) return;
+    if (!waitingUser.value) {
+      waitingUser.value = ev.payload;
+    } else {
+      waitingQueue.value.push(ev.payload);
+    }
   })
   listen<ProgressPayload>(TASK_PROGRESS, (ev) => {
     const p = ev.payload
@@ -361,14 +367,17 @@ export interface InterruptedJob {
 }
 
 export const waitingUser = ref<WaitingUserPayload | null>(null);
+const waitingQueue = ref<WaitingUserPayload[]>([]);
 
 export async function decideWaitingTask(action: "skip" | "retry" | "cancel") {
   const w = waitingUser.value;
   if (!w) return;
-  waitingUser.value = null; // 先关弹窗（决策后任务侧继续/结束）
+  waitingUser.value = waitingQueue.value.shift() ?? null; // 先展示下一项，失败再恢复
   try {
     await invoke("decide_waiting_task", { taskId: w.task_id, action });
   } catch (e) {
+    waitingQueue.value.unshift(w);
+    if (!waitingUser.value) waitingUser.value = waitingQueue.value.shift() ?? null;
     showToast(errMsg(e));
   }
 }
@@ -383,22 +392,34 @@ export async function checkInterrupted() {
   }
 }
 
+let resumeAllBusy = false;
+export const resumingAll = ref(false);
+
 /** 恢复全部中断任务：逐个 resume_task（后端读快照重跑，已完成文件 sha1 命中跳过）。 */
 export async function resumeAllInterrupted() {
+  if (resumeAllBusy) return;
+  resumeAllBusy = true;
+  resumingAll.value = true;
   const jobs = [...interruptedJobs.value];
-  let failed = 0;
-  for (const j of jobs) {
-    try {
-      await invoke("resume_task", { taskId: j.id });
-    } catch {
-      failed++;
+  const failedJobs: InterruptedJob[] = [];
+  try {
+    for (const j of jobs) {
+      try {
+        await invoke("resume_task", { taskId: j.id });
+      } catch {
+        failedJobs.push(j);
+      }
     }
-  }
-  interruptedJobs.value = [];
-  if (failed === 0) {
-    showToast(t("task.restored", { count: jobs.length }, jobs.length));
-  } else if (jobs.length > 0) {
-    showToast(t("task.restorePartial", { failed }));
+    // 失败项保留在横幅里，给用户再次重试的机会。
+    interruptedJobs.value = failedJobs;
+    if (failedJobs.length === 0) {
+      showToast(t("task.restored", { count: jobs.length }, jobs.length));
+    } else {
+      showToast(t("task.restorePartial", { failed: failedJobs.length }));
+    }
+  } finally {
+    resumeAllBusy = false;
+    resumingAll.value = false;
   }
 }
 

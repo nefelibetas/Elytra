@@ -16,9 +16,10 @@ const CALLBACK_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// 统一 HTTP 客户端（Elytra UA + 可配超时；visage 等外部服务要求自定义 UA）。
 fn http_client(timeout_secs: u64) -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .user_agent(constants::UA_MOJANG_API)
-        .timeout(Duration::from_secs(timeout_secs))
+        .timeout(Duration::from_secs(timeout_secs));
+    crate::downloader::proxy::apply_system_proxy(builder)
         .build()
         .map_err(common_err_ctx_key!(
             "errors.login.failed",

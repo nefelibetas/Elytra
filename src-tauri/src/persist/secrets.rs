@@ -75,12 +75,8 @@ where
     F: FnOnce(&mut Vec<T>) -> Result<R, String>,
 {
     let _guard = SECRETS_LOCK.lock();
-    let mut list: Vec<T> = load_map()
-        .get(key)
-        .and_then(|b64| engine::general_purpose::STANDARD.decode(b64).ok())
-        .and_then(|enc| decrypt_bytes(&enc).ok())
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .unwrap_or_default();
+    let map = load_map();
+    let mut list: Vec<T> = decode_json_list_locked(&map, key)?.unwrap_or_default();
     let out = f(&mut list)?;
     if list.is_empty() {
         remove_secret_locked(key)?;
@@ -92,6 +88,24 @@ where
         save_secret_locked(key, &bytes)?;
     }
     Ok(out)
+}
+
+/// 已存在但无法解密的列表必须报错；否则下一次读改写会用空列表覆盖旧凭据。
+fn decode_json_list_locked<T: serde::de::DeserializeOwned>(
+    map: &std::collections::HashMap<String, String>,
+    key: &str,
+) -> Result<Option<Vec<T>>, String> {
+    let Some(b64) = map.get(key) else {
+        return Ok(None);
+    };
+    let encrypted = engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|_| keyed_msg!("errors.secrets.cipherFormat", "密文格式异常"))?;
+    let bytes = decrypt_bytes(&encrypted)
+        .map_err(|_| keyed_msg!("errors.secrets.decryptFailed", "解密失败"))?;
+    let list = serde_json::from_slice(&bytes)
+        .map_err(|_| keyed_msg!("errors.secrets.decryptFailed", "解密失败"))?;
+    Ok(Some(list))
 }
 
 fn load_map() -> std::collections::HashMap<String, String> {
@@ -592,6 +606,28 @@ mod tests {
         }
         clear_secret(&key).expect("清除应成功");
         assert!(read_secret(&key).is_none(), "清除后不应命中");
+    }
+
+    #[test]
+    fn corrupt_encrypted_list_is_not_overwritten() {
+        let key = format!("test_corrupt_list_{}", std::process::id());
+        {
+            let _guard = SECRETS_LOCK.lock();
+            let mut map = load_map();
+            map.insert(key.clone(), "not-valid-ciphertext".into());
+            write_map(&map).expect("写入损坏样本");
+        }
+        let result = update_json_list::<String, _, ()>(&key, |list| {
+            list.push("new-token".into());
+            Ok(())
+        });
+        assert!(result.is_err(), "解密失败时读改写必须失败");
+        assert_eq!(
+            load_map().get(&key).map(String::as_str),
+            Some("not-valid-ciphertext"),
+            "失败时不得覆盖原密文"
+        );
+        clear_secret(&key).expect("清理");
     }
 
     #[test]

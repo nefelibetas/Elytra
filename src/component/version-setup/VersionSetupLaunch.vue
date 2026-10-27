@@ -24,7 +24,8 @@ import type { ProcessPriority } from "../../types/launcher/ProcessPriority";
 
 const route = useRoute();
 const { t } = useI18n();
-const versionName = computed(() => String(route.query.name ?? ""));
+// 组件卸载时 route.query 可能先清空；固定本次编辑的实例 id，避免延迟保存写到空目录。
+const versionId = String(route.query.name ?? "");
 
 const AUTO_VALUE = "__auto__";
 
@@ -58,10 +59,14 @@ function setDraft(instance: InstanceLaunchOptions | null) {
 }
 
 async function load() {
+  if (!versionId) {
+    loading.value = false;
+    return;
+  }
   loading.value = true;
   error.value = "";
   try {
-    state.value = await getInstanceLaunchOptions(versionName.value);
+    state.value = await getInstanceLaunchOptions(versionId);
     setDraft(state.value.instance);
     await loadConfig();
   } catch (e) {
@@ -80,8 +85,9 @@ onBeforeUnmount(() => {
 
 /** 所有写入串行排队，避免快速切换字段时旧值后落盘。 */
 function enqueueSave(options: InstanceLaunchOptions | null): Promise<void> {
+  if (!versionId) return saveQueue;
   const next = saveQueue.catch(() => undefined).then(() =>
-    saveInstanceLaunchOptions(versionName.value, options),
+    saveInstanceLaunchOptions(versionId, options),
   );
   saveQueue = next;
   return next;

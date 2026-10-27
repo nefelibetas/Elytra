@@ -56,7 +56,7 @@ export const loGc = ref("TunedG1Gc");
 export const loDisableWrapper = ref(false);
 export const loDisableAgent = ref(false);
 export const loHighGpu = ref(false);
-export const loVerifySsl = ref(false);
+export const loVerifySsl = ref(true);
 
 export const gcOptions: { value: string; labelKey: string }[] = [
   { value: "PreferZgc", labelKey: "settings.jdk.gc.preferZgc" },

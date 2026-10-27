@@ -528,7 +528,11 @@ fn prepare_version_dir(
     std::fs::create_dir_all(&vdir).ok();
     if let Err(e) = std::fs::write(
         vdir.join("elytra-pack.json"),
-        serde_json::json!({ "cache_key": cache_key(request) }).to_string(),
+        serde_json::json!({
+            "cache_key": cache_key(request),
+            "mc_version": plan.mc_version,
+        })
+        .to_string(),
     ) {
         // 标记写失败 → 复用检测（find_reusable_pack_dir）对该目录失效，需可诊断
         eprintln!("[modpack] 包身份标记写入失败（复用检测将失效）: {e}");

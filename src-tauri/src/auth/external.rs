@@ -610,15 +610,15 @@ pub struct ExternalConfig {
 }
 
 impl ExternalConfig {
-    /// 读取第三方登录配置；无配置或预设列表为空时注入内置默认预设。
+    /// 读取第三方登录配置；仅 section 缺失时注入内置默认预设，用户删空的列表必须保持为空。
     pub fn load() -> Self {
-        let cfg: Self = persist::read(constants::SECT_EXTERNAL).unwrap_or_default();
-        if cfg.servers.is_empty() {
-            return Self {
+        match persist::read::<Self>(constants::SECT_EXTERNAL) {
+            Ok(cfg) => cfg,
+            Err(persist::PersistError::NotFound) => Self {
                 servers: default_external_servers(),
-            };
+            },
+            Err(_) => Self::default(),
         }
-        cfg
     }
 }
 
@@ -678,6 +678,19 @@ mod tests {
         assert_eq!(all.last().unwrap().name, "Alice2");
         assert_eq!(all.last().unwrap().api_url, "https://a.example/api");
         cleanup();
+    }
+
+    #[test]
+    fn empty_external_config_is_not_reseeded() {
+        persist::save(
+            constants::SECT_EXTERNAL,
+            &ExternalConfig {
+                servers: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert!(ExternalConfig::load().servers.is_empty());
+        persist::remove(constants::SECT_EXTERNAL).unwrap();
     }
 
     #[test]

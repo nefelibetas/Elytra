@@ -129,7 +129,7 @@ export async function searchAllSources(
   category: string | null,
   offset: number,
   pageSize: number,
-): Promise<{ items: CommunityDisplayItem[]; maxKnownTotal: number }> {
+): Promise<{ items: CommunityDisplayItem[]; maxKnownTotal: number; partial: boolean }> {
   const queryParams = {
     query,
     gameVersion: gameVersion || null,
@@ -142,6 +142,9 @@ export async function searchAllSources(
     invoke<CommunitySearchPage>("search_community", { source: "modrinth", query: queryParams, translate: needsTranslation() }).catch(() => null),
     invoke<CommunitySearchPage>("search_community", { source: "curseforge", query: queryParams, translate: needsTranslation() }).catch(() => null),
   ]);
+  if (mr === null && cf === null) {
+    throw new Error(t("download.search.allSourcesFailed"));
+  }
   const merged = new Map<string, CommunityDisplayItem>();
   const all: Array<[CommunitySearchResult, "modrinth" | "curseforge"]> = [
     ...(cf?.items ?? []).map<[CommunitySearchResult, "curseforge"]>(h => [h, "curseforge"]),
@@ -157,6 +160,7 @@ export async function searchAllSources(
   return {
     items: Array.from(merged.values()).sort((a, b) => b.downloads - a.downloads),
     maxKnownTotal: Math.max(mr?.total ?? 0, cf?.total ?? 0),
+    partial: mr === null || cf === null,
   };
 }
 
@@ -167,6 +171,7 @@ export const communitySearch = reactive({
   loader: "",
   searching: false,
   error: "",
+  partialError: "",
   searched: false,
   results: [] as CommunityDisplayItem[],
   /** 结果总数：单源为平台精确命中数；聚合（source="all"）为两源较大值＝已知总量下限（非精确），UI 文案须标「至少」。 */
@@ -187,6 +192,7 @@ export const communitySearch = reactive({
         if (seq !== this.searchSeq) return;
         this.results = res.items;
         this.total = res.maxKnownTotal;
+        this.partialError = res.partial ? t("download.search.partialSource") : "";
       } else {
         const res = await invoke<CommunitySearchPage>("search_community", {
           source: this.source,
@@ -202,6 +208,7 @@ export const communitySearch = reactive({
         if (seq !== this.searchSeq) return;
         this.results = res.items.map(h => toDisplayItem(h, this.source as "modrinth" | "curseforge"));
         this.total = res.total;
+        this.partialError = "";
       }
       this.page = page;
       this.searched = true;
@@ -211,6 +218,7 @@ export const communitySearch = reactive({
       this.searched = true;
       this.results = [];
       this.total = 0;
+      this.partialError = "";
     } finally {
       if (seq === this.searchSeq) this.searching = false;
     }

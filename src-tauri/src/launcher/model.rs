@@ -111,8 +111,8 @@ pub struct LaunchOptions {
     #[serde(default)]
     pub port: Option<u16>,
 
-    /// 正版登录时验证 SSL 证书（默认关闭，规避国内网络证书链不完整问题）。
-    #[serde(default)]
+    /// 正版登录时验证 SSL 证书（默认开启；关闭会暴露 token 到中间人风险）。
+    #[serde(default = "default_true")]
     pub verify_ssl: bool,
 
     pub jvm_args: Vec<String>,
@@ -149,7 +149,7 @@ impl Default for LaunchOptions {
             game_language: "auto_zh_CN".into(),
             server: None,
             port: None,
-            verify_ssl: false,
+            verify_ssl: true,
             jvm_args: vec![
                 "-XX:-OmitStackTraceInFastThrow".into(),
                 "-Djdk.lang.Process.allowAmbiguousCommands=True".into(),
@@ -190,7 +190,7 @@ pub struct InstanceLaunchOptions {
     pub use_high_performance_gpu: bool,
     #[serde(default = "default_zh")]
     pub game_language: String,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub verify_ssl: bool,
     #[serde(default)]
     pub jvm_args: Vec<String>,

@@ -38,6 +38,7 @@ async function handleStartHost() {
 }
 
 async function handleJoin() {
+  if (busy.value) return;
   busy.value = true;
   try {
     await joinRoom(roomCodeInput.value.trim());
@@ -50,11 +51,15 @@ async function handleJoin() {
 }
 
 async function handleStop() {
+  if (busy.value) return;
+  busy.value = true;
   try {
     await stopOnline();
     showToast(t("tools.online.stopped"));
   } catch (e) {
     showToast(errMsg(e));
+  } finally {
+    busy.value = false;
   }
 }
 
@@ -145,7 +150,7 @@ async function copyRoomCode() {
           v-model="roomCodeInput"
           class="online-input"
           placeholder="U/XXXX-XXXX-XXXX-XXXX"
-          :disabled="onlineStatus !== 'idle'"
+          :disabled="onlineStatus !== 'idle' || busy"
           @keyup.enter="handleJoin"
           autocomplete="off"
         />

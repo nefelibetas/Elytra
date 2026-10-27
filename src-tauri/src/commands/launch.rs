@@ -49,29 +49,43 @@ pub async fn check_launch_env(version_dir_name: String) -> Result<String, String
 
 /// 开始一次启动：清空上一次的取消标志与进程登记（前端在启动流程最前调用，此后到达的取消才作用于本次启动）。
 #[tauri::command]
-pub fn begin_launch() {
-    process::begin_launch();
+pub fn begin_launch() -> u64 {
+    process::begin_launch()
 }
 
-/// 取消本次启动：尚未拉起进程则阻止启动，已拉起则终止游戏进程。
+/// 取消指定代际的启动：尚未拉起进程则阻止启动，已拉起则终止游戏进程。
 #[tauri::command]
-pub fn cancel_launch() {
-    process::request_cancel();
+pub fn cancel_launch(generation: u64) {
+    process::request_cancel(generation);
+}
+
+/// 启动游戏命令入参（字段名按前端 camelCase 约定）。
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpawnGameRequest {
+    pub version_dir_name: String,
+    pub auth_mode: String,
+    pub username: String,
+    pub access_token: String,
+    pub uuid: String,
+    pub xuid: String,
+    pub launch_generation: u64,
 }
 
 /// 启动 Minecraft 游戏进程。返回子进程 PID。
 #[tauri::command]
-pub async fn spawn_game(
-    app: AppHandle,
-    version_dir_name: String,
-    auth_mode: String,
-    username: String,
-    access_token: String,
-    uuid: String,
-    xuid: String,
-) -> Result<u32, String> {
+pub async fn spawn_game(app: AppHandle, request: SpawnGameRequest) -> Result<u32, String> {
+    let SpawnGameRequest {
+        version_dir_name,
+        auth_mode,
+        username,
+        access_token,
+        uuid,
+        xuid,
+        launch_generation,
+    } = request;
     // 启动流程开始即已收到取消请求（如重启前一次启动）：不再拉起进程
-    if process::cancel_requested() {
+    if process::cancel_requested(launch_generation) {
         bail_key!("errors.task.cancelled", "启动已取消");
     }
     // online 模式改用后端有效 token（临近过期自动刷新；前端缓存 token 约 24h 失效）；离线/第三方沿用传入值。
@@ -150,7 +164,7 @@ pub async fn spawn_game(
     platform::apply_gpu_preference(launcher_config.use_high_performance_gpu);
 
     // 取消请求可能在安装 JDK / 检查文件 / 启动前自动任务期间到达：此时不再拉起游戏进程
-    if process::cancel_requested() {
+    if process::cancel_requested(launch_generation) {
         bail_key!("errors.task.cancelled", "启动已取消");
     }
 
@@ -164,6 +178,7 @@ pub async fn spawn_game(
     let mc_dir_exit = mc_dir.clone();
     let game_dir_exit = game_dir.clone();
     let version_exit = version_dir_name.clone();
+    let clear_generation = launch_generation;
     let pid = process::spawn_and_watch(
         process::SpawnRequest {
             args: &cmd.args,
@@ -180,7 +195,7 @@ pub async fn spawn_game(
         },
         move |pid, exit_code, crash_report, diagnosis| {
             // 注销启动 pid：退出后到达的取消不得按此 pid 误杀其他进程
-            process::clear_launched(pid);
+            process::clear_launched(clear_generation, pid);
             // 退出码随事件送出：前端据非 0 判崩溃；diagnosis 为推断出的失败结论（可空）
             task::emit_event(
                 &app_exit,
@@ -217,7 +232,7 @@ pub async fn spawn_game(
     )?;
 
     // 登记 pid 供取消终止；若取消在 spawn 与登记之间到达，登记时即终止并如实报错
-    if process::note_launched(pid) {
+    if process::note_launched(launch_generation, pid) {
         bail_key!("errors.task.cancelled", "启动已取消");
     }
 
@@ -257,6 +272,22 @@ pub async fn get_launcher_log() -> String {
 mod tests {
     use super::*;
     use crate::game::version::model::VersionJson;
+
+    #[test]
+    fn spawn_game_request_deserializes_camel_case() {
+        let req: SpawnGameRequest = serde_json::from_value(serde_json::json!({
+            "versionDirName": "26.3-fabric-0.20.0",
+            "authMode": "offline",
+            "username": "Player",
+            "accessToken": "",
+            "uuid": "",
+            "xuid": "",
+            "launchGeneration": 7
+        }))
+        .unwrap();
+        assert_eq!(req.version_dir_name, "26.3-fabric-0.20.0");
+        assert_eq!(req.launch_generation, 7);
+    }
     use crate::launcher::model::{AuthMode, LaunchOptions, MemoryMode, WindowSize};
 
     /// 构造一个最小可用的版本 JSON（旧格式 minecraftArguments，保底参数路径）。

@@ -1028,6 +1028,15 @@ fn build_game_args(
         }
     };
 
+    if has_custom_resolution && !game_args.iter().any(|arg| arg == ARG_WIDTH) {
+        game_args.extend([
+            ARG_WIDTH.into(),
+            game_ctx.resolution_width.to_string(),
+            ARG_HEIGHT.into(),
+            game_ctx.resolution_height.to_string(),
+        ]);
+    }
+
     if !user_properties.is_empty()
         && !game_args
             .iter()
