@@ -11,8 +11,8 @@ name: Release
 #             Windows  便携 zip + NSIS + MSI
 #             macOS    universal dmg（ad-hoc 签名：Apple Silicon 上未签名二进制无法启动）
 #             Linux    AppImage + deb + rpm + 便携 tar.gz（固定 ubuntu-22.04，取该发行版的 glibc 下限）
-#   publish needs [prepare, build]：三平台产物齐了且验证门通过，才把草稿 Release 转正
-#             —— 门禁失败或任一平台构建失败时 Release 停在草稿，不会对外可见
+#   publish needs [prepare, build]：三平台产物齐了且验证门通过，生成 release.json
+#             （静态更新清单）后把草稿 Release 转正；任一环节失败 Release 停在草稿
 #
 # 想重跑同版本：`git tag -f v1.0.0 <新提交> && git push -f origin v1.0.0`
 # （版本校验要求 tag 与 tauri.conf.json 的版本一致，故不能随便换个新 tag 号重跑）
@@ -220,6 +220,32 @@ jobs:
           else
             echo "未找到 $NOTES，保留 --generate-notes 自动正文"
           fi
+      - name: 生成并上传 release.json（静态更新清单）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          VERSION="${TAG#v}"
+          PAGE="https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"
+          PUBLISHED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          BODY="$(mktemp)"
+          gh release view "$TAG" --json body -q .body -R "$GITHUB_REPOSITORY" > "$BODY"
+          python3 - "$BODY" "$VERSION" "$PUBLISHED" "$PAGE" <<'PY'
+          import json, sys
+          body_path, version, published, page = sys.argv[1:5]
+          with open(body_path, encoding="utf-8") as f:
+              notes = f.read().strip()
+          with open("release.json", "w", encoding="utf-8") as f:
+              json.dump({
+                  "version": version,
+                  "notes": notes,
+                  "published_at": published,
+                  "url": page,
+              }, f, ensure_ascii=False, indent=2)
+          PY
+          gh release upload "$TAG" release.json --clobber -R "$GITHUB_REPOSITORY"
+
       - name: 取消草稿（验证门与三平台产物都通过才对外可见）
         env:
           GH_TOKEN: ${{ github.token }}

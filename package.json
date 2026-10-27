@@ -1,7 +1,7 @@
 {
   "name": "elytra",
   "private": true,
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "A modern, lightweight Minecraft launcher built with Tauri and Rust.",
   "author": "BridgeFishDev",
   "license": "GPL-3.0-only",

@@ -3,6 +3,8 @@
 use crate::constants::APP_VERSION;
 
 const REPO: &str = "nefelibetas/ElytraLauncher";
+const RELEASE_MANIFEST_URL: &str =
+    "https://github.com/nefelibetas/ElytraLauncher/releases/latest/download/release.json";
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct UpdateInfo {
@@ -14,8 +16,67 @@ pub struct UpdateInfo {
     pub published_at: Option<String>,
 }
 
-/// 查询最新正式 Release。无已发布版本时返回 `None`；限流/网络/解析错误返回可本地化错误。
+#[derive(serde::Deserialize)]
+struct ReleaseManifest {
+    version: String,
+    #[serde(default)]
+    notes: String,
+    #[serde(default)]
+    published_at: Option<String>,
+    #[serde(default)]
+    url: String,
+}
+
+/// 查询最新正式 Release：优先取发布产物中的静态 release.json；缺失/损坏时回退 GitHub API。
 pub async fn check() -> Result<Option<UpdateInfo>, String> {
+    if let Ok(Some(info)) = check_static_manifest().await {
+        return Ok(Some(info));
+    }
+    check_github_api().await
+}
+
+async fn check_static_manifest() -> Result<Option<UpdateInfo>, String> {
+    let response = crate::downloader::fetcher::http()
+        .get(RELEASE_MANIFEST_URL)
+        .send()
+        .await
+        .map_err(common_err_ctx_key!("errors.update.failed", "检查更新失败"))?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    let manifest: ReleaseManifest = response
+        .error_for_status()
+        .map_err(common_err_ctx_key!("errors.update.failed", "检查更新失败"))?
+        .json()
+        .await
+        .map_err(common_err_ctx_key!("errors.update.failed", "检查更新失败"))?;
+    Ok(Some(manifest_to_info(manifest)?))
+}
+
+fn manifest_to_info(manifest: ReleaseManifest) -> Result<UpdateInfo, String> {
+    let latest_version = normalize_version(&manifest.version);
+    if latest_version.is_empty() {
+        return Err(keyed_msg!(
+            "errors.update.failed",
+            "检查更新失败\n发布信息缺少版本号"
+        ));
+    }
+    let url = if manifest.url.is_empty() {
+        format!("https://github.com/{REPO}/releases/tag/v{latest_version}")
+    } else {
+        manifest.url
+    };
+    Ok(UpdateInfo {
+        current_version: APP_VERSION,
+        update_available: is_newer(&latest_version, APP_VERSION),
+        latest_version,
+        url,
+        notes: manifest.notes,
+        published_at: manifest.published_at,
+    })
+}
+
+async fn check_github_api() -> Result<Option<UpdateInfo>, String> {
     let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
     let response = crate::downloader::fetcher::http()
         .get(url)
@@ -107,6 +168,21 @@ fn parse_version(raw: &str) -> Option<(u64, u64, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manifest_maps_static_release_json() {
+        let info = manifest_to_info(ReleaseManifest {
+            version: "v1.0.4".into(),
+            notes: "changes".into(),
+            published_at: Some("2026-10-28T00:00:00Z".into()),
+            url: String::new(),
+        })
+        .unwrap();
+        assert_eq!(info.latest_version, "1.0.4");
+        assert_eq!(info.notes, "changes");
+        assert_eq!(info.published_at.as_deref(), Some("2026-10-28T00:00:00Z"));
+        assert!(info.url.ends_with("/releases/tag/v1.0.4"));
+    }
 
     #[test]
     fn version_order_is_numeric() {
