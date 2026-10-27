@@ -55,6 +55,8 @@ export default {
       bmclapi: "China mirror for Mojang game files and ModLoader artifacts.",
       modrinth: "Community resources and dependency data.",
       curseforge: "Community resources and dependency data; requires a valid API key.",
+      terracottaName: "Terracotta",
+      terracotta: "Reference for the multiplayer protocol; the two built-in community coordination nodes come from Terracotta: etnode.zkitefly.eu.org/node1 and node2.",
       easytier: "Virtual network layer for LAN play; embeds the no_tun + smoltcp + KCP data plane.",
       fabric: "Source of ModLoader metadata and installers.",
       quilt: "Source of ModLoader metadata and installers.",

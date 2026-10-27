@@ -53,6 +53,8 @@ export default {
       bmclapi: "Mojang 游戏文件与 ModLoader 的国内下载镜像。",
       modrinth: "社区资源与依赖数据。",
       curseforge: "社区资源与依赖数据；需要有效的 API Key。",
+      terracottaName: "陶瓦联机",
+      terracotta: "联机协议参考；内置两个社区协调节点来自陶瓦联机：etnode.zkitefly.eu.org/node1、node2。",
       easytier: "局域网联机的虚拟网络层；内嵌 no_tun + smoltcp + KCP 数据面。",
       fabric: "ModLoader 元数据与安装器来源。",
       quilt: "ModLoader 元数据与安装器来源。",

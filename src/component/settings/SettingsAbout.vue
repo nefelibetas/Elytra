@@ -4,7 +4,7 @@ import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Copy, ExternalLink, RefreshCw } from "@lucide/vue";
+import { Copy, ExternalLink, RefreshCw, Waypoints } from "@lucide/vue";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 import { checkLauncherUpdate, updateState, updateInfo } from "../../store/app/update";
@@ -54,7 +54,7 @@ interface FeatureCredit {
 interface Credit {
   name: string;
   nameKey?: string;
-  icon: string;
+  icon?: string;
   descKey: string;
   url: string;
 }
@@ -94,6 +94,12 @@ const dataCredits: Credit[] = [
 
 const networkingCredits: Credit[] = [
   { name: "EasyTier", icon: easytierIcon, descKey: "settings.about.credits.easytier", url: "https://github.com/EasyTier/EasyTier" },
+  {
+    name: "Terracotta",
+    nameKey: "settings.about.credits.terracottaName",
+    descKey: "settings.about.credits.terracotta",
+    url: "https://github.com/burningtnt/Terracotta",
+  },
 ];
 
 const loaderCredits: Credit[] = [
@@ -250,7 +256,10 @@ async function copyVersionInfo() {
       <h3>{{ t("settings.about.dataMirrors") }}</h3>
       <div class="ab-grid">
         <button v-for="c in dataCredits" :key="c.name" type="button" class="ab-credit" @click="open(c.url)">
-          <span class="ab-credit-icon"><img :src="c.icon" alt="" /></span>
+          <span class="ab-credit-icon">
+            <img v-if="c.icon" :src="c.icon" alt="" />
+            <Waypoints v-else :size="20" />
+          </span>
           <span class="ab-credit-body">
             <b>{{ c.nameKey ? t(c.nameKey) : c.name }}</b>
             <small>{{ t(c.descKey) }}</small>
@@ -263,7 +272,10 @@ async function copyVersionInfo() {
       <h3>{{ t("settings.about.networking") }}</h3>
       <div class="ab-grid">
         <button v-for="c in networkingCredits" :key="c.name" type="button" class="ab-credit" @click="open(c.url)">
-          <span class="ab-credit-icon"><img :src="c.icon" alt="" /></span>
+          <span class="ab-credit-icon">
+            <img v-if="c.icon" :src="c.icon" alt="" />
+            <Waypoints v-else :size="20" />
+          </span>
           <span class="ab-credit-body">
             <b>{{ c.nameKey ? t(c.nameKey) : c.name }}</b>
             <small>{{ t(c.descKey) }}</small>
@@ -276,7 +288,10 @@ async function copyVersionInfo() {
       <h3>{{ t("settings.about.loaders") }}</h3>
       <div class="ab-grid">
         <button v-for="c in loaderCredits" :key="c.name" type="button" class="ab-credit" @click="open(c.url)">
-          <span class="ab-credit-icon"><img :src="c.icon" alt="" /></span>
+          <span class="ab-credit-icon">
+            <img v-if="c.icon" :src="c.icon" alt="" />
+            <Waypoints v-else :size="20" />
+          </span>
           <span class="ab-credit-body">
             <b>{{ c.nameKey ? t(c.nameKey) : c.name }}</b>
             <small>{{ t(c.descKey) }}</small>
@@ -289,7 +304,10 @@ async function copyVersionInfo() {
       <h3>{{ t("settings.about.runtime") }}</h3>
       <div class="ab-grid">
         <button v-for="c in runtimeCredits" :key="c.name" type="button" class="ab-credit" @click="open(c.url)">
-          <span class="ab-credit-icon"><img :src="c.icon" alt="" /></span>
+          <span class="ab-credit-icon">
+            <img v-if="c.icon" :src="c.icon" alt="" />
+            <Waypoints v-else :size="20" />
+          </span>
           <span class="ab-credit-body">
             <b>{{ c.nameKey ? t(c.nameKey) : c.name }}</b>
             <small>{{ t(c.descKey) }}</small>
