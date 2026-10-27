@@ -15,7 +15,8 @@ export default {
     copy: "复制文件失败",
     create: "创建文件失败",
     createDir: "创建目录失败",
-    extract: "解压文件失败"
+    extract: "解压文件失败",
+    replaceFailed: "替换旧文件失败"
   },
   download: {
     failed: "下载失败",

@@ -2,17 +2,24 @@
 // 下载确认弹窗：主 Mod + 必装/可选前置；分类折叠、整体滚动、单分类渲染上限 200。
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { ChevronDown } from "@lucide/vue";
+import { ChevronDown, CircleCheck, Info, LoaderCircle } from "@lucide/vue";
 import { focusDialog, restoreFocus } from "../../utils/focusNav";
 import { formatError } from "../../utils/error";
-import type { ModDependencyItem, ModDependencyPlan } from "../../store/community/modDependencies";
+import DropSelect, { type SelOption } from "../common/DropSelect.vue";
+import type {
+  ModDependencyItem,
+  ModDependencyPlan,
+  ModDependencyVersion,
+} from "../../store/community/modDependencies";
 
 const props = defineProps<{
   modelValue: boolean;
   loading: boolean;
+  updating: boolean;
   error: string;
   modName: string;
   modVersion: string;
+  modFilename: string;
   modLoaders: string[];
   plan: ModDependencyPlan | null;
 }>();
@@ -21,6 +28,7 @@ const emit = defineEmits<{
   "update:modelValue": [value: boolean];
   confirm: [selectedOptional: string[]];
   mainOnly: [];
+  versionChange: [projectId: string, versionId: string];
 }>();
 
 const { t } = useI18n();
@@ -31,6 +39,7 @@ let restoreTo: HTMLElement | null = null;
 const requiredOpen = ref(true);
 const optionalOpen = ref(true);
 const selected = ref<Set<string>>(new Set());
+let planSeen = false;
 
 const items = computed<ModDependencyItem[]>(() => props.plan?.items ?? []);
 // 必装树 = 不属于任何可选根；可选树 = 属某个可选根（含其 required 子依赖）
@@ -43,7 +52,9 @@ const planErrors = computed(() => props.plan?.errors ?? []);
 const hasRequiredError = computed(
   () => planErrors.value.length > 0 || requiredRows.value.some(item => !!item.error),
 );
-const canDownload = computed(() => !props.loading && !hasRequiredError.value);
+const canDownload = computed(
+  () => !props.loading && !props.updating && !hasRequiredError.value,
+);
 const requiredShown = computed(() => requiredRows.value.slice(0, RENDER_CAP));
 const optionalShown = computed(() => optionalRows.value.slice(0, RENDER_CAP));
 
@@ -84,6 +95,42 @@ function clearAll() {
   selected.value = new Set();
 }
 
+function versionLabel(version: ModDependencyVersion): string {
+  return version.version_type === "beta" || version.version_type === "alpha"
+    ? `${version.version_label} · ${version.version_type}`
+    : version.version_label;
+}
+
+function versionOptions(item: ModDependencyItem): SelOption[] {
+  return item.candidates.map(version => ({
+    value: version.version_id,
+    label: versionLabel(version),
+  }));
+}
+
+function versionHint(item: ModDependencyItem): string {
+  if (item.candidate_total > item.candidates.length) {
+    return t("download.detail.modDepsVersionTruncated", {
+      shown: item.candidates.length,
+      total: item.candidate_total,
+    });
+  }
+  return "";
+}
+
+function versionTitle(item: ModDependencyItem): string {
+  const chosen = item.candidates.find(version => version.version_id === item.version_id);
+  const label = chosen?.version_label ?? item.version_label;
+  const hint = versionHint(item);
+  return hint ? `${label}\n${hint}` : label;
+}
+
+function changeVersion(item: ModDependencyItem, versionId: string) {
+  if (versionId && versionId !== item.version_id) {
+    emit("versionChange", item.project_id, versionId);
+  }
+}
+
 function close() {
   emit("update:modelValue", false);
 }
@@ -105,6 +152,7 @@ watch(
       return;
     }
     selected.value = new Set();
+    planSeen = false;
     requiredOpen.value = true;
     optionalOpen.value = true;
     await nextTick();
@@ -115,8 +163,8 @@ watch(
 watch(
   () => props.plan,
   plan => {
-    if (!plan) return;
-    selected.value = new Set();
+    if (!plan || planSeen) return;
+    planSeen = true;
     const roots = plan.items.filter(
       item => item.relation === "optional" && item.root_optional === item.project_id,
     );
@@ -141,6 +189,15 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
       >
         <div class="dialog-header">
           <span class="dialog-title">{{ t("download.detail.modDepsTitle", { name: modName }) }}</span>
+          <span
+            v-if="updating"
+            class="dep-updating-indicator"
+            role="status"
+            :aria-label="t('download.detail.modDepsUpdating')"
+            :title="t('download.detail.modDepsUpdating')"
+          >
+            <LoaderCircle :size="14" class="dep-spin" aria-hidden="true" />
+          </span>
         </div>
 
         <div class="dialog-body">
@@ -167,12 +224,20 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
                 <span class="dep-meta-label">{{ t("download.detail.modDepsVersionLabel") }}：</span>
                 <span class="dep-meta-value">{{ modVersion || "—" }}</span>
               </div>
+              <div class="dep-meta-row">
+                <span class="dep-meta-label">{{ t("download.detail.modDepsFilenameLabel") }}：</span>
+                <span class="dep-meta-value" :title="modFilename">{{ modFilename || "—" }}</span>
+              </div>
             </div>
           </div>
 
           <div v-if="loading" class="dep-state">{{ t("download.detail.modDepsLoading") }}</div>
           <div v-else-if="error" class="dep-state dep-error-text">{{ error }}</div>
           <template v-else-if="plan">
+            <div
+              v-if="requiredRows.length || optionalRows.length"
+              class="dep-version-hint"
+            >{{ t("download.detail.modDepsVersionHint") }}</div>
             <div v-if="planErrors.length" class="dep-errors">
               <div v-for="message in planErrors" :key="message" class="dep-error-text">{{ errorText(message) }}</div>
             </div>
@@ -202,11 +267,40 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
                         class="dep-tag"
                         :class="`dep-tag--${row.loader}`"
                       >{{ row.loader }}</span>
+                      <span
+                        v-if="row.installed"
+                        class="dep-status dep-status--installed"
+                        role="img"
+                        :title="t('download.detail.modDepsInstalled')"
+                        :aria-label="t('download.detail.modDepsInstalled')"
+                      >
+                        <CircleCheck :size="14" aria-hidden="true" />
+                      </span>
+                      <span
+                        v-else-if="row.installed_version_label"
+                        class="dep-status dep-status--other"
+                        role="img"
+                        :title="t('download.detail.modDepsInstalledOther', { version: row.installed_version_label })"
+                        :aria-label="t('download.detail.modDepsInstalledOther', { version: row.installed_version_label })"
+                      >
+                        <Info :size="14" aria-hidden="true" />
+                      </span>
+                      <span v-if="row.error" class="dep-row-error">{{ errorText(row.error) }}</span>
                     </div>
                     <span class="dep-row-side">
-                      <span v-if="row.installed" class="dep-note">{{ t("download.detail.modDepsInstalled") }}</span>
-                      <span v-else-if="row.error" class="dep-error-text">{{ errorText(row.error) }}</span>
-                      <span v-else class="dep-version">{{ row.version_label }}</span>
+                      <DropSelect
+                        v-if="row.candidates.length"
+                        class="dep-version-select"
+                        :model-value="row.version_id"
+                        :options="versionOptions(row)"
+                        :disabled="updating"
+                        width="100%"
+                        max-height="220px"
+                        :title="row.error ? errorText(row.error) : versionTitle(row)"
+                        @update:model-value="changeVersion(row, $event)"
+                      />
+                      <span v-else class="dep-version">{{ row.version_label || "—" }}</span>
+
                     </span>
                   </div>
                   <div v-if="requiredRows.length > RENDER_CAP" class="dep-more">
@@ -234,7 +328,7 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
               </div>
               <Transition name="expand">
                 <div v-if="optionalOpen" class="dep-list">
-                  <label
+                  <div
                     v-for="row in optionalShown"
                     :key="row.project_id"
                     class="dep-row"
@@ -249,7 +343,8 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
                       type="checkbox"
                       class="dep-check"
                       :checked="selectedRoot(row)"
-                      :disabled="!available(row)"
+                      :disabled="updating || !available(row)"
+                      :aria-label="row.name"
                       @change="toggleRoot(row)"
                     />
                     <span v-else class="dep-indent">↳</span>
@@ -260,13 +355,42 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
                         class="dep-tag"
                         :class="`dep-tag--${row.loader}`"
                       >{{ row.loader }}</span>
+                      <span
+                        v-if="row.installed"
+                        class="dep-status dep-status--installed"
+                        role="img"
+                        :title="t('download.detail.modDepsInstalled')"
+                        :aria-label="t('download.detail.modDepsInstalled')"
+                      >
+                        <CircleCheck :size="14" aria-hidden="true" />
+                      </span>
+                      <span
+                        v-else-if="row.installed_version_label"
+                        class="dep-status dep-status--other"
+                        role="img"
+                        :title="t('download.detail.modDepsInstalledOther', { version: row.installed_version_label })"
+                        :aria-label="t('download.detail.modDepsInstalledOther', { version: row.installed_version_label })"
+                      >
+                        <Info :size="14" aria-hidden="true" />
+                      </span>
+                      <span v-if="row.error" class="dep-row-error">{{ errorText(row.error) }}</span>
                     </div>
                     <span class="dep-row-side">
-                      <span v-if="row.installed" class="dep-note">{{ t("download.detail.modDepsInstalled") }}</span>
-                      <span v-else-if="row.error" class="dep-error-text">{{ errorText(row.error) }}</span>
-                      <span v-else class="dep-version">{{ row.version_label }}</span>
+                      <DropSelect
+                        v-if="row.candidates.length"
+                        class="dep-version-select"
+                        :model-value="row.version_id"
+                        :options="versionOptions(row)"
+                        :disabled="updating"
+                        width="100%"
+                        max-height="220px"
+                        :title="row.error ? errorText(row.error) : versionTitle(row)"
+                        @update:model-value="changeVersion(row, $event)"
+                      />
+                      <span v-else class="dep-version">{{ row.version_label || "—" }}</span>
+
                     </span>
-                  </label>
+                  </div>
                   <div v-if="optionalRows.length > RENDER_CAP" class="dep-more">
                     {{ t("download.detail.modDepsHidden", { shown: RENDER_CAP, total: optionalRows.length }) }}
                   </div>
@@ -282,7 +406,7 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
 
         <div class="dialog-footer">
           <button class="dialog-btn" @click="close">{{ t("download.detail.modDepsCancel") }}</button>
-          <button class="dialog-btn" @click="emit('mainOnly')">{{ t("download.detail.modDepsMainOnly") }}</button>
+          <button class="dialog-btn" :disabled="updating" @click="emit('mainOnly')">{{ t("download.detail.modDepsMainOnly") }}</button>
           <button class="dialog-btn primary" :disabled="!canDownload" @click="confirm">
             {{ t("download.detail.modDepsDownload") }}
           </button>
@@ -304,12 +428,22 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
   display: flex;
   align-items: center;
   justify-content: center;
+  background: transparent;
+}
+
+/* 遮罩模糊放在伪元素：backdrop-filter 会为 fixed 子元素创建包含块，导致版本下拉定位偏移。 */
+.dialog-overlay::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
   background: var(--overlay, rgba(15, 23, 42, 0.5));
   backdrop-filter: blur(2px);
+  pointer-events: none;
 }
 
 @supports not (backdrop-filter: blur(1px)) {
-  .dialog-overlay {
+  .dialog-overlay::before {
     background: rgba(15, 23, 42, 0.68);
   }
 }
@@ -450,6 +584,30 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
   color: var(--text-secondary);
 }
 
+.dep-updating-indicator {
+  position: absolute;
+  top: 50%;
+  right: 20px;
+  display: inline-flex;
+  color: var(--text-tertiary);
+  transform: translateY(-50%);
+}
+
+.dep-spin {
+  animation: dep-spin 0.8s linear infinite;
+}
+
+@keyframes dep-spin {
+  to { transform: rotate(360deg); }
+}
+
+.dep-version-hint {
+  margin-bottom: 10px;
+  color: var(--text-tertiary);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
 .dep-errors {
   margin-bottom: 10px;
   padding: 8px 10px;
@@ -566,7 +724,7 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
 }
 
 .dep-row--muted {
-  opacity: 0.62;
+  background: var(--surface-hover);
 }
 
 .dep-row--error .dep-name {
@@ -589,8 +747,18 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
   flex: 1;
   min-width: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+}
+
+.dep-row-error {
+  flex-basis: 100%;
+  min-width: 0;
+  color: var(--color-danger);
+  font-size: 11.5px;
+  line-height: 1.5;
+  word-break: break-word;
 }
 
 .dep-name {
@@ -628,22 +796,52 @@ onUnmounted(() => document.removeEventListener("keydown", onKeydown));
 }
 
 .dep-row-side {
+  flex: 0 0 230px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  max-width: 58%;
+  min-width: 0;
+}
+
+.dep-version-select {
+  width: 100%;
+  min-width: 0;
+  max-width: 230px;
+}
+
+.dep-version-select :deep(.ds-btn) {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.dep-version {
   flex: none;
-  max-width: 46%;
-  text-align: right;
+  min-width: 0;
   overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.dep-version {
-  color: var(--text-secondary);
-  font-size: 12px;
+.dep-status {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  cursor: help;
 }
 
-.dep-note {
+.dep-status--installed {
+  color: var(--color-success);
+}
+
+.dep-status--other {
   color: var(--text-tertiary);
-  font-size: 11.5px;
 }
 
 .dep-more {

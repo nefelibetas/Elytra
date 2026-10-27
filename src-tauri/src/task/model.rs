@@ -341,6 +341,9 @@ pub struct DownloadFileItem {
     pub kind: DownloadFileKind,
     pub url: String,
     pub filename: String,
+    /// 下载成功后要替换掉的旧版本文件名（仅 mods；简单文件名）。
+    #[serde(default)]
+    pub replace: Vec<String>,
 }
 
 /// 批量下载任务；步骤 = 每文件一步，create 时按文件数动态生成。
@@ -364,6 +367,13 @@ impl DownloadFilesTask {
         }
         for f in &self.files {
             validate_file_item(&f.url, &f.filename)?;
+            for name in &f.replace {
+                if !crate::util::is_simple_name(name)
+                    || self.files.iter().any(|other| other.filename == *name)
+                {
+                    return Err(keyed_msg!("errors.task.fileNameInvalid", "文件名不合法"));
+                }
+            }
         }
         Ok(())
     }
@@ -565,6 +575,7 @@ mod tests {
             kind: DownloadFileKind::Mod,
             url: "https://example.com/a.jar".into(),
             filename: filename.into(),
+            replace: Vec::new(),
         };
         let t = |files: Vec<DownloadFileItem>| DownloadFilesTask {
             version_dir_name: "26.2-fabric-0.19.3".into(),
@@ -575,6 +586,20 @@ mod tests {
         assert!(
             t(vec![item("../evil.jar")]).validate().is_err(),
             "穿越文件名应拒绝"
+        );
+        let mut bad_replace = item("a.jar");
+        bad_replace.replace.push("../old.jar".into());
+        assert!(
+            t(vec![bad_replace]).validate().is_err(),
+            "穿越替换文件名应拒绝"
+        );
+        let mut conflicting_replace = item("a.jar");
+        conflicting_replace.replace.push("b.jar".into());
+        assert!(
+            t(vec![conflicting_replace, item("b.jar")])
+                .validate()
+                .is_err(),
+            "替换目标不能同时是本批新文件"
         );
         let mut empty_dir = t(vec![item("a.jar")]);
         empty_dir.version_dir_name = "".into();

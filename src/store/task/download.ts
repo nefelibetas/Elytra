@@ -74,6 +74,8 @@ export interface DownloadFileInput {
   kind: DownloadFileKind;
   url: string;
   filename: string;
+  /** 下载成功后替换的旧版本文件名（仅 mods）。 */
+  replace?: string[];
 }
 
 /** 批量文件下载（同一任务、每文件一步；前置 Mod 与主 Mod 共用）。 */

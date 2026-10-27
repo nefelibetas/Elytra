@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::game::community;
 
 /// 搜索 Mod / 光影包等（按 `source` 分派 modrinth / curseforge；`query.category` 为项目类型过滤，`page_size` 为每源条数；`translate` 默认开启）。
@@ -42,6 +44,7 @@ pub async fn resolve_mod_dependencies(
     project_id: String,
     version_id: String,
     version_dir_name: String,
+    version_overrides: Option<HashMap<String, String>>,
 ) -> Result<community::ModDependencyPlan, String> {
     let vdir = crate::game::version::dir::version_dir_path(&version_dir_name)?;
     let (mc_version, kind, _) =
@@ -58,6 +61,7 @@ pub async fn resolve_mod_dependencies(
         &version_id,
         &mc_version,
         &kind,
+        &version_overrides.unwrap_or_default(),
         &vdir.join("mods"),
     )
     .await

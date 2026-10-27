@@ -357,21 +357,45 @@ function backAfterSubmit() {
 
 const depDialogOpen = ref(false);
 const depDialogLoading = ref(false);
+const depDialogUpdating = ref(false);
 const depDialogError = ref("");
 const depPlan = ref<ModDependencyPlan | null>(null);
 const depModName = ref("");
 const depModVersion = ref("");
+const depModFilename = ref("");
 const depModLoaders = ref<string[]>([]);
+const depVersionOverrides = ref<Record<string, string>>({});
 let depDialogSeq = 0;
 let pendingMain: { version: CommunityVersion; target: string } | null = null;
 
-function mainDownloadFile(version: CommunityVersion): DownloadFileInput {
-  return { kind: "mod", url: version.download_url, filename: version.filename };
+function mainDownloadFile(
+  version: CommunityVersion,
+  replace: string[] = [],
+): DownloadFileInput {
+  return { kind: "mod", url: version.download_url, filename: version.filename, replace };
+}
+
+/** 主 Mod 同项目的旧文件：项目版本列表 ∩ 目标 mods 目录文件名。 */
+function mainReplacements(version: CommunityVersion): string[] {
+  const installed = new Set(depPlan.value?.installed_files ?? []);
+  const known = new Set(versions.value.map(item => item.filename));
+  return Array.from(known).filter(name => name !== version.filename && installed.has(name));
+}
+
+/** 替换列表不能误删本批新文件（例如两个依赖恰好同名）。 */
+function normalizeReplacement(files: DownloadFileInput[]): DownloadFileInput[] {
+  const newNames = new Set(files.map(file => file.filename));
+  return files.map(file => ({
+    ...file,
+    replace: Array.from(new Set(
+      (file.replace ?? []).filter(name => name !== file.filename && !newNames.has(name)),
+    )),
+  }));
 }
 
 function dependencyDownloadFiles(selectedOptional: string[]): DownloadFileInput[] {
   if (!pendingMain) return [];
-  const files = [mainDownloadFile(pendingMain.version)];
+  const files = [mainDownloadFile(pendingMain.version, mainReplacements(pendingMain.version))];
   const seen = new Set(files.map(file => file.filename));
   for (const dep of depPlan.value?.items ?? []) {
     if (!dep.url || !dep.filename || dep.error || dep.installed) continue;
@@ -380,16 +404,21 @@ function dependencyDownloadFiles(selectedOptional: string[]): DownloadFileInput[
       || (dep.root_optional !== null && selectedOptional.includes(dep.root_optional));
     if (!included || seen.has(dep.filename)) continue;
     seen.add(dep.filename);
-    files.push({ kind: "mod", url: dep.url, filename: dep.filename });
+    files.push({
+      kind: "mod",
+      url: dep.url,
+      filename: dep.filename,
+      replace: dep.installed_files.filter(name => name !== dep.filename),
+    });
   }
-  return files;
+  return normalizeReplacement(files);
 }
 
 async function submitModFiles(files: DownloadFileInput[], name: string) {
   const target = pendingMain?.target;
   if (!target || files.length === 0) return;
   try {
-    const taskId = await downloadFiles(target, files);
+    const taskId = await downloadFiles(target, normalizeReplacement(files));
     if (taskId) registerTaskName(taskId, name);
     showToast(t("download.detail.submitted"));
     depDialogOpen.value = false;
@@ -400,44 +429,85 @@ async function submitModFiles(files: DownloadFileInput[], name: string) {
   }
 }
 
-/** 解析前置并打开确认框；无前置则直接提交主 Mod。 */
-async function openModDownload(version: CommunityVersion, target: string) {
-  pendingMain = { version, target };
-  depModName.value = item.value?.title ?? version.filename;
-  depModVersion.value = version.version_number;
-  depModLoaders.value = version.loaders;
-  depPlan.value = null;
-  depDialogError.value = "";
-  depDialogLoading.value = true;
-  depDialogOpen.value = true;
+/** 解析/重解析前置；重解析保留已选可选根，并丢弃已不在计划里的版本覆盖。 */
+async function resolveDependencyPlan(initial: boolean) {
+  const request = pendingMain;
+  if (!request) return;
+  const version = request.version;
   const seq = ++depDialogSeq;
+  if (initial) {
+    depDialogLoading.value = true;
+    depDialogError.value = "";
+  } else {
+    depDialogUpdating.value = true;
+  }
   try {
     const plan = await resolveModDependencies({
       source: item.value?.source ?? "modrinth",
       projectId: item.value?.id ?? "",
       versionId: version.version_id,
-      versionDirName: target,
+      versionDirName: request.target,
+      versionOverrides: depVersionOverrides.value,
     });
     if (seq !== depDialogSeq || !depDialogOpen.value) return;
     depPlan.value = plan;
-    if (plan.items.length === 0 && plan.errors.length === 0) {
-      await submitModFiles([mainDownloadFile(version)], depModName.value);
+    const projectIds = new Set(plan.items.map(dep => dep.project_id));
+    depVersionOverrides.value = Object.fromEntries(
+      Object.entries(depVersionOverrides.value).filter(([projectId]) => projectIds.has(projectId)),
+    );
+    if (initial && plan.items.length === 0 && plan.errors.length === 0) {
+      await submitModFiles(
+        [mainDownloadFile(version, mainReplacements(version))],
+        depModName.value,
+      );
     }
   } catch (e) {
     if (seq !== depDialogSeq || !depDialogOpen.value) return;
-    depDialogError.value = errMsg(e);
+    if (initial) depDialogError.value = errMsg(e);
+    else showToast(errMsg(e));
   } finally {
-    if (seq === depDialogSeq) depDialogLoading.value = false;
+    if (seq === depDialogSeq) {
+      depDialogLoading.value = false;
+      depDialogUpdating.value = false;
+    }
   }
 }
 
+/** 解析前置并打开确认框；无前置则直接提交主 Mod。 */
+async function openModDownload(version: CommunityVersion, target: string) {
+  pendingMain = { version, target };
+  depModName.value = item.value?.title ?? version.filename;
+  depModVersion.value = version.version_number;
+  depModFilename.value = version.filename;
+  depModLoaders.value = version.loaders;
+  depPlan.value = null;
+  depDialogError.value = "";
+  depVersionOverrides.value = {};
+  depDialogUpdating.value = false;
+  depDialogLoading.value = true;
+  depDialogOpen.value = true;
+  await resolveDependencyPlan(true);
+}
+
+function onDependencyVersionChange(projectId: string, versionId: string) {
+  depVersionOverrides.value = {
+    ...depVersionOverrides.value,
+    [projectId]: versionId,
+  };
+  void resolveDependencyPlan(false);
+}
+
 function onDependencyConfirm(selectedOptional: string[]) {
+  if (depDialogUpdating.value) return;
   void submitModFiles(dependencyDownloadFiles(selectedOptional), depModName.value);
 }
 
 function onDependencyMainOnly() {
-  if (!pendingMain) return;
-  void submitModFiles([mainDownloadFile(pendingMain.version)], depModName.value);
+  if (depDialogUpdating.value || !pendingMain) return;
+  void submitModFiles(
+    [mainDownloadFile(pendingMain.version, mainReplacements(pendingMain.version))],
+    depModName.value,
+  );
 }
 
 /** 提交选中版本下载任务（任务中心自动注册）；落盘 versions/{版本目录}/{kind_dir}/{filename}（后端兜底 _{n} 冲突）。 */
@@ -671,13 +741,16 @@ async function copyName() {
     <ModDownloadDialog
       v-model="depDialogOpen"
       :loading="depDialogLoading"
+      :updating="depDialogUpdating"
       :error="depDialogError"
       :mod-name="depModName"
       :mod-version="depModVersion"
+      :mod-filename="depModFilename"
       :mod-loaders="depModLoaders"
       :plan="depPlan"
       @confirm="onDependencyConfirm"
       @main-only="onDependencyMainOnly"
+      @version-change="onDependencyVersionChange"
     />
   </Teleport>
   </div>

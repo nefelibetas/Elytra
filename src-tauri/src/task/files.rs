@@ -1,7 +1,7 @@
 // ── 批量文件下载任务（mod / 资源包 / 数据包 / 光影包垂直切片）──
 
 use parking_lot::Mutex;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -31,6 +31,65 @@ fn file_dest(
         .join(version_dir)
         .join(kind.kind_dir())
         .join(filename)
+}
+
+static UPGRADE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn restore_backups(backups: &[(PathBuf, PathBuf)]) {
+    for (old, backup) in backups.iter().rev() {
+        let _ = std::fs::rename(backup, old);
+    }
+}
+
+/// 安装新文件前把旧版本移到同目录备份，成功后删除；任一步失败回滚，避免旧 Mod 丢失。
+fn replace_file(tmp: &Path, dest: &Path, replace: &[String]) -> Result<(), String> {
+    let Some(dir) = dest.parent() else {
+        return Err(keyed_msg!("errors.file.replaceFailed", "替换旧文件失败"));
+    };
+    let Some(dest_name) = dest.file_name().and_then(|name| name.to_str()) else {
+        return Err(keyed_msg!("errors.file.replaceFailed", "替换旧文件失败"));
+    };
+    let mut names: Vec<&str> = replace.iter().map(String::as_str).collect();
+    if !names.contains(&dest_name) {
+        names.push(dest_name);
+    }
+    let mut backups: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let mut seen: Vec<&str> = Vec::new();
+    for name in names {
+        if seen.contains(&name) {
+            continue;
+        }
+        seen.push(name);
+        let old = dir.join(name);
+        if !old.is_file() {
+            continue;
+        }
+        let seq = UPGRADE_SEQ.fetch_add(1, Ordering::Relaxed);
+        let backup = dir.join(format!(".elytra-upgrade-{}-{seq}.bak", std::process::id()));
+        let _ = std::fs::remove_file(&backup);
+        if let Err(e) = std::fs::rename(&old, &backup) {
+            restore_backups(&backups);
+            return Err(format!(
+                "{}\n{}: {}",
+                keyed_msg!("errors.file.replaceFailed", "替换旧文件失败"),
+                old.display(),
+                e
+            ));
+        }
+        backups.push((old, backup));
+    }
+    if let Err(e) = std::fs::rename(tmp, dest) {
+        restore_backups(&backups);
+        return Err(format!(
+            "{}\n{}",
+            keyed_msg!("errors.file.replaceFailed", "替换旧文件失败"),
+            e
+        ));
+    }
+    for (_, backup) in backups {
+        let _ = std::fs::remove_file(backup);
+    }
+    Ok(())
 }
 
 /// task-waiting-user 事件 payload（前端 mirror）。
@@ -373,7 +432,7 @@ fn prepare_files(
         })
         .collect();
 
-    // 任一目标被占用 → 整任务拒绝（不半途而废）
+    // 任一目标/待替换旧文件被占用 → 整任务拒绝（不半途而废）
     let mut locks = Vec::new();
     for (dest, _) in &items {
         match PathLock::try_acquire(dest) {
@@ -383,6 +442,28 @@ fn prepare_files(
                     app,
                     progress,
                     format!("该文件正在被其他任务下载:\n{}", dest.display()),
+                );
+                return None;
+            }
+        }
+    }
+    let mut old_paths: Vec<PathBuf> = Vec::new();
+    for f in &task.files {
+        for name in &f.replace {
+            let path = file_dest(&mc, &task.version_dir_name, f.kind, name);
+            if !items.iter().any(|(dest, _)| dest == &path) && !old_paths.contains(&path) {
+                old_paths.push(path);
+            }
+        }
+    }
+    for path in old_paths {
+        match PathLock::try_acquire(&path) {
+            Some(l) => locks.push(l),
+            None => {
+                set_error(
+                    app,
+                    progress,
+                    format!("该文件正在被其他任务下载:\n{}", path.display()),
                 );
                 return None;
             }
@@ -501,7 +582,7 @@ async fn run_file_steps(
                 tmp,
                 &cb,
                 emit_handle,
-                |tmp| std::fs::rename(tmp, dest).map_err(|e| e.to_string()),
+                |tmp| replace_file(tmp, dest, &f.replace),
             )
             .await
         };
@@ -623,6 +704,43 @@ mod tests {
         );
         let dest = file_dest(Path::new("mc"), "26.2", DownloadFileKind::World, "map.zip");
         assert_eq!(dest, Path::new("mc/versions/26.2/saves/map.zip"));
+    }
+
+    #[test]
+    fn replace_file_moves_in_new_and_removes_old() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("new.jar");
+        let old = dir.path().join("old.jar");
+        let tmp = dir.path().join("new.jar.elytra-part");
+        std::fs::write(&old, b"old").unwrap();
+        std::fs::write(&tmp, b"new").unwrap();
+
+        replace_file(&tmp, &dest, &["old.jar".to_string()]).unwrap();
+
+        assert_eq!(std::fs::read(&dest).unwrap(), b"new");
+        assert!(!old.exists(), "旧版本应被替换");
+        assert!(!tmp.exists(), "临时文件应改名");
+        assert!(
+            std::fs::read_dir(dir.path())
+                .unwrap()
+                .flatten()
+                .all(|entry| !entry.file_name().to_string_lossy().ends_with(".bak")),
+            "成功替换后不应残留备份"
+        );
+    }
+
+    #[test]
+    fn replace_file_restores_old_when_new_file_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("new.jar");
+        let old = dir.path().join("old.jar");
+        std::fs::write(&old, b"old").unwrap();
+
+        assert!(
+            replace_file(&dir.path().join("missing.part"), &dest, &["old.jar".into()]).is_err()
+        );
+        assert_eq!(std::fs::read(&old).unwrap(), b"old", "失败必须回滚旧文件");
+        assert!(!dest.exists());
     }
 
     #[test]

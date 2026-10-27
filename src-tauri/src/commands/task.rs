@@ -32,6 +32,7 @@ pub async fn download_single_file(
             kind: task.kind,
             url: task.url,
             filename: task.filename,
+            replace: Vec::new(),
         }],
     };
     files::spawn_files_task(app, batch)

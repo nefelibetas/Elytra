@@ -11,6 +11,16 @@ use super::{curseforge, modrinth};
 
 /// 节点上限：正常整合包远低于此；仅拦截异常/恶意元数据。
 const MAX_DEPENDENCY_NODES: usize = 512;
+/// 候选上限：控制宽依赖树的计划体积；当前选中版本始终保留。
+const MAX_DEPENDENCY_CANDIDATES: usize = 40;
+
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[ts(export_to = "community/")]
+pub struct ModDependencyVersion {
+    pub version_id: String,
+    pub version_label: String,
+    pub version_type: String,
+}
 
 #[derive(Debug, Clone, Serialize, ts_rs::TS)]
 #[ts(export_to = "community/")]
@@ -29,6 +39,13 @@ pub struct ModDependencyItem {
     pub root_optional: Option<String>,
     pub installed: bool,
     pub error: Option<String>,
+    /// 已安装的其他兼容版本（当前选中版本未安装时给出）。
+    pub installed_version_label: Option<String>,
+    /// 该项目已落盘的版本文件名；用于安装时替换旧版本。
+    pub installed_files: Vec<String>,
+    /// 仅含与实例 MC/loader 组合兼容的版本；按发布时间倒序。
+    pub candidates: Vec<ModDependencyVersion>,
+    pub candidate_total: usize,
 }
 
 #[derive(Debug, Clone, Serialize, ts_rs::TS)]
@@ -38,6 +55,8 @@ pub struct ModDependencyPlan {
     pub instance_loader: String,
     pub items: Vec<ModDependencyItem>,
     pub errors: Vec<String>,
+    /// 目标 mods 目录当前文件名；前端据此识别主 Mod 的旧版本。
+    pub installed_files: Vec<String>,
 }
 
 struct Pending {
@@ -55,13 +74,18 @@ pub(crate) async fn resolve_mod_dependencies(
     version_id: &str,
     mc_version: &str,
     loader: &str,
+    version_overrides: &HashMap<String, String>,
     mods_dir: &Path,
 ) -> Result<ModDependencyPlan, String> {
+    let installed = installed_filenames(mods_dir);
+    let mut installed_files: Vec<String> = installed.iter().cloned().collect();
+    installed_files.sort();
     let mut plan = ModDependencyPlan {
         instance_mc: mc_version.to_string(),
         instance_loader: loader.to_string(),
         items: Vec::new(),
         errors: Vec::new(),
+        installed_files,
     };
 
     let root_versions = fetch_versions(source, project_id, mc_version, loader).await?;
@@ -76,7 +100,6 @@ pub(crate) async fn resolve_mod_dependencies(
         return Ok(plan);
     };
 
-    let installed = installed_filenames(mods_dir);
     let mut visited: HashSet<String> = HashSet::new();
     visited.insert(project_id.to_string());
 
@@ -107,15 +130,24 @@ pub(crate) async fn resolve_mod_dependencies(
                     mc_version,
                     loader,
                     &keyed_msg!("errors.community.dependencyFetchFailed", "无法获取前置版本"),
+                    &[],
                 ));
                 continue;
             }
         };
-        let selected = match pick_version(&versions, pending.version_hint.as_deref()) {
+        let selected = match pick_version(
+            &versions,
+            version_overrides
+                .get(&pending.project_id)
+                .map(String::as_str),
+            pending.version_hint.as_deref(),
+            &installed,
+        ) {
             Ok(version) => version,
             Err(error) => {
-                plan.items
-                    .push(missing_item(&pending, mc_version, loader, &error));
+                plan.items.push(missing_item(
+                    &pending, mc_version, loader, &error, &versions,
+                ));
                 continue;
             }
         };
@@ -128,6 +160,17 @@ pub(crate) async fn resolve_mod_dependencies(
                 "缺少下载地址（作者可能禁止第三方分发）"
             )
         });
+        let (candidates, candidate_total) = build_candidates(&versions, &selected.version_id);
+        let installed_files: Vec<String> = versions
+            .iter()
+            .filter(|version| installed.contains(&version.filename))
+            .map(|version| version.filename.clone())
+            .collect();
+        let installed_version_label = versions
+            .iter()
+            .find(|version| installed.contains(&version.filename))
+            .filter(|version| version.version_id != selected.version_id)
+            .map(|version| version.version_number.clone());
         plan.items.push(ModDependencyItem {
             project_id: pending.project_id.clone(),
             version_id: selected.version_id.clone(),
@@ -140,7 +183,11 @@ pub(crate) async fn resolve_mod_dependencies(
             relation: pending.relation.clone(),
             root_optional: pending.root_optional.clone(),
             installed: installed.contains(&filename),
+            installed_version_label,
+            installed_files,
             error,
+            candidates,
+            candidate_total,
         });
         if plan.items.last().is_some_and(|item| item.error.is_some()) {
             continue;
@@ -182,27 +229,47 @@ async fn fetch_versions(
     mc_version: &str,
     loader: &str,
 ) -> Result<Vec<CommunityVersion>, String> {
-    match source {
+    let versions = match source {
         "modrinth" => modrinth::modrinth_versions(project_id, Some(mc_version), Some(loader)).await,
         "curseforge" => {
             curseforge::curseforge_versions(project_id, Some(mc_version), Some(loader)).await
         }
-        other => Err(keyed_msg!(
-            "errors.community.unsupportedSource",
-            "不支持的资源来源\n{other}"
-        )),
-    }
+        other => {
+            return Err(keyed_msg!(
+                "errors.community.unsupportedSource",
+                "不支持的资源来源\n{other}"
+            ))
+        }
+    }?;
+    Ok(versions
+        .into_iter()
+        .filter(|version| version_supports(version, mc_version, loader))
+        .collect())
 }
 
-/// 精确 `version_hint` 优先；否则 release 优先，最后取第一个。
+/// 平台过滤之外再校验一次，确保候选只属于实例的 MC/loader 组合。
+fn version_supports(version: &CommunityVersion, mc_version: &str, loader: &str) -> bool {
+    version
+        .game_versions
+        .iter()
+        .any(|value| value == mc_version)
+        && version
+            .loaders
+            .iter()
+            .any(|value| value.eq_ignore_ascii_case(loader))
+}
+
+/// 版本覆盖优先，其次精确 `version_hint`；否则 release 优先，最后取第一个。
 fn pick_version<'a>(
     versions: &'a [CommunityVersion],
+    override_id: Option<&str>,
     hint: Option<&str>,
+    installed: &HashSet<String>,
 ) -> Result<&'a CommunityVersion, String> {
-    if let Some(hint) = hint {
+    if let Some(id) = override_id.or(hint) {
         return versions
             .iter()
-            .find(|version| version.version_id == hint)
+            .find(|version| version.version_id == id)
             .ok_or_else(|| {
                 keyed_msg!(
                     "errors.community.dependencyVersionMismatch",
@@ -212,7 +279,12 @@ fn pick_version<'a>(
     }
     versions
         .iter()
-        .find(|version| version.version_type == "release")
+        .find(|version| installed.contains(&version.filename))
+        .or_else(|| {
+            versions
+                .iter()
+                .find(|version| version.version_type == "release")
+        })
         .or_else(|| versions.first())
         .ok_or_else(|| {
             keyed_msg!(
@@ -220,6 +292,45 @@ fn pick_version<'a>(
                 "没有适用于当前实例的前置版本"
             )
         })
+}
+
+/// 候选按发布时间倒序，限制数量；当前选中项即使超出上限也补进列表。
+fn build_candidates(
+    versions: &[CommunityVersion],
+    selected_id: &str,
+) -> (Vec<ModDependencyVersion>, usize) {
+    let mut seen = HashSet::new();
+    let mut unique: Vec<&CommunityVersion> = versions
+        .iter()
+        .filter(|version| seen.insert(version.version_id.as_str()))
+        .collect();
+    unique.sort_by(|a, b| b.date_published.cmp(&a.date_published));
+    let total = unique.len();
+    let mut candidates: Vec<ModDependencyVersion> = unique
+        .iter()
+        .take(MAX_DEPENDENCY_CANDIDATES)
+        .map(|version| dependency_version(version))
+        .collect();
+    if !candidates
+        .iter()
+        .any(|candidate| candidate.version_id == selected_id)
+    {
+        if let Some(selected) = unique
+            .iter()
+            .find(|version| version.version_id == selected_id)
+        {
+            candidates.push(dependency_version(selected));
+        }
+    }
+    (candidates, total)
+}
+
+fn dependency_version(version: &CommunityVersion) -> ModDependencyVersion {
+    ModDependencyVersion {
+        version_id: version.version_id.clone(),
+        version_label: version.version_number.clone(),
+        version_type: version.version_type.clone(),
+    }
 }
 
 fn seed_dependencies(
@@ -267,7 +378,9 @@ fn missing_item(
     mc_version: &str,
     loader: &str,
     error: &str,
+    versions: &[CommunityVersion],
 ) -> ModDependencyItem {
+    let (candidates, candidate_total) = build_candidates(versions, "");
     ModDependencyItem {
         project_id: pending.project_id.clone(),
         version_id: pending.version_hint.clone().unwrap_or_default(),
@@ -280,7 +393,11 @@ fn missing_item(
         relation: pending.relation.clone(),
         root_optional: pending.root_optional.clone(),
         installed: false,
+        installed_version_label: None,
+        installed_files: Vec::new(),
         error: Some(error.to_string()),
+        candidates,
+        candidate_total,
     }
 }
 
@@ -373,11 +490,74 @@ mod tests {
         let versions = vec![beta, release];
 
         assert_eq!(
-            pick_version(&versions, Some("beta")).unwrap().version_id,
+            pick_version(&versions, None, Some("beta"), &HashSet::new())
+                .unwrap()
+                .version_id,
             "beta"
         );
-        assert_eq!(pick_version(&versions, None).unwrap().version_id, "release");
-        assert!(pick_version(&versions, Some("missing")).is_err());
+        assert_eq!(
+            pick_version(&versions, None, None, &HashSet::new())
+                .unwrap()
+                .version_id,
+            "release"
+        );
+        assert!(pick_version(&versions, None, Some("missing"), &HashSet::new()).is_err());
+    }
+
+    #[test]
+    fn pick_version_override_wins_and_must_match() {
+        let beta = version("beta", "beta", Vec::new());
+        let release = version("release", "release", Vec::new());
+        let versions = vec![beta, release];
+
+        assert_eq!(
+            pick_version(&versions, Some("beta"), Some("release"), &HashSet::new())
+                .unwrap()
+                .version_id,
+            "beta"
+        );
+        assert!(pick_version(&versions, Some("missing"), None, &HashSet::new()).is_err());
+    }
+
+    #[test]
+    fn pick_version_prefers_installed_when_unpinned() {
+        let beta = version("beta", "beta", Vec::new());
+        let release = version("release", "release", Vec::new());
+        let versions = vec![beta, release];
+        let installed = HashSet::from(["beta.jar".to_string()]);
+
+        assert_eq!(
+            pick_version(&versions, None, None, &installed)
+                .unwrap()
+                .version_id,
+            "beta"
+        );
+    }
+
+    #[test]
+    fn version_supports_requires_matching_game_and_loader() {
+        let mut item = version("v", "release", Vec::new());
+        assert!(version_supports(&item, "1.20.1", "fabric"));
+        assert!(!version_supports(&item, "1.21.1", "fabric"));
+        assert!(!version_supports(&item, "1.20.1", "forge"));
+        item.loaders.push("Quilt".into());
+        assert!(version_supports(&item, "1.20.1", "quilt"));
+    }
+
+    #[test]
+    fn candidates_include_selected_outside_limit() {
+        let mut versions = Vec::new();
+        for index in 0..(MAX_DEPENDENCY_CANDIDATES + 5) {
+            let mut item = version(&format!("v{index}"), "release", Vec::new());
+            item.date_published = format!("2026-01-{:02}", index + 1);
+            versions.push(item);
+        }
+        let (candidates, total) = build_candidates(&versions, "v0");
+
+        assert_eq!(total, versions.len());
+        assert_eq!(candidates.len(), MAX_DEPENDENCY_CANDIDATES + 1);
+        assert_eq!(candidates[0].version_id, format!("v{}", versions.len() - 1));
+        assert!(candidates.iter().any(|item| item.version_id == "v0"));
     }
 
     #[test]
@@ -418,6 +598,8 @@ mod tests {
 
 #[cfg(test)]
 mod real_tests {
+    use std::collections::HashMap;
+
     use super::super::modrinth::modrinth_versions;
     use super::resolve_mod_dependencies;
 
@@ -439,6 +621,7 @@ mod real_tests {
             &version.version_id,
             "1.20.1",
             "fabric",
+            &HashMap::new(),
             dir.path(),
         )
         .await

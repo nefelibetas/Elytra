@@ -15,7 +15,8 @@ export default {
     copy: "Failed to copy file",
     create: "Failed to create file",
     createDir: "Failed to create directory",
-    extract: "Failed to extract archive"
+    extract: "Failed to extract archive",
+    replaceFailed: "Failed to replace the old file"
   },
   download: {
     failed: "Download failed",
