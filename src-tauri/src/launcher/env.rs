@@ -47,9 +47,18 @@ pub fn load_launch_config(
     let dl_config: DownloaderConfig = downloader_config();
     let jdk_options: JdkOptions = persist::read(constants::SECT_JDK).unwrap_or_default();
     let jdk_cache: JdkScanCache = persist::read(constants::SECT_JDK_SCANNED).unwrap_or_default();
-    let launch_option: LaunchOptions = launch_options();
 
-    // 版本级服务器直连（版本设置里配的 --server/--port）优先，覆盖全局 LaunchOptions
+    // minecraft_dir 可能是相对路径（默认 ".minecraft"），统一转绝对，避免 classpath/natives 基于 java cwd 解析出错
+    let mc_dir = dl_config.minecraft_dir_abs();
+
+    // 实例级启动参数（有 [launch] 段则覆盖全局；否则沿用全局）
+    let instance_launch = persist::instance::read_launch(&mc_dir, version_dir_name);
+    let mut launch_option: LaunchOptions = launch_options();
+    if let Some(profile) = instance_launch.as_ref() {
+        profile.apply_to(&mut launch_option);
+    }
+
+    // 版本级服务器直连（版本设置里配的 --server/--port）优先，覆盖全局/实例 LaunchOptions
     let version_server: VersionServer = version_server_section(version_dir_name)
         .ok()
         .and_then(|s| persist::read(&s).ok())
@@ -64,10 +73,7 @@ pub fn load_launch_config(
         launch_option
     };
 
-    // minecraft_dir 可能是相对路径（默认 ".minecraft"），统一转绝对，避免 classpath/natives 基于 java cwd 解析出错
-    let mc_dir = dl_config.minecraft_dir_abs();
-
-    // 实例级自动任务覆盖（实例文件存在则完全采用其自动任务，否则沿用全局）
+    // 实例级自动任务（有 [auto_tasks] 段则用实例值，否则沿用全局）
     let launch_option = match persist::instance::read_auto_tasks(&mc_dir, version_dir_name) {
         Some(auto_tasks) => LaunchOptions {
             auto_tasks,
@@ -75,6 +81,11 @@ pub fn load_launch_config(
         },
         None => launch_option,
     };
+
+    // Java 选择随实例启动快照；没有实例快照时沿用全局 JDK 选择
+    let java_selection = instance_launch
+        .map(|profile| profile.java)
+        .unwrap_or(jdk_options.selection);
 
     // 读取版本 JSON（扫描目录，文件名不一定是目录名），并展开 inheritsFrom 继承
     let vdir = mc_dir.join("versions").join(version_dir_name);
@@ -92,7 +103,7 @@ pub fn load_launch_config(
         .major_version
         .as_u64()
         .unwrap_or(0) as u32;
-    let java_env = match jdk_options.selection {
+    let java_env = match java_selection {
         JdkSelection::Manual { path } => jdk_cache
             .jdks
             .iter()

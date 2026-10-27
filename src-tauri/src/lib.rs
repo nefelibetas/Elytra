@@ -56,7 +56,10 @@ use commands::launch::{
     begin_launch, cancel_launch, check_launch_env, get_game_log, get_launcher_log,
     open_launcher_log_dir, spawn_game,
 };
-use commands::launch_options::{get_launch_options, get_memory_info, save_launch_options};
+use commands::launch_options::{
+    get_instance_launch_options, get_launch_options, get_memory_info, save_instance_launch_options,
+    save_launch_options,
+};
 use commands::launch_script::export_launch_script;
 use commands::loader::{
     get_fabric_api_versions, get_fabric_versions, get_forge_versions, get_neoforge_versions,
@@ -245,6 +248,8 @@ pub fn run() {
             get_memory_info,
             get_launch_options,
             save_launch_options,
+            get_instance_launch_options,
+            save_instance_launch_options,
             get_instance_auto_tasks,
             save_instance_auto_tasks,
             save_global_auto_tasks,

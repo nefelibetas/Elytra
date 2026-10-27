@@ -9,6 +9,7 @@ use ts_rs::TS;
 use crate::auth::external::{ExternalAccount, ExternalConfig, ExternalProfile, ExternalServer};
 use crate::auth::model::MsAccount;
 use crate::commands::auto_tasks::InstanceAutoTasksState;
+use crate::commands::launch_options::InstanceLaunchState;
 use crate::commands::map::MapBlockInfo;
 use crate::config::downloader::{
     DownloadSource, DownloadSourceMode, DownloaderConfig, JdkSourceMode, NetworkMode,
@@ -24,7 +25,9 @@ use crate::launcher::auto_tasks::model::{
     AutoTaskAction, AutoTaskFailure, AutoTaskFailureInfo, AutoTaskPhase, AutoTaskProgress,
     AutoTaskStep, AutoTasks, AutoTasksFinished, BackupScope,
 };
-use crate::launcher::model::{GcType, LaunchOptions, MemoryMode, ProcessPriority, WindowSize};
+use crate::launcher::model::{
+    GcType, InstanceLaunchOptions, LaunchOptions, MemoryMode, ProcessPriority, WindowSize,
+};
 use crate::map::folder::MapFolderEntry;
 use crate::map::region_io::MapRegionInfo;
 use crate::map::search::{MapBiomeHit, MapBiomeSummary};
@@ -64,6 +67,8 @@ pub fn export_all() {
     DownloadTask::export().unwrap();
     DownloadFileKind::export().unwrap();
     LaunchOptions::export().unwrap();
+    InstanceLaunchOptions::export().unwrap();
+    InstanceLaunchState::export().unwrap();
     MemoryMode::export().unwrap();
     ProcessPriority::export().unwrap();
     WindowSize::export().unwrap();

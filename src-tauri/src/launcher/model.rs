@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Default, Serialize, Deserialize, ts_rs::TS)]
+use crate::jdk::model::JdkSelection;
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ts_rs::TS)]
 #[ts(export_to = "launcher/")]
 pub enum GcType {
     PreferZgc,
@@ -33,7 +35,7 @@ pub enum AuthMode {
     },
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[ts(export_to = "launcher/")]
 pub enum MemoryMode {
     #[default]
@@ -158,5 +160,85 @@ impl Default for LaunchOptions {
             auto_tasks: Default::default(),
             gc_type: GcType::default(),
         }
+    }
+}
+
+/// 实例级启动参数快照：只包含“可以按实例覆盖”的字段。
+///
+/// 不含 `server`/`port`（版本设置里的服务器直连独立存储、优先级更高）与 `auto_tasks`（独立 section）；
+/// Java 选择随实例快照一起保存。
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export_to = "launcher/")]
+pub struct InstanceLaunchOptions {
+    #[serde(default)]
+    pub memory: MemoryMode,
+    #[serde(default)]
+    pub min_memory: Option<u32>,
+    #[serde(default)]
+    pub window_title: String,
+    #[serde(default)]
+    pub process_priority: ProcessPriority,
+    #[serde(default)]
+    pub window_size: WindowSize,
+    #[serde(default)]
+    pub disable_launch_wrapper: bool,
+    #[serde(default)]
+    pub disable_lwjgl_unsafe_agent: bool,
+    #[serde(default)]
+    pub pre_launch_memory_optimize: bool,
+    #[serde(default = "default_true")]
+    pub use_high_performance_gpu: bool,
+    #[serde(default = "default_zh")]
+    pub game_language: String,
+    #[serde(default)]
+    pub verify_ssl: bool,
+    #[serde(default)]
+    pub jvm_args: Vec<String>,
+    #[serde(default)]
+    pub game_args: Vec<String>,
+    #[serde(default)]
+    pub gc_type: GcType,
+    #[serde(default)]
+    pub java: JdkSelection,
+}
+
+impl InstanceLaunchOptions {
+    /// 从全局配置生成实例快照（启用“单独配置”时的初始值）。
+    pub fn from_launch_options(options: &LaunchOptions, java: JdkSelection) -> Self {
+        Self {
+            memory: options.memory.clone(),
+            min_memory: options.min_memory,
+            window_title: options.window_title.clone(),
+            process_priority: options.process_priority,
+            window_size: options.window_size,
+            disable_launch_wrapper: options.disable_launch_wrapper,
+            disable_lwjgl_unsafe_agent: options.disable_lwjgl_unsafe_agent,
+            pre_launch_memory_optimize: options.pre_launch_memory_optimize,
+            use_high_performance_gpu: options.use_high_performance_gpu,
+            game_language: options.game_language.clone(),
+            verify_ssl: options.verify_ssl,
+            jvm_args: options.jvm_args.clone(),
+            game_args: options.game_args.clone(),
+            gc_type: options.gc_type.clone(),
+            java,
+        }
+    }
+
+    /// 覆盖全局启动参数（Java 由 `env` 单独取用）。
+    pub fn apply_to(&self, options: &mut LaunchOptions) {
+        options.memory = self.memory.clone();
+        options.min_memory = self.min_memory;
+        options.window_title = self.window_title.clone();
+        options.process_priority = self.process_priority;
+        options.window_size = self.window_size;
+        options.disable_launch_wrapper = self.disable_launch_wrapper;
+        options.disable_lwjgl_unsafe_agent = self.disable_lwjgl_unsafe_agent;
+        options.pre_launch_memory_optimize = self.pre_launch_memory_optimize;
+        options.use_high_performance_gpu = self.use_high_performance_gpu;
+        options.game_language = self.game_language.clone();
+        options.verify_ssl = self.verify_ssl;
+        options.jvm_args = self.jvm_args.clone();
+        options.game_args = self.game_args.clone();
+        options.gc_type = self.gc_type.clone();
     }
 }

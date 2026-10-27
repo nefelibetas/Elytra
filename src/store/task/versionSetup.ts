@@ -1,5 +1,7 @@
 // 版本管理页（VersionSetup）的 IPC 封装：导出启动脚本/整合包、版本级服务器直连配置（组件不直接 invoke）。
 import { invoke } from "@tauri-apps/api/core";
+import type { InstanceLaunchOptions } from "../../types/launcher/InstanceLaunchOptions";
+import type { InstanceLaunchState } from "../../types/launcher/InstanceLaunchState";
 
 export async function exportLaunchScript(payload: {
   savePath: string;
@@ -45,4 +47,17 @@ export async function saveVersionServer(
   port: number | null,
 ): Promise<void> {
   await invoke("save_version_server", { versionName, server, port });
+}
+
+/** 实例级启动参数（全局快照 + 实例快照 + 实际生效值）。 */
+export function getInstanceLaunchOptions(versionId: string): Promise<InstanceLaunchState> {
+  return invoke<InstanceLaunchState>("get_instance_launch_options", { versionId });
+}
+
+/** 保存实例启动参数；null = 删除 [launch] 段并回退全局。 */
+export function saveInstanceLaunchOptions(
+  versionId: string,
+  options: InstanceLaunchOptions | null,
+): Promise<void> {
+  return invoke("save_instance_launch_options", { versionId, options });
 }

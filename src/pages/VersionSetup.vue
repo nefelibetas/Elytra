@@ -3,12 +3,13 @@
 import { computed, onMounted, ref } from "vue";
 import type { Component } from "vue";
 import { useRoute } from "vue-router";
-import { Puzzle, Map, Palette, Sun, Database, Upload, ImagePlus, FileText, Server, Play } from "@lucide/vue";
+import { Puzzle, Map, Palette, Sun, Database, Upload, ImagePlus, FileText, Server, Play, SlidersHorizontal } from "@lucide/vue";
 import SideNav from "../component/common/SideNav.vue";
 import VersionSetupMisc from "../component/version-setup/VersionSetupMisc.vue";
 import AutoTasksEditor from "../component/settings/AutoTasksEditor.vue";
 import VersionSetupLogs from "../component/version-setup/VersionSetupLogs.vue";
 import VersionSetupServer from "../component/version-setup/VersionSetupServer.vue";
+import VersionSetupLaunch from "../component/version-setup/VersionSetupLaunch.vue";
 import VersionSetupExport from "../component/version-setup/VersionSetupExport.vue";
 import VersionSetupMods from "../component/version-setup/VersionSetupMods.vue";
 import VersionSetupSaves from "../component/version-setup/VersionSetupSaves.vue";
@@ -20,7 +21,7 @@ import {
 } from "../store/task/versionDetail";
 import { useI18n } from "vue-i18n";
 
-type TabKey = "mods" | "saves" | "resourcepacks" | "shaderpacks" | "datapacks" | "export" | "logs" | "server" | "auto_tasks" | "misc";
+type TabKey = "mods" | "saves" | "resourcepacks" | "shaderpacks" | "datapacks" | "export" | "logs" | "server" | "launchOptions" | "auto_tasks" | "misc";
 
 const { t } = useI18n();
 
@@ -31,6 +32,7 @@ const tabs = computed<{ key: TabKey; label: string; icon: Component }[]>(() => [
   { key: "shaderpacks", label: t("settings.version.setup.tabs.shaderpacks"), icon: Sun },
   { key: "datapacks", label: t("settings.version.setup.tabs.datapacks"), icon: Database },
   { key: "server", label: t("settings.version.setup.tabs.server"), icon: Server },
+  { key: "launchOptions", label: t("settings.version.setup.tabs.launchOptions"), icon: SlidersHorizontal },
   { key: "auto_tasks", label: t("settings.version.setup.tabs.autoTasks"), icon: Play },
   { key: "misc", label: t("settings.version.setup.tabs.misc"), icon: ImagePlus },
   { key: "logs", label: t("settings.version.setup.tabs.logs"), icon: FileText },
@@ -68,6 +70,7 @@ const REFRESHERS: Record<TabKey, () => void> = {
   export: () => {},
   logs: () => {},
   server: () => {},
+  launchOptions: () => {},
   auto_tasks: () => {},
   misc: () => {},
 };
@@ -86,7 +89,7 @@ onMounted(() => {
       :width="240"
       refreshable
       internal-scroll
-      :no-refresh-keys="['export']"
+      :no-refresh-keys="['export', 'launchOptions']"
       @refresh="REFRESHERS[$event as TabKey]()"
     >
       <VersionSetupMods v-if="activeTab === 'mods'" key="mods" />
@@ -116,6 +119,8 @@ onMounted(() => {
       <VersionSetupLogs v-else-if="activeTab === 'logs'" key="logs" />
 
       <VersionSetupServer v-else-if="activeTab === 'server'" key="server" />
+
+      <VersionSetupLaunch v-else-if="activeTab === 'launchOptions'" key="launchOptions" />
 
       <AutoTasksEditor v-else-if="activeTab === 'auto_tasks'" key="auto_tasks" />
 
