@@ -80,44 +80,38 @@ fn map_block(
 }
 
 /// 渲染/读取单块 region 的 512×512 俯视 PNG（自 max_y 向下）。
-async fn map_tile(
-    world: PathBuf,
-    dimension: String,
+fn map_tile(
+    world: &Path,
+    dimension: &str,
     rx: i32,
     rz: i32,
     max_y: i32,
     mod_colors: bool,
-) -> Result<tauri::ipc::Response, String> {
-    validate_dimension(&world, &dimension)?;
+) -> Result<Vec<u8>, String> {
+    validate_dimension(world, dimension)?;
     let max_y = max_y.clamp(-512, 512) as isize;
     let render_style = RenderStyle::TopDown { max_y };
     let cache_style = format!("topdown{max_y}|mod{}", if mod_colors { 1 } else { 0 });
-    let Some(cache_path) = tile_cache_key(&world, &dimension, rx, rz, &cache_style) else {
+
+    let Some(cache_path) = tile_cache_key(world, dimension, rx, rz, &cache_style) else {
         bail_key!(
             "errors.map.missing_region",
             "region 文件不存在\n前端应按 region 列表请求"
         );
     };
     if let Some(png) = read_cached_tile(&cache_path) {
-        return Ok(tauri::ipc::Response::new(png));
+        return Ok(png);
     }
-    let region_file = dimension_dir(&world, &dimension)
+
+    let region_file = dimension_dir(world, dimension)
         .join("region")
         .join(format!("r.{rx}.{rz}.mca"));
-    let png = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<u8>, String> {
-        let overlay = mod_colors
-            .then(|| crate::map::mod_color::overlay_for_world(&world))
-            .flatten();
-        let png = render_region_tile(&region_file, render_style, overlay.as_deref())?;
-        write_tile(&cache_path, &png)?;
-        Ok(png)
-    })
-    .await
-    .map_err(common_err_ctx_key!(
-        "errors.map.tile_failed",
-        "瓦片渲染任务异常"
-    ))??;
-    Ok(tauri::ipc::Response::new(png))
+    let overlay = mod_colors
+        .then(|| crate::map::mod_color::overlay_for_world(world))
+        .flatten();
+    let png = render_region_tile(&region_file, render_style, overlay.as_deref())?;
+    write_tile(&cache_path, &png)?;
+    Ok(png)
 }
 
 #[tauri::command]
@@ -159,8 +153,16 @@ pub async fn get_map_tile(
     max_y: i32,
     mod_colors: bool,
 ) -> Result<tauri::ipc::Response, String> {
-    let world = world_root(&version_name, &world_name)?;
-    map_tile(world, dimension, rx, rz, max_y, mod_colors).await
+    let png = tauri::async_runtime::spawn_blocking(move || {
+        let world = world_root(&version_name, &world_name)?;
+        map_tile(&world, &dimension, rx, rz, max_y, mod_colors)
+    })
+    .await
+    .map_err(common_err_ctx_key!(
+        "errors.map.tile_failed",
+        "瓦片渲染任务异常"
+    ))??;
+    Ok(tauri::ipc::Response::new(png))
 }
 
 /// 悬停识别：自 max_y 向下取首个非空气方块与所在群系。
@@ -225,8 +227,16 @@ pub async fn get_map_folder_tile(
     max_y: i32,
     mod_colors: bool,
 ) -> Result<tauri::ipc::Response, String> {
-    let world = folder_root(&root)?;
-    map_tile(world, dimension, rx, rz, max_y, mod_colors).await
+    let png = tauri::async_runtime::spawn_blocking(move || {
+        let world = folder_root(&root)?;
+        map_tile(&world, &dimension, rx, rz, max_y, mod_colors)
+    })
+    .await
+    .map_err(common_err_ctx_key!(
+        "errors.map.tile_failed",
+        "瓦片渲染任务异常"
+    ))??;
+    Ok(tauri::ipc::Response::new(png))
 }
 
 #[tauri::command]
