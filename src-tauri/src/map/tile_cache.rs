@@ -8,9 +8,16 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::UNIX_EPOCH;
 
 use crate::util::config_dir;
+
+/// 瓦片缓存治理, 原逻辑每次写瓦片均会全面治理，现改为累计一定量后全面治理
+static WRITE_SEQ: AtomicU64 = AtomicU64::new(0);
+/// 每写64次进行一次全面治理
+/// 首次写必扫，用于清理上次运行遗留
+const EVICT_EVERY: u64 = 64;
 
 /// 缓存目录上限（256MB；1000+ 张 64×64 瓦片 ≈ 每张 5-15KB，足够覆盖中大型存档）。
 const MAPCACHE_MAX_BYTES: u64 = 256 * 1024 * 1024;
@@ -78,15 +85,17 @@ pub fn write_tile(path: &Path, png: &[u8]) -> Result<(), String> {
         "errors.map.cache_write",
         "瓦片写入失败"
     ))?;
-    evict_if_oversize();
+    let seq = WRITE_SEQ.fetch_add(1, Ordering::Relaxed);
+    if seq.is_multiple_of(EVICT_EVERY) {
+        evict_if_oversize();
+    }
     Ok(())
 }
 
-/// 超限淘汰：按 mtime 升序删最旧 PNG 直到总大小 ≤ 上限。
-/// 全目录扫描 O(n)，在写入路径上触发；n 为千级时可接受。
-fn evict_if_oversize() {
-    let dir = mapcache_dir();
-    let Ok(entries) = std::fs::read_dir(&dir) else {
+/// 按mtime升序删除最旧的png，直到总量小于max_bytes。
+/// 删除失败忽略；不阻塞写盘；不删除非.png后缀文件
+fn evict_dir(dir: &Path, max_bytes: u64) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
     let mut files: Vec<(PathBuf, u64, u64)> = entries
@@ -104,19 +113,24 @@ fn evict_if_oversize() {
         })
         .collect();
     let total: u64 = files.iter().map(|(_, s, _)| *s).sum();
-    if total <= MAPCACHE_MAX_BYTES {
+    if total <= max_bytes {
         return;
     }
     files.sort_by_key(|(_, _, m)| *m);
     let mut total = total;
     for (path, size, _) in files {
-        if total <= MAPCACHE_MAX_BYTES {
+        if total <= max_bytes {
             break;
         }
         if std::fs::remove_file(path).is_ok() {
             total -= size;
         }
     }
+}
+
+/// 超限淘汰：按 mtime 升序删最旧 PNG 直到总大小 ≤ 上限。
+fn evict_if_oversize() {
+    evict_dir(&mapcache_dir(), MAPCACHE_MAX_BYTES);
 }
 
 #[cfg(test)]
@@ -154,6 +168,53 @@ mod tests {
         let path = dir.join("abc.png");
         write_tile(&path, b"PNGDATA").unwrap();
         assert_eq!(read_cached_tile(&path), Some(b"PNGDATA".to_vec()));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn evict_dir_removes_oldest_until_under_cap() {
+        // 开临时目录
+        let dir = std::env::temp_dir().join(format!("elytra_evit_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // 基准时间
+        let base = UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        // 创建文件lambda
+        let touch = |name: &str, secs: u64| {
+            let p = dir.join(name);
+            std::fs::write(&p, vec![0u8; 100]).unwrap();
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&p)
+                .unwrap()
+                .set_modified(base + std::time::Duration::from_secs(secs))
+                .unwrap();
+        };
+        touch("a.png", 0);
+        touch("b.png", 10);
+        touch("c.png", 20);
+        std::fs::write(dir.join("keep.txt"), vec![0u8; 200]).unwrap();
+
+        evict_dir(&dir, 150); // 总300, 最大150，预期删除a、b，剩余c与keep.txt
+
+        // 只应删除.png等瓦片缓存
+        assert!(!dir.join("a.png").exists());
+        assert!(!dir.join("b.png").exists());
+        assert!(dir.join("c.png").exists());
+        assert!(dir.join("keep.txt").exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    #[ignore = "性能测试"]
+    fn bench_evict_scan() {
+        let dir = std::env::temp_dir().join(format!("elytra_evict_bench_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for i in 0..3000 {
+            std::fs::write(dir.join(format!("{i:04}.png")), vec![0u8; 8192]).unwrap();
+        }
+        let t = std::time::Instant::now();
+        evict_dir(&dir, MAPCACHE_MAX_BYTES);
+        eprintln!("evict_dir 3000 files: {:?}", t.elapsed());
         std::fs::remove_dir_all(&dir).ok();
     }
 }
