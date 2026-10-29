@@ -7,8 +7,4 @@ export type MapRegionInfo = { x: number, z: number,
 /**
  * region 文件最后修改（unix 秒）；前端据此检测变更并增量重取瓦片。
  */
-mtime: number, 
-/**
- * location 表非零条目 == 1024；仅作诊断，不参与预测/空洞判定。
- */
-full: boolean, };
+mtime: number, };

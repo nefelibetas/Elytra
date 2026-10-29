@@ -404,8 +404,6 @@ pub struct MapRegionInfo {
     /// region 文件最后修改（unix 秒）；前端据此检测变更并增量重取瓦片。
     #[ts(type = "number")]
     pub mtime: u64,
-    /// location 表非零条目 == 1024；仅作诊断，不参与预测/空洞判定。
-    pub full: bool,
 }
 
 /// 列出世界维度目录下全部 region（按坐标排序）。
@@ -421,7 +419,6 @@ pub fn list_region_files(dimension_dir: &Path) -> Vec<MapRegionInfo> {
         let Some((x, z)) = parse_region_name(&name) else {
             continue;
         };
-        let path = entry.path();
         let mtime = entry
             .metadata()
             .and_then(|m| m.modified())
@@ -429,31 +426,10 @@ pub fn list_region_files(dimension_dir: &Path) -> Vec<MapRegionInfo> {
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let full = region_fully_generated(&path);
-        out.push(MapRegionInfo { x, z, mtime, full });
+        out.push(MapRegionInfo { x, z, mtime });
     }
     out.sort_by_key(|r| (r.x, r.z));
     out
-}
-
-/// region 头部 location 表（4KiB，每 chunk 4B 高字节非零=有数据）读一遍统计。
-fn region_fully_generated(path: &std::path::Path) -> bool {
-    use std::io::Read;
-    let Ok(file) = std::fs::File::open(path) else {
-        return false;
-    };
-    let mut reader = std::io::BufReader::new(file);
-    let mut header = [0u8; 4096];
-    if reader.read_exact(&mut header).is_err() {
-        return false;
-    }
-    let count = header
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .filter(|c| c[0] != 0)
-        .count();
-    count == 1024
 }
 
 /// 解析 "r.X.Z.mca" 文件名 → region 坐标（容忍 .mcr 旧扩展）。
@@ -918,28 +894,5 @@ mod tests {
             .unwrap()
             .set_modified(t)
             .unwrap();
-    }
-
-    #[test]
-    fn region_full_flag_reflects_location_header() {
-        let dir = tempfile::tempdir().unwrap();
-        let region = dir.path().join("region");
-        fs::create_dir_all(&region).unwrap();
-
-        // 不足 4KiB：header 读不满，full = false
-        fs::write(region.join("r.0.0.mca"), b"x").unwrap();
-        // 4KiB header，1024 项首字节全非零：full = true
-        let mut header = vec![0u8; 4096];
-        for i in 0..1024 {
-            header[i * 4] = 1;
-        }
-        fs::write(region.join("r.1.0.mca"), &header).unwrap();
-
-        let got = list_region_files(dir.path());
-        assert_eq!(got.len(), 2);
-        let r00 = got.iter().find(|r| (r.x, r.z) == (0, 0)).unwrap();
-        let r10 = got.iter().find(|r| (r.x, r.z) == (1, 0)).unwrap();
-        assert!(!r00.full, "短文件不应判为完整 region");
-        assert!(r10.full, "location 表全非零应判为完整 region");
     }
 }
