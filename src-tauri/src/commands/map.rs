@@ -155,7 +155,7 @@ pub async fn get_map_tile(
 
 /// 悬停识别：自 max_y 向下取首个非空气方块与所在群系。
 #[tauri::command]
-pub fn get_map_block(
+pub async fn get_map_block(
     version_name: String,
     world_name: String,
     dimension: String,
@@ -163,8 +163,13 @@ pub fn get_map_block(
     z: i32,
     max_y: i32,
 ) -> Result<MapBlockInfo, String> {
-    let world = world_root(&version_name, &world_name)?;
-    map_block(&world, &dimension, x, z, max_y)
+    let info = tauri::async_runtime::spawn_blocking(move || {
+        let world = world_root(&version_name, &world_name)?;
+        map_block(&world, &dimension, x, z, max_y)
+    })
+    .await
+    .map_err(common_err_ctx_key!("errors.map.failed", "地图操作失败"))??;
+    Ok(info)
 }
 
 /// 递归查找用户所选文件夹内的世界根目录（目录本身是世界时只返回它）。
@@ -202,15 +207,20 @@ pub async fn get_map_folder_tile(
 }
 
 #[tauri::command]
-pub fn get_map_folder_block(
+pub async fn get_map_folder_block(
     root: String,
     dimension: String,
     x: i32,
     z: i32,
     max_y: i32,
 ) -> Result<MapBlockInfo, String> {
-    let world = folder_root(&root)?;
-    map_block(&world, &dimension, x, z, max_y)
+    let info = tauri::async_runtime::spawn_blocking(move || {
+        let world = folder_root(&root)?;
+        map_block(&world, &dimension, x, z, max_y)
+    })
+    .await
+    .map_err(common_err_ctx_key!("errors.map.failed", "地图操作失败"))??;
+    Ok(info)
 }
 
 /// 世界预览史莱姆覆盖层：单个 region 的史莱姆区块（与版本无关）。

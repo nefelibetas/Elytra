@@ -17,10 +17,14 @@ use std::fmt;
 use std::fs;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::OnceLock;
+use std::time::UNIX_EPOCH;
 
 use fastanvil::biome::Biome;
 use fastanvil::{BiomeData, BlockData, Chunk, JavaChunk, SectionLike, SectionTower};
 use mca::{CompressionError, CustomDecompression, RegionReader};
+use parking_lot::Mutex;
 use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
@@ -468,7 +472,7 @@ fn parse_region_name(name: &str) -> Option<(i32, i32)> {
 /// 读取单个 region 文件并解析全部已生成 chunk。
 /// 单 chunk 损坏只跳过该 chunk（返回 None），不影响其余——渲染容错优先。
 pub fn parse_region(path: &Path) -> Vec<Option<ParsedChunk>> {
-    let Ok(data) = fs::read(path) else {
+    let Some(data) = cached_region_bytes(path) else {
         return Vec::new();
     };
     // 并行解析：1024 个 chunk 的解压+NBT 解析互不依赖（各自独立字节区间），
@@ -492,7 +496,7 @@ pub fn parse_region(path: &Path) -> Vec<Option<ParsedChunk>> {
     // 输出占位 + 按区间并行填充
     out.resize_with(1024, || None);
     std::thread::scope(|s| {
-        let data_ref = &data;
+        let data_ref = data.as_slice();
         let mut handles = Vec::with_capacity(n);
         for t in 0..n {
             let start = (1024 * t) / n;
@@ -564,8 +568,10 @@ pub fn surface_info(
     bz: i32,
     max_y: isize,
 ) -> Option<(String, Option<String>, i32)> {
-    let data = fs::read(region_file).ok()?;
-    let mut reader = RegionReader::new_with_decompression(&data, JavaWrcDecompression).ok()?;
+    let data = cached_region_bytes(region_file)?;
+    let mut reader =
+        RegionReader::new_with_decompression(data.as_slice(), JavaWrcDecompression).ok()?;
+
     let cx = bx.rem_euclid(512) / 16;
     let cz = bz.rem_euclid(512) / 16;
     let parsed = parse_one(&mut reader, cx as u8, cz as u8)?;
@@ -655,6 +661,107 @@ fn biome_id_at(raw: &[u8], x: usize, z: usize, y: isize) -> Option<String> {
     None
 }
 
+const MAX_CACHED_REGION_BYTES: usize = 64 * 1024 * 1024;
+
+struct RegionEntry {
+    path: PathBuf,
+    mtime: u64,
+    len: u64,
+    data: Arc<Vec<u8>>,
+}
+
+struct RegionCache {
+    max_bytes: usize,
+    total: usize,
+    entries: Vec<RegionEntry>,
+}
+
+impl RegionCache {
+    fn new(max_bytes: usize) -> Self {
+        RegionCache {
+            max_bytes,
+            total: 0,
+            entries: Vec::new(),
+        }
+    }
+
+    /// 最近使用返回到队首
+    fn get(&mut self, path: &Path, mtime: u64, len: u64) -> Option<Arc<Vec<u8>>> {
+        let pos = self
+            .entries
+            .iter()
+            .position(|e| e.path.as_path() == path && e.mtime == mtime && e.len == len)?;
+        let entry = self.entries.remove(pos);
+        let data = Arc::clone(&entry.data);
+        self.entries.insert(0, entry);
+        Some(data)
+    }
+
+    /// 旧路径先删除; 数据入队首; 从队尾开始淘汰缓存
+    fn insert(&mut self, path: PathBuf, mtime: u64, len: u64, data: Arc<Vec<u8>>) {
+        let existing = self.entries.iter().position(|e| e.path == path);
+        if let Some(pos) = existing {
+            let old = self.entries.remove(pos);
+            self.total = self.total.saturating_sub(old.data.len());
+        }
+        self.total += data.len();
+        self.entries.insert(
+            0,
+            RegionEntry {
+                path,
+                mtime,
+                len,
+                data,
+            },
+        );
+        // 至少保留一条
+        while self.total > self.max_bytes && self.entries.len() > 1 {
+            let Some(old) = self.entries.pop() else { break };
+            self.total = self.total.saturating_sub(old.data.len());
+        }
+    }
+}
+
+static REGION_CACHE: OnceLock<Mutex<RegionCache>> = OnceLock::new();
+
+#[cfg(test)]
+static REGION_DISK_READS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn region_cache() -> &'static Mutex<RegionCache> {
+    REGION_CACHE.get_or_init(|| Mutex::new(RegionCache::new(MAX_CACHED_REGION_BYTES)))
+}
+
+/// 按路径、mtime、长度缓存region原始字节；锁外读盘，读失败不缓存。
+/// 返回 Arc 以便调用方在锁外安全使用，淘汰不影响已持有的 Arc。
+fn cached_region_bytes(path: &Path) -> Option<Arc<Vec<u8>>> {
+    let meta = fs::metadata(path).ok()?;
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let len = meta.len();
+
+    let hit = region_cache().lock().get(path, mtime, len);
+    if let Some(data) = hit {
+        return Some(data);
+    }
+
+    let data = Arc::new(fs::read(path).ok()?);
+    #[cfg(test)]
+    {
+        REGION_DISK_READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    // 双检
+    let mut cache = region_cache().lock();
+    if let Some(existing) = cache.get(path, mtime, len) {
+        return Some(existing);
+    }
+    cache.insert(path.to_path_buf(), mtime, len, Arc::clone(&data));
+    Some(data)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -722,5 +829,94 @@ mod tests {
         assert_eq!(got[0].x, 0, "按 (x,z) 排序");
         assert!(got[0].mtime > 0, "region mtime 应为有效 unix 秒");
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn region_cache_lru_evict_oldest() {
+        let mut cache = RegionCache::new(8);
+        let (a, b, c) = (Path::new("a.mca"), Path::new("b.mca"), Path::new("c.mca"));
+        let bytes = |n: usize| Arc::new(vec![0u8; n]);
+
+        cache.insert(a.to_path_buf(), 0, 4, bytes(4));
+        cache.insert(b.to_path_buf(), 0, 4, bytes(4));
+        // 此时队列为[a, b]
+        assert!(cache.get(a, 0, 4).is_some(), "a 应在缓存");
+
+        // 淘汰队尾, c插入队头
+        cache.insert(c.to_path_buf(), 0, 4, bytes(4));
+
+        // 此时队列为[c, a]
+        assert!(cache.get(a, 0, 4).is_some(), "a 最近用过，应保留");
+        assert!(cache.get(b, 0, 4).is_none(), "最久未使用的 b 应被淘汰");
+        assert!(cache.get(c, 0, 4).is_some(), "c 刚写入");
+        assert_eq!(cache.total, 8, "淘汰后总字节数应回到上限");
+    }
+
+    #[test]
+    fn region_cache_invalidates_on_mtime_change() {
+        let mut cache = RegionCache::new(1024);
+        let p = Path::new("r.0.0.mca");
+
+        cache.insert(p.to_path_buf(), 100, 4, Arc::new(vec![1; 4]));
+        assert!(cache.get(p, 100, 4).is_some());
+
+        assert!(cache.get(p, 101, 4).is_none(), "mtime 变化必须 miss");
+        assert!(cache.get(p, 101, 5).is_none(), "长度变化也必须 miss");
+
+        cache.insert(p.to_path_buf(), 101, 4, Arc::new(vec![2; 4]));
+        assert_eq!(cache.get(p, 101, 4).unwrap().as_slice(), &[2; 4]);
+        assert_eq!(cache.entries.len(), 1, "同路径旧版本必须被替换，不能堆积");
+    }
+
+    #[test]
+    fn region_cache_keeps_single_oversized_entry() {
+        let mut cache = RegionCache::new(4);
+        let p = Path::new("huge.mca");
+
+        cache.insert(p.to_path_buf(), 0, 10, Arc::new(vec![0u8; 10]));
+
+        assert!(cache.get(p, 0, 10).is_some(), "单个超大region不能淘汰自身");
+        assert_eq!(cache.total, 10);
+    }
+
+    #[test]
+    fn cached_region_bytes_reads_disk_once_per_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("r.0.0.mca");
+        fs::write(&p, b"region-v1").unwrap();
+        let t1 = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        set_mtime(&p, t1);
+
+        let before = REGION_DISK_READS.load(std::sync::atomic::Ordering::Relaxed);
+        let a = cached_region_bytes(&p).unwrap();
+        let b = cached_region_bytes(&p).unwrap();
+
+        assert_eq!(a.as_slice(), b"region-v1");
+        assert!(Arc::ptr_eq(&a, &b), "缓存命中应复用同一个Arc");
+        assert_eq!(
+            REGION_DISK_READS.load(std::sync::atomic::Ordering::Relaxed) - before,
+            1,
+            "同一(path, mtime, len)应只读一次盘"
+        );
+
+        fs::write(&p, b"region-v2").unwrap();
+        set_mtime(&p, t1 + std::time::Duration::from_secs(1));
+        let c = cached_region_bytes(&p).unwrap();
+
+        assert_eq!(c.as_slice(), b"region-v2");
+        assert_eq!(
+            REGION_DISK_READS.load(std::sync::atomic::Ordering::Relaxed) - before,
+            2,
+            "mtime 变化后应重新读盘"
+        )
+    }
+
+    fn set_mtime(path: &Path, t: std::time::SystemTime) {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(t)
+            .unwrap();
     }
 }
