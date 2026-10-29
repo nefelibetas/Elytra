@@ -43,7 +43,7 @@ server: string | null,
  */
 port: number | null, 
 /**
- * 正版登录时验证 SSL 证书（默认关闭，规避国内网络证书链不完整问题）。
+ * 正版登录时验证 SSL 证书（默认开启；关闭会暴露 token 到中间人风险）。
  */
 verify_ssl: boolean, jvm_args: Array<string>, game_args: Array<string>, 
 /**
