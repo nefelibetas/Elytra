@@ -121,22 +121,32 @@ async fn map_tile(
 }
 
 #[tauri::command]
-pub fn get_map_world_info(
+pub async fn get_map_world_info(
     version_name: String,
     world_name: String,
 ) -> Result<MapWorldInfo, String> {
-    let world = world_root(&version_name, &world_name)?;
-    Ok(world_info(&world))
+    let info = tauri::async_runtime::spawn_blocking(move || -> Result<MapWorldInfo, String> {
+        let world = world_root(&version_name, &world_name)?;
+        Ok(world_info(&world))
+    })
+    .await
+    .map_err(common_err_ctx_key!("errors.map.failed", "地图操作失败"))??;
+    Ok(info)
 }
 
 #[tauri::command]
-pub fn list_map_regions(
+pub async fn list_map_regions(
     version_name: String,
     world_name: String,
     dimension: String,
 ) -> Result<Vec<MapRegionInfo>, String> {
-    let world = world_root(&version_name, &world_name)?;
-    map_regions(&world, &dimension)
+    let regions = tauri::async_runtime::spawn_blocking(move || {
+        let world = world_root(&version_name, &world_name)?;
+        map_regions(&world, &dimension)
+    })
+    .await
+    .map_err(common_err_ctx_key!("errors.map.failed", "地图操作失败"))??;
+    Ok(regions)
 }
 
 #[tauri::command]
@@ -174,23 +184,36 @@ pub async fn get_map_block(
 
 /// 递归查找用户所选文件夹内的世界根目录（目录本身是世界时只返回它）。
 #[tauri::command]
-pub fn resolve_map_folders(path: String) -> Result<Vec<MapFolderEntry>, String> {
-    discover_worlds(Path::new(&path))
+pub async fn resolve_map_folders(path: String) -> Result<Vec<MapFolderEntry>, String> {
+    let folders = tauri::async_runtime::spawn_blocking(move || discover_worlds(Path::new(&path)))
+        .await
+        .map_err(common_err_ctx_key!("errors.map.failed", "地图操作失败"))??;
+    Ok(folders)
 }
 
 #[tauri::command]
-pub fn get_map_folder_info(root: String) -> Result<MapWorldInfo, String> {
-    let world = folder_root(&root)?;
-    Ok(world_info(&world))
+pub async fn get_map_folder_info(root: String) -> Result<MapWorldInfo, String> {
+    let info = tauri::async_runtime::spawn_blocking(move || -> Result<MapWorldInfo, String> {
+        let world = folder_root(&root)?;
+        Ok(world_info(&world))
+    })
+    .await
+    .map_err(common_err_ctx_key!("errors.map.failed", "地图操作失败"))??;
+    Ok(info)
 }
 
 #[tauri::command]
-pub fn list_map_folder_regions(
+pub async fn list_map_folder_regions(
     root: String,
     dimension: String,
 ) -> Result<Vec<MapRegionInfo>, String> {
-    let world = folder_root(&root)?;
-    map_regions(&world, &dimension)
+    let regions = tauri::async_runtime::spawn_blocking(move || {
+        let world = folder_root(&root)?;
+        map_regions(&world, &dimension)
+    })
+    .await
+    .map_err(common_err_ctx_key!("errors.map.failed", "地图操作失败"))??;
+    Ok(regions)
 }
 
 #[tauri::command]

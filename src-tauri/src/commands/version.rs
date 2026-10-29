@@ -39,20 +39,24 @@ pub fn get_instance_mod_target(version_dir_name: String) -> Result<InstanceModTa
 }
 
 #[tauri::command]
-pub fn list_worlds(version_name: String) -> Vec<WorldInfo> {
-    let Ok(vdir) = version_dir_path(&version_name) else {
-        return Vec::new();
-    };
-    let saves = vdir.join("saves");
-    let mut worlds: Vec<WorldInfo> = util::dir_entries(&saves, true)
-        .into_iter()
-        .map(|(name, _, last_modified)| WorldInfo {
-            name,
-            last_modified,
-        })
-        .collect();
-    worlds.sort_by_key(|w| std::cmp::Reverse(w.last_modified));
-    worlds
+pub async fn list_worlds(version_name: String) -> Vec<WorldInfo> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Ok(vdir) = version_dir_path(&version_name) else {
+            return Vec::new();
+        };
+        let saves = vdir.join("saves");
+        let mut worlds: Vec<WorldInfo> = util::dir_entries(&saves, true)
+            .into_iter()
+            .map(|(name, _, last_modified)| WorldInfo {
+                name,
+                last_modified,
+            })
+            .collect();
+        worlds.sort_by_key(|w| std::cmp::Reverse(w.last_modified));
+        worlds
+    })
+    .await
+    .unwrap_or_default()
 }
 
 /// 世界 icon 文件大小上限（128×128 PNG 正常 <100KB；超限视为异常，前端回退占位）。
@@ -60,15 +64,19 @@ const MAX_WORLD_ICON_BYTES: u64 = 512 * 1024;
 
 /// 世界缩略图（saves/<world>/icon.png）：缺失/超限/损坏返回 None；`world_name` 须为简单目录名（防路径穿越）。
 #[tauri::command]
-pub fn get_world_icon(version_name: String, world_name: String) -> Option<util::IconData> {
-    if !util::is_simple_name(&world_name) {
-        return None;
-    }
-    let vdir = version_dir_path(&version_name).ok()?;
-    util::icon_payload(
-        &vdir.join("saves").join(&world_name).join("icon.png"),
-        MAX_WORLD_ICON_BYTES,
-    )
+pub async fn get_world_icon(version_name: String, world_name: String) -> Option<util::IconData> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !util::is_simple_name(&world_name) {
+            return None;
+        }
+        let vdir = version_dir_path(&version_name).ok()?;
+        util::icon_payload(
+            &vdir.join("saves").join(&world_name).join("icon.png"),
+            MAX_WORLD_ICON_BYTES,
+        )
+    })
+    .await
+    .unwrap_or_default()
 }
 
 /// 列出版本下资源目录（材质包/数据包/光影包/mod）中的文件，按名称排序；`kind` 白名单：resourcepacks / datapacks / shaderpacks / mods。
