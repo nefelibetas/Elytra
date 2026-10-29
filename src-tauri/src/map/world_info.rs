@@ -102,3 +102,77 @@ fn read_data_version(world_root: &Path) -> Option<i32> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::io::Write;
+
+    fn write_gzip_nbt(path: &Path, value: &Value) {
+        let raw = fastnbt::to_bytes(value).unwrap();
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(&raw).unwrap();
+        std::fs::write(path, enc.finish().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn reads_nbt_fields_and_modern_y_range() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut data = HashMap::new();
+        data.insert("seed".to_string(), Value::Long(1234));
+        let mut root = HashMap::new();
+        root.insert("DataVersion".to_string(), Value::Int(3465));
+        root.insert("Data".to_string(), Value::Compound(data));
+        write_gzip_nbt(&dir.path().join("level.dat"), &Value::Compound(root));
+
+        let info = world_info(dir.path());
+        assert_eq!(info.data_version, Some(3465));
+        assert_eq!(info.seed.as_deref(), Some("1234"));
+        assert_eq!((info.min_y, info.max_y), (-64, 319), "1.21+ 数据版本");
+        assert!(info.dimensions.is_empty());
+    }
+
+    #[test]
+    fn invalid_level_dat_degrades_to_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("region")).unwrap();
+        std::fs::write(dir.path().join("level.dat"), b"not-nbt").unwrap();
+
+        let info = world_info(dir.path());
+        assert_eq!(info.dimensions, vec![String::new()]);
+        assert_eq!((info.min_y, info.max_y), (0, 255));
+        assert!(info.seed.is_none(), "损坏的 level.dat 不应影响地图可看");
+        assert!(info.data_version.is_none());
+    }
+
+    /// 26.x 把种子/DataVersion 放在 world_gen_settings.dat；旧 level.dat 只能兜底，
+    /// 两份都在时必须以前者为准（否则读到过期数据）。
+    #[test]
+    fn world_gen_settings_takes_precedence_over_level_dat() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("data/minecraft")).unwrap();
+
+        let mut old_data = HashMap::new();
+        old_data.insert("seed".to_string(), Value::Long(1));
+        let mut old_root = HashMap::new();
+        old_root.insert("DataVersion".to_string(), Value::Int(100));
+        old_root.insert("Data".to_string(), Value::Compound(old_data));
+        write_gzip_nbt(&dir.path().join("level.dat"), &Value::Compound(old_root));
+
+        let mut new_data = HashMap::new();
+        new_data.insert("seed".to_string(), Value::Long(2));
+        let mut new_root = HashMap::new();
+        new_root.insert("DataVersion".to_string(), Value::Int(3465));
+        new_root.insert("Data".to_string(), Value::Compound(new_data));
+        write_gzip_nbt(
+            &dir.path().join("data/minecraft/world_gen_settings.dat"),
+            &Value::Compound(new_root),
+        );
+
+        let info = world_info(dir.path());
+        assert_eq!(info.data_version, Some(3465), "26.x 文件优先");
+        assert_eq!(info.seed.as_deref(), Some("2"));
+        assert_eq!((info.min_y, info.max_y), (-64, 319));
+    }
+}

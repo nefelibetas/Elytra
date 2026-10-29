@@ -83,4 +83,31 @@ mod tests {
         assert_eq!(to_base64(b"foo"), "Zm9v");
         assert_eq!(to_base64(b"foobar"), "Zm9vYmFy");
     }
+
+    #[test]
+    fn icon_payload_reads_png_and_rejects_invalid_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let png = dir.path().join("icon.png");
+        let bytes = b"\x89PNG\r\n\x1a\npayload";
+        std::fs::write(&png, bytes).unwrap();
+
+        let icon = icon_payload(&png, 1024).expect("应读取 PNG 图标");
+        assert_eq!(icon.mime, "image/png");
+        assert_eq!(icon.data, to_base64(bytes));
+
+        assert!(icon_payload(&png, 4).is_none(), "超过 max_bytes 应拒绝");
+
+        let empty = dir.path().join("empty.png");
+        std::fs::write(&empty, b"").unwrap();
+        assert!(icon_payload(&empty, 1024).is_none(), "空文件应拒绝");
+
+        let text = dir.path().join("text.png");
+        std::fs::write(&text, b"<html>").unwrap();
+        assert!(icon_payload(&text, 1024).is_none(), "非图片应拒绝");
+
+        assert!(
+            icon_payload(&dir.path().join("missing.png"), 1024).is_none(),
+            "缺失文件应返回 None"
+        );
+    }
 }

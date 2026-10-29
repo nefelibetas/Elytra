@@ -163,4 +163,23 @@ mod tests {
         assert!(!is_simple_name("C:foo"));
         assert!(!is_simple_name("file:stream"));
     }
+
+    #[test]
+    fn dir_entries_filters_kind_and_reads_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        std::fs::write(dir.path().join("file.txt"), b"12345").unwrap();
+
+        let dirs = dir_entries(dir.path(), true);
+        assert_eq!(dirs.len(), 1);
+        assert_eq!(dirs[0].0, "sub");
+
+        let files = dir_entries(dir.path(), false);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].0, "file.txt");
+        assert_eq!(files[0].1, 5, "size 应来自 metadata");
+        assert!(files[0].2 > 0, "mtime 应为有效 unix 秒");
+
+        assert!(dir_entries(&dir.path().join("missing"), false).is_empty());
+    }
 }

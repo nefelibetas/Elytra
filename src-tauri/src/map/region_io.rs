@@ -919,4 +919,27 @@ mod tests {
             .set_modified(t)
             .unwrap();
     }
+
+    #[test]
+    fn region_full_flag_reflects_location_header() {
+        let dir = tempfile::tempdir().unwrap();
+        let region = dir.path().join("region");
+        fs::create_dir_all(&region).unwrap();
+
+        // 不足 4KiB：header 读不满，full = false
+        fs::write(region.join("r.0.0.mca"), b"x").unwrap();
+        // 4KiB header，1024 项首字节全非零：full = true
+        let mut header = vec![0u8; 4096];
+        for i in 0..1024 {
+            header[i * 4] = 1;
+        }
+        fs::write(region.join("r.1.0.mca"), &header).unwrap();
+
+        let got = list_region_files(dir.path());
+        assert_eq!(got.len(), 2);
+        let r00 = got.iter().find(|r| (r.x, r.z) == (0, 0)).unwrap();
+        let r10 = got.iter().find(|r| (r.x, r.z) == (1, 0)).unwrap();
+        assert!(!r00.full, "短文件不应判为完整 region");
+        assert!(r10.full, "location 表全非零应判为完整 region");
+    }
 }
