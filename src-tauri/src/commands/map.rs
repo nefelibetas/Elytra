@@ -294,14 +294,16 @@ pub async fn list_map_biomes(
     dimension: String,
     max_y: i32,
 ) -> Result<Vec<MapBiomeSummary>, String> {
-    let world = world_root(&version_name, &world_name)?;
-    validate_dimension(&world, &dimension)?;
-    tauri::async_runtime::spawn_blocking(move || list_biomes(&world, &dimension, max_y))
-        .await
-        .map_err(common_err_ctx_key!(
-            "errors.map.biomeListFailed",
-            "群系列表任务异常"
-        ))
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<MapBiomeSummary>, String> {
+        let world = world_root(&version_name, &world_name)?;
+        validate_dimension(&world, &dimension)?;
+        Ok(list_biomes(&world, &dimension, max_y))
+    })
+    .await
+    .map_err(common_err_ctx_key!(
+        "errors.map.biomeListFailed",
+        "群系列表任务异常"
+    ))?
 }
 
 #[tauri::command]
@@ -310,14 +312,16 @@ pub async fn list_map_folder_biomes(
     dimension: String,
     max_y: i32,
 ) -> Result<Vec<MapBiomeSummary>, String> {
-    let world = folder_root(&root)?;
-    validate_dimension(&world, &dimension)?;
-    tauri::async_runtime::spawn_blocking(move || list_biomes(&world, &dimension, max_y))
-        .await
-        .map_err(common_err_ctx_key!(
-            "errors.map.biomeListFailed",
-            "群系列表任务异常"
-        ))
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<MapBiomeSummary>, String> {
+        let world = folder_root(&root)?;
+        validate_dimension(&world, &dimension)?;
+        Ok(list_biomes(&world, &dimension, max_y))
+    })
+    .await
+    .map_err(common_err_ctx_key!(
+        "errors.map.biomeListFailed",
+        "群系列表任务异常"
+    ))?
 }
 
 /// 已加载地图内离中心最近的指定群系。
@@ -331,16 +335,18 @@ pub async fn find_map_biome(
     center_x: i32,
     center_z: i32,
 ) -> Result<Option<MapBiomeHit>, String> {
-    let world = world_root(&version_name, &world_name)?;
-    validate_dimension(&world, &dimension)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        find_biome(&world, &dimension, max_y, &biome, center_x, center_z)
+    tauri::async_runtime::spawn_blocking(move || -> Result<Option<MapBiomeHit>, String> {
+        let world = world_root(&version_name, &world_name)?;
+        validate_dimension(&world, &dimension)?;
+        Ok(find_biome(
+            &world, &dimension, max_y, &biome, center_x, center_z,
+        ))
     })
     .await
     .map_err(common_err_ctx_key!(
         "errors.map.biomeSearchFailed",
         "群系搜索任务异常"
-    ))
+    ))?
 }
 
 #[tauri::command]
@@ -352,14 +358,16 @@ pub async fn find_map_folder_biome(
     center_x: i32,
     center_z: i32,
 ) -> Result<Option<MapBiomeHit>, String> {
-    let world = folder_root(&root)?;
-    validate_dimension(&world, &dimension)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        find_biome(&world, &dimension, max_y, &biome, center_x, center_z)
+    tauri::async_runtime::spawn_blocking(move || -> Result<Option<MapBiomeHit>, String> {
+        let world = folder_root(&root)?;
+        validate_dimension(&world, &dimension)?;
+        Ok(find_biome(
+            &world, &dimension, max_y, &biome, center_x, center_z,
+        ))
     })
     .await
     .map_err(common_err_ctx_key!(
         "errors.map.biomeSearchFailed",
         "群系搜索任务异常"
-    ))
+    ))?
 }

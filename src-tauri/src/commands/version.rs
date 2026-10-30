@@ -81,27 +81,31 @@ pub async fn get_world_icon(version_name: String, world_name: String) -> Option<
 
 /// 列出版本下资源目录（材质包/数据包/光影包/mod）中的文件，按名称排序；`kind` 白名单：resourcepacks / datapacks / shaderpacks / mods。
 #[tauri::command]
-pub fn list_resource_files(version_name: String, kind: String) -> Vec<ResourceFile> {
-    if !matches!(
-        kind.as_str(),
-        "resourcepacks" | "datapacks" | "shaderpacks" | "mods"
-    ) {
-        return Vec::new();
-    }
-    let Ok(vdir) = version_dir_path(&version_name) else {
-        return Vec::new();
-    };
-    let dir = vdir.join(&kind);
-    let mut files: Vec<ResourceFile> = util::dir_entries(&dir, false)
-        .into_iter()
-        .map(|(name, size, last_modified)| ResourceFile {
-            name,
-            size,
-            last_modified,
-        })
-        .collect();
-    files.sort_by(|a, b| a.name.cmp(&b.name));
-    files
+pub async fn list_resource_files(version_name: String, kind: String) -> Vec<ResourceFile> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !matches!(
+            kind.as_str(),
+            "resourcepacks" | "datapacks" | "shaderpacks" | "mods"
+        ) {
+            return Vec::new();
+        }
+        let Ok(vdir) = version_dir_path(&version_name) else {
+            return Vec::new();
+        };
+        let dir = vdir.join(&kind);
+        let mut files: Vec<ResourceFile> = util::dir_entries(&dir, false)
+            .into_iter()
+            .map(|(name, size, last_modified)| ResourceFile {
+                name,
+                size,
+                last_modified,
+            })
+            .collect();
+        files.sort_by(|a, b| a.name.cmp(&b.name));
+        files
+    })
+    .await
+    .unwrap_or_default()
 }
 
 /// 资源目录（材质包/数据包/光影包）的 .zip 详细列表：sha1 → Modrinth 识别，未命中/网络失败仅本地信息（network_error 置位）；`kind` 白名单：resourcepacks / datapacks / shaderpacks。
