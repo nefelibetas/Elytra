@@ -95,10 +95,13 @@ export async function loadWorlds(versionName: string) {
   }
 }
 
-// ── 存档列表实时性：轮询自动反映游戏运行中新建/删除的存档 ──
+// ── 存档列表实时性：目录事件为主，轮询降级为兜底 ──
 
 let worldsPollTimer: number | null = null;
 let worldsPollVersion = "";
+
+/** 兜底轮询：notify 初始化失败只 eprintln（watch.rs），事件丢失时靠它自愈。 */
+const WORLDS_FALLBACK_POLL_MS = 30_000;
 
 /** 静默刷新：不置 loading（列表不闪烁）；内容一致时不更新；失败保留旧列表，下轮轮询自愈。 */
 async function refreshWorldsSilent(versionName: string) {
@@ -119,7 +122,7 @@ export function startWorldsLivePolling(versionName: string) {
 	worldsPollTimer = window.setInterval(() => {
 		if (document.visibilityState !== "visible" || worldsLoading.value) return;
 		void refreshWorldsSilent(versionName);
-	}, 3000);
+	}, WORLDS_FALLBACK_POLL_MS);
 }
 
 export function stopWorldsLivePolling() {
@@ -132,21 +135,39 @@ export function stopWorldsLivePolling() {
 
 // ── 版本目录变化事件（后端非递归监听聚焦版本的一级资源子目录）──
 
-let dirWatchReady = false;
-/** 当前关注的版本（页面挂载时设置；事件按此过滤，避免刷新非当前版本）。 */
-let watchedVersion = "";
+/** 监听器全局注册一次；事件按当前已加载的版本过滤，旧版本事件直接丢弃。 */
+let dirEventsReady = false;
+/** 不可见期间收到过匹配事件：恢复可见时补一次刷新。 */
+let dirEventsStale = false;
 
-/** 聚焦版本目录：切换后端监听目标 + 订阅资源子目录变化（幂等；页面 onMounted 调用）。 */
-export function watchVersionDir(version: string) {
-	watchedVersion = version;
-	void invoke("set_watched_version", { version: version || null });
-	if (dirWatchReady || !version) return;
-	dirWatchReady = true;
+export function ensureVersionDirEvents() {
+	if (dirEventsReady) return;
+	dirEventsReady = true;
 	void listen<VersionDirChanged>(VERSION_DIR_CHANGED, (ev) => {
-		if (ev.payload.version !== watchedVersion || document.visibilityState !== "visible") return;
-		if (ev.payload.kinds.includes("saves")) void refreshWorldsSilent(watchedVersion);
-		if (ev.payload.kinds.includes("mods")) void loadMods(watchedVersion);
+		const savesMatch =
+			ev.payload.kinds.includes("saves") && ev.payload.version === worldsLoadedFor.value;
+		const modsMatch =
+			ev.payload.kinds.includes("mods") && ev.payload.version === modsLoadedFor.value;
+		if (!savesMatch && !modsMatch) return;
+		if (document.visibilityState !== "visible") {
+			dirEventsStale = true;
+			return;
+		}
+		if (savesMatch) void refreshWorldsSilent(ev.payload.version);
+		if (modsMatch) void loadMods(ev.payload.version);
 	});
+	document.addEventListener("visibilitychange", () => {
+		if (document.visibilityState !== "visible" || !dirEventsStale) return;
+		dirEventsStale = false;
+		if (worldsLoadedFor.value) void refreshWorldsSilent(worldsLoadedFor.value);
+		if (modsLoadedFor.value) void loadMods(modsLoadedFor.value);
+	});
+}
+
+/** 聚焦版本目录：切换后端监听目标；事件监听由 ensureVersionDirEvents 统一注册。 */
+export function watchVersionDir(version: string) {
+	ensureVersionDirEvents();
+	void invoke("set_watched_version", { version: version || null });
 }
 
 watch(worlds, list => {

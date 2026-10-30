@@ -11,6 +11,7 @@ import { startMemoryMonitor } from "./store/app/memory";
 import { ensureConfigRecoveryWatch } from "./store/config/configRecovery";
 import { ensureAutoTasksListen, lastAutoTasksFinished } from "./store/config/autoTasks";
 import { ensureVersionsWatch } from "./store/config/gameDirs";
+import { ensureVersionDirEvents } from "./store/task/versionDetail";
 import { setSelected } from "./store/app/selectedVersion";
 import { toasts, dismissToast, pauseToast, resumeToast, showToast } from "./utils/toast";
 import { moveFocus, clearFocusRing, focusDialog, restoreFocus } from "./utils/focusNav";
@@ -180,6 +181,8 @@ onMounted(() => {
   ensureAutoTasksListen();
   // 游戏目录变化事件（后端监听激活目录 versions/ → 版本列表自动刷新）
   void ensureVersionsWatch();
+  // 版本目录事件（存档/Mod 变化）：全局注册一次，页面只切换后端聚焦
+  ensureVersionDirEvents();
 });
 
 onUnmounted(() => {
