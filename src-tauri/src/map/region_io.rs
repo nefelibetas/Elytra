@@ -17,8 +17,7 @@ use std::fmt;
 use std::fs;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::OnceLock;
+use std::sync::{Arc, LazyLock};
 use std::time::UNIX_EPOCH;
 
 use fastanvil::biome::Biome;
@@ -29,6 +28,7 @@ use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
 use super::chunk_pos::ChunkPos;
+use super::lru_cache::{CacheKey, LruCache};
 
 /// 区块 palette 中的方块状态。1.18–1.21 为 `{Name, Properties}`；26.x 起无属性
 /// 方块用纯字符串，同 section 一旦出现带属性方块，无属性条目退化为无名子键复合
@@ -200,6 +200,31 @@ impl ChunkData {
             Self::Legacy(c) => c.biome(x, y, z),
         }
     }
+}
+
+/// 悬停 chunk 缓存 key：path + mtime + chunk 坐标。
+#[derive(PartialEq)]
+struct ChunkKey {
+    path: PathBuf,
+    mtime: u64,
+    cx: u8,
+    cz: u8,
+}
+
+impl CacheKey for ChunkKey {
+    fn same_slot(&self, other: &Self) -> bool {
+        self.path == other.path && self.cx == other.cx && self.cz == other.cz
+    }
+}
+
+/// 8MB ≈ 16–32 个解压 chunk（按 raw_nbt × 2 估算）；只由悬停填充，
+/// 不从 parse_region 批量写入，避免渲染一次撑爆。
+const MAX_CACHE_CHUNK_BYTES: usize = 8 * 1024 * 1024;
+static CHUNK_CACHE: LazyLock<Mutex<LruCache<ChunkKey, Arc<ParsedChunk>>>> =
+    LazyLock::new(|| Mutex::new(LruCache::new(MAX_CACHE_CHUNK_BYTES)));
+
+fn chunk_cache() -> &'static Mutex<LruCache<ChunkKey, Arc<ParsedChunk>>> {
+    &CHUNK_CACHE
 }
 
 /// region 文件内单 chunk 解析结果。
@@ -506,11 +531,16 @@ pub fn parse_region(path: &Path) -> Vec<Option<ParsedChunk>> {
 }
 
 /// 解析 region 内单个 chunk：解压 → NBT 原始字节 + fastanvil 三代回退解析。
+#[cfg(test)]
+static PARSE_ONE_CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 fn parse_one(
     reader: &mut RegionReader<'_, JavaWrcDecompression>,
     x: u8,
     z: u8,
 ) -> Option<ParsedChunk> {
+    #[cfg(test)]
+    PARSE_ONE_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let raw = reader.chunk(x, z).ok()??;
     // fastanvil 0.32 的 Block 反序列化只认 `{Name, ...}`，26.x 的字符串 palette
     // 一定解析失败，故先按本模块模型解析；失败再回退旧格式三级回退。
@@ -534,6 +564,41 @@ pub fn region_file_for(world_path: &Path, dimension: &str, bx: i32, bz: i32) -> 
         .join(format!("r.{rx}.{rz}.mca"))
 }
 
+/// 按 (region 路径, mtime, chunk 坐标) 缓存解析结果；锁外解析并双检。
+fn cached_parsed_chunk(region_file: &Path, cx: u8, cz: u8) -> Option<Arc<ParsedChunk>> {
+    let meta = fs::metadata(region_file).ok()?;
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let key = ChunkKey {
+        path: region_file.to_path_buf(),
+        mtime,
+        cx,
+        cz,
+    };
+
+    let hit = chunk_cache().lock().get(&key);
+    if let Some(chunk) = hit {
+        return Some(chunk);
+    }
+
+    let data = cached_region_bytes(region_file)?;
+    let mut reader =
+        RegionReader::new_with_decompression(data.as_slice(), JavaWrcDecompression).ok()?;
+    let parsed = Arc::new(parse_one(&mut reader, cx, cz)?);
+
+    let mut cache = chunk_cache().lock();
+    if let Some(existing) = cache.get(&key) {
+        return Some(existing);
+    }
+    let bytes = parsed.raw_nbt.len().saturating_mul(2);
+    cache.insert(key, Arc::clone(&parsed), bytes);
+    Some(parsed)
+}
+
 /// 指定方块坐标的表面方块（自 `max_y` 向下首个非空气名）+ 所在群系原始 id。
 /// 群系经 chunk NBT biome palette 直读（fastanvil 会把 26.x/Mod 群系折叠为
 /// Unknown，这里绕开）：返回完整 id 形如 "minecraft:plains"。region 缺失/
@@ -544,13 +609,10 @@ pub fn surface_info(
     bz: i32,
     max_y: isize,
 ) -> Option<(String, Option<String>, i32)> {
-    let data = cached_region_bytes(region_file)?;
-    let mut reader =
-        RegionReader::new_with_decompression(data.as_slice(), JavaWrcDecompression).ok()?;
-
     let cx = bx.rem_euclid(512) / 16;
     let cz = bz.rem_euclid(512) / 16;
-    let parsed = parse_one(&mut reader, cx as u8, cz as u8)?;
+    let parsed = cached_parsed_chunk(region_file, cx as u8, cz as u8)?;
+
     let y_range = parsed.chunk.y_range();
     if y_range.is_empty() {
         return None;
@@ -637,74 +699,30 @@ fn biome_id_at(raw: &[u8], x: usize, z: usize, y: isize) -> Option<String> {
     None
 }
 
-const MAX_CACHED_REGION_BYTES: usize = 64 * 1024 * 1024;
-
-struct RegionEntry {
+/// region 原始字节缓存 key：path + mtime + len。
+#[derive(PartialEq)]
+struct RegionKey {
     path: PathBuf,
     mtime: u64,
     len: u64,
-    data: Arc<Vec<u8>>,
 }
 
-struct RegionCache {
-    max_bytes: usize,
-    total: usize,
-    entries: Vec<RegionEntry>,
-}
-
-impl RegionCache {
-    fn new(max_bytes: usize) -> Self {
-        RegionCache {
-            max_bytes,
-            total: 0,
-            entries: Vec::new(),
-        }
-    }
-
-    /// 最近使用返回到队首
-    fn get(&mut self, path: &Path, mtime: u64, len: u64) -> Option<Arc<Vec<u8>>> {
-        let pos = self
-            .entries
-            .iter()
-            .position(|e| e.path.as_path() == path && e.mtime == mtime && e.len == len)?;
-        let entry = self.entries.remove(pos);
-        let data = Arc::clone(&entry.data);
-        self.entries.insert(0, entry);
-        Some(data)
-    }
-
-    /// 旧路径先删除; 数据入队首; 从队尾开始淘汰缓存
-    fn insert(&mut self, path: PathBuf, mtime: u64, len: u64, data: Arc<Vec<u8>>) {
-        let existing = self.entries.iter().position(|e| e.path == path);
-        if let Some(pos) = existing {
-            let old = self.entries.remove(pos);
-            self.total = self.total.saturating_sub(old.data.len());
-        }
-        self.total += data.len();
-        self.entries.insert(
-            0,
-            RegionEntry {
-                path,
-                mtime,
-                len,
-                data,
-            },
-        );
-        // 至少保留一条
-        while self.total > self.max_bytes && self.entries.len() > 1 {
-            let Some(old) = self.entries.pop() else { break };
-            self.total = self.total.saturating_sub(old.data.len());
-        }
+impl CacheKey for RegionKey {
+    fn same_slot(&self, other: &Self) -> bool {
+        self.path == other.path
     }
 }
 
-static REGION_CACHE: OnceLock<Mutex<RegionCache>> = OnceLock::new();
+/// 64MB ≈ 1–6 个典型 region（10–50MB）；按字节而非条目数。
+const MAX_CACHED_REGION_BYTES: usize = 64 * 1024 * 1024;
+static REGION_CACHE: LazyLock<Mutex<LruCache<RegionKey, Arc<Vec<u8>>>>> =
+    LazyLock::new(|| Mutex::new(LruCache::new(MAX_CACHED_REGION_BYTES)));
 
 #[cfg(test)]
 static REGION_DISK_READS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-fn region_cache() -> &'static Mutex<RegionCache> {
-    REGION_CACHE.get_or_init(|| Mutex::new(RegionCache::new(MAX_CACHED_REGION_BYTES)))
+fn region_cache() -> &'static Mutex<LruCache<RegionKey, Arc<Vec<u8>>>> {
+    &REGION_CACHE
 }
 
 /// 按路径、mtime、长度缓存region原始字节；锁外读盘，读失败不缓存。
@@ -718,8 +736,13 @@ fn cached_region_bytes(path: &Path) -> Option<Arc<Vec<u8>>> {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let len = meta.len();
+    let key = RegionKey {
+        path: path.to_path_buf(),
+        mtime,
+        len,
+    };
 
-    let hit = region_cache().lock().get(path, mtime, len);
+    let hit = region_cache().lock().get(&key);
     if let Some(data) = hit {
         return Some(data);
     }
@@ -731,10 +754,10 @@ fn cached_region_bytes(path: &Path) -> Option<Arc<Vec<u8>>> {
     }
     // 双检
     let mut cache = region_cache().lock();
-    if let Some(existing) = cache.get(path, mtime, len) {
+    if let Some(existing) = cache.get(&key) {
         return Some(existing);
     }
-    cache.insert(path.to_path_buf(), mtime, len, Arc::clone(&data));
+    cache.insert(key, Arc::clone(&data), data.len());
     Some(data)
 }
 
@@ -808,51 +831,25 @@ mod tests {
     }
 
     #[test]
-    fn region_cache_lru_evict_oldest() {
-        let mut cache = RegionCache::new(8);
-        let (a, b, c) = (Path::new("a.mca"), Path::new("b.mca"), Path::new("c.mca"));
-        let bytes = |n: usize| Arc::new(vec![0u8; n]);
-
-        cache.insert(a.to_path_buf(), 0, 4, bytes(4));
-        cache.insert(b.to_path_buf(), 0, 4, bytes(4));
-        // 此时队列为[a, b]
-        assert!(cache.get(a, 0, 4).is_some(), "a 应在缓存");
-
-        // 淘汰队尾, c插入队头
-        cache.insert(c.to_path_buf(), 0, 4, bytes(4));
-
-        // 此时队列为[c, a]
-        assert!(cache.get(a, 0, 4).is_some(), "a 最近用过，应保留");
-        assert!(cache.get(b, 0, 4).is_none(), "最久未使用的 b 应被淘汰");
-        assert!(cache.get(c, 0, 4).is_some(), "c 刚写入");
-        assert_eq!(cache.total, 8, "淘汰后总字节数应回到上限");
-    }
-
-    #[test]
     fn region_cache_invalidates_on_mtime_change() {
-        let mut cache = RegionCache::new(1024);
-        let p = Path::new("r.0.0.mca");
+        let mut cache = LruCache::new(1024);
+        let key = |mtime: u64, len: u64| RegionKey {
+            path: PathBuf::from("r.0.0.mca"),
+            mtime,
+            len,
+        };
 
-        cache.insert(p.to_path_buf(), 100, 4, Arc::new(vec![1; 4]));
-        assert!(cache.get(p, 100, 4).is_some());
+        cache.insert(key(100, 4), Arc::new(vec![1; 4]), 4);
+        assert!(cache.get(&key(100, 4)).is_some());
+        assert!(cache.get(&key(101, 4)).is_none(), "mtime 变化必须 miss");
+        assert!(cache.get(&key(101, 5)).is_none(), "长度变化也必须 miss");
 
-        assert!(cache.get(p, 101, 4).is_none(), "mtime 变化必须 miss");
-        assert!(cache.get(p, 101, 5).is_none(), "长度变化也必须 miss");
-
-        cache.insert(p.to_path_buf(), 101, 4, Arc::new(vec![2; 4]));
-        assert_eq!(cache.get(p, 101, 4).unwrap().as_slice(), &[2; 4]);
-        assert_eq!(cache.entries.len(), 1, "同路径旧版本必须被替换，不能堆积");
-    }
-
-    #[test]
-    fn region_cache_keeps_single_oversized_entry() {
-        let mut cache = RegionCache::new(4);
-        let p = Path::new("huge.mca");
-
-        cache.insert(p.to_path_buf(), 0, 10, Arc::new(vec![0u8; 10]));
-
-        assert!(cache.get(p, 0, 10).is_some(), "单个超大region不能淘汰自身");
-        assert_eq!(cache.total, 10);
+        cache.insert(key(101, 4), Arc::new(vec![2; 4]), 4);
+        assert_eq!(cache.get(&key(101, 4)).unwrap().as_slice(), &[2; 4]);
+        assert!(
+            cache.get(&key(100, 4)).is_none(),
+            "同路径旧版本必须被替换，不能堆积"
+        );
     }
 
     #[test]
@@ -894,5 +891,93 @@ mod tests {
             .unwrap()
             .set_modified(t)
             .unwrap();
+    }
+
+    fn dummy_chunk(bytes: usize) -> Arc<ParsedChunk> {
+        Arc::new(ParsedChunk {
+            chunk: ChunkData::Modern(ModernChunk {
+                _status: "full".into(),
+                sections: None,
+            }),
+            raw_nbt: vec![0u8; bytes],
+        })
+    }
+
+    fn parse_one_calls() -> usize {
+        PARSE_ONE_CALLS.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[test]
+    fn chunk_cache_keys_by_mtime_and_coords() {
+        let mut cache = LruCache::new(1024);
+        let key = |mtime: u64, cx: u8, cz: u8| ChunkKey {
+            path: PathBuf::from("r.0.0.mca"),
+            mtime,
+            cx,
+            cz,
+        };
+
+        cache.insert(key(1, 0, 0), dummy_chunk(4), 8);
+        assert!(cache.get(&key(1, 0, 0)).is_some());
+        assert!(cache.get(&key(2, 0, 0)).is_none(), "mtime 变化必须 miss");
+        assert!(cache.get(&key(1, 1, 0)).is_none(), "cx 变化必须 miss");
+        assert!(cache.get(&key(1, 0, 1)).is_none(), "cz 变化必须 miss");
+
+        // 同 path+chunk 的新 mtime 应替换旧条目，不能堆积
+        cache.insert(key(2, 0, 0), dummy_chunk(4), 8);
+        assert!(cache.get(&key(1, 0, 0)).is_none());
+        assert!(cache.get(&key(2, 0, 0)).is_some());
+    }
+
+    #[test]
+    fn surface_info_reuses_parsed_chunk() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = crate::map::test_support::write_synthetic_region(dir.path());
+        let before = parse_one_calls();
+
+        let a = surface_info(&path, 0, 0, 319).expect("surface");
+        assert_eq!(a.0, "minecraft:oak_planks");
+        assert_eq!(a.1.as_deref(), Some("minecraft:plains"));
+        assert_eq!(a.2, 79);
+        assert_eq!(parse_one_calls(), before + 1, "首次应解析一次");
+
+        let b = surface_info(&path, 0, 0, 319).expect("surface");
+        assert_eq!(b, a);
+        assert_eq!(parse_one_calls(), before + 1, "同 chunk 命中缓存");
+
+        let c = surface_info(&path, 1, 1, 319).expect("surface");
+        assert_eq!(c.0, "minecraft:oak_planks");
+        assert_eq!(parse_one_calls(), before + 1, "同 chunk 换方块仍命中");
+
+        let d = surface_info(&path, 0, 0, 0).expect("surface");
+        assert_eq!(d.0, "minecraft:stone");
+        assert_eq!(parse_one_calls(), before + 1, "max_y 不参与 chunk 缓存 key");
+    }
+
+    #[test]
+    fn surface_info_invalidates_on_mtime_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = crate::map::test_support::write_synthetic_region(dir.path());
+        surface_info(&path, 0, 0, 319).expect("surface");
+        let before = parse_one_calls();
+
+        set_mtime(
+            &path,
+            std::time::SystemTime::now() + std::time::Duration::from_secs(2),
+        );
+        surface_info(&path, 0, 0, 319).expect("surface");
+        assert_eq!(parse_one_calls(), before + 1, "mtime 变化应重新解析");
+    }
+
+    #[test]
+    fn surface_info_misses_other_chunk() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = crate::map::test_support::write_synthetic_region(dir.path());
+        surface_info(&path, 0, 0, 319).expect("surface");
+        let before = parse_one_calls();
+
+        // chunk (1,0) 未生成：解析一次，返回 None，不写缓存
+        assert!(surface_info(&path, 16, 0, 319).is_none());
+        assert_eq!(parse_one_calls(), before + 1);
     }
 }

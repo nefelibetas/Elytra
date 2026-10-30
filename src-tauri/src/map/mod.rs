@@ -3,6 +3,7 @@
 
 pub mod chunk_pos;
 pub mod folder;
+mod lru_cache;
 pub mod mod_color;
 pub mod region_io;
 pub mod render;
