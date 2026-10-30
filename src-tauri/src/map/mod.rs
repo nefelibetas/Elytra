@@ -9,3 +9,6 @@ pub mod render;
 pub mod search;
 pub mod tile_cache;
 pub mod world_info;
+
+#[cfg(test)]
+pub(crate) mod test_support;

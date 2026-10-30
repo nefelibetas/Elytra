@@ -100,3 +100,37 @@ pub fn find_biome(
     });
     best.map(|(_, hit)| hit)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::map::test_support::write_synthetic_region;
+
+    #[test]
+    fn list_biomes_counts_synthetic_chunk() {
+        let dir = tempfile::tempdir().unwrap();
+        write_synthetic_region(dir.path());
+
+        let got = list_biomes(dir.path(), "", 319);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].biome, "minecraft:plains");
+        assert_eq!(got[0].count, 1);
+    }
+
+    #[test]
+    fn find_biome_returns_chunk_center() {
+        let dir = tempfile::tempdir().unwrap();
+        write_synthetic_region(dir.path());
+
+        let hit = find_biome(dir.path(), "", 319, "plains", 0, 0).expect("应找到 plains");
+        assert_eq!(hit.biome, "minecraft:plains");
+        assert_eq!((hit.x, hit.z), (8, 8), "chunk (0,0) 中心坐标");
+    }
+
+    #[test]
+    fn find_biome_missing_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        write_synthetic_region(dir.path());
+        assert!(find_biome(dir.path(), "", 319, "desert", 0, 0).is_none());
+    }
+}
