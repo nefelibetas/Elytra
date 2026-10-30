@@ -11,7 +11,7 @@
 //!
 //! 采样失败的方块返回 None，由渲染层语义兜底（名字特征近似色）→ 中性灰。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
@@ -113,12 +113,20 @@ const VANILLA_TEMPLATES: &[TemplateDef] = &[
     ("template_glass_pane_post", Some("#pane"), &["#pane"]),
 ];
 
+#[derive(Default)]
+pub struct NamespaceIndex {
+    /// 命名空间 → 属主 jar
+    ns_jar: HashMap<String, Option<PathBuf>>,
+    /// 已扫描jar -> 它包含的命名空间集合
+    jar_namespaces: HashMap<PathBuf, HashSet<String>>,
+}
+
 /// 单实例 Mod 色覆盖层（不可变元数据 + 惰性采样结果）。
 pub struct ModOverlay {
     /// 构建时的 jar 集合指纹（增量失效依据）
     fingerprint: String,
-    /// 命名空间 → 属主 jar
-    ns_jar: HashMap<String, PathBuf>,
+    mods_dir: PathBuf,
+    index: Mutex<NamespaceIndex>,
     /// 已采样方块色：完整方块名（ns:block）→ RGBA
     colors: Mutex<HashMap<String, Rgba>>,
 }
@@ -138,7 +146,7 @@ impl ModOverlay {
     /// 单块采样主入口：blockstates → 模型集合 → 纹理解析 → PNG 平均色。
     fn sample_block(&self, name: &str) -> Option<Rgba> {
         let (ns, block) = name.split_once(':')?;
-        let jar = self.ns_jar.get(ns)?;
+        let jar = self.jar_for_ns(ns)?;
         let mut arc = ZipArchive::new(File::open(jar).ok()?).ok()?;
 
         // blockstates JSON：变体 + multipart 的全部模型引用
@@ -271,6 +279,43 @@ impl ModOverlay {
         let mut bytes = Vec::new();
         arc.by_name(&p).ok()?.read_to_end(&mut bytes).ok()?;
         png_average(&bytes)
+    }
+
+    fn jar_for_ns(&self, ns: &str) -> Option<PathBuf> {
+        let mut index = self.index.lock().unwrap();
+        // 已解析内容
+        if let Some(hit) = index.ns_jar.get(ns) {
+            return hit.clone();
+        }
+        // 从已扫描的jar内查询
+        let found = index
+            .jar_namespaces
+            .iter()
+            .find_map(|(jar, names)| names.contains(ns).then(|| jar.clone()));
+        if let Some(jar) = found {
+            index.ns_jar.insert(ns.to_string(), Some(jar.clone()));
+            return Some(jar);
+        }
+        // 扫描剩余jar;
+        let mut jars: Vec<PathBuf> = std::fs::read_dir(&self.mods_dir)
+            .ok()?
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("jar")))
+            .filter(|p| !index.jar_namespaces.contains_key(p))
+            .collect();
+        jars.sort();
+        for jar in jars {
+            let names = scan_jar_namespaces(&jar);
+            let hit = names.contains(ns);
+            index.jar_namespaces.insert(jar.clone(), names);
+            if hit {
+                index.ns_jar.insert(ns.to_string(), Some(jar.clone()));
+                return Some(jar);
+            }
+        }
+        index.ns_jar.insert(ns.to_string(), None);
+        None
     }
 }
 
@@ -494,36 +539,32 @@ fn fingerprint(mods_dir: &Path) -> String {
     crate::downloader::hash::sha1_hex(desc.as_bytes())
 }
 
-/// 命名空间索引：扫描每个 jar 的中央目录，记录 `assets/<ns>/blockstates/`。
-fn scan_namespaces(mods_dir: &Path) -> HashMap<String, PathBuf> {
-    let mut out = HashMap::new();
-    let Ok(rd) = std::fs::read_dir(mods_dir) else {
+#[cfg(test)]
+static JAR_SCANS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// 扫描单个jar的中央目录, 返回它包含blockstates的命名空间集合。
+fn scan_jar_namespaces(jar: &Path) -> HashSet<String> {
+    #[cfg(test)]
+    JAR_SCANS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut out = HashSet::new();
+    let Ok(file) = File::open(jar) else {
         return out;
     };
-    for e in rd.flatten() {
-        let p = e.path();
-        if !p.extension().is_some_and(|x| x.eq_ignore_ascii_case("jar")) {
-            continue;
-        }
-        let Ok(file) = File::open(&p) else {
-            continue;
-        };
-        let Ok(mut arc) = ZipArchive::new(file) else {
+    let Ok(mut archive) = ZipArchive::new(file) else {
+        return out;
+    };
+    for i in 0..archive.len() {
+        let Ok(entry) = archive.by_index(i) else {
             continue;
         };
-        for i in 0..arc.len() {
-            let Ok(name) = arc.by_index(i).map(|f| f.name().to_string()) else {
-                continue;
-            };
-            let Some(rest) = name.strip_prefix("assets/") else {
-                continue;
-            };
-            let Some((ns, after)) = rest.split_once('/') else {
-                continue;
-            };
-            if after.starts_with("blockstates") && !out.contains_key(ns) {
-                out.insert(ns.to_string(), p.clone());
-            }
+        let Some(rest) = entry.name().strip_prefix("assets/") else {
+            continue;
+        };
+        let Some((ns, after)) = rest.split_once('/') else {
+            continue;
+        };
+        if after.starts_with("blockstates") {
+            out.insert(ns.to_string());
         }
     }
     out
@@ -551,7 +592,8 @@ pub fn overlay_for_world(world_path: &Path) -> Option<Arc<ModOverlay>> {
     }
     let overlay = Arc::new(ModOverlay {
         fingerprint: fp,
-        ns_jar: scan_namespaces(&mods_dir),
+        mods_dir: mods_dir.clone(),
+        index: Mutex::new(NamespaceIndex::default()),
         colors: Mutex::new(HashMap::new()),
     });
     map.insert(mods_dir, (Arc::clone(&overlay), Instant::now()));
@@ -671,6 +713,31 @@ mod tests {
         w.finish().unwrap();
     }
 
+    /// 通用 zip 构造：只写条目名和字节，供 `scan_jar_namespaces` 直接测。
+    fn write_jar(path: &std::path::Path, entries: &[(&str, &[u8])]) {
+        let file = std::fs::File::create(path).unwrap();
+        let mut w = zip::ZipWriter::new(file);
+        let opts = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        for (name, bytes) in entries {
+            w.start_file(*name, opts).unwrap();
+            w.write_all(bytes).unwrap();
+        }
+        w.finish().unwrap();
+    }
+
+    /// 只为命名空间发现构造的 jar：每个 ns 一个 blockstates 条目，不需要模型/贴图。
+    fn write_mod_jar_with_namespaces(path: &std::path::Path, namespaces: &[&str]) {
+        let file = std::fs::File::create(path).unwrap();
+        let mut w = zip::ZipWriter::new(file);
+        let opts = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        for ns in namespaces {
+            w.start_file(format!("assets/{ns}/blockstates/probe.json"), opts)
+                .unwrap();
+            w.write_all(br#"{"variants":{}}"#).unwrap();
+        }
+        w.finish().unwrap();
+    }
+
     /// 标准假实例布局：<root>/versions/Inst/mods + <root>/versions/Inst/saves/w
     struct Fixture {
         root: tempfile::TempDir,
@@ -701,6 +768,10 @@ mod tests {
                 .join("saves")
                 .join("w")
         }
+    }
+
+    fn jar_scans() -> usize {
+        JAR_SCANS.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     #[test]
@@ -759,5 +830,104 @@ mod tests {
         overlays().lock().unwrap().clear();
         let ov2 = overlay_for_world(&fx.world_path()).unwrap();
         assert_eq!(ov2.fingerprint, fp2);
+        let before_scan = jar_scans();
+        ov2.color("mymod:ruby_block").expect("取色");
+        assert!(
+            jar_scans() > before_scan,
+            "重建后的索引为空，首次取色应重新扫描"
+        );
+    }
+
+    #[test]
+    fn duplicate_namespace_picks_sorted_first_jar() {
+        let fx = Fixture::new();
+        let mods = fx.root.path().join("versions").join("Inst").join("mods");
+        // a.jar / b.jar 都声明 mymod；fixture 里先创建的 mymod.jar 也在
+        write_mod_jar_with_namespaces(&mods.join("a.jar"), &["mymod"]);
+        write_mod_jar_with_namespaces(&mods.join("b.jar"), &["mymod"]);
+
+        let ov = overlay_for_world(&fx.world_path()).unwrap();
+        let jar = ov.jar_for_ns("mymod").expect("应解析到属主 jar");
+        assert_eq!(
+            jar.file_name().unwrap(),
+            "a.jar",
+            "按路径排序后第一个 jar 胜出"
+        );
+    }
+
+    #[test]
+    fn scan_jar_namespaces_collects_only_blockstates() {
+        let dir = tempfile::tempdir().unwrap();
+        let jar = dir.path().join("x.jar");
+        write_jar(
+            &jar,
+            &[
+                ("assets/mymod/blockstates/a.json", b"{}".as_slice()),
+                ("assets/other/blockstates/b.json", b"{}".as_slice()),
+                ("assets/mymod/models/block/a.json", b"{}".as_slice()),
+                ("assets/readme.txt", b"".as_slice()),
+            ],
+        );
+
+        assert_eq!(
+            scan_jar_namespaces(&jar),
+            HashSet::from(["mymod".to_string(), "other".to_string()])
+        );
+    }
+
+    #[test]
+    fn scan_jar_namespaces_broken_zip_is_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let jar = dir.path().join("bad.jar");
+        std::fs::write(&jar, b"not a zip").unwrap();
+        assert!(scan_jar_namespaces(&jar).is_empty());
+    }
+
+    #[test]
+    fn overlay_scans_jars_lazily() {
+        let fx = Fixture::new();
+        let before = jar_scans();
+
+        let ov = overlay_for_world(&fx.world_path()).unwrap();
+        assert_eq!(jar_scans(), before, "构建覆盖层不应打开任何 jar");
+
+        ov.color("mymod:ruby_block").expect("取色");
+        assert_eq!(jar_scans(), before + 1, "首次取色只扫 mymod.jar");
+
+        ov.color("mymod:stoneish").expect("取色");
+        assert_eq!(jar_scans(), before + 1, "同命名空间命中缓存，不再扫描");
+    }
+
+    #[test]
+    fn unknown_namespace_is_negatively_cached() {
+        let fx = Fixture::new();
+        let ov = overlay_for_world(&fx.world_path()).unwrap();
+        let before = jar_scans();
+
+        assert_eq!(ov.color("ghost:block"), None);
+        assert_eq!(jar_scans(), before + 1, "未知 ns 扫描唯一 jar 一次");
+
+        assert_eq!(ov.color("ghost:block"), None);
+        assert_eq!(jar_scans(), before + 1, "负缓存命中，不再扫描");
+    }
+
+    #[test]
+    fn scanned_jar_namespaces_are_reused() {
+        let fx = Fixture::new();
+        // 追加一个同时提供 mymod 与 extra 的 jar，或让现有 fixture 的 jar 多一个 ns
+        let mods = fx.root.path().join("versions/Inst/mods");
+        write_mod_jar_with_namespaces(&mods.join("both.jar"), &["mymod", "extra"]);
+        let ov = overlay_for_world(&fx.world_path()).unwrap();
+        let before = jar_scans();
+
+        assert!(ov.jar_for_ns("mymod").is_some());
+        let after_first = jar_scans();
+        assert!(ov.jar_for_ns("extra").is_some());
+        assert_eq!(
+            jar_scans(),
+            after_first,
+            "同一 jar 的第二个 ns 直接命中集合"
+        );
+        assert!(after_first > before);
     }
 }
