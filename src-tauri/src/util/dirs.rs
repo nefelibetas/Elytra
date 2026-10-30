@@ -1,13 +1,21 @@
 //! 配置 / 数据 / 游戏目录基准（平台感知）。
 
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use crate::constants;
+
+/// 配置目录在进程生命周期内不变；缓存避免每次 `current_exe()` 系统调用。
+static CONFIG_DIR: LazyLock<PathBuf> = LazyLock::new(compute_config_dir);
 
 /// 配置目录（Settings.toml / secrets.bin / tasks.db / 日志基准）：三端统一走平台用户数据目录
 /// （Windows `%APPDATA%\Elytra`、macOS `~/Library/Application Support/Elytra`、Linux `$XDG_DATA_HOME/Elytra`）；
 /// exe 旁在只读安装位置不可写、多用户共用会因 `secrets.bin` 存 token 而互相污染；dev / cargo test 仍走 exe 旁隔离。
 pub fn config_dir() -> PathBuf {
+    CONFIG_DIR.clone()
+}
+
+fn compute_config_dir() -> PathBuf {
     if is_dev_runtime() {
         return exe_dir().join(constants::CONFIG_DIR);
     }

@@ -120,10 +120,9 @@ fn evict() {
         if path.extension().is_none_or(|e| e != "json") {
             continue;
         }
-        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-        let fetched = entry
-            .metadata()
-            .ok()
+        let meta = entry.metadata().ok();
+        let size = meta.as_ref().map_or(0, |m| m.len());
+        let fetched = meta
             .and_then(|m| m.modified().ok())
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs())

@@ -32,10 +32,19 @@ pub struct ResourceFile {
 }
 
 #[tauri::command]
-pub fn get_instance_mod_target(version_dir_name: String) -> Result<InstanceModTarget, String> {
-    let vdir = version_dir_path(&version_dir_name)?;
-    let (mc_version, loader, _) = resolve_version_meta(&vdir, &version_dir_name);
-    Ok(InstanceModTarget { mc_version, loader })
+pub async fn get_instance_mod_target(
+    version_dir_name: String,
+) -> Result<InstanceModTarget, String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<InstanceModTarget, String> {
+        let vdir = version_dir_path(&version_dir_name)?;
+        let (mc_version, loader, _) = resolve_version_meta(&vdir, &version_dir_name);
+        Ok(InstanceModTarget { mc_version, loader })
+    })
+    .await
+    .map_err(common_err_ctx_key!(
+        "errors.version.read",
+        "读取版本信息失败"
+    ))?
 }
 
 #[tauri::command]
@@ -201,39 +210,55 @@ pub struct VersionServer {
 }
 
 #[tauri::command]
-pub fn get_version_server(version_name: String) -> VersionServer {
-    let Ok(section) = version_server_section(&version_name) else {
-        return VersionServer::default();
-    };
-    crate::persist::read(&section).unwrap_or_default()
+pub async fn get_version_server(version_name: String) -> VersionServer {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Ok(section) = version_server_section(&version_name) else {
+            return VersionServer::default();
+        };
+        crate::persist::read(&section).unwrap_or_default()
+    })
+    .await
+    .unwrap_or_default()
 }
 
 #[tauri::command]
-pub fn save_version_server(
+pub async fn save_version_server(
     version_name: String,
     server: Option<String>,
     port: Option<u16>,
 ) -> Result<(), String> {
-    let section = version_server_section(&version_name)?;
-    let cfg = VersionServer {
-        server: server.filter(|s| !s.trim().is_empty()),
-        port,
-    };
-    crate::persist::save(&section, &cfg)
-        .map_err(common_err_ctx_key!("errors.config.write", "保存失败"))
+    tauri::async_runtime::spawn_blocking(move || {
+        let section = version_server_section(&version_name)?;
+        let cfg = VersionServer {
+            server: server.filter(|s| !s.trim().is_empty()),
+            port,
+        };
+        crate::persist::save(&section, &cfg)
+            .map_err(common_err_ctx_key!("errors.config.write", "保存失败"))
+    })
+    .await
+    .map_err(common_err_ctx_key!("errors.config.write", "保存失败"))?
 }
 
 #[tauri::command]
-pub fn delete_mod_file(version_name: String, file_name: String) -> Result<(), String> {
-    let vdir = version_dir_path(&version_name)?;
-    updates::delete_mod_file(&vdir.join("mods"), &file_name)
+pub async fn delete_mod_file(version_name: String, file_name: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let vdir = version_dir_path(&version_name)?;
+        updates::delete_mod_file(&vdir.join("mods"), &file_name)
+    })
+    .await
+    .map_err(common_err_ctx_key!("errors.unknown", "操作失败，请重试"))?
 }
 
 /// 切换 mods 目录下单个 mod 文件的启用/禁用状态（重命名 .jar → .jar.disabled，扫描自动隐藏）。
 #[tauri::command]
-pub fn toggle_mod_file(version_name: String, file_name: String) -> Result<bool, String> {
-    let vdir = version_dir_path(&version_name)?;
-    updates::toggle_mod_file(&vdir.join("mods"), &file_name)
+pub async fn toggle_mod_file(version_name: String, file_name: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let vdir = version_dir_path(&version_name)?;
+        updates::toggle_mod_file(&vdir.join("mods"), &file_name)
+    })
+    .await
+    .map_err(common_err_ctx_key!("errors.unknown", "操作失败，请重试"))?
 }
 
 /// 导出结果（前端展示匹配/打包数量；MRPACK 的 bundled 暂为 0）。
