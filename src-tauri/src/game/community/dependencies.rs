@@ -1,10 +1,10 @@
 //! 前置 Mod 解析：从主 Mod 版本出发递归展开 required/optional 依赖，按目标实例的 MC/loader
 //! 选兼容版本；`visited` 去重与去环，节点上限 512。
 
+use futures_util::stream::{self, StreamExt};
+use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
-
-use serde::Serialize;
 
 use super::api::CommunityVersion;
 use super::{curseforge, modrinth};
@@ -13,6 +13,8 @@ use super::{curseforge, modrinth};
 const MAX_DEPENDENCY_NODES: usize = 512;
 /// 候选上限：控制宽依赖树的计划体积；当前选中版本始终保留。
 const MAX_DEPENDENCY_CANDIDATES: usize = 40;
+/// 请求最大并发数量
+const FETCH_CONCURRENCY: usize = 4;
 
 #[derive(Debug, Clone, Serialize, ts_rs::TS)]
 #[ts(export_to = "community/")]
@@ -107,115 +109,158 @@ pub(crate) async fn resolve_mod_dependencies(
     let mut optional_queue: VecDeque<Pending> = VecDeque::new();
     seed_dependencies(root, None, &mut required_queue, &mut optional_queue);
 
-    while let Some(pending) = required_queue
-        .pop_front()
-        .or_else(|| optional_queue.pop_front())
-    {
-        if !visited.insert(pending.project_id.clone()) {
+    loop {
+        // 同层并发：required 队列优先，排空后再处理 optional（与串行 BFS 的队列优先级一致）。
+        let mut batch = Vec::new();
+        let mut overflow = false;
+        {
+            let queue = if required_queue.is_empty() {
+                &mut optional_queue
+            } else {
+                &mut required_queue
+            };
+            while let Some(pending) = queue.pop_front() {
+                if !visited.insert(pending.project_id.clone()) {
+                    continue;
+                }
+                if visited.len() > MAX_DEPENDENCY_NODES {
+                    overflow = true;
+                    break;
+                }
+                batch.push(pending);
+            }
+        }
+        if batch.is_empty() {
+            if overflow {
+                plan.errors.push(keyed_msg!(
+                    "errors.community.dependencyTooLarge",
+                    "依赖链过大，已停止解析"
+                ));
+                break;
+            }
+            if required_queue.is_empty() && optional_queue.is_empty() {
+                break;
+            }
+            // 本层全是 visited 命中的重复节点：换另一个队列继续。
             continue;
         }
-        if visited.len() > MAX_DEPENDENCY_NODES {
+
+        let mut results: Vec<_> = stream::iter(batch.into_iter().enumerate())
+            .map(|(index, pending)| async move {
+                let versions =
+                    fetch_versions(source, &pending.project_id, mc_version, loader).await;
+                (index, pending, versions)
+            })
+            .buffer_unordered(FETCH_CONCURRENCY)
+            .collect()
+            .await;
+        // buffer_unordered 按完成顺序返回；按原下标还原，保证 items/visited 顺序确定。
+        results.sort_by_key(|(index, _, _)| *index);
+
+        for (_, pending, versions) in results {
+            let versions = match versions {
+                Ok(versions) => versions,
+                Err(_) => {
+                    plan.items.push(missing_item(
+                        &pending,
+                        mc_version,
+                        loader,
+                        &keyed_msg!("errors.community.dependencyFetchFailed", "无法获取前置版本"),
+                        &[],
+                    ));
+                    continue;
+                }
+            };
+            let selected = match pick_version(
+                &versions,
+                version_overrides
+                    .get(&pending.project_id)
+                    .map(String::as_str),
+                pending.version_hint.as_deref(),
+                &installed,
+            ) {
+                Ok(version) => version,
+                Err(error) => {
+                    plan.items.push(missing_item(
+                        &pending, mc_version, loader, &error, &versions,
+                    ));
+                    continue;
+                }
+            };
+
+            let filename = selected.filename.clone();
+            let url = selected.download_url.clone();
+            let error = url.is_empty().then(|| {
+                keyed_msg!(
+                    "errors.community.dependencyNoDownloadUrl",
+                    "缺少下载地址（作者可能禁止第三方分发）"
+                )
+            });
+            let (candidates, candidate_total) = build_candidates(&versions, &selected.version_id);
+            let installed_files: Vec<String> = versions
+                .iter()
+                .filter(|version| installed.contains(&version.filename))
+                .map(|version| version.filename.clone())
+                .collect();
+            let installed_version_label = versions
+                .iter()
+                .find(|version| installed.contains(&version.filename))
+                .filter(|version| version.version_id != selected.version_id)
+                .map(|version| version.version_number.clone());
+            plan.items.push(ModDependencyItem {
+                project_id: pending.project_id.clone(),
+                version_id: selected.version_id.clone(),
+                name: selected.filename.clone(),
+                version_label: selected.version_number.clone(),
+                loader: loader.to_string(),
+                game_version: mc_version.to_string(),
+                url,
+                filename: filename.clone(),
+                relation: pending.relation.clone(),
+                root_optional: pending.root_optional.clone(),
+                installed: installed.contains(&filename),
+                installed_version_label,
+                installed_files,
+                error,
+                candidates,
+                candidate_total,
+            });
+            if plan.items.last().is_some_and(|item| item.error.is_some()) {
+                continue;
+            }
+
+            let child_optional_root = pending.root_optional.as_ref();
+            for dependency in &selected.dependencies {
+                let relation = dependency.relation.as_str();
+                if relation != "required" && relation != "optional" {
+                    continue;
+                }
+                let is_optional_root = relation == "optional";
+                let root = if is_optional_root {
+                    Some(dependency.project_id.clone())
+                } else {
+                    child_optional_root.cloned()
+                };
+                let pending = Pending {
+                    project_id: dependency.project_id.clone(),
+                    version_hint: dependency.version_id.clone(),
+                    relation: relation.to_string(),
+                    root_optional: root,
+                };
+                if child_optional_root.is_some() || is_optional_root {
+                    optional_queue.push_back(pending);
+                } else {
+                    required_queue.push_back(pending);
+                }
+            }
+        }
+
+        if overflow {
             plan.errors.push(keyed_msg!(
                 "errors.community.dependencyTooLarge",
                 "依赖链过大，已停止解析"
             ));
             break;
-        }
-
-        let versions = match fetch_versions(source, &pending.project_id, mc_version, loader).await {
-            Ok(versions) => versions,
-            Err(_) => {
-                plan.items.push(missing_item(
-                    &pending,
-                    mc_version,
-                    loader,
-                    &keyed_msg!("errors.community.dependencyFetchFailed", "无法获取前置版本"),
-                    &[],
-                ));
-                continue;
-            }
-        };
-        let selected = match pick_version(
-            &versions,
-            version_overrides
-                .get(&pending.project_id)
-                .map(String::as_str),
-            pending.version_hint.as_deref(),
-            &installed,
-        ) {
-            Ok(version) => version,
-            Err(error) => {
-                plan.items.push(missing_item(
-                    &pending, mc_version, loader, &error, &versions,
-                ));
-                continue;
-            }
-        };
-
-        let filename = selected.filename.clone();
-        let url = selected.download_url.clone();
-        let error = url.is_empty().then(|| {
-            keyed_msg!(
-                "errors.community.dependencyNoDownloadUrl",
-                "缺少下载地址（作者可能禁止第三方分发）"
-            )
-        });
-        let (candidates, candidate_total) = build_candidates(&versions, &selected.version_id);
-        let installed_files: Vec<String> = versions
-            .iter()
-            .filter(|version| installed.contains(&version.filename))
-            .map(|version| version.filename.clone())
-            .collect();
-        let installed_version_label = versions
-            .iter()
-            .find(|version| installed.contains(&version.filename))
-            .filter(|version| version.version_id != selected.version_id)
-            .map(|version| version.version_number.clone());
-        plan.items.push(ModDependencyItem {
-            project_id: pending.project_id.clone(),
-            version_id: selected.version_id.clone(),
-            name: selected.filename.clone(),
-            version_label: selected.version_number.clone(),
-            loader: loader.to_string(),
-            game_version: mc_version.to_string(),
-            url,
-            filename: filename.clone(),
-            relation: pending.relation.clone(),
-            root_optional: pending.root_optional.clone(),
-            installed: installed.contains(&filename),
-            installed_version_label,
-            installed_files,
-            error,
-            candidates,
-            candidate_total,
-        });
-        if plan.items.last().is_some_and(|item| item.error.is_some()) {
-            continue;
-        }
-
-        let child_optional_root = pending.root_optional.as_ref();
-        for dependency in &selected.dependencies {
-            let relation = dependency.relation.as_str();
-            if relation != "required" && relation != "optional" {
-                continue;
-            }
-            let is_optional_root = relation == "optional";
-            let root = if is_optional_root {
-                Some(dependency.project_id.clone())
-            } else {
-                child_optional_root.cloned()
-            };
-            let pending = Pending {
-                project_id: dependency.project_id.clone(),
-                version_hint: dependency.version_id.clone(),
-                relation: relation.to_string(),
-                root_optional: root,
-            };
-            if child_optional_root.is_some() || is_optional_root {
-                optional_queue.push_back(pending);
-            } else {
-                required_queue.push_back(pending);
-            }
         }
     }
 
