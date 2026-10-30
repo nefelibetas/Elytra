@@ -618,7 +618,7 @@ mod tests {
             -64..320,
             "section 跨度应换算为世界 Y"
         );
-        assert!(!first.raw_nbt.is_empty());
+        assert!(first.raw_nbt.is_none(), "渲染路径不应保留 chunk raw NBT");
 
         // top-down 渲染：最高不透明方块是 section y=4（世界 y 64..79）的 oak_planks，
         // 16×16 全为 plank 色

@@ -230,8 +230,8 @@ fn chunk_cache() -> &'static Mutex<LruCache<ChunkKey, Arc<ParsedChunk>>> {
 /// region 文件内单 chunk 解析结果。
 pub(crate) struct ParsedChunk {
     pub(crate) chunk: ChunkData,
-    /// 原始 NBT 字节（未解析快照；区块复制通道直接用，避免二次解压）
-    pub(crate) raw_nbt: Vec<u8>,
+    /// 原始 NBT 字节；仅搜索/悬停路径保留，渲染路径为 None（避免整 region 复制）。
+    pub(crate) raw_nbt: Option<Vec<u8>>,
 }
 
 impl ParsedChunk {
@@ -242,12 +242,14 @@ impl ParsedChunk {
             return None;
         }
         let top = (range.end - 1).min(max_y);
-        for y in [top, top.min(63), range.start] {
-            if y < range.start {
-                continue;
-            }
-            if let Some(id) = biome_id_at(&self.raw_nbt, 8, 8, y) {
-                return Some(id);
+        if let Some(raw) = self.raw_nbt.as_deref() {
+            for y in [top, top.min(63), range.start] {
+                if y < range.start {
+                    continue;
+                }
+                if let Some(id) = biome_id_at(raw, 8, 8, y) {
+                    return Some(id);
+                }
             }
         }
         for y in [top, top.min(63), range.start] {
@@ -470,9 +472,18 @@ fn parse_region_name(name: &str) -> Option<(i32, i32)> {
     Some((x, z))
 }
 
-/// 读取单个 region 文件并解析全部已生成 chunk。
+/// 读取单个 region 文件并解析全部已生成 chunk（渲染路径，不保留 raw NBT）。
 /// 单 chunk 损坏只跳过该 chunk（返回 None），不影响其余——渲染容错优先。
 pub fn parse_region(path: &Path) -> Vec<Option<ParsedChunk>> {
+    parse_region_inner(path, false)
+}
+
+/// 同 [`parse_region`]，但保留每个 chunk 的 raw NBT（搜索/群系扫描需要）。
+pub fn parse_region_with_raw(path: &Path) -> Vec<Option<ParsedChunk>> {
+    parse_region_inner(path, true)
+}
+
+fn parse_region_inner(path: &Path, keep_raw: bool) -> Vec<Option<ParsedChunk>> {
     let Some(data) = cached_region_bytes(path) else {
         return Vec::new();
     };
@@ -490,7 +501,7 @@ pub fn parse_region(path: &Path) -> Vec<Option<ParsedChunk>> {
         };
         for i in 0..1024u16 {
             let (cx, cz) = ChunkPos::from_index(i).coords_in_region();
-            out.push(parse_one(&mut reader, cx, cz));
+            out.push(parse_one(&mut reader, cx, cz, keep_raw));
         }
         return out;
     }
@@ -514,7 +525,7 @@ pub fn parse_region(path: &Path) -> Vec<Option<ParsedChunk>> {
                 let mut part = Vec::with_capacity(end - start);
                 for i in start..end {
                     let (cx, cz) = ChunkPos::from_index(i as u16).coords_in_region();
-                    part.push((i, parse_one(&mut reader, cx, cz)));
+                    part.push((i, parse_one(&mut reader, cx, cz, keep_raw)));
                 }
                 part
             }));
@@ -538,6 +549,7 @@ fn parse_one(
     reader: &mut RegionReader<'_, JavaWrcDecompression>,
     x: u8,
     z: u8,
+    keep_raw: bool,
 ) -> Option<ParsedChunk> {
     #[cfg(test)]
     PARSE_ONE_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -551,7 +563,7 @@ fn parse_one(
     };
     Some(ParsedChunk {
         chunk,
-        raw_nbt: raw.to_vec(),
+        raw_nbt: keep_raw.then(|| raw.to_vec()),
     })
 }
 
@@ -588,13 +600,16 @@ fn cached_parsed_chunk(region_file: &Path, cx: u8, cz: u8) -> Option<Arc<ParsedC
     let data = cached_region_bytes(region_file)?;
     let mut reader =
         RegionReader::new_with_decompression(data.as_slice(), JavaWrcDecompression).ok()?;
-    let parsed = Arc::new(parse_one(&mut reader, cx, cz)?);
+    let parsed = Arc::new(parse_one(&mut reader, cx, cz, true)?);
 
     let mut cache = chunk_cache().lock();
     if let Some(existing) = cache.get(&key) {
         return Some(existing);
     }
-    let bytes = parsed.raw_nbt.len().saturating_mul(2);
+    let bytes = parsed
+        .raw_nbt
+        .as_ref()
+        .map_or(0, |raw| raw.len().saturating_mul(2));
     cache.insert(key, Arc::clone(&parsed), bytes);
     Some(parsed)
 }
@@ -629,7 +644,10 @@ pub fn surface_info(
         };
         let name = block.name();
         if name != "minecraft:air" && name != "minecraft:cave_air" {
-            let biome = biome_id_at(&parsed.raw_nbt, x, z, y);
+            let biome = parsed
+                .raw_nbt
+                .as_deref()
+                .and_then(|raw| biome_id_at(raw, x, z, y));
             return Some((name.to_string(), biome, y as i32));
         }
     }
@@ -899,7 +917,7 @@ mod tests {
                 _status: "full".into(),
                 sections: None,
             }),
-            raw_nbt: vec![0u8; bytes],
+            raw_nbt: Some(vec![0u8; bytes]),
         })
     }
 
@@ -927,6 +945,24 @@ mod tests {
         cache.insert(key(2, 0, 0), dummy_chunk(4), 8);
         assert!(cache.get(&key(1, 0, 0)).is_none());
         assert!(cache.get(&key(2, 0, 0)).is_some());
+    }
+
+    #[test]
+    fn parse_region_keeps_raw_only_on_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = crate::map::test_support::write_synthetic_region(dir.path());
+
+        let light = parse_region(&path);
+        assert!(
+            light[0].as_ref().unwrap().raw_nbt.is_none(),
+            "渲染路径不应复制 raw NBT"
+        );
+
+        let raw = parse_region_with_raw(&path);
+        assert!(
+            raw[0].as_ref().unwrap().raw_nbt.is_some(),
+            "搜索路径必须保留 raw NBT"
+        );
     }
 
     #[test]

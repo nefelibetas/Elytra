@@ -6,7 +6,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use super::region_io::{dimension_dir, list_region_files, parse_region};
+use super::region_io::{dimension_dir, list_region_files, parse_region_with_raw};
 
 #[derive(Debug, Clone, Serialize, ts_rs::TS)]
 #[ts(export_to = "map/")]
@@ -37,7 +37,7 @@ where
         let path = dir
             .join("region")
             .join(format!("r.{}.{}.mca", region.x, region.z));
-        for (i, chunk) in parse_region(&path).into_iter().enumerate() {
+        for (i, chunk) in parse_region_with_raw(&path).into_iter().enumerate() {
             let Some(chunk) = chunk else {
                 continue;
             };
