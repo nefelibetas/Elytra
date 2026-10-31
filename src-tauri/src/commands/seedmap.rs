@@ -22,14 +22,14 @@ pub async fn get_seed_map_tile(
     let resolved = seedmap::resolve_version(&version)?;
     let seed = seedmap::parse_seed(&seed)?;
     let cache_path = seedmap::tile_cache_path(&resolved.family, seed, rx, rz);
-    if let Some(png) = seedmap::read_tile(&cache_path) {
-        return Ok(Response::new(png));
-    }
     let family = resolved.family;
     let png = tauri::async_runtime::spawn_blocking(move || {
+        if let Some(png) = seedmap::read_tile(&cache_path) {
+            return Ok::<Vec<u8>, String>(png);
+        }
         let png = seedmap::render_tile(&family, seed, rx, rz)?;
         let _ = seedmap::write_tile_png(&cache_path, &png);
-        Ok::<Vec<u8>, String>(png)
+        Ok(png)
     })
     .await
     .map_err(common_err_ctx_key!(
@@ -40,15 +40,22 @@ pub async fn get_seed_map_tile(
 }
 
 #[tauri::command]
-pub fn get_seed_map_block(
+pub async fn get_seed_map_block(
     seed: String,
     version: String,
     x: i32,
     z: i32,
 ) -> Result<seedmap::SeedMapBlock, String> {
-    let resolved = seedmap::resolve_version(&version)?;
-    let seed = seedmap::parse_seed(&seed)?;
-    seedmap::biome_at(&resolved.family, seed, x, z)
+    tauri::async_runtime::spawn_blocking(move || {
+        let resolved = seedmap::resolve_version(&version)?;
+        let seed = seedmap::parse_seed(&seed)?;
+        seedmap::biome_at(&resolved.family, seed, x, z)
+    })
+    .await
+    .map_err(common_err_ctx_key!(
+        "errors.seedmap.biomeQueryFailed",
+        "群系查询失败"
+    ))?
 }
 
 #[tauri::command]
@@ -112,13 +119,20 @@ pub async fn find_seed_map_slime_chunks(
 }
 
 #[tauri::command]
-pub fn get_seed_map_slime_chunks(
+pub async fn get_seed_map_slime_chunks(
     seed: String,
     version: String,
     rx: i32,
     rz: i32,
 ) -> Result<Vec<seedmap::SeedMapSlimeChunk>, String> {
-    let resolved = seedmap::resolve_version(&version)?;
-    let seed = seedmap::parse_seed(&seed)?;
-    seedmap::slime_chunks(&resolved.family, seed, rx, rz)
+    tauri::async_runtime::spawn_blocking(move || {
+        let resolved = seedmap::resolve_version(&version)?;
+        let seed = seedmap::parse_seed(&seed)?;
+        seedmap::slime_chunks(&resolved.family, seed, rx, rz)
+    })
+    .await
+    .map_err(common_err_ctx_key!(
+        "errors.seedmap.slimeSearchFailed",
+        "史莱姆区块搜索任务异常"
+    ))?
 }

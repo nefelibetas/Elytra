@@ -201,31 +201,44 @@ pub fn list_interrupted() -> Vec<InterruptedJob> {
     let Ok(pool) = pool() else {
         return Vec::new();
     };
-    let rows: Vec<(String, String, i64)> = block_on(async move {
-        let rows = sqlx::query(
-            "SELECT id, name, updated_at FROM install_jobs
-             WHERE status IN ('running', 'interrupted', 'paused')
-             ORDER BY updated_at DESC",
-        )
+    let rows = block_on(async move {
+        sqlx::query(LIST_INTERRUPTED_SQL)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default()
+    });
+    jobs_from_rows(rows)
+}
+
+const LIST_INTERRUPTED_SQL: &str = "SELECT id, name, updated_at FROM install_jobs
+     WHERE status IN ('running', 'interrupted', 'paused')
+     ORDER BY updated_at DESC";
+
+/// 异步查询：命令层直接 await，不在 UI/主线程 block_on。
+/// 连接池由启动期 `task::init()` 预热，此处不会触发阻塞初始化。
+pub async fn list_interrupted_async() -> Vec<InterruptedJob> {
+    let Ok(pool) = pool() else {
+        return Vec::new();
+    };
+    let rows = sqlx::query(LIST_INTERRUPTED_SQL)
         .fetch_all(pool)
         .await
         .unwrap_or_default();
-        rows.into_iter()
-            .map(|r| {
-                (
-                    r.get::<String, _>("id"),
-                    r.get::<String, _>("name"),
-                    r.get::<i64, _>("updated_at"),
-                )
-            })
-            .collect()
-    });
+    jobs_from_rows(rows)
+}
+
+fn jobs_from_rows(rows: Vec<sqlx::sqlite::SqliteRow>) -> Vec<InterruptedJob> {
     rows.into_iter()
-        .map(|(id, name, updated_at)| InterruptedJob {
-            id: id.clone(),
-            name,
-            kind: kind_of(&id).unwrap_or_default(),
-            updated_at,
+        .map(|r| {
+            let id: String = r.get("id");
+            let name: String = r.get("name");
+            let updated_at: i64 = r.get("updated_at");
+            InterruptedJob {
+                kind: kind_of(&id).unwrap_or_default(),
+                id,
+                name,
+                updated_at,
+            }
         })
         .collect()
 }
@@ -344,6 +357,31 @@ mod tests {
             list_interrupted().iter().any(|j| j.id == id),
             "interrupted 快照应可列出供恢复"
         );
+        cleanup(&[&id]);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_interrupted_async_matches_sync() {
+        let id = format!("test_async_list_{}", std::process::id());
+        cleanup(&[&id]);
+        save_snapshot(
+            &id,
+            "异步列表",
+            &JobSpec::Repair {
+                version_dir_name: "26.2".into(),
+            },
+            TaskStatus::Paused,
+        );
+
+        let async_ids: Vec<String> = list_interrupted_async()
+            .await
+            .into_iter()
+            .map(|j| j.id)
+            .collect();
+        let sync_ids: Vec<String> = list_interrupted().into_iter().map(|j| j.id).collect();
+
+        assert_eq!(async_ids, sync_ids, "异步查询应与同步查询返回同一批快照");
+        assert!(async_ids.contains(&id));
         cleanup(&[&id]);
     }
 

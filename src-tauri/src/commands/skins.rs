@@ -4,8 +4,10 @@ use crate::auth::skins::{self, LocalSkinView};
 
 /// 本地皮肤列表（添加时间倒序）。条目含 PNG base64 与绝对路径，供前端一次渲染 3D 衣柜。
 #[tauri::command]
-pub fn list_local_skins() -> Vec<LocalSkinView> {
-    skins::list_views()
+pub async fn list_local_skins() -> Vec<LocalSkinView> {
+    tauri::async_runtime::spawn_blocking(skins::list_views)
+        .await
+        .unwrap_or_default()
 }
 
 /// 保存皮肤到本地衣柜（b64 = PNG 原文 base64；variant = CLASSIC | SLIM；
@@ -27,8 +29,10 @@ pub fn remove_local_skin(id: String) -> Result<Vec<LocalSkinView>, String> {
 }
 
 #[tauri::command]
-pub fn read_local_skin(id: String) -> Result<String, String> {
-    skins::read(&id)
+pub async fn read_local_skin(id: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || skins::read(&id))
+        .await
+        .map_err(common_err_ctx_key!("errors.file.read", "读取皮肤失败"))?
 }
 
 /// 导出皮肤 PNG 到选定路径（仅接受 .png）。

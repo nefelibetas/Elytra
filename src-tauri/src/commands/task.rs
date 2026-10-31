@@ -78,8 +78,8 @@ pub async fn submit_install_jdk(app: AppHandle, major: u32) -> Result<String, St
 }
 
 #[tauri::command]
-pub fn list_interrupted_tasks() -> Vec<store::InterruptedJob> {
-    store::list_interrupted()
+pub async fn list_interrupted_tasks() -> Vec<store::InterruptedJob> {
+    store::list_interrupted_async().await
 }
 
 /// 恢复中断任务：读快照 → 以恢复凭证重新提交（幂等重跑，已下载文件 sha1 命中自动跳过），返回新任务 id。
