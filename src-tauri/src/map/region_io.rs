@@ -235,28 +235,24 @@ pub(crate) struct ParsedChunk {
 }
 
 impl ParsedChunk {
-    /// 区块中心在 `max_y` 以下的表面群系原始 id（1.18+ biome palette 直读）。
+    /// 区块中心在 `max_y` 以下的表面群系原始 id。
+    /// 每层先查 fastanvil（原版群系无需二次 NBT 解析），Unknown（新版本/Mod 群系）
+    /// 再回退 raw palette；不能先整体查 fastanvil，否则会跳过上层的 Mod 群系。
     pub(crate) fn surface_biome(&self, max_y: isize) -> Option<String> {
         let range = self.chunk.y_range();
         if range.is_empty() {
             return None;
         }
         let top = (range.end - 1).min(max_y);
-        if let Some(raw) = self.raw_nbt.as_deref() {
-            for y in [top, top.min(63), range.start] {
-                if y < range.start {
-                    continue;
-                }
-                if let Some(id) = biome_id_at(raw, 8, 8, y) {
-                    return Some(id);
-                }
-            }
-        }
+        let raw = self.raw_nbt.as_deref();
         for y in [top, top.min(63), range.start] {
             if y < range.start {
                 continue;
             }
             if let Some(id) = self.chunk.biome(8, y, 8).and_then(legacy_biome_id) {
+                return Some(id);
+            }
+            if let Some(id) = raw.and_then(|raw| biome_id_at(raw, 8, 8, y)) {
                 return Some(id);
             }
         }
@@ -615,9 +611,8 @@ fn cached_parsed_chunk(region_file: &Path, cx: u8, cz: u8) -> Option<Arc<ParsedC
 }
 
 /// 指定方块坐标的表面方块（自 `max_y` 向下首个非空气名）+ 所在群系原始 id。
-/// 群系经 chunk NBT biome palette 直读（fastanvil 会把 26.x/Mod 群系折叠为
-/// Unknown，这里绕开）：返回完整 id 形如 "minecraft:plains"。region 缺失/
-/// 区块未生成/损坏 → None。
+/// 群系优先 fastanvil 枚举（原版群系无额外解析），Unknown（新版本/Mod 群系）
+/// 再回退 chunk NBT 的 biome palette 直读。region 缺失/区块未生成/损坏 → None。
 pub fn surface_info(
     region_file: &Path,
     bx: i32,
@@ -645,76 +640,71 @@ pub fn surface_info(
         let name = block.name();
         if name != "minecraft:air" && name != "minecraft:cave_air" {
             let biome = parsed
-                .raw_nbt
-                .as_deref()
-                .and_then(|raw| biome_id_at(raw, x, z, y));
+                .chunk
+                .biome(x, y, z)
+                .and_then(legacy_biome_id)
+                .or_else(|| {
+                    parsed
+                        .raw_nbt
+                        .as_deref()
+                        .and_then(|raw| biome_id_at(raw, x, z, y))
+                });
             return Some((name.to_string(), biome, y as i32));
         }
     }
     None
 }
 
+/// 群系回退探针：只反序列化 `sections[].Y/biomes`，`block_states` 由 serde 跳过。
+#[derive(Deserialize)]
+struct BiomeProbeChunk {
+    #[serde(default)]
+    sections: Vec<BiomeProbeSection>,
+}
+
+#[derive(Deserialize)]
+struct BiomeProbeSection {
+    #[serde(rename = "Y")]
+    y: i8,
+    biomes: Option<BiomePalette>,
+}
+
+#[derive(Deserialize)]
+struct BiomePalette {
+    #[serde(default)]
+    palette: Vec<String>,
+    data: Option<fastnbt::LongArray>,
+}
+
 /// 从 chunk 原始 NBT 读 (x,z) 在高度 y 处的群系 id（biome 4×4×4 网格）。
 fn biome_id_at(raw: &[u8], x: usize, z: usize, y: isize) -> Option<String> {
-    let root: fastnbt::Value = fastnbt::from_bytes(raw).ok()?;
-    let fastnbt::Value::Compound(map) = &root else {
+    let chunk: BiomeProbeChunk = fastnbt::from_bytes(raw).ok()?;
+    let section = chunk.sections.iter().find(|s| s.y == (y >> 4) as i8)?;
+    palette_biome(section.biomes.as_ref()?, x, z, y)
+}
+
+fn palette_biome(palette: &BiomePalette, x: usize, z: usize, y: isize) -> Option<String> {
+    let names = &palette.palette;
+    if names.is_empty() {
         return None;
-    };
-    let fastnbt::Value::List(sections) = map.get("sections")? else {
-        return None;
-    };
-    let sec_y = (y >> 4) as i8;
-    for s in sections {
-        let fastnbt::Value::Compound(sec) = s else {
-            continue;
-        };
-        let fastnbt::Value::Byte(sy) = sec.get("Y")? else {
-            continue;
-        };
-        if *sy != sec_y {
-            continue;
-        }
-        let fastnbt::Value::Compound(bio) = sec.get("biomes")? else {
-            return None;
-        };
-        let fastnbt::Value::List(palette) = bio.get("palette")? else {
-            return None;
-        };
-        let names: Vec<String> = palette
-            .iter()
-            .filter_map(|p| match p {
-                fastnbt::Value::String(s) => Some(s.clone()),
-                _ => None,
-            })
-            .collect();
-        if names.is_empty() {
-            return None;
-        }
-        // biome 单元：4×4×4 网格，索引 = x4 + z4*4 + y4*16
-        let idx = ((x >> 2) & 3) + ((z >> 2) & 3) * 4 + (((y as usize) >> 2) & 3) * 16;
-        if names.len() == 1 {
-            return Some(names[0].clone());
-        }
-        let fastnbt::Value::LongArray(la) = bio.get("data")? else {
-            return None;
-        };
-        let data = la.clone().into_inner();
-        let bits = (names.len() as f64).log2().ceil().max(1.0) as usize;
-        if bits == 0 || bits > 64 {
-            return None;
-        }
-        // 调色板按 64 位字打包，值不跨字：word = idx / (64/bits), shift = (idx % per) * bits。
-        let per = 64 / bits;
-        let word = idx / per;
-        let shift = (idx % per) * bits;
-        if word >= data.len() {
-            return None;
-        }
-        let mask = (1i64 << bits.min(63)) - 1;
-        let v = ((data[word] >> shift) & mask) as usize;
-        return names.get(v).cloned();
     }
-    None
+    // biome 单元：4×4×4 网格，索引 = x4 + z4*4 + y4*16
+    let idx = ((x >> 2) & 3) + ((z >> 2) & 3) * 4 + (((y as usize) >> 2) & 3) * 16;
+    if names.len() == 1 {
+        return names.first().cloned();
+    }
+    let bits = (names.len() as f64).log2().ceil().max(1.0) as usize;
+    if bits == 0 || bits > 64 {
+        return None;
+    }
+    // 调色板按 64 位字打包，值不跨字：word = idx / (64/bits), shift = (idx % per) * bits。
+    let per = 64 / bits;
+    let word = idx / per;
+    let shift = (idx % per) * bits;
+    let value = *palette.data.as_ref()?.get(word)?;
+    let mask = (1i64 << bits.min(63)) - 1;
+    let v = ((value >> shift) & mask) as usize;
+    names.get(v).cloned()
 }
 
 /// region 原始字节缓存 key：path + mtime + len。
@@ -963,6 +953,83 @@ mod tests {
             raw[0].as_ref().unwrap().raw_nbt.is_some(),
             "搜索路径必须保留 raw NBT"
         );
+    }
+
+    #[test]
+    fn surface_biome_falls_back_to_raw_per_height() {
+        // 顶层是 fastanvil 不认识的 Mod 群系，Y=63 是原版 plains。
+        // 回退必须逐层进行，否则会错误返回下层的 plains。
+        let chunk = chunk_with_biomes(&[(19, "custom:modded_biome"), (3, "minecraft:plains")]);
+        assert_eq!(
+            chunk.surface_biome(319).as_deref(),
+            Some("custom:modded_biome")
+        );
+    }
+
+    #[test]
+    fn biome_probe_reads_packed_palette() {
+        // 2 项 palette → 1 bit/值；索引 10 = x4(2) + z4(2)*4 + y4(0)*16
+        let biomes = fastnbt::Value::Compound(HashMap::from([
+            (
+                "palette".to_string(),
+                fastnbt::Value::List(vec![
+                    fastnbt::Value::String("minecraft:plains".into()),
+                    fastnbt::Value::String("minecraft:desert".into()),
+                ]),
+            ),
+            (
+                "data".to_string(),
+                fastnbt::Value::LongArray(fastnbt::LongArray::new(vec![1i64 << 10])),
+            ),
+        ]));
+        let section = fastnbt::Value::Compound(HashMap::from([
+            ("Y".to_string(), fastnbt::Value::Byte(0)),
+            ("biomes".to_string(), biomes),
+        ]));
+        let raw = fastnbt::to_bytes(&fastnbt::Value::Compound(HashMap::from([(
+            "sections".to_string(),
+            fastnbt::Value::List(vec![section]),
+        )])))
+        .unwrap();
+
+        assert_eq!(
+            biome_id_at(&raw, 8, 8, 0).as_deref(),
+            Some("minecraft:desert")
+        );
+        assert_eq!(
+            biome_id_at(&raw, 0, 0, 0).as_deref(),
+            Some("minecraft:plains")
+        );
+    }
+
+    /// 由 (section Y, biome id) 构造已解析 chunk；raw NBT 保留供回退路径使用。
+    fn chunk_with_biomes(sections: &[(i8, &str)]) -> ParsedChunk {
+        let sections = sections
+            .iter()
+            .map(|(y, biome)| {
+                let biomes = fastnbt::Value::Compound(HashMap::from([(
+                    "palette".to_string(),
+                    fastnbt::Value::List(vec![fastnbt::Value::String((*biome).into())]),
+                )]));
+                fastnbt::Value::Compound(HashMap::from([
+                    ("Y".to_string(), fastnbt::Value::Byte(*y)),
+                    ("biomes".to_string(), biomes),
+                ]))
+            })
+            .collect();
+        let root = fastnbt::Value::Compound(HashMap::from([
+            (
+                "Status".to_string(),
+                fastnbt::Value::String("minecraft:full".into()),
+            ),
+            ("sections".to_string(), fastnbt::Value::List(sections)),
+        ]));
+        let raw = fastnbt::to_bytes(&root).unwrap();
+        let chunk = fastnbt::from_bytes::<ModernChunk>(&raw).unwrap();
+        ParsedChunk {
+            chunk: ChunkData::Modern(chunk),
+            raw_nbt: Some(raw),
+        }
     }
 
     #[test]
