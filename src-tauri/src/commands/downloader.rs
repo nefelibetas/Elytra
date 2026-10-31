@@ -30,8 +30,13 @@ pub fn save_downloader_config(config: DownloaderConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn get_installed_versions() -> Result<Vec<dir::InstalledVersionInfo>, String> {
-    dir::list_installed()
+pub async fn get_installed_versions() -> Result<Vec<dir::InstalledVersionInfo>, String> {
+    tauri::async_runtime::spawn_blocking(dir::list_installed)
+        .await
+        .map_err(common_err_ctx_key!(
+            "errors.version.read",
+            "读取版本信息失败"
+        ))?
 }
 
 #[tauri::command]

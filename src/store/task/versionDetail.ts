@@ -6,6 +6,7 @@ import { VERSION_DIR_CHANGED, type VersionDirChanged } from "../app/events";
 import { showToast } from "../../utils/toast";
 import { errMsg } from "../../utils/error";
 import { createBoundedCache } from "../../utils/boundedCache";
+import { createLimiter } from "../../utils/limiter";
 import { t } from "../../i18n";
 import { classifyVersion } from "../../utils/versionClassify";
 import type { InstalledVersionInfo } from "../config/gameDirs";
@@ -183,16 +184,20 @@ const worldIconsCache = createBoundedCache<string>(128);
 export const worldIcons = worldIconsCache.record;
 const worldIconsLoadingCache = createBoundedCache<boolean>(256);
 const worldIconsLoading = worldIconsLoadingCache.record;
+/** 世界缩略图并发上限：存档列表一次为全部世界发起请求，避免打满后端阻塞池。 */
+const limitWorldIconLoad = createLimiter(4);
 
 export async function loadWorldIcon(versionName: string, worldName: string) {
   if (worldIcons[worldName] || worldIconsLoading[worldName]) return;
   worldIconsLoadingCache.put(worldName, true);
   try {
     // 后端返回 { mime, base64 } 载荷（魔数嗅探 + 服务端编码，替代 JSON 数字数组）
-    const icon = await invoke<{ mime: string; data: string } | null>("get_world_icon", {
-      versionName,
-      worldName,
-    });
+    const icon = await limitWorldIconLoad(() =>
+      invoke<{ mime: string; data: string } | null>("get_world_icon", {
+        versionName,
+        worldName,
+      }),
+    );
     if (icon) {
       worldIconsCache.put(worldName, `data:${icon.mime};base64,${icon.data}`);
     }

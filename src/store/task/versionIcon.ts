@@ -1,6 +1,10 @@
 // 整合包版本图标（versions/{dir}/pack-icon.png 懒加载缓存）：安装期后端持久化平台 logo，此处按需读转 data URL，缺失/失败保持占位。
 import { invoke } from "@tauri-apps/api/core";
 import { createBoundedCache } from "../../utils/boundedCache";
+import { createLimiter } from "../../utils/limiter";
+
+/** 版本图标并发上限：列表一次为全部版本发起请求，避免打满后端阻塞池。 */
+const limitIconLoad = createLimiter(4);
 
 /** 版本目录名 → 图标 data URL（懒加载缓存）。单图上限见后端 1MiB；上限 128 按 FIFO 淘汰防无界增长。 */
 const versionIconsCache = createBoundedCache<string>(128);
@@ -11,9 +15,11 @@ export async function loadVersionIcon(versionDirName: string) {
   loadingCache.put(versionDirName, true);
   try {
     // 后端返回 { mime, base64 } 载荷（魔数嗅探 + 服务端编码，替代 JSON 数字数组）
-    const icon = await invoke<{ mime: string; data: string } | null>("get_version_icon", {
-      versionDirName,
-    });
+    const icon = await limitIconLoad(() =>
+      invoke<{ mime: string; data: string } | null>("get_version_icon", {
+        versionDirName,
+      }),
+    );
     if (icon) {
       versionIconsCache.put(versionDirName, `data:${icon.mime};base64,${icon.data}`);
     }
